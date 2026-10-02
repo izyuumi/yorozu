@@ -1943,8 +1943,11 @@ impl History {
         }
         Ok(json!({"applied":true,"outcome":outcome,"wasRunning":marker["state"] == "running"}))
     }
-    // Only an issued, still-current Rust worker may raise or consume a native prompt.
+    // Permission, question and startup callers always require effect currency.
     fn native_prompt_owner(&mut self, scope: &Value, card: &Value) -> io::Result<bool> {
+        self.native_worker_owner(scope, card, "effect")
+    }
+    fn native_worker_owner(&mut self, scope: &Value, card: &Value, mode: &str) -> io::Result<bool> {
         let thread = card["threadId"]
             .as_str()
             .filter(|id| !invalid_id(id))
@@ -1961,7 +1964,7 @@ impl History {
         if scope["turnId"] != turn {
             return Err(invalid());
         }
-        let current = self.attempt_request(&json!({"op":"run_attempt_current","threadId":thread,"eventId":origin,"attemptId":attempt,"mode":"effect"}))?;
+        let current = self.attempt_request(&json!({"op":"run_attempt_current","threadId":thread,"eventId":origin,"attemptId":attempt,"mode":mode}))?;
         if current.get("error").is_some() {
             return Err(invalid());
         }
@@ -2298,6 +2301,172 @@ impl History {
             json!({"stored":true,"execute":status == "applied" && (question || event["data"]["answer"] == "yes"),"replayed":false,"status":outcome,"events":events}),
         )
     }
+    fn worker_policy_operation(
+        thread: &str,
+        origin: &str,
+        completion: &str,
+        attempt: &str,
+        source: &str,
+    ) -> io::Result<String> {
+        Ok(format!(
+            "worker-policy:{}",
+            digest(
+                &serde_json::to_vec(&json!([1, thread, origin, completion, attempt, source]))
+                    .map_err(io::Error::other)?
+            )
+        ))
+    }
+    fn worker_activity(
+        &mut self,
+        request: &Value,
+        thread: &str,
+        origin: &str,
+    ) -> io::Result<Value> {
+        let attempt = request["attemptId"]
+            .as_str()
+            .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(invalid)?;
+        let source = request["source"]
+            .as_str()
+            .filter(|id| !invalid_id(id) && *id != "yorozu")
+            .ok_or_else(invalid)?;
+        let batch = request["requestId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let completion = format!("native:{origin}:final");
+        if request["version"] != 1 || request["turnId"] != completion {
+            return Err(invalid());
+        }
+        let scope = json!({"version":1,"threadId":thread,"eventId":origin,"turnId":completion,"attemptId":attempt,"source":source});
+        let supplied = request["events"]
+            .as_array()
+            .filter(|events| !events.is_empty() && events.len() <= 256)
+            .ok_or_else(invalid)?;
+        let mut events = Vec::with_capacity(supplied.len());
+        let mut size = 0;
+        let nonempty = |value: &Value| value.as_str().is_some_and(|s| !s.is_empty());
+        for input in supplied {
+            if input["threadId"] != thread
+                || input["agentId"] != "main"
+                || !nonempty(&input["id"])
+                || input["id"] == origin
+                || input["id"] == completion
+                || input.get("workerRun").is_some_and(|value| value != &scope)
+            {
+                return Err(invalid());
+            }
+            let data = &input["data"];
+            let valid = match input["kind"].as_str() {
+                Some("thought") => {
+                    data["text"].is_string() && data.get("transient").is_none_or(Value::is_boolean)
+                }
+                Some("tool_call") => {
+                    nonempty(&data["callId"]) && nonempty(&data["name"]) && data["args"].is_object()
+                }
+                Some("tool_result") => {
+                    nonempty(&data["callId"])
+                        && data["ok"].is_boolean()
+                        && data["output"].is_string()
+                        && data.get("denied").is_none_or(Value::is_boolean)
+                        && data.get("truncated").is_none_or(Value::is_boolean)
+                        && data.get("chunkOffset").is_none()
+                        && data.get("nextOffset").is_none()
+                        && if data["truncated"] == true {
+                            data["fullResultRef"].as_str().is_some_and(valid_hash)
+                        } else {
+                            data.get("fullResultRef").is_none()
+                        }
+                }
+                _ => false,
+            };
+            if !valid || day(&input["ts"])? != day(&supplied[0]["ts"])? {
+                return Err(invalid());
+            }
+            let mut event = input.clone();
+            event["workerRun"] = scope.clone();
+            size += serde_json::to_vec(&event).map_err(io::Error::other)?.len() + 1;
+            if size > 8 * 1024 * 1024 {
+                return Err(invalid());
+            }
+            events.push(event);
+        }
+        let operation = format!(
+            "worker-stream:{}",
+            digest(&serde_json::to_vec(&json!([scope, batch])).map_err(io::Error::other)?)
+        );
+        let key = digest(operation.as_bytes());
+        let root = self.root.clone();
+        // Replay owns only the original observations, even after the live epoch has disappeared.
+        {
+            let _writer = crate::thread_index::native_writer(&root)?;
+            self.recover().inspect_err(|_| self.failed = true)?;
+            if self.committed.contains_key(&key) {
+                let original = (|| -> io::Result<Vec<Value>> {
+                    let value: Value = serde_json::from_slice(&read_private(
+                        &self.directory.join(format!("{key}.json")),
+                        RECORD_BYTES,
+                    )?)
+                    .map_err(io::Error::other)?;
+                    let entry: Entry =
+                        serde_json::from_value(value["entry"].clone()).map_err(io::Error::other)?;
+                    if entry.key != key
+                        || entry.operation_id != operation
+                        || !self.valid_entry(&entry)
+                        || entry.targets.len() != 2
+                        || self
+                            .committed
+                            .get(&key)
+                            .is_none_or(|proof| proof.line_hash != digest(entry.line.as_bytes()))
+                        || value["checksum"]
+                            != digest(&serde_json::to_vec(&entry).map_err(io::Error::other)?)
+                    {
+                        return Err(invalid());
+                    }
+                    let original: Vec<Value> = entry
+                        .line
+                        .lines()
+                        .map(serde_json::from_str)
+                        .collect::<Result<_, _>>()
+                        .map_err(io::Error::other)?;
+                    Ok(original)
+                })()
+                .inspect_err(|_| self.failed = true)?;
+                if original != events {
+                    return Ok(json!({"stored":false,"reason":"conflicting-request"}));
+                }
+                let proof=self.append(&json!({"op":"history_append","operationId":operation,"events":original,"thread":true,"transcript":true})).inspect_err(|_| self.failed = true)?;
+                if proof["stored"] != true {
+                    self.failed = true;
+                    return Err(invalid());
+                }
+                return Ok(
+                    json!({"stored":true,"replayed":true,"operationId":operation,"events":original}),
+                );
+            }
+        }
+        let policy = Self::worker_policy_operation(thread, origin, &completion, attempt, source)?;
+        // Do not call the policy's creation path from an observation request.
+        if !self.committed.contains_key(&digest(policy.as_bytes())) {
+            return Ok(json!({"stored":false,"reason":"startup-unconfirmed"}));
+        }
+        let permit = self.worker_policy(request, thread, origin)?;
+        if permit["stored"] != true || permit["execute"] != false || permit["replayed"] != true {
+            return Err(invalid());
+        }
+        let _writer = crate::thread_index::native_writer(&root)?;
+        let card = json!({"threadId":thread,"data":{"nativeAgent":source}});
+        if !self.native_worker_owner(&scope, &card, "owned")? {
+            return Ok(json!({"stored":false,"reason":"scope-replaced"}));
+        }
+        // Admission binds the preview/reference. The guarded downloader separately validates blob bytes.
+        let proof=self.append(&json!({"op":"history_append","operationId":operation,"events":events,"thread":true,"transcript":true})).inspect_err(|_| self.failed = true)?;
+        if proof["stored"] != true {
+            self.failed = true;
+            return Err(invalid());
+        }
+        Ok(json!({"stored":true,"replayed":false,"operationId":operation,"events":events}))
+    }
     fn worker_policy(&mut self, request: &Value, thread: &str, origin: &str) -> io::Result<Value> {
         if request["version"].as_u64() != Some(1) {
             return Err(invalid());
@@ -2315,13 +2484,8 @@ impl History {
             return Err(invalid());
         }
         let scope = json!({"eventId":origin,"turnId":completion,"attemptId":attempt});
-        let operation = format!(
-            "worker-policy:{}",
-            digest(
-                &serde_json::to_vec(&json!([1, thread, origin, completion, attempt, source]))
-                    .map_err(io::Error::other)?
-            )
-        );
+        let operation =
+            Self::worker_policy_operation(thread, origin, &completion, attempt, source)?;
         let key = digest(operation.as_bytes());
         let root = self.root.clone();
         let _writer = crate::thread_index::native_writer(&root)?;
@@ -2446,6 +2610,9 @@ impl History {
         }
         if request["op"] == "run_attempt_policy" {
             return self.worker_policy(request, &thread, &origin);
+        }
+        if request["op"] == "run_attempt_activity" {
+            return self.worker_activity(request, &thread, &origin);
         }
         if ["run_attempt_pause", "run_attempt_finish"]
             .contains(&request["op"].as_str().unwrap_or(""))
@@ -2957,6 +3124,7 @@ impl History {
                         || id.starts_with("native-question-")
                         || id.starts_with("worker-result:")
                         || id.starts_with("worker-policy:")
+                        || id.starts_with("worker-stream:")
                 }) =>
             {
                 Ok(json!({"error":"reserved-history-operation"}))

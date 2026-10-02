@@ -1495,6 +1495,43 @@ also pass. The earlier registration failure is retained, without a claimed root-
 No test deadline changes, credential access, release dispatch or installed-app replacement accompanies
 this slice.
 
+
+Root now offers version1 `run_attempt_activity` for bounded SDK observation batches, tied to the
+issued conversation/origin/canonical reply/attempt/source and a stable request ID. It requires an
+existing authenticated startup receipt and never creates a start permit. It admits only the still
+owned cached source and canonical marker, accepted visible origin and absent final/conflicting
+terminal evidence under the native writer lease. Ownership here permits storing observations after
+Stop or pause, including already-buffered thoughts/calls; it grants no execution permission. The
+approval, question and startup paths continue to require effect currency.
+
+The API accepts only typed thought/tool-call/tool-result events for the main agent and exact
+conversation, at most 256 records and 8 MiB including generated worker scopes and JSONL delimiters.
+Provider event and call IDs remain opaque and may exceed 128 characters; accepted origin and canonical
+final IDs are protected. Result previews may retain a lowercase 64-hex immutable reference only when
+truncated; transport fragments and control/final events are refused. Root authenticates the preview's
+scope/reference; the guarded downloader independently checks full blob bytes. Artifact size behavior
+remains unchanged. Each batch stays within one UTC day.
+
+Reserved `worker-stream:` operations commit through the existing thread/transcript journal.
+Authenticated replay returns the original normalized records without consulting a new live epoch
+or granting progress/execution. Reused request IDs with changed contents conflict. Storage recovery,
+entry-integrity or append uncertainty fences operational execution until recovery; malformed input
+and conflicting packets remain ordinary refusals. This Root-only slice leaves Node activity on the
+generic compatibility persister until the next adoption step. Full task/model/account packets,
+platform IPC, operational SQLite/Markdown migration, standalone launch and release gates remain open.
+
+Verification: the primary positive owner regression fails against the missing API. Public history
+also accepts a forged stream operation on the actual previous Root; automatic byte-exact restoration
+preserves the candidate. Review then reproduces a genuine partially applied stream (thread projection
+written, transcript unchanged) that leaves execution currency usable, and a worker observation that
+reuses the accepted message ID. The repaired owner fences execution, recovers original events after
+restart without duplicates, and rejects both protected IDs. Six focused approval/startup/activity tests,
+including annotation-inclusive byte bounds, and strict Clippy pass. Final verification passes all
+158 Rust tests, formatting, strict Clippy, the production runtime build and 28 affected SDK startup,
+permission/question, stale-owner, session and artifact integrations. No test deadlines are weakened.
+The preceding artifact commit also passes its complete alpha CI run (36958066186). This establishes
+the Root API slice; Node adoption and remaining finite migration/release gates remain unfinished.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

@@ -342,3 +342,263 @@ fn startup_policy_cannot_authorize_a_replaced_stopped_or_unstored_attempt() {
         assert_ne!(proof["stored"], true, "{mode}: {proof}");
     }
 }
+
+// SDK observations use the already-issued policy, never another execution permit.
+fn activity_request(scope: &Value, ts: u64) -> Value {
+    let call = "provider-call-".to_owned() + &"界".repeat(100);
+    json!({"op":"run_attempt_activity","version":1,"threadId":"thread","eventId":"origin",
+    "turnId":scope["turnId"],"attemptId":scope["attemptId"],"source":"codex","requestId":"batch",
+    "events":[
+        {"id":"provider-thought-".to_owned()+&"x".repeat(200),"threadId":"thread","ts":ts,"agentId":"main","kind":"thought","data":{"text":"thinking"}},
+        {"id":"provider-call","threadId":"thread","ts":ts,"agentId":"main","kind":"tool_call","data":{"callId":call,"name":"Bash","args":{"command":"pwd"}}},
+        {"id":"provider-result","threadId":"thread","ts":ts,"agentId":"main","kind":"tool_result","data":{"callId":call,"ok":true,"output":"/project"}}
+    ]})
+}
+fn issue_policy(host: &mut History, scope: &Value) -> Value {
+    let request = json!({"op":"run_attempt_policy","version":1,"threadId":"thread","eventId":"origin","turnId":scope["turnId"],"attemptId":scope["attemptId"],"source":"codex"});
+    let proof = host.request(&request);
+    assert_eq!(proof["stored"], true, "{proof}");
+    assert_eq!(proof["execute"], true);
+    request
+}
+#[test]
+fn scoped_activity_commits_observations_and_replays_original_without_effects() {
+    for mode in ["partial-storage", "current", "stopped"] {
+        let stopped = mode == "stopped";
+        let temp = Temp::new();
+        let ts = now_ms();
+        let (mut host, card) = setup(&temp, "Bash", ts);
+        let scope = &card["data"]["nativeRun"];
+        let policy = issue_policy(&mut host, scope);
+        if stopped {
+            assert_eq!(host.request(&json!({"op":"stop_save","record":{"targetEventId":"origin","threadId":"thread","status":"requested","requestIds":["stop"]}}))["record"]["status"],"requested");
+            assert_eq!(host.request(&json!({"op":"run_attempt_pause","threadId":"thread","eventId":"origin","turnId":scope["turnId"],"attemptId":scope["attemptId"]}))["applied"],true);
+        }
+        let request = activity_request(scope, ts);
+        if mode == "partial-storage" {
+            let transcript = temp
+                .0
+                .join("transcripts")
+                .read_dir()
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            let before = fs::read(&transcript).unwrap();
+            let original = fs::metadata(&transcript).unwrap().permissions();
+            let mut readonly = original.clone();
+            readonly.set_readonly(true);
+            fs::set_permissions(&transcript, readonly).unwrap();
+            let proof = host.request(&request);
+            fs::set_permissions(&transcript, original).unwrap();
+            assert_ne!(proof["stored"], true, "{proof}");
+            // The thread projection applied; the transcript is still the old bytes.
+            let rows: Vec<Value> = fs::read_to_string(temp.0.join("threads/thread.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let applied: Vec<Value> = rows
+                .into_iter()
+                .filter(|event| {
+                    ["thought", "tool_call", "tool_result"]
+                        .contains(&event["kind"].as_str().unwrap_or(""))
+                })
+                .collect();
+            assert_eq!(applied.len(), 3);
+            assert_eq!(fs::read(&transcript).unwrap(), before);
+            assert_ne!(host.request(&json!({"op":"run_attempt_current","threadId":"thread","eventId":"origin","attemptId":scope["attemptId"],"mode":"effect"}))["current"],true,"pending stream uncertainty must fence execution");
+            drop(host);
+            let mut host = History::open(&temp.0).unwrap();
+            let replay = host.request(&request);
+            assert_eq!(replay["stored"], true, "{replay}");
+            assert_eq!(replay["replayed"], true);
+            assert_eq!(replay["events"], json!(applied));
+            let thread = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+            assert_eq!(host.request(&request)["events"], replay["events"]);
+            assert_eq!(
+                fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+                thread
+            );
+            continue;
+        }
+        let proof = host.request(&request);
+        assert_eq!(proof["stored"], true, "stopped={stopped}: {proof}");
+        assert_eq!(proof["replayed"], false);
+        let expected_scope = json!({"version":1,"threadId":"thread","eventId":"origin","turnId":scope["turnId"],"attemptId":scope["attemptId"],"source":"codex"});
+        for (original, saved) in request["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(proof["events"].as_array().unwrap())
+        {
+            let mut expected = original.clone();
+            expected["workerRun"] = expected_scope.clone();
+            assert_eq!(saved, &expected);
+        }
+        assert_eq!(proof["events"].as_array().unwrap().len(), 3);
+        let thread = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let rows: Vec<Value> = String::from_utf8(thread.clone())
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        for saved in proof["events"].as_array().unwrap() {
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| row["id"] == saved["id"])
+                    .collect::<Vec<_>>(),
+                vec![saved]
+            );
+        }
+        let again = host.request(&request);
+        assert_eq!(again["stored"], true);
+        assert_eq!(again["replayed"], true);
+        assert_eq!(again["events"], proof["events"]);
+        assert_eq!(host.request(&policy)["execute"], false);
+        let mut changed = request.clone();
+        changed["events"][0]["data"]["text"] = json!("different");
+        assert_ne!(host.request(&changed)["stored"], true);
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            thread
+        );
+        drop(host);
+        let mut host = History::open(&temp.0).unwrap();
+        let replay = host.request(&request);
+        assert_eq!(replay["stored"], true);
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["events"], proof["events"]);
+        let mut late = request.clone();
+        late["requestId"] = json!("late");
+        assert_ne!(host.request(&late)["stored"], true);
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            thread
+        );
+    }
+}
+#[test]
+fn scoped_activity_rejects_unissued_replaced_malformed_and_unstored_packets() {
+    for mode in [
+        "origin-id",
+        "turn-id",
+        "policy-missing",
+        "public-history",
+        "source",
+        "canonical-reply",
+        "released",
+        "forged-scope",
+        "control",
+        "chunk",
+        "wrong-ok",
+        "invalid-ref",
+        "mixed-day",
+        "count",
+        "bytes",
+        "storage",
+    ] {
+        let temp = Temp::new();
+        let ts = now_ms();
+        let (mut host, card) = setup(&temp, "Bash", ts);
+        let scope = &card["data"]["nativeRun"];
+        let policy = json!({"op":"run_attempt_policy","version":1,"threadId":"thread","eventId":"origin","turnId":scope["turnId"],"attemptId":scope["attemptId"],"source":"codex"});
+        if mode != "policy-missing" {
+            issue_policy(&mut host, scope);
+        }
+        let mut request = activity_request(scope, ts);
+        match mode {
+            "origin-id" => request["events"][0]["id"] = json!("origin"),
+            "turn-id" => request["events"][0]["id"] = scope["turnId"].clone(),
+            "public-history" => {
+                request["op"] = json!("history_append");
+                request["operationId"] = json!("worker-stream:forged");
+                request["thread"] = json!(true);
+                request["transcript"] = json!(true);
+            }
+            "source" | "canonical-reply" => {
+                let path = temp.0.join("threads.json");
+                let mut index: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                if mode == "source" {
+                    index[0]["agent"] = json!("claude-code");
+                } else {
+                    index[0]["nativeTurn"]["id"] = json!("foreign");
+                }
+                fs::write(path, serde_json::to_vec(&index).unwrap()).unwrap();
+            }
+            "released" => {
+                assert_eq!(host.request(&json!({"op":"run_attempt_release","threadId":"thread","eventId":"origin","attemptId":scope["attemptId"]}))["released"],true);
+            }
+            "forged-scope" => {
+                request["events"][0]["workerRun"] = json!({"version":1,"threadId":"thread","eventId":"origin","turnId":scope["turnId"],"attemptId":"foreign","source":"codex"})
+            }
+            "control" => request["events"][0]["kind"] = json!("approval_status"),
+            "chunk" => request["events"][2]["data"]["chunkOffset"] = json!(0),
+            "wrong-ok" => request["events"][2]["data"]["ok"] = json!("true"),
+            "invalid-ref" => {
+                request["events"][2]["data"]["truncated"] = json!(true);
+                request["events"][2]["data"]["fullResultRef"] = json!("bad");
+            }
+            "mixed-day" => request["events"][1]["ts"] = json!(ts + 86_400_000),
+            "count" => request["events"] = json!(vec![request["events"][0].clone(); 257]),
+            "bytes" => {
+                request["events"][0]["data"]["text"] = json!("x".repeat(8 * 1024 * 1024));
+                let input_bytes: usize = request["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|event| serde_json::to_vec(event).unwrap().len() + 1)
+                    .sum();
+                // Input fits; the mandatory generated scopes push the admitted packet over its limit.
+                request["events"][0]["data"]["text"] =
+                    json!("x".repeat(8 * 1024 * 1024 - (input_bytes - 8 * 1024 * 1024) - 32));
+                assert!(
+                    request["events"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|event| serde_json::to_vec(event).unwrap().len() + 1)
+                        .sum::<usize>()
+                        <= 8 * 1024 * 1024
+                );
+            }
+            "storage" => {
+                let path = temp
+                    .0
+                    .join("transcripts")
+                    .read_dir()
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path();
+                fs::rename(&path, path.with_extension("backup")).unwrap();
+                fs::create_dir(path).unwrap();
+            }
+            "policy-missing" => {}
+            _ => unreachable!(),
+        }
+        let before = fs::read(temp.0.join("threads/thread.jsonl")).unwrap();
+        let index = fs::read(temp.0.join("threads.json")).unwrap();
+        let proof = host.request(&request);
+        assert_ne!(proof["stored"], true, "{mode}: {proof}");
+        assert_eq!(
+            fs::read(temp.0.join("threads/thread.jsonl")).unwrap(),
+            before,
+            "{mode}"
+        );
+        assert_eq!(
+            fs::read(temp.0.join("threads.json")).unwrap(),
+            index,
+            "{mode}"
+        );
+        if mode == "policy-missing" {
+            assert_eq!(
+                host.request(&policy)["execute"],
+                true,
+                "activity must not mint startup"
+            );
+        }
+    }
+}
