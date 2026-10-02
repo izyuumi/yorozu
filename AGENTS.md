@@ -4,7 +4,8 @@
 
 Follow [docs/RELEASE_WORKFLOW.md](docs/RELEASE_WORKFLOW.md) for release-related work,
 including versioning, candidate builds, release notes, beta/stable promotion, and hotfixes.
-All commits must use Conventional Commit messages and be cryptographically signed.
+All commits must use Conventional Commit messages (checked by `.githooks/commit-msg` and CI)
+and be signed (enforced on `main`).
 
 ## UI layout
 
