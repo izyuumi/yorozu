@@ -55,10 +55,17 @@ class Host:
         raise TimeoutError("alpha acceptance timed out")
 
     def request(self, op, **params):
-        request_id = self.send(op, **params)
-        result = self.until(lambda f: f.get("id") == request_id, 15)["result"]
-        assert "error" not in result, f"host rejected {op}: {result.get('error')}"
-        return result
+        deadline = time.monotonic() + 5
+        while True:
+            request_id = self.send(op, **params)
+            result = self.until(lambda f: f.get("id") == request_id, 15)["result"]
+            # Only an explicit rejection proves work was not accepted. The bridge may
+            # still be exiting after its provider terminal; never replay an unknown run.
+            if op == "submit" and result.get("error") == "worker-busy" and time.monotonic() < deadline:
+                time.sleep(.1)
+                continue
+            assert "error" not in result, f"host rejected {op}: {result.get('error')}"
+            return result
 
     def terminal(self, run_id):
         return self.until(lambda f: f.get("event", {}).get("runId") == run_id and

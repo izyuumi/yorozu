@@ -1,0 +1,39 @@
+{
+  "format": 1,
+  "profile": "/var/folders/kf/512zw4hj7l5bm566xkcqyt500000gn/T/yorozu-alpha-qa-ftg4_dkg",
+  "checks": {
+    "isolatedSnapshot": true,
+    "english": {
+      "runId": "1a48da55-d408-4dd8-af35-c3fff47fd74b",
+      "sha256": "7463440468f33daa272fc0795c5db7ef6ec89cb363cd0eb1bab7d54366ba2a9a",
+      "terminal": "completed",
+      "idempotentReplay": true
+    },
+    "japanese": {
+      "runId": "50c79804-5443-4c33-b45d-af0fd1fcb67b",
+      "sha256": "51b6bbb8e7625f0ed009e63ee62b0d0de002bdaf2af345b30327a75297237446",
+      "terminal": "completed",
+      "idempotentReplay": true
+    },
+    "stop": {
+      "seq": 25,
+      "runId": "54d95de5-76f0-427b-9890-66a9702bfc50",
+      "kind": "stopped",
+      "ts": 1790959474723,
+      "text": "",
+      "data": {
+        "evidence": "process-exited"
+      }
+    },
+    "reconnect": {
+      "retainedEvents": 14,
+      "activeRunId": null
+    }
+  },
+  "nativeComputerUse": "blocked; no existing TCC grants proven",
+  "passed": true,
+  "evidenceSha256": "cb9e019c3a58c1b5d376fc8a0086c2952b4703ba7d90233324330aa39e5b121e",
+  "source": "fbe27fab73a16fd57eb6387fefb96e103d2d79e3",
+  "testedModel": "gpt-6-sol",
+  "scope": "Rust host + Node official app-server; no native UI/CU or legacy profile migration"
+}
