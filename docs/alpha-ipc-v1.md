@@ -10,6 +10,12 @@ selected. New profile contains `state/` and `workspace/`; existing profiles need
 host-created `.yorozu-alpha-v1` marker. No installed profile, migration, pairing or updater.
 Node worker uses existing `codexNativeRunner` official installed app-server configuration.
 This is a temporary Node provider bridge, not a complete Rust migration.
+The installed official client advertised `gpt-6-astra` as default but returned the exact
+unsupported-ChatGPT-model failure on a harmless turn. The internal alpha explicitly uses
+advertised `gpt-6-sol` (`YOROZU_ALPHA_MODEL` can choose another advertised model); it never
+changes official client configuration or credentials. Catalog presence is checked before
+invocation and does not itself prove successful inference. Model support is verified by
+real QA results, and there is no automatic retry through other models.
 
 Private child pipes use UTF-8 JSON lines, maximum 1 MiB per frame, protocol version 1.
 Requests have `version:1`, `id` (UUID), `op`:
