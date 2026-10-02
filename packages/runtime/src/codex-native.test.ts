@@ -46,7 +46,7 @@ test("Codex starts/resumes native threads with cwd, models, effort and independe
   const runner = codexNativeRunner(fake.connect);
   const onSession = vi.fn();
   const first = await runner.run(turn({ onSession, model: "model-a", effort: "ultra" }));
-  expect(first).toEqual({ text: "Done", sessionId: "native", completed: true });
+  expect(first).toEqual({ text: "Done", sessionId: "native", completed: true, cessation: "provider-terminal" });
   expect(onSession).toHaveBeenCalledWith("native");
   expect(fake.calls).toContainEqual(["thread/start", { cwd: "/tmp/project", model: "model-a", approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: "workspace-write" }]);
   expect(fake.calls.find(([m]) => m === "turn/start")?.[1]).toMatchObject({ threadId: "native", model: "model-a", effort: "ultra" });
@@ -101,7 +101,7 @@ test.each([true, false])("Codex permission %s and multiple-choice/free-text answ
   const fake = fakeCodex(async (h) => {
     for (const kind of ["commandExecution", "fileChange", "permissions"]) decisions.push(await h.request(`item/${kind}/requestApproval`, { threadId: "native", command: "pwd", permissions: { network: { enabled: true } } }));
     decisions.push(await h.request("item/tool/requestUserInput", { questions: [{ id: "q1", question: "Which?", options: [{ label: "A" }] }, { id: "q2", question: "Name?", options: null }] }));
-    h.notify("turn/completed", { threadId: "native", turn: { status: "completed" } });
+    h.notify("turn/completed", { threadId: "native", turn: { id: "turn-1", status: "completed" } });
   });
   const approve = vi.fn().mockResolvedValue(allow);
   const ask = vi.fn().mockResolvedValueOnce("A").mockResolvedValueOnce("Free text");
@@ -119,12 +119,12 @@ test("Codex maps native thought, tool and reply streams to existing trace events
     h.notify("item/agentMessage/delta", { threadId: "native", itemId: "reply", delta: "Do" });
     h.notify("item/agentMessage/delta", { threadId: "native", itemId: "reply", delta: "ne" });
     h.notify("item/completed", { threadId: "native", item: { type: "agentMessage", id: "reply", text: "Done" } });
-    h.notify("turn/completed", { threadId: "native", turn: { status: "completed" } });
+    h.notify("turn/completed", { threadId: "native", turn: { id: "turn-1", status: "completed" } });
   });
   const onActivity = vi.fn();
   const onUpdate = vi.fn();
   const onToolBoundary = vi.fn();
-  expect(await codexNativeRunner(fake.connect).run(turn({ onActivity, onUpdate, onToolBoundary }))).toEqual({ text: "Done", sessionId: "native", completed: true });
+  expect(await codexNativeRunner(fake.connect).run(turn({ onActivity, onUpdate, onToolBoundary }))).toEqual({ text: "Done", sessionId: "native", completed: true, cessation: "provider-terminal" });
   expect(onActivity.mock.calls.map((c) => c[1].kind)).toEqual(["thought", "tool_call", "tool_result"]);
   expect(onActivity.mock.calls[2]?.[1].data.output).toHaveLength(5000);
   expect(onActivity.mock.calls[2]?.[1].data.callId).toBe("turn-1:cmd");
@@ -144,7 +144,7 @@ test.each(["approval", "question"])("Stop interrupts Codex while %s is pending, 
   const running = runner.run(turn({ signal: abort.signal, approve: async (_t, _i, s) => { await wait(s); return false; }, ask: (_q, _o, s) => wait(s) }));
   await vi.waitFor(() => expect(requested).toBe(true));
   abort.abort();
-  expect(await running).toEqual({ text: "", sessionId: "native" });
+  expect(await running).toEqual({ text: "", sessionId: "native", cessation: "provider-terminal" });
   expect(fake.calls).toContainEqual(["turn/interrupt", { threadId: "native", turnId: "turn-1" }]);
   expect(fake.close).toHaveBeenCalledOnce();
 });
@@ -160,7 +160,7 @@ test("Stop returns Codex's last streamed reply", async () => {
   const running = codexNativeRunner(fake.connect).run(turn({ signal: abort.signal, onUpdate }));
   await vi.waitFor(() => expect(onUpdate).toHaveBeenLastCalledWith("first last"));
   abort.abort();
-  expect(await running).toEqual({ text: "first last", sessionId: "native" });
+  expect(await running).toEqual({ text: "first last", sessionId: "native", cessation: "provider-terminal" });
 });
 
 test("Codex reports completed only when the server finishes successfully after Stop", async () => {
@@ -179,14 +179,14 @@ test("Codex reports completed only when the server finishes successfully after S
   await started.promise;
   abort.abort();
   handlers.notify("item/completed", { threadId: "native", item: { type: "agentMessage", id: "reply", text: "full answer" } });
-  handlers.notify("turn/completed", { threadId: "native", turn: { status: "completed" } });
-  expect(await running).toEqual({ text: "full answer", sessionId: "native", completed: true });
+  handlers.notify("turn/completed", { threadId: "native", turn: { id: "turn-1", status: "completed" } });
+  expect(await running).toEqual({ text: "full answer", sessionId: "native", completed: true, cessation: "provider-terminal" });
 });
 
 test("Codex failures propagate and unknown server requests fail closed", async () => {
   const fake = fakeCodex(async (h) => {
     await expect(h.request("new/permission", {})).rejects.toThrow("Unsupported");
-    h.notify("turn/completed", { threadId: "native", turn: { status: "failed", error: { message: "Failed safely" } } });
+    h.notify("turn/completed", { threadId: "native", turn: { id: "turn-1", status: "failed", error: { message: "Failed safely" } } });
   });
   await expect(codexNativeRunner(fake.connect).run(turn())).rejects.toThrow("Failed safely");
   expect(fake.close).toHaveBeenCalledOnce();
@@ -219,4 +219,61 @@ test("the Codex app server is spawned with the allowlisted env, never Yorozu's o
     expect(child.kill).toHaveBeenCalledOnce();
     expect(ended).toHaveBeenCalledOnce();
   } finally { vi.unstubAllEnvs(); }
+});
+
+
+test("Codex Stop ignores foreign or unidentified terminal acknowledgements", async () => {
+  const abort = new AbortController(); const ready=Promise.withResolvers<void>(); let handlers!: CodexHandlers;
+  const connect: ConnectCodex = (h) => { handlers=h; return {
+    request: async (method) => { if(method==="thread/start") return {thread:{id:"native"}}; if(method==="turn/start") { return {turn:{id:"turn-1"}}; } return {}; },
+    notify() {}, close() { h.ended(new Error("closed")); }
+  }; };
+  let settled=false; const pending=codexNativeRunner(connect).run(turn({signal:abort.signal,onSteer:()=>ready.resolve()})).then((result)=>{settled=true;return result;});
+  await ready.promise; abort.abort();
+  for(const params of [{threadId:"foreign",turn:{id:"turn-1",status:"interrupted"}}, {threadId:"native",turn:{id:"old",status:"completed"}}, {turn:{id:"turn-1",status:"completed"}}, {threadId:"native",turn:{status:"interrupted"}}]) handlers.notify("turn/completed",params);
+  await new Promise<void>((resolve)=>setImmediate(resolve)); expect(settled).toBe(false);
+  handlers.ended(new Error("transport ended without exit"));
+  expect(await pending).toEqual({text:"",sessionId:"native"});
+});
+
+test("Codex early cancellation requires observed owned exit and bounds a missing exit", async () => {
+  for(const exits of [false,true]) {
+    const abort=new AbortController(); const exit=Promise.withResolvers<void>();
+    const connect: ConnectCodex=(h)=>({exited:exit.promise,request:async(method)=>{
+      if(method==="thread/start") {abort.abort();return {thread:{id:"native"}};} return {};
+    },notify(){},close(){h.ended(new Error("closed"));if(exits) exit.resolve();}});
+    const result=await codexNativeRunner(connect).run(turn({signal:abort.signal}));
+    expect(result).toEqual({text:"",sessionId:"native",...(exits?{cessation:"process-exited"}: {})});
+  }
+});
+
+test("Codex connection close and error do not resolve child exit proof", async () => {
+  const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stdin:new PassThrough(),kill:vi.fn()});
+  spawnMock.mockReturnValueOnce(child); const client=connectCodex({notify(){},request:async()=>({}),ended(){}});
+  let exited=false; void client.exited!.then(()=>{exited=true;});
+  client.close(); child.emit("error",new Error("transport error"));
+  await new Promise<void>((resolve)=>setImmediate(resolve)); expect(exited).toBe(false);
+  child.emit("exit",0); await client.exited; expect(exited).toBe(true);
+});
+
+
+test("Codex cannot relabel a pre-response terminal as the returned turn", async () => {
+  const connect: ConnectCodex=(h)=>({request:async(method)=>{
+    if(method==="thread/start") return {thread:{id:"native"}};
+    if(method==="turn/start") {
+      h.notify("turn/started",{threadId:"native",turn:{id:"old"}});
+      h.notify("turn/completed",{threadId:"native",turn:{id:"old",status:"completed"}});
+      return {turn:{id:"turn-1"}};
+    } return {};
+  },notify(){},close(){h.ended(new Error("closed"));}});
+  await expect(codexNativeRunner(connect).run(turn())).rejects.toThrow("identity remains unconfirmed");
+});
+
+
+test("Codex seals its first validated terminal outcome", async () => {
+  const fake=fakeCodex(async(h)=>{
+    h.notify("turn/completed",{threadId:"native",turn:{id:"turn-1",status:"completed"}});
+    h.notify("turn/completed",{threadId:"native",turn:{id:"turn-1",status:"interrupted"}});
+  });
+  expect(await codexNativeRunner(fake.connect).run(turn())).toMatchObject({completed:true,cessation:"provider-terminal"});
 });

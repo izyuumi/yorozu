@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { tmpdir } from "node:os";
 import { REASONING_EFFORTS, type ModelOption } from "@yorozu/shared";
-import { childEnv, turnCwd } from "./native.js";
+import { childEnv, nativeProcessExited, turnCwd } from "./native.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -24,6 +24,8 @@ export interface CodexConnection {
   request(method: string, params: ObjectValue): Promise<ObjectValue>;
   notify(method: string, params: ObjectValue): void;
   close(): void;
+  /** Resolves only for this connection's child exit event. */
+  exited?: Promise<void>;
 }
 export type ConnectCodex = (handlers: CodexHandlers) => CodexConnection;
 
@@ -33,6 +35,7 @@ export type ConnectCodex = (handlers: CodexHandlers) => CodexConnection;
  */
 export const connectCodex = (handlers: CodexHandlers, trackProcess?: (pid: number) => () => void): CodexConnection => {
   const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "ignore"], env: childEnv() });
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   let untrack: (() => void) | undefined;
   try { if (child.pid) untrack = trackProcess?.(child.pid); }
   catch (error) { child.once("error", () => {}); child.kill("SIGTERM"); throw error; }
@@ -96,6 +99,7 @@ export const connectCodex = (handlers: CodexHandlers, trackProcess?: (pid: numbe
     },
     notify: (method, params) => write({ method, params }),
     close: () => close(),
+    exited,
   };
 };
 
@@ -151,6 +155,9 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
       let text = "";
       let lastStreamed = "";
       let completed = false;
+      let terminal = false;
+      let startingTurn = false;
+      const pendingTerminals: ObjectValue[] = [];
       const streamed = new Map<string, string>();
       const cancel = new AbortController();
       const signal = AbortSignal.any([turn.signal, cancel.signal]);
@@ -159,12 +166,19 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
       const completion = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
       // Early process exits can precede awaiting completion during initialize/start.
       void completion.catch(() => {});
+      const receiveTerminal = (done: ObjectValue): void => {
+        if (terminal || !turnId || string(done.id) !== turnId) return;
+        if (done.status === "failed") { terminal = true; reject(new Error(string(object(done.error).message) || "Codex turn failed")); }
+        else if (["completed", "interrupted"].includes(string(done.status))) {
+          terminal = true; completed = done.status === "completed"; resolve();
+        }
+      };
       const client = connect({
         ended: reject,
         request: (method, params, requestSignal) => answerRequest(method, params, turn, requestSignal ? AbortSignal.any([signal, requestSignal]) : signal),
         notify(method, params) {
-          if (params.threadId && params.threadId !== sessionId) return;
-          if (method === "turn/started") turnId = string(object(params.turn).id);
+          if (!sessionId || params.threadId !== sessionId) return;
+          if (method === "turn/started" && startingTurn && !turnId) turnId = string(object(params.turn).id);
           if (method === "item/agentMessage/delta") {
             const id = string(params.itemId);
             const next = (streamed.get(id) ?? "") + string(params.delta);
@@ -196,15 +210,15 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
             if (complete) turn.onToolBoundary?.();
           } else if (method === "turn/completed") {
             const done = object(params.turn);
-            if (done.status === "failed") reject(new Error(string(object(done.error).message) || "Codex turn failed"));
-            else { completed = done.status === "completed"; resolve(); }
+            if (startingTurn) { if (pendingTerminals.length < 16) pendingTerminals.push(done); }
+            else receiveTerminal(done);
           }
         },
       });
       turn.onTerminate?.(() => client.close());
       let abortTimer: ReturnType<typeof setTimeout> | undefined;
       const abort = (): void => {
-        if (sessionId && turnId) {
+        if (sessionId && turnId && !startingTurn) {
           abortTimer = setTimeout(() => client.close(), 2_000);
           void client.request("turn/interrupt", { threadId: sessionId, turnId }).catch(() => client.close());
         } else client.close();
@@ -221,7 +235,8 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         sessionId = string(object(home.thread).id);
         if (!sessionId) throw new Error("Codex did not return a thread id");
         turn.onSession?.(sessionId);
-        if (turn.signal.aborted) return { text: "", sessionId };
+        if (turn.signal.aborted) throw new Error("Codex turn cancelled before start");
+        startingTurn = true;
         const started = await client.request("turn/start", { threadId: sessionId,
           input: [{ type: "text", text: turn.text, text_elements: [] },
             ...(turn.skill ? [{ type: "skill", name: turn.skill.name, path: turn.skill.path }] : []),
@@ -229,7 +244,12 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
             ...(turn.attachments ?? []).filter((file) => file.mime.startsWith("image/"))
               .map((file) => ({ type: "localImage", path: file.path }))],
           model: turn.model ?? null, effort: turn.effort ?? null });
-        turnId = string(object(started.turn).id) || turnId;
+        const startedId = string(object(started.turn).id);
+        if (!startedId || turnId && turnId !== startedId) throw new Error("Codex turn identity remains unconfirmed");
+        turnId = startedId;
+        startingTurn = false;
+        for (const done of pendingTerminals) receiveTerminal(done);
+        pendingTerminals.length = 0;
         turn.onSteer?.(async (text, attachments) => {
           if (!sessionId || !turnId || signal.aborted || completed) return false;
           await client.request("turn/steer", { threadId: sessionId, expectedTurnId: turnId,
@@ -248,7 +268,10 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         clearTimeout(abortTimer);
         client.close();
       }
+      const cessation = terminal ? "provider-terminal" as const :
+        turn.signal.aborted && await nativeProcessExited(client.exited) ? "process-exited" as const : undefined;
       return { text: completed || !turn.signal.aborted ? text : lastStreamed || text,
+        ...(cessation ? { cessation } : {}),
         ...(completed ? { completed: true } : {}), ...(sessionId ? { sessionId } : {}) };
     },
   };

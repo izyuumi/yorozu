@@ -70,6 +70,28 @@ export class StopStore {
     if (proof.stopConfirmed !== true) this.failed = true;
     return proof;
   }
+  async reconcileNativeResult(packet: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const captured = structuredClone(packet);
+    const threadId = captured.threadId, targetEventId = captured.eventId;
+    if (typeof threadId !== "string" || typeof targetEventId !== "string" || !this.available)
+      throw new Error("Native result remains unconfirmed");
+    let pending: Promise<void> | undefined;
+    while ((pending = this.pendingWrites.get(targetEventId))) await pending;
+    if (!this.available) throw new Error("Native result remains unconfirmed");
+    const prior = this.committed.get(targetEventId);
+    // No await between Root mutation and adoption of both mirrors.
+    const proof = syncHostResult(this.dir, { ...captured, op: "run_attempt_result" });
+    const record = proof.record;
+    if (record === null && !prior && proof.stopConfirmed === true) return proof;
+    if (!valid(record) || record.targetEventId !== targetEventId || record.threadId !== threadId ||
+        prior && (!prior.requestIds.every((id) => record.requestIds.includes(id)) ||
+          ["stopped", "completed", "withdrawn"].includes(prior.status) && record.status !== prior.status))
+      throw new Error("Native result remains unconfirmed");
+    const confirmed = structuredClone(record);
+    this.committed.set(targetEventId, confirmed); this.records.set(targetEventId, confirmed);
+    if (proof.stopConfirmed !== true) this.failed = true;
+    return proof;
+  }
   save(record: StopRecord): Promise<void> {
     if (!this.available || !valid(record) || this.writes >= 32) return Promise.reject(new Error("Stop remains unconfirmed"));
     const previous = this.records.get(record.targetEventId);

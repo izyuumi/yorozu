@@ -105,8 +105,17 @@ export interface NativeTurnResult {
   failed?: boolean;
   /** The agent reported a successful turn, even if Stop was requested meanwhile. */
   completed?: true;
+  /** Explicit terminal turn or this invocation's observed child exit; close/settlement alone is insufficient. */
+  cessation?: "provider-terminal" | "process-exited";
   /** The session to resume next time. Kept even for an aborted turn: the session survives it. */
   sessionId?: string;
+}
+
+export async function nativeProcessExited(exited: Promise<void> | undefined): Promise<boolean> {
+  if (!exited) return false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([exited.then(() => true), new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), 100); })]); }
+  finally { clearTimeout(timer); }
 }
 
 export interface NativeAgentRunner {
@@ -138,17 +147,19 @@ function claudeModelLabel(model: ModelInfo): string {
  */
 export function claudeCodeRunner(query: QueryFn = sdkQuery,
   trackProcess?: (pid: number, command: string) => () => void): NativeAgentRunner {
-  const trackedSpawn: Options["spawnClaudeCodeProcess"] | undefined = trackProcess ? (options) => {
+  const makeSpawn = (exits?: Promise<void>[]): NonNullable<Options["spawnClaudeCodeProcess"]> => (options) => {
     const child = spawn(options.command, options.args, {
       cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "ignore"], signal: options.signal,
     });
     if (!child.pid) { child.once("error", () => {}); throw new Error("Claude Code did not start"); }
-    let untrack: () => void;
-    try { untrack = trackProcess(child.pid, options.command); }
+    if (exits) exits.push(new Promise<void>((resolve) => child.once("exit", () => resolve())));
+    let untrack: (() => void) | undefined;
+    try { untrack = trackProcess?.(child.pid, options.command); }
     catch (error) { child.once("error", () => {}); child.kill("SIGTERM"); throw error; }
-    child.once("exit", () => { try { untrack(); } catch { /* Stale record is checked on restart. */ } });
+    child.once("exit", () => { try { untrack?.(); } catch { /* Stale record is checked on restart. */ } });
     return child;
-  } : undefined;
+  };
+  const trackedSpawn = trackProcess ? makeSpawn() : undefined;
   return {
     async skills() {
       const session = query({ prompt: (async function* () {})(), options: { tools: [], cwd: tmpdir(), env: childEnv(),
@@ -177,6 +188,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
       } finally { session.close(); }
     },
     async run(turn) {
+      const exits: Promise<void>[] = [];
       // Refuse before anything is spawned: a turn with no folder must not run where the sidecar does.
       const cwd = turnCwd(turn);
       const abort = new AbortController();
@@ -222,7 +234,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
             ? { additionalDirectories: [...new Set(turn.attachments.map((file) => dirname(file.path)))] } : {}),
           // Replaces the CLI's environment: Yorozu's own secrets and other providers' keys stay here.
           env: childEnv(),
-          ...(trackedSpawn ? { spawnClaudeCodeProcess: trackedSpawn } : {}),
+          spawnClaudeCodeProcess: makeSpawn(exits),
           ...(turn.sessionId ? { resume: turn.sessionId } : {}),
           ...(turn.model ? { model: turn.model } : {}),
           ...(claudeEffort(turn.effort) ? { effort: claudeEffort(turn.effort) } : {}),
@@ -270,6 +282,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
       let streamed = "";
       let failed = false;
       let completed = false;
+      let terminal = false;
       let sessionId = turn.sessionId;
       try {
         for await (const message of session as AsyncIterable<SDKMessage>) {
@@ -314,6 +327,7 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
               });
             }
           } else if (message.type === "result") {
+            terminal = true;
             accepting = false;
             wake?.();
             if (message.subtype === "success") { text = message.result || text; completed = true; }
@@ -332,7 +346,10 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
         turn.signal.removeEventListener("abort", onAbort);
         session.close();
       }
+      const cessation = terminal ? "provider-terminal" as const :
+        turn.signal.aborted && exits.length && await nativeProcessExited(Promise.all(exits).then(() => {})) ? "process-exited" as const : undefined;
       return { text: completed || !turn.signal.aborted ? text : streamed || text,
+        ...(cessation ? { cessation } : {}),
         ...(failed ? { failed: true } : {}), ...(completed ? { completed: true } : {}), ...(sessionId ? { sessionId } : {}) };
     },
   };

@@ -1638,6 +1638,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       let changesScheduled = false;
       let terminalRecorded = false;
       let activeAttempt: string | undefined;
+      let workerResult: { attempt: string; outcome: "completed" | "stopped"; evidence: "returned" | "provider-terminal" | "process-exited" | "unconfirmed"; text: string; failed?: boolean } | undefined;
       let changesReport: Promise<void> | undefined;
       const reportChanges = (): void => {
         if (changesScheduled) return;
@@ -1655,12 +1656,34 @@ export function serve(options: ServeOptions = {}): Sidecar {
           void pending.finally(() => { if (pendingChanges.get(threadId) === pending) pendingChanges.delete(threadId); });
         }
       };
-      const finish = (reply: string, failed = false): void => {
-        const final = message(reply, true, failed);
-        persistThreadAndTranscript(final, dir);
-        terminalRecorded = true;
-        broadcast(final);
-        reportChanges();
+      const publishResult = async (result: NonNullable<typeof workerResult>): Promise<void> => {
+        let proof: Record<string, unknown>;
+        try { proof = await stopStore.reconcileNativeResult({ contractVersion: 1, threadId, eventId: userEventId,
+          turnId: id, attemptId: result.attempt, agent, outcome: result.outcome, evidence: result.evidence,
+          text: result.text, failed: result.failed ?? false }); }
+        catch { proof = {}; }
+        if (proof.stored === true && proof.final && typeof proof.final === "object" && !Array.isArray(proof.final)) {
+          if (!terminalRecorded) broadcast(proof.final as YorozuEvent);
+          terminalRecorded = true; reportChanges();
+        }
+        const record = userEventId ? stopStore.confirmed(userEventId) : undefined;
+        if (record && proof.stopConfirmed === true) {
+          clearTimeout(stopTimers.get(record.targetEventId)); stopTimers.delete(record.targetEventId);
+          if (record.status === "unconfirmed") {
+            const current = turnStates.get(threadId);
+            if (current && current.activeEventId === userEventId) { current.state = "stopped-unconfirmed"; publishTurnState(threadId); }
+          }
+          broadcastStop(record);
+        }
+        if (!terminalRecorded) {
+          paused = true; turn.abort(); pauseIssuedAttempt(result.attempt, "unconfirmed");
+        }
+        if (proof.stopConfirmed !== true) { nativeStorageFenced.add(threadId); state("native-result-unconfirmed"); }
+      };
+      const finish = async (reply: string, failed = false, evidence: "returned" | "provider-terminal" = "returned"): Promise<void> => {
+        if (!activeAttempt) return;
+        workerResult = { attempt: activeAttempt, outcome: "completed", evidence, text: reply, failed };
+        await publishResult(workerResult);
       };
       const previous = listThreads(dir).find((thread) => thread.id === threadId)?.nativeTurn;
       const preflightFinish = (reason: "missing-runner" | "missing-folder"): void => {
@@ -1996,18 +2019,19 @@ export function serve(options: ServeOptions = {}): Sidecar {
               }
               await Promise.all([...steering.values()].filter((entry) => entry.threadId === threadId).map((entry) => entry.promise));
             });
-            if (progressUnconfirmed || !attemptCurrent(attempt, done.completed ? "terminal" : "effect")) return;
+            workerResult = { attempt, outcome: done.completed === true ? "completed" : "stopped",
+              evidence: done.completed === true ? "provider-terminal" : done.cessation ?? "unconfirmed", text: done.text, failed: done.failed };
+            if (progressUnconfirmed || !attemptCurrent(attempt, done.completed === true ? "terminal" : "effect")) return;
             flushActivity();
-            if (done.sessionId && done.sessionId !== currentHome.sessionId) saveNativeSession(done.sessionId, done.completed ? "terminal" : "effect");
+            if (done.sessionId && done.sessionId !== currentHome.sessionId) saveNativeSession(done.sessionId, done.completed === true ? "terminal" : "effect");
             const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
-            if (done.completed && stop && (stop.status === "requested" || stop.status === "unconfirmed")) {
-              finish(done.text);
-              await completeStop(stop, "completed");
+            if (done.completed === true && stop && (stop.status === "requested" || stop.status === "unconfirmed")) {
+              await finish(done.text, done.failed ?? false, "provider-terminal");
               return;
             }
             if (turn.signal.aborted) return;
             if (done.failed) throw new Error(`${agent} reported an unsuccessful turn`);
-            finish(done.text);
+            await finish(done.text, false, done.completed === true ? "provider-terminal" : "returned");
             return;
           } catch (error) {
             attemptLive = false;
@@ -2018,7 +2042,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             state(`native-error ${error instanceof Error ? error.message : String(error)}`);
             process.stderr.write(`native-error ${threadId}: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
             if (!recovering && !executionStarted) {
-              finish(`${agent} could not answer; see the Mac log.`, true);
+              await finish(`${agent} could not answer; see the Mac log.`, true);
               return;
             }
             // Rust confirms exact retained interruption before admitting a replacement.
@@ -2045,12 +2069,22 @@ export function serve(options: ServeOptions = {}): Sidecar {
         if (runningEventIds.get(threadId) === userEventId) runningEventIds.delete(threadId);
         const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
         if (stop) {
-          await completeStop(stop);
-          terminalRecorded ||= readThreadEvents(threadId, dir).some((event) => event.id === id && event.kind === "message" &&
-            event.data.role === "agent" && event.data.done === true);
+          if (activeAttempt) {
+            await publishResult(workerResult?.attempt === activeAttempt ? workerResult :
+              { attempt: activeAttempt, outcome: "stopped", evidence: "unconfirmed", text: "" });
+          } else {
+            let proof: Record<string, unknown>;
+            try { proof = await stopStore.reconcileNativeFallback(threadId, stop.targetEventId, unissuedTurn ?? null); }
+            catch { proof = {}; }
+            if (proof.stored === true && proof.final && typeof proof.final === "object" && !Array.isArray(proof.final)) {
+              terminalRecorded = true; broadcast(proof.final as YorozuEvent);
+            }
+            const current = stopStore.confirmed(stop.targetEventId);
+            if (current) broadcastStop(current);
+          }
         }
         if (!stopped && !terminalRecorded && !paused && activeAttempt) pauseIssuedAttempt(activeAttempt, "unconfirmed");
-        if (stop && (terminalRecorded || !paused)) reportChanges();
+        if (stop && terminalRecorded) reportChanges();
         await changesReport;
         if (!stopped && terminalRecorded) {
           const issued = activeAttempt ?? previous?.attemptId;

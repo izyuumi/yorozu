@@ -1266,12 +1266,46 @@ Normal returned replies may use compatibility evidence while no Stop exists. A p
 explicit successful provider-terminal evidence for completion, or provider-terminal/owned-process-exit
 cessation for interruption; a settled promise is unconfirmed. Interrupted text comes only from
 durable host partial text. An existing terminal Stop bars fresh publication. Boolean failure shape
-is validated and failed replies cannot confirm successful completion after Stop. Native adapters and
-Node result/Stop integration are still the next step; this API alone does not fix the active-worker
-runtime path or complete the bounded worker contract.
+is validated and failed replies cannot confirm successful completion after Stop. The native compatibility runtime now submits captured
+result envelopes through this API after all pending writes for that Stop settle. Root mutation and
+adoption of both Stop mirrors have no intervening await. Native final publication uses the saved
+Root final; the native finally block cannot synthesize an interrupted final via the old completeStop
+path. This integration remains one part of the bounded worker contract.
 Verification: 149 Rust tests passed; four focused result regressions and strict Clippy also passed
-after final shape guards. Two new runtime regressions still reproduce the old Node false-Stop path
-and remain uncommitted for the adapter integration. The result API is a preparatory finite item3/4 slice.
+after final shape guards. The two initial runtime regressions reproduced the old Node false-Stop path. The result API and
+its adapter integration are finite item3/4 work, without a standalone host readiness claim.
+
+Codex cessation evidence belongs to its actual connection, session and authoritative turn/start
+response ID. Startup terminal notifications are buffered within a fixed bound until that ID is
+validated, contradictory started IDs are refused, and the first validated terminal outcome is
+immutable. Explicit completed/interrupted protocol acknowledgements can prove the turn ended.
+Connection close, process error, abort and a settled transport cannot do so. A separately observed
+owned child exit may prove cessation after cancellation; the exit wait is bounded to100ms.
+The post-spawn early-cancellation path uses the same evidence handling.
+
+Claude observes child exits separately for each run invocation, including every child it spawned.
+Skills/model requests and other threads cannot supply that invocation's exit proof. Its actual
+result envelope or observed owned process exits provide cessation; close-only promise settlement
+remains unconfirmed. Successful completed and failed flags remain distinct when forwarded, including
+contradictory custom runners: failed completion cannot confirm pending Stop. Account/model/source
+worker packets, all stream ownership, broader questions/plugin policies, and SDK bypass configuration
+migration remain unfinished parts of the finite plan.
+
+Captured source also fences exact pause/finish cleanup whenever the Rust epoch remains live;
+a denied result cannot pause or retire another source under retained IDs. Session/progress mutations
+check the source again in the second metadata snapshot before compare-and-swap. Conservative
+retained-scope cleanup after a lost epoch keeps its existing restart behavior.
+The same live-source veto applies to Stop clear, preflight failure publication, rewind marker
+retirement, and Retry/Dismiss. Rewind can still retire its separately authenticated hidden queue
+entries without clearing a foreign marker. Replacement claim checks its actual marker/source against
+any live registry and the earlier readiness proof before issuing or replacing an attempt.
+
+The final result/adapter/source-guard slice passes all152 Rust tests, formatting and strict
+Clippy, production runtime build, and875 runtime/plugin tests with one existing skip across52
+files. Original deadlines remain unchanged. Actual baseline negative controls reproduce false Stop,
+source cleanup, Retry and preflight publication failures; their logs and final verification are retained.
+One aggregate approval fixture timed out at five seconds and passed unchanged in isolation in485ms;
+the final complete run passes it. These component checks do not establish full alpha readiness.
 
 ## Isolated alpha CI
 

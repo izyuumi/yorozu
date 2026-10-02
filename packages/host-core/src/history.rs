@@ -936,6 +936,11 @@ impl History {
             || marker["id"] != request["turnId"]
             || marker["userEventId"] != request["eventId"]
             || marker["attemptId"] != request["attemptId"]
+            || self.attempts.get(thread).is_some_and(|owner| {
+                marker["userEventId"] != owner.0
+                    || marker["attemptId"] != owner.1
+                    || home["agent"] != owner.3
+            })
             || home["agent"]
                 .as_str()
                 .is_none_or(|agent| agent.is_empty() || agent == "yorozu")
@@ -1181,7 +1186,10 @@ impl History {
             return Ok(refusal("run-active"));
         }
         if self.attempts.get(thread).is_some_and(|owner| {
-            marker.is_null() || owner.0 != origin || marker["attemptId"] != owner.1
+            marker.is_null()
+                || owner.0 != origin
+                || marker["attemptId"] != owner.1
+                || home["agent"] != owner.3
         }) {
             return Ok(refusal("scope-replaced"));
         }
@@ -1731,11 +1739,9 @@ impl History {
             outcome["reason"] = json!("run-active");
             return Ok(outcome);
         }
-        if self
-            .attempts
-            .get(thread)
-            .is_some_and(|owner| owner.0 != origin || marker["attemptId"] != owner.1)
-        {
+        if self.attempts.get(thread).is_some_and(|owner| {
+            owner.0 != origin || marker["attemptId"] != owner.1 || home["agent"] != owner.3
+        }) {
             outcome["reason"] = json!("scope-replaced");
             return Ok(outcome);
         }
@@ -1805,11 +1811,9 @@ impl History {
         if marker["state"] != "interrupted" {
             return Ok(json!({"applied":false,"reason":"run-active"}));
         }
-        if self
-            .attempts
-            .get(thread)
-            .is_some_and(|owner| owner.0 != origin || marker["attemptId"] != owner.1)
-        {
+        if self.attempts.get(thread).is_some_and(|owner| {
+            owner.0 != origin || marker["attemptId"] != owner.1 || home["agent"] != owner.3
+        }) {
             return Ok(json!({"applied":false,"reason":"scope-replaced"}));
         }
         home.as_object_mut().unwrap().remove("nativeTurn");
@@ -2265,6 +2269,17 @@ impl History {
                 .iter_mut()
                 .find(|row| row["id"] == thread)
                 .ok_or_else(invalid)?;
+            if home["agent"] != proof["agent"]
+                || self.attempts.get(&thread).is_some_and(|owner| {
+                    owner.0 != origin
+                        || home["nativeTurn"]["userEventId"] != origin
+                        || home["nativeTurn"]["attemptId"] != owner.1
+                        || home["nativeTurn"]["id"] != proof["completionId"]
+                        || home["agent"] != owner.3
+                })
+            {
+                return Ok(json!({"ready":false,"reason":"scope-replaced"}));
+            }
             // Admission comes from retained state, never a worker's recovery hint.
             let marker = home.get("nativeTurn");
             if marker.is_some_and(|turn| turn["state"] == "running") {
@@ -2341,6 +2356,7 @@ impl History {
                 .ok_or_else(invalid)?;
             if home["nativeTurn"]["attemptId"] != request["attemptId"]
                 || home["nativeTurn"]["userEventId"] != origin
+                || home["agent"] != self.attempts.get(&thread).ok_or_else(invalid)?.3
                 || home["nativeTurn"]["id"] != format!("native:{origin}:final")
                 || request["turnId"] != format!("native:{origin}:final")
             {
@@ -2389,6 +2405,7 @@ impl History {
                 .ok_or_else(invalid)?;
             if home["nativeTurn"]["attemptId"] != request["attemptId"]
                 || home["nativeTurn"]["userEventId"] != origin
+                || home["agent"] != self.attempts.get(&thread).ok_or_else(invalid)?.3
             {
                 return Ok(json!({"current":false}));
             }
@@ -2505,6 +2522,11 @@ impl History {
             .as_str()
             .is_none_or(|agent| agent.is_empty() || agent == "yorozu")
         {
+            return Ok(json!({"applied":false,"reason":"scope-replaced"}));
+        }
+        if self.attempts.get(thread).is_some_and(|owner| {
+            owner.0 != origin || owner.1 != attempt || owner.3 != home["agent"]
+        }) {
             return Ok(json!({"applied":false,"reason":"scope-replaced"}));
         }
         // A retained scope may be conservatively paused after its Rust epoch was lost.

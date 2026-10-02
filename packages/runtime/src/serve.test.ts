@@ -1411,7 +1411,7 @@ test.each(["claude-code", "codex"] as const)("a %s thread runs, resumes and stop
         release = resolve;
         turn.signal.addEventListener("abort", () => resolve(), { once: true });
       });
-      return { text: "", sessionId: "s-1" };
+      return { text: "", sessionId: "s-1", cessation: "provider-terminal" };
     }),
   };
   const { dir, send, eventsUntil } = await pairedPhone([], true, { nativeRunners: { [agent]: runner } });
@@ -1593,7 +1593,7 @@ test("stopping a turn persists its latest unsent draft", async () => {
   const runner: NativeAgentRunner = { run: async (turn) => {
     for (let i = 0; i < 20; i++) turn.onUpdate?.(`draft ${i}`);
     await new Promise<void>((resolve) => turn.signal.addEventListener("abort", () => resolve(), { once: true }));
-    return { text: "" };
+    return { text: "", cessation: "provider-terminal" };
   } };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
   send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "cc");
@@ -1905,7 +1905,7 @@ test.each(["phone", "mac"])("Stop from %s drains only its thread queue and repor
   const run = vi.fn<NativeAgentRunner["run"]>(async (turn) => {
     if (turn.text === "active") await new Promise<void>((resolve) => turn.signal.addEventListener("abort", () => resolve(), { once: true }));
     if (turn.text === "other active") await otherDone.promise;
-    return { text: `reply to ${turn.text}` };
+    return { text: `reply to ${turn.text}`, cessation: "provider-terminal" };
   });
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } }, true);
   const mac = await macClient(dir);
@@ -4431,14 +4431,17 @@ test("failed native finish persistence retains its canonical final and fences th
   let finishes = 0;
   const request = rustSyncModule.syncHostResult;
   vi.spyOn(rustSyncModule, "syncHostResult").mockImplementation((root, data, bytes) => {
-    if (data.op === "run_attempt_finish" && data.threadId === "finish-conflict") finishes++;
+    if (data.op === "run_attempt_finish" && data.threadId === "finish-conflict") {
+      finishes++;
+      // Disrupt retirement after the canonical final has been admitted under Root's lease.
+      pending = join(dir, "threads.json.tmp");
+      writeFileSync(pending, "owned finish conflict fixture");
+    }
     return request(root, data, bytes);
   });
   const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async () => {
     started.resolve();
     await finish.promise;
-    pending = join(dir, "threads.json.tmp");
-    writeFileSync(pending, "owned finish conflict fixture");
     return { text: "confirmed completion" };
   });
   const { send, eventsUntil } = await pairedPhone([], false, { stateDir: dir, nativeRunners: { codex: { run } } });
@@ -4947,7 +4950,7 @@ test("delayed exact-run Stop cannot abort the next turn", async () => {
       if (turns.length === 2) releaseSecond = resolve;
       turn.signal.addEventListener("abort", () => resolve(), { once: true });
     });
-    return { text: turn.signal.aborted ? "" : "second completed" };
+    return { text: turn.signal.aborted ? "" : "second completed", cessation: "provider-terminal" };
   } };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
   send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "exact-stop");
@@ -4974,7 +4977,7 @@ test("delayed exact-run Stop cannot abort the next turn", async () => {
 
 test("repeated Stop requests each receive the confirmed outcome", async () => {
   const finish = Promise.withResolvers<void>();
-  const runner: NativeAgentRunner = { run: async () => { await finish.promise; return { text: "" }; } };
+  const runner: NativeAgentRunner = { run: async () => { await finish.promise; return { text: "", cessation: "provider-terminal" }; } };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
   send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "multi-stop");
   await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "multi-stop"));
@@ -5020,7 +5023,7 @@ test("Stop reports uncertainty within three seconds when a runner ignores abort"
     event.data.role === "agent" && event.data.done)).toBe(false);
 }, 10_000);
 
-test("Stop confirms when closing the session settles an ignored abort", async () => {
+test("Stop stays unconfirmed when closing only settles an ignored abort", async () => {
   const runner: NativeAgentRunner = { run: async (turn) => {
     const closed = Promise.withResolvers<void>();
     turn.onTerminate?.(() => closed.resolve());
@@ -5035,8 +5038,8 @@ test("Stop confirms when closing the session settles an ignored abort", async ()
     thread.id === "close-stop" && thread.turnState === "running"));
   send({ kind: "interrupt", data: { targetEventId: target } }, "close-stop");
   const outcome = await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === target &&
-    event.data.status === "stopped");
-  expect(outcome.some((event) => event.kind === "stop_status" && event.data.status === "unconfirmed")).toBe(false);
+    event.data.status === "unconfirmed");
+  expect(outcome.some((event) => event.kind === "stop_status" && event.data.status === "stopped")).toBe(false);
 }, 10_000);
 
 test("a successful native completion during Stop keeps the full reply and tool result", async () => {
@@ -5077,7 +5080,7 @@ test.each(["approval", "question"] as const)("Stop withdraws an open native %s c
     turn = current;
     if (kind === "approval") await current.approve?.("Bash", {}, current.signal);
     else await current.ask?.("Which?", ["A"], current.signal);
-    return { text: "" };
+    return { text: "", cessation: "provider-terminal" };
   } };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
   send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "card-stop");
@@ -6445,7 +6448,7 @@ test.each(["complete", "stop", "withdraw"])("steering confirmation racing %s nev
     turn.signal.addEventListener("abort", () => finish.resolve(), { once: true });
     ready.resolve();
     await finish.promise;
-    return { text: "finished" };
+    return { text: "finished", cessation: "provider-terminal" };
   });
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: { run } } }, true);
   send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "steer-race");
@@ -7289,4 +7292,109 @@ test("native approval storage uncertainty aborts even a worker that ignores the 
     expect(history.some((event) => event.id === `native:${origin}:final`)).toBe(false);
     expect(listThreads(dir).find((thread) => thread.id === "approval-storage")?.nativeTurn?.userEventId).toBe(origin);
   } finally { if (disrupted) { rmSync(path, { recursive: true }); renameSync(backup, path); } }
+});
+
+
+test.each(["attempt", "source"] as const)("a native worker ending cannot confirm Stop for a replacement Rust %s", async (replacementKind) => {
+  const finish = Promise.withResolvers<void>();
+  const started = Promise.withResolvers<void>();
+  const runner: NativeAgentRunner = { run: async () => {
+    started.resolve(); await finish.promise; return { text: "", cessation: "provider-terminal" as const };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj, title: "Owned" } }, "stop-worker-owner");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "stop-worker-owner");
+  await started.promise;
+  const prior = listThreads(dir).find((thread) => thread.id === "stop-worker-owner")!.nativeTurn!;
+  const request = rustHost.hostRequest;
+  let retained: string | undefined;
+  let replacement: unknown;
+  vi.spyOn(rustHost, "hostRequest").mockImplementation(async (root, data) => {
+    const record = data.record as StopRecord | undefined;
+    if (data.op === "stop_save" && record?.targetEventId === origin && record.status === "requested" && retained === undefined) {
+      if (replacementKind === "source") {
+        const path = join(dir, "threads.json");
+        const rows = JSON.parse(readFileSync(path, "utf8")) as { id: string; agent: string }[];
+        rows.find((row) => row.id === record.threadId)!.agent = "claude-code";
+        writeFileSync(path, JSON.stringify(rows));
+        replacement = prior.attemptId;
+      } else {
+        expect(rustSyncModule.syncHostRequest(dir, { op: "run_attempt_release", threadId: record.threadId, eventId: origin,
+          attemptId: prior.attemptId })).toMatchObject({ released: true });
+        setNativeTurn(record.threadId, undefined, dir);
+        const claim = rustSyncModule.syncHostRequest(dir, { op: "run_attempt_claim", threadId: record.threadId, eventId: origin });
+        expect(claim.claimed).toBe(true); replacement = claim.attemptId;
+      }
+      retained = readFileSync(join(dir, "threads.json"), "utf8");
+    }
+    const result = await request(root, data);
+    if (data.op === "stop_save" && record?.targetEventId === origin && record.status === "requested") finish.resolve();
+    return result;
+  });
+  send({ kind: "interrupt", data: { targetEventId: origin } }, "stop-worker-owner");
+  const response = (await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === origin &&
+    ["unconfirmed", "stopped", "completed"].includes(event.data.status))).at(-1)!;
+  expect(response).toMatchObject({ data: { status: "unconfirmed" } });
+  expect(readThreadEvents("stop-worker-owner", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(retained);
+  expect(rustSyncModule.syncHostRequest(dir, { op: "run_attempt_current", threadId: "stop-worker-owner", eventId: origin,
+    attemptId: replacement, mode: "owned" })).toMatchObject({ current: replacementKind === "attempt" });
+});
+
+
+test("a native SDK promise settling without cessation evidence leaves Stop unconfirmed", async () => {
+  const started = Promise.withResolvers<void>();
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    started.resolve();
+    await new Promise<void>((resolve) => turn.signal.addEventListener("abort", () => resolve(), { once: true }));
+    // A closed transport/promise supplies no provider-terminal or owned process-exit proof.
+    return { text: "" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj, title: "Owned" } }, "stop-worker-evidence");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "stop-worker-evidence");
+  await started.promise;
+  send({ kind: "interrupt", data: { targetEventId: origin } }, "stop-worker-evidence");
+  const response = (await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === origin &&
+    ["unconfirmed", "stopped", "completed"].includes(event.data.status))).at(-1)!;
+  expect(response).toMatchObject({ data: { status: "unconfirmed" } });
+  expect(readThreadEvents("stop-worker-evidence", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
+  expect(listThreads(dir).find((thread) => thread.id === "stop-worker-evidence")?.nativeTurn?.userEventId).toBe(origin);
+});
+
+
+test("a contradictory failed native completion cannot confirm Stop", async () => {
+  const started=Promise.withResolvers<void>(); const finish=Promise.withResolvers<void>();
+  const runner: NativeAgentRunner={run:async()=>{started.resolve();await finish.promise;return {text:"failed answer",completed:true,failed:true};}};
+  const {dir,send,eventsUntil}=await pairedPhone([],false,{nativeRunners:{codex:runner}},true);
+  send({kind:"thread_create",data:{agent:"codex",cwd:proj}},"stop-failed-result");
+  const origin=send({kind:"message",data:{role:"user",text:"work"}},"stop-failed-result");await started.promise;
+  send({kind:"interrupt",data:{targetEventId:origin}},"stop-failed-result");
+  await eventsUntil((event)=>event.kind==="stop_status"&&event.data.targetEventId===origin&&event.data.status==="requested");finish.resolve();
+  const response=(await eventsUntil((event)=>event.kind==="stop_status"&&event.data.targetEventId===origin&&["unconfirmed","completed","stopped"].includes(event.data.status))).at(-1)!;
+  expect(response).toMatchObject({data:{status:"unconfirmed"}});
+  expect(readThreadEvents("stop-failed-result",dir).some((event)=>event.id===`native:${origin}:final`)).toBe(false);
+});
+
+
+test("a saved native final cannot fabricate Stop status after its journal write fails", async () => {
+  const started=Promise.withResolvers<void>();const finish=Promise.withResolvers<void>();
+  const runner: NativeAgentRunner={run:async()=>{started.resolve();await finish.promise;return {text:"full answer",completed:true};}};
+  const {dir,send,eventsUntil}=await pairedPhone([],false,{nativeRunners:{codex:runner}},true);
+  send({kind:"thread_create",data:{agent:"codex",cwd:proj}},"stop-result-storage");
+  const origin=send({kind:"message",data:{role:"user",text:"work"}},"stop-result-storage");await started.promise;
+  send({kind:"interrupt",data:{targetEventId:origin}},"stop-result-storage");
+  await eventsUntil((event)=>event.kind==="stop_status"&&event.data.targetEventId===origin&&event.data.status==="requested");
+  const path=join(dir,"stopped-turns.jsonl"),backup=`${path}.backup`;let disrupted=false;let receipt:Record<string,unknown>|undefined;
+  const request=rustSyncModule.syncHostResult;
+  vi.spyOn(rustSyncModule,"syncHostResult").mockImplementation((root,data,bytes,timeout)=>{
+    if(root===dir&&data.op==="run_attempt_result"&&!disrupted){renameSync(path,backup);mkdirSync(path);disrupted=true;}
+    const proof=request(root,data,bytes,timeout);if(root===dir&&data.op==="run_attempt_result") receipt=proof;return proof;
+  });
+  try {
+    finish.resolve();await eventsUntil((event)=>event.id===`native:${origin}:final`&&event.kind==="message"&&event.data.done===true);
+    expect(receipt).toMatchObject({stored:true,stopConfirmed:false,record:{status:"requested"}});
+    expect(readThreadEvents("stop-result-storage",dir).filter((event)=>event.id===`native:${origin}:final`)).toEqual([expect.objectContaining({data:expect.objectContaining({text:"full answer",done:true})})]);
+    expect(readThreadEvents("stop-result-storage",dir).some((event)=>event.kind==="stop_status"&&["stopped","completed"].includes(event.data.status))).toBe(false);
+  } finally {if(disrupted){rmSync(path,{recursive:true});renameSync(backup,path);}}
 });

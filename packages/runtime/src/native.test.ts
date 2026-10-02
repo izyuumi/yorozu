@@ -63,7 +63,7 @@ test("a turn runs in the thread's folder and hands back the session to resume", 
     threadId: "cc", cwd: "/tmp/proj", text: "fix the tests", signal: new AbortController().signal,
     effort: "high", onUpdate: (text) => updates.push(text),
   });
-  expect(first).toEqual({ text: "hello from claude", sessionId: "s-1", completed: true });
+  expect(first).toEqual({ text: "hello from claude", sessionId: "s-1", completed: true, cessation: "provider-terminal" });
   expect(calls[0]).toMatchObject({ cwd: "/tmp/proj", effort: "high" });
   expect(calls[0]).not.toHaveProperty("resume");
   // The agent keeps its own tools and settings: Yorozu names none of them.
@@ -183,13 +183,13 @@ test("Claude Code reports a successful result after Stop as completed", async ()
     yield result("s-race", "full answer");
   })(), { close() {} }) as ReturnType<QueryFn>;
   expect(await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "work", signal: turn.signal }))
-    .toEqual({ text: "full answer", sessionId: "s-race", completed: true });
+    .toEqual({ text: "full answer", sessionId: "s-race", completed: true, cessation: "provider-terminal" });
 });
 
 test("a failure the agent reports is the reply; a transport failure is thrown", async () => {
   const failed = fakeQuery([init("s-4"), { type: "result", subtype: "error_max_turns", session_id: "s-4", is_error: true }]);
   const reported = await claudeCodeRunner(failed.query).run({ threadId: "cc", cwd: "/tmp/proj", text: "x", signal: new AbortController().signal });
-  expect(reported).toEqual({ text: "Claude Code stopped: max turns.", sessionId: "s-4", failed: true });
+  expect(reported).toEqual({ text: "Claude Code stopped: max turns.", sessionId: "s-4", failed: true, cessation: "provider-terminal" });
 
   const broken = fakeQuery(() => {
     throw new Error("claude is not installed");
@@ -252,7 +252,7 @@ test.each(["yes", "no"] as const)("native SDK permission %s holds the turn and r
   expect(cards.admitApproval(reply)).toMatchObject({ data: { status: "applied" } });
   await running;
   expect(decision).toMatchObject({ behavior: answer === "yes" ? "allow" : "deny" });
-  expect(finished).toHaveBeenCalledWith({ text: "finished", sessionId: "permission-session", completed: true });
+  expect(finished).toHaveBeenCalledWith({ text: "finished", sessionId: "permission-session", completed: true, cessation: "provider-terminal" });
   expect(cards.admitApproval(reply)).toMatchObject({ data: { status: "applied" } });
   expect(finished).toHaveBeenCalledOnce();
 });
@@ -377,4 +377,28 @@ test("childEnv skips undefined values, lets extra win, and reads process.env by 
     expect(Object.keys(env).some((key) => key.startsWith("YOROZU_"))).toBe(false);
     expect(Object.values(env).every((value) => typeof value === "string")).toBe(true);
   } finally { vi.unstubAllEnvs(); }
+});
+
+
+test("Claude exit evidence belongs to this invocation and close alone is unconfirmed", async () => {
+  const controllers=[new AbortController(),new AbortController()]; let call=0;
+  const children: import("node:child_process").ChildProcess[]=[];
+  const query: QueryFn = ({options}) => {
+    const index=call++; const signal=options!.abortController!.signal;
+    const child=index===0 ? options!.spawnClaudeCodeProcess!({command:process.execPath,args:["-e","process.stdin.resume()"],cwd:tmpdir(),env:options!.env as Record<string,string>}) : undefined;
+    if(child) children.push(child as import("node:child_process").ChildProcess);
+    const exit=child ? new Promise<void>((resolve)=>child.on("exit",()=>resolve())) : undefined;
+    return Object.assign((async function*(){
+      await new Promise<void>((resolve)=>signal.addEventListener("abort",()=>resolve(),{once:true}));
+      child?.kill("SIGTERM"); if(exit) await exit;
+      throw new Error("transport settled");
+      yield init("unreachable");
+    })(),{close(){child?.kill("SIGTERM");}}) as ReturnType<QueryFn>;
+  };
+  try {
+    const runner=claudeCodeRunner(query); const first=runner.run({threadId:"one",cwd:tmpdir(),text:"work",signal:controllers[0]!.signal});
+    const second=runner.run({threadId:"two",cwd:tmpdir(),text:"work",signal:controllers[1]!.signal});
+    controllers[0]!.abort(); expect(await first).toMatchObject({text:"",cessation:"process-exited"});
+    controllers[1]!.abort(); expect(await second).toEqual({text:""});
+  } finally { for(const child of children) child.kill("SIGTERM"); }
 });
