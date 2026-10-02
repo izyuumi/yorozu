@@ -16,6 +16,7 @@ end = source.index("    func applicationShouldHandleReopen(", start)
 callback = source[start:end]
 session = (ROOT / "apps/mac/Sources/YorozuMac/MacChatSession.swift").read_text()
 session_start = session[session.index("    func start() {"):session.index("    func select(")]
+role_selection = session[session.index("    func select("):session.index("    enum PairingError:")]
 host_start = session[session.index("    private func startHost() {"):session.index("    private func", session.index("    private func startHost() {") + 1)]
 
 fixture = r'''
@@ -30,13 +31,18 @@ import Foundation
     static var sessionsStarted = 0
     static var cacheAvailable = true
 }
-enum MacRole: CaseIterable { case host, client }
+enum MacRole: String, CaseIterable { case host, client }
 @MainActor final class MacChatSession {
     static let shared = MacChatSession()
     var role: MacRole?
     var local = Model()
     var model: Model { local }
     var failure: String?
+    static let roleKey = "fixture-role"
+    var hosts = MultiHostModel()
+    var relays: [String: Int] = [:]
+    var retiringClients: Task<Void, Never>?
+    let store = Store()
     func startClients() { Effects.sessionsStarted += 1 }
     func configure(_ model: Model) {}
     static func idleModel() -> Model { Model() }
@@ -45,9 +51,21 @@ enum MacRole: CaseIterable { case host, client }
         return Model()
     }
 SESSION_START
+ROLE_SELECTION
 HOST_START
 }
-@MainActor final class Model { func start() {} }
+@MainActor final class Store { var lastUsedHostID: String? }
+@MainActor final class MultiHostModel {
+    struct Host { let id: String }
+    var sessions: [Host] = []
+    init(lastUsedHostID: String? = nil) {}
+    func suspend() {}
+    func remove(_ id: String) async {}
+}
+@MainActor final class Model {
+    func start() {}
+    func close() {}
+}
 @MainActor final class Sidecar {
     static let shared = Sidecar()
     func start() { Effects.sessionsStarted += 1 }
@@ -99,6 +117,7 @@ final class UserDefaults: Sendable {
     static let standard = UserDefaults()
     func bool(forKey key: String) -> Bool { false }
     func removeObject(forKey key: String) {}
+    func set(_ value: String, forKey key: String) {}
 }
 @MainActor final class LaunchFixture {
 CALLBACK
@@ -107,7 +126,7 @@ CALLBACK
     @MainActor static func main() async throws {
         let delegate = LaunchFixture()
         // Exercise the startup boundary for unselected, stored-client, and host roles.
-        // Pairing/history migration and live role selection have their own session fixture.
+        // Pairing/history migration has its own session fixture.
         let roles: [MacRole?] = [nil, .client, .client, .host, .client, nil, .host]
         for (index, role) in roles.enumerated() {
             MacChatSession.shared.role = role
@@ -125,7 +144,28 @@ CALLBACK
             check(Effects.awakeRestores == (role == .host ? 1 : 0), "Only host launch may restore keep-awake")
             check(Effects.sessionsStarted == (role == nil ? 0 : 1), "Role session startup must remain intact")
         }
-        print("PASS Mac launch: no privacy probes; host-only availability; repeated client/unselected launches")
+        let session = MacChatSession.shared
+        session.role = .client
+        Effects.cacheAvailable = true
+        Effects.loginRegistrations = 0
+        Effects.sessionsStarted = 0
+        session.select(.host)
+        check(Effects.loginRegistrations == 1 && Effects.sessionsStarted == 1,
+              "Choosing Host must register availability and start its sidecar")
+        session.select(.host)
+        check(Effects.loginRegistrations == 1, "Selecting the same role must remain a no-op")
+        session.select(.client)
+        try await Task.sleep(for: .milliseconds(50))
+        check(session.role == .client && Effects.loginRegistrations == 1 && Effects.sessionsStarted == 2,
+              "Switching to Client must resume clients without host registration")
+        session.clearRole()
+        session.start()
+        check(session.role == nil && Effects.sessionsStarted == 2, "Clearing/cancelling the role must not start a host")
+        Effects.cacheAvailable = false
+        session.select(.host)
+        check(session.failure != nil && Effects.privacyProbes == 0,
+              "Missing host readiness must report failure without probing privacy grants")
+        print("PASS Mac launch/role changes: no privacy probes; host-only availability; repeated launches; cancellation; failed host readiness")
     }
     static func check(_ condition: Bool, _ message: String) {
         if !condition { print("FAIL: " + message); exit(1) }
@@ -136,7 +176,8 @@ CALLBACK
 with tempfile.TemporaryDirectory(prefix="yorozu-startup-") as directory:
     path = Path(directory)
     swift = path / "Check.swift"
-    swift.write_text(fixture.replace("CALLBACK", callback).replace("SESSION_START", session_start).replace("HOST_START", host_start))
+    swift.write_text(fixture.replace("CALLBACK", callback).replace("SESSION_START", session_start)
+                     .replace("ROLE_SELECTION", role_selection).replace("HOST_START", host_start))
     executable = path / "check"
     subprocess.run(["xcrun", "swiftc", "-parse-as-library", "-module-cache-path", str(path / "cache"),
                     str(swift), "-o", str(executable)], check=True)
