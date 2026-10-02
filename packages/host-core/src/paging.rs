@@ -510,13 +510,16 @@ fn detailed_run_evidence(
         conflict,
     })
 }
-// Approval cards remain in the existing bounded retained history, with no second truth store.
-pub(crate) fn native_approval_evidence(
+// Native prompts remain in the existing bounded retained history, with no second truth store.
+pub(crate) fn native_prompt_evidence(
     root: &Path,
     thread: &str,
     action: &str,
     request: &str,
+    question: bool,
 ) -> io::Result<(Option<Value>, Option<Value>)> {
+    let prefix = if question { "question" } else { "approval" };
+    let key_field = if question { "questionId" } else { "actionId" };
     let path = root
         .join("threads")
         .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
@@ -539,13 +542,13 @@ pub(crate) fn native_approval_evidence(
                 if event["id"] == request {
                     return Err(invalid());
                 }
-                if event["kind"] == "approval_card" && event["data"]["actionId"] == action {
+                if event["kind"] == format!("{prefix}_card") && event["data"][key_field] == action {
                     if card.as_ref().is_some_and(|previous| previous != &event) {
                         return Err(invalid());
                     }
                     card = Some(event);
-                } else if event["kind"] == "approval_status"
-                    && event["data"]["actionId"] == action
+                } else if event["kind"] == format!("{prefix}_status")
+                    && event["data"][key_field] == action
                     && event["data"]["status"] == "applied"
                 {
                     if settled.as_ref().is_some_and(|previous| previous != &event) {

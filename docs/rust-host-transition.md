@@ -1307,6 +1307,25 @@ source cleanup, Retry and preflight publication failures; their logs and final v
 One aggregate approval fixture timed out at five seconds and passed unchanged in isolation in485ms;
 the final complete run passes it. These component checks do not establish full alpha readiness.
 
+Rust now exposes scoped `native_question_raise` / `native_question_decide` operations using the
+same leased, bounded retained-history admission and immutable journal replay machinery as native
+permissions. Cards bind question/source/origin/canonical reply/attempt IDs. Answers require the
+actual current issued owner, Accepted origin, retained visible history and no durable Stop. A valid
+answer and separate `question_status` receipt commit in one host-day transaction, retaining the
+original client timestamp. Replayed decisions never execute another worker continuation, including
+negative decisions after restart. Conflicting request bytes and unowned applied status are refused.
+Offered choices are checked unless `allowOther` permits bounded free text. Question prompts keep
+their existing native no-timeout policy; the permission-only30-minute TTL remains separate. Literal
+user text such as `Cancelled` remains a valid free-text answer. Storage uncertainty, a replaced scope
+or `live=false` produces no accepted answer and cannot authorize execution. Native SDK adapter and
+Swift question receipt adoption are the next coherent slice; this API alone does not migrate the
+existing Node question path or establish full alpha readiness.
+Verification: all154 Rust tests, formatting, strict Clippy and both TypeScript builds pass. The
+full runtime/plugin suite passes875 tests with one existing skip across52 files using one local
+worker and original deadlines. The two initial Root tests fail against the missing API. One fixture
+initially used a nonexistent Stop method; it now exercises actual durable `stop_save`. The first
+Clippy run exposed identical rejection branches, which are combined without weakening policy.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

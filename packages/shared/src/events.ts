@@ -396,12 +396,21 @@ export interface ApprovalSettingsData {
 export interface QuestionCardData {
   /** Native SDK request. Absent on older hosts and for Yorozu questions. */
   nativeAgent?: ThreadAgent;
+  /** Captured Rust worker ownership, absent for legacy and Yorozu questions. */
+  nativeRun?: { eventId: string; turnId: string; attemptId: string };
   questionId: string;
   question: string;
   /** The choices offered, in the order the card lists them. May be empty when only free text makes sense. */
   options: string[];
   /** Whether the card also offers a free-text field. Absent means it does not. */
   allowOther?: boolean;
+}
+
+/** Rust admitted one native answer; this receipt is separate from the user's answer text. */
+export interface QuestionStatusData {
+  requestId: string;
+  questionId: string;
+  status: "applied" | "no-longer-needed" | "expired" | "rejected";
 }
 
 export interface QuestionAnswerData {
@@ -775,6 +784,7 @@ export type EventPayload =
   | { kind: "approval_settings"; data: ApprovalSettingsData }
   | { kind: "question_card"; data: QuestionCardData }
   | { kind: "question_answer"; data: QuestionAnswerData }
+  | { kind: "question_status"; data: QuestionStatusData }
   | { kind: "progress_card"; data: ProgressCardData }
   | { kind: "tool_result_request"; data: ToolResultRequestData }
   | { kind: "thread_create"; data: ThreadCreateData }
