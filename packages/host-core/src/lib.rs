@@ -7,6 +7,7 @@ pub mod crypto;
 pub mod history;
 mod journal;
 pub mod native_queue;
+pub mod operational;
 pub mod outbox;
 pub mod paging;
 pub mod peers;

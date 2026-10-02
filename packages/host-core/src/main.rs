@@ -13,6 +13,14 @@ fn run() -> io::Result<()> {
     if args.next().is_some() {
         return Err(io::ErrorKind::InvalidInput.into());
     }
+    if mode == "operational-prepare" {
+        serde_json::to_writer(
+            io::stdout().lock(),
+            &yorozu_host_core::operational::prepare(Path::new(&dir))?,
+        )
+        .map_err(io::Error::other)?;
+        return Ok(());
+    }
     if mode == "thread-index" {
         let mut bytes = Vec::new();
         io::stdin()

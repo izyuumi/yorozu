@@ -6,6 +6,7 @@ rust-version = "1.89"
 publish = false
 
 [dependencies]
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 base64 = "0.22"
 chacha20poly1305 = "0.10.1"
 ed25519-dalek = "2.2"

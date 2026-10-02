@@ -1615,6 +1615,62 @@ Assertions and deadlines are unchanged. Six Node launch logs are retained byte-e
 CI job (36961574556). Full logical task/context/subprocess contracts, portable IPC, authoritative
 SQLite/Markdown migration, standalone launch and native release gates remain unfinished.
 
+## Offline operational migration candidates
+
+Logical tasks can span several messages; existing accepted origins, native queue entries and quoted
+`replyTo` ancestry do not define membership or task completion. The approved SQLite foundation is
+therefore brought forward as a dependency of the task/worker contract, without introducing a temporary
+journal task reducer to replace later. This first slice adds a real `operational-prepare <state-dir>`
+Rust CLI. Run it only with the legacy Node writer stopped. Runtime reads/writes remain with the existing
+Root authority; every candidate explicitly reports `cutoverReady=false`.
+
+Preparation takes fail-fast OS-held source leases in existing history/metadata/component order,
+without opening constructors that could recover or rewrite the source. Its explicit scope includes
+thread/transcript logs, accepted messages, history intents and markers, native queue, Stop/steering/
+admission journals, channel outbox files, raw approval settings/audit evidence and recovery/pending
+backups. Recursive thread trees preserve attachments and full result artifacts, including empty files
+and directories. Connection identity/counters, credentials/provider configuration, attachment ingress
+staging, Markdown knowledge and derived memory indexes remain outside this candidate, untouched.
+Noncooperating legacy writes are excluded by the stopped-writer precondition and detected through
+repeated path/descriptor identity, hashes and final inventories. Ambiguous metadata `.tmp` files refuse
+without deleting them.
+
+A unique private candidate contains `legacy/`, `operational.sqlite` and, only after verification,
+`prepared.json`. Original raw file chunks commit to SQLite before authenticated history recovery runs
+exclusively in `legacy/`. Recovery/authentication failure retains an unsealed original snapshot and
+leaves the source unchanged. A second transaction retains recovered bytes and a versioned migration
+manifest. Physical JSONL occurrences use path/offset keys, with nonunique event IDs: repeated cards,
+`clientTs` corrections, unknown JSON, malformed/non-UTF-8 lines and unterminated tails stay represented.
+This is an import-review snapshot, without inferred tasks, permission grants or a resolved chat view.
+
+Chunk and occurrence scans are clamped to inventoried lengths and verify hashes/stamps immediately. Per-file/phase,
+entry/line/occurrence bounds and SQLite's page budget bound construction; refusal does not label a
+partial candidate prepared. Fresh read-only verification reconstructs every original/recovered chunk,
+checks file/occurrence counts, offsets, raw bytes and manifest content, runs SQLite integrity/foreign-key
+checks, then repeats both inventories. The seal retains manifest/database hashes. SQLite integrity
+alone cannot establish migration fidelity. Schema uses the established
+[rusqlite bundled SQLite connection](https://docs.rs/rusqlite/0.40.2/rusqlite/struct.Connection.html)
+with explicit [no-follow/read-only flags](https://docs.rs/rusqlite/0.40.2/rusqlite/struct.OpenFlags.html)
+and the documented [SQLite integrity and page-budget pragmas](https://www.sqlite.org/pragma.html).
+
+Verification: the actual CLI preservation test fails against the missing mode. Two owner tests then
+cover repeated/corrected IDs, exact interrupted transaction bytes and clone-only recovery, multi-chunk
+artifacts, backup retention, empty files/directories, invalid legacy bytes, active independent writers,
+source symlinks, ambiguous metadata and real corrupt-intent authentication failure. Reintroducing the
+previous Unix backslash normalization fails the real CLI test; automatic byte-exact restoration
+preserves the candidate. Initial compilation exposed signed SQLite binding requirements; an initial
+strict lint exposed iterator style. Both were corrected without suppressions. Review's moving-EOF,
+aggregate occurrence and database-growth bounds were repaired before final checks. Final verification
+passes all 162 Rust tests, formatting, strict Clippy, the production build and 13 real Node/Rust bridge,
+local/relay, synchronization and catch-up checks across five files. Eight logs are retained byte-exact
+in sibling `evidence/alpha-operational-candidate-*.log`. The preceding signed Node launch slice passes
+all alpha CI jobs (36962820560).
+
+Typed operational/task projections, searchable resolved history/FTS, stopped-writer authority cutover,
+rollback at a recorded checkpoint, Markdown synchronization, bounded task context, portable worker/IPC,
+standalone launch and native/internal release gates remain required finite work. Preparing a candidate
+neither proves these gates nor changes the installed application or existing beta distribution.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including
