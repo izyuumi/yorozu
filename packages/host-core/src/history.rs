@@ -186,7 +186,7 @@ pub struct History {
     stops: Option<crate::stops::Stops>,
     admissions: Option<crate::admission::Admissions>,
     outbox: Option<crate::outbox::ChannelOutbox>,
-    attempts: HashMap<String, (String, String, crate::paging::ProgressAnchor)>,
+    attempts: HashMap<String, (String, String, crate::paging::ProgressAnchor, Value)>,
 }
 impl Drop for History {
     fn drop(&mut self) {
@@ -1335,6 +1335,196 @@ impl History {
             "stored":final_event.is_some(),"final":final_event,"reason":if confirmed {reason}else{"stop-status-unconfirmed"}}),
         )
     }
+    // One immutable result per issued attempt. The lease protects scope validation and final
+    // admission; metadata retirement remains the separate exact run_attempt_finish operation.
+    fn worker_result(&mut self, request: &Value, thread: &str, origin: &str) -> io::Result<Value> {
+        let attempt = request["attemptId"]
+            .as_str()
+            .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(invalid)?;
+        let agent = request["agent"]
+            .as_str()
+            .filter(|id| !invalid_id(id) && *id != "yorozu")
+            .ok_or_else(invalid)?;
+        let completion = format!("native:{origin}:final");
+        let outcome = request["outcome"]
+            .as_str()
+            .filter(|v| ["completed", "stopped"].contains(v))
+            .ok_or_else(invalid)?;
+        let evidence = request["evidence"]
+            .as_str()
+            .filter(|v| {
+                [
+                    "returned",
+                    "provider-terminal",
+                    "process-exited",
+                    "unconfirmed",
+                ]
+                .contains(v)
+            })
+            .ok_or_else(invalid)?;
+        if request["contractVersion"] != 1
+            || request["turnId"] != completion
+            || request.get("failed").is_some_and(|v| !v.is_boolean())
+            || request.get("text").is_some_and(|v| !v.is_string())
+            || outcome == "completed" && !request["text"].is_string()
+        {
+            return Err(invalid());
+        }
+        let stop = self.request(&json!({"op":"stop_get","targetEventId":origin}));
+        if stop.get("error").is_some() {
+            return Ok(stop);
+        }
+        let record = stop["record"].clone();
+        if !record.is_null() && (record["threadId"] != thread || record["preDispatch"] == true) {
+            return Err(invalid());
+        }
+        let root = self.root.clone();
+        let _writer = crate::thread_index::native_writer(&root)?;
+        let scope = json!([attempt, agent]);
+        let operation = Self::final_operation("worker-result", thread, origin, "v1", &scope)?;
+        let mut final_event = None;
+        let reason;
+        let mut status = "unconfirmed";
+        // Recover this operation before requiring a live epoch: lost responses cannot dispatch
+        // again, change its timestamp/text, or acquire a replacement's metadata.
+        let key = digest(operation.as_bytes());
+        if self.committed.contains_key(&key) {
+            let value: Value = serde_json::from_slice(&read_private(
+                &self.directory.join(format!("{key}.json")),
+                RECORD_BYTES,
+            )?)
+            .map_err(io::Error::other)?;
+            let line = value["entry"]["line"].as_str().ok_or_else(invalid)?;
+            let original: Value = serde_json::from_str(line).map_err(io::Error::other)?;
+            let original_status = if original["data"]["interrupted"] == true {
+                "stopped"
+            } else {
+                "completed"
+            };
+            if original["id"] != completion
+                || original["threadId"] != thread
+                || original["kind"] != "message"
+                || original["data"]["role"] != "agent"
+                || original["data"]["done"] != true
+            {
+                return Err(invalid());
+            }
+            if original_status != outcome
+                || outcome == "completed"
+                    && (original["data"]["text"] != request["text"]
+                        || (original["data"]["failed"] == true) != (request["failed"] == true))
+            {
+                return Ok(
+                    json!({"stored":false,"stopConfirmed":record.is_null(),"record":record,"reason":"conflicting-result"}),
+                );
+            }
+            final_event = self.retained_final(&operation, &original)?;
+            status = original_status;
+            reason = "already-stored";
+        } else {
+            let bytes = crate::thread_index::current(&root)?.ok_or_else(invalid)?;
+            let index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            let home = index
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == thread)
+                .ok_or_else(invalid)?;
+            let owned =
+                self.attempts.get(thread).is_some_and(|owner| {
+                    owner.0 == origin && owner.1 == attempt && owner.3 == agent
+                }) && home["agent"] == agent
+                    && home["nativeTurn"]["id"] == completion
+                    && home["nativeTurn"]["userEventId"] == origin
+                    && home["nativeTurn"]["attemptId"] == attempt
+                    && home["nativeTurn"]["state"] == "running";
+            let accepted = self.request(&json!({"op":"accepted_get","messageId":origin}));
+            if accepted.get("error").is_some() {
+                return Ok(accepted);
+            }
+            let entry = &accepted["entry"];
+            if entry["id"] != origin
+                || entry["threadId"] != thread
+                || !["conversation", "legacy"].contains(&entry["purpose"].as_str().unwrap_or(""))
+            {
+                reason = "not-accepted-conversation";
+            } else {
+                let (seen, terminal, hidden, conflict) =
+                    crate::paging::stop_evidence(&root, thread, entry, &completion)?;
+                let expired = self.request(&json!({"op":"admission_get","messageId":origin}));
+                if expired.get("error").is_some() {
+                    return Ok(expired);
+                }
+                if !seen {
+                    reason = "missing-origin";
+                } else if hidden {
+                    reason = "rewound-origin";
+                } else if conflict {
+                    reason = "completion-conflict";
+                } else if ["stopped", "completed", "withdrawn"]
+                    .contains(&record["status"].as_str().unwrap_or(""))
+                {
+                    reason = "already-recorded";
+                } else if let Some(known) = terminal {
+                    status = known;
+                    reason = "terminal-known";
+                } else if !owned {
+                    reason = "scope-replaced";
+                } else if !expired["entry"].is_null() {
+                    reason = "expired";
+                } else if outcome == "stopped"
+                    && (record.is_null()
+                        || !["provider-terminal", "process-exited"].contains(&evidence))
+                    || outcome == "completed"
+                        && (!record.is_null()
+                            && (evidence != "provider-terminal" || request["failed"] == true)
+                            || !["returned", "provider-terminal"].contains(&evidence))
+                {
+                    reason = "cessation-unconfirmed";
+                } else {
+                    // Stop text is exclusively the durable host partial, never the worker packet.
+                    let text = if outcome == "stopped" {
+                        record["partialText"].as_str().unwrap_or("")
+                    } else {
+                        request["text"].as_str().ok_or_else(invalid)?
+                    };
+                    let mut event = json!({"id":completion,"threadId":thread,"ts":crate::now_ms(),"agentId":"main","kind":"message","data":{"role":"agent","text":text,"done":true}});
+                    if outcome == "stopped" {
+                        event["data"]["interrupted"] = json!(true);
+                    }
+                    if outcome == "completed" && request["failed"] == true {
+                        event["data"]["failed"] = json!(true);
+                    }
+                    let proof = self.append_final(&operation, &event)?;
+                    if proof["stored"] != true {
+                        return Ok(proof);
+                    }
+                    final_event = Some(event);
+                    status = outcome;
+                    reason = "worker-result-stored";
+                }
+            }
+        }
+        if record.is_null() {
+            return Ok(
+                json!({"stored":final_event.is_some(),"final":final_event,"stopConfirmed":true,"record":null,"reason":reason}),
+            );
+        }
+        let prior = record["status"].as_str().ok_or_else(invalid)?;
+        if ["stopped", "completed", "withdrawn"].contains(&prior) {
+            status = prior;
+        }
+        let mut next = record.clone();
+        next["status"] = json!(status);
+        let proof = self.request(&json!({"op":"stop_save","record":next}));
+        let confirmed = proof["record"]["threadId"] == thread
+            && proof["record"]["targetEventId"] == origin
+            && proof["record"]["status"] == status;
+        Ok(
+            json!({"stored":final_event.is_some(),"final":final_event,"stopConfirmed":confirmed,"record":if confirmed {&proof["record"]} else {&record},"reason":if confirmed {reason} else {"stop-status-unconfirmed"}}),
+        )
+    }
     fn unissued_turn(&mut self, request: &Value, thread: &str) -> io::Result<Value> {
         let origin = request["eventId"]
             .as_str()
@@ -2051,6 +2241,9 @@ impl History {
             .filter(|id| !invalid_id(id))
             .ok_or_else(invalid)?
             .to_owned();
+        if request["op"] == "run_attempt_result" {
+            return self.worker_result(request, &thread, &origin);
+        }
         if ["run_attempt_pause", "run_attempt_finish"]
             .contains(&request["op"].as_str().unwrap_or(""))
         {
@@ -2104,8 +2297,15 @@ impl History {
             if stored["stored"] != true {
                 return Ok(stored);
             }
-            self.attempts
-                .insert(thread.clone(), (origin.clone(), attempt.clone(), progress));
+            self.attempts.insert(
+                thread.clone(),
+                (
+                    origin.clone(),
+                    attempt.clone(),
+                    progress,
+                    proof["agent"].clone(),
+                ),
+            );
             return Ok(
                 json!({"claimed":true,"threadId":thread,"eventId":origin,"attemptId":attempt,"recovering":recovering,"recoveryAttempts":count}),
             );
@@ -2240,7 +2440,9 @@ impl History {
             .as_str()
             .filter(|mode| ["effect", "terminal", "owned"].contains(mode))
             .ok_or_else(invalid)?;
-        if home["nativeTurn"]["attemptId"] != attempt || home["nativeTurn"]["userEventId"] != origin
+        if home["nativeTurn"]["attemptId"] != attempt
+            || home["nativeTurn"]["userEventId"] != origin
+            || home["agent"] != self.attempts.get(&thread).ok_or_else(invalid)?.3
         {
             return Ok(json!({"current":false}));
         }
@@ -2528,9 +2730,9 @@ impl History {
         let result = match request["op"].as_str() {
             Some("history_open") => Ok(json!({"stored":true})),
             Some("history_append")
-                if request["operationId"]
-                    .as_str()
-                    .is_some_and(|id| id.starts_with("native-approval-")) =>
+                if request["operationId"].as_str().is_some_and(|id| {
+                    id.starts_with("native-approval-") || id.starts_with("worker-result:")
+                }) =>
             {
                 Ok(json!({"error":"reserved-history-operation"}))
             }

@@ -1254,6 +1254,25 @@ answer IDs; the phone keeps real time while the update clock advances. That fail
 rerun are retained. Broader plugin approval policy/currency, questions,
 worker cancellation acknowledgements and the remaining finite migration are still unfinished.
 
+The Rust host now admits version1 `run_attempt_result` envelopes with captured thread, origin,
+canonical reply, attempt and source-agent IDs. Under the native writer lease it validates the
+actual issued owner, Accepted conversation, retained history, rewind/conflict and expiry evidence.
+One reserved `worker-result:` journal operation per attempt preserves original final bytes and
+host timestamp across retries/restarts; alternate outcome/text is refused. The final proof remains
+independent of a failed Stop-status save. This operation does not retire metadata or remove FIFO
+entries; the existing exact `run_attempt_finish` remains responsible for retirement.
+
+Normal returned replies may use compatibility evidence while no Stop exists. A pending Stop needs
+explicit successful provider-terminal evidence for completion, or provider-terminal/owned-process-exit
+cessation for interruption; a settled promise is unconfirmed. Interrupted text comes only from
+durable host partial text. An existing terminal Stop bars fresh publication. Boolean failure shape
+is validated and failed replies cannot confirm successful completion after Stop. Native adapters and
+Node result/Stop integration are still the next step; this API alone does not fix the active-worker
+runtime path or complete the bounded worker contract.
+Verification: 149 Rust tests passed; four focused result regressions and strict Clippy also passed
+after final shape guards. Two new runtime regressions still reproduce the old Node false-Stop path
+and remain uncommitted for the adapter integration. The result API is a preparatory finite item3/4 slice.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including
