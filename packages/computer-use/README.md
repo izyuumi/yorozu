@@ -5,6 +5,10 @@ It neither imports nor changes host-core or the paused migration. No app install
 storage migration, process-interposition fixture, live model inference, or live input is part
 of the automated checks.
 
+See [Mac helper integration](mac/README.md) for the independent staged helper, pipe
+client and explicit-key Responses API transport added after this baseline. Native
+identity/permissions and production host admission remain unverified.
+
 ## Implemented
 
 - Provider-neutral Serde batch/actions and goal/control/outcome types. Required task,
@@ -51,8 +55,8 @@ key action. No shell, AppleScript, arbitrary code, clipboard or held-key tool ex
 ## Ordinary-model contract and synthetic integration
 
 `model.rs` defines an asynchronous `OrdinaryModel` adapter contract and a bounded
-`run_worker` loop. No provider SDK, HTTP client, credentials route or live inference is
-included. The host owns the private `WorkerContext` separately from the secretary's
+`run_worker` loop. The provider-neutral loop remains separate from the explicit-key HTTP adapter in
+`responses.rs`; no live inference has been performed. The host owns the private `WorkerContext` separately from the secretary's
 model context and retains its evidence after the loop returns.
 
 Adapters receive exactly one generated custom function, `yorozu_desktop_batch`, plus
@@ -74,8 +78,8 @@ model claim requiring secretary review, not independent proof of real app accept
 The eight synthetic-provider tests use the real queue/context/loop with an inert desktop;
 they cover image/receipt delivery, scope injection, unsupported/malformed calls,
 completion gating, uncertain effects, duplicate calls, turn limits, deadlines and stops.
-A concrete BYO ChatGPT transport adapter is still future integration; it should implement
-this ordinary image/custom-function contract without advertising native hosted tools.
+A concrete API-key Responses transport now implements this contract in `responses.rs`.
+A ChatGPT-login transport remains future integration; credentials are never reused.
 
 Package-only CI is `.github/workflows/computer-use.yml`: feature-branch pushes affecting
 this package run formatting, Clippy, tests and example compilation on Linux/macOS/Windows.
@@ -141,7 +145,7 @@ arbitrary keyboard chords are deliberately unsupported in this slice.
 The process-local replay ledger and native singleton do not survive restarts or exclude
 other processes. The host must ensure one desktop owner across processes and reconcile
 uncertain effects before starting any new session. This package does not implement a
-durable recursive scheduler or a concrete live-provider adapter. The hierarchy/control
+durable recursive scheduler. Its concrete provider adapter is tested only against synthetic HTTP. The hierarchy/control
 types are its contract only;
 Queue/Steer/Stop must be routed by that scheduler, with the StopToken used for stops.
 

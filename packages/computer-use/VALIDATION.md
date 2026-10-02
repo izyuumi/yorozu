@@ -108,3 +108,29 @@ Exact current native helper/app and future permission scope are recorded separat
 past permission probe from the unverified TCC identity of the unrun fixture helper.
 Native proof, an authorized live BYO transport adapter, durable recursive scheduling and
 approved alpha app integration remain finite follow-ups.
+
+## 2026-10-02: independent Mac integration increment
+
+Branch `mac-helper-integration`, based on verified remote `computer-use-alpha`
+`ef9d4a79d79a20d9750272ab90b5f4351064b639`, isolated task-19 checkout.
+
+Added one-shot inherited-pipe helper protocol and Foundation Process client, staged
+bundle plist/signing recipe, and explicit-key reqwest Responses API adapter. The helper
+returns the existing compact done/stuck/stopped outcome; `--check-stdio` is always inert.
+No existing app, host-core file, migration/recovery test or other checkout was changed.
+
+Local proof: 22 package tests passed (20 retained, 2 new boundary tests); the provider
+boundary table exercises seven local HTTP responses. Only synthetic credentials and
+image bytes were sent to 127.0.0.1. Helper subprocess tests used `--check-stdio` only.
+Package Clippy with `-D warnings`, all-target build, Rust formatting, Swift launcher
+typecheck, plist lint, shell syntax and diff whitespace checks passed.
+
+Initial sandbox DNS and Swift compiler-cache writes were unavailable; approved network
+verification/dependency download and package-only build access succeeded. No automatic
+approval-review denial occurred. No live provider call, native capture/input, permission
+probe/change, installed app launch, app signing, app installation, merge or release ran.
+
+The bundle identity is a specification, not verified TCC identity. Native launch,
+Developer ID signing/packaging, provider/model compatibility, host admission, evidence
+retention and cross-process ownership remain unverified or unwired. See
+[Mac integration](mac/README.md) for exact limits and the shortest coordinated native path.

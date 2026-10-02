@@ -4,7 +4,7 @@ name: Computer use package CI
 # its paused host-core recovery suite; no PR trigger in this slice.
 on:
   push:
-    branches: [computer-use-alpha]
+    branches: [computer-use-alpha, mac-helper-integration]
     paths:
       - 'packages/computer-use/**'
       - '.github/workflows/computer-use.yml'
@@ -37,3 +37,6 @@ jobs:
         run: cargo +1.92.0 test --locked --manifest-path packages/computer-use/Cargo.toml
       - name: Compile examples without running native helpers
         run: cargo +1.92.0 build --locked --manifest-path packages/computer-use/Cargo.toml --all-targets
+      - name: Typecheck isolated Mac launcher
+        if: runner.os == 'macOS'
+        run: swiftc -typecheck packages/computer-use/mac/HelperClient.swift

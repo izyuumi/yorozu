@@ -1,5 +1,5 @@
 //! Ordinary-model contract: images plus one custom function. No provider SDK,
-//! credentials, hosted computer-use tool, HTTP client or live inference is included.
+//! credentials or hosted computer-use tool is included here. See responses.rs for HTTP.
 use crate::{
     contract::*,
     executor::{DesktopQueue, Grant, StopToken},
