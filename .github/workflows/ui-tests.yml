@@ -70,5 +70,6 @@ jobs:
           name: ui-tests
           path: |
             apps/ios/e2e/.ui/results.xcresult
+            apps/ios/e2e/.ui/rendering-*.xcresult
             apps/ios/e2e/.ui/harness.log
             apps/ios/e2e/.ui/device.log

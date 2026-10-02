@@ -92,3 +92,15 @@ TEST_RUNNER_YOROZU_RIG3="http://127.0.0.1:$PORT3" xcodebuild test-without-buildi
   -workspace "$IOS/Yorozu.xcworkspace" -scheme YorozuUITests \
   -destination "id=$UDID" -derivedDataPath "$OUT/dd" \
   -resultBundlePath "$OUT/results.xcresult" "$@"
+
+# Native glyph geometry must run on iOS: macOS swift test uses another renderer.
+# Exercise narrow proposals and all reply fonts at normal and accessibility text sizes.
+for content_size in large accessibility-extra-extra-extra-large; do
+  xcrun simctl ui "$UDID" content_size "$content_size"
+  xcodebuild test \
+    -workspace "$IOS/Yorozu.xcworkspace" -scheme YorozuRenderingTests \
+    -destination "id=$UDID" -derivedDataPath "$OUT/dd" \
+    -parallel-testing-enabled NO \
+    -resultBundlePath "$OUT/rendering-$content_size.xcresult" \
+    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+done
