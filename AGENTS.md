@@ -12,18 +12,19 @@ Follow [docs/ui-layout.md](docs/ui-layout.md): size from the container with the 
 native mechanisms, never from a hard-coded number, unless building a custom component that
 owns its own geometry.
 
-## Parallel feature work and cleanup
+## Commands
 
-- Before starting a new feature, fetch the target base branch and create a dedicated Git
-  worktree with a new branch named for the task topic alone, with no `codex/` or other
-  prefix. Give each agent working on an independent feature its own worktree and branch so
-  agents can work simultaneously.
-- Work only in your task's worktree. Do not switch, reset, or overwrite another agent's
-  checkout or the user's working changes.
-- After creating a PR, verify all intended changes are committed and pushed. Once the
-  worktree is clean and no agent needs it, remove it with `git worktree remove <path>`.
-  Never force removal or discard uncommitted work to clean up.
-- Keep the PR's source branch while the PR is open. After it is merged or deliberately
-  closed, delete the task's local and remote branches only if their work is preserved and
-  no active worktree or agent uses them. Run `git fetch --prune` for the relevant remote to
-  remove stale remote-tracking references.
+`pnpm check` builds and tests every JS package (if `pnpm` is missing, use `corepack pnpm`);
+`pnpm test:swift` runs the Swift tests (`env -u SDKROOT` is required).
+iOS UI tests: [apps/ios/Tests/UITests/README.md](apps/ios/Tests/UITests/README.md).
+
+## OpenClaw channel plugin
+
+Before changing `packages/openclaw-channel`, read its
+[Development](packages/openclaw-channel/README.md#development) section.
+
+## Worktrees
+
+One worktree and branch per task, named for the topic with no prefix; never touch another
+checkout. After the PR is pushed and the worktree is clean, `git worktree remove` it (never
+`--force`); delete merged branches and `git fetch --prune`.
