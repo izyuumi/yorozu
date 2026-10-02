@@ -44,7 +44,10 @@ class Host:
                 return frame
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            frame = self.incoming.get(timeout=max(.01, deadline - time.monotonic()))
+            try:
+                frame = self.incoming.get(timeout=max(.01, deadline - time.monotonic()))
+            except queue.Empty as error:
+                raise TimeoutError("alpha event wait timed out") from error
             self.frames.append(frame)
             assert frame.get("version") == 1, "invalid protocol or unexpected host exit"
             if predicate(frame):
@@ -62,7 +65,8 @@ class Host:
                           f["event"]["kind"] in ("completed", "failed", "stopped", "unconfirmed"))["event"]
 
     def close(self):
-        self.process.stdin.close()
+        if not self.process.stdin.closed:
+            self.process.stdin.close()
         try:
             self.process.wait(timeout=8)
         except subprocess.TimeoutExpired:

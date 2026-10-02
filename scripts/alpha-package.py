@@ -8,6 +8,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import tempfile
 
 
 def main():
@@ -21,6 +22,10 @@ def main():
     runtime = args.runtime.resolve()
     resources = args.shared_resources.resolve()
     output = args.output.absolute()
+    staging_roots = [Path(__file__).resolve().parent.parent,
+                     Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()]
+    if not any(output.resolve().is_relative_to(root) for root in staging_roots):
+        parser.error("output must stay in this checkout or OS temporary staging")
     if output.exists() or output.is_symlink():
         parser.error("output already exists; select a fresh isolated path")
     if output.name != "YorozuAlpha.app":
@@ -48,6 +53,8 @@ def main():
     shutil.copy2(binaries[2], dest / "node")
     shutil.copytree(runtime, dest / "runtime", symlinks=True)
     shutil.copytree(resources, dest / resources.name, symlinks=True)
+    # Remove Finder/resource-fork detritus from this copied staging tree only.
+    subprocess.run(["xattr", "-cr", str(output)], check=True)
     identifier = "to.yumi.yorozu.alpha.internal"
     with (output / "Contents/Info.plist").open("wb") as file:
         plistlib.dump({"CFBundleExecutable": "YorozuAlpha", "CFBundleIdentifier": identifier,

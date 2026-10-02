@@ -39,9 +39,13 @@ Build `yorozu-alpha-host` with Cargo `--bin yorozu-alpha-host` and the Swift she
 swift build --package-path apps/mac --product YorozuAlpha
 ```
 
-Stage a production runtime dependency tree with the existing pnpm deploy mechanism
-in a fresh staging directory (`--filter @yorozu/runtime --prod --legacy
---config.node-linker=hoisted deploy ...`). The packaging script accepts this tree,
+Stage a production runtime dependency tree with pnpm's lockfile-derived deploy
+in a fresh staging directory (`--config.inject-workspace-packages=true
+--filter @yorozu/runtime --prod --config.node-linker=hoisted deploy ...`). This
+CLI option applies only to staging; no workspace configuration change is required.
+The old `--legacy` route re-resolves dependency ranges and was observed to drift
+the Anthropic SDK from locked 0.3.278 to 0.3.286; do not use it for this candidate.
+The packaging script accepts the locked tree,
 built UI/host binaries, a relocatable Node binary and the Swift shared resource bundle:
 
 ```sh
@@ -49,11 +53,13 @@ python3 scripts/alpha-package.py \
   --ui /absolute/build/YorozuAlpha --host /absolute/build/yorozu-alpha-host \
   --node /absolute/relocatable/node --runtime /absolute/staged/runtime \
   --shared-resources /absolute/build/YorozuShared_YorozuShared.bundle \
-  --source-sha EXACT_INTEGRATED_SHA --output /absolute/fresh/YorozuAlpha.app
+  --source-sha EXACT_INTEGRATED_SHA --output /tmp/fresh/YorozuAlpha.app
 ```
 
 Default signing is ad-hoc, internal only. `--identity` may select the existing Developer
 ID for an authorized signing run. Signature verification is mandatory in either mode.
+Output is confined to this checkout or the OS temporary directory. Copied staging
+xattrs are cleared before signing, because File Provider can add Finder detritus.
 No notarization, upload or installation occurs. The adjacent manifest hashes sealed
 files and identifies the source and original input binaries. No updater/feed or URL
 scheme is added. The app retains its separate bundle ID `to.yumi.yorozu.alpha.internal`.
