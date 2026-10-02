@@ -96,6 +96,8 @@ TEST_RUNNER_YOROZU_RIG3="http://127.0.0.1:$PORT3" xcodebuild test-without-buildi
 # Native glyph geometry must run on iOS: macOS swift test uses another renderer.
 # Exercise narrow proposals and all reply fonts at normal and accessibility text sizes.
 for content_size in large accessibility-extra-extra-extra-large; do
+  # A test run can leave this destination shut down; simctl ui needs it fully booted.
+  xcrun simctl bootstatus "$UDID" -b >/dev/null
   xcrun simctl ui "$UDID" content_size "$content_size"
   xcodebuild test \
     -workspace "$IOS/Yorozu.xcworkspace" -scheme YorozuRenderingTests \
