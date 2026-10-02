@@ -340,12 +340,27 @@ final class ConnectionTests: XCTestCase {
         let initialFrame = row.frame
         let toast = app.descendants(matching: .any)["Connection: Reconnecting"].firstMatch
         try await rig.post("blackhole")
-        XCTAssertEqual(status(becomes: "Reconnecting", within: 70), .completed, "A dead link was never shown")
-        XCTAssertTrue(toast.waitForExistence(timeout: 8), "A sustained interruption showed no toast")
-        XCTAssertEqual(row.frame.minY, initialFrame.minY, accuracy: 1, "The toast moved list content")
-        XCTAssertEqual(row.frame.height, initialFrame.height, accuracy: 1, "The toast resized list content")
-        XCTAssertEqual(app.descendants(matching: .any)
-            .matching(identifier: "Connection: Reconnecting").count, 1)
+        // The notice lasts eight seconds. Separate remote queries can cross its dismissal;
+        // check the status, notice count and row geometry in the same immutable snapshot.
+        let deadline = Date.now + 70
+        var visible: [any XCUIElementSnapshot] = []
+        while Date.now < deadline {
+            let elements = descendants(of: try app.snapshot())
+            if elements.contains(where: { $0.label == "Connection: Reconnecting" }) {
+                visible = elements
+                break
+            }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        XCTAssertEqual(visible.first(where: { $0.elementType == .button && $0.label == "Settings" })?.value as? String,
+                       "Mac connection: Reconnecting", "A dead link was never shown")
+        XCTAssertEqual(visible.filter { $0.label == "Connection: Reconnecting" }.count, 1,
+                       "A sustained interruption must show exactly one toast")
+        let shownRow = try XCTUnwrap(visible.first {
+            $0.elementType == .button && $0.label.localizedCaseInsensitiveContains("toast anchor")
+        }, "The toast hid the thread row")
+        XCTAssertEqual(shownRow.frame.minY, initialFrame.minY, accuracy: 1, "The toast moved list content")
+        XCTAssertEqual(shownRow.frame.height, initialFrame.height, accuracy: 1, "The toast resized list content")
         let shown = XCTAttachment(screenshot: app.screenshot())
         shown.name = "Connection toast over stable list"
         shown.lifetime = .keepAlways
@@ -497,6 +512,11 @@ final class ConnectionTests: XCTestCase {
     }
 
     // MARK: - Steps
+
+    @MainActor
+    private func descendants(of snapshot: any XCUIElementSnapshot) -> [any XCUIElementSnapshot] {
+        [snapshot] + snapshot.children.flatMap { descendants(of: $0) }
+    }
 
     /// A Settings sheet leaves the thread list in the accessibility tree. An offscreen row can
     /// also exist without a valid activation point, so check its frame before its hittability.
