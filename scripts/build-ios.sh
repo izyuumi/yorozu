@@ -1,16 +1,14 @@
 #!/bin/sh
 # Archive the iOS app and hand it to TestFlight. The Mac counterpart is
 # scripts/build-mac.sh; this one is shorter because Xcode does the parts that script has
-# to do by hand — signing, packaging, and the upload itself.
+# to do by hand — signing and packaging. The pinned ASC CLI owns the upload.
 #
 #   VERSION=0.2.0 BUILD=12345 ./scripts/build-ios.sh
 #
 # Signing is automatic (see apps/ios/Project.swift): given -allowProvisioningUpdates and
 # an App Store Connect key, xcodebuild issues the distribution certificate and the App
 # Store provisioning profile on its own, so there is no .p12 and no .mobileprovision to
-# keep anywhere. The same key authenticates the upload, which is why the export options
-# below say `destination: upload` rather than writing an .ipa for a second tool to send:
-# one xcodebuild invocation, one credential, nothing on disk to leak.
+# keep anywhere. The same key authenticates the ASC CLI's public build-upload API.
 set -eu
 cd "$(dirname "$0")/.."
 . ./scripts/build-version.sh
@@ -31,6 +29,7 @@ fi
 ASC_KEY_PATH=${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8}
 # -authenticationKeyPath rejects a relative path.
 case "$ASC_KEY_PATH" in /*) ;; *) ASC_KEY_PATH="$PWD/$ASC_KEY_PATH" ;; esac
+command -v asc >/dev/null || { echo 'App Store Connect CLI is required (CI pins 5.9.0)' >&2; exit 1; }
 
 ARCHIVE="$PWD/$DIST/YorozuIOS.xcarchive"
 OPTIONS="$PWD/$DIST/export-options.plist"
@@ -44,7 +43,7 @@ cat > "$OPTIONS" <<PLIST
 <plist version="1.0">
 <dict>
   <key>method</key><string>app-store-connect</string>
-  <key>destination</key><string>upload</string>
+  <key>destination</key><string>export</string>
   <key>teamID</key><string>$TEAM_ID</string>
   <key>uploadSymbols</key><true/>
   <key>manageAppVersionAndBuildNumber</key><false/>
@@ -70,5 +69,16 @@ env -u SDKROOT xcodebuild -exportArchive \
   -authenticationKeyPath "$ASC_KEY_PATH" \
   -authenticationKeyID "$ASC_KEY_ID" \
   -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+set -- "$DIST/export"/*.ipa
+if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+  echo 'expected exactly one exported iOS IPA' >&2
+  exit 1
+fi
+shasum -a 256 "$1" > "$DIST/ios-sha256.txt"
+ASC_TELEMETRY_DISABLED=1 asc --version > "$DIST/asc-version.txt"
+ASC_TELEMETRY_DISABLED=1 ASC_BYPASS_KEYCHAIN=1 ASC_PRIVATE_KEY_PATH="$ASC_KEY_PATH" \
+  asc builds upload --app "${ASC_APP_ID:-6811274963}" --ipa "$1" \
+    --version "$VERSION" --build-number "$BUILD" --checksum --output json > "$DIST/ios-upload.json"
 
 echo "uploaded $VERSION_LABEL as App Store version $VERSION ($BUILD) to TestFlight; it appears once processing finishes"

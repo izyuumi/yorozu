@@ -249,9 +249,21 @@ jobs:
           print(ios['build_id'])
           PY_BUILD_ID
           )
-          asc builds test-notes create --build-id "$BUILD_ID" --locale en-US \
-            --whats-new 'Please test pairing, reconnection, streamed replies, tool approvals, and reply layout at normal and accessibility text sizes.' \
-            --output json > dist/ios-test-notes.json
+          asc --read-only builds test-notes list --build-id "$BUILD_ID" --output json > dist/ios-test-notes-before.json
+          notes_action=$(python3 - <<'PY_NOTES'
+          import json
+          notes = next((note['attributes'] for note in json.load(open('dist/ios-test-notes-before.json'))['data']
+                        if note['attributes']['locale'] == 'en-US'), None)
+          print('keep' if notes and (notes.get('whatsNew') or '').strip() else 'update' if notes else 'create')
+          PY_NOTES
+          )
+          if [ "$notes_action" = keep ]; then
+            cp dist/ios-test-notes-before.json dist/ios-test-notes.json
+          else
+            asc builds test-notes "$notes_action" --build-id "$BUILD_ID" --locale en-US \
+              --whats-new 'Please test pairing, reconnection, streamed replies, tool approvals, and reply layout at normal and accessibility text sizes.' \
+              --output json > dist/ios-test-notes.json
+          fi
           asc --read-only validate testflight --app 6811274963 --build-id "$BUILD_ID" \
             --output json > dist/ios-testflight-validation.json
           node scripts/asc-candidate.mjs distribute dist/ios.json
@@ -262,7 +274,7 @@ jobs:
           printf 'Candidate: [%s](https://github.com/%s/releases/tag/%s)\n' \
             "$CANDIDATE_TAG" "$GITHUB_REPOSITORY" "$CANDIDATE_TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Retain processing receipts and signed candidate on failure
-        if: failure() && hashFiles('dist/ios-processing.json') != ''
+        if: failure() && hashFiles('dist/mac-sha256.txt') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: candidate-processing
@@ -273,9 +285,14 @@ jobs:
             dist/Yorozu.dmg
             dist/appcast.xml
             dist/mac-sha256.txt
+            dist/export/*.ipa
+            dist/ios-sha256.txt
+            dist/asc-version.txt
+            dist/ios-upload.json
             dist/ios.json
             dist/ios-processing*.json
             dist/ios-test-notes.json
+            dist/ios-test-notes-before.json
             dist/ios-testflight-validation.json
       - name: Forget signing credentials
         if: always()
