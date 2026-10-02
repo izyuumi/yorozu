@@ -1593,6 +1593,28 @@ all 160 Rust tests, formatting, strict Clippy, the production build and 28 affec
 activity, session/artifact, progress and Stop checks. Every original deadline remains intact. The
 preceding observation commit passes all alpha CI jobs (36960641080).
 
+Node now starts native SDK workers only from a fresh, durable Root launch receipt. It validates the
+exact origin/attempt/source, startup operation, normalized prepared input and typed snapshot fields,
+then passes only the returned input/directory/session/model/effort/bypass to the SDK. A final Root
+currency check rejects source or canonical reply replacement after receipt delivery. Refusal, replay
+or a lost acknowledgement pauses the captured attempt as unconfirmed instead of starting the SDK.
+Built-in Codex/Claude workers still require a nonblank directory; registered custom workers preserve
+their existing empty-directory contract. The issued source and current registered-runner gate remain
+in force, without new account aliases or authorization.
+
+Verification: all six added launch cases fail against the previous adapter, while the five existing
+startup-policy refusal cases still pass. The actual encrypted SDK boundary covers storage obstruction,
+real Root replay, acknowledgement loss after commit, source/canonical replacement and settings changed
+both before and after Root's snapshot. The first full run passes 904 checks with one existing skip but
+finds four existing custom-worker regressions caused by requiring a directory for every source. The
+shared owner repair retains the built-in directory refusal. Final checks pass all 160 Rust tests,
+formatting, strict Clippy, the production build and 38 native/custom SDK checks; the final complete
+runtime/plugin suite passes 908 checks with one existing skip across 52 files in 230.88 seconds.
+Assertions and deadlines are unchanged. Six Node launch logs are retained byte-exact in the sibling
+`evidence/alpha-native-launch-node-*.log` files. The preceding Root launch commit passes every alpha
+CI job (36961574556). Full logical task/context/subprocess contracts, portable IPC, authoritative
+SQLite/Markdown migration, standalone launch and native release gates remain unfinished.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including

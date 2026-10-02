@@ -1947,8 +1947,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
               });
               prompt = `Conversation before the rewind (files were not reverted):\n${JSON.stringify(retained)}\n\nNew user request:\n${prompt}`;
             }
-            const model = threadModel(threadId, dir);
-            const effort = threadEffort(threadId, dir);
             if (turn.signal.aborted || !attemptLive) return;
             let startup: Record<string, unknown>;
             try { startup = syncHostResult(dir, { op: "run_attempt_policy", version: 1,
@@ -1971,16 +1969,40 @@ export function serve(options: ServeOptions = {}): Sidecar {
               return;
             }
             if (!effectsAllowed()) return;
+            const input = JSON.parse(JSON.stringify({ text: [prompt, attached].filter(Boolean).join("\n\n"),
+              ...(skillPath ? { skill: { name: skillName!, path: skillPath } } : {}),
+              ...(files.length ? { attachments: files } : {}) })) as Pick<NativeTurn, "text" | "skill" | "attachments">;
+            let launch: Record<string, unknown>;
+            try { launch = syncHostResult(dir, { op: "run_attempt_launch", version: 1,
+              threadId, eventId: userEventId, turnId: id, attemptId: attempt, source: agent, input }); }
+            catch { launch = {}; }
+            const packet = launch.packet && typeof launch.packet === "object" && !Array.isArray(launch.packet)
+              ? launch.packet as Record<string, unknown> : undefined;
+            if (launch.stored !== true || launch.execute !== true || launch.replayed !== false ||
+              typeof launch.operationId !== "string" || !/^worker-launch:[a-f0-9]{64}$/.test(launch.operationId) ||
+              !packet || packet.version !== 1 || packet.threadId !== threadId || packet.eventId !== userEventId ||
+              packet.turnId !== id || packet.attemptId !== attempt || packet.source !== agent ||
+              typeof packet.originFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(packet.originFingerprint) ||
+              packet.policyOperationId !== startup.operationId || !isDeepStrictEqual(packet.input, input) ||
+              typeof packet.cwd !== "string" || ["codex", "claude-code"].includes(agent) && !packet.cwd.trim() || typeof packet.bypass !== "boolean" ||
+              !Number.isSafeInteger(packet.sampledAt) || (packet.sampledAt as number) < 0 ||
+              !["model", "effort", "sessionId", "rewindId"].every((key) => packet[key] === null || typeof packet[key] === "string") ||
+              packet.bypass && (policy.bypass !== true || typeof policy.yoloUntil !== "number" || policy.yoloUntil <= (packet.sampledAt as number))) {
+              paused = true;
+              turn.abort();
+              pauseIssuedAttempt(attempt, "unconfirmed");
+              state("native-launch-unconfirmed");
+              return;
+            }
+            if (!effectsAllowed()) return;
             const done = await runner.run({
               threadId,
-              text: [prompt, attached].filter(Boolean).join("\n\n"),
-              ...(skillPath ? { skill: { name: skillName!, path: skillPath } } : {}),
-              ...(files.length ? { attachments: files } : {}),
-              ...currentHome,
-              cwd: home.cwd ?? "",
-              bypass: policy.bypass,
-              model,
-              effort,
+              ...packet.input as typeof input,
+              ...(packet.sessionId ? { sessionId: packet.sessionId as string } : {}),
+              cwd: packet.cwd,
+              bypass: packet.bypass,
+              model: packet.model as string | undefined ?? undefined,
+              effort: packet.effort as ReasoningEffort | undefined ?? undefined,
               signal: scopedSignal(turn.signal),
               onSession: (sessionId) => { if (effectsAllowed()) { executionStarted = true; saveNativeSession(sessionId); } },
               onTerminate: (terminate) => { if (attemptLive && attemptCurrent(attempt, "owned")) { if (turn.signal.aborted) terminate(); else terminateRunning.set(threadId, terminate); } },
@@ -2086,7 +2108,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               evidence: done.completed === true ? "provider-terminal" : done.cessation ?? "unconfirmed", text: done.text, failed: done.failed };
             if (workerUnconfirmed || !attemptCurrent(attempt, done.completed === true ? "terminal" : "effect")) return;
             flushActivity();
-            if (done.sessionId && done.sessionId !== currentHome.sessionId) saveNativeSession(done.sessionId, done.completed === true ? "terminal" : "effect");
+            if (done.sessionId && done.sessionId !== packet.sessionId) saveNativeSession(done.sessionId, done.completed === true ? "terminal" : "effect");
             const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
             if (done.completed === true && stop && (stop.status === "requested" || stop.status === "unconfirmed")) {
               await finish(done.text, done.failed ?? false, "provider-terminal");

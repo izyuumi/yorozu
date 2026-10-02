@@ -2578,7 +2578,9 @@ impl History {
                         || packet["attemptId"] != attempt
                         || packet["source"] != source
                         || !packet["bypass"].is_boolean()
-                        || !nonempty(&packet["cwd"])
+                        || !packet["cwd"].is_string()
+                        || ["codex", "claude-code"].contains(&source)
+                            && packet["cwd"].as_str().unwrap().trim().is_empty()
                         || !packet["originFingerprint"].as_str().is_some_and(valid_hash)
                         || serde_json::to_vec(packet).map_err(io::Error::other)?.len()
                             > 8 * 1024 * 1024
@@ -2638,10 +2640,10 @@ impl History {
         {
             return Ok(json!({"stored":false,"execute":false,"reason":"scope-replaced"}));
         }
-        let cwd = home["cwd"]
-            .as_str()
-            .filter(|cwd| !cwd.trim().is_empty())
-            .ok_or_else(invalid)?;
+        let cwd = home["cwd"].as_str().unwrap_or("");
+        if ["codex", "claude-code"].contains(&source) && cwd.trim().is_empty() {
+            return Err(invalid());
+        }
         let rewind =
             crate::paging::latest_rewind(&root, thread).inspect_err(|_| self.failed = true)?;
         let session = if home["nativeSessionRewindId"] == json!(rewind) {

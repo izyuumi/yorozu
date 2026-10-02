@@ -732,6 +732,7 @@ fn worker_launch_refuses_unissued_replaced_malformed_and_unstored_requests() {
         "input",
         "input-bytes",
         "metadata-bytes",
+        "folder",
         "storage",
     ] {
         let temp = Temp::new();
@@ -780,6 +781,10 @@ fn worker_launch_refuses_unissued_replaced_malformed_and_unstored_requests() {
             }
             "metadata-bytes" => {
                 rows[0]["model"] = json!("a".repeat(8 * 1024 * 1024));
+                fs::write(&path, rows.to_string()).unwrap();
+            }
+            "folder" => {
+                rows[0].as_object_mut().unwrap().remove("cwd");
                 fs::write(&path, rows.to_string()).unwrap();
             }
             "storage" => {
