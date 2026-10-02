@@ -245,6 +245,32 @@ Do not merge an entire hotfix branch into `main` just to transfer its old versio
 
 ## Failures and retries
 
+The canonical upload keeps Xcode signing/export and verifies the exact processed build with
+App Store Connect CLI 5.9.0, pinned to upstream binary hashes. Every CLI process disables
+telemetry with `ASC_TELEMETRY_DISABLED=1` and reuses the existing API credentials. Processing
+waits run in at most 50-second windows; exit 7 means pending. Once Apple exposes the build ID,
+further waits use that exact ID. The workflow saves the pending receipt and its `resumeCommand`,
+adds What to Test notes, then runs the TestFlight-specific preflight before external distribution.
+
+If processing remains pending after 30 minutes, the failed run retains a `candidate-processing`
+artifact for seven days with receipts, source manifest, and the signed Mac DMG/appcast. Resume
+the saved wait using the existing build identity; do not upload it again or restart Release merely
+because Apple is still processing. Verify the retained source CI and signed artifact hashes before
+continuing publication. If external distribution already started, inspect Apple's actual group and
+review state before further writes. A terminal upload/processing failure still needs a fresh candidate.
+
+For a known build, use bounded read-only checks with the existing credentials:
+
+```sh
+ASC_TELEMETRY_DISABLED=1 asc --read-only builds wait --build-id "$BUILD_ID" \
+  --timeout 50s --report-pending --fail-on-invalid --output json
+ASC_TELEMETRY_DISABLED=1 asc --read-only validate testflight --app 6811274963 \
+  --build-id "$BUILD_ID" --output json
+```
+
+TestFlight preflight checks processing, beta review details, and What to Test notes. App Store
+submission, pricing, and iPad screenshot gates belong to stable submission, not this beta lane.
+
 | Failure | Recovery |
 | --- | --- |
 | CI fails | Fix source, push signed commit, wait for successful CI |
