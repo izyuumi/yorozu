@@ -134,3 +134,16 @@ The bundle identity is a specification, not verified TCC identity. Native launch
 Developer ID signing/packaging, provider/model compatibility, host admission, evidence
 retention and cross-process ownership remain unverified or unwired. See
 [Mac integration](mac/README.md) for exact limits and the shortest coordinated native path.
+
+Package CI [36998155723](https://github.com/izyuumi/yorozu/actions/runs/36998155723)
+completed successfully for `4313d2abe3769dc7810a709206c08729e36da9bb` on all three
+preserved platforms, including Mac launcher typechecking. A separate local temporary
+Swift Process/Pipe fixture also reached the real helper's inert `stuck` response.
+
+Follow-up signing clarification: the helper packaging script now follows the existing
+`IDENTITY` convention/default in `scripts/build-mac.sh`, rather than requiring a new
+`SIGNING_IDENTITY` setting. This is public build configuration, not a request to create
+or inspect signing keys. Only repository source was inspected; codesign and repository
+packaging scripts were not run. Shell syntax and whitespace checks passed for this
+configuration/documentation-only follow-up. Actual key availability and TCC permissions
+remain unverified and are separate questions.

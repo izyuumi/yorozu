@@ -8,22 +8,22 @@ scheduler. No native execution or paid provider request has been verified.
 
 Proposed stable identity: `com.yorozu.computer-use-helper`, executable
 `YorozuComputerUseHelper.app/Contents/MacOS/yorozu-computer-use-helper`, macOS 14+.
-Keep the identifier, approved signing team/designated requirement and final install
+Keep the identifier, signing team/designated requirement and final install
 path stable across updates. A bundle identifier alone does not establish TCC identity.
 The actual responsible process may include the launching app; verify it on the target
 Mac before relying on Screen Recording or Accessibility permission.
 
 `package.sh` stages only an already-built release binary under this package's ignored
-`target/mac-stage`. It requires an explicitly supplied Developer ID Application signing
-identity, signs with hardened runtime and verifies the signature. No identity discovery,
+`target/mac-stage`. It uses the same `IDENTITY` override and default public identity name as
+`scripts/build-mac.sh`: `Developer ID Application: Yumi Izumi (AN5KM8QGEF)`.
+It signs with hardened runtime and verifies the signature. No identity discovery,
 ad-hoc signing, installation, registration, notarization or permission changes occur.
 The script has not been run against a signing identity. The plist and script are build
 inputs, not evidence of a signed/installed helper. Distribution also needs the normal
 reviewed license-notice and notarization steps. Preserve upstream dependency notices.
 
 Build separately with `cargo +1.92.0 build --locked --release --manifest-path
-packages/computer-use/Cargo.toml --bin yorozu-computer-use-helper`. After approving a
-signing identity, invoke `sh packages/computer-use/mac/package.sh`. Do not overwrite
+packages/computer-use/Cargo.toml --bin yorozu-computer-use-helper`. For an authorized local packaging run, invoke `sh packages/computer-use/mac/package.sh`. Do not overwrite
 an installed app or run the native mode as part of build/CI.
 
 ## App-to-worker protocol v1
@@ -84,8 +84,8 @@ integration, and live model compatibility remains unverified.
 ## Verification and next real Mac test
 
 Automated checks use only inert desktop code, synthetic local HTTP and `--check-stdio`.
-They do not inspect the screen or permissions. Before a real test, approve and stage the
-signed helper, verify actual responsible-process identity and existing permissions,
+They do not inspect the screen or permissions. Before a real test, stage the signed helper in an authorized packaging run,
+verify actual responsible-process identity and existing permissions,
 implement host admission/evidence retention, then coordinate the disposable TextEdit
 fixture on an idle desktop. An API-driven test separately requires an explicit provider
 key, model and paid-call approval. The existing fixed-text native example can establish
@@ -96,3 +96,21 @@ References: [Apple Process and pipe lifecycle](https://developer.apple.com/forum
 [CFBundleIdentifier](https://developer.apple.com/documentation/bundleresources/information-property-list/cfbundleidentifier),
 [OpenAI custom functions](https://developers.openai.com/api/docs/guides/function-calling),
 [Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create).
+
+## Signing configuration versus native permissions
+
+“Approved signing” in the initial handoff meant selecting the repository's existing
+Developer ID identity; it did not mean a new OS permission or a need to create a key.
+The public name above comes from `scripts/build-mac.sh:26`. The developer bundle path
+in `scripts/dev-bundle.sh` instead uses ad-hoc signing. This helper follows the
+Developer ID convention to keep its intended signing identity stable; it does not
+fall back silently to ad-hoc signing. No credential store was inspected, and the
+availability of the corresponding certificate/private key on this Mac is unknown.
+A missing key would be a packaging setup failure, not evidence of a TCC denial.
+
+This task did not execute either repository packaging script (the shipping script
+also builds host-core), invoke codesign, create/import signing material, or install
+a bundle. No user decision is needed to select the conventional identity. Actual
+signing is deferred under the current no-credential-access scope. Screen Recording
+and Accessibility for the helper's actual responsible process remain a separate,
+unverified native-execution prerequisite; signing alone does not grant them.
