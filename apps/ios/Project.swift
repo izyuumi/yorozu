@@ -57,6 +57,17 @@ let project = Project(
     packages: [.local(path: "../../packages/shared-swift")],
     targets: [
         .target(
+            name: "YorozuRenderingTests",
+            destinations: .iOS,
+            product: .unitTests,
+            bundleId: "to.yumi.yorozu.rendering-tests",
+            deploymentTargets: .iOS("18.0"),
+            infoPlist: .default,
+            sources: ["Tests/RenderingTests/**"],
+            dependencies: [.target(name: "YorozuIOS"), .package(product: "YorozuShared")],
+            settings: signing()
+        ),
+        .target(
             name: "YorozuUITests",
             destinations: .iOS,
             product: .uiTests,

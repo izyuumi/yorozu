@@ -63,6 +63,10 @@ private actor ShowcaseTransport: ChatTransport {
             continuation.yield(.ownerOnline(launchArgument("yorozuShowcase") != "queued"))
             continuation.yield(.state(.paired))
             let scene = launchArgument("yorozuShowcase")
+            if scene == "japanese" || scene == "japanese-streaming" {
+                continuation.yield(.event(YorozuEvent(id: "japanese-reply", threadId: "Weeknight dinners", ts: 1, agentId: "main",
+                    payload: .message(MessageData(role: .agent, text: japaneseReplyFixture, done: scene == "japanese")))))
+            }
             if scene == "threads" || scene == "new-thread" || scene == "session-yorozu" || scene == "session-multiple" || scene == "session-legacy" {
                 let configured = scene == "session-yorozu" ? [ThreadAgent.yorozu] : ThreadAgent.allCases
                 continuation.yield(.event(YorozuEvent(id: "configured-agents", threadId: "", ts: 0, agentId: "main",
