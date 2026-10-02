@@ -84,6 +84,8 @@ const pendingQr = [];
 const sidecar = serve({
   relayUrl: `ws://127.0.0.1:${relay.port}`,
   stateDir,
+  // Keep Settings scrolling coverage independent of the runner's computer name.
+  computerName: () => "UI test Mac with a long computer name that wraps across several lines in Settings",
   provider: openaiCompat({ baseUrl: "https://model.invalid", model: "m", fetch: model }),
   nativeRunners: {},
   titler: async () => "",
