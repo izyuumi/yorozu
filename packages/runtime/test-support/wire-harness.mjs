@@ -197,14 +197,17 @@ await qrPrinted;
 function freshPairing() {
   // CI can spend longer than the relay's 10-minute token lifetime building iOS tests.
   return new Promise((resolve, reject) => {
+    const started = performance.now();
     const onQr = (qr) => {
       clearTimeout(timeout);
       resolve(qr.replace(/relay=[^&]+/, `relay=${encodeURIComponent(`ws://127.0.0.1:${proxy.address().port}`)}`));
     };
+    // Match URLSession's 60-second request budget: a paused CI host cannot service local sockets.
     const timeout = setTimeout(() => {
       pendingQr.splice(pendingQr.indexOf(onQr), 1);
+      process.stderr.write(`HARNESS pairing timeout after ${Math.round(performance.now() - started)}ms\n`);
       reject(new Error("pairing token unavailable"));
-    }, 10_000);
+    }, 60_000);
     pendingQr.push(onQr);
     sidecar.mint();
   });
