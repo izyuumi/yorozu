@@ -529,6 +529,16 @@ async fn worker_context_is_bounded_and_secretary_outcome_contains_only_evidence_
             .count(),
         2
     );
+    // Evicted screenshots must release their backing buffers, not merely hide bytes.
+    assert!(
+        worker
+            .history()
+            .iter()
+            .flat_map(|b| &b.results)
+            .filter_map(|r| r.observation.as_ref())
+            .filter(|o| o.image.is_empty())
+            .all(|o| o.image.capacity() == 0)
+    );
     let outcome = worker
         .outcome(WorkerStatus::Stuck, "Await native fixture access".into())
         .unwrap();

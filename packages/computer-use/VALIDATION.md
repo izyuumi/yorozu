@@ -44,10 +44,12 @@ seams:
 11. Worker context retains 16 results/two images; secretary outcome contains only evidence IDs and summary.
 12. Observation expiry during delayed native preflight rejects immediately before input.
 
-Two meaningful defects were demonstrated and repaired during implementation: internally
+Three meaningful defects were demonstrated and repaired during implementation: internally
 tagged Serde unit variants accepted extra fields despite `deny_unknown_fields`, and a
-slow preflight could outlive the observation TTL. The wire/preflight regression tests
-failed for those intended reasons before their fixes and pass afterward.
+slow preflight could outlive the observation TTL. The retention check also caught
+cleared image vectors retaining their backing allocation; eviction now releases the
+buffers. The wire/preflight/retention regression tests failed for those intended reasons
+before their fixes and pass afterward.
 
 ## Unverified and next scope
 

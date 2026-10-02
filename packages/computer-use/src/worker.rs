@@ -58,7 +58,7 @@ impl WorkerContext {
                 if let Some(o) = &mut step.observation {
                     images += 1;
                     if images > 2 {
-                        o.image.clear();
+                        o.image = Vec::new();
                     }
                 }
             }
