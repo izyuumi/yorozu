@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
 import { connectPhone, keypair, rejoinPhone } from "@yorozu/relay/dist/testing.js";
 import {
@@ -4339,10 +4339,16 @@ test("unconfirmed native progress aborts even when a worker swallows the callbac
     data: { role: "user", text: "Finish the report" } }, dir);
   setNativeTurn("cc", { id: "native:original:final", state: "running", userEventId: "original", recoveryAttempts: 2 }, dir);
   const conflict = join(dir, "threads.json.tmp");
+  const request = rustSyncModule.syncHostResult;
+  vi.spyOn(rustSyncModule, "syncHostResult").mockImplementation((root, data, bytes, timeout) => {
+    const proof = request(root, data, bytes, timeout);
+    if (root === dir && data.op === "run_attempt_activity" && proof.stored === true)
+      writeFileSync(conflict, "owned progress conflict fixture");
+    return proof;
+  });
   let callbackEnded = false;
   let aborted = false;
   const run = vi.fn<NativeAgentRunner["run"]>().mockImplementation(async (turn) => {
-    writeFileSync(conflict, "owned progress conflict fixture");
     try { turn.onActivity?.("result:fresh", { kind: "tool_result", data: { callId: "fresh", ok: true, output: "retained" } }); }
     catch { /* a provider may swallow observer errors; host ownership still has to stop */ }
     aborted = turn.signal.aborted;
@@ -7590,4 +7596,136 @@ test.each(["source", "tail", "utf8", "symlink", "fifo"] as const)("retained nati
       await vi.waitFor(() => expect(states).toContain("tool-result-missing"));
     }
   } finally { finish.resolve({ text: "done" }); }
+});
+
+// Actual Root receipts and encrypted publication own SDK observation admission.
+test.each(["artifact", "artifact-stop", "source", "canonical-reply", "lost-ack", "replay", "stored", "days", "paused-buffer"] as const)("SDK activity uses Root admission across %s", async (mode) => {
+  const finish = Promise.withResolvers<{ text: string; completed: true }>();
+  let worker: NativeTurn | undefined;
+  const runner: NativeAgentRunner = { run: async (turn) => { worker = turn; return finish.promise; } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } });
+  send({ kind: "thread_create", data: { title: "Work", agent: "codex", cwd: proj } }, "activity-owner");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "activity-owner");
+  await vi.waitFor(() => expect(worker).toBeDefined());
+  const obstructions: { path: string; backup: string }[] = [];
+  if (mode === "artifact" || mode === "artifact-stop") {
+    worker!.onActivity!("seed", { kind: "tool_result", data: { callId: "seed", ok: true, output: "A".repeat(5_000) } });
+    const seed = (await eventsUntil((event) => event.kind === "tool_result" && event.data.callId === "seed")).at(-1)!;
+    const candidates = readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => join(entry.parentPath, entry.name));
+    const artifact = candidates.find((path) => JSON.parse(readFileSync(path, "utf8")).id === seed.id);
+    const indexBackup = candidates.find((path) => {
+      if (path === join(dir, "threads.json")) return false;
+      const rows = JSON.parse(readFileSync(path, "utf8"));
+      return Array.isArray(rows) && rows.some((row) => row.id === "activity-owner");
+    });
+    expect(artifact).toBeDefined();
+    expect(indexBackup).toBeDefined();
+    for (const path of [dirname(artifact!), ...(mode === "artifact-stop" ? [dirname(indexBackup!)] : [])]) {
+      const backup = `${path}.held`; renameSync(path, backup); writeFileSync(path, "owned preparation obstruction");
+      obstructions.push({ path, backup });
+    }
+  }
+  const query = rustSyncModule.syncHostRequest;
+  const result = rustSyncModule.syncHostResult;
+  let armed = true; let replacement: string | undefined; let released = false;
+  vi.spyOn(rustSyncModule, "syncHostRequest").mockImplementation((root, request, bytes) => {
+    const proof = query(root, request, bytes);
+    if (root === dir && request.op === "run_attempt_release" && proof.released === true) released = true;
+    if (root === dir && armed && request.op === "run_attempt_current" && request.mode === "owned" && proof.current === true) {
+      armed = false;
+      if (mode === "source" || mode === "canonical-reply") {
+        const path = join(dir, "threads.json");
+        const rows = JSON.parse(readFileSync(path, "utf8"));
+        const row = rows.find((row: { id: string }) => row.id === "activity-owner");
+        if (mode === "source") row.agent = "claude-code"; else row.nativeTurn.id = "foreign-final";
+        writeFileSync(path, JSON.stringify(rows)); replacement = readFileSync(path, "utf8");
+      } else if (mode === "paused-buffer") {
+        expect(result(dir, { op: "stop_save", record: { threadId: "activity-owner", targetEventId: origin, status: "requested", requestIds: ["stop-buffer"] } })).toMatchObject({ record: { status: "requested" } });
+        expect(result(dir, { op: "run_attempt_pause", threadId: "activity-owner", eventId: origin,
+          turnId: `native:${origin}:final`, attemptId: request.attemptId })).toMatchObject({ applied: true });
+      }
+    }
+    return proof;
+  });
+  const receipts: { request: Record<string, unknown>; proof: Record<string, unknown> }[] = [];
+  let progress = 0;
+  vi.spyOn(rustSyncModule, "syncHostResult").mockImplementation((root, request, bytes, timeout) => {
+    if (root === dir && request.op === "run_attempt_progress") progress++;
+    const proof = result(root, request, bytes, timeout);
+    if (root === dir && request.op === "run_attempt_activity") {
+      receipts.push({ request, proof });
+      if (mode === "lost-ack") throw new Error("actual activity receipt lost after Root commit");
+      if (mode === "replay") return result(root, request, bytes, timeout);
+    }
+    return proof;
+  });
+  try {
+    if (mode === "artifact" || mode === "artifact-stop") {
+      expect(() => worker!.onActivity!("observed", { kind: "tool_result", data: { callId: "observed", ok: true, output: "B".repeat(5_000) } })).toThrow();
+      const abortedBeforeStop = worker!.signal.aborted;
+      if (mode === "artifact-stop") {
+        send({ kind: "interrupt", data: { targetEventId: origin } }, "activity-owner");
+        await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === origin);
+      }
+      finish.resolve({ text: "swallowed preparation error", completed: true });
+      await vi.waitFor(() => expect(released).toBe(true));
+      expect(readThreadEvents("activity-owner", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
+      expect(abortedBeforeStop).toBe(true);
+      expect(states).toContain("native-activity-unconfirmed");
+      expect(receipts).toEqual([]);
+      expect(readThreadEvents("activity-owner", dir).some((event) => event.id === "codex:activity-owner:observed")).toBe(false);
+      if (mode === "artifact") expect(listThreads(dir).find((thread) => thread.id === "activity-owner")?.nativeTurn)
+        .toMatchObject({ state: "interrupted", pauseReason: "unconfirmed" });
+      else expect(listThreads(dir).find((thread) => thread.id === "activity-owner")?.nativeTurn)
+        .toMatchObject({ state: "running", userEventId: origin });
+      return;
+    }
+    const kind = mode === "replay" ? "tool_result" : "thought";
+    const payload = kind === "tool_result" ? { kind, data: { callId: "observed", ok: true, output: "evidence" } } as const :
+      { kind, data: { text: "observed evidence" } } as const;
+    worker!.onActivity!("observed", payload);
+    if (mode === "days") {
+      const now = Date.now();
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now + 86_400_000);
+      try { worker!.onActivity!("next-day", { kind: "thought", data: { text: "next day evidence" } }); }
+      finally { clock.mockRestore(); }
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const rows = readThreadEvents("activity-owner", dir).filter((event) => event.id.startsWith("codex:activity-owner:"));
+    if (mode === "source" || mode === "canonical-reply") {
+      expect(replacement).toBeDefined();
+      expect(rows).toEqual([]);
+      expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(replacement);
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]!.proof).toMatchObject({ stored: false, reason: "scope-replaced" });
+    } else {
+      expect(receipts).toHaveLength(mode === "days" ? 2 : 1);
+      expect(rows).toHaveLength(mode === "days" ? 2 : 1);
+      expect(receipts.flatMap(({ proof }) => proof.events as YorozuEvent[])).toEqual(rows);
+      for (const { request, proof } of receipts) {
+        expect(proof).toMatchObject({ stored: true, replayed: false });
+        expect(request).toMatchObject({ version: 1, threadId: "activity-owner", eventId: origin,
+          turnId: `native:${origin}:final`, source: "codex" });
+        expect(rows.every((event) => event.workerRun?.attemptId === request.attemptId)).toBe(true);
+      }
+      if (mode === "days") expect(receipts[0]!.request.requestId).not.toBe(receipts[1]!.request.requestId);
+      if (mode === "replay") expect(progress).toBe(0);
+    }
+    const barrier = send({ kind: "thread_list", data: { threads: [], peerInfo: localPeerInfo("test") } }, "");
+    const published = (await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === barrier))
+      .filter((event) => event.id.startsWith("codex:activity-owner:"));
+    expect(published).toEqual(["stored", "days", "paused-buffer"].includes(mode) ? rows : []);
+    if (["source", "canonical-reply", "lost-ack"].includes(mode)) {
+      expect(worker!.signal.aborted).toBe(true);
+      expect(states).toContain("native-activity-unconfirmed");
+      finish.resolve({ text: "late terminal", completed: true });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(readThreadEvents("activity-owner", dir).some((event) => event.id === `native:${origin}:final`)).toBe(false);
+    }
+  } finally {
+    for (const { path, backup } of obstructions.reverse()) { rmSync(path); renameSync(backup, path); }
+    finish.resolve({ text: "done", completed: true });
+  }
 });

@@ -16,7 +16,7 @@ import { argv, env, stdin, stdout } from "node:process";
 import { AcceptedMessages, type AcceptedEntry } from "./accepted.js";
 import { ExpiredAdmissions } from "./admission.js";
 import { StopStore, type StopRecord } from "./stops.js";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import {
   encodePairingLink,
   encodePairingString,
@@ -125,7 +125,7 @@ import { NativeCards } from "./native-cards.js";
 import { claudeCodeRunner, type NativeAgentRunner, type NativeTurn } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
 import { questionDesk, QUESTION_TIMEOUT_MS } from "./tools/cards.js";
-import { persistThreadAndTranscript, persistThreadAndTranscriptBatch } from "./transcripts.js";
+import { persistThreadAndTranscript } from "./transcripts.js";
 import { retainSyncHost, syncHostRequest, syncHostResult } from "./rust-sync.js";
 
 const DEFAULT_STATE_DIR = join(homedir(), "Library", "Application Support", "Yorozu");
@@ -1789,37 +1789,64 @@ export function serve(options: ServeOptions = {}): Sidecar {
         return current;
       };
       const activityBuffer: YorozuEvent[] = [];
+      let activityAttempt: string | undefined;
+      let workerUnconfirmed = false;
       let activityBytes = 0;
       let activityFlushScheduled = false;
-      const flushActivity = (): void => {
-        if (!activityBuffer.length) return;
-        if (!activeAttempt || !attemptCurrent(activeAttempt, "owned")) { activityBuffer.length = 0; activityBytes = 0; return; }
+      const uncertainActivity = (attempt: string): void => {
+        if (workerUnconfirmed) return;
+        workerUnconfirmed = true;
+        paused = true; turn.abort();
+        state("native-activity-unconfirmed");
+        pauseIssuedAttempt(attempt, "unconfirmed");
+      };
+      const flushActivity = (): boolean => {
+        if (!activityBuffer.length) return false;
+        const attempt = activityAttempt;
+        activityAttempt = undefined;
         const events = activityBuffer.splice(0);
         activityBytes = 0;
+        if (!attempt || !attemptCurrent(attempt, "owned")) return false;
         try {
-          // Keep day boundaries explicit while preserving event order in each durable batch.
+          let fresh = false;
+          const publish = (batch: YorozuEvent[]): void => {
+            const packet = JSON.parse(JSON.stringify(batch)) as YorozuEvent[];
+            const proof = syncHostResult(dir, { op: "run_attempt_activity", version: 1, threadId,
+              eventId: userEventId, turnId: id, attemptId: attempt, source: agent, requestId: randomUUID(), events: packet });
+            if (proof.stored !== true || typeof proof.replayed !== "boolean" ||
+              typeof proof.operationId !== "string" || !/^worker-stream:[a-f0-9]{64}$/.test(proof.operationId) ||
+              !isDeepStrictEqual(proof.events, packet)) throw new Error("Native activity remains unconfirmed");
+            fresh = proof.replayed === false;
+            if (fresh) for (const saved of proof.events as YorozuEvent[]) broadcast(saved);
+          };
+          // Each contiguous UTC-day batch keeps its captured attempt and one durable request ID.
           let batch: YorozuEvent[] = [];
           for (const event of events) {
             if (batch.length && new Date(batch[0]!.ts).toISOString().slice(0, 10) !== new Date(event.ts).toISOString().slice(0, 10)) {
-              persistThreadAndTranscriptBatch(batch, dir); for (const saved of batch) broadcast(saved); batch = [];
+              publish(batch); batch = [];
             }
             batch.push(event);
           }
-          persistThreadAndTranscriptBatch(batch, dir); for (const saved of batch) broadcast(saved);
+          publish(batch);
+          return fresh;
         } catch (error) {
-          paused = true; turn.abort(); state("history-storage-failed"); throw error;
+          uncertainActivity(attempt);
+          throw error;
         }
       };
-      const queueActivity = (event: YorozuEvent): void => {
-        const bytes = Buffer.byteLength(JSON.stringify(event));
+      const queueActivity = (event: YorozuEvent, attempt: string): boolean => {
+        if (activityBuffer.length && activityAttempt !== attempt) flushActivity();
+        const bytes = Buffer.byteLength(JSON.stringify(event)) + 1;
         if (activityBuffer.length && activityBytes + bytes > 8 * 1024 * 1024) flushActivity();
+        activityAttempt = attempt;
         activityBuffer.push(event);
         activityBytes += bytes;
-        if (activityBuffer.length >= 256 || event.kind === "tool_call" || event.kind === "tool_result") { flushActivity(); return; }
+        if (activityBuffer.length >= 256 || event.kind === "tool_call" || event.kind === "tool_result") return flushActivity();
         if (!activityFlushScheduled) {
           activityFlushScheduled = true;
-          queueMicrotask(() => { activityFlushScheduled = false; try { flushActivity(); } catch { /* abort and retained intent report uncertainty */ } });
+          queueMicrotask(() => { activityFlushScheduled = false; try { flushActivity(); } catch { /* captured turn remains recoverable */ } });
         }
+        return false;
       };
       const pauseForUpdate = (unissuedOnly = false): void => {
         if (paused || turn.signal.aborted || unissuedOnly && (activeAttempt ?? previous?.attemptId)) return;
@@ -1885,7 +1912,6 @@ export function serve(options: ServeOptions = {}): Sidecar {
           broadcast(threadList());
           const attemptAbort = new AbortController();
           let attemptLive = true;
-          let progressUnconfirmed = false;
           const effectsAllowed = (): boolean => attemptLive && !turn.signal.aborted && attemptCurrent(attempt);
           const scopedSignal = (signal: AbortSignal): AbortSignal => AbortSignal.any([signal, turn.signal, attemptAbort.signal]);
           const saveNativeSession = (sessionId: string, mode: "effect" | "terminal" = "effect"): void => {
@@ -2015,10 +2041,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 } else if (payload.kind === "tool_result") {
                   openToolCalls.get(threadId)?.delete(payload.data.callId);
                 }
-                const event: YorozuEvent = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT,
-                  workerRun: { version: 1, threadId, eventId: userEventId!, turnId: id, attemptId: attempt, source: agent }, ...payload };
-                queueActivity(event.kind === "tool_result" ? stashToolResult(event, dir) : event);
-                if (event.kind === "tool_result" && event.data.ok === true && mayAct) {
+                let event: YorozuEvent;
+                let admitted: boolean;
+                try {
+                  event = { id: `${agent}:${threadId}:${key}`, threadId, ts: Date.now(), agentId: MAIN_AGENT,
+                    workerRun: { version: 1, threadId, eventId: userEventId!, turnId: id, attemptId: attempt, source: agent }, ...payload };
+                  admitted = queueActivity(event.kind === "tool_result" ? stashToolResult(event, dir) : event, attempt);
+                } catch (error) { uncertainActivity(attempt); throw error; }
+                if (admitted && event.kind === "tool_result" && event.data.ok === true && mayAct) {
                   let proof: Record<string, unknown>;
                   try { proof = syncHostResult(dir, { op: "run_attempt_progress", threadId, turnId: id,
                     eventId: userEventId, attemptId: attempt, activityId: event.id }); }
@@ -2033,7 +2063,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
                     }
                     // A provider can swallow observer errors. Retain the fence independently
                     // so even an explicit completed result cannot retire this uncertain scope.
-                    progressUnconfirmed = true;
+                    workerUnconfirmed = true;
                     paused = true;
                     nativeStorageFenced.add(threadId);
                     state("native-progress-unconfirmed");
@@ -2054,7 +2084,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
             });
             workerResult = { attempt, outcome: done.completed === true ? "completed" : "stopped",
               evidence: done.completed === true ? "provider-terminal" : done.cessation ?? "unconfirmed", text: done.text, failed: done.failed };
-            if (progressUnconfirmed || !attemptCurrent(attempt, done.completed === true ? "terminal" : "effect")) return;
+            if (workerUnconfirmed || !attemptCurrent(attempt, done.completed === true ? "terminal" : "effect")) return;
             flushActivity();
             if (done.sessionId && done.sessionId !== currentHome.sessionId) saveNativeSession(done.sessionId, done.completed === true ? "terminal" : "effect");
             const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
@@ -2103,7 +2133,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         const stop = userEventId ? stoppedTurns.get(userEventId) : undefined;
         if (stop) {
           if (activeAttempt) {
-            await publishResult(workerResult?.attempt === activeAttempt ? workerResult :
+            await publishResult(workerResult?.attempt === activeAttempt && (!workerUnconfirmed || workerResult.outcome !== "completed") ? workerResult :
               { attempt: activeAttempt, outcome: "stopped", evidence: "unconfirmed", text: "" });
           } else {
             let proof: Record<string, unknown>;

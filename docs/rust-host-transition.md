@@ -1532,6 +1532,32 @@ permission/question, stale-owner, session and artifact integrations. No test dea
 The preceding artifact commit also passes its complete alpha CI run (36958066186). This establishes
 the Root API slice; Node adoption and remaining finite migration/release gates remain unfinished.
 
+Node SDK activity now uses the Root observation API. Each buffered batch retains the issued
+attempt that produced it, splits contiguous UTC days into distinct request IDs, and requires a typed
+receipt matching the normalized JSON packet. Live publication uses only newly stored Root-returned
+events; an authenticated replay neither broadcasts another observation nor grants new progress.
+Successful tool results advance recovery only after fresh observation admission. The existing Root
+ownership precheck remains a compatibility filter; the leased Root write decides final admission.
+
+Preparation, artifact storage and admission failures set a captured uncertainty veto before abort
+and pause. A provider that swallows an observer error cannot subsequently publish a completed result,
+including through Stop cleanup when pause persistence fails and the original marker remains running.
+Actual stopped/provider-terminal or observed-child-exit evidence remains distinct from uncertainty.
+Generic non-SDK history producers retain their existing compatibility path.
+
+Verification: seven initial SDK boundary cases fail against the prior generic persister. They exercise
+actual Root receipts and encrypted publication after source/canonical replacement, a lost acknowledgement
+after a real commit, actual replay, normal publication, day splitting and a buffer admitted after Stop.
+Review adds two genuine artifact-preparation failures; both reproduce a completed canonical final when
+the provider swallows the failure, including with an obstructed metadata backup. The repaired runtime
+build and 23 focused integration checks pass. One earlier full run passes 899 cases and skips one,
+but an existing progress fixture obstructs the newly added observation boundary too early. Its original
+assertions now obstruct persistence only after actual observation admission, retaining the intended
+progress failure. Final complete runtime/plugin verification passes all 902 checks with one existing
+skip across 52 files in 229.35 seconds, with unchanged deadlines. The preceding Root API commit also
+passes every alpha CI job (36958894144). Full provider launch/context/task contracts, portable IPC,
+SQLite/Markdown migration, standalone launch and native release gates remain unfinished.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including
