@@ -13,6 +13,10 @@ lines. The pre-fix block separator uses an unstyled newline and fails this check
 For real Simulator captures without a host/account, launch with `-yorozuShowcase japanese`
 or `-yorozuShowcase japanese-streaming`. These are synthetic offline messages; the streaming
 fixture holds an unfinished reply for inspecting wrapping and the completion handoff.
+Add `-yorozuFinishJapanese on -followUpBehavior steer` and send `Continue`, then `Finish`,
+to deliver growing and completed replies through the offline transport. `JapaneseStreamingTests`
+drives those messages through the real composer, checks the table appears during growth,
+and verifies the completed reply becomes selectable without losing its Markdown blocks.
 
 Generate with `tuist generate --no-open --path apps/ios`, then run:
 

@@ -64,8 +64,15 @@ private actor ShowcaseTransport: ChatTransport {
             continuation.yield(.state(.paired))
             let scene = launchArgument("yorozuShowcase")
             if scene == "japanese" || scene == "japanese-streaming" {
+                let completes = scene == "japanese-streaming" && launchArgument("yorozuFinishJapanese") != nil
+                let initial = completes ? String(japaneseReplyFixture.prefix(japaneseReplyFixture.count / 3)) : japaneseReplyFixture
                 continuation.yield(.event(YorozuEvent(id: "japanese-reply", threadId: "Weeknight dinners", ts: 1, agentId: "main",
-                    payload: .message(MessageData(role: .agent, text: japaneseReplyFixture, done: scene == "japanese")))))
+                    payload: .message(MessageData(role: .agent, text: initial, done: scene == "japanese")))))
+                if scene == "japanese-streaming" {
+                    continuation.yield(.event(YorozuEvent(id: "japanese-working", threadId: "", ts: 2, agentId: "main",
+                        payload: .syncDelta(SyncDeltaData(events: [], workingThreadIds: ["Weeknight dinners"])))))
+                }
+
             }
             if scene == "threads" || scene == "new-thread" || scene == "session-yorozu" || scene == "session-multiple" || scene == "session-legacy" {
                 let configured = scene == "session-yorozu" ? [ThreadAgent.yorozu] : ThreadAgent.allCases
@@ -82,6 +89,18 @@ private actor ShowcaseTransport: ChatTransport {
     }
 
     func send(_ event: YorozuEvent) async throws {
+        if launchArgument("yorozuShowcase") == "japanese-streaming", launchArgument("yorozuFinishJapanese") != nil {
+            continuation?.yield(.event(YorozuEvent(id: "receipt-\(event.id)", threadId: event.threadId, ts: event.ts, agentId: "main",
+                payload: .receipt(ReceiptData(eventId: event.id)))))
+        }
+        if launchArgument("yorozuShowcase") == "japanese-streaming", launchArgument("yorozuFinishJapanese") != nil,
+           case .message(let message) = event.payload, message.text == "Continue" || message.text == "Finish" {
+            let done = message.text == "Finish"
+            let text = done ? japaneseReplyFixture : String(japaneseReplyFixture.prefix(japaneseReplyFixture.count * 2 / 3))
+            continuation?.yield(.event(YorozuEvent(id: "japanese-reply", threadId: event.threadId, ts: event.ts + 1, agentId: "main",
+                payload: .message(MessageData(role: .agent, text: text, done: done)))))
+        }
+
         if case .agentStatus = event.payload, launchArgument("yorozuShowcase") != "session-pending" {
             let scene = launchArgument("yorozuShowcase")
             let ready = scene != "session-yorozu" && scene != "session-legacy"
