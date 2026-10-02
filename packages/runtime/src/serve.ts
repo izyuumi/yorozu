@@ -1143,7 +1143,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
       broadcast(threadList());
   }
 
-  const nativeCards = new NativeCards(emit);
+  const nativeCards = new NativeCards(emit, { dir, publish: (event) => {
+    broadcast(event);
+    broadcast(threadList());
+  } });
 
   /** Cards on screen somewhere, waiting to be answered, by action ID. */
   const pending = new Map<
@@ -1911,7 +1914,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
               approve: async (tool, input, signal) => {
                 if (!effectsAllowed()) return false;
                 flushActivity();
-                const allowed = loadSettings(dir).yolo || await nativeCards.approve(threadId, agent, tool, input, scopedSignal(signal));
+                const unconfirmed = (): void => {
+                  paused = true;
+                  state("native-approval-unconfirmed");
+                  pauseIssuedAttempt(attempt, "unconfirmed");
+                  turn.abort();
+                };
+                const allowed = await nativeCards.approve(threadId, agent, tool, input, scopedSignal(signal),
+                  { eventId: userEventId!, turnId: id, attemptId: attempt }, unconfirmed, loadSettings(dir).yolo);
                 return allowed && !signal.aborted && effectsAllowed();
               },
               ask: async (question, options, signal) => {
@@ -2850,6 +2860,16 @@ export function serve(options: ServeOptions = {}): Sidecar {
           !["yes", "task", "always", "no", "discuss"].includes(event.data.answer) ||
           (event.data.source !== undefined && event.data.source !== "notification")) return;
       const history = readThreadEvents(event.threadId, dir);
+      // Native decisions are admitted by the scoped Rust owner, including historical replay.
+      if (nativeCards.has(event.data.actionId, event.threadId) || history.some((known) =>
+          known.kind === "approval_card" && known.data.actionId === event.data.actionId && known.data.nativeAgent !== undefined ||
+          known.kind === "approval_status" && known.data.requestId === event.id && "nativeRequestHash" in known.data)) {
+        const outcome = nativeCards.admitApproval(event);
+        if (outcome?.kind !== "approval_status") { state("native-approval-unconfirmed"); return; }
+        if (statusSupported || outcome.data.status === "applied") reply(control({ kind: "receipt", data: { eventId: event.id } }));
+        else rejectLegacy();
+        return;
+      }
       const previous = history.find((known) => known.kind === "approval_status" && known.data.requestId === event.id);
       if (previous?.kind === "approval_status") {
         const accepted = history.find((known) => known.kind === "approval_answer" && known.id === event.id);
@@ -3612,12 +3632,18 @@ export function serve(options: ServeOptions = {}): Sidecar {
       return;
     }
     if (typed && oldest) return oldest.settle(typed);
+    const nativeOrigin = threadAgent(event.threadId, dir) !== "yorozu";
     const queued = admittedTurn ?? enqueueTurn(event.threadId, event.data.text, true,
       event.data.attachments ?? [], event.id, logged);
     // Admission is durable now. Echoing by id is harmless and converges all clients.
     broadcast(logged);
     queued.catch((e: unknown) => {
       state(`agent-error ${String(e)}`);
+      if (nativeOrigin) {
+        nativeStorageFenced.add(event.threadId);
+        state("native-run-unconfirmed");
+        return;
+      }
       // A thrown turn has no final event. Save one so its alert names a real row after sync.
       const id = completionIdFor(event.threadId, event.id);
       if (!readThreadEvents(event.threadId, dir).some((known) => known.id === id)) {

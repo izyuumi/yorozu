@@ -294,6 +294,8 @@ export interface ApprovalRule {
 export interface ApprovalCardData {
   /** Native SDK request: only this invocation may be allowed, never a Yorozu rule. */
   nativeAgent?: Exclude<ThreadAgent, "yorozu">;
+  /** Rust-issued native invocation; retained for scoped permission currency, never a grant. */
+  nativeRun?: { eventId: string; turnId: string; attemptId: string };
   actionId: string;
   /** e.g. "send-message", "purchase", "delete-file". */
   actionClass: string;

@@ -510,6 +510,62 @@ fn detailed_run_evidence(
         conflict,
     })
 }
+// Approval cards remain in the existing bounded retained history, with no second truth store.
+pub(crate) fn native_approval_evidence(
+    root: &Path,
+    thread: &str,
+    action: &str,
+    request: &str,
+) -> io::Result<(Option<Value>, Option<Value>)> {
+    let path = root
+        .join("threads")
+        .join(format!("{}.jsonl", crate::thread_index::file_name(thread)));
+    let mut file = match open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok((None, None)),
+        Err(error) => return Err(error),
+    };
+    let stamp = Stamp::new(&file.metadata()?);
+    let mut card = None;
+    let mut settled = None;
+    let mut end = 0;
+    {
+        let mut reader = BufReader::new(&mut file);
+        while let Some(text) = line(&mut reader, &mut end, stamp.length)? {
+            if let Some(event) = parse(&text)? {
+                if event["threadId"] != thread {
+                    continue;
+                }
+                if event["id"] == request {
+                    return Err(invalid());
+                }
+                if event["kind"] == "approval_card" && event["data"]["actionId"] == action {
+                    if card.as_ref().is_some_and(|previous| previous != &event) {
+                        return Err(invalid());
+                    }
+                    card = Some(event);
+                } else if event["kind"] == "approval_status"
+                    && event["data"]["actionId"] == action
+                    && event["data"]["status"] == "applied"
+                {
+                    if settled.as_ref().is_some_and(|previous| previous != &event) {
+                        return Err(invalid());
+                    }
+                    settled = Some(event);
+                }
+            }
+        }
+    }
+    let current = fs::symlink_metadata(&path)?;
+    if current.file_type().is_symlink()
+        || !current.is_file()
+        || Stamp::new(&current) != stamp
+        || Stamp::new(&file.metadata()?) != stamp
+    {
+        return Err(invalid());
+    }
+    Ok((card, settled))
+}
 impl Paging {
     fn page(&mut self, root: &Path, request: &Value) -> io::Result<Value> {
         let id = request["threadId"]

@@ -1,4 +1,8 @@
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { syncHostRequest, retainSyncHost } from "./rust-sync.js";
 import { CHILD_ENV_KEYS, CHILD_ENV_PREFIXES, childEnv, claudeCodeRunner, type QueryFn } from "./native.js";
 
 /** A stand-in for the SDK's Query: the messages it will yield, plus close(). */
@@ -199,9 +203,32 @@ import { NativeCards } from "./native-cards.js";
 import type { YorozuEvent } from "@yorozu/shared";
 import type { Options, Query } from "@anthropic-ai/claude-agent-sdk";
 
+const permissionOwners: (() => void)[] = [];
+afterEach(() => { for (const close of permissionOwners.splice(0)) close(); });
+/** This SDK adapter test uses real issued Root ownership; the callback never invents admission. */
+function permissionDesk(events: YorozuEvent[]) {
+  const dir = mkdtempSync(join(tmpdir(), "yorozu-sdk-permissions-"));
+  const release = retainSyncHost(dir);
+  permissionOwners.push(() => { release(); rmSync(dir, { recursive: true, force: true }); });
+  const rows = ["cc", "other"].map((id) => ({ id, title: id, createdAt: new Date().toISOString(), archived: false, agent: "claude-code" }));
+  expect(syncHostRequest(dir, { op: "thread_index_replace", expectedHash: null, threads: rows }).stored).toBe(true);
+  const scopes = new Map<string, { eventId: string; turnId: string; attemptId: string }>();
+  for (const threadId of ["cc", "other"]) {
+    const eventId = `origin-${threadId}`;
+    const event: YorozuEvent = { id: eventId, threadId, ts: Date.now(), agentId: "phone", kind: "message", data: { role: "user", text: "work" } };
+    expect(syncHostRequest(dir, { op: "accepted_accept", entry: { id: eventId, threadId, identity: "a".repeat(64), purpose: "conversation", event } }).status).toBe("accepted");
+    expect(syncHostRequest(dir, { op: "history_append", operationId: eventId, event, thread: true, transcript: true }).stored).toBe(true);
+    expect(syncHostRequest(dir, { op: "queue_enqueue", threadId, eventId }).stored).toBe(true);
+    const claim = syncHostRequest(dir, { op: "run_attempt_claim", threadId, eventId });
+    expect(claim.claimed).toBe(true);
+    scopes.set(threadId, { eventId, turnId: `native:${eventId}:final`, attemptId: claim.attemptId as string });
+  }
+  return { cards: new NativeCards((event) => events.push(event), { dir, publish: (event) => events.push(event) }), scopes };
+}
+
 test.each(["yes", "no"] as const)("native SDK permission %s holds the turn and returns to the SDK", async (answer) => {
   const events: YorozuEvent[] = [];
-  const cards = new NativeCards((event) => events.push(event));
+  const { cards, scopes } = permissionDesk(events);
   let decision: unknown;
   const query: QueryFn = ({ options }) => Object.assign((async function* () {
     yield init("permission-session");
@@ -210,7 +237,7 @@ test.each(["yes", "no"] as const)("native SDK permission %s holds the turn and r
   })(), { close() {} }) as Query;
   const finished = vi.fn();
   const running = claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "run", signal: new AbortController().signal,
-    approve: (tool, input, signal) => cards.approve("cc", "claude-code", tool, input, signal),
+    approve: (tool, input, signal) => cards.approve("cc", "claude-code", tool, input, signal, scopes.get("cc")!, () => { throw new Error("Unexpected permission uncertainty"); }),
   }).then(finished);
   await vi.waitFor(() => expect(events).toHaveLength(1));
   expect(finished).not.toHaveBeenCalled();
@@ -219,13 +246,15 @@ test.each(["yes", "no"] as const)("native SDK permission %s holds the turn and r
   expect(card.data).toMatchObject({ nativeAgent: "claude-code", actionClass: "Bash" });
   expect(card.data.suggestedRule).toBeUndefined();
   expect(cards.quickApprovable(card.data.actionId)).toBe(true);
-  const reply: YorozuEvent = { ...card, kind: "approval_answer", data: { actionId: card.data.actionId, answer, source: "notification" } };
-  expect(cards.answer({ ...reply, threadId: "other" })).toBe(false);
-  expect(cards.answer(reply)).toBe(true);
+  const reply: YorozuEvent = { ...card, id: "permission-answer", kind: "approval_answer", data: { actionId: card.data.actionId, answer, source: "notification" } };
+  expect(cards.admitApproval({ ...reply, id: "foreign-answer", threadId: "other" })).toMatchObject({ data: { status: "no-longer-needed" } });
+  expect(finished).not.toHaveBeenCalled();
+  expect(cards.admitApproval(reply)).toMatchObject({ data: { status: "applied" } });
   await running;
   expect(decision).toMatchObject({ behavior: answer === "yes" ? "allow" : "deny" });
   expect(finished).toHaveBeenCalledWith({ text: "finished", sessionId: "permission-session", completed: true });
-  expect(cards.answer(reply)).toBe(false);
+  expect(cards.admitApproval(reply)).toMatchObject({ data: { status: "applied" } });
+  expect(finished).toHaveBeenCalledOnce();
 });
 
 test.each(["Option A", "My own answer"])("SDK question accepts %s", async (answer) => {
@@ -242,11 +271,11 @@ test.each(["Option A", "My own answer"])("SDK question accepts %s", async (answe
 
 test.each(["approval", "question"])("abort pending %s clears only that request", async (kind) => {
   const events: YorozuEvent[] = [];
-  const cards = new NativeCards((event) => events.push(event));
+  const { cards, scopes } = permissionDesk(events);
   const abort = new AbortController();
   const other = new AbortController();
-  const request = kind === "approval" ? cards.approve("cc", "claude-code", "Bash", {}, abort.signal) : cards.ask("cc", "claude-code", "Which?", ["A"], abort.signal);
-  const separate = cards.approve("other", "claude-code", "Edit", {}, other.signal);
+  const request = kind === "approval" ? cards.approve("cc", "claude-code", "Bash", {}, abort.signal, scopes.get("cc")!, () => { throw new Error("Unexpected permission uncertainty"); }) : cards.ask("cc", "claude-code", "Which?", ["A"], abort.signal);
+  const separate = cards.approve("other", "claude-code", "Edit", {}, other.signal, scopes.get("other")!, () => { throw new Error("Unexpected permission uncertainty"); });
   abort.abort();
   expect(await request).toBe(kind === "approval" ? false : undefined);
   const card = events[1]!;

@@ -4,7 +4,7 @@ import { createRuns } from "../../openclaw-channel/runs.js";
 import { connectYorozu } from "../../openclaw-channel/socket.js";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
@@ -52,6 +52,7 @@ import * as threadStorage from "./threads.js";
 import { AcceptedMessages, type AcceptedEntry } from "./accepted.js";
 import { SYNC_PAGE_BYTES, setNativeTurn, setThreadSession, appendThreadEvent, appendThreadEvents, createThread, eventsAfter, listThreads, readThreadEvents } from "./threads.js";
 import { readTranscripts, transcriptDir } from "./transcripts.js";
+import * as transcriptStorage from "./transcripts.js";
 
 /** No native helper here: a thread takes its first words unless a test brings its own titler. */
 const serve = (options: ServeOptions): Sidecar =>
@@ -769,6 +770,7 @@ test("queued updates wait for approvals and queued turns, and new work resets th
   let mac = await macClient(dir);
   const stranger = await macClient(dir);
   send({ kind: "update_control", data: { action: "status" } });
+  const phoneNow = Date.now;
   let now = Date.now();
   vi.spyOn(Date, "now").mockImplementation(() => now);
   async function control(action: "queue" | "poll" | "cancel" = "poll") {
@@ -791,7 +793,9 @@ test("queued updates wait for approvals and queued turns, and new work resets th
     send({ kind: "message", data: { role: "user", text: "new task" } }, "other");
     await eventsUntil((event) => event.kind === "message" && event.data.done === true && event.threadId === "other");
     expect((await control()).phase).toBe("waiting");
-    send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "yes" } }, "work");
+    // Update countdown advances its application clock; the phone still answers at real time.
+    sendRaw({ id: randomUUID(), threadId: "work", ts: phoneNow(), agentId: "phone",
+      kind: "approval_answer", data: { actionId: card.data.actionId, answer: "yes" } });
     await eventsUntil((event) => event.kind === "message" && event.id === `native:${afterFailure}:final` && event.data.done === true);
     expect(run).toHaveBeenCalledTimes(4);
     expect((await control()).phase).toBe("countdown");
@@ -7209,4 +7213,80 @@ test("Stop cannot mistake a retained user/done row for agent completion", async 
   expect(response).toMatchObject({ data: { status: "unconfirmed" } });
   expect(readFileSync(join(dir, "threads", "cc.jsonl"), "utf8")).toBe(before);
   expect(run).not.toHaveBeenCalled();
+});
+
+
+test("native approval cannot report application after its Rust attempt is replaced", async () => {
+  const decisions: boolean[] = [];
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    decisions.push(await turn.approve!("Bash", { command: "pwd" }, turn.signal));
+    return { text: "obsolete worker" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "approval-owner");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "approval-owner");
+  const card = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+  if (card.kind !== "approval_card") throw new Error("missing native card");
+  const previous = listThreads(dir).find((thread) => thread.id === "approval-owner")!.nativeTurn!;
+  expect(rustSyncModule.syncHostRequest(dir, { op: "run_attempt_release", threadId: "approval-owner",
+    eventId: origin, attemptId: previous.attemptId })).toMatchObject({ released: true });
+  setNativeTurn("approval-owner", undefined, dir);
+  const next = rustSyncModule.syncHostRequest(dir, { op: "run_attempt_claim", threadId: "approval-owner", eventId: origin });
+  expect(next.claimed).toBe(true);
+  const retained = readFileSync(join(dir, "threads.json"), "utf8");
+  const requestId = send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "yes" } }, "approval-owner");
+  const response = (await eventsUntil((event) => event.kind === "approval_status" && event.data.requestId === requestId)).at(-1)!;
+  expect(response).toMatchObject({ data: { status: "no-longer-needed" } });
+  await vi.waitFor(() => expect(decisions).toEqual([false]));
+  expect(readThreadEvents("approval-owner", dir).some((event) => event.kind === "approval_status" &&
+    event.data.actionId === card.data.actionId && event.data.status === "applied")).toBe(false);
+  expect(readFileSync(join(dir, "threads.json"), "utf8")).toBe(retained);
+  expect(rustSyncModule.syncHostRequest(dir, { op: "run_attempt_current", threadId: "approval-owner", eventId: origin,
+    attemptId: next.attemptId, mode: "effect" })).toMatchObject({ current: true });
+});
+
+
+test("native approval storage uncertainty aborts even a worker that ignores the denied answer", async () => {
+  const decisions: boolean[] = [];
+  let worker: NativeTurn | undefined;
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    worker = turn;
+    decisions.push(await turn.approve!("Bash", { command: "pwd" }, turn.signal));
+    // A worker returning success after denial cannot publish or clear the retained owner.
+    return { text: "unconfirmed permission must not produce a final" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "approval-storage");
+  const origin = send({ kind: "message", data: { role: "user", text: "work" } }, "approval-storage");
+  const card = (await eventsUntil((event) => event.kind === "approval_card")).at(-1)!;
+  if (card.kind !== "approval_card") throw new Error("missing native card");
+  const path = join(dir, "transcripts", `${new Date(card.ts).toISOString().slice(0, 10)}.jsonl`);
+  const backup = `${path}.backup`;
+  let disrupted = false;
+  const disrupt = (): void => {
+    if (disrupted) return;
+    renameSync(path, backup); mkdirSync(path); disrupted = true;
+  };
+  const persist = transcriptStorage.persistThreadAndTranscript;
+  vi.spyOn(transcriptStorage, "persistThreadAndTranscript").mockImplementation((event, root) => {
+    persist(event, root);
+    // Baseline: the echo was saved before a separate status write, releasing the SDK early.
+    if (event.threadId === "approval-storage" && event.kind === "approval_answer") disrupt();
+  });
+  const request = rustSyncModule.syncHostResult;
+  vi.spyOn(rustSyncModule, "syncHostResult").mockImplementation((root, data, bytes, timeout) => {
+    if (root === dir && data.op === "native_approval_decide") disrupt();
+    return request(root, data, bytes, timeout);
+  });
+  try {
+    send({ kind: "approval_answer", data: { actionId: card.data.actionId, answer: "yes" } }, "approval-storage");
+    await vi.waitFor(() => expect(disrupted).toBe(true));
+    await vi.waitFor(() => expect(decisions).toEqual([false]));
+    expect(worker?.signal.aborted).toBe(true);
+    const history = readThreadEvents("approval-storage", dir);
+    expect(history.some((event) => event.kind === "approval_status" && event.data.actionId === card.data.actionId &&
+      event.data.status === "applied")).toBe(false);
+    expect(history.some((event) => event.id === `native:${origin}:final`)).toBe(false);
+    expect(listThreads(dir).find((thread) => thread.id === "approval-storage")?.nativeTurn?.userEventId).toBe(origin);
+  } finally { if (disrupted) { rmSync(path, { recursive: true }); renameSync(backup, path); } }
 });

@@ -1719,6 +1719,326 @@ impl History {
         }
         Ok(json!({"applied":true,"outcome":outcome,"wasRunning":marker["state"] == "running"}))
     }
+    // Only an issued, still-current Rust worker may raise or consume a native permission.
+    fn native_approval_owner(&mut self, scope: &Value, card: &Value) -> io::Result<bool> {
+        let thread = card["threadId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let origin = scope["eventId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let attempt = scope["attemptId"]
+            .as_str()
+            .filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(invalid)?;
+        let turn = format!("native:{origin}:final");
+        if scope["turnId"] != turn {
+            return Err(invalid());
+        }
+        let current = self.attempt_request(&json!({"op":"run_attempt_current","threadId":thread,"eventId":origin,"attemptId":attempt,"mode":"effect"}))?;
+        if current.get("error").is_some() {
+            return Err(invalid());
+        }
+        if current["current"] != true {
+            return Ok(false);
+        }
+        let bytes = crate::thread_index::current(&self.root)?.ok_or_else(invalid)?;
+        let index: Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        let home = index
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == thread)
+            .ok_or_else(invalid)?;
+        if home["nativeTurn"]["id"] != turn
+            || home["agent"] != card["data"]["nativeAgent"]
+            || home["agent"]
+                .as_str()
+                .is_none_or(|a| a.is_empty() || a == "yorozu")
+        {
+            return Ok(false);
+        }
+        let accepted = self.request(&json!({"op":"accepted_get","messageId":origin}));
+        if accepted.get("error").is_some()
+            || accepted["entry"]["threadId"] != thread
+            || !["conversation", "legacy"]
+                .contains(&accepted["entry"]["purpose"].as_str().unwrap_or(""))
+        {
+            return Err(invalid());
+        }
+        let (seen, terminal, hidden, conflict) =
+            crate::paging::stop_evidence(&self.root, thread, &accepted["entry"], &turn)?;
+        Ok(seen && terminal.is_none() && !hidden && !conflict)
+    }
+    fn native_approval_replay(
+        &mut self,
+        operation: &str,
+        event: &Value,
+        fingerprint: &str,
+    ) -> io::Result<Option<Value>> {
+        if let Err(error) = self.recover() {
+            self.failed = true;
+            return Err(error);
+        }
+        let key = digest(operation.as_bytes());
+        if !self.committed.contains_key(&key) {
+            return Ok(None);
+        }
+        let value: Value = serde_json::from_slice(&read_private(
+            &self.directory.join(format!("{key}.json")),
+            RECORD_BYTES,
+        )?)
+        .map_err(io::Error::other)?;
+        let entry: Entry =
+            serde_json::from_value(value["entry"].clone()).map_err(io::Error::other)?;
+        if entry.key != key
+            || entry.operation_id != operation
+            || !self.valid_entry(&entry)
+            || value["checksum"] != digest(&serde_json::to_vec(&entry).map_err(io::Error::other)?)
+        {
+            return Err(invalid());
+        }
+        let events: Vec<Value> = entry
+            .line
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()
+            .map_err(io::Error::other)?;
+        let status = events.last().ok_or_else(invalid)?;
+        if status["kind"] != "approval_status"
+            || status["threadId"] != event["threadId"]
+            || status["id"]
+                != format!(
+                    "approval:{}:status",
+                    event["id"].as_str().ok_or_else(invalid)?
+                )
+            || status["data"]["requestId"] != event["id"]
+        {
+            return Err(invalid());
+        }
+        if status["data"]["nativeRequestHash"] != fingerprint
+            || status["data"]["actionId"] != event["data"]["actionId"]
+        {
+            return Ok(Some(
+                json!({"stored":false,"execute":false,"reason":"conflicting-request"}),
+            ));
+        }
+        let applied = status["data"]["status"] == "applied";
+        if !["applied", "no-longer-needed", "expired", "rejected"]
+            .contains(&status["data"]["status"].as_str().unwrap_or(""))
+            || events.len() != if applied { 2 } else { 1 }
+            || applied
+                && (events[0]["id"] != event["id"]
+                    || events[0]["threadId"] != event["threadId"]
+                    || events[0]["kind"] != "approval_answer"
+                    || events[0]["data"] != event["data"])
+        {
+            return Err(invalid());
+        }
+        let proof = self.append(&json!({"op":"history_append","operationId":operation,"events":events,"thread":true,"transcript":true}));
+        if !proof.is_ok_and(|proof| proof["stored"] == true) {
+            self.failed = true;
+            return Err(invalid());
+        }
+        Ok(Some(
+            json!({"stored":true,"execute":false,"replayed":true,"status":status,"events":events}),
+        ))
+    }
+    fn native_approval_request(&mut self, request: &Value) -> io::Result<Value> {
+        let event = &request["event"];
+        let thread = event["threadId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let id = event["id"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let action = event["data"]["actionId"]
+            .as_str()
+            .filter(|id| !invalid_id(id))
+            .ok_or_else(invalid)?;
+        let ts = event["ts"]
+            .as_f64()
+            .filter(|ts| ts.fract() == 0.0 && ts.abs() <= crate::SAFE_INTEGER as f64)
+            .ok_or_else(invalid)?;
+        day(&event["ts"])?;
+        let root = self.root.clone();
+        let _writer = crate::thread_index::native_writer(&root)?;
+        if request["op"] == "native_approval_raise" {
+            if event["kind"] != "approval_card"
+                || event["data"]["actionClass"]
+                    .as_str()
+                    .is_none_or(|s| s.is_empty() || s.len() > 4096)
+                || !event["data"]["target"].is_string()
+                || event["data"].get("nativeRun").is_some()
+            {
+                return Err(invalid());
+            }
+            let scope = &request["scope"];
+            if !self.native_approval_owner(scope, event)? {
+                return Ok(json!({"stored":false,"reason":"scope-replaced"}));
+            }
+            let operation = Self::final_operation(
+                "native-approval-card",
+                thread,
+                scope["eventId"].as_str().ok_or_else(invalid)?,
+                action,
+                scope,
+            )?;
+            let mut card = event.clone();
+            card["data"]["nativeRun"] = scope.clone();
+            if let Some(saved) = self.retained_final(&operation, &card)? {
+                return Ok(json!({"stored":true,"event":saved}));
+            }
+            let (prior, _) =
+                crate::paging::native_approval_evidence(&self.root, thread, action, id)?;
+            if prior.is_some() {
+                return Err(invalid());
+            }
+            let proof = self.append_final(&operation, &card)?;
+            if proof["stored"] != true {
+                return Err(invalid());
+            }
+            return Ok(json!({"stored":true,"event":card}));
+        }
+        if request["op"] != "native_approval_decide"
+            || event["kind"] != "approval_answer"
+            || !["yes", "no", "discuss", "task", "always"]
+                .contains(&event["data"]["answer"].as_str().unwrap_or(""))
+            || event["data"]
+                .get("source")
+                .is_some_and(|s| s != "notification")
+        {
+            return Err(invalid());
+        }
+        let live = request["live"].as_bool().ok_or_else(invalid)?;
+        let operation = Self::final_operation(
+            "native-approval-decision",
+            thread,
+            id,
+            "answer",
+            &Value::Null,
+        )?;
+        let fingerprint = Self::final_operation(
+            "native-approval-request",
+            thread,
+            id,
+            "answer",
+            &event["data"],
+        )?;
+        if let Some(replay) = self.native_approval_replay(&operation, event, &fingerprint)? {
+            return Ok(replay);
+        }
+        let (card, settled) =
+            crate::paging::native_approval_evidence(&self.root, thread, action, id)?;
+        if let Some(prior) = &settled {
+            // Generic history rows cannot consume a registered permission or authorize replay.
+            let prior_id = prior["data"]["requestId"]
+                .as_str()
+                .filter(|id| !invalid_id(id))
+                .ok_or_else(invalid)?;
+            let prior_operation = Self::final_operation(
+                "native-approval-decision",
+                thread,
+                prior_id,
+                "answer",
+                &Value::Null,
+            )?;
+            let key = digest(prior_operation.as_bytes());
+            if !self.committed.contains_key(&key) {
+                return Err(invalid());
+            }
+            let value: Value = serde_json::from_slice(&read_private(
+                &self.directory.join(format!("{key}.json")),
+                RECORD_BYTES,
+            )?)
+            .map_err(io::Error::other)?;
+            let entry: Entry =
+                serde_json::from_value(value["entry"].clone()).map_err(io::Error::other)?;
+            let original = entry.line.lines().next().ok_or_else(invalid)?;
+            let original: Value = serde_json::from_str(original).map_err(io::Error::other)?;
+            let hash = Self::final_operation(
+                "native-approval-request",
+                thread,
+                prior_id,
+                "answer",
+                &original["data"],
+            )?;
+            let proof = self
+                .native_approval_replay(&prior_operation, &original, &hash)?
+                .ok_or_else(invalid)?;
+            if proof["stored"] != true || proof["status"] != *prior {
+                return Err(invalid());
+            }
+        }
+        let now = crate::now_ms() as f64;
+        let status;
+        if ts > now + 5.0 * 60_000.0 {
+            status = "rejected";
+        } else if now >= ts + 30.0 * 60_000.0 {
+            status = "expired";
+        } else if settled.is_some() || !live {
+            status = "no-longer-needed";
+        } else if let Some(card) = card.as_ref() {
+            let scope = &card["data"]["nativeRun"];
+            if scope.is_null() {
+                status = "no-longer-needed";
+            } else {
+                let operation = Self::final_operation(
+                    "native-approval-card",
+                    thread,
+                    scope["eventId"].as_str().ok_or_else(invalid)?,
+                    action,
+                    scope,
+                )?;
+                if self.retained_final(&operation, card)?.as_ref() != Some(card) {
+                    return Err(invalid());
+                }
+                let raised = card["ts"].as_f64().ok_or_else(invalid)?;
+                if now >= raised + 30.0 * 60_000.0 {
+                    status = "expired";
+                } else if !self.native_approval_owner(scope, card)? {
+                    status = "no-longer-needed";
+                } else if event["data"]["source"] == "notification"
+                    && card["data"]["actionClass"]
+                        .as_str()
+                        .ok_or_else(invalid)?
+                        .starts_with("mcp__")
+                    || ["task", "always"].contains(&event["data"]["answer"].as_str().unwrap_or(""))
+                {
+                    status = "rejected";
+                } else {
+                    status = "applied";
+                }
+            }
+        } else {
+            status = "no-longer-needed";
+        }
+        let outcome = json!({"id":format!("approval:{id}:status"),"threadId":thread,"ts":crate::now_ms(),"agentId":"main","kind":"approval_status","data":{"requestId":id,"actionId":action,"status":status,"nativeRequestHash":fingerprint}});
+        let events = if status == "applied" {
+            vec![event.clone(), outcome.clone()]
+        } else {
+            vec![outcome.clone()]
+        };
+        // A delayed phone answer may belong to a different day: its original timestamp remains
+        // readable in clientTs while this one transaction uses the host's admission day.
+        let mut events = events;
+        if status == "applied" {
+            events[0]["clientTs"] = events[0]["ts"].clone();
+            events[0]["ts"] = outcome["ts"].clone();
+        }
+        let proof = self.append(&json!({"op":"history_append","operationId":operation,"events":events,"thread":true,"transcript":true}));
+        if !proof.is_ok_and(|proof| proof["stored"] == true) {
+            self.failed = true;
+            return Err(invalid());
+        }
+        Ok(
+            json!({"stored":true,"execute":status == "applied" && event["data"]["answer"] == "yes","replayed":false,"status":outcome,"events":events}),
+        )
+    }
     fn attempt_request(&mut self, request: &Value) -> io::Result<Value> {
         use rand_core::{OsRng, RngCore};
         let thread = request["threadId"]
@@ -2078,6 +2398,14 @@ impl History {
         }
         if request["op"]
             .as_str()
+            .is_some_and(|op| op.starts_with("native_approval_"))
+        {
+            return self
+                .native_approval_request(request)
+                .unwrap_or_else(|_| json!({"error":"native-approval-unconfirmed"}));
+        }
+        if request["op"]
+            .as_str()
             .is_some_and(|op| op.starts_with("run_turn_"))
         {
             return self
@@ -2199,6 +2527,13 @@ impl History {
         }
         let result = match request["op"].as_str() {
             Some("history_open") => Ok(json!({"stored":true})),
+            Some("history_append")
+                if request["operationId"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("native-approval-")) =>
+            {
+                Ok(json!({"error":"reserved-history-operation"}))
+            }
             Some("history_append") => self.append(request),
             _ => return json!({"error":"invalid-history-request"}),
         };

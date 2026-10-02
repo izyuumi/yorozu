@@ -1209,6 +1209,51 @@ actual StopStore reconciliation boundary and use its real Root result. The compl
 original deadlines and one local worker. Active-worker acknowledgement provenance and provider/plugin approval
 currency remain unfinished; this does not claim the entire orchestration or standalone migration.
 
+## Rust native permission admission
+
+Native SDK approval cards now use native_approval_raise with the captured Rust-issued origin,
+canonical reply and attempt IDs. Rust verifies its live registry, same agent, actual Accepted
+conversation and retained user evidence under the metadata writer lease. It refuses Stop,
+expired admission, rewound origins, terminal history and replacement attempts. The card's immutable
+tool/input and nativeRun are saved through the existing history journal before publication.
+Questions and plugin rules/grants retain their existing paths for later finite work.
+
+native_approval_decide authenticates that registration and any previous applied status through
+owned journal/projection evidence. Public history_append reserves native-approval-* operation
+names; arbitrary matching public rows cannot grant permission or consume the registered card.
+A bounded retained-history scan supplies card evidence, rather than another operational truth store.
+The Node waiting map is only a liveness veto and never selects a newer attempt. Root applies the
+existing MCP notification restriction, thirty-minute answer lifetime and five-minute future-clock
+allowance, and also expires an old card despite a newly timestamped answer.
+
+The original answer and status share one journal transaction and host admission day. clientTs
+retains the original device timestamp. Stable request identity authenticates action/answer/source/
+rule content; a conflicting reused request ID remains uncertain without overwrite. Retries prove
+original bytes and projections, return the original status and never release another SDK execution,
+including after host epoch loss. Rejected notification answers retain the prompt. Stale/expired
+answers settle false. Initial YOLO for host approval callbacks and late YOLO for waiting cards use
+this captured registration/admission boundary. The SDK's own bypass configuration remains a Node
+compatibility setting until the worker contract migrates it; SDK checks it suppresses do not raise
+host cards. Native approvals still install no task grants or permanent rules.
+
+Node removes the waiting card only after Root admission, before confirmed publication, and checks
+its captured effect scope and abort signals again before the SDK receives permission. Storage
+uncertainty pauses/aborts that captured worker even if it ignores the denial. A thrown native queue
+turn remains fenced/uncertain and cannot use the generic provider error-final writer.
+
+The actual old Node implementation reports applied for a released/replaced attempt and returns true
+to the SDK after its separate status projection fails. Both regressions fail on the signed baseline.
+The focused candidate passes two Root permission tests, strict Clippy, production build and fourteen
+runtime cases, including encrypted transport, notification rejection, both YOLO paths, Stop and drain.
+Initial type rebuild, Clippy and unhandled generic-fallback failures are retained with final evidence.
+The final Rust source passes145 tests; the complete runtime/plugin rerun passes864 tests and one
+existing skip across52 files with one local worker and unchanged deadlines. The initial full run
+exposed four SDK fixtures lacking a real Root owner and an application-clock test that also advanced
+the phone answer by24 hours. SDK fixtures now use actual Accepted/FIFO/claim ownership and distinct
+answer IDs; the phone keeps real time while the update clock advances. That failed run and the final
+rerun are retained. Broader plugin approval policy/currency, questions,
+worker cancellation acknowledgements and the remaining finite migration are still unfinished.
+
 ## Isolated alpha CI
 
 Push CI now includes the exact `v0.6.0-alpha` branch and runs the existing full checks, including
