@@ -1119,7 +1119,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const finalReply = event.kind === "message" && event.data.role === "agent" &&
       event.data.done === true && event.parentAgentId === undefined;
     if (!threadId || !(finalReply || ["approval_card", "approval_answer", "approval_status", "question_card",
-      "question_answer", "interrupt"].includes(event.kind) || event.kind === "message" && event.data.role === "user"))
+      "question_answer", "question_status", "interrupt"].includes(event.kind) || event.kind === "message" && event.data.role === "user"))
       return false;
     // A user message starts a turn before the host has said so; a final reply ends it, unless
     // another turn is already queued behind it.
@@ -1139,7 +1139,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     }
     broadcast(event);
     // A raised card shows on the list as well as in the chat, so the list follows it.
-    if (["approval_card", "approval_answer", "approval_status", "question_card", "question_answer"].includes(event.kind))
+    if (["approval_card", "approval_answer", "approval_status", "question_card", "question_answer", "question_status"].includes(event.kind))
       broadcast(threadList());
   }
 
@@ -1464,7 +1464,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
   /** A bounded replay page. An explicit thread request includes its pre-pairing history. */
   const syncDelta = (lastSeen: Record<string, string>, pairedAt = 0, threadId?: string,
     includeApprovalStatus = true, focusThreadId?: string, includeCurrent = true,
-    replayBytes = SYNC_PAGE_BYTES, replayEvents = SYNC_LIMIT, phoneCanDownload: boolean | null = null): YorozuEvent[] => {
+    replayBytes = SYNC_PAGE_BYTES, replayEvents = SYNC_LIMIT, phoneCanDownload: boolean | null = null, includeQuestionStatus = true): YorozuEvent[] => {
     const events: YorozuEvent[] = [];
     const cards: YorozuEvent[] = [];
     const allThreads = listThreads(dir);
@@ -1477,12 +1477,13 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const activeCards = (id: string, history: YorozuEvent[]): YorozuEvent[] => {
       const answered = new Set(history.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
         : event.kind === "approval_status" && event.data.status !== "rejected" ? [event.data.actionId]
-        : event.kind === "question_answer" ? [event.data.questionId] : []));
+        : event.kind === "question_answer" ? [event.data.questionId]
+        : event.kind === "question_status" && event.data.status !== "rejected" ? [event.data.questionId] : []));
       return history.filter((event) => event.kind === "approval_card"
         ? !answered.has(event.data.actionId) &&
           (pending.get(event.data.actionId)?.threadId === id || nativeCards.has(event.data.actionId, id))
         : event.kind === "question_card" && !answered.has(event.data.questionId) &&
-          questions.has(event.data.questionId, id));
+          (questions.has(event.data.questionId, id) || nativeCards.hasQuestion(event.data.questionId, id)));
     };
     let latest: YorozuEvent | undefined;
     if (focused && includeCurrent) {
@@ -1525,7 +1526,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     let bytes = currentBytes;
     let more = false;
     threads: for (const thread of selected) {
-      const page = threadSyncPage(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt, includeApprovalStatus);
+      const page = threadSyncPage(thread.id, lastSeen?.[thread.id], dir, threadId ? 0 : pairedAt, includeApprovalStatus, includeQuestionStatus);
       if (page.more) more = true;
       for (const stored of page.events) {
         const event = phoneCanDownload === null ? stored : phoneTrace(stored, phoneCanDownload);
@@ -1948,10 +1949,17 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 return allowed && !signal.aborted && effectsAllowed();
               },
               ask: async (question, options, signal) => {
-                if (!effectsAllowed()) return "Interrupted";
+                if (!effectsAllowed()) return undefined;
                 flushActivity();
-                const answer = await nativeCards.ask(threadId, agent, question, options, scopedSignal(signal));
-                return !signal.aborted && effectsAllowed() ? answer : "Interrupted";
+                const unconfirmed = (): void => {
+                  paused = true;
+                  state("native-question-unconfirmed");
+                  pauseIssuedAttempt(attempt, "unconfirmed");
+                  turn.abort();
+                };
+                const answer = await nativeCards.ask(threadId, agent, question, options, scopedSignal(signal),
+                  { eventId: userEventId!, turnId: id, attemptId: attempt }, unconfirmed);
+                return !signal.aborted && effectsAllowed() ? answer : undefined;
               },
               beforeTool: async (signal) => {
                 signal = scopedSignal(signal);
@@ -2638,7 +2646,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     ? pending.get(event.data.actionId)?.threadId === event.threadId ||
       nativeCards.has(event.data.actionId, event.threadId)
     : event.kind === "question_card"
-      ? questions.has(event.data.questionId, event.threadId)
+      ? questions.has(event.data.questionId, event.threadId) || nativeCards.hasQuestion(event.data.questionId, event.threadId)
       : true;
 
   /** The compatibility timer only wakes Rust's monotonic, connection-scoped scheduler. */
@@ -2881,6 +2889,26 @@ export function serve(options: ServeOptions = {}): Sidecar {
         }).catch((error) => state(`thread-search-error ${String(error)}`));
       return;
     }
+    if (event.kind === "question_answer") {
+      if (typeof event.threadId !== "string" || !event.threadId || event.threadId.length > 128 ||
+          typeof event.id !== "string" || !event.id || event.id.length > 128 ||
+          typeof event.data.questionId !== "string" || !event.data.questionId || event.data.questionId.length > 128 ||
+          typeof event.data.answer !== "string") return;
+      const history = readThreadEvents(event.threadId, dir);
+      if (nativeCards.ownsQuestion(event.data.questionId) || history.some((known) =>
+          known.kind === "question_card" && known.data.questionId === event.data.questionId && known.data.nativeAgent !== undefined ||
+          known.kind === "question_status" && known.data.requestId === event.id && "nativeRequestHash" in known.data)) {
+        if (!event.data.answer.trim() || Buffer.byteLength(event.data.answer) > 65_536) return;
+        const outcome = nativeCards.answer(event);
+        if (outcome?.kind !== "question_status") { state("native-question-unconfirmed"); return; }
+        const compatibility = from ? devices.get(from)?.compatibility : undefined;
+        if (!from || compatibility?.state === "compatible" && compatibility.capabilities.includes("native-question-status-v1") ||
+            outcome.data.status === "applied") reply(control({ kind: "receipt", data: { eventId: event.id } }));
+        else reply({ id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: MAIN_AGENT,
+          kind: "thought", data: { text: "Update Yorozu to confirm this question answer." } });
+        return;
+      }
+    }
     if (event.kind === "approval_answer") {
       const compatibility = from ? devices.get(from)?.compatibility : undefined;
       const statusSupported = !from || compatibility?.state === "compatible" &&
@@ -2928,7 +2956,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // Notification buttons cannot inherit app-only permission to approve a sensitive card.
         if (event.data.source === "notification" && quickActions.get(event.data.actionId) !== true &&
             !nativeCards.quickApprovable(event.data.actionId)) return "rejected";
-        if (!nativeCards.answer(event)) active?.settle({ answer: event.data.answer,
+        active?.settle({ answer: event.data.answer,
           ...(event.data.rule ? { rule: event.data.rule } : {}) }, "already-logged");
         if (active) emit(event);
         return "applied";
@@ -3128,7 +3156,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       } }));
       return;
     }
-    if (event.kind === "admission_status" || event.kind === "approval_status") return;
+    if (event.kind === "admission_status" || event.kind === "approval_status" || event.kind === "question_status") return;
     if (event.kind === "update_status") return;
     if (event.kind === "update_control") {
       const subscriber = localDevice ?? from;
@@ -3513,7 +3541,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
         // Emitted by the runtime, never accepted from a device: a proposal is not a decision.
         return;
       case "question_answer":
-        if (!nativeCards.answer(event)) questions.answer(event.data.questionId, event.data.answer);
+        questions.answer(event.data.questionId, event.data.answer);
         // The row's "needs your answer" mark clears with the card.
         return broadcast(threadList());
       // The rest of a truncated tool result, to the one device that asked, under the id it
@@ -3637,7 +3665,8 @@ export function serve(options: ServeOptions = {}): Sidecar {
           event.data.focusThreadId, event.data.includeCurrent !== false,
           hinted ? 32 * 1024 : SYNC_PAGE_BYTES, hinted ? 32 : SYNC_LIMIT,
           from ? compatibility?.state === "compatible" &&
-            compatibility.capabilities.includes("attachment-chunks-v1") : null);
+            compatibility.capabilities.includes("attachment-chunks-v1") : null,
+          !from || compatibility?.state === "compatible" && compatibility.capabilities.includes("native-question-status-v1"));
         if (hinted && event.data.threadId === undefined &&
           responses.some((response) => response.kind === "sync_delta" && !response.data.more))
           hintedClients.delete(from!);
@@ -4015,6 +4044,9 @@ export function serve(options: ServeOptions = {}): Sidecar {
       const supportsApprovalStatus = known.compatibility?.state === "compatible" &&
         known.compatibility.capabilities.includes("offline-approval-v1");
       if (!supportsApprovalStatus && event.kind === "approval_status") return [];
+      const supportsQuestionStatus = known.compatibility?.state === "compatible" &&
+        known.compatibility.capabilities.includes("native-question-status-v1");
+      if (!supportsQuestionStatus && event.kind === "question_status") return [];
       const awaitingCompatibility = known.record.peerInfoRequired && known.compatibility?.state !== "compatible";
       if (awaitingCompatibility && event.kind !== "thread_list") return [];
       const cutoff = known.record.pairedAt ?? 0;

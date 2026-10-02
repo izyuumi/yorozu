@@ -4029,7 +4029,7 @@ test("Stop retires a pending approval on the phone and in the thread log", async
     data: expect.objectContaining({ actionId: card.data.actionId, status: "no-longer-needed" }) }));
 });
 
-test("catch-up excludes an answered question from current state", async () => {
+test.each(["A", ""])("catch-up excludes an answered generic question from current state (%j)", async (answer) => {
   const ask = () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0,
     id: "call_ask", function: { name: "ask_user", arguments: JSON.stringify({ question: "Which?", options: ["A", "B"] }) },
   }] }, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
@@ -4049,7 +4049,10 @@ test("catch-up excludes an answered question from current state", async () => {
   const archived = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
   expect(archived.kind === "sync_delta" && archived.data.current).toContainEqual(question);
   if (question.kind !== "question_card") throw new Error("expected question card");
-  send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: "A" } });
+  const answerId = send({ kind: "question_answer", data: { questionId: question.data.questionId, answer } });
+  await vi.waitFor(() => expect(readThreadEvents("t1", dir)).toContainEqual(expect.objectContaining({
+    id: answerId, kind: "question_answer", data: { questionId: question.data.questionId, answer },
+  })));
   await eventsUntil((event) => event.kind === "message" && event.data.done === true);
   send({ kind: "sync_request", data: { lastSeen: {}, focusThreadId: "t1" } }, "");
   const settled = await eventsUntil((event) => event.kind === "sync_delta");
@@ -4084,13 +4087,17 @@ test("current snapshot honors the pairing cutoff for live replies", async () => 
   } finally { release.resolve(); }
 });
 
-test.each([["claude-code", "yes"], ["claude-code", "no"], ["codex", "yes"], ["codex", "no"]] as const)("%s native approval %s round-trips through encrypted relay including lockscreen answers", async (agent, answer) => {
+test.each([["claude-code", "yes", "Custom", true], ["claude-code", "no", "Cancelled", false], ["codex", "yes", "Interrupted", true], ["codex", "no", "Custom", false]] as const)("%s native approval %s round-trips through encrypted relay including lockscreen answers (%s)", async (agent, answer, choice, supportsStatus) => {
   const runner: NativeAgentRunner = { run: async (turn) => {
     const allowed = await turn.approve!("Bash", { command: "pwd" }, turn.signal);
     const response = await turn.ask!("Which?", ["A", "B"], turn.signal);
     return { text: `${allowed}:${response}`, sessionId: "sdk-session" };
   } };
   const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { [agent]: runner } });
+  const peer = localPeerInfo("test");
+  if (!supportsStatus) peer.capabilities = peer.capabilities.filter((capability) => capability !== "native-question-status-v1");
+  const claim = send({ kind: "thread_list", data: { threads: [], peerInfo: peer } }, "");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.peerInfoReplyTo === claim);
   send({ kind: "thread_create", data: { agent, cwd: proj } }, "native");
   send({ kind: "message", data: { role: "user", text: "work" } }, "native");
   const approval = (await eventsUntil((e) => e.kind === "approval_card")).at(-1)!;
@@ -4098,8 +4105,16 @@ test.each([["claude-code", "yes"], ["claude-code", "no"], ["codex", "yes"], ["co
   send({ kind: "approval_answer", data: { actionId: approval.data.actionId, answer, source: "notification" } }, "native");
   const question = (await eventsUntil((e) => e.kind === "question_card")).at(-1)!;
   if (question.kind !== "question_card") throw new Error("missing question");
-  send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: "Custom" } }, "native");
-  expect((await eventsUntil((e) => e.kind === "message" && e.data.done === true)).at(-1)).toMatchObject({ data: { text: `${answer === "yes"}:Custom` } });
+  send({ kind: "question_answer", data: { questionId: question.data.questionId, answer: choice } }, "native");
+  const completion = await eventsUntil((e) => e.kind === "message" && e.data.done === true);
+  expect(completion.at(-1)).toMatchObject({ data: { text: `${answer === "yes"}:${choice}` } });
+  expect(completion.some((event) => event.kind === "question_status")).toBe(supportsStatus);
+  send({ kind: "sync_request", data: { lastSeen: {}, threadId: "native" } }, "");
+  const replay = (await eventsUntil((event) => event.kind === "sync_delta")).at(-1)!;
+  if (replay.kind !== "sync_delta") throw new Error("missing replay");
+  expect(replay.data.events.some((event) => event.kind === "question_status")).toBe(supportsStatus);
+  expect(readThreadEvents("native", dir)).toContainEqual(expect.objectContaining({ kind: "question_status",
+    data: expect.objectContaining({ questionId: question.data.questionId, status: "applied" }) }));
   expect(listRules(dir)).toEqual([]);
   expect(readThreadEvents("native", dir).some((e) => e.kind === "rule_proposal")).toBe(false);
 });
@@ -4709,7 +4724,7 @@ test.each([
   oldTurn.onUpdate!("stale partial");
   oldTurn.onActivity!("stale-call", { kind: "tool_call", data: { callId: "stale", name: "Bash", args: {} } });
   expect(await oldTurn.approve!("Bash", {}, new AbortController().signal)).toBe(false);
-  expect(await oldTurn.ask!("Stale question?", [], new AbortController().signal)).toBe("Interrupted");
+  expect(await oldTurn.ask!("Stale question?", [], new AbortController().signal)).toBeUndefined();
   expect(await oldTurn.beforeTool!(new AbortController().signal)).toBe(false);
   oldResult.resolve({ text: "stale completion", sessionId: "stale-completion-session", completed: true });
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -5091,10 +5106,11 @@ test.each(["approval", "question"] as const)("Stop withdraws an open native %s c
   send({ kind: "interrupt", data: { targetEventId: target } }, "card-stop");
   const result = await eventsUntil((event) => event.kind === "stop_status" && event.data.targetEventId === target &&
     event.data.status === "stopped");
-  const answer = result.find((event) => event.kind === (kind === "approval" ? "approval_answer" : "question_answer"));
+  const answer = result.find((event) => event.kind === (kind === "approval" ? "approval_answer" : "question_status"));
   expect(answer).toMatchObject(kind === "approval"
     ? { data: { actionId: card.kind === "approval_card" ? card.data.actionId : "", answer: "no" } }
-    : { data: { questionId: card.kind === "question_card" ? card.data.questionId : "", answer: "Cancelled" } });
+    : { data: { questionId: card.kind === "question_card" ? card.data.questionId : "", status: "no-longer-needed" } });
+  if (kind === "question") expect(readThreadEvents("card-stop", dir).some((event) => event.kind === "question_answer")).toBe(false);
   expect(turn.signal.aborted).toBe(true);
   expect(readThreadEvents("card-stop", dir)).toContainEqual(expect.objectContaining({ kind: answer?.kind,
     data: expect.objectContaining(answer?.data ?? {}) }));
@@ -7397,4 +7413,33 @@ test("a saved native final cannot fabricate Stop status after its journal write 
     expect(readThreadEvents("stop-result-storage",dir).filter((event)=>event.id===`native:${origin}:final`)).toEqual([expect.objectContaining({data:expect.objectContaining({text:"full answer",done:true})})]);
     expect(readThreadEvents("stop-result-storage",dir).some((event)=>event.kind==="stop_status"&&["stopped","completed"].includes(event.data.status))).toBe(false);
   } finally {if(disrupted){rmSync(path,{recursive:true});renameSync(backup,path);}}
+});
+
+
+test.each(["source", "foreign-thread"])("an encrypted native question answer cannot enter history outside its captured scope (%s)", async (mode) => {
+  const response = Promise.withResolvers<string | undefined>();
+  const runner: NativeAgentRunner = { run: async (turn) => {
+    response.resolve(await turn.ask!("Which?", ["A"], turn.signal));
+    return { text: "retired" };
+  } };
+  const { dir, send, eventsUntil } = await pairedPhone([], false, { nativeRunners: { codex: runner } }, true);
+  send({ kind: "thread_create", data: { agent: "codex", cwd: proj } }, "question-scope");
+  await eventsUntil((event) => event.kind === "thread_list" && event.data.threads.some((thread) => thread.id === "question-scope"));
+  send({ kind: "message", data: { role: "user", text: "ask" } }, "question-scope");
+  const card = (await eventsUntil((event) => event.kind === "question_card")).at(-1)!;
+  if (card.kind !== "question_card") throw new Error("missing question");
+  const targetThread = mode === "source" ? "question-scope" : "question-foreign";
+  if (mode === "source") {
+    const path = join(dir, "threads.json");
+    const threads = JSON.parse(readFileSync(path, "utf8"));
+    threads.find((thread: { id: string }) => thread.id === "question-scope").agent = "claude-code";
+    writeFileSync(path, JSON.stringify(threads));
+  } else createThread("Other conversation", dir, targetThread);
+  const answer = send({ kind: "question_answer", data: { questionId: card.data.questionId, answer: "A" } }, targetThread);
+  await eventsUntil((event) => event.kind === "receipt" && event.data.eventId === answer);
+  expect(readThreadEvents(targetThread, dir).some((event) => event.kind === "question_answer")).toBe(false);
+  if (mode === "foreign-thread") {
+    send({ kind: "question_answer", data: { questionId: card.data.questionId, answer: "A" } }, "question-scope");
+    expect(await response.promise).toBe("A");
+  } else expect(await response.promise).toBeUndefined();
 });

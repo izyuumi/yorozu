@@ -21,7 +21,7 @@ import {
 import { stateDir } from "./memory.js";
 import type { Message } from "./provider.js";
 import { rustSyncPage } from "./thread-sync-rust.js";
-import { persistHistory, persistHistoryBatch, syncHostRequest } from "./rust-sync.js";
+import { persistHistory, persistHistoryBatch, syncHostRequest, syncHostResult } from "./rust-sync.js";
 
 /** How much of a thread's log is replayed to the model as context. */
 export const HISTORY_LIMIT = 40;
@@ -394,7 +394,8 @@ function logSummary(threadId: string, dir: string, minTs = 0):
     : e.kind === "approval_status" && (e.data.status === "expired" || e.data.status === "no-longer-needed")
       ? [e.data.actionId] : []));
   const awaiting = events.some((e) => e.kind === "approval_card" && !answered.has(e.data.actionId));
-  const asked = new Set(events.flatMap((e) => (e.kind === "question_answer" ? [e.data.questionId] : [])));
+  const asked = new Set(events.flatMap((e) => (e.kind === "question_answer" ? [e.data.questionId]
+    : e.kind === "question_status" && e.data.status !== "rejected" ? [e.data.questionId] : [])));
   const asking = events.some((e) => e.kind === "question_card" && !asked.has(e.data.questionId));
   const failed = last?.kind === "message" && last.data.role === "agent" && last.data.done === true && last.data.failed === true;
   return {
@@ -694,8 +695,8 @@ export function eventsAfter(
   return threadSyncPage(threadId, afterEventId, dir, minTs, includeApprovalStatus).events;
 }
 export function threadSyncPage(threadId: string, afterEventId: string | undefined, dir: string,
-  minTs: number, includeApprovalStatus: boolean): { events: YorozuEvent[]; more: boolean } {
-  return rustSyncPage(dir, threadId, afterEventId, minTs, includeApprovalStatus);
+  minTs: number, includeApprovalStatus: boolean, includeQuestionStatus = true): { events: YorozuEvent[]; more: boolean } {
+  return rustSyncPage(dir, threadId, afterEventId, minTs, includeApprovalStatus, includeQuestionStatus);
 }
 
 /**
@@ -775,6 +776,19 @@ export function setNativeTurn(id: string, turn: ThreadRecord["nativeTurn"], dir 
   saveThreads(threads, dir);
 }
 
+/** Root-scoped dead prompts retire through the original owner, never an invented answer. */
+function retireNativeQuestion(event: Extract<YorozuEvent, { kind: "question_card" }>, dir: string): void {
+  const request: YorozuEvent = { id: randomUUID(), threadId: event.threadId, ts: Date.now(), agentId: "main",
+    kind: "question_answer", data: { questionId: event.data.questionId, answer: "Interrupted" } };
+  const proof = syncHostResult(dir, { op: "native_question_decide", event: request, live: false });
+  const status = proof.status as YorozuEvent | undefined;
+  if (proof.stored !== true || proof.execute !== false || status?.kind !== "question_status" ||
+      status.threadId !== event.threadId || status.data.requestId !== request.id ||
+      status.data.questionId !== event.data.questionId ||
+      !["no-longer-needed", "expired"].includes(status.data.status))
+    throw new Error("Native question retirement remains unconfirmed");
+}
+
 export function recoverNativeTurns(dir = stateDir()): void {
   for (const thread of listThreads(dir)) {
     if (!thread.agent || thread.agent === "yorozu" || !thread.nativeTurn) continue;
@@ -785,14 +799,16 @@ export function recoverNativeTurns(dir = stateDir()): void {
     // for retry; a partial denial log is idempotent even across another process restart.
     const events = visibleThreadEvents(thread.id, dir);
     const answered = new Set(events.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
-      : event.kind === "question_answer" ? [event.data.questionId] : []));
+      : event.kind === "question_answer" ? [event.data.questionId]
+      : event.kind === "question_status" && event.data.status !== "rejected" ? [event.data.questionId] : []));
     for (const event of events) {
       const base = { id: randomUUID(), threadId: thread.id, ts: Date.now(), agentId: "main" };
       if (event.kind === "approval_card" && event.data.nativeAgent && !answered.has(event.data.actionId)) {
         appendThreadEvent({ ...base, kind: "approval_answer", data: { actionId: event.data.actionId, answer: "no" } }, dir);
         answered.add(event.data.actionId);
       } else if (event.kind === "question_card" && !answered.has(event.data.questionId)) {
-        appendThreadEvent({ ...base, kind: "question_answer", data: { questionId: event.data.questionId, answer: "Interrupted" } }, dir);
+        if (event.data.nativeRun) retireNativeQuestion(event, dir);
+        else appendThreadEvent({ ...base, kind: "question_answer", data: { questionId: event.data.questionId, answer: "Interrupted" } }, dir);
         answered.add(event.data.questionId);
       }
     }
@@ -808,7 +824,8 @@ export function retireOrphanedCards(dir = stateDir()): void {
     const events = readThreadEvents(thread.id, dir);
     const settled = new Set(events.flatMap((event) => event.kind === "approval_answer" ? [event.data.actionId]
       : event.kind === "approval_status" && event.data.status !== "rejected" ? [event.data.actionId]
-      : event.kind === "question_answer" ? [event.data.questionId] : []));
+      : event.kind === "question_answer" ? [event.data.questionId]
+      : event.kind === "question_status" && event.data.status !== "rejected" ? [event.data.questionId] : []));
     for (const event of events) {
       const base = { id: randomUUID(), threadId: thread.id, ts: Date.now(), agentId: "main" };
       if (event.kind === "approval_card" && !settled.has(event.data.actionId)) {
@@ -816,7 +833,8 @@ export function retireOrphanedCards(dir = stateDir()): void {
           requestId: randomUUID(), actionId: event.data.actionId, status: "no-longer-needed",
         } }, dir);
       } else if (event.kind === "question_card" && !settled.has(event.data.questionId)) {
-        appendThreadEvent({ ...base, kind: "question_answer", data: {
+        if (event.data.nativeRun) retireNativeQuestion(event, dir);
+        else appendThreadEvent({ ...base, kind: "question_answer", data: {
           questionId: event.data.questionId, answer: "Interrupted",
         } }, dir);
       }

@@ -12,6 +12,7 @@ const CAPABILITIES: &[&str] = &[
     "model-select-v1",
     "thread-rewind-v1",
     "offline-approval-v1",
+    "native-question-status-v1",
     "thread-search-v1",
     "attachment-chunks-v1",
     "reply-context-v1",

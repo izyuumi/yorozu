@@ -11,6 +11,8 @@ interface PendingCard {
   quick: boolean;
   settle: (answer?: string, alreadyLogged?: boolean) => void;
   unconfirmed?: () => void;
+  cancel: () => void;
+  scope: NativeApprovalScope;
 }
 
 /** SDK prompts install no Yorozu rules, floors, task grants or proposals. */
@@ -31,12 +33,45 @@ export class NativeCards {
   waitingThreads(): Set<string> {
     return new Set([...this.waiting.values()].map((item) => item.threadId));
   }
-  answer(event: YorozuEvent): boolean {
-    if (event.kind !== "question_answer") return false;
+  /** Pending native identity routes even a foreign/stale answer to Root for refusal. */
+  ownsQuestion(questionId: string): boolean {
+    return this.waiting.get(questionId)?.kind === "question_answer";
+  }
+  hasQuestion(questionId: string, threadId: string): boolean {
+    const pending = this.waiting.get(questionId);
+    if (pending?.kind !== "question_answer" || pending.threadId !== threadId) return false;
+    try { return syncHostResult(this.root.dir, { op: "run_attempt_current", threadId, ...pending.scope, mode: "effect" }).current === true; }
+    catch { return false; }
+  }
+
+  /** A local waiter is only a veto; Root owns answer currency and journal evidence. */
+  answer(event: YorozuEvent, cancelled = false): YorozuEvent | undefined {
+    if (event.kind !== "question_answer") return;
     const pending = this.waiting.get(event.data.questionId);
-    if (!pending || pending.threadId !== event.threadId || pending.kind !== event.kind) return false;
-    pending.settle(event.data.answer);
-    return true;
+    const live = pending?.kind === "question_answer" && pending.threadId === event.threadId;
+    try {
+      const proof = syncHostResult(this.root.dir, { op: "native_question_decide", event, live: live && !cancelled });
+      const status = proof.status as YorozuEvent | undefined;
+      const events = proof.events as YorozuEvent[] | undefined;
+      if (proof.stored !== true || status?.kind !== "question_status" || status.threadId !== event.threadId ||
+          status.data.requestId !== event.id || status.data.questionId !== event.data.questionId ||
+          !["applied", "no-longer-needed", "expired", "rejected"].includes(status.data.status) ||
+          !Array.isArray(events) || events.length !== (status.data.status === "applied" ? 2 : 1) ||
+          events.at(-1)?.id !== status.id || events.some((saved) => saved.threadId !== event.threadId ||
+            !(saved.kind === "question_status" && saved.data.requestId === event.id && saved.data.questionId === event.data.questionId ||
+              saved.kind === "question_answer" && saved.id === event.id && saved.data.questionId === event.data.questionId && saved.data.answer === event.data.answer)))
+        throw new Error("Native question remains unconfirmed");
+      const saved = events[0];
+      if (live && status.data.status !== "rejected") {
+        pending.settle(proof.execute === true && proof.replayed === false && status.data.status === "applied" && saved?.kind === "question_answer"
+          ? saved.data.answer : undefined, true);
+      }
+      for (const saved of events) this.root.publish(saved);
+      return status;
+    } catch {
+      if (live) { pending.unconfirmed?.(); pending.settle(undefined, true); }
+      return;
+    }
   }
 
   /** Rust commits the original answer/status before any captured SDK promise can settle. */
@@ -80,7 +115,7 @@ export class NativeCards {
     }
   }
   cancelAll(threadId: string): void {
-    for (const pending of [...this.waiting.values()]) if (pending.threadId === threadId) pending.settle();
+    for (const pending of [...this.waiting.values()]) if (pending.threadId === threadId) pending.cancel();
   }
 
   async approve(threadId: string, agent: Exclude<ThreadAgent, "yorozu">, tool: string,
@@ -92,48 +127,53 @@ export class NativeCards {
     }, signal, nativeQuickApprovable(tool), scope, unconfirmed, bypass);
     return answer === "yes";
   }
-  ask(threadId: string, agent: ThreadAgent, question: string, options: string[], signal: AbortSignal): Promise<string | undefined> {
+  ask(threadId: string, agent: ThreadAgent, question: string, options: string[], signal: AbortSignal,
+    scope: NativeApprovalScope, unconfirmed: () => void): Promise<string | undefined> {
     const questionId = randomUUID();
     return this.request(threadId, questionId, "question_answer", {
       kind: "question_card", data: { questionId, nativeAgent: agent, question, options, allowOther: true },
-    }, signal);
+    }, signal, false, scope, unconfirmed);
   }
 
   private request(threadId: string, id: string, kind: "approval_answer" | "question_answer", payload: EventPayload,
     signal: AbortSignal, quick = false, scope?: NativeApprovalScope, unconfirmed?: () => void, bypass = false): Promise<string | undefined> {
     if (signal.aborted) return Promise.resolve(undefined);
     return new Promise((resolve, reject) => {
-      const cancel = (): void => settle();
+      const cancel = (): void => {
+        if (kind === "question_answer") this.answer({ id: randomUUID(), threadId, ts: Date.now(), agentId: "main",
+          kind: "question_answer", data: { questionId: id, answer: "Cancelled" } }, true);
+        else settle();
+      };
       const settle = (answer?: string, alreadyLogged = false): void => {
         if (!this.waiting.delete(id)) return;
         signal.removeEventListener("abort", cancel);
         // Cancellation is a denial, never permission to continue after an aborted signal.
         try {
-          if (!alreadyLogged) this.emit({ id: randomUUID(), threadId, ts: Date.now(), agentId: "main", ...(kind === "approval_answer"
-            ? { kind, data: { actionId: id, answer: answer === "yes" ? "yes" as const : "no" as const } }
-            : { kind, data: { questionId: id, answer: answer ?? "Cancelled" } }) });
+          if (!alreadyLogged && kind === "approval_answer") this.emit({ id: randomUUID(), threadId, ts: Date.now(), agentId: "main",
+            kind, data: { actionId: id, answer: answer === "yes" ? "yes" : "no" } });
         } catch { /* An aborted SDK signal still receives denial when history is unavailable. */ }
         finally { resolve(answer); }
       };
       let event: YorozuEvent = { id: randomUUID(), threadId, ts: Date.now(), agentId: "main", ...payload };
-      if (kind === "approval_answer") {
-        try {
-          const proof = syncHostResult(this.root.dir, { op: "native_approval_raise", event, scope });
-          const saved = proof.event as YorozuEvent | undefined;
-          if (proof.stored !== true || saved?.kind !== "approval_card" || saved.threadId !== threadId ||
-              saved.data.actionId !== id || !scope || saved.data.nativeRun?.eventId !== scope.eventId ||
-              saved.data.nativeRun.turnId !== scope.turnId || saved.data.nativeRun.attemptId !== scope.attemptId)
-            throw new Error("Native permission remains unconfirmed");
-          event = saved;
-        } catch (error) { unconfirmed?.(); reject(error); return; }
-      }
-      this.waiting.set(id, { threadId, kind, quick, settle, unconfirmed });
+      try {
+        const prefix = kind === "approval_answer" ? "approval" : "question";
+        const proof = syncHostResult(this.root.dir, { op: `native_${prefix}_raise`, event, scope });
+        const saved = proof.event as YorozuEvent | undefined;
+        if (proof.stored !== true || !saved || !(saved.kind === "approval_card" || saved.kind === "question_card") ||
+            saved.kind !== `${prefix}_card` || saved.threadId !== threadId ||
+            (saved.kind === "approval_card" ? saved.data.actionId : saved.data.questionId) !== id ||
+            !scope || saved.data.nativeRun?.eventId !== scope.eventId || saved.data.nativeRun.turnId !== scope.turnId ||
+            saved.data.nativeRun.attemptId !== scope.attemptId)
+          throw new Error("Native prompt remains unconfirmed");
+        event = saved;
+      } catch (error) { unconfirmed?.(); reject(error); return; }
+      this.waiting.set(id, { threadId, kind, quick, settle, unconfirmed, cancel, scope: { ...scope! } });
       signal.addEventListener("abort", cancel, { once: true });
       if (kind === "approval_answer") {
         if (bypass) this.admitApproval({ id: randomUUID(), threadId, ts: Date.now(), agentId: "main",
           kind: "approval_answer", data: { actionId: id, answer: "yes" } });
         else this.root.publish(event);
-      } else this.emit(event);
+      } else this.root.publish(event);
     });
   }
 }

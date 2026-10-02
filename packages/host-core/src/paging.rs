@@ -586,6 +586,10 @@ impl Paging {
         let include = request["includeApprovalStatus"]
             .as_bool()
             .ok_or_else(invalid)?;
+        let include_questions = match request.get("includeQuestionStatus") {
+            None => true,
+            Some(value) => value.as_bool().ok_or_else(invalid)?,
+        };
         let path = root
             .join("threads")
             .join(format!("{}.jsonl", crate::thread_index::file_name(id)));
@@ -718,6 +722,7 @@ impl Paging {
             };
             if event["ts"].as_f64().ok_or_else(invalid)? < min
                 || (!include && event["kind"] == "approval_status")
+                || (!include_questions && event["kind"] == "question_status")
             {
                 continue;
             }

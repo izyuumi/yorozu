@@ -1317,9 +1317,8 @@ negative decisions after restart. Conflicting request bytes and unowned applied 
 Offered choices are checked unless `allowOther` permits bounded free text. Question prompts keep
 their existing native no-timeout policy; the permission-only30-minute TTL remains separate. Literal
 user text such as `Cancelled` remains a valid free-text answer. Storage uncertainty, a replaced scope
-or `live=false` produces no accepted answer and cannot authorize execution. Native SDK adapter and
-Swift question receipt adoption are the next coherent slice; this API alone does not migrate the
-existing Node question path or establish full alpha readiness.
+or `live=false` produces no accepted answer and cannot authorize execution. Native SDK adapter and Swift receipt adoption are described below; this API alone does not
+establish full alpha readiness.
 Verification: all154 Rust tests, formatting, strict Clippy and both TypeScript builds pass. The
 full runtime/plugin suite passes875 tests with one existing skip across52 files using one local
 worker and original deadlines. The two initial Root tests fail against the missing API. One fixture
@@ -1338,8 +1337,9 @@ same reducer. Native question outcomes, choices and pending state are scoped by 
 when two cards share a question ID. The native iOS timeline observes those outcomes; Mac attention
 and notification filters consume the same scoped resolved state. Status rows remain operational
 metadata rather than separate conversation answers. The optional `native-question-status-v1` client
-capability does not alter required capabilities or grant access. SDK adapter publication and filtering
-remain the next finite migration slice, before release or installed-app replacement.
+capability does not alter required capabilities or grant access. The SDK adapter and transport now
+adopt the same Root admission as described below. Required capabilities and the native release/
+installed-app replacement gates remain unchanged.
 Verification: all457 shared Swift tests, two watch-link tests,16 Mac tests, the native Mac
 multi-host harness and localization checks pass. Sixty-five focused tests pass with original
 deadlines. Actual old-reducer negatives reproduce premature confirmation and missing reconciliation;
@@ -1348,6 +1348,48 @@ additional candidate negatives reproduce cached-history eviction, foreign-thread
 those cases. The initial full run has one outdated capability-list fixture failure; the revised test
 checks an independent common subset and omission of an unknown optional claim. Evidence retains
 that failure and the final complete run. Exact iOS26.5 verification remains a separate release gate.
+
+
+Native SDK questions now raise and decide through Root before publishing a card or settling a
+captured SDK promise. Local waiters only veto execution; current source/origin/reply/attempt,
+durable Stop, accepted answer text and journal commit are Root decisions. Only a newly applied
+saved answer reaches the SDK. Immutable replay confirms history without another continuation.
+Rejected choices leave the prompt open; stale or cancelled prompts settle without answer text.
+Unconfirmed storage pauses the captured attempt. SDK cancellation and scoped boot recovery store
+only typed retirement receipts, preserving legacy unscoped recovery and saved history. Literal
+`Cancelled` and `Interrupted` remain valid user choices. Scoped answers are intercepted before
+generic inbound persistence, so refused answers cannot appear as accepted history. Pending native
+question identity routes to Root even when a reply supplies a different conversation; exact Root
+waiter scope prevents that foreign receipt from retiring the original question. Live catch-up still
+checks current owner currency.
+
+Both Root and shared peers advertise optional `native-question-status-v1`. Unsupported paired clients
+receive no question status rows live or in catch-up. Root filters before page limits and keeps
+occurrence cursors valid; negative answers require an updated client to confirm their disposition,
+while compatible applied answers keep the existing receipt behavior. Thread attention and live
+catch-up consume typed retirement state rather than fabricated answers. Broader plugin policy,
+SDK bypass configuration, the full provider-worker packet, operational SQLite migration and the
+standalone launcher remain unfinished finite-plan work.
+Verification in progress: focused SDK/restart/cursor checks and thirteen encrypted relay/Stop/
+replacement and generic catch-up cases pass with original deadlines. The native answer bounds apply
+only to native cards; the generic empty-answer contract remains unchanged. Actual old Node negatives returned answers after ownership/source/
+storage loss, fabricated a boot answer and leaked unsupported receipt rows. A distinct encrypted
+transport negative persisted an answer after a captured source change; byte-verified restoration
+followed the baseline run. All154 Rust tests, formatting, strict Clippy and production builds
+pass. The first full runtime run passes876 cases and exposes four stale-callback fixtures expecting
+synthetic interruption text; their original replacement/history checks remain, with no-answer
+cancellation expected. The unchanged-deadline rerun passes880 cases with one existing skip. An
+extended generic catch-up case then exposes the incorrectly shared empty-answer bound; the native
+intercept is narrowed, and the next full run passes881 cases with one existing skip. A foreign-
+conversation variant of the same encrypted transport regression then exposes generic fall-through;
+known pending native identity now routes to Root independently of supplied conversation. Its
+correctly scoped follow-up still answers the original waiter. Nineteen focused checks pass. The
+next full run passes881 cases and times out in one existing channel Stop case; its unchanged
+three-case table passes separately using the original deadline. The unchanged final full run passes
+882 runtime/plugin tests with one existing skip across52 files. All154 Rust tests, formatting,
+strict Clippy, both production builds and two shared peer-negotiation tests pass. No deadlines,
+assertions or global worker configuration were weakened. This completes the bounded native question
+admission slice, not the remaining finite migration or native release gates.
 
 ## Isolated alpha CI
 

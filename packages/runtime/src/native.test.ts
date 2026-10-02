@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync, renameSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { syncHostRequest, retainSyncHost } from "./rust-sync.js";
@@ -199,6 +199,7 @@ test("a failure the agent reports is the reply; a transport failure is thrown", 
 });
 
 // Exercise the SDK callback through the same card desk used by the sidecar.
+import { recoverNativeTurns, readThreadEvents, threadSummaries } from "./threads.js";
 import { NativeCards } from "./native-cards.js";
 import type { YorozuEvent } from "@yorozu/shared";
 import type { Options, Query } from "@anthropic-ai/claude-agent-sdk";
@@ -223,7 +224,10 @@ function permissionDesk(events: YorozuEvent[]) {
     expect(claim.claimed).toBe(true);
     scopes.set(threadId, { eventId, turnId: `native:${eventId}:final`, attemptId: claim.attemptId as string });
   }
-  return { cards: new NativeCards((event) => events.push(event), { dir, publish: (event) => events.push(event) }), scopes };
+  return { dir, cards: new NativeCards((event) => {
+    expect(syncHostRequest(dir, { op: "history_append", operationId: event.id, event, thread: true, transcript: true }).stored).toBe(true);
+    events.push(event);
+  }, { dir, publish: (event) => events.push(event) }), scopes };
 }
 
 test.each(["yes", "no"] as const)("native SDK permission %s holds the turn and returns to the SDK", async (answer) => {
@@ -274,7 +278,7 @@ test.each(["approval", "question"])("abort pending %s clears only that request",
   const { cards, scopes } = permissionDesk(events);
   const abort = new AbortController();
   const other = new AbortController();
-  const request = kind === "approval" ? cards.approve("cc", "claude-code", "Bash", {}, abort.signal, scopes.get("cc")!, () => { throw new Error("Unexpected permission uncertainty"); }) : cards.ask("cc", "claude-code", "Which?", ["A"], abort.signal);
+  const request = kind === "approval" ? cards.approve("cc", "claude-code", "Bash", {}, abort.signal, scopes.get("cc")!, () => { throw new Error("Unexpected permission uncertainty"); }) : cards.ask("cc", "claude-code", "Which?", ["A"], abort.signal, scopes.get("cc")!, () => { throw new Error("Unexpected question uncertainty"); });
   const separate = cards.approve("other", "claude-code", "Edit", {}, other.signal, scopes.get("other")!, () => { throw new Error("Unexpected permission uncertainty"); });
   abort.abort();
   expect(await request).toBe(kind === "approval" ? false : undefined);
@@ -401,4 +405,51 @@ test("Claude exit evidence belongs to this invocation and close alone is unconfi
     controllers[0]!.abort(); expect(await first).toMatchObject({text:"",cessation:"process-exited"});
     controllers[1]!.abort(); expect(await second).toEqual({text:""});
   } finally { for(const child of children) child.kill("SIGTERM"); }
+});
+
+
+test.each(["released", "source", "storage"])("native question never resumes a stale or unconfirmed worker: %s", async (guard) => {
+  const events: YorozuEvent[] = [];
+  const { dir, cards, scopes } = permissionDesk(events);
+  const scope = scopes.get("cc")!;
+  const uncertain = vi.fn();
+  const pending = cards.ask("cc", "claude-code", "Which?", ["A"], new AbortController().signal, scope, uncertain);
+  const card = events[0]!;
+  if (card.kind !== "question_card") throw new Error("missing question");
+  if (guard === "released") {
+    expect(syncHostRequest(dir, { op: "run_attempt_release", threadId: "cc", ...scope }).released).toBe(true);
+  } else if (guard === "source") {
+    const path = join(dir, "threads.json");
+    const rows = JSON.parse(readFileSync(path, "utf8"));
+    rows.find((row: { id: string }) => row.id === "cc").agent = "codex";
+    writeFileSync(path, JSON.stringify(rows));
+  } else {
+    const transcript = join(dir, "transcripts", readdirSync(join(dir, "transcripts"))[0]!);
+    renameSync(transcript, `${transcript}.backup`);
+    mkdirSync(transcript);
+  }
+  const answer: YorozuEvent = { id: "question-answer", threadId: "cc", ts: Date.now(), agentId: "phone", kind: "question_answer", data: { questionId: card.data.questionId, answer: "A" } };
+  cards.answer(answer);
+  expect(await pending).toBeUndefined();
+  if (guard === "storage") expect(uncertain).toHaveBeenCalledOnce();
+  const rows = readFileSync(join(dir, "threads", "cc.jsonl"), "utf8");
+  expect(rows).not.toContain('"kind":"question_answer"');
+});
+
+
+test("boot retires a Root-scoped native question without fabricating an SDK answer", () => {
+  const events: YorozuEvent[] = [];
+  const { dir, cards, scopes } = permissionDesk(events);
+  void cards.ask("cc", "claude-code", "Which?", ["A"], new AbortController().signal, scopes.get("cc")!, () => {});
+  const card = events[0]!;
+  if (card.kind !== "question_card") throw new Error("missing question");
+  for (const [threadId, scope] of scopes) expect(syncHostRequest(dir, { op: "run_attempt_release", threadId, ...scope }).released).toBe(true);
+  recoverNativeTurns(dir);
+  recoverNativeTurns(dir);
+  const history = readThreadEvents("cc", dir);
+  expect(history.some((event) => event.kind === "question_answer")).toBe(false);
+  expect(history.filter((event) => event.kind === "question_status")).toMatchObject([
+    { data: { questionId: card.data.questionId, status: "no-longer-needed" } },
+  ]);
+  expect(threadSummaries(dir).find((thread) => thread.id === "cc")?.awaitingQuestion).toBeUndefined();
 });

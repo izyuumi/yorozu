@@ -30,11 +30,11 @@ test("Rust retained history preserves released occurrence cursors, decoding and 
   rmSync(file); expect(rustSyncPage(dir, "home", undefined, 0, true)).toEqual({ events: [], more: false });
 }));
 test("Rust pages filter before limits and bound bytes without dropping an oversized first event", () => fixture((dir, file) => {
-  const rows = [event("old", "old", 0), ...Array.from({ length: 210 }, (_, n) => ({ ...event(`status${n}`, "status", 2), kind: "approval_status" })), ...Array.from({ length: 240 }, (_, n) => event(`new${n}`, "🙂".repeat(2500), 3))];
+  const rows = [event("old", "old", 0), ...Array.from({ length: 210 }, (_, n) => ({ ...event(`status${n}`, "status", 2), kind: n % 2 ? "question_status" : "approval_status" })), ...Array.from({ length: 240 }, (_, n) => event(`new${n}`, "🙂".repeat(2500), 3))];
   writeFileSync(file, rows.map(row => JSON.stringify(row)).join("\n") + "\n");
   let after: string | undefined; const ids: string[] = [];
   for (;;) {
-    const page = rustSyncPage(dir, "home", after, 1, false);
+    const page = rustSyncPage(dir, "home", after, 1, false, false);
     expect(page.events.length).toBeLessThan(200);
     ids.push(...page.events.map(e => e.id));
     if (!page.more) break;
