@@ -62,6 +62,7 @@ public struct MessageBubble: View {
     /// Sends the queued message again, for a message the outbox has given up on.
     private let onResend: (() -> Void)?
 
+    @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.sans
     @State private var hovering = false
@@ -116,12 +117,17 @@ public struct MessageBubble: View {
 
     private var speaking: Bool { Speaker.shared.speakingId == id && !id.isEmpty }
 
+    // Use the selected interface locale for actions, including in the isolated alpha app.
+    private func messageText(_ english: String, _ japanese: String) -> String {
+        locale.language.languageCode?.identifier == "ja" ? japanese : english
+    }
+
     private var copyLabel: String {
-        copied ? String(localized: "Copied message") : String(localized: "Copy message")
+        copied ? messageText("Copied message", "メッセージをコピーしました") : messageText("Copy message", "メッセージをコピー")
     }
 
     private var speechLabel: String {
-        speaking ? String(localized: "Stop reading aloud") : String(localized: "Listen to reply")
+        speaking ? messageText("Stop reading aloud", "読み上げを停止") : messageText("Listen to reply", "返信を読み上げる")
     }
 
     /// The one link worth previewing, and only under a reply: what the user typed is their own
@@ -166,7 +172,7 @@ public struct MessageBubble: View {
                 bubble
             }
             if data.interrupted == true {
-                Text("Stopped")
+                Text(messageText("Stopped", "停止済み"))
                     .font(.scaled(.caption2))
                     .foregroundStyle(YorozuPalette.ink.opacity(0.62))
             }
@@ -231,11 +237,11 @@ public struct MessageBubble: View {
     @ViewBuilder private var actions: some View {
         if let onReply { Button("Reply", systemImage: "arrowshape.turn.up.left", action: onReply) }
         if copyAvailable, !data.text.isEmpty, !streaming {
-            Button("Copy", systemImage: "doc.on.doc") { copy() }
+            Button(messageText("Copy", "コピー"), systemImage: "doc.on.doc") { copy() }
         }
         if !isUser, !id.isEmpty, !data.text.isEmpty {
             // One utterance at a time, so this is a toggle rather than a second voice.
-            Button(speaking ? String(localized: "Stop") : String(localized: "Listen"), systemImage: speaking ? "stop" : "speaker.wave.2") {
+            Button(speaking ? messageText("Stop", "停止") : messageText("Listen", "読み上げ"), systemImage: speaking ? "stop" : "speaker.wave.2") {
                 toggleSpeaking()
             }
         }
@@ -267,7 +273,7 @@ public struct MessageBubble: View {
         Group {
             if copyAvailable, !data.text.isEmpty, !streaming {
                 Button { copy() } label: {
-                    Label(copied ? String(localized: "Copied") : String(localized: "Copy"),
+                    Label(copied ? messageText("Copied", "コピー済み") : messageText("Copy", "コピー"),
                           systemImage: copied ? "checkmark" : "doc.on.doc")
                         .frame(minWidth: controlTarget, minHeight: controlTarget)
                         .contentShape(.rect)
@@ -295,7 +301,7 @@ public struct MessageBubble: View {
             }
             if !isUser, !id.isEmpty, !data.text.isEmpty {
                 Button(action: toggleSpeaking) {
-                    Label(speaking ? String(localized: "Stop") : String(localized: "Listen"),
+                    Label(speaking ? messageText("Stop", "停止") : messageText("Listen", "読み上げ"),
                           systemImage: speaking ? "stop" : "speaker.wave.2")
                         .frame(minWidth: controlTarget, minHeight: controlTarget)
                         .contentShape(.rect)
@@ -329,7 +335,7 @@ public struct MessageBubble: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .accessibilityLabel("Message actions")
+        .accessibilityLabel(messageText("Message actions", "メッセージの操作"))
         .accessibilityIdentifier("messageActions-\(id)")
         #if os(macOS)
             .menuStyle(.button)
@@ -398,7 +404,7 @@ public struct MessageBubble: View {
         if isUser {
             bubbleContent.contextMenu {
                 if copyAvailable, !data.text.isEmpty, !streaming {
-                    Button("Copy", systemImage: "doc.on.doc") { copy() }
+                    Button(messageText("Copy", "コピー"), systemImage: "doc.on.doc") { copy() }
                 }
             }
         } else {
