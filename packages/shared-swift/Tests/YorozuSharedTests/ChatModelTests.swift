@@ -161,65 +161,63 @@ private func started(by transport: BlockingTransport, atLeast count: Int) async 
 }
 
 @MainActor
-@Test func legacySavedDraftsRecoverSeparatelyAndSurviveRepeatedRelaunch() throws {
+@Test func stashedDraftsSurviveRelaunchAndRestoreTextAndAttachments() throws {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     let key = SymmetricKey(size: .bits256)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cache = ThreadCache(directory: directory, key: key)
-    let source = ThreadSummary(id: "legacy", title: "", archived: false, lastActivity: 1)
-    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
-    let stashes = [
-        ThreadCache.StashedDraft(id: "text", text: "  unfinished\nthought  ", attachments: []),
-        ThreadCache.StashedDraft(id: "file", text: "", attachments: [file]),
-        ThreadCache.StashedDraft(id: "both", text: "with file", attachments: [file]),
-    ]
-    try cache.save(composer: .init(drafts: [source.id: "current draft"], attachments: [source.id: [file]],
-        threads: [source], knownThreads: [], openThread: source.id, stashes: [source.id: stashes]))
-    func launch() -> ChatModel { ChatModel(transport: FakeTransport(), cache: cache) }
+    func launch() -> ChatModel {
+        ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
+    }
     let model = launch()
-    for stash in stashes {
-        let id = try #require(model.recoverStash(stash.id, in: source.id))
-        #expect(model.drafts[id] == stash.text)
-        #expect(model.attachments[id] == stash.attachments)
-        #expect(model.recoverStash(stash.id, in: source.id) == id)
-        let again = launch()
-        #expect(again.drafts[id] == stash.text)
-        #expect(again.attachments[id] == stash.attachments)
-        #expect(again.drafts[source.id] == "current draft")
-        #expect(again.attachments[source.id] == [file])
-        #expect(again.stashes[source.id]?.count == 3)
-    }
-    #expect(model.threads.count == 4)
-    model.drafts["recovered-both"] = "edited recovered draft"
-    #expect(model.recoverStash("both", in: source.id) == "recovered-both")
-    #expect(launch().drafts["recovered-both"] == "edited recovered draft")
-    #expect(model.recoverStash("both", in: "other-host") == nil)
-}
-
-@MainActor
-@Test func interruptedLegacyRecoveryKeepsSourceAndRepairsMissingFiles() throws {
-    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let cache = ThreadCache(directory: directory, key: SymmetricKey(size: .bits256))
-    let source = ThreadSummary(id: "legacy", title: "", archived: false, lastActivity: 1)
-    let recovered = ThreadSummary(id: "recovered-both", title: "", archived: false, lastActivity: 2)
+    let thread = model.newDraft()
     let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
-    let stash = ThreadCache.StashedDraft(id: "both", text: "with file", attachments: [file])
-    // Crash after one of the two independently atomic encrypted records was written.
-    for composerFirst in [false, true] {
-        try cache.save(composer: .init(drafts: composerFirst ? [recovered.id: stash.text] : [:],
-            attachments: composerFirst ? [recovered.id: [file]] : [:],
-            threads: composerFirst ? [source, recovered] : [source], knownThreads: [], openThread: source.id,
-            stashes: [source.id: [stash]]))
-        try cache.save(draftState: .init(drafts: composerFirst ? [:] : [recovered.id: stash.text], preparedSend: [:],
-            threads: composerFirst ? [source] : [source, recovered], openThread: source.id))
-        let model = ChatModel(transport: FakeTransport(), cache: cache)
-        #expect(model.recoverStash(stash.id, in: source.id) == recovered.id)
-        let again = ChatModel(transport: FakeTransport(), cache: cache)
-        #expect(again.drafts[recovered.id] == stash.text)
-        #expect(again.attachments[recovered.id] == [file])
-        #expect(again.stashes[source.id]?.first?.attachments == [file])
-    }
+    model.drafts[thread.id] = "  unfinished\nthought  "
+    model.attachments[thread.id] = [file]
+    model.stashDraft(in: thread.id)
+    #expect(model.drafts[thread.id] == "")
+    #expect((model.attachments[thread.id] ?? []).isEmpty)
+    model.attachments[thread.id] = [file]
+    model.stashDraft(in: thread.id)
+    model.stashDraft(in: thread.id) // An empty composer adds nothing.
+    let other = model.newDraft()
+    model.drafts[other.id] = "another thread"
+    model.stashDraft(in: other.id)
+    model.discardDraft(thread.id)
+
+    let restored = launch() // No flush or close: stash is durable immediately.
+    #expect(restored.isDraft(thread.id))
+    let stashes = try #require(restored.stashes[thread.id])
+    #expect(stashes.count == 2)
+    #expect(restored.stashes[other.id]?.count == 1)
+    restored.drafts[thread.id] = "quick question"
+    restored.restoreStash(stashes[0].id, in: thread.id)
+    #expect(restored.drafts[thread.id] == "quick question")
+    #expect(restored.stashes[thread.id]?.count == 2)
+    restored.drafts[thread.id] = ""
+    restored.attachments[thread.id] = [file]
+    restored.restoreStash(stashes[0].id, in: thread.id)
+    #expect(restored.drafts[thread.id] == "")
+    restored.attachments[thread.id] = []
+    restored.restoreStash(stashes[0].id, in: other.id)
+    #expect(restored.stashes[thread.id]?.count == 2)
+    restored.restoreStash(stashes[0].id, in: thread.id)
+    #expect(restored.drafts[thread.id] == "  unfinished\nthought  ")
+    #expect(restored.attachments[thread.id] == [file])
+    #expect(restored.stashes[thread.id]?.count == 1)
+
+    let again = launch()
+    #expect(again.drafts[thread.id] == "  unfinished\nthought  ")
+    #expect(again.attachments[thread.id] == [file])
+    let remaining = try #require(again.stashes[thread.id]?.first)
+    #expect(remaining.attachments == [file])
+    again.drafts[thread.id] = ""
+    again.attachments[thread.id] = []
+    again.restoreStash(remaining.id, in: thread.id)
+    #expect(again.drafts[thread.id] == "")
+    #expect(again.attachments[thread.id] == [file])
+    #expect(again.stashes[thread.id]?.isEmpty == true)
+    again.archive(other)
+    #expect(launch().stashes[other.id] == nil)
 }
 
 @MainActor
@@ -560,91 +558,6 @@ private func connected(_ transport: FakeTransport, device: String = "phone") asy
     let requests = await sent(by: transport, atLeast: pairingSends)
     #expect(Set(requests.map(\.payload.kind)).isSuperset(of: pairingKinds))
     return model
-}
-
-@MainActor
-@Test func signInChecksAreCorrelatedDeduplicatedAndInvalidatedOffline() async throws {
-    let transport = FakeTransport()
-    let model = await connected(transport)
-    defer { model.close() }
-    let before = await transport.sent.count
-    model.requestAgentStatus()
-    model.requestAgentStatus()
-    var sentEvents = await sent(by: transport, atLeast: before + 1)
-    let first = try #require(sentEvents.last(where: { $0.payload.kind == .agentStatus }))
-    #expect(sentEvents.filter { $0.payload.kind == .agentStatus }.count == 1)
-    await transport.yield(.event(event("checked", .agentStatus(AgentStatusData(codex: .init(ok: true), requestId: first.id)))))
-    #expect(await eventually { !model.agentStatusChecking && model.agentStatus?.codex?.ok == true })
-    model.requestAgentStatus()
-    sentEvents = await sent(by: transport, atLeast: before + 2)
-    let second = try #require(sentEvents.last(where: { $0.payload.kind == .agentStatus }))
-    #expect(second.id != first.id)
-    await transport.yield(.event(event("late", .agentStatus(AgentStatusData(claude: .init(ok: true), requestId: first.id)))))
-    await transport.yield(.event(event("current", .agentStatus(AgentStatusData(codex: .init(ok: false, reason: .notLoggedIn), requestId: second.id)))))
-    #expect(await eventually { model.agentStatus?.codex?.reason == .notLoggedIn })
-    #expect(model.agentStatus?.claude == nil)
-    await transport.yield(.ownerOnline(false))
-    #expect(await eventually { !model.ownerOnline && model.agentStatus == nil })
-    model.requestAgentStatus()
-    #expect(!model.agentStatusChecking && model.agentStatusFailure != nil)
-    await transport.yield(.ownerOnline(true))
-    #expect(await eventually { model.canDeliver })
-    model.requestAgentStatus()
-    #expect(model.agentStatusChecking && model.agentStatus == nil)
-    await transport.yield(.event(event("stale-after-reconnect", .agentStatus(AgentStatusData(codex: .init(ok: true), requestId: second.id)))))
-    await transport.yield(.state(.closed))
-    #expect(await eventually { !model.agentStatusChecking && model.agentStatus == nil })
-}
-
-@MainActor
-@Test func signInCheckTimeoutRemainsRetryableWithoutDraftLoss() async throws {
-    let transport = FakeTransport()
-    let model = ChatModel(transport: transport, agentStatusTimeout: .milliseconds(100))
-    await transport.yield(.state(.paired))
-    await transport.yield(.ownerOnline(true))
-    model.start()
-    defer { model.close() }
-    #expect(await eventually { model.canDeliver })
-    model.drafts["home"] = "keep draft"
-    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
-    model.attachments["home"] = [file]
-    model.requestAgentStatus()
-    #expect(model.agentStatusChecking)
-    #expect(await eventually { !model.agentStatusChecking && model.agentStatusFailure != nil })
-    model.requestAgentStatus()
-    #expect(model.agentStatusChecking)
-    #expect(model.agentStatus == nil)
-    #expect(model.drafts["home"] == "keep draft")
-    #expect(model.attachments["home"] == [file])
-}
-
-@MainActor
-@Test func legacyAndFailedSignInAnswersRemainRetryableWithoutDraftLoss() async throws {
-    let transport = FakeTransport()
-    // Reply handling uses the production deadline. The separate timeout case above
-    // exercises 100 ms expiry without racing these deliberately delivered responses.
-    let model = ChatModel(transport: transport)
-    await transport.yield(.state(.paired))
-    await transport.yield(.ownerOnline(true))
-    model.start()
-    defer { model.close() }
-    #expect(await eventually { model.canDeliver })
-    model.drafts["home"] = "keep draft"
-    let file = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
-    model.attachments["home"] = [file]
-    model.requestAgentStatus()
-    #expect(model.agentStatusChecking)
-    await transport.yield(.event(event("legacy-check", .agentStatus(AgentStatusData(codex: .init(ok: true))))))
-    #expect(await eventually { !model.agentStatusChecking && model.agentStatusFailure?.contains("Update") == true })
-    #expect(model.agentStatus == nil)
-    model.requestAgentStatus()
-    #expect(await eventually { await transport.sent.filter { $0.payload.kind == .agentStatus }.count == 2 })
-    let request = try #require(await transport.sent.last(where: { $0.payload.kind == .agentStatus }))
-    await transport.yield(.event(event("failed-check", .agentStatus(AgentStatusData(requestId: request.id, failed: true)))))
-    #expect(await eventually { !model.agentStatusChecking && model.agentStatusFailure?.contains("Could not check") == true })
-    #expect(model.agentStatus == nil)
-    #expect(model.drafts["home"] == "keep draft")
-    #expect(model.attachments["home"] == [file])
 }
 
 @MainActor
@@ -2569,9 +2482,24 @@ func queuedMessageMovesAfterStoppedReplyAndSurvivesCacheRestore(
     #expect(!model.needsFolder(custom))
     #expect(model.agentLabel(.codex) == "Codex")
     #expect(model.needsFolder(.codex))
+    // A legacy host can advertise installed but unauthenticated coding agents. Only a
+    // confirmed setup survives relaunch; checking again must keep that offline choice.
+    #expect(model.configuredAgents.map(\.id) == [.yorozu, custom])
+    let readiness = AgentStatusData(codex: AgentReadiness(ok: true))
+    await transport.yield(.event(event("ready", .agentStatus(readiness))))
+    #expect(await eventually { model.configuredAgents.map(\.id) == [.yorozu, custom, .codex] })
+    model.requestAgentStatus()
+    #expect(model.agentStatus == nil)
+    #expect(model.configuredAgents.map(\.id) == [.yorozu, custom, .codex])
     let restored = ChatModel(transport: FakeTransport(), cache: cache)
     #expect(restored.availableAgents.map(\.id) == [.yorozu, custom, .codex])
     #expect(restored.agentLabel(custom) == "Test Harness")
+    #expect(!restored.canDeliver)
+    #expect(restored.configuredAgents.map(\.id) == [.yorozu, custom, .codex])
+    await transport.yield(.event(event("logged-out", .agentStatus(AgentStatusData(codex: AgentReadiness(ok: false))))))
+    #expect(await eventually { model.configuredAgents.map(\.id) == [.yorozu, custom] })
+    let loggedOut = ChatModel(transport: FakeTransport(), cache: cache)
+    #expect(loggedOut.configuredAgents.map(\.id) == [.yorozu, custom])
     await transport.yield(.event(event("old-host", .modelList(ModelListData(models: [])))))
     #expect(await eventually { model.availableAgents.map(\.id) == ThreadAgent.allCases })
     let afterDowngrade = ChatModel(transport: FakeTransport(), cache: cache)
@@ -3447,195 +3375,4 @@ func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData
     await transport.yield(.event(event("again", .modelList(ModelListData(models: [], channelCapabilities: ["model-select-v1", "missing:run-boundary-v1"])))))
     #expect(await eventually { model.channelModelSelection })
     #expect(model.pluginNotice == nil)
-}
-
-/// Reply targets have their own durability boundary; cancelling never writes into typed input.
-@MainActor
-@Test func replyDraftRestoresAndRepeatedCancelPreservesTextAndFiles() async throws {
-    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let key = SymmetricKey(size: .bits256)
-    let cache = ThreadCache(directory: directory, key: key)
-    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
-    cache.save(threads: [thread])
-    let parent = event("parent", .message(MessageData(role: .agent, text: "日本語の元の返信", done: true)))
-    cache.save(events: [parent], threadId: thread.id, lastSeen: parent.id)
-    let transport = FakeTransport()
-    let model = ChatModel(transport: transport, cache: cache)
-    defer { model.close() }
-    model.start()
-    await transport.yield(.state(.paired))
-    await transport.yield(.ownerOnline(true))
-    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1"])))
-    await transport.yield(.event(event("capabilities", .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
-    #expect(await eventually { model.supportsReplies(in: "home") })
-    let file = MessageAttachment(name: "notes.pdf", mime: "application/pdf", data: "aGk=")
-    model.drafts["home"] = "  日本語の下書き\ncontinued  "
-    model.attachments["home"] = [file]
-    #expect(model.beginReply(to: parent))
-    #expect(model.beginReply(to: parent))
-    model.openThread = "other"
-    #expect(model.replyTargets["other"] == nil)
-    #expect(model.replyTargets["home"]?.preview == "日本語の元の返信")
-    let restored = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
-    #expect(restored.replyTargets["home"]?.eventId == parent.id)
-    #expect(restored.drafts["home"] == model.drafts["home"])
-    #expect(restored.attachments["home"] == [file])
-    restored.cancelReply(in: "home")
-    restored.cancelReply(in: "home")
-    let again = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
-    #expect(again.replyTargets.isEmpty)
-    #expect(again.drafts["home"] == model.drafts["home"])
-    #expect(again.attachments["home"] == [file])
-    #expect(again.outbox.isEmpty)
-    let independentHost = ChatModel(transport: FakeTransport())
-    #expect(independentHost.replyTargets.isEmpty)
-    #expect(!independentHost.beginReply(to: parent))
-}
-
-@MainActor
-@Test func repliesRequireNegotiatedSupportAndASettledMessageInThisConversation() async {
-    let transport = FakeTransport()
-    let model = await connected(transport)
-    defer { model.close() }
-    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
-    let parent = event("parent", .message(MessageData(role: .agent, text: "settled", done: true)))
-    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [thread])))))
-    await transport.yield(.event(parent))
-    #expect(await eventually { model.events["home"]?.contains(parent) == true })
-    #expect(!model.beginReply(to: parent))
-    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1"])))
-    await transport.yield(.event(event("caps", .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
-    #expect(await eventually { model.supportsReplies(in: "home") })
-    #expect(model.beginReply(to: parent))
-    let unfinished = event("streaming", .message(MessageData(role: .agent, text: "still writing")))
-    await transport.yield(.event(unfinished))
-    #expect(await eventually { model.events["home"]?.contains(unfinished) == true })
-    #expect(!model.beginReply(to: unfinished))
-    #expect(!model.beginReply(to: event("parent", parent.payload, thread: "other")))
-    model.drafts["home"] = "keep this"
-    await transport.yield(.event(event("old-caps", .modelList(ModelListData(models: [], channelCapabilities: [])))))
-    #expect(await eventually { !model.supportsReplies(in: "home") })
-    model.send(in: thread)
-    #expect(model.drafts["home"] == "keep this")
-    #expect(model.replyTargets["home"]?.eventId == parent.id)
-    #expect(model.outbox.isEmpty)
-    #expect(model.failure != nil)
-    model.cancelReply(in: "home")
-    model.send(in: thread)
-    #expect(model.outbox.count == 1)
-    guard case .message(let sent) = model.outbox[0].event.payload else { Issue.record("no message"); return }
-    #expect(sent.replyTo == nil)
-}
-
-@MainActor
-@Test func replyAttachmentCommitAndRejectedRecoveryKeepOneIntent() async throws {
-    let transport = FakeTransport()
-    let model = await connected(transport)
-    defer { model.close() }
-    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
-    let parent = event("parent", .message(MessageData(role: .agent, text: "quoted", done: true)))
-    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1", "attachment-chunks-v1"])))
-    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [thread])))))
-    await transport.yield(.event(parent))
-    await transport.yield(.event(event("caps", .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
-    #expect(await eventually { model.canReply(to: parent) })
-    let file = MessageAttachment(name: "notes.pdf", mime: "application/pdf", data: "aGk=")
-    model.attachments["home"] = [file]
-    #expect(model.beginReply(to: parent))
-    model.send(in: thread)
-    let pending = try #require(model.outbox.first)
-    #expect(model.drafts["home"] == "")
-    #expect(model.attachments["home"] == nil)
-    #expect(model.replyTargets["home"] == nil)
-    #expect(!model.canReply(to: pending.event))
-    #expect(await eventually { await transport.sent.contains { $0.payload.kind == .attachmentChunk } })
-    let chunkEvent = try #require(await transport.sent.first { $0.payload.kind == .attachmentChunk })
-    guard case .attachmentChunk(let chunk) = chunkEvent.payload else { Issue.record("no chunk"); return }
-    await transport.yield(.event(event("progress", .attachmentProgress(AttachmentProgressData(requestId: chunkEvent.id,
-        messageId: pending.id, index: 0, nextOffset: chunk.totalBytes)))))
-    #expect(await eventually { await transport.sent.contains { $0.payload.kind == .attachmentCommit } })
-    let commitEvent = try #require(await transport.sent.first { $0.payload.kind == .attachmentCommit })
-    guard case .attachmentCommit(let commit) = commitEvent.payload else { Issue.record("no commit"); return }
-    #expect(commit.replyTo == parent.id)
-    #expect(commit.text.isEmpty)
-    #expect(commit.attachments.map(\.name) == [file.name])
-    await transport.yield(.event(event("rejection", .admissionStatus(AdmissionStatusData(eventId: pending.id,
-        status: .rejected, reason: "reply-context-unsupported")))))
-    #expect(await eventually { model.outboxStatus(of: pending.id) == .rejected })
-    model.drafts["home"] = "a newer thought"
-    model.recoverRejectedReply(pending.id)
-    model.recoverRejectedReply(pending.id)
-    #expect(model.drafts["home"] == "a newer thought")
-    #expect(model.attachments["home"] == [file])
-    #expect(model.replyTargets["home"] == nil, "an unrelated current draft must keep its target")
-    #expect(model.outbox.count == 1)
-}
-
-@MainActor
-@Test func aLateRejectedReplyRestoresFromHistoryAndRecoveryDoesNotDuplicateInput() throws {
-    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let key = SymmetricKey(size: .bits256)
-    let cache = ThreadCache(directory: directory, key: key)
-    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
-    cache.save(threads: [thread])
-    let file = MessageAttachment(name: "notes.pdf", mime: "application/pdf", data: "aGk=")
-    let parent = event("parent", .message(MessageData(role: .agent, text: "quoted", done: true)))
-    let sent = event("sent", .message(MessageData(role: .user, text: "follow up", attachments: [file], replyTo: parent.id)))
-    let rejected = event("sent:rejected", .admissionStatus(AdmissionStatusData(eventId: sent.id,
-        status: .rejected, reason: "reply-context-unsupported")))
-    cache.save(events: [parent, sent, rejected], threadId: thread.id, lastSeen: rejected.id)
-    let model = ChatModel(transport: FakeTransport(), cache: cache)
-    #expect(model.outboxStatus(of: sent.id) == .rejected)
-    model.recoverRejectedReply(sent.id)
-    model.recoverRejectedReply(sent.id)
-    #expect(model.drafts["home"] == "follow up")
-    #expect(model.attachments["home"] == [file])
-    #expect(model.replyTargets["home"]?.eventId == parent.id)
-    model.cancelReply(in: "home")
-    let again = ChatModel(transport: FakeTransport(), cache: ThreadCache(directory: directory, key: key))
-    again.recoverRejectedReply(sent.id)
-    #expect(again.drafts["home"] == "follow up")
-    #expect(again.attachments["home"] == [file])
-    #expect(again.replyTargets["home"] == nil)
-    #expect(again.outbox.count == 1)
-}
-
-@Test func replyPreviewsBoundBytesBeforeCountingCombiningCharacters() {
-    let source = "a" + String(repeating: "\u{0301}", count: 5000)
-    let target = ReplyTarget(eventId: "parent", message: MessageData(role: .agent, text: source, done: true))
-    #expect(target.preview.utf8.count <= 2003)
-    #expect(target.preview != source)
-}
-
-@MainActor
-@Test func aQuestionArrivingDuringReplyCompositionCannotConsumeTheDraft() async throws {
-    let transport = FakeTransport()
-    let model = await connected(transport)
-    defer { model.close() }
-    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
-    let parent = event("parent", .message(MessageData(role: .agent, text: "quoted", done: true)))
-    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1", "turn-state-v1"])))
-    await transport.yield(.event(event("threads", .threadList(ThreadListData(threads: [thread])))))
-    await transport.yield(.event(parent))
-    await transport.yield(.event(event("caps", .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
-    #expect(await eventually { model.canReply(to: parent) })
-    #expect(model.beginReply(to: parent))
-    model.drafts["home"] = "yes"
-    let file = MessageAttachment(name: "notes.pdf", mime: "application/pdf", data: "aGk=")
-    model.attachments["home"] = [file]
-    var working = thread
-    working.turnState = .running
-    await transport.yield(.event(event("working", .threadList(ThreadListData(threads: [working])))))
-    #expect(await eventually { model.generating.contains("home") })
-    await transport.yield(.event(event("question", .questionCard(QuestionCardData(questionId: "q1", question: "Which?", options: ["yes", "no"])))))
-    #expect(await eventually { !model.pendingComposerCards(in: "home").isEmpty })
-    model.send(in: thread)
-    #expect(model.drafts["home"] == "yes")
-    #expect(model.attachments["home"] == [file])
-    #expect(model.replyTargets["home"]?.eventId == parent.id)
-    #expect(model.questionChoices.isEmpty)
-    #expect(model.outbox.isEmpty)
-    #expect(model.failure != nil)
 }

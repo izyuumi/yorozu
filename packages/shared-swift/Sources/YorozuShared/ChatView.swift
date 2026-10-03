@@ -48,9 +48,6 @@ public struct ChatView: View {
 
     /// Whether geometry currently reaches the newest message. Reader intent is tracked
     /// separately because async row growth can make this false without any manual scroll.
-    @State private var clipboardTask: Task<Void, Never>?
-    @State private var clipboardLoadID: UUID?
-    @State private var savedDraftRecovered = false
     @State private var atBottom = true
     /// The shortcut stays out of the way while the reader is still at the newest edge.
     @State private var showJumpToLatest = false
@@ -84,7 +81,6 @@ public struct ChatView: View {
         @FocusState private var composerFocused: Bool
         @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
     #endif
-    @State private var replyFocusRequest: UUID?
     @State private var channelModelPicker = false
     @State private var channelPickerWidth: CGFloat?
     @State private var searching = false
@@ -169,7 +165,7 @@ public struct ChatView: View {
             generating: generating,
             streamingId: streamingId,
             answeredApprovals: model.answered,
-            answeredQuestions: model.resolvedQuestionIds(in: thread.id),
+            answeredQuestions: model.answeredQuestions,
             waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id)
         )
     }
@@ -312,7 +308,7 @@ public struct ChatView: View {
                     dismiss: { model.dismissPluginNotice() })
             }
             if model.hasUnconfirmedStop(in: thread.id) {
-                Banner(text: "Could not confirm whether this task stopped. Check the host before retrying.",
+                Banner(text: String(localized: "Could not confirm whether this task stopped. Check the host before retrying."),
                     systemImage: "exclamationmark.triangle")
             }
             if thread.interruptedTurnId != nil { interruptedTurnNotice }
@@ -450,11 +446,6 @@ public struct ChatView: View {
             // so the bar had an edge in one kind of thread and none in the other.
             .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
         #endif
-        .toolbar {
-            if !(model.stashes[thread.id] ?? []).isEmpty {
-                ToolbarItem { savedDraftsMenu }
-            }
-        }
         #if os(iOS)
         .toolbar {
                 // From iOS 26 the bar lays a custom title view out at its ideal width and never
@@ -521,9 +512,7 @@ public struct ChatView: View {
         }
         // The Mac reuses this detail view while its sidebar selection changes. A new thread is
         // a new opening intent even when the surrounding `ChatView` value keeps its state.
-        .onDisappear { cancelClipboardImport() }
         .onChange(of: thread.id, initial: true) { _, _ in
-            cancelClipboardImport()
             dismissedSkillDraft = nil
             #if os(macOS)
                 skillIndex = 0
@@ -670,7 +659,7 @@ public struct ChatView: View {
 
     @ViewBuilder private func messages(rows: [ChatRow], queuedStatuses: [String: String]) -> some View {
         let activity = chatActivity(in: rows, generating: generating, streamingId: streamingId,
-            answeredApprovals: model.answered, answeredQuestions: model.resolvedQuestionIds(in: thread.id),
+            answeredApprovals: model.answered, answeredQuestions: model.answeredQuestions,
             waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id))
         #if os(iOS)
             nativeMessages(rows: rows, activity: activity, queuedStatuses: queuedStatuses)
@@ -717,9 +706,8 @@ public struct ChatView: View {
                     queuedStatuses: queuedStatuses,
                     answered: model.answered,
                     approvalOutcomes: model.approvalOutcomes,
-                    answeredQuestions: model.resolvedQuestionIds(in: thread.id),
-                    questionChoices: model.questionChoices(in: thread.id),
-                    questionOutcomes: model.questionDispositions(in: thread.id),
+                    answeredQuestions: model.answeredQuestions,
+                    questionChoices: model.questionChoices,
                     handledProposals: model.handledProposals,
                     choices: model.choices
                 ),
@@ -948,12 +936,6 @@ public struct ChatView: View {
                     queuedStatus: queuedStatus,
                     rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
-                    onReply: model.canReply(to: event) ? {
-                        if model.beginReply(to: event) {
-                            focusReplyComposer()
-                        }
-                    } : nil,
-                    replyPreview: model.replyPreview(for: data, in: thread.id),
                     onEditFromHere: data.role == .user && model.supportsRewind(in: thread.id)
                         ? { model.editFromHere(event) } : nil,
                     editFromHereEnabled: model.canEditFromHere(event),
@@ -962,9 +944,6 @@ public struct ChatView: View {
                         ? { if needsNewChat {
                                 recoveryMessage = data
                                 choosingAgent = true
-                            } else if rejectionReason?.hasPrefix("reply-") == true {
-                                model.recoverRejectedReply(event.id)
-                                focusReplyComposer()
                             } else { retry(data) } } : messageActions.retry.map { prompt in
                                 { retry(prompt) }
                             },
@@ -1035,10 +1014,8 @@ public struct ChatView: View {
                 QuestionCardView(
                     card: card,
                     agentLabel: card.nativeAgent.map(model.agentLabel),
-                    answered: model.questionAnswered(card.questionId, in: thread.id),
-                    chosen: model.questionChoices(in: thread.id)[card.questionId],
-                    pending: model.questionPending(card.questionId, in: thread.id),
-                    disposition: model.questionDispositions(in: thread.id)[card.questionId]
+                    answered: model.answeredQuestions.contains(card.questionId),
+                    chosen: model.questionChoices[card.questionId]
                 ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
                 .id(event.id)
                 .notificationHighlight(highlightedNotificationRow == event.id)
@@ -1258,10 +1235,6 @@ public struct ChatView: View {
         // send control all live inside the same rounded container, so the eye reads one thing
         // to type into rather than three controls in a row.
         VStack(alignment: .leading, spacing: 0) {
-            if let target = model.replyTargets[thread.id] {
-                ReplyComposerContext(target: target) { model.cancelReply(in: thread.id) }
-                    .padding(.leading, 12).padding(.trailing, 4).padding(.top, 8)
-            }
             if let attachmentFailure {
                 HStack(alignment: .top, spacing: 8) {
                     Label(attachmentFailure, systemImage: "exclamationmark.circle")
@@ -1283,17 +1256,11 @@ public struct ChatView: View {
                 .padding(.top, 8)
             }
             if attachmentLoading {
-                HStack {
-                    Label("Loading attachments…", systemImage: "paperclip")
-                    if clipboardLoadID != nil {
-                        Spacer()
-                        Button("Cancel", action: cancelClipboardImport)
-                    }
-                }
-                .font(.scaled(.caption))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
+                Label("Loading attachments…", systemImage: "paperclip")
+                    .font(.scaled(.caption))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
             }
             if !attachments.wrappedValue.isEmpty {
                 StagedStrip(attachments: attachments.wrappedValue) { index in
@@ -1310,15 +1277,15 @@ public struct ChatView: View {
                     onSendNextQueued: { model.sendNextQueued(in: thread.id) },
                     onQuestionOption: questionOption,
                     onPromptHistory: { model.recallPrompt(in: thread.id, older: $0) },
-                    onPasteProviders: { pasteAttachments(sources: clipboardAttachmentSources($0)) },
-                    focusThread: startsFocused ? thread.id : nil,
-                    focusRequest: replyFocusRequest
+                    onPasteImage: { pasteImages() },
+                    focusThread: startsFocused ? thread.id : nil
                 )
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
+                    stashMenu
                     if model.offersChannelModels(for: thread) { channelModelButton }
                     else if !model.models(for: thread).isEmpty { runSettingsButton }
                     Spacer(minLength: 4)
@@ -1349,6 +1316,7 @@ public struct ChatView: View {
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
+                    stashMenu
                     if model.offersChannelModels(for: thread) { channelModelButton }
                     else if !model.models(for: thread).isEmpty {
                         runSettingsButton.frame(maxWidth: 280, alignment: .leading)
@@ -1439,28 +1407,26 @@ public struct ChatView: View {
         })
     }
 
-    private var savedDraftsMenu: some View {
+    private var stashMenu: some View {
         Menu {
+            Button("Stash draft", systemImage: "tray.and.arrow.down") {
+                model.stashDraft(in: thread.id)
+            }
+            .disabled(draft.wrappedValue.isEmpty && attachments.wrappedValue.isEmpty || attachmentLoading)
             ForEach((model.stashes[thread.id] ?? []).reversed()) { stash in
                 Button {
-                    if let id = model.recoverStash(stash.id, in: thread.id) {
-                        if let hostID { onDraftMove?(HostThreadID(hostID: hostID, threadID: id)) }
-                        savedDraftRecovered = true
-                    }
+                    model.restoreStash(stash.id, in: thread.id)
                 } label: {
                     Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? String(localized: "Draft")) : stash.text)
                         .lineLimit(1)
                 }
+                .disabled(!draft.wrappedValue.isEmpty || !attachments.wrappedValue.isEmpty || attachmentLoading)
             }
         } label: {
-            Label("Recover saved draft", systemImage: "clock.arrow.circlepath")
+            Image(systemName: "tray")
         }
-        .help("Open an older saved draft separately. Your current draft is kept.")
-        .alert("Saved draft recovered", isPresented: $savedDraftRecovered) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("The recovered draft is in your conversation list. Your current draft and the original saved copy are kept.")
-        }
+        .accessibilityLabel("Draft stash")
+        .help("Stash draft or restore a saved draft")
     }
 
     private var attachButton: some View {
@@ -1468,8 +1434,6 @@ public struct ChatView: View {
             remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
             onPick: addAttachments,
             onTooLarge: { attachmentTooLarge = true },
-            onPaste: { pasteAttachments() },
-            externalLoading: attachmentLoading,
             onLoadingChanged: { loading in
                 if loading { attachmentFailure = nil }
                 attachmentLoading = loading
@@ -1478,58 +1442,19 @@ public struct ChatView: View {
         .id(thread.id)
     }
 
-    private func pasteAttachments(sources provided: [AttachmentSource]? = nil) {
+    private func pasteImages() {
         guard !attachmentLoading else {
             reportAttachmentFailure(String(localized: "Wait for attachments to finish loading, then paste again."))
             return
         }
         attachmentFailure = nil
-        let sources = provided ?? clipboardAttachmentSources()
-        guard !sources.isEmpty else {
-            reportAttachmentFailure(String(localized: "No readable files or images were copied. Use Photos or Files to attach them."))
-            return
-        }
-        let target = thread.id
-        let loadID = UUID()
-        clipboardLoadID = loadID
-        attachmentLoading = true
-        clipboardTask = Task { @MainActor in
-            defer {
-                if clipboardLoadID == loadID {
-                    clipboardLoadID = nil
-                    clipboardTask = nil
-                    attachmentLoading = false
-                }
-            }
-            do {
-                let result = try await AttachmentAcquisition.load(sources)
-                try Task.checkCancellation()
-                guard clipboardLoadID == loadID else { return }
-                if !result.picks.isEmpty {
-                    stageAttachments(result.picks,
-                        remaining: MessageAttachment.maxCount - (model.attachments[target] ?? []).count,
-                        onPick: { picked in
-                            let added = addingAttachments(picked, to: model.attachments[target] ?? [])
-                            model.attachments[target] = added.attachments
-                            if added.rejectedCount > 0 { attachmentTooLarge = true }
-                        }, onTooLarge: { attachmentTooLarge = true }, onFailure: reportAttachmentFailure)
-                }
-                if !result.failed.isEmpty {
-                    reportAttachmentFailure(String(localized: "Some attachments couldn’t be read or exceeded the import limit. Copy them again or use Files."))
-                }
-            } catch is CancellationError {
-                // Closing/switching the conversation cancels the user's import intent.
-            } catch {
-                reportAttachmentFailure(String(localized: "Couldn’t load the attachments. Choose them again."))
-            }
-        }
-    }
-
-    private func cancelClipboardImport() {
-        clipboardLoadID = nil
-        clipboardTask?.cancel()
-        clipboardTask = nil
-        attachmentLoading = false
+        stageAttachments(
+            pasteboardImagePicks(),
+            remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
+            onPick: addAttachments,
+            onTooLarge: { attachmentTooLarge = true },
+            onFailure: reportAttachmentFailure
+        )
     }
 
     private func dropFiles(_ files: [DroppedFile]) -> Bool {
@@ -1654,7 +1579,7 @@ public struct ChatView: View {
             model.interrupt(in: thread.id)
         } label: {
             Image(systemName: "stop.fill")
-                .font(.system(size: sendCircle / 2, weight: .bold))
+                .font(.scaled(.footnote).weight(.bold))
                 .foregroundStyle(.background)
                 .frame(width: sendCircle, height: sendCircle)
                 .background(Color.primary, in: Circle())
@@ -1674,7 +1599,7 @@ public struct ChatView: View {
             send()
         } label: {
             Image(systemName: "arrow.up")
-                .font(.system(size: sendCircle / 2, weight: .bold))
+                .font(.scaled(.body).weight(.bold))
                 .foregroundStyle(canSend ? Color.white : Color.secondary)
                 .frame(width: sendCircle, height: sendCircle)
                 .background(canSend ? YorozuPalette.vermilion : Color.clear, in: Circle())
@@ -1699,7 +1624,7 @@ public struct ChatView: View {
     #if os(macOS)
         /// The field handles Return, alternate delivery, and Send now before AppKit inserts a newline.
         private var composerKeyMonitor: some View {
-            let onPaste: (() -> Void)? = { pasteAttachments() }
+            let onPaste: (() -> Void)? = { pasteImages() }
             let onPickerKey: ((SkillPickerKey) -> Void)? = skillChoices.isEmpty ? nil : { skillKey($0) }
             return ComposerKeyMonitor(
                 isActive: composerFocused,
@@ -1733,16 +1658,8 @@ public struct ChatView: View {
 
     /// Sends the same thing again, as a new message. The original stays where it is — a
     /// transcript that quietly rewrote itself would not be one.
-    private func focusReplyComposer() {
-        #if os(macOS)
-            composerFocused = true
-        #else
-            replyFocusRequest = UUID()
-        #endif
-    }
-
     private func retry(_ data: MessageData) {
-        model.send(data.text, in: thread.id, attachments: data.attachments, replyTo: data.replyTo)
+        model.send(data.text, in: thread.id, attachments: data.attachments)
         sends += 1
         atBottom = true
         newestScroll.followLatest()
@@ -1778,7 +1695,6 @@ public struct ChatView: View {
         let approvalOutcomes: [String: ApprovalStatusData.Status]
         let answeredQuestions: Set<String>
         let questionChoices: [String: String]
-        let questionOutcomes: [String: QuestionStatusData.Status]
         let handledProposals: Set<String>
         let choices: [String: ApprovalAnswerData.Answer]
     }

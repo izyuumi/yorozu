@@ -79,12 +79,11 @@ final class E2EHarness {
                 for thread in model?.threads.prefix(2) ?? [] { model?.previewChat(in: thread.id) }
                 guard let thread = model?.threads.first?.id else { return }
                 model?.previewModels(in: thread)
-                if CommandLine.arguments.contains("-yorozuReplyAttachment") {
-                    model?.attachments[thread] = Array(showcaseImages().prefix(1))
-                }
             }
             seed()
             model.onThreads = seed
+        case "japanese", "japanese-streaming":
+            model.previewThreads()
         case "activity":
             model.previewThreads()
             model.previewActivity(in: model.threads[0].id)
@@ -109,6 +108,8 @@ final class E2EHarness {
         case "pairing", "pairing-manual", "pairing-error":
             break
         case "channel-model":
+            model.newDraft()
+        case "session-yorozu", "session-multiple", "session-pending", "session-legacy":
             model.newDraft()
         case "model":
             // Re-seeded whenever the runtime sends a list, for the same reason as `share`: the

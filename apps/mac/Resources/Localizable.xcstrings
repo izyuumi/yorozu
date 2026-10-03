@@ -2,76 +2,6 @@
   "sourceLanguage": "en",
   "version": "1.0",
   "strings": {
-    "Paste attachments": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "添付ファイルをペースト"
-          }
-        }
-      }
-    },
-    "Recover saved draft": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存済みの下書きを復元"
-          }
-        }
-      }
-    },
-    "Open an older saved draft separately. Your current draft is kept.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "以前に保存した下書きを別の会話として開きます。現在の下書きは保持されます。"
-          }
-        }
-      }
-    },
-    "Saved draft recovered": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下書きを復元しました"
-          }
-        }
-      }
-    },
-    "The recovered draft is in your conversation list. Your current draft and the original saved copy are kept.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "復元した下書きは会話一覧にあります。現在の下書きと元の保存済みコピーは保持されます。"
-          }
-        }
-      }
-    },
-    "No readable files or images were copied. Use Photos or Files to attach them.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "読み込めるファイルや画像がコピーされていません。写真またはファイルから添付してください。"
-          }
-        }
-      }
-    },
-    "Some attachments couldn’t be read or exceeded the import limit. Copy them again or use Files.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "一部の添付ファイルを読み込めないか、読み込みの上限を超えています。もう一度コピーするか、ファイルから選択してください。"
-          }
-        }
-      }
-    },
     "Confirming delivery…" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Confirmando la entrega…" } },
@@ -15035,401 +14965,472 @@
         }
       }
     },
-    "Reply to message": {
+    "Not sent — click to retry" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "メッセージへの返信"
+            "value": "未送信 — クリックして再試行"
           }
         }
       }
     },
-    "Replying to you": {
+    "Not sent — tap to retry" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "あなたのメッセージに返信"
+            "value": "未送信 — タップして再試行"
           }
         }
       }
     },
-    "Replying to Yorozu": {
+    "Delivery unconfirmed — tap to retry" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Yorozuへの返信"
+            "value": "配信を確認できません — タップして再試行"
           }
         }
       }
     },
-    "Cancel reply": {
+    "Could not confirm whether this task stopped. Check the host before retrying." : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "返信をキャンセル"
+            "value": "このタスクが停止したか確認できませんでした。再試行する前にホストを確認してください。"
           }
         }
       }
     },
-    "Keeps your text and attachments": {
+    "Exported %@" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "入力したテキストと添付ファイルは保持されます"
+            "value": "%@に書き出し"
           }
         }
       }
     },
-    "Connect to a host that supports replies, or cancel the reply to send without it.": {
+    "Delegated to %@" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "返信に対応したホストに接続するか、返信をキャンセルして通常のメッセージとして送信してください。"
+            "value": "%@に委任"
           }
         }
       }
     },
-    "Use in composer": {
+    "(no reply)" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "入力欄で編集"
+            "value": "（返信なし）"
           }
         }
       }
     },
-    "Not sent · the quoted message is unavailable. Use in composer to edit and send again.": {
+    "You" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "未送信・引用元のメッセージを利用できません。入力欄で編集して再度送信してください。"
+            "value": "あなた"
           }
         }
       }
     },
-    "Not sent · this connection cannot receive replies. Use in composer to cancel the reply or try again.": {
+    "Attached: %@ (%@)" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "未送信・この接続では返信を受信できません。入力欄で返信をキャンセルするか、再度お試しください。"
+            "value": "添付：%@（%@）"
           }
         }
       }
     },
-    "replies": {
+    "(no text)" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "返信"
+            "value": "（本文なし）"
           }
         }
       }
     },
-    "Finish the pending request or cancel the reply before sending.": {
+    "1 changed file" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "保留中のリクエストを完了するか、返信をキャンセルしてから送信してください。"
+            "value": "1個の変更されたファイル"
           }
         }
       }
     },
-    "Schedules": {
+    "%lld changed files" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "スケジュール"
+            "value": "%lld個の変更されたファイル"
           }
         }
       }
     },
-    "Schedules unavailable": {
+    "Approval asked" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "スケジュールは利用できません"
+            "value": "承認の依頼"
           }
         }
       }
     },
-    "This version of Yorozu cannot display or manage schedules yet. Existing schedules are not changed.": {
+    "Rule suggested" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このバージョンのYorozuは、まだスケジュールの表示や管理に対応していません。既存のスケジュールは変更されません。"
+            "value": "ルールの提案"
           }
         }
       }
     },
-    "You can continue chatting. Scheduled work needs a separate connection that has not been enabled in Yorozu.": {
+    "Question asked" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "チャットは引き続き利用できます。スケジュールされた作業には別の接続が必要ですが、Yorozuではまだ有効になっていません。"
+            "value": "質問"
           }
         }
       }
     },
-    "No Mac connected": {
+    "Update Yorozu to see this event." : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Macが接続されていません"
+            "value": "このイベントを見るにはYorozuを更新してください。"
           }
         }
       }
     },
-    "Connect your Mac in Settings to use chat. Connecting chat does not enable schedules.": {
+    "Ran %@" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "チャットを使うには、設定でMacを接続してください。チャットを接続してもスケジュールは有効になりません。"
+            "value": "%@を実行"
           }
         }
       }
     },
-    "Update Yorozu on your Mac before sending messages.": {
+    "Ran %lld tools" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "メッセージを送信する前に、MacのYorozuをアップデートしてください。"
+            "value": "%lld個のツールを実行"
           }
         }
       }
     },
-    "Chat is connected. The assistant must also be set up on your Mac to answer.": {
+    "ok" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "チャットは接続されています。応答するには、Macでアシスタントの設定も必要です。"
+            "value": "成功"
           }
         }
       }
     },
-    "Saved chats and drafts remain available. Messages wait until your Mac reconnects.": {
+    "pending" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "保存済みのチャットと下書きは引き続き利用できます。メッセージはMacが再接続されるまで待機します。"
+            "value": "待機中"
           }
         }
       }
     },
-    "Connect your Mac before checking sign-in.": {
+    "running" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "サインインを確認する前にMacを接続してください。"
+            "value": "実行中"
           }
         }
       }
     },
-    "Sign-in check did not answer. Re-check when your Mac is connected.": {
+    "done" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "サインインの確認に応答がありませんでした。Macが接続されたら再確認してください。"
+            "value": "完了"
           }
         }
       }
     },
-    "Update Yorozu on your Mac to check sign-in.": {
+    "paired" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "サインインを確認するには、MacのYorozuをアップデートしてください。"
+            "value": "ペアリング済み"
           }
         }
       }
     },
-    "Connection details": {
+    "joined" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "接続の詳細"
+            "value": "リレーに接続済み"
           }
         }
       }
     },
-    "Compatibility details": {
+    "connecting" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "互換性の詳細"
+            "value": "接続中"
           }
         }
       }
     },
-    "Chat connection": {
+    "closed" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "チャットの接続"
+            "value": "切断済み"
           }
         }
       }
     },
-    "Assistant setup": {
+    "legacy" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "アシスタントの設定"
+            "value": "旧形式"
           }
         }
       }
     },
-    "Sign-in and connection checks do not prove the assistant can answer. Send a message to check an actual response.": {
+    "protocol %lld" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "サインインと接続の確認だけでは、アシスタントが応答できるとは限りません。メッセージを送信して実際の応答を確認してください。"
+            "value": "プロトコル %lld"
           }
         }
       }
     },
-    "Checking sign-in…": {
+    "update required" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "サインインを確認中…"
+            "value": "更新が必要"
           }
         }
       }
     },
-    "Reachable": {
+    "unavailable" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "接続可能"
+            "value": "利用不可"
           }
         }
       }
     },
-    "Signed in": {
+    "no" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "サインイン済み"
+            "value": "いいえ"
           }
         }
       }
     },
-    "Not checked": {
+    "yes" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "未確認"
+            "value": "はい"
           }
         }
       }
     },
-    "Assistant connection has not been verified by this check.": {
+    "Yorozu connection diagnostics\nConnection: %@\nTransport: %@\nHost presence: %@\nCompatibility: %@\nRecent failure: %@\nPending sends: %lld" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "この確認では、アシスタントとの接続は検証されていません。"
+            "value": "Yorozuの接続診断\n接続状態：%@\n通信状態：%@\nホストの状態：%@\n互換性：%@\n最近のエラー：%@\n送信待ち：%lld"
           }
         }
       }
     },
-    "Sign-in instructions": {
+    "Connection timed out" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "サインインの手順"
+            "value": "接続がタイムアウトしました"
           }
         }
       }
     },
-    "Check details": {
+    "Project folder was refused" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "確認の詳細"
+            "value": "プロジェクトフォルダへのアクセスが拒否されました"
           }
         }
       }
     },
-    "Assistant connection unavailable": {
+    "Model list unavailable" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "アシスタントに接続できません"
+            "value": "モデル一覧を取得できません"
           }
         }
       }
     },
-    "Open Settings": {
+    "Waiting for the previous message" : {
       "localizations": {
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Abrir Ajustes"
-          }
-        },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "設定を開く"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "설정 열기"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "打开设置"
+            "value": "前のメッセージを待っています"
           }
         }
       }
     },
-    "Hide keyboard": {"localizations": {"ja": {"stringUnit": {"state": "translated", "value": "キーボードを閉じる"}}}},
-    "Could not check sign-in. Re-check or open assistant setup.": {
+    "Duplicate message ignored" : {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "サインインを確認できませんでした。再確認するか、アシスタントの設定を開いてください。"
+            "value": "重複するメッセージを無視しました"
+          }
+        }
+      }
+    },
+    "Duplicate command ignored" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重複するコマンドを無視しました"
+          }
+        }
+      }
+    },
+    "Tool result unavailable" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ツールの結果を取得できません"
+          }
+        }
+      }
+    },
+    "Attachments exceed the size limit" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイルがサイズの上限を超えています"
+          }
+        }
+      }
+    },
+    "Attachments are not supported" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添付ファイルは利用できません"
+          }
+        }
+      }
+    },
+    "Conflicting message rejected" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "競合するメッセージを拒否しました"
+          }
+        }
+      }
+    },
+    "Invalid connection data ignored" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無効な接続データを無視しました"
+          }
+        }
+      }
+    },
+    "Replayed connection data ignored" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再送された接続データを無視しました"
+          }
+        }
+      }
+    },
+    "Device limit reached" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デバイス数の上限に達しました"
+          }
+        }
+      }
+    },
+    "Notification rate limit reached" : {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知の送信頻度が上限に達しました"
           }
         }
       }

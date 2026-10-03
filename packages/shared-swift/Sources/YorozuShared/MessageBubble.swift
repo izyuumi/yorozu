@@ -51,8 +51,6 @@ public struct MessageBubble: View {
     private let queuedStatus: String?
     private let rejectionReason: String?
     private let attachmentTransferLabels: [String]?
-    private let onReply: (() -> Void)?
-    private let replyPreview: ReplyTarget?
     private let onEditFromHere: (() -> Void)?
     private let editFromHereEnabled: Bool
     private let onRetry: (() -> Void)?
@@ -62,12 +60,12 @@ public struct MessageBubble: View {
     /// Sends the queued message again, for a message the outbox has given up on.
     private let onResend: (() -> Void)?
 
-    @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(ReplyFont.key) private var replyFont = ReplyFont.sans
     @State private var hovering = false
     @State private var copied = false
     @State private var confirmingEdit = false
+    @State private var detectedLink: (text: String, url: URL?)?
 
     public init(
         id: String = "",
@@ -79,8 +77,6 @@ public struct MessageBubble: View {
         queuedStatus: String? = nil,
         rejectionReason: String? = nil,
         attachmentTransferLabels: [String]? = nil,
-        onReply: (() -> Void)? = nil,
-        replyPreview: ReplyTarget? = nil,
         onEditFromHere: (() -> Void)? = nil,
         editFromHereEnabled: Bool = false,
         onRetry: (() -> Void)? = nil,
@@ -102,8 +98,6 @@ public struct MessageBubble: View {
         self.queuedStatus = queuedStatus
         self.rejectionReason = rejectionReason
         self.attachmentTransferLabels = attachmentTransferLabels
-        self.onReply = onReply
-        self.replyPreview = replyPreview
         self.onEditFromHere = onEditFromHere
         self.editFromHereEnabled = editFromHereEnabled
         self.onRetry = onRetry
@@ -117,35 +111,21 @@ public struct MessageBubble: View {
 
     private var speaking: Bool { Speaker.shared.speakingId == id && !id.isEmpty }
 
-    // Use the selected interface locale for actions, including in the isolated alpha app.
-    private func messageText(_ english: String, _ japanese: String) -> String {
-        locale.language.languageCode?.identifier == "ja" ? japanese : english
-    }
-
     private var copyLabel: String {
-        copied ? messageText("Copied message", "メッセージをコピーしました") : messageText("Copy message", "メッセージをコピー")
+        copied ? String(localized: "Copied message") : String(localized: "Copy message")
     }
 
     private var speechLabel: String {
-        speaking ? messageText("Stop reading aloud", "読み上げを停止") : messageText("Listen to reply", "返信を読み上げる")
+        speaking ? String(localized: "Stop reading aloud") : String(localized: "Listen to reply")
     }
 
     /// The one link worth previewing, and only under a reply: what the user typed is their own
     /// text and is not decorated back at them.
-    private var link: URL? { isUser ? nil : firstLink(in: data.text) }
+    private var previewText: String? { isUser || streaming ? nil : data.text }
+    private var link: URL? { detectedLink?.text == previewText ? detectedLink?.url : nil }
 
     public var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: LayoutMetrics.tight) {
-            if isUser, data.replyTo != nil {
-                VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
-                    Label("Reply to message", systemImage: "arrowshape.turn.up.left")
-                        .font(.scaled(.caption).weight(.semibold))
-                    if let replyPreview { Text(replyPreview.preview).font(.scaled(.caption)).lineLimit(2) }
-                }
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
-                .accessibilityElement(children: .combine)
-            }
             if !data.attachments.isEmpty {
                 AttachmentsView(attachments: data.attachments)
             }
@@ -172,13 +152,13 @@ public struct MessageBubble: View {
                 bubble
             }
             if data.interrupted == true {
-                Text(messageText("Stopped", "停止済み"))
+                Text("Stopped")
                     .font(.scaled(.caption2))
                     .foregroundStyle(YorozuPalette.ink.opacity(0.62))
             }
             // Only once the reply has finished arriving: previewing a URL that is still being
             // typed would fetch whatever prefix of it happened to be on screen.
-            if let link, !streaming {
+            if let link {
                 LinkPreviewRow(url: link)
             }
             if speaking {
@@ -200,7 +180,7 @@ public struct MessageBubble: View {
             if let status, queuedStatus == nil || ![.queued, .confirming, .withdrawalPending].contains(status) {
                 caption(status)
             }
-            if !data.text.isEmpty || onReply != nil || onEditFromHere != nil || onRetry != nil || onDelete != nil || timestamp != nil {
+            if !data.text.isEmpty || onEditFromHere != nil || onRetry != nil || onDelete != nil || timestamp != nil {
                 HStack(spacing: LayoutMetrics.inner) {
                     if isUser { Spacer(minLength: 0) }
                     #if os(macOS)
@@ -215,6 +195,14 @@ public struct MessageBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        .task(id: previewText) {
+            guard let text = previewText else { detectedLink = nil; return }
+            // Data detection can tokenize an entire CJK reply. Keep it outside the UI
+            // update, and rerun only when the finished reply's text changes.
+            let url = await Task.detached(priority: .utility) { firstLink(in: text) }.value
+            guard !Task.isCancelled else { return }
+            detectedLink = (text, url)
+        }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: speaking)
         .confirmationDialog("Edit from here?", isPresented: $confirmingEdit, titleVisibility: .visible) {
             Button("Edit from here", role: .destructive) { onEditFromHere?() }
@@ -235,13 +223,12 @@ public struct MessageBubble: View {
 
     /// The explicit menu keeps secondary actions available without taking over selection.
     @ViewBuilder private var actions: some View {
-        if let onReply { Button("Reply", systemImage: "arrowshape.turn.up.left", action: onReply) }
         if copyAvailable, !data.text.isEmpty, !streaming {
-            Button(messageText("Copy", "コピー"), systemImage: "doc.on.doc") { copy() }
+            Button("Copy", systemImage: "doc.on.doc") { copy() }
         }
         if !isUser, !id.isEmpty, !data.text.isEmpty {
             // One utterance at a time, so this is a toggle rather than a second voice.
-            Button(speaking ? messageText("Stop", "停止") : messageText("Listen", "読み上げ"), systemImage: speaking ? "stop" : "speaker.wave.2") {
+            Button(speaking ? String(localized: "Stop") : String(localized: "Listen"), systemImage: speaking ? "stop" : "speaker.wave.2") {
                 toggleSpeaking()
             }
         }
@@ -251,8 +238,7 @@ public struct MessageBubble: View {
         }
         if let onRetry {
             Button(rejectionReason?.hasPrefix("thread-create-rejected:") == true || rejectionReason == "thread-not-created"
-                ? String(localized: "Use in new chat") : rejectionReason?.hasPrefix("reply-") == true
-                    ? String(localized: "Use in composer") : String(localized: "Retry"),
+                ? String(localized: "Use in new chat") : String(localized: "Retry"),
                 systemImage: "arrow.clockwise", action: onRetry)
         }
         if let onWithdraw {
@@ -273,7 +259,7 @@ public struct MessageBubble: View {
         Group {
             if copyAvailable, !data.text.isEmpty, !streaming {
                 Button { copy() } label: {
-                    Label(copied ? messageText("Copied", "コピー済み") : messageText("Copy", "コピー"),
+                    Label(copied ? String(localized: "Copied") : String(localized: "Copy"),
                           systemImage: copied ? "checkmark" : "doc.on.doc")
                         .frame(minWidth: controlTarget, minHeight: controlTarget)
                         .contentShape(.rect)
@@ -301,7 +287,7 @@ public struct MessageBubble: View {
             }
             if !isUser, !id.isEmpty, !data.text.isEmpty {
                 Button(action: toggleSpeaking) {
-                    Label(speaking ? messageText("Stop", "停止") : messageText("Listen", "読み上げ"),
+                    Label(speaking ? String(localized: "Stop") : String(localized: "Listen"),
                           systemImage: speaking ? "stop" : "speaker.wave.2")
                         .frame(minWidth: controlTarget, minHeight: controlTarget)
                         .contentShape(.rect)
@@ -335,7 +321,7 @@ public struct MessageBubble: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .accessibilityLabel(messageText("Message actions", "メッセージの操作"))
+        .accessibilityLabel("Message actions")
         .accessibilityIdentifier("messageActions-\(id)")
         #if os(macOS)
             .menuStyle(.button)
@@ -352,11 +338,11 @@ public struct MessageBubble: View {
         let label = Label {
             // "tap" on a Mac is a phone app talking to the wrong person.
             #if os(macOS)
-                Text(status == .failed ? "Not sent — click to retry" :
-                    status == .unconfirmed ? "Delivery unconfirmed — click to retry" : description)
+                Text(status == .failed ? String(localized: "Not sent — click to retry") :
+                    status == .unconfirmed ? String(localized: "Delivery unconfirmed — click to retry") : description)
             #else
-                Text(status == .failed ? "Not sent — tap to retry" :
-                    status == .unconfirmed ? "Delivery unconfirmed — tap to retry" : description)
+                Text(status == .failed ? String(localized: "Not sent — tap to retry") :
+                    status == .unconfirmed ? String(localized: "Delivery unconfirmed — tap to retry") : description)
             #endif
         } icon: {
             // The icon carries the red; caption-sized red text is under 4.5:1.
@@ -391,8 +377,6 @@ public struct MessageBubble: View {
         case "conflicting-message-id": String(localized: "Not sent · message changed after sending")
         case "invalid-admission-deadline": String(localized: "Not sent · invalid message deadline")
         case "thread-not-created": String(localized: "Not sent · chat does not exist. Use in new chat to keep attachments.")
-        case "reply-target-unavailable": String(localized: "Not sent · the quoted message is unavailable. Use in composer to edit and send again.")
-        case "reply-context-unsupported": String(localized: "Not sent · this connection cannot receive replies. Use in composer to cancel the reply or try again.")
         case "attachments-unsupported":
             String(localized: "Not sent · OpenClaw can't receive attachments. Update the Yorozu plugin.")
         case "conflicting-thread-create": String(localized: "Not sent · chat creation changed")
@@ -404,7 +388,7 @@ public struct MessageBubble: View {
         if isUser {
             bubbleContent.contextMenu {
                 if copyAvailable, !data.text.isEmpty, !streaming {
-                    Button(messageText("Copy", "コピー"), systemImage: "doc.on.doc") { copy() }
+                    Button("Copy", systemImage: "doc.on.doc") { copy() }
                 }
             }
         } else {

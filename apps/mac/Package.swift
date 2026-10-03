@@ -13,11 +13,6 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0")
     ],
     targets: [
-        // Isolated 0.6 chat: no legacy sidecar, login item, pairing or updater.
-        .executableTarget(name: "YorozuAlpha", dependencies: [
-            .product(name: "YorozuShared", package: "shared-swift")
-        ]),
-        .testTarget(name: "YorozuAlphaTests", dependencies: ["YorozuAlpha"]),
         // Every macOS privacy grant, as one description the app and the helper share.
         .target(name: "YorozuPermissions"),
         // The login item, the watchdog LaunchAgent and the log all three write to. A library

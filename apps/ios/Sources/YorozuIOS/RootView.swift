@@ -62,10 +62,24 @@ private actor ShowcaseTransport: ChatTransport {
             self.continuation = continuation
             continuation.yield(.ownerOnline(launchArgument("yorozuShowcase") != "queued"))
             continuation.yield(.state(.paired))
-            if CommandLine.arguments.contains("-yorozuReplySupported") {
-                continuation.yield(.compatibility(.compatible(version: 1, capabilities: ["reply-context-v1", "attachment-chunks-v1"])))
-                continuation.yield(.event(YorozuEvent(id: "reply-capability", threadId: "", ts: 0, agentId: "main",
-                    payload: .modelList(ModelListData(models: [], channelCapabilities: ["reply-context-v1"])))))
+            let scene = launchArgument("yorozuShowcase")
+            if scene == "japanese" || scene == "japanese-streaming" {
+                let completes = scene == "japanese-streaming" && launchArgument("yorozuFinishJapanese") != nil
+                let initial = completes ? String(japaneseReplyFixture.prefix(japaneseReplyFixture.count / 3)) : japaneseReplyFixture
+                continuation.yield(.event(YorozuEvent(id: "japanese-reply", threadId: "Weeknight dinners", ts: 1, agentId: "main",
+                    payload: .message(MessageData(role: .agent, text: initial, done: scene == "japanese")))))
+                if scene == "japanese-streaming" {
+                    continuation.yield(.event(YorozuEvent(id: "japanese-working", threadId: "", ts: 2, agentId: "main",
+                        payload: .syncDelta(SyncDeltaData(events: [], workingThreadIds: ["Weeknight dinners"])))))
+                }
+
+            }
+            if scene == "threads" || scene == "new-thread" || scene == "session-yorozu" || scene == "session-multiple" || scene == "session-legacy" {
+                let configured = scene == "session-yorozu" ? [ThreadAgent.yorozu] : ThreadAgent.allCases
+                continuation.yield(.event(YorozuEvent(id: "configured-agents", threadId: "", ts: 0, agentId: "main",
+                    payload: .modelList(ModelListData(models: [], agents: configured.map {
+                        AgentDescriptor(id: $0, label: $0.label, needsFolder: $0.needsFolder)
+                    })))))
             }
             if launchArgument("yorozuShowcase") == "channel-model" {
                 continuation.yield(.event(YorozuEvent(id: "channel-capability", threadId: "", ts: 0, agentId: "main",
@@ -75,6 +89,24 @@ private actor ShowcaseTransport: ChatTransport {
     }
 
     func send(_ event: YorozuEvent) async throws {
+        if launchArgument("yorozuShowcase") == "japanese-streaming", launchArgument("yorozuFinishJapanese") != nil {
+            continuation?.yield(.event(YorozuEvent(id: "receipt-\(event.id)", threadId: event.threadId, ts: event.ts, agentId: "main",
+                payload: .receipt(ReceiptData(eventId: event.id)))))
+        }
+        if launchArgument("yorozuShowcase") == "japanese-streaming", launchArgument("yorozuFinishJapanese") != nil,
+           case .message(let message) = event.payload, message.text == "Continue" || message.text == "Finish" {
+            let done = message.text == "Finish"
+            let text = done ? japaneseReplyFixture : String(japaneseReplyFixture.prefix(japaneseReplyFixture.count * 2 / 3))
+            continuation?.yield(.event(YorozuEvent(id: "japanese-reply", threadId: event.threadId, ts: event.ts + 1, agentId: "main",
+                payload: .message(MessageData(role: .agent, text: text, done: done)))))
+        }
+
+        if case .agentStatus = event.payload, launchArgument("yorozuShowcase") != "session-pending" {
+            let scene = launchArgument("yorozuShowcase")
+            let ready = scene != "session-yorozu" && scene != "session-legacy"
+            continuation?.yield(.event(YorozuEvent(id: "setup-\(event.id)", threadId: "", ts: event.ts, agentId: "main",
+                payload: .agentStatus(AgentStatusData(claude: AgentReadiness(ok: ready), codex: AgentReadiness(ok: ready))))))
+        }
         if case .threadModelsRequest = event.payload {
             continuation?.yield(.event(YorozuEvent(id: "catalog-\(event.id)", threadId: event.threadId,
                 ts: event.ts, agentId: "main", payload: .threadModels(ThreadModelsData(requestId: event.id, models: [
@@ -413,12 +445,6 @@ final class Session {
 
     func requestNotifications() {
         guard !isDemo, launchArgument("yorozuShowcase") == nil, launchArgument("yorozuScene") == nil else { return }
-        #if DEBUG
-        // Network UI tests use synthetic hosts and never grant system permissions.
-        // Notification consent has its own flow and must not intercept a Send tap.
-        if ProcessInfo.processInfo.arguments.contains("-yorozuNoNotificationPrompt") ||
-            ProcessInfo.processInfo.environment["YOROZU_UITEST_NO_NOTIFICATIONS"] == "1" { return }
-        #endif
         Task {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             UIApplication.shared.registerForRemoteNotifications()
@@ -596,14 +622,13 @@ final class Session {
 
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var session = Session.shared
     /// The thread ids pushed on the list's stack: at most one, and what lets the app open a
     /// thread by itself rather than waiting to be tapped. Seeded from the session, which decided
     /// it before this view was ever built, so the first frame is already the chat.
     @State private var path: [String] = Session.shared.openPath
     @State private var hostPath: [HostThreadID] = Session.shared.hostPath
-    @State private var destination: AppDestination = launchArgument("yorozuShowcase") == "settings" ? .settings : .chat
+    @State private var settings = launchArgument("yorozuShowcase") == "settings"
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
     /// because a simulator cannot be made to open a real share sheet.
     @State private var shareShowcase = ChatShowcase.share
@@ -624,7 +649,6 @@ struct RootView: View {
             // `thread` and `ref` name a thread to open, `share` is the share extension handing
             // over. Anything else is not ours and is ignored, not tried as a pairing code.
             .onOpenURL { url in
-                if ["thread", "ref", "share"].contains(url.host() ?? "") { destination = .chat }
                 switch url.host() {
                 case "thread":
                     // `yorozu://thread/<id>`, so the id is the path with its leading slash off.
@@ -652,7 +676,14 @@ struct RootView: View {
             }
             // A pairing code tapped inside a chat takes the same road as one tapped in Messages.
             .environment(\.onPairingLink) { session.handlePairingLink($0) }
-            .modifier(PairingConfirmation(session: session, enabled: destination != .settings))
+            .modifier(PairingConfirmation(session: session, enabled: !settings))
+            .sheet(isPresented: $settings) {
+                SettingsView(session: session) { threadID, hostID in
+                    settings = false
+                    if let hostID { hostPath = [HostThreadID(hostID: hostID, threadID: threadID)] }
+                    else { path = [threadID] }
+                }
+            }
             // iOS suspends the app and its socket with it. Coming back is the moment to re-dial,
             // rather than waiting out a backoff that ran down while nothing was executing — and
             // the moment to pick up anything shared while it was away.
@@ -680,16 +711,12 @@ struct RootView: View {
             // not being read, and must not report that it was. Kept apart from the switch above
             // so the reconnect only happens on an actual transition into `.active`.
             .onChange(of: scenePhase, initial: true) { _, phase in
-                updateReading()
+                session.hosts.foreground = phase == .active && !settings
+                if session.hosts.sessions.isEmpty { session.model?.foreground = phase == .active && !settings }
             }
-            .onChange(of: destination) { _, _ in updateReading() }
-            .onChange(of: session.hostPath) { _, opened in
-                if !opened.isEmpty { destination = .chat }
-                hostPath = opened
-            }
-            .onChange(of: session.openPath) { _, opened in
-                if !opened.isEmpty { destination = .chat }
-                path = opened
+            .onChange(of: settings) { _, shown in
+                session.hosts.foreground = scenePhase == .active && !shown
+                if session.hosts.sessions.isEmpty { session.model?.foreground = scenePhase == .active && !shown }
             }
             .onChange(of: session.hosts.sessions.map { $0.model.compatibility }) { _, _ in
                 session.finishIncompatiblePairing()
@@ -729,36 +756,7 @@ struct RootView: View {
         }
     }
 
-    private func updateReading() {
-        let reading = scenePhase == .active && destination == .chat
-        session.hosts.foreground = reading
-        if session.hosts.sessions.isEmpty { session.model?.foreground = reading }
-    }
-
     @ViewBuilder private var content: some View {
-        if session.showingHosts || session.model != nil && !session.isPairing {
-            TabView(selection: $destination) {
-                Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: .chat) { chatContent }
-                Tab("Schedules", systemImage: "calendar", value: .schedules) {
-                    NavigationStack {
-                        SchedulesUnavailableView(models: session.allModels) { destination = .settings }
-                            .navigationBarTitleDisplayMode(horizontalSizeClass == .regular ? .inline : .automatic)
-                            .paperList()
-                    }
-                }
-                Tab("Settings", systemImage: "gearshape", value: .settings) {
-                    SettingsView(session: session, showsDone: false) { threadID, hostID in
-                        if let hostID { hostPath = [HostThreadID(hostID: hostID, threadID: threadID)] }
-                        else { path = [threadID] }
-                        destination = .chat
-                    }
-                }
-            }
-            .yorozuTint()
-        } else { chatContent }
-    }
-
-    @ViewBuilder private var chatContent: some View {
         #if DEBUG
         if launchArgument("yorozuShowcase") == "pairing-manual" {
             PairView(onPair: { _ in String(localized: "Not a Yorozu pairing code.") })
@@ -841,7 +839,7 @@ struct RootView: View {
                 searchScope: model.searchScope,
                 onSearchQueryChange: model.searchHost,
                 exportMarkdown: model.markdown(of:),
-                onSettings: { destination = .settings }
+                onSettings: { settings = true }
             ) { thread in
                 let notification = session.notificationOpen.flatMap { $0.threadId == thread.id ? $0 : nil }
                 ChatView(
@@ -898,7 +896,7 @@ struct RootView: View {
         MultiHostThreadListView(
             session: session.hosts,
             path: $hostPath,
-            onSettings: { destination = .settings },
+            onSettings: { settings = true },
             updateStatuses: session.hosts.sessions.map { host in
                 UpdateStatusItem(
                     id: host.id,

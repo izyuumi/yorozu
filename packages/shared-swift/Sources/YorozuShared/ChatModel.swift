@@ -269,9 +269,6 @@ public final class ChatModel {
     public private(set) var approvalOutcomes: [String: ApprovalStatusData.Status] = [:]
     /// The same for question cards, which are answered with a choice rather than a decision.
     public private(set) var answeredQuestions: Set<String> = []
-    private var questionOutcomes: [String: [String: QuestionStatusData.Status]] = [:]
-    private var scopedQuestionIds: [String: Set<String>] = [:]
-    private var scopedQuestionChoices: [String: [String: String]] = [:]
     /// The choice made on this device, so a resolved question keeps its answer visible.
     public private(set) var questionChoices: [String: String] = [:]
     /// Proposals this device has reviewed or waved away, so the card stops offering buttons.
@@ -300,46 +297,6 @@ public final class ChatModel {
             saveComposerNow()
         }
     }
-    public private(set) var replyTargets: [String: ReplyTarget] = [:] {
-        didSet { saveDraftsNow() }
-    }
-    private var channelReplyContext = false
-
-    public func supportsReplies(in threadId: String) -> Bool {
-        guard case .compatible(_, let capabilities) = compatibility,
-              capabilities.contains("reply-context-v1"), channelReplyContext,
-              let thread = synced.first(where: { $0.id == threadId }),
-              (thread.agent ?? .yorozu) == .yorozu else { return false }
-        return true
-    }
-
-    public func canReply(to event: YorozuEvent) -> Bool {
-        guard supportsReplies(in: event.threadId), event.parentAgentId == nil,
-              pendingComposerCards(in: event.threadId).isEmpty,
-              outboxStatus(of: event.id) == nil,
-              timeline(event.threadId).events.contains(where: { $0.id == event.id }),
-              case .message(let data) = event.payload,
-              !data.text.isEmpty || !data.attachments.isEmpty else { return false }
-        return data.role == .user || data.done == true
-    }
-
-    @discardableResult
-    public func beginReply(to event: YorozuEvent) -> Bool {
-        guard canReply(to: event), case .message(let data) = event.payload else { return false }
-        replyTargets[event.threadId] = ReplyTarget(eventId: event.id, message: data)
-        return true
-    }
-
-    /// Cancelling a reply never edits the user's text or staged files.
-    public func cancelReply(in threadId: String) { replyTargets[threadId] = nil }
-
-    public func replyPreview(for data: MessageData, in threadId: String) -> ReplyTarget? {
-        guard data.role == .user, let id = data.replyTo,
-              let original = timeline(threadId).events.first(where: { $0.id == id }),
-              case .message(let message) = original.payload else { return nil }
-        return ReplyTarget(eventId: id, message: message)
-    }
-
     public private(set) var stashes: [String: [ThreadCache.StashedDraft]] = [:]
     private var promptHistory: [String: String] = [:]
     private var recallingPrompt = false
@@ -368,48 +325,47 @@ public final class ChatModel {
         return true
     }
 
-    /// Recovery copies a legacy saved draft into its own composer. Keep the original as a
-    /// recovery source: a crash between the two encrypted records must never destroy it.
-    /// The stable destination makes repeated recovery reopen the same draft.
-    @discardableResult
-    public func recoverStash(_ id: String, in threadId: String) -> String? {
-        guard let stash = stashes[threadId]?.first(where: { $0.id == id }),
-              let source = threads.first(where: { $0.id == threadId }) else { return nil }
-        let destination = "recovered-" + id
-        if threads.contains(where: { $0.id == destination }) {
-            if isDraft(destination), drafts[destination] == stash.text, attachments[destination] == nil {
-                restoringComposer = true
-                defer { restoringComposer = false }
-                attachments[destination] = stash.attachments
-                do {
-                    try saveComposer()
-                    try saveDraftState()
-                } catch {
-                    failure = String(localized: "Could not save draft: \(error.localizedDescription)")
-                    return nil
-                }
-            }
-            return destination
-        }
+    public func stashDraft(in threadId: String) {
+        let text = drafts[threadId] ?? ""
+        let files = attachments[threadId] ?? []
+        guard !text.isEmpty || !files.isEmpty else { return }
         restoringComposer = true
         defer { restoringComposer = false }
-        var recovered = ThreadSummary(id: destination, title: "", archived: false,
-            lastActivity: Date().timeIntervalSince1970 * 1000, agent: source.agent, cwd: source.cwd)
-        recovered.model = source.model
-        recovered.effort = source.effort
-        draftThreads.insert(recovered, at: 0)
-        drafts[destination] = stash.text
-        attachments[destination] = stash.attachments
+        let previous = stashes[threadId]
+        stashes[threadId, default: []].append(.init(text: text, attachments: files))
+        do {
+            // Make the stash durable before clearing either part of the composer.
+            try saveComposer()
+        } catch {
+            stashes[threadId] = previous
+            failure = String(localized: "Could not save draft: \(error.localizedDescription)")
+            return
+        }
+        drafts[threadId] = ""
+        attachments[threadId] = nil
         do {
             try saveComposer()
             try saveDraftState()
-            return destination
+        } catch { failure = String(localized: "Could not save draft: \(error.localizedDescription)") }
+    }
+
+    public func restoreStash(_ id: String, in threadId: String) {
+        guard (drafts[threadId] ?? "").isEmpty, (attachments[threadId] ?? []).isEmpty,
+              let stash = stashes[threadId]?.first(where: { $0.id == id }) else { return }
+        restoringComposer = true
+        defer { restoringComposer = false }
+        drafts[threadId] = stash.text
+        attachments[threadId] = stash.attachments
+        let previous = stashes[threadId]
+        do {
+            // Keep the stash until both composer records own the restored draft.
+            try saveDraftState()
+            try saveComposer()
+            stashes[threadId]?.removeAll { $0.id == id }
+            try saveComposer()
         } catch {
-            draftThreads.removeAll { $0.id == destination }
-            drafts[destination] = nil
-            attachments[destination] = nil
+            stashes[threadId] = previous
             failure = String(localized: "Could not save draft: \(error.localizedDescription)")
-            return nil
         }
     }
     private var restoredWithdrawals: Set<String> = []
@@ -424,14 +380,12 @@ public final class ChatModel {
     public private(set) var devices: [DeviceInfo] = []
     /// Includes empty replies, so pairing can await a confirmed list before showing its code.
     public private(set) var deviceListRevision = 0
-    /// Sign-in and optional gateway reachability, as checked by this host. This is not
-    /// execution readiness; only the host Mac asks, and disconnect invalidates the result.
+    /// Whether each agent would answer here. Nil while ``requestAgentStatus()`` waits for the
+    /// runtime, so a check that finds nothing new still reads as a check. New-session setup
+    /// and the host Mac's settings ask through the same readiness check.
     public private(set) var agentStatus: AgentStatusData?
-    public private(set) var agentStatusChecking = false
-    public private(set) var agentStatusFailure: String?
-    private var agentStatusRequestID: String?
-    @ObservationIgnored private var agentStatusTask: Task<Void, Never>?
-    private let agentStatusTimeout: Duration
+    /// Last authenticated setup, retained while checking again and for this host offline.
+    private var confirmedAgentStatus: AgentStatusData?
     /// Every model a thread can be put on, as the Mac has it configured. Arrives with the
     /// thread list; empty until then, which is a picker that offers only Default.
     public private(set) var channelModelSelection = false
@@ -446,6 +400,17 @@ public final class ChatModel {
 
     public var availableAgents: [AgentDescriptor] {
         agents ?? ThreadAgent.allCases.map { AgentDescriptor(id: $0, label: $0.label, needsFolder: $0.needsFolder) }
+    }
+
+    /// New sessions offer built-in coding agents only after their host confirms setup.
+    public var configuredAgents: [AgentDescriptor] {
+        availableAgents.filter { descriptor in
+            switch descriptor.id {
+            case .claudeCode: confirmedAgentStatus?.claude?.ok == true
+            case .codex: confirmedAgentStatus?.codex?.ok == true
+            default: true
+            }
+        }
     }
 
     public func descriptor(for agent: ThreadAgent) -> AgentDescriptor? {
@@ -488,7 +453,6 @@ public final class ChatModel {
         ("progress-v1", String(localized: "progress")),
         ("model-select-v1", String(localized: "model picker")),
         ("media-v1", String(localized: "attachments")),
-        ("reply-context-v1", String(localized: "replies")),
     ]
 
     /// The host reports `missing:<capability>` for a connected plugin that did not announce it.
@@ -655,8 +619,7 @@ public final class ChatModel {
     private func saveDraftState() throws {
         try cache?.save(draftState: .init(drafts: drafts, preparedSend: preparedSend,
                                           threads: draftThreads, openThread: openThread,
-                                          lastRun: lastRun, channelModels: draftChannelModels.filter { isDraft($0.key) },
-                                          replyTargets: replyTargets.isEmpty ? nil : replyTargets))
+                                          lastRun: lastRun, channelModels: draftChannelModels.filter { isDraft($0.key) }))
     }
 
     /// Staged files change rarely, but must survive immediate termination too.
@@ -735,8 +698,7 @@ public final class ChatModel {
     private var pendingStreamEvents: [String: YorozuEvent] = [:]
     private var streamFrame: Task<Void, Never>?
 
-    public init(transport: any ChatTransport, cache: ThreadCache? = nil, device: String = "phone", agentStatusTimeout: Duration = .seconds(10)) {
-        self.agentStatusTimeout = agentStatusTimeout
+    public init(transport: any ChatTransport, cache: ThreadCache? = nil, device: String = "phone") {
         self.transport = transport
         self.cache = cache
         self.device = device
@@ -744,6 +706,7 @@ public final class ChatModel {
         guard let cache else { return }
         peerInfo = cache.peerInfo()
         agents = cache.agents().map(Self.acceptedAgents)
+        confirmedAgentStatus = cache.agentStatus()
         synced = cache.threads()
         syncLastSeen = cache.lastSeen()
         let storedPending = cache.outbox()
@@ -766,7 +729,6 @@ public final class ChatModel {
         draftChannelModels = draftState?.channelModels ?? [:]
         var composerPrepared: [String: String] = [:]
         restoringComposer = true
-        replyTargets = draftState?.replyTargets ?? [:]
         let composer = cache.composer()
         if let composer {
             composerPrepared = composer.preparedSend ?? [:]
@@ -800,7 +762,6 @@ public final class ChatModel {
             for threadId in committedSends {
                 if let eventId = activePrepared[threadId], outbox.contains(where: { $0.id == eventId }) {
                     drafts[threadId] = ""
-                    replyTargets[threadId] = nil
                 }
                 attachments[threadId] = nil
             }
@@ -841,16 +802,9 @@ public final class ChatModel {
             for event in events { applyAnswerState(event) }
         }
         for item in outbox {
-            if item.questionStatusRequired == true, case .questionAnswer(let answer) = item.event.payload {
-                scopedQuestionIds[item.event.threadId, default: []].insert(answer.questionId)
-            }
             if case .message = item.event.payload { upsert(item.event, persist: false) }
-            if item.event.payload.kind != .approvalAnswer &&
-                !(item.event.payload.kind == .questionAnswer && questionRequiresStatus(item)) {
-                applyAnswerState(item.event)
-            }
+            if item.event.payload.kind != .approvalAnswer { applyAnswerState(item.event) }
         }
-        for thread in synced { restoreRejectedReplies(in: thread.id) }
         armOutboxRetry()
     }
 
@@ -869,7 +823,6 @@ public final class ChatModel {
     }
 
     public func close() {
-        invalidateAgentStatus()
         retryTask?.cancel()
         retryTask = nil
         Task { [transport] in await transport.close() }
@@ -879,7 +832,6 @@ public final class ChatModel {
     /// Detached cache writes keep their snapshots alive, so cancellation alone is not enough:
     /// wait for them before allowing the host's keys and files to be erased.
     public func shutdown() async {
-        invalidateAgentStatus()
         searchTask?.cancel()
         flushStreamEvents()
         do { try saveComposer() }
@@ -1045,10 +997,6 @@ public final class ChatModel {
         let text = (drafts[thread.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = attachments[thread.id] ?? []
         if let card = pendingComposerCards(in: thread.id).first {
-            guard replyTargets[thread.id] == nil else {
-                failure = String(localized: "Finish the pending request or cancel the reply before sending.")
-                return
-            }
             guard case .questionCard(let question) = card.payload, !text.isEmpty else { return }
             guard answerQuestion(question.questionId, in: thread.id, text) else { return }
             drafts[thread.id] = ""
@@ -1061,7 +1009,6 @@ public final class ChatModel {
         guard queueMessage(text, in: thread.id, attachments: attachments, fromComposer: true, alternateDelivery: alternateDelivery) else { return }
         drafts[thread.id] = ""
         self.attachments[thread.id] = nil
-        replyTargets[thread.id] = nil
         preparedSend[thread.id] = nil
         do {
             try saveComposer()
@@ -1075,18 +1022,13 @@ public final class ChatModel {
         send(text, in: threadId, attachments: attachment.map { [$0] } ?? [])
     }
 
-    public func send(_ text: String, in threadId: String, attachments: [MessageAttachment], replyTo: String? = nil) {
-        if queueMessage(text, in: threadId, attachments: attachments, replyTo: replyTo) { flush() }
+    public func send(_ text: String, in threadId: String, attachments: [MessageAttachment]) {
+        if queueMessage(text, in: threadId, attachments: attachments) { flush() }
     }
 
     @discardableResult
     private func queueMessage(_ text: String, in threadId: String, attachments: [MessageAttachment],
-                              fromComposer: Bool = false, alternateDelivery: Bool = false, replyTo: String? = nil) -> Bool {
-        let replyTo = fromComposer ? replyTargets[threadId]?.eventId : replyTo
-        if replyTo != nil, !supportsReplies(in: threadId) {
-            failure = String(localized: "Connect to a host that supports replies, or cancel the reply to send without it.")
-            return false
-        }
+                              fromComposer: Bool = false, alternateDelivery: Bool = false) -> Bool {
         guard !stopped else { return false }
         guard !attachments.contains(where: \.isDeferred) else {
             failure = String(localized: "Wait for attachment download before sending.")
@@ -1125,7 +1067,7 @@ public final class ChatModel {
             payload: .message(MessageData(role: .user, text: text, attachments: attachments,
                 admissionDeadline: createdAt + 30 * 60_000,
                 delivery: alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior,
-                channelModel: channelChoice, replyTo: replyTo))
+                channelModel: channelChoice))
         )
         // Persist creation and its first message in one encrypted write. A failed write leaves
         // the composer and draft thread intact, with no phantom bubble or unsaved outbox item.
@@ -1264,7 +1206,7 @@ public final class ChatModel {
         let ts = Int(Date().timeIntervalSince1970 * 1000)
         let renewed = YorozuEvent(id: UUID().uuidString, threadId: old.threadId, ts: ts,
             agentId: device, payload: .message(MessageData(role: .user, text: original.text,
-                attachments: original.attachments, admissionDeadline: ts + 30 * 60_000, delivery: original.delivery, replyTo: original.replyTo)))
+                attachments: original.attachments, admissionDeadline: ts + 30 * 60_000, delivery: original.delivery)))
         var pending = outbox
         // A draft's creation and settings must reach the host before its renewed first message.
         // Their original IDs are safe to retry; the host deduplicates accepted operations.
@@ -1316,8 +1258,7 @@ public final class ChatModel {
     @discardableResult
     private func deliver(_ event: YorozuEvent, queue: Bool) -> Bool {
         guard !stopped else { return false }
-        outbox = Outbox.pruned(outbox + [OutboxItem(event: event,
-            questionStatusRequired: questionRequiresStatus(event) ? true : nil)])
+        outbox = Outbox.pruned(outbox + [OutboxItem(event: event)])
         guard saveOutbox() else { return false }
         if !queue { flush() }
         return true
@@ -1477,7 +1418,7 @@ public final class ChatModel {
         let commit = YorozuEvent(id: item.id, threadId: item.event.threadId, ts: item.event.ts,
             agentId: item.event.agentId, payload: .attachmentCommit(AttachmentCommitData(
                 text: message.text, attachments: descriptors, admissionDeadline: deadline, delivery: message.delivery,
-                channelModel: message.channelModel, replyTo: message.replyTo)))
+                channelModel: message.channelModel)))
         inFlightUpload[item.id] = (item.id, -1)
         try await transport.send(commit)
     }
@@ -1610,8 +1551,7 @@ public final class ChatModel {
         guard outbox.contains(where: { $0.id == eventId }) else { return }
         // Stop's receipt confirms durable intent, not that execution ceased.
         if outbox.contains(where: { $0.id == eventId &&
-            ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer ||
-             $0.event.payload.kind == .questionAnswer && questionRequiresStatus($0)) }) { return }
+            ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer) }) { return }
         outbox.removeAll { $0.id == eventId }
         inFlightUpload[eventId] = nil
         if uploadCache?.id == eventId { uploadCache = nil }
@@ -1623,8 +1563,7 @@ public final class ChatModel {
         guard let index = outbox.firstIndex(where: { $0.id == status.eventId }) else {
             // The host took this message and only later found it cannot go out (a plugin without
             // attachment support connected). Its outbox entry is gone, so the timeline's copy becomes one.
-            if status.status == .rejected,
-               status.reason == "attachments-unsupported" || status.reason?.hasPrefix("reply-") == true,
+            if status.status == .rejected, status.reason == "attachments-unsupported",
                let sent = timelines.values.lazy.flatMap(\.events).first(where: { $0.id == status.eventId }),
                case .message(let data) = sent.payload, data.role == .user {
                 outbox.append(OutboxItem(event: sent, admissionStatus: .rejected, rejectionReason: status.reason))
@@ -1836,17 +1775,8 @@ public final class ChatModel {
             return item.admissionStatus != .withdrawn && item.admissionStatus != .rejected &&
                 item.replacementId == nil && !stopPending(for: event.id)
         }
-        let history = timeline(event.threadId).events
-        guard history.contains(where: { $0.id == event.id }), !stopPending(for: event.id) else { return false }
-        return !history.contains { known in
-            if case .stopStatus(let status) = known.payload {
-                return status.targetEventId == event.id && status.status != .requested && status.status != .unknown
-            }
-            if case .message(let reply) = known.payload, reply.role == .agent, reply.done == true {
-                return known.id == data.completionId || known.id.hasSuffix(":\(event.id):final")
-            }
-            return false
-        }
+        return !stopPending(for: event.id) && timeline(event.threadId).isUnfinishedMessage(
+            id: event.id, completionID: data.completionId)
     }
 
     private func stopPending(for eventId: String) -> Bool {
@@ -1977,23 +1907,6 @@ public final class ChatModel {
         }
     }
 
-    private func restoreRejectedReplies(in threadId: String) {
-        for event in timeline(threadId).events {
-            if case .admissionStatus(let status) = event.payload,
-               status.status == .rejected, status.reason?.hasPrefix("reply-") == true { reconcile(status) }
-        }
-    }
-
-    /// Recover an explicitly rejected reply without resending it or replacing another draft.
-    /// Repeated recovery is idempotent, just like a confirmed withdrawal.
-    public func recoverRejectedReply(_ eventId: String) {
-        guard let item = outbox.first(where: { $0.id == eventId }),
-              item.admissionStatus == .rejected, item.rejectionReason?.hasPrefix("reply-") == true else { return }
-        restoreWithdrawnMessage(item.event)
-        saveComposerNow()
-        saveDraftsNow()
-    }
-
     private func restoreWithdrawnMessage(_ original: YorozuEvent) {
         guard !restoredWithdrawals.contains(original.id),
               case .message(let message) = original.payload, message.role == .user else { return }
@@ -2001,10 +1914,6 @@ public final class ChatModel {
         liveWithdrawals.remove(original.id)
         let threadId = original.threadId
         let draft = drafts[threadId] ?? ""
-        if draft.isEmpty, (attachments[threadId] ?? []).isEmpty, replyTargets[threadId] == nil,
-           let reply = replyPreview(for: message, in: threadId) {
-            replyTargets[threadId] = reply
-        }
         drafts[threadId] = [draft, message.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
         attachments[threadId, default: []].append(contentsOf: message.attachments)
         if message.attachments.contains(where: \.isDeferred) { requestAttachmentDownloads(original) }
@@ -2102,7 +2011,6 @@ public final class ChatModel {
         drafts[threadId] = nil
         stashes[threadId] = nil
         attachments[threadId] = nil
-        replyTargets[threadId] = nil
     }
 
     /// Creates a thread on the runtime straight away, title and all. Only the end-to-end harness
@@ -2371,8 +2279,7 @@ public final class ChatModel {
                 return !answered.contains(card.actionId) && !approvalPending(card.actionId) &&
                     approvalOutcomes[card.actionId] != .noLongerNeeded && approvalOutcomes[card.actionId] != .expired
             case .questionCard(let card):
-                return !questionAnswered(card.questionId, in: threadId) && !questionPending(card.questionId, in: threadId) &&
-                    questionOutcomes[threadId]?[card.questionId] != .noLongerNeeded && questionOutcomes[threadId]?[card.questionId] != .expired
+                return !answeredQuestions.contains(card.questionId)
             default: return false
             }
         }
@@ -2402,58 +2309,6 @@ public final class ChatModel {
         retireApproval(status)
         if status.status == .rejected { failure = String(localized: "Approval answer could not be applied.") }
         applyEvent(event)
-    }
-
-    public func questionPending(_ questionId: String, in threadId: String? = nil) -> Bool {
-        outbox.contains { item in
-            if case .questionAnswer(let answer) = item.event.payload {
-                return answer.questionId == questionId && (threadId == nil || item.event.threadId == threadId)
-            }
-            return false
-        }
-    }
-
-    public func questionAnswered(_ questionId: String, in threadId: String) -> Bool {
-        scopedQuestionIds[threadId]?.contains(questionId) == true
-            ? questionOutcomes[threadId]?[questionId] == .applied
-            : answeredQuestions.contains(questionId)
-    }
-
-    public func questionDispositions(in threadId: String) -> [String: QuestionStatusData.Status] {
-        questionOutcomes[threadId] ?? [:]
-    }
-
-    public func resolvedQuestionIds(in threadId: String) -> Set<String> {
-        answeredQuestions.subtracting(scopedQuestionIds[threadId] ?? [])
-            .union((questionOutcomes[threadId] ?? [:]).filter { $0.value != .rejected }.keys)
-    }
-
-    public func questionChoices(in threadId: String) -> [String: String] {
-        questionChoices.filter { scopedQuestionIds[threadId]?.contains($0.key) != true }
-            .merging(scopedQuestionChoices[threadId] ?? [:]) { _, scoped in scoped }
-    }
-
-    private func questionRequiresStatus(_ item: OutboxItem) -> Bool {
-        item.questionStatusRequired == true || questionRequiresStatus(item.event)
-    }
-
-    private func questionRequiresStatus(_ event: YorozuEvent) -> Bool {
-        guard case .questionAnswer(let answer) = event.payload else { return false }
-        return scopedQuestionIds[event.threadId]?.contains(answer.questionId) == true
-    }
-
-    private func retireQuestion(_ status: QuestionStatusData, in threadId: String) {
-        guard let index = outbox.firstIndex(where: { $0.id == status.requestId && $0.event.threadId == threadId }),
-              case .questionAnswer(let answer) = outbox[index].event.payload,
-              answer.questionId == status.questionId else { return }
-        applyQuestionOutcome(status, in: threadId)
-        if status.status == .applied {
-            questionChoices[status.questionId] = answer.answer
-            scopedQuestionChoices[threadId, default: [:]][status.questionId] = answer.answer
-        }
-        outbox.remove(at: index)
-        saveOutbox()
-        flush()
     }
 
     /// Saves a rule: from the proposal card's editor, or from the Rules screen. The runtime
@@ -2492,14 +2347,11 @@ public final class ChatModel {
     /// call is suspended on this: until it arrives, or expires, the turn is parked.
     @discardableResult
     public func answerQuestion(_ questionId: String, in threadId: String, _ answer: String) -> Bool {
-        guard !stopped, !questionAnswered(questionId, in: threadId), !questionPending(questionId, in: threadId),
-              questionOutcomes[threadId]?[questionId] != .noLongerNeeded, questionOutcomes[threadId]?[questionId] != .expired else { return false }
+        guard !stopped, !answeredQuestions.contains(questionId) else { return false }
         let request = event(.questionAnswer(QuestionAnswerData(questionId: questionId, answer: answer)), in: threadId)
         guard deliver(request, queue: !canDeliver) else { return false }
-        if !questionRequiresStatus(request) {
-            answeredQuestions.insert(questionId)
-            questionChoices[questionId] = answer
-        }
+        answeredQuestions.insert(questionId)
+        questionChoices[questionId] = answer
         return true
     }
 
@@ -2560,35 +2412,10 @@ public final class ChatModel {
             "\(platform) \(version.majorVersion).\(version.minorVersion)\(patch)")), in: "")
     }
 
-    /// Checks sign-in, not execution. Requests are correlated and bounded, so an old result
-    /// cannot turn a disconnected or retried check into a current readiness claim.
+    /// Asks the runtime which agents would answer, forgetting the last answer until this one lands.
     public func requestAgentStatus() {
-        guard !agentStatusChecking else { return }
         agentStatus = nil
-        guard canDeliver else {
-            agentStatusFailure = String(localized: "Connect your Mac before checking sign-in.")
-            return
-        }
-        let request = control(.agentStatus(AgentStatusData()))
-        agentStatusFailure = nil
-        agentStatusRequestID = request.id
-        agentStatusChecking = true
-        emit(request)
-        agentStatusTask = Task { [weak self, agentStatusTimeout] in
-            try? await Task.sleep(for: agentStatusTimeout)
-            guard !Task.isCancelled, let self, self.agentStatusRequestID == request.id else { return }
-            self.invalidateAgentStatus()
-            self.agentStatusFailure = String(localized: "Sign-in check did not answer. Re-check when your Mac is connected.")
-        }
-    }
-
-    private func invalidateAgentStatus() {
-        agentStatusTask?.cancel()
-        agentStatusTask = nil
-        agentStatusRequestID = nil
-        agentStatusChecking = false
-        agentStatus = nil
-        agentStatusFailure = nil
+        emit(.agentStatus(AgentStatusData()), in: "")
     }
 
     /// Forgets a paired device, here and at the relay. Answered with a new list.
@@ -2653,9 +2480,7 @@ public final class ChatModel {
         case .state(let state):
             self.state = state
             if state != .paired {
-                invalidateAgentStatus()
                 channelModelsDisconnected()
-                channelReplyContext = false
                 inFlightUpload.removeAll()
                 downloadInFlight.removeAll()
                 downloadRetries.values.forEach { $0.cancel() }
@@ -2686,7 +2511,7 @@ public final class ChatModel {
                 requestHostSearch()
             }
         case .ownerOnline(let online):
-            if !online { channelModelsDisconnected(); invalidateAgentStatus() }
+            if !online { channelModelsDisconnected() }
             let wasOnline = ownerOnline
             ownerOnline = online
             if !online && updateStatus.phase != .none && updateStatus.phase != .installing {
@@ -2738,7 +2563,6 @@ public final class ChatModel {
                 for event in data.current ?? [] { upsert(event, persist: false) }
                 for event in data.events {
                     if case .approvalStatus(let status) = event.payload { retireApproval(status) }
-                    if case .questionStatus(let status) = event.payload { retireQuestion(status, in: event.threadId) }
                     upsert(event, persist: false)
                     if data.threadId == nil { syncLastSeen[event.threadId] = event.syncCursor ?? event.id }
                     else { historyCursors[event.threadId] = event.syncCursor ?? event.id }
@@ -2746,10 +2570,7 @@ public final class ChatModel {
                 let syncedThreads = Set(data.events.map(\.threadId))
                     .union((data.current ?? []).map(\.threadId))
                     .union(data.threadId.map { [$0] } ?? [])
-                for threadId in syncedThreads {
-                    restoreWithdrawals(in: threadId)
-                    restoreRejectedReplies(in: threadId)
-                }
+                for threadId in syncedThreads { restoreWithdrawals(in: threadId) }
                 if let id = data.threadId {
                     historyInFlight.remove(id)
                     if data.more != true { historyLoaded.insert(id) }
@@ -2820,7 +2641,6 @@ public final class ChatModel {
             case .threadModelsRequest:
                 break
             case .modelList(let data):
-                channelReplyContext = data.channelCapabilities?.contains("reply-context-v1") == true
                 channelModelSelection = data.channelCapabilities?.contains("model-select-v1") == true
                 noteMissingPluginFeatures(data.channelCapabilities)
                 if !channelModelSelection {
@@ -2844,21 +2664,9 @@ public final class ChatModel {
                 deviceListRevision += 1
                 onDevices?()
             case .agentStatus(let data):
-                guard agentStatusChecking, canDeliver else { break }
-                guard let id = data.requestId else {
-                    invalidateAgentStatus()
-                    agentStatusFailure = String(localized: "Update Yorozu on your Mac to check sign-in.")
-                    break
-                }
-                guard id == agentStatusRequestID else { break }
-                agentStatusTask?.cancel()
-                agentStatusTask = nil
-                agentStatusRequestID = nil
-                agentStatusChecking = false
-                if data.failed == true {
-                    agentStatus = nil
-                    agentStatusFailure = String(localized: "Could not check sign-in. Re-check or open assistant setup.")
-                } else { agentStatus = data }
+                agentStatus = data
+                confirmedAgentStatus = data
+                cache?.save(agentStatus: data)
             // The stored rules, in answer to `rule_list` and after any change to them. Also
             // not a thread's event: rules are global, which is the whole point of them.
             case .ruleList(let data):
@@ -2877,20 +2685,15 @@ public final class ChatModel {
                 attachmentDownloadChunk(data, in: event.threadId)
             case .admissionStatus(let data):
                 reconcile(data)
-                if !event.threadId.isEmpty { applyEvent(event) }
             case .stopStatus(let data):
                 reconcileStop(data)
                 applyEvent(event)
             case .approvalStatus(let data):
                 reconcileApproval(data, event: event)
-            case .questionStatus(let data):
-                retireQuestion(data, in: event.threadId)
-                applyEvent(event)
             default:
                 applyEvent(event)
             }
         case .failed(let reason):
-            invalidateAgentStatus()
             flushStreamEvents()
             failure = reason
             linkFailure = reason
@@ -2926,10 +2729,9 @@ public final class ChatModel {
             restoreWithdrawals(in: event.threadId)
         } else if case .message(let message) = event.payload, message.role == .user {
             restoreWithdrawals(in: event.threadId)
-            restoreRejectedReplies(in: event.threadId)
         }
         switch event.payload {
-        case .approvalAnswer, .approvalStatus, .questionAnswer, .questionStatus: flush()
+        case .approvalAnswer, .approvalStatus, .questionAnswer: flush()
         default: break
         }
     }
@@ -3301,35 +3103,8 @@ public final class ChatModel {
         case .questionAnswer(let data):
             answeredQuestions.insert(data.questionId)
             questionChoices[data.questionId] = data.answer
-            if scopedQuestionIds[event.threadId]?.contains(data.questionId) == true {
-                scopedQuestionChoices[event.threadId, default: [:]][data.questionId] = data.answer
-                applyQuestionOutcome(QuestionStatusData(requestId: event.id, questionId: data.questionId, status: .applied), in: event.threadId)
-            }
-        case .questionStatus(let data):
-            // A receipt from another conversation cannot retire this prompt.
-            if timeline(event.threadId).events.contains(where: { prior in
-                if case .questionCard(let card) = prior.payload { return card.questionId == data.questionId }
-                return false
-            }) { applyQuestionOutcome(data, in: event.threadId) }
-        case .questionCard(let card):
-            if card.nativeRun != nil { scopedQuestionIds[event.threadId, default: []].insert(card.questionId) }
-            // A live receipt can arrive before the next history page supplies its card.
-            for prior in timeline(event.threadId).events {
-                if case .questionStatus(let data) = prior.payload, data.questionId == card.questionId {
-                    applyQuestionOutcome(data, in: event.threadId)
-                }
-            }
         default: break
         }
-    }
-
-    private func applyQuestionOutcome(_ status: QuestionStatusData, in threadId: String) {
-        // Late rejection cannot reopen an already applied or retired prompt.
-        let previous = questionOutcomes[threadId]?[status.questionId]
-        if previous == nil || previous == .rejected || status.status == .applied {
-            questionOutcomes[threadId, default: [:]][status.questionId] = status.status
-        }
-        if status.status == .applied { answeredQuestions.insert(status.questionId) }
     }
 
     private func staleReplyUpdate(_ candidate: YorozuEvent, replacing previous: YorozuEvent) -> Bool {

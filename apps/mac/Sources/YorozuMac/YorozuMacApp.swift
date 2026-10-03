@@ -3,7 +3,6 @@ import CoreImage.CIFilterBuiltins
 import CoreServices
 import SwiftUI
 import YorozuKeepalive
-import YorozuPermissions
 import YorozuShared
 
 /// The Node runtime sidecar, spawned by the app and killed with it. Its stdout is the
@@ -47,6 +46,24 @@ final class Sidecar: ObservableObject {
         case "stopped": return String(localized: "Stopped")
         case "openclaw": return "OpenClaw"
         case "revoked": return String(localized: "Pairing revoked")
+        case "peer-update-required": return String(localized: "Update required")
+        case "heartbeat-timeout": return String(localized: "Connection timed out")
+        case "native-cwd-refused": return String(localized: "Project folder was refused")
+        case "native-model-list-unavailable claude-code", "native-model-list-unavailable codex":
+            return String(localized: "Model list unavailable")
+        case "missing-previous-message": return String(localized: "Waiting for the previous message")
+        case "duplicate-message": return String(localized: "Duplicate message ignored")
+        case "duplicate-command": return String(localized: "Duplicate command ignored")
+        case "tool-result-missing": return String(localized: "Tool result unavailable")
+        case "rejected-oversized-attachments": return String(localized: "Attachments exceed the size limit")
+        case "rejected-attachments-unsupported": return String(localized: "Attachments are not supported")
+        case "rejected-conflicting-message-id": return String(localized: "Conflicting message rejected")
+        case "malformed-frame", "frame-error malformed body", "hello-refused", "hello-spub-ignored":
+            return String(localized: "Invalid connection data ignored")
+        case "replayed-frame": return String(localized: "Replayed connection data ignored")
+        case "hello-refused device-limit": return String(localized: "Device limit reached")
+        case "relay-notify rate limit": return String(localized: "Notification rate limit reached")
+
         default:
             if state.hasPrefix("restarting in "), state.hasSuffix("s"), let seconds = Int(state.dropFirst("restarting in ".count).dropLast()) {
                 return String(localized: "Restarting in \(seconds) seconds")
@@ -473,9 +490,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Re-registered rather than only written once: an update moves the bundle, and an
                 // agent pointing at the old path supervises nothing.
                 if Watchdog.isEnabled { Watchdog.install() }
-                LoginItem.enableByDefaultOnce()
             }
-            Task { await Permission.logAll() }
+            // Permission status can itself prompt (e.g. listing protected folders).
+            // Inspect grants only from host setup/settings or an invoked native tool.
             // Starts Sparkle here rather than when Settings is first opened: the whole point of
             // an automatic update is that nobody had to go looking for it.
             Updates.start()

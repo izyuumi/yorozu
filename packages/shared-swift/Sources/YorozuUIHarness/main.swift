@@ -2,6 +2,7 @@
 /// Layout fixtures briefly host native windows so AppKit lists actually draw.
 /// swift run --package-path packages/shared-swift YorozuUIHarness /tmp/yorozu-ui --screenshots-only
 /// Add --round-two for adversarial questions, messages, agent states, folders and search.
+/// --send-freeze measures native Mac Send stalls; --verify-send checks the 250 ms budget.
 import AppKit
 import CryptoKit
 import Foundation
@@ -61,6 +62,66 @@ actor HarnessTransport: ChatTransport {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/tmp/yorozu-ui")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--send-freeze") {
+            let cache = ThreadCache(directory: output.appendingPathComponent("send-cache"), key: SymmetricKey(size: .bits256))
+            let thread = ThreadSummary(id: "send-fixture", title: "Synthetic send", archived: false, lastActivity: 1)
+            let count = Int(ProcessInfo.processInfo.environment["YOROZU_SEND_HISTORY_COUNT"] ?? "1000") ?? 1000
+            cache.save(threads: [thread])
+            cache.save(events: (0..<count).map { index in
+                YorozuEvent(id: "history-\(index)", threadId: thread.id, ts: index, agentId: "main",
+                    payload: .message(MessageData(role: index.isMultiple(of: 2) ? .user : .agent,
+                        text: "Synthetic history \(index). " + String(repeating: "日本語の文章。 ", count: 20), done: true)))
+            }, threadId: thread.id)
+            let transport = HarnessTransport()
+            let model = ChatModel(transport: transport, cache: cache, device: "mac")
+            model.start()
+            let host = NSHostingView(rootView: NavigationStack { ChatView(model: model, thread: thread) })
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 720),
+                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            window.title = "Yorozu synthetic send investigation"
+            window.contentView = host
+            window.orderFrontRegardless()
+            var maxGap: Duration = .zero
+            let heartbeat = Task { @MainActor in
+                var last = ContinuousClock.now
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(10))
+                    let now = ContinuousClock.now
+                    maxGap = max(maxGap, last.duration(to: now))
+                    last = now
+                }
+            }
+            try await Task.sleep(for: .seconds(2))
+            var report = "Synthetic Mac view: \(count) history messages\n"
+            var worstGap: Duration = .zero
+            for index in 0..<5 {
+                model.drafts[thread.id] = "Synthetic send \(index)"
+                try await Task.sleep(for: .milliseconds(100))
+                maxGap = .zero
+                let start = ContinuousClock.now
+                // Exercise the shipping model with the native ChatView mounted. This measures
+                // submission and ensuing rendering; it does not inject a button or Return event.
+                model.send(in: thread)
+                let submitted = start.duration(to: .now)
+                try await Task.sleep(for: .milliseconds(500))
+                worstGap = max(worstGap, maxGap)
+                report += "send \(index): submission=\(submitted), UI heartbeat max gap=\(maxGap)\n"
+            }
+            heartbeat.cancel()
+            await model.shutdown()
+            window.orderOut(nil)
+            print(report)
+            try report.write(to: output.appendingPathComponent("send-timing.txt"), atomically: true, encoding: .utf8)
+            let restored = ChatModel(transport: HarnessTransport(), cache: cache, device: "mac")
+            guard restored.outbox.filter({ $0.event.payload.kind == .message }).count == 5,
+                  restored.drafts[thread.id]?.isEmpty == true else {
+                throw NSError(domain: "SendHarness", code: 1, userInfo: [NSLocalizedDescriptionKey: "Synthetic sends were not preserved in the offline outbox"])
+            }
+            if CommandLine.arguments.contains("--verify-send"), worstGap >= .milliseconds(250) {
+                throw NSError(domain: "SendHarness", code: 2, userInfo: [NSLocalizedDescriptionKey: "Mac Send blocked the UI for \(worstGap)"])
+            }
+            return
+        }
         if CommandLine.arguments.contains("--channel-model") {
             NSApplication.shared.setActivationPolicy(.regular)
             let transport = HarnessTransport()

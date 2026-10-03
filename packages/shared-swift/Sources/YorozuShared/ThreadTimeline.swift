@@ -16,6 +16,7 @@ final class ThreadTimeline {
                 return event.payload.kind != .threadRewound && !hidden.contains(event.id)
             }
             cachedRows = nil
+            withdrawalState = nil
         }
     }
     private var visibleEvents: [YorozuEvent] = []
@@ -24,6 +25,37 @@ final class ThreadTimeline {
         set { storedEvents = newValue }
     }
     @ObservationIgnored private var cachedRows: (generating: Bool, activeEventId: String?, excluding: Set<String>, rows: [ChatRow])?
+    @ObservationIgnored private var withdrawalState: (ids: Set<String>, replies: Set<String>, stops: Set<String>, legacyTargets: Set<String>)?
+
+    /// Each visible row asks whether Remove is available. Index terminal events once per
+    /// timeline change instead of scanning the whole history again for every old message.
+    func isUnfinishedMessage(id: String, completionID: String?) -> Bool {
+        let source = events
+        if withdrawalState == nil {
+            var replies: Set<String> = []
+            var stops: Set<String> = []
+            var legacyTargets: Set<String> = []
+            for event in source {
+                if case .stopStatus(let status) = event.payload, status.status != .requested, status.status != .unknown {
+                    stops.insert(status.targetEventId)
+                }
+                if case .message(let reply) = event.payload, reply.role == .agent, reply.done == true {
+                    replies.insert(event.id)
+                    if event.id.hasSuffix(":final") {
+                        let base = event.id.dropLast(":final".count)
+                        // Preserve legacy suffix matching even for message IDs with colons.
+                        for colon in base.indices where base[colon] == ":" {
+                            legacyTargets.insert(String(base[base.index(after: colon)...]))
+                        }
+                    }
+                }
+            }
+            withdrawalState = (Set(source.map(\.id)), replies, stops, legacyTargets)
+        }
+        guard let state = withdrawalState else { return false }
+        return state.ids.contains(id) && !state.stops.contains(id) && !state.legacyTargets.contains(id) &&
+            !(completionID.map { state.replies.contains($0) } ?? false)
+    }
 
     func rows(generating: Bool, activeEventId: String? = nil, excluding: Set<String> = []) -> [ChatRow] {
         // Read the observable input even on a cache hit, so SwiftUI tracks this thread.

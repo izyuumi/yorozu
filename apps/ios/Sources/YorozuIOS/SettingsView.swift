@@ -28,11 +28,9 @@ private func statusTint(_ host: HostSession) -> Color {
 
 struct SettingsView: View {
     let session: Session
-    var showsDone = true
     let onOpenThread: (String, HostID?) -> Void
     @AppStorage(ChatModel.followUpBehaviorKey) private var followUpBehavior = MessageDelivery.queue
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var addingHost = false
     @State private var repairHostID: HostID?
 
@@ -45,14 +43,6 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                if !session.allModels.isEmpty {
-                    Section("Chat connection") {
-                        ForEach(session.allModels.indices, id: \.self) { index in
-                            ChatConnectionSummary(model: session.allModels[index])
-                        }
-                    }
-                    .listRowBackground(YorozuPalette.paper)
-                }
                 Section("Chat") {
                 Picker("Follow-up messages", selection: $followUpBehavior) {
                     Text("Queue").tag(MessageDelivery.queue)
@@ -161,10 +151,7 @@ struct SettingsView: View {
             }
             .paperList()
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(horizontalSizeClass == .regular ? .inline : .automatic)
-            .toolbar {
-                if showsDone { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(isPresented: $addingHost) {
                 NavigationStack {
                     PairingFlowView(onPair: { code in
@@ -225,21 +212,19 @@ private struct HostSettingsView: View {
                 LabeledContent("Status") {
                     YorozuStatusLabel(hostStatus(host), tint: statusTint(host))
                 }
-                DisclosureGroup("Connection details") {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Relay")
-                        Text(host.relayURL)
-                            .font(.callout.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .accessibilityElement(children: .combine)
-                    LabeledContent("Mac key", value: QrPayload.fingerprint(ofBase64URLKey: host.id) ?? host.id)
-                    if let date = PairingStore.load(hostID: host.id)?.pairedAt {
-                        LabeledContent("Paired since", value: date.formatted(date: .abbreviated, time: .shortened))
-                    }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Relay")
+                    Text(host.relayURL)
+                        .font(.callout.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                LabeledContent("Mac key", value: QrPayload.fingerprint(ofBase64URLKey: host.id) ?? host.id)
+                if let date = PairingStore.load(hostID: host.id)?.pairedAt {
+                    LabeledContent("Paired since", value: date.formatted(date: .abbreviated, time: .shortened))
                 }
             }
             .listRowBackground(YorozuPalette.paper)
@@ -252,12 +237,10 @@ private struct HostSettingsView: View {
                          : String(localized: "Chat is available. Update Yorozu on your Mac for newer features."))
                         .font(.footnote).foregroundStyle(.secondary)
                 case .compatible(let version, _):
-                    Text("Compatible")
-                    DisclosureGroup("Compatibility details") { LabeledContent("Protocol", value: String(version)) }
+                    LabeledContent("Protocol", value: String(version))
                 case .updateRequired(let reason):
                     Label("Update required", systemImage: "arrow.down.circle")
-                    Text("Update Yorozu on your Mac before sending messages.")
-                    DisclosureGroup("Compatibility details") { Text(reason).font(.footnote).foregroundStyle(.secondary) }
+                    Text(reason).font(.footnote).foregroundStyle(.secondary)
                 }
                 if let version = host.model.peerInfo?.appVersion { LabeledContent(session.hosts.hasMultipleHosts ? String(localized: "Host version") : String(localized: "Mac version"), value: version) }
             }

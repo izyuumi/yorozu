@@ -57,7 +57,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case approvalSettings = "approval_settings"
         case questionCard = "question_card"
         case questionAnswer = "question_answer"
-        case questionStatus = "question_status"
         case progressCard = "progress_card"
         case toolResultRequest = "tool_result_request"
         case threadCreate = "thread_create"
@@ -114,7 +113,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case approvalSettings(ApprovalSettingsData)
         case questionCard(QuestionCardData)
         case questionAnswer(QuestionAnswerData)
-        case questionStatus(QuestionStatusData)
         case progressCard(ProgressCardData)
         case toolResultRequest(ToolResultRequestData)
         case threadCreate(ThreadCreateData)
@@ -171,7 +169,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .approvalSettings: .approvalSettings
             case .questionCard: .questionCard
             case .questionAnswer: .questionAnswer
-            case .questionStatus: .questionStatus
             case .progressCard: .progressCard
             case .toolResultRequest: .toolResultRequest
             case .threadCreate: .threadCreate
@@ -215,7 +212,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             guard case .unknown(let rawKind, _) = self, let kind = Kind(rawValue: rawKind) else { return false }
             switch kind {
             case .message, .turnChanges, .thought, .toolCall, .toolResult, .approvalCard, .approvalAnswer,
-                 .approvalStatus, .ruleProposal, .questionCard, .questionAnswer, .questionStatus, .progressCard,
+                 .approvalStatus, .ruleProposal, .questionCard, .questionAnswer, .progressCard,
                  .stopStatus:
                 return true
             default:
@@ -263,7 +260,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .approvalSettings: payload = .approvalSettings(try c.decode(ApprovalSettingsData.self, forKey: .data))
             case .questionCard: payload = .questionCard(try c.decode(QuestionCardData.self, forKey: .data))
             case .questionAnswer: payload = .questionAnswer(try c.decode(QuestionAnswerData.self, forKey: .data))
-            case .questionStatus: payload = .questionStatus(try c.decode(QuestionStatusData.self, forKey: .data))
             case .progressCard: payload = .progressCard(try c.decode(ProgressCardData.self, forKey: .data))
             case .toolResultRequest: payload = .toolResultRequest(try c.decode(ToolResultRequestData.self, forKey: .data))
             case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
@@ -338,7 +334,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .approvalSettings(let d): try c.encode(d, forKey: .data)
         case .questionCard(let d): try c.encode(d, forKey: .data)
         case .questionAnswer(let d): try c.encode(d, forKey: .data)
-        case .questionStatus(let d): try c.encode(d, forKey: .data)
         case .progressCard(let d): try c.encode(d, forKey: .data)
         case .toolResultRequest(let d): try c.encode(d, forKey: .data)
         case .threadCreate(let d): try c.encode(d, forKey: .data)
@@ -472,15 +467,13 @@ public struct ThreadModelsData: Codable, Equatable, Sendable {
 }
 
 public struct AttachmentCommitData: Codable, Equatable, Sendable {
-    public var replyTo: String?
     public var delivery: MessageDelivery?
     public var channelModel: ChannelModelChoice?
     public var text: String
     public var attachments: [AttachmentDescriptor]
     public var admissionDeadline: Int
 
-    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, delivery: MessageDelivery? = nil, channelModel: ChannelModelChoice? = nil, replyTo: String? = nil) {
-        self.replyTo = replyTo
+    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, delivery: MessageDelivery? = nil, channelModel: ChannelModelChoice? = nil) {
         self.delivery = delivery
         self.channelModel = channelModel
         self.text = text
@@ -635,8 +628,6 @@ public struct TurnChangesData: Codable, Equatable, Sendable {
 }
 
 public struct MessageData: Codable, Equatable, Sendable {
-    /// Explicit user reply target, or the triggering user message for an agent answer.
-    public var replyTo: String?
     public var delivery: MessageDelivery?
     public var channelModel: ChannelModelChoice?
     public enum Role: String, Codable, Sendable { case user, agent }
@@ -673,10 +664,8 @@ public struct MessageData: Codable, Equatable, Sendable {
         runId: String? = nil,
         completionId: String? = nil,
         delivery: MessageDelivery? = nil,
-        channelModel: ChannelModelChoice? = nil,
-        replyTo: String? = nil
+        channelModel: ChannelModelChoice? = nil
     ) {
-        self.replyTo = replyTo
         self.delivery = delivery
         self.channelModel = channelModel
         self.role = role
@@ -691,11 +680,10 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, replyTo }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        replyTo = try c.decodeIfPresent(String.self, forKey: .replyTo)
         delivery = try c.decodeIfPresent(MessageDelivery.self, forKey: .delivery)
         channelModel = try c.decodeIfPresent(ChannelModelChoice.self, forKey: .channelModel)
         role = try c.decode(Role.self, forKey: .role)
@@ -715,7 +703,6 @@ public struct MessageData: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(replyTo, forKey: .replyTo)
         try c.encodeIfPresent(delivery, forKey: .delivery)
         try c.encodeIfPresent(channelModel, forKey: .channelModel)
         try c.encode(role, forKey: .role)
@@ -1043,28 +1030,16 @@ public struct RuleDeleteData: Codable, Equatable, Sendable {
 /// A choice the agent needs made before it can carry on, raised by its `ask_user` tool. Unlike
 /// an approval card this is not about permission: nothing is pending, the agent simply does not
 /// know which way to go, and its tool call stays suspended until an answer goes back.
-/// Scope of a prompt admitted by the Rust host; absence preserves legacy prompt behavior.
-public struct NativeRunScope: Codable, Equatable, Sendable {
-    public var eventId: String
-    public var turnId: String
-    public var attemptId: String
-    public init(eventId: String, turnId: String, attemptId: String) {
-        self.eventId = eventId; self.turnId = turnId; self.attemptId = attemptId
-    }
-}
-
 public struct QuestionCardData: Codable, Equatable, Sendable {
     public var nativeAgent: ThreadAgent?
-    public var nativeRun: NativeRunScope?
     public var questionId: String
     public var question: String
     /// The choices, in the order the card lists them. May be empty when only free text fits.
     public var options: [String]
     /// Whether the card also offers a free-text field. Absent on the wire means it does not.
     public var allowOther: Bool?
-    public init(questionId: String, question: String, options: [String], allowOther: Bool? = nil, nativeAgent: ThreadAgent? = nil, nativeRun: NativeRunScope? = nil) {
+    public init(questionId: String, question: String, options: [String], allowOther: Bool? = nil, nativeAgent: ThreadAgent? = nil) {
         self.nativeAgent = nativeAgent
-        self.nativeRun = nativeRun
         self.questionId = questionId
         self.question = question
         self.options = options
@@ -1082,19 +1057,6 @@ public struct QuestionAnswerData: Codable, Equatable, Sendable {
     public init(questionId: String, answer: String) {
         self.questionId = questionId
         self.answer = answer
-    }
-}
-
-/// Confirmation of one native question answer, separate from answer text and transport receipt.
-public struct QuestionStatusData: Codable, Equatable, Sendable {
-    public enum Status: String, Codable, Sendable {
-        case applied, noLongerNeeded = "no-longer-needed", expired, rejected
-    }
-    public var requestId: String
-    public var questionId: String
-    public var status: Status
-    public init(requestId: String, questionId: String, status: Status) {
-        self.requestId = requestId; self.questionId = questionId; self.status = status
     }
 }
 
@@ -1740,7 +1702,7 @@ public struct DeviceRemoveData: Codable, Equatable, Sendable {
     public init(pub: String) { self.pub = pub }
 }
 
-/// CLI sign-in or gateway reachability; successful checks do not prove provider execution.
+/// Whether one agent would answer a thread right now, as the runtime sees it.
 public struct AgentReadiness: Codable, Equatable, Sendable {
     /// What the user has to do next, not how the runtime found out.
     public enum Reason: String, Codable, Sendable {
@@ -1760,17 +1722,13 @@ public struct AgentReadiness: Codable, Equatable, Sendable {
     }
 }
 
-/// Asked with no fields; answers correlate to the request event ID. `openclaw` is absent
-/// when gateway reachability was not checked, not proof of an uninstalled assistant.
+/// Asked with no fields; answered with every agent the runtime has. `openclaw` is absent on a
+/// runtime without the Gateway.
 public struct AgentStatusData: Codable, Equatable, Sendable {
-    public var requestId: String?
-    public var failed: Bool?
     public var claude: AgentReadiness?
     public var codex: AgentReadiness?
     public var openclaw: AgentReadiness?
-    public init(claude: AgentReadiness? = nil, codex: AgentReadiness? = nil, openclaw: AgentReadiness? = nil, requestId: String? = nil, failed: Bool? = nil) {
-        self.requestId = requestId
-        self.failed = failed
+    public init(claude: AgentReadiness? = nil, codex: AgentReadiness? = nil, openclaw: AgentReadiness? = nil) {
         self.claude = claude
         self.codex = codex
         self.openclaw = openclaw

@@ -34,8 +34,6 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     /// Host-fsynced byte offsets, one per attachment. Missing on older encrypted caches.
     public var uploadOffsets: [Int]?
     public var uploadDescriptors: [AttachmentDescriptor]?
-    /// Captured delivery requirement; cached history may evict the original scoped card.
-    public var questionStatusRequired: Bool?
 
     public init(event: YorozuEvent, tries: Int = 0, attemptedAt: Date? = nil,
                 nextAttemptAt: Date? = nil, deliveryAttempts: Int? = nil, reconfirmedAt: Date? = nil,
@@ -43,7 +41,7 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
                 replacementId: String? = nil, lastStatusQueryAt: Date? = nil,
                 lastStatusQueryId: String? = nil,
                 legacyHoldUntil: Date? = nil, uploadOffsets: [Int]? = nil,
-                uploadDescriptors: [AttachmentDescriptor]? = nil, questionStatusRequired: Bool? = nil) {
+                uploadDescriptors: [AttachmentDescriptor]? = nil) {
         self.event = event
         self.tries = tries
         self.attemptedAt = attemptedAt
@@ -58,7 +56,6 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
         self.legacyHoldUntil = legacyHoldUntil
         self.uploadOffsets = uploadOffsets
         self.uploadDescriptors = uploadDescriptors
-        self.questionStatusRequired = questionStatusRequired
     }
 
     public var id: String { event.id }
@@ -97,7 +94,6 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public func isExpired(at now: Date) -> Bool {
         if case .interrupt(let data) = event.payload, data.targetEventId != nil { return false }
         if case .approvalAnswer = event.payload { return false }
-        if case .questionAnswer = event.payload, questionStatusRequired == true { return false }
         if legacyHoldUntil != nil || admissionStatus == .expired || admissionStatus == .withdrawn { return true }
         if let admissionDeadline { return now >= admissionDeadline }
         return now.timeIntervalSince(reconfirmedAt ?? queuedAt) > Outbox.life
