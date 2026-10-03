@@ -161,6 +161,11 @@ fn run() -> io::Result<()> {
                                 result
                             }
                         }
+                        Some("steer") if secretary => {
+                            let (result, event) = owner.steer(&request)?;
+                            emitted = event;
+                            result
+                        }
                         Some("respond") if secretary => {
                             if let Some(current) = &mut worker
                                 && !current.terminal
@@ -215,6 +220,15 @@ fn run() -> io::Result<()> {
                                 owner.active = None;
                             }
                         }
+                    } else if kind == "steer_requested" {
+                        if let Some(current) = &mut worker {
+                            // A failed write remains uncertain in the durable intent ledger.
+                            send(
+                                &mut current.child,
+                                &json!({"version":1,"op":"steer","runId":run,
+                                "deliveryId":request["deliveryId"],"text":request["text"],"attachments":request["attachments"]}),
+                            )?;
+                        }
                     } else if kind == "stop_requested"
                         && let Some(worker) = &mut worker
                     {
@@ -250,6 +264,7 @@ fn run() -> io::Result<()> {
                                     .contains(&packet["data"]["type"].as_str().unwrap_or(""))
                         }
                         "tool_boundary" => secretary,
+                        "steer_result" => owner.accepts_steer_result(&run, &packet),
                         "completed" => proof == "provider-terminal",
                         "stopped" => ["provider-terminal", "process-exited"].contains(&proof),
                         _ => false,

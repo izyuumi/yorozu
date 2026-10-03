@@ -362,6 +362,79 @@ impl Conversation {
             Some(event),
         ))
     }
+    /// Journal the exact change before it can cross the worker pipe. A repeated ID
+    /// is evidence to reconcile, never permission to send the change a second time.
+    pub fn steer(&mut self, request: &Value) -> io::Result<(Value, Option<Value>)> {
+        let Some(run) = identifier(&request["runId"]) else {
+            return Ok((json!({"submitted":false}), None));
+        };
+        let Some(delivery) = identifier(&request["deliveryId"]) else {
+            return Ok((json!({"submitted":false}), None));
+        };
+        let Some(text) = request["text"]
+            .as_str()
+            .filter(|t| !t.trim().is_empty() && t.len() <= 16000)
+        else {
+            return Ok((json!({"submitted":false}), None));
+        };
+        let Some(files) = validated_turn(&json!({"attachments":request["attachments"]})) else {
+            return Ok((json!({"submitted":false}), None));
+        };
+        let data = json!({"deliveryId":delivery,"attachments":files["attachments"]});
+        if let Some(original) = self
+            .events
+            .iter()
+            .find(|e| e["kind"] == "steer_requested" && e["data"]["deliveryId"] == delivery)
+        {
+            return Ok((
+                if original["runId"] == run && original["text"] == text && original["data"] == data
+                {
+                    json!({"submitted":true,"replayed":true})
+                } else {
+                    json!({"error":"conflicting-steer"})
+                },
+                None,
+            ));
+        }
+        if self.secretary_run.as_deref() != Some(run)
+            || self.active.as_deref() != Some(run)
+            || self.events.iter().any(|e| e["kind"] == "stop_requested")
+            || self
+                .events
+                .iter()
+                .filter(|e| e["kind"] == "steer_requested")
+                .count()
+                >= 16
+        {
+            return Ok((json!({"submitted":false}), None));
+        }
+        let retained = serde_json::to_vec(&self.snapshot())
+            .map_err(io::Error::other)?
+            .len();
+        if retained + serde_json::to_vec(request).map_err(io::Error::other)?.len() + 3 * EVENT_BYTES
+            > FRAME_BYTES as usize - 16 * 1024
+        {
+            return Ok((json!({"submitted":false}), None));
+        }
+        let event = self.record(run, "steer_requested", Some(text), Some(data))?;
+        Ok((json!({"submitted":true,"replayed":false}), Some(event)))
+    }
+
+    pub fn accepts_steer_result(&self, run: &str, packet: &Value) -> bool {
+        let delivery = &packet["data"]["deliveryId"];
+        self.secretary_run.as_deref() == Some(run)
+            && (packet["data"]["accepted"].is_boolean() || packet["data"]["accepted"].is_null())
+            && self.events.iter().any(|e| {
+                e["kind"] == "steer_requested"
+                    && e["runId"] == run
+                    && &e["data"]["deliveryId"] == delivery
+            })
+            && !self
+                .events
+                .iter()
+                .any(|e| e["kind"] == "steer_result" && &e["data"]["deliveryId"] == delivery)
+    }
+
     pub fn stop(&mut self, request: &Value) -> io::Result<(Value, Option<Value>)> {
         let Some(run) = identifier(&request["runId"]) else {
             return Ok((json!({"error":"invalid-run"}), None));

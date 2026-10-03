@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { serveSecretary } from "../dist/secretary-serve.js";
 import { dirname, join } from "node:path";
 import { secretaryRunner, SECRETARY_THREAD_ID } from "../dist/secretary-runner.js";
-import { appendThreadEvent, createThread, listThreads, setNativeTurn, setThreadSession, threadHome } from "../dist/threads.js";
+import { appendThreadEvent, createThread, listThreads, readThreadEvents, setNativeTurn, setThreadSession, threadHome } from "../dist/threads.js";
 import type { NativeTurn } from "./native.js";
 
 // The lifecycle regression must never launch the SDK's bundled Claude executable.
@@ -23,6 +23,7 @@ const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
 const log = value => fs.appendFileSync(process.env.CODEX_FIXTURE_LOG, JSON.stringify(value) + '\\n');
 const session = 'fixture-native-session';
 let mode = '';
+let changed = 'A';
 lines.on('line', line => {
   const frame = JSON.parse(line);
   if (frame.method) log({ method: frame.method, params: frame.params, pid: process.pid });
@@ -51,6 +52,17 @@ lines.on('line', line => {
     log({ persistedBeforeStart: records.find(t => t.id === 'yorozu-secretary-v1')?.nativeSessionId === session });
     mode = frame.params.input[0].text;
     send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } });
+    if (mode === 'STEER' || mode === 'STEER_LOST') {
+      setTimeout(() => send({ method: 'item/agentMessage/delta', params: { threadId: session, itemId: 'reply', delta: 'Waiting for controlled change' } }), 30);
+      const timer = setInterval(() => {
+        if (!fs.existsSync(process.env.CODEX_FIXTURE_RELEASE)) return;
+        clearInterval(timer);
+        fs.writeFileSync(process.env.CODEX_FIXTURE_RESULT, changed);
+        send({ method: 'item/completed', params: { threadId: session, item: { id: 'reply', type: 'agentMessage', text: 'Wrote ' + changed } } });
+        send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: 'completed' } } });
+      }, 20);
+      return;
+    }
     if (mode === 'FAIL') { process.exit(8); return; }
     if (mode === 'DONE') {
       send({ method: 'item/completed', params: { threadId: session, item: { id: 'reply', type: 'agentMessage', text: 'Fixture completed' } } });
@@ -88,6 +100,11 @@ lines.on('line', line => {
     send({ method: 'item/completed', params: { threadId: session, item: { id: 'command', type: 'commandExecution', status: 'completed', aggregatedOutput: 'fixture result' } } });
     send({ method: 'item/completed', params: { threadId: session, item: { id: 'reply', type: 'agentMessage', text: 'Hello from fixture' } } });
     send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: 'completed' } } });
+  }
+  if (frame.method === 'turn/steer') {
+    changed = frame.params.input[0].text === 'write B instead' ? 'B' : 'unexpected';
+    if (mode === 'STEER_LOST') { fs.writeFileSync(process.env.CODEX_FIXTURE_RESULT, changed); process.exit(8); return; }
+    send({ id: frame.id, result: { turnId: 'fixture-turn' } });
   }
   if (frame.method === 'turn/interrupt') {
     if (mode === 'STOP_UNCONFIRMED') return;
@@ -251,6 +268,67 @@ test("settings subcommands retain the baseline CLI without starting the secretar
     expect(existsSync(join(temp, "state", "local.sock"))).toBe(false);
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
+
+test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never becomes another execution", async (mode) => {
+  const { temp, state, rows } = fixture();
+  const release = join(temp, "release-task");
+  const resultFile = join(temp, "result.txt");
+  vi.stubEnv("CODEX_FIXTURE_RELEASE", release);
+  vi.stubEnv("CODEX_FIXTURE_RESULT", resultFile);
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  const events: any[] = [];
+  const connect = async () => {
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    createInterface({ input: socket }).on("line", (line) => events.push(JSON.parse(line))).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+  };
+  const message = (id: string, text: string, delivery?: "steer") => ({ id, threadId: SECRETARY_THREAD_ID,
+    ts: Date.now(), agentId: "main", kind: "message", data: { role: "user", text, ...(delivery ? { delivery } : {}) } });
+  const send = (event: unknown) => socket!.write(`${JSON.stringify(event)}\n`);
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await connect();
+    send(message("steer-original", mode));
+    await vi.waitFor(() => expect(events.some((event) => event.kind === "message" && event.data.text === "Waiting for controlled change")).toBe(true));
+    const change = message("steer-change", "write B instead", "steer");
+    send(change);
+    await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/steer")).toHaveLength(1));
+    socket!.destroy();
+    await connect();
+    send(change); // same client submission after losing its connection
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:steer-change:final")?.data.text)
+      .toContain(mode === "STEER" ? "received your change" : "unconfirmed"));
+    expect(rows().find((row) => row.method === "turn/steer").params.expectedTurnId).toBe("fixture-turn");
+    if (mode === "STEER") writeFileSync(release, "finish original task");
+    await vi.waitFor(() => expect(readFileSync(resultFile, "utf8")).toBe("B"));
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).some((event) => event.id === "native:steer-original:final" && event.data.done)).toBe(true));
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(state, "native-turn-queue.json"), "utf8"))).not.toContainEqual({ threadId: SECRETARY_THREAD_ID, eventId: change.id });
+    socket!.destroy();
+    await sidecar.close();
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await connect();
+    send(change);
+    if (mode === "STEER") {
+      send(message("after-steer", "DONE"));
+      await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).some((event) => event.id === "native:after-steer:final" && event.data.done)).toBe(true));
+      expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(2);
+    } else {
+      socket!.write(`${JSON.stringify({ id: "query-steer", kind: "admission_query", data: { eventId: change.id },
+        threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now() })}\n`);
+      await vi.waitFor(() => expect(events.some((event) => event.kind === "admission_status" && event.data.requestId === "query-steer")).toBe(true));
+      expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
+    }
+    expect(rows().filter((row) => row.method === "turn/steer")).toHaveLength(1);
+  } finally {
+    socket?.destroy();
+    await sidecar?.close();
+    vi.unstubAllEnvs();
+    rmSync(temp, { recursive: true, force: true });
+  }
+}, 15000);
 
 
 test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL", "SYMLINK_TERMINAL"])("service preserves %s outcome, replay and queue semantics", async (mode) => {

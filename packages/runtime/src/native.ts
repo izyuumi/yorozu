@@ -44,7 +44,7 @@ export interface NativeTurn {
   onTerminate?: (terminate: () => void) => void;
   /** Register delivery into this live turn. False proves no input was accepted;
    * a thrown error leaves delivery uncertain and must never imply a safe retry. */
-  onSteer?: (steer: (text: string, attachments: NonNullable<NativeTurn["attachments"]>) => Promise<boolean>) => void;
+  onSteer?: (steer: (text: string, attachments: NonNullable<NativeTurn["attachments"]>, deliveryId?: string) => Promise<boolean>) => void;
   approve?: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
   ask?: (question: string, options: string[], signal: AbortSignal) => Promise<string | undefined>;
   beforeTool?: (signal: AbortSignal) => Promise<boolean>;

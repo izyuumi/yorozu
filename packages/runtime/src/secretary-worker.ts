@@ -8,6 +8,8 @@ const lines = createInterface({ input: process.stdin });
 const abort = new AbortController();
 let runId = "";
 let terminate: (() => void) | undefined;
+let steer: Parameters<NonNullable<NativeTurn["onSteer"]>>[0] | undefined;
+let steering = Promise.resolve();
 let nextRequest = 0;
 let detailCount = 0;
 let lastUpdateAt = -Infinity;
@@ -44,6 +46,17 @@ lines.on("line", (line) => {
     if (packet.version !== 1 || typeof packet.runId !== "string") throw new Error("invalid frame");
     if (packet.runId === runId && packet.op === "respond") { pending.get(packet.requestId)?.(packet.value); return; }
     if (packet.runId === runId && packet.op === "stop") { abort.abort(); return; }
+    if (packet.runId === runId && packet.op === "steer") {
+      // Rust validates and journals the immutable delivery before forwarding it.
+      steering = steering.then(async () => {
+        let accepted: boolean | null = false;
+        try { if (steer && !abort.signal.aborted) accepted = await steer(packet.text, packet.attachments, packet.deliveryId); }
+        catch { accepted = null; }
+        // This is a provider receipt, never evidence that the model applied the change.
+        emit("steer_result", undefined, { deliveryId: packet.deliveryId, accepted });
+      });
+      return;
+    }
     if (runId || packet.op !== "run" || packet.secretary !== true || typeof packet.cwd !== "string" || typeof packet.text !== "string") throw new Error("invalid admission");
     runId = packet.runId;
     void run(packet.cwd, packet.text, packet.turn).finally(() => { abort.abort(); lines.close(); });
@@ -90,6 +103,7 @@ async function run(cwd: string, text: string, metadata: Pick<NativeTurn, "model"
       bypass: false, signal: abort.signal,
       onSession: (id) => { sessionId = id; sessionAck = request("session", { sessionId }); },
       onTerminate: (close) => { terminate = close; },
+      onSteer: (deliver) => { steer = deliver; },
       onUpdate: (text) => {
         const now = performance.now();
         if (detailCount < 1000 && now - lastUpdateAt >= 100) {
@@ -107,12 +121,16 @@ async function run(cwd: string, text: string, metadata: Pick<NativeTurn, "model"
       },
       beforeTool: async (signal) => await request("beforeTool", {}, signal) === true,
     });
+    steer = undefined;
+    await steering;
     if (await finishBeforeSubmission()) return;
     if (result.completed && result.cessation === "provider-terminal") emit("completed", clipped(result.text), { evidence: result.cessation, sessionId: result.sessionId });
     else if (result.cessation) emit("stopped", clipped(result.text || "Codex ended the turn without completing it."),
       { evidence: result.cessation, sessionId: result.sessionId, failed: result.failed === true || !abort.signal.aborted });
     else emit("unconfirmed", "Codex stopped without confirmed completion. The accepted task will not run again automatically.");
   } catch {
+    steer = undefined;
+    await steering;
     if (await finishBeforeSubmission()) return;
     emit("unconfirmed", "The secretary connection ended without confirmed completion. The accepted task will not run again automatically.");
   }

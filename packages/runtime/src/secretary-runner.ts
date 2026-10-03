@@ -50,8 +50,6 @@ export function secretaryRunner(dir: string, ordinaryCodex: NativeAgentRunner,
       throw new Error("Secretary requires a persisted accepted user event");
     }
     const runId = createHash("sha256").update(`${SECRETARY_THREAD_ID}\0${eventId}`).digest("hex");
-    // Existing queue owns later messages; no uncertain live steering is acknowledged.
-    turn.onSteer?.(async () => false);
     return runSecretary(root, workspace, runId, turn);
   } };
 }
@@ -75,6 +73,7 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
     let sessionId = turn.sessionId;
     let stopping: ReturnType<typeof setTimeout> | undefined;
     let nextId = 0;
+    const steering = new Map<string, { deliveryId: string; finish(accepted?: boolean): void }>();
     const callbacks = new AbortController();
     const signal = AbortSignal.any([turn.signal, callbacks.signal]);
     const deliver = (result: NativeTurnResult): void => {
@@ -84,12 +83,15 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
           failed: !turn.signal.aborted, cessation: "process-exited" });
       } else resolve(result);
     };
-    const write = (op: string, data: Record<string, unknown> = {}): void => {
-      if (!host.stdin.destroyed) host.stdin.write(`${JSON.stringify({ version: 1, id: String(++nextId), op, runId, ...data })}\n`);
+    const write = (op: string, data: Record<string, unknown> = {}): string => {
+      const id = String(++nextId);
+      if (!host.stdin.destroyed) host.stdin.write(`${JSON.stringify({ version: 1, id, op, runId, ...data })}\n`);
+      return id;
     };
     const finish = (result: NativeTurnResult): void => {
       if (settled) return;
       settled = true; callbacks.abort(); turn.signal.removeEventListener("abort", stop); clearTimeout(stopping);
+      for (const pending of steering.values()) pending.finish();
       resultToDeliver = result;
       host.stdin.end(); lines.close(); host.stdout.resume();
       // Release the shared workspace lock before the baseline queue starts another turn.
@@ -103,6 +105,22 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
     };
     turn.signal.addEventListener("abort", stop, { once: true });
     turn.onTerminate?.(stop);
+    turn.onSteer?.((text, attachments, deliveryId) => {
+      if (!deliveryId || !submitted || settled || signal.aborted) return Promise.resolve(false);
+      deliveryId = createHash("sha256").update(deliveryId).digest("hex");
+      return new Promise<boolean>((resolve, reject) => {
+        const id = String(nextId + 1);
+        const timer = setTimeout(() => finish(), 35000);
+        const finish = (accepted?: boolean): void => {
+          if (!steering.delete(id)) return;
+          clearTimeout(timer);
+          if (accepted === undefined) reject(new Error("Steer receipt is unconfirmed; do not resend"));
+          else resolve(accepted);
+        };
+        steering.set(id, { deliveryId, finish });
+        write("steer", { deliveryId, text, attachments });
+      });
+    });
     host.once("error", () => uncertain());
     host.stdin.on("error", () => uncertain());
     // close follows exit/spawn failure and drains all buffered terminal frames first.
@@ -125,6 +143,10 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
       } else if (event.kind === "update") turn.onUpdate?.(event.text ?? "");
       else if (event.kind === "activity" && typeof data.id === "string" && data.payload) turn.onActivity?.(data.id, data.payload);
       else if (event.kind === "tool_boundary") turn.onToolBoundary?.();
+      else if (event.kind === "steer_result") {
+        const pending = [...steering.values()].find((entry) => entry.deliveryId === data.deliveryId);
+        pending?.finish(typeof data.accepted === "boolean" ? data.accepted : undefined);
+      }
       else if (event.kind === "request" && !replay) {
         let value: unknown;
         if (data.type === "approve") value = await turn.approve?.(data.tool, data.input, signal) ?? false;
@@ -161,6 +183,10 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
             submitted = true;
             write("submit", { text: turn.text, turn: metadata });
           })().catch(() => { stop(); uncertain(); });
+        } else if (steering.has(packet.id)) {
+          const pending = steering.get(packet.id)!;
+          if (packet.result?.submitted === false) pending.finish(false);
+          else if (packet.result?.error || packet.result?.replayed === true) pending.finish();
         } else if (packet.result?.error) {
           finish({ text: `The secretary could not accept this task (${String(packet.result.error)}).`, sessionId, failed: true });
         }

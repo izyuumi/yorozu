@@ -150,3 +150,54 @@ fn invalid_payloads_and_conflicting_admissions_never_start_a_run() {
     drop(reopened);
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn steering_is_immutable_durable_and_never_reissued_after_reopen() {
+    let (dir, root, workspace) = fixture("steering");
+    let mut owner = Conversation::open_secretary(&root, "run", &workspace).unwrap();
+    owner
+        .submit(&json!({"runId":"run","text":"write A","turn":{}}))
+        .unwrap();
+    let change =
+        json!({"runId":"run","deliveryId":"change","text":"write B instead","attachments":[]});
+    let (receipt, event) = owner.steer(&change).unwrap();
+    assert_eq!(receipt["submitted"], true);
+    assert_eq!(event.unwrap()["kind"], "steer_requested");
+    assert_eq!(owner.steer(&change).unwrap().0["replayed"], true);
+    assert!(owner.steer(&change).unwrap().1.is_none());
+    let mut conflict = change.clone();
+    conflict["text"] = json!("write C");
+    assert_eq!(
+        owner.steer(&conflict).unwrap().0["error"],
+        "conflicting-steer"
+    );
+    let result = json!({"data":{"deliveryId":"change","accepted":true}});
+    assert!(owner.accepts_steer_result("run", &result));
+    assert!(!owner.accepts_steer_result(
+        "run",
+        &json!({"data":{"deliveryId":"unknown","accepted":true}})
+    ));
+    owner
+        .record("run", "steer_result", None, Some(result["data"].clone()))
+        .unwrap();
+    assert!(!owner.accepts_steer_result("run", &result));
+    owner.stop(&json!({"runId":"run"})).unwrap();
+    let mut later = change.clone();
+    later["deliveryId"] = json!("later");
+    assert_eq!(owner.steer(&later).unwrap().0["submitted"], false);
+    drop(owner);
+    let mut reopened = Conversation::open_secretary(&root, "run", &workspace).unwrap();
+    assert!(reopened.steer(&change).unwrap().1.is_none());
+    assert_eq!(reopened.steer(&later).unwrap().0["submitted"], false);
+    assert_eq!(
+        reopened.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["kind"] == "steer_requested")
+            .count(),
+        1
+    );
+    drop(reopened);
+    fs::remove_dir_all(dir).unwrap();
+}
