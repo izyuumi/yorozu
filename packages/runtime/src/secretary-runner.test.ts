@@ -1,14 +1,23 @@
 /** Real Rust/Node/official-adapter boundary, with a local protocol peer instead of live Codex. */
 import { expect, test, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { createConnection } from "node:net";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import { serveSecretary } from "../dist/secretary-serve.js";
 import { dirname, join } from "node:path";
 import { secretaryRunner, SECRETARY_THREAD_ID } from "../dist/secretary-runner.js";
 import { appendThreadEvent, createThread, listThreads, setNativeTurn, setThreadSession, threadHome } from "../dist/threads.js";
 import type { NativeTurn } from "./native.js";
 
+// The lifecycle regression must never launch the SDK's bundled Claude executable.
+vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: () => { throw new Error("Claude is absent from this fixture"); }, createSdkMcpServer: () => ({}) }));
+
 const peer = `#!${process.execPath}
 const fs = require('node:fs');
+if (process.argv[2] === 'login') { console.log('Logged in using fixture'); process.exit(0); }
 const lines = require('node:readline').createInterface({ input: process.stdin });
 const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
 const log = value => fs.appendFileSync(process.env.CODEX_FIXTURE_LOG, JSON.stringify(value) + '\\n');
@@ -16,8 +25,18 @@ const session = 'fixture-native-session';
 let mode = '';
 lines.on('line', line => {
   const frame = JSON.parse(line);
-  if (frame.method) log({ method: frame.method, params: frame.params });
+  if (frame.method) log({ method: frame.method, params: frame.params, pid: process.pid });
   if (frame.method === 'initialize') send({ id: frame.id, result: {} });
+  if (frame.method === 'skills/list') send({ id: frame.id, result: { data: [] } });
+  if (frame.method === 'model/list') {
+    const reply = () => send({ id: frame.id, result: { data: [{ model: 'fixture-model', displayName: 'Fixture', isDefault: true }] } });
+    if (!process.env.CODEX_FIXTURE_MODELS_RELEASE) reply();
+    else {
+      const timer = setInterval(() => {
+        if (fs.existsSync(process.env.CODEX_FIXTURE_MODELS_RELEASE)) { clearInterval(timer); reply(); }
+      }, 20);
+    }
+  }
   if (['thread/start', 'thread/resume'].includes(frame.method)) send({ id: frame.id, result: { thread: { id: session } } });
   if (frame.method === 'turn/start') {
     const records = JSON.parse(fs.readFileSync(process.env.CODEX_FIXTURE_STATE + '/threads.json', 'utf8'));
@@ -46,19 +65,25 @@ lines.on('line', line => {
 });
 `;
 
-test("secretary preserves legacy data, durable replay, session continuity and native controls", async () => {
-  const temp = realpathSync(mkdtempSync(join(tmpdir(), "yorozu-secretary-wire-")));
+function fixture() {
+  const temp = realpathSync(mkdtempSync(join(tmpdir(), "ys-wire-")));
   const state = join(temp, "state");
   const bin = join(temp, "bin");
   mkdirSync(bin);
   writeFileSync(join(bin, "codex"), peer);
   chmodSync(join(bin, "codex"), 0o700);
+  vi.stubEnv("YOROZU_STATE_DIR", state);
   vi.stubEnv("YOROZU_PROJECTS_DIR", join(temp, "projects"));
   vi.stubEnv("PATH", `${bin}:${dirname(process.execPath)}`);
   vi.stubEnv("HOME", temp);
   vi.stubEnv("CODEX_FIXTURE_STATE", state);
   vi.stubEnv("CODEX_FIXTURE_LOG", join(temp, "protocol.jsonl"));
   const rows = (): any[] => readFileSync(join(temp, "protocol.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  return { temp, state, rows };
+}
+
+test("secretary preserves legacy data, durable replay, session continuity and native controls", async () => {
+  const { temp, state, rows } = fixture();
   try {
     createThread("Existing thread", state, "legacy-thread", { agent: "codex", cwd: temp });
     setThreadSession("legacy-thread", "keep-native-session", state);
@@ -116,3 +141,56 @@ test("secretary preserves legacy data, durable replay, session continuity and na
     expect(readFileSync(join(state, "threads", "legacy-thread.jsonl"))).toEqual(legacyBytes);
   } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
 }, 30000);
+
+
+test("production decoration retains default readiness and process journaling", async () => {
+  const { temp, state, rows } = fixture();
+  const release = join(temp, "release-models");
+  vi.stubEnv("CODEX_FIXTURE_MODELS_RELEASE", release);
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  try {
+    // A fresh empty profile contains no work or processes to recover.
+    const log: string[] = [];
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: (line) => log.push(line) });
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock")), log.join("\n")).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    const events: any[] = [];
+    createInterface({ input: socket }).on("line", (line) => events.push(JSON.parse(line))).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    await vi.waitFor(() => expect(rows().some((row) => row.method === "model/list")).toBe(true));
+    const pid = rows().find((row) => row.method === "model/list").pid;
+    expect(JSON.parse(readFileSync(join(state, "native-agent-processes.json"), "utf8"))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ pid, startedAt: expect.any(String), commandLine: expect.stringContaining("codex") }),
+    ]));
+    await vi.waitFor(() => {
+      const agents = events.findLast((event) => event.kind === "model_list")?.data.agents.map((agent: any) => agent.id);
+      expect(agents).toContain("codex");
+      expect(agents).not.toContain("claude-code");
+    });
+  } finally {
+    writeFileSync(release, "release fixture");
+    if (sidecar) {
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(join(state, "native-agent-processes.json"), "utf8"))).toEqual([]));
+      socket?.destroy();
+      await sidecar.close();
+    }
+    vi.unstubAllEnvs();
+    rmSync(temp, { recursive: true, force: true });
+  }
+}, 10000);
+
+test("settings subcommands retain the baseline CLI without starting the secretary", () => {
+  const temp = realpathSync(mkdtempSync(join(tmpdir(), "ys-command-")));
+  try {
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL("../dist/secretary-serve.js", import.meta.url)), "models", "missing-fixture-entry"], {
+      env: { ...process.env, HOME: temp, YOROZU_STATE_DIR: join(temp, "state"), YOROZU_PROJECTS_DIR: join(temp, "projects") },
+      encoding: "utf8", timeout: 5000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("\n");
+    expect(existsSync(join(temp, "state", "secretary-v1"))).toBe(false);
+    expect(existsSync(join(temp, "state", "local.sock"))).toBe(false);
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+});

@@ -1,18 +1,49 @@
 /** Production entry: legacy transport/storage, additive Rust secretary admission. */
-import { serve, type ServeOptions, type Sidecar } from "./serve.js";
+import * as runtime from "./serve.js";
+import type { ServeOptions, Sidecar } from "./serve.js";
 import { stateDir } from "./memory.js";
-import { claudeCodeRunner } from "./native.js";
-import { codexNativeRunner } from "./codex-native.js";
+import type { NativeAgentRunner } from "./native.js";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { constants } from "node:os";
 import { secretaryRunner } from "./secretary-runner.js";
 
-export function serveSecretary(options: ServeOptions = {}): Sidecar {
-  const dir = options.stateDir ?? stateDir();
-  const runners = options.nativeRunners ?? { "claude-code": claudeCodeRunner(), codex: codexNativeRunner() };
-  if (!runners.codex) throw new Error("The secretary requires the Codex adapter");
-  return serve({ ...options, stateDir: dir, nativeRunners: { ...runners, codex: secretaryRunner(dir, runners.codex) } });
+function requireProductionRuntime(): void {
+  if (!("secretaryRunnerDecorator" in runtime) || runtime.secretaryRunnerDecorator !== true) {
+    throw new Error("The production runtime is missing its secretary decorator patch");
+  }
 }
 
-if (import.meta.main) {
+export function serveSecretary(options: ServeOptions = {}): Sidecar {
+  requireProductionRuntime();
+  const dir = options.stateDir ?? stateDir();
+  let decorated = false;
+  // A local variable also type-checks against the unpatched development ServeOptions.
+  const decoratedOptions = { ...options, stateDir: dir,
+    decorateNativeRunners: (runners: Record<string, NativeAgentRunner>) => {
+      if (!runners.codex) throw new Error("The secretary requires the Codex adapter");
+      const codex = secretaryRunner(dir, runners.codex);
+      decorated = true;
+      return { ...runners, codex };
+    },
+  };
+  const sidecar = runtime.serve(decoratedOptions);
+  if (!decorated) {
+    void sidecar.close().catch(() => {});
+    throw new Error("The production runtime is missing its secretary decorator patch");
+  }
+  return sidecar;
+}
+
+if (import.meta.main && process.argv.length > 2) {
+  requireProductionRuntime();
+  // Preserve the original CLI, including settings commands, without starting another service.
+  const child = spawn(process.execPath, [fileURLToPath(new URL("./serve.js", import.meta.url)), ...process.argv.slice(2)], { stdio: "inherit" });
+  process.once("SIGTERM", () => child.kill("SIGTERM"));
+  process.once("SIGINT", () => child.kill("SIGINT"));
+  child.once("error", () => process.exit(1));
+  child.once("exit", (code, signal) => process.exit(code ?? (signal ? 128 + constants.signals[signal] : 1)));
+} else if (import.meta.main) {
   const sidecar = serveSecretary();
   process.once("SIGTERM", () => {
     const deadline = setTimeout(() => process.exit(143), 15000);
