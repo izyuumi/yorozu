@@ -10,6 +10,7 @@ let runId = "";
 let terminate: (() => void) | undefined;
 let nextRequest = 0;
 let detailCount = 0;
+let lastUpdateAt = -Infinity;
 const pending = new Map<string, (value: unknown) => void>();
 const clipped = (text: string): string => {
   let result = text.slice(0, 16000);
@@ -67,7 +68,14 @@ async function run(cwd: string, text: string, metadata: Pick<NativeTurn, "model"
       bypass: false, signal: abort.signal,
       onSession: (sessionId) => { sessionAck = request("session", { sessionId }); },
       onTerminate: (close) => { terminate = close; },
-      onUpdate: (text) => { if (detailCount++ < 1000) emit("update", clipped(text)); },
+      onUpdate: (text) => {
+        const now = performance.now();
+        if (detailCount < 1000 && now - lastUpdateAt >= 100) {
+          lastUpdateAt = now;
+          detailCount += 1;
+          emit("update", clipped(text));
+        }
+      },
       onActivity: (id, payload) => { if (detailCount++ < 1000) emit("activity", undefined, { id, payload }); },
       onToolBoundary: () => { if (detailCount++ < 1000) emit("tool_boundary"); },
       approve: async (tool, input, signal) => await request("approve", { tool, input }, signal) === true,
