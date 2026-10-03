@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Observation
 import YorozuShared
 
@@ -7,6 +8,46 @@ struct AlphaConfiguration {
     let host: URL
     let node: URL
     let worker: URL
+
+    static let hostEnvironment = loginEnvironment(ProcessInfo.processInfo.environment)
+
+    // Match the existing sidecar's login PATH discovery without starting its legacy runtime.
+    // ponytail: one synchronous lookup per app launch, with a two-second wait ceiling.
+    static func loginEnvironment(_ environment: [String: String]) -> [String: String] {
+        let mark = "__YOROZU_PATH__"
+        let process = Process()
+        let output = Pipe()
+        defer {
+            try? output.fileHandleForReading.close()
+            try? output.fileHandleForWriting.close()
+        }
+        process.executableURL = URL(fileURLWithPath: environment["SHELL"] ?? "/bin/zsh")
+        process.arguments = ["-lc", "printf '\(mark)%s\(mark)' \"$PATH\""]
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        guard (try? process.run()) != nil else { return environment }
+        guard exited.wait(timeout: .now() + 2) == .success else {
+            process.terminate()
+            return environment
+        }
+        // A background job may retain stdout. Bound the read instead of waiting for EOF.
+        guard process.terminationStatus == 0,
+              fcntl(output.fileHandleForReading.fileDescriptor, F_SETFL, O_NONBLOCK) != -1,
+              let bytes = try? output.fileHandleForReading.read(upToCount: 64 * 1024) else { return environment }
+        let parts = String(decoding: bytes, as: UTF8.self).components(separatedBy: mark)
+        guard parts.count == 3, parts[1].hasPrefix("/") else { return environment }
+        let login = parts[1].split(separator: ":").map(String.init)
+        let inherited = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        guard !Set(login).isSubset(of: inherited) else { return environment }
+        var result = environment
+        var seen = Set<String>()
+        result["PATH"] = (login + inherited).filter { seen.insert($0).inserted }.joined(separator: ":")
+        return result
+    }
 
     var hasTemporaryProfile: Bool {
         let path = profile.resolvingSymlinksInPath().path
@@ -89,6 +130,7 @@ struct AlphaRun: Identifiable {
     var answer = ""
     var kind = "accepted"
     var detail: String?
+    var model: String?
     var activityCount = 0
 
     var terminal: Bool { ["completed", "stopped", "failed", "unconfirmed"].contains(kind) }
@@ -113,6 +155,10 @@ struct AlphaRun: Identifiable {
             if run.terminal { continue }
             switch event.kind {
             case "accepted": run.prompt = event.text ?? ""
+            case "running":
+                if case .object(let data) = event.data, case .string(let model) = data["model"] {
+                    run.model = model
+                }
             case "update": run.answer = event.text ?? run.answer
             case "completed", "stopped": run.answer = event.text ?? run.answer
             case "failed", "unconfirmed": run.detail = event.text
@@ -189,6 +235,7 @@ final class AlphaChatModel {
         let next = Process()
         next.executableURL = configuration.host
         next.arguments = [configuration.profile.path, configuration.node.path, configuration.worker.path]
+        next.environment = AlphaConfiguration.hostEnvironment
         let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
         next.standardInput = stdinPipe
