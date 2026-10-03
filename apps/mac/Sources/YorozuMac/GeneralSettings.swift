@@ -24,7 +24,7 @@ struct GeneralView: View {
                 }
                 .pickerStyle(.segmented)
                 if session.role == .client {
-                    Text(session.hosts.hasMultipleHosts ? String(localized: "Manage paired Macs in Hosts.") : String(localized: "Manage pairing in Connection."))
+                    Text(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Manage paired Macs in Hosts.") : SecretaryUI.localized("Manage pairing in Connection."))
                         .foregroundStyle(.secondary)
                 } else if session.role == .host {
                     Toggle(isOn: $backgroundOnlyHost) {
@@ -52,16 +52,16 @@ struct GeneralView: View {
                 Text("Chat")
             } footer: {
                 VStack(alignment: .leading) {
-                    Text(sendWithCommandReturn ? String(localized: "Enter starts a new line.") : String(localized: "Shift-Enter starts a new line."))
+                    Text(sendWithCommandReturn ? SecretaryUI.localized("Enter starts a new line.") : SecretaryUI.localized("Shift-Enter starts a new line."))
                     Text(sendWithCommandReturn
-                        ? String(localized: "⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
-                        : String(localized: "⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now."))
+                        ? SecretaryUI.localized("⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                        : SecretaryUI.localized("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now."))
                 }
                 .leadingFooter()
             }
             Section {
                 LabeledContent("Archived threads") {
-                    Text(archivedCount == 0 ? String(localized: "None") : archivedCount.formatted())
+                    Text(archivedCount == 0 ? SecretaryUI.localized("None") : archivedCount.formatted())
                         .foregroundStyle(.secondary)
                     Button("Show…") { showingArchive = true }
                         .disabled(archivedCount == 0)
@@ -209,7 +209,7 @@ struct UpdatesSettingsSection: View {
         let info = Bundle.main.infoDictionary
         let version = info?["YorozuVersionLabel"] as? String
             ?? info?["CFBundleShortVersionString"] as? String
-            ?? String(localized: "Development")
+            ?? SecretaryUI.localized("Development")
         guard let build = info?["YorozuVersionBuild"] as? String else { return version }
         return "\(version) (\(build))"
     }
@@ -236,7 +236,7 @@ struct KeepaliveView: View {
         .task {
             while !Task.isCancelled {
                 startsAtLogin = LoginItem.isEnabled
-                loginStatus = LoginItem.statusText
+                loginStatus = LoginItem.localizedStatusText { SecretaryUI.localized($0) }
                 try? await Task.sleep(for: .seconds(2))
             }
         }

@@ -30,11 +30,11 @@ public enum ClientConnectionStatus: Equatable, Sendable {
 
     public var label: String {
         switch self {
-        case .connected: String(localized: "Connected")
-        case .connecting: String(localized: "Connecting…")
-        case .hostOffline: String(localized: "Host Mac offline")
-        case .offline: String(localized: "Offline")
-        case .failed: String(localized: "Couldn’t connect")
+        case .connected: SecretaryUI.localized("Connected")
+        case .connecting: SecretaryUI.localized("Connecting…")
+        case .hostOffline: SecretaryUI.localized("Host Mac offline")
+        case .offline: SecretaryUI.localized("Offline")
+        case .failed: SecretaryUI.localized("Couldn’t connect")
         }
     }
 }
@@ -44,19 +44,19 @@ public enum ClientConnectionStatus: Equatable, Sendable {
 public enum ConnectionDiagnostics {
     @MainActor public static func snapshot(for model: ChatModel) -> String {
         let transport: String = switch model.state {
-        case .paired: String(localized: "paired")
-        case .joined: String(localized: "joined")
-        case .connecting: String(localized: "connecting")
-        case .closed: String(localized: "closed")
+        case .paired: SecretaryUI.localized("paired")
+        case .joined: SecretaryUI.localized("joined")
+        case .connecting: SecretaryUI.localized("connecting")
+        case .closed: SecretaryUI.localized("closed")
         }
         let compatibility: String = switch model.compatibility {
-        case .legacy: String(localized: "legacy")
-        case .compatible(let version, _): String(localized: "protocol \(version)")
-        case .updateRequired: String(localized: "update required")
+        case .legacy: SecretaryUI.localized("legacy")
+        case .compatible(let version, _): SecretaryUI.localized("protocol \(version)")
+        case .updateRequired: SecretaryUI.localized("update required")
         }
-        let presence = model.ownerOnline ? String(localized: "online") : String(localized: "unavailable")
-        let recentFailure = model.failure == nil ? String(localized: "no") : String(localized: "yes")
-        return String(localized: """
+        let presence = model.ownerOnline ? SecretaryUI.localized("online") : SecretaryUI.localized("unavailable")
+        let recentFailure = model.failure == nil ? SecretaryUI.localized("no") : SecretaryUI.localized("yes")
+        return SecretaryUI.localized("""
         Yorozu connection diagnostics
         Connection: \(model.link.state.label)
         Transport: \(transport)

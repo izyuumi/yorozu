@@ -30,7 +30,7 @@ struct PairingFlowView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         .accessibilityHidden(true)
                     Text("Yorozu").font(.largeTitle.weight(.semibold))
-                    Text(addingHost ? String(localized: "Connect another Mac.") : String(localized: "Your Mac's agent, in your pocket."))
+                    Text(addingHost ? SecretaryUI.localized("Connect another Mac.") : SecretaryUI.localized("Your Mac's agent, in your pocket."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -151,7 +151,7 @@ struct PairView: View {
                     }
                 }
             }
-            .navigationTitle("Pair with your Mac")
+            .navigationTitle(SecretaryUI.localized("Pair with your Mac"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

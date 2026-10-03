@@ -88,9 +88,9 @@ public struct ReasoningActivity: Identifiable, Equatable, Sendable {
         return ""
     }
     public var label: String {
-        if running { return String(localized: "Thinking…") }
+        if running { return SecretaryUI.localized("Thinking…") }
         let seconds = max(0, (finishedAt ?? event.ts) - event.ts) / 1000
-        return String(localized: "Thought for \(seconds) s")
+        return SecretaryUI.localized("Thought for \(seconds) s")
     }
 }
 
@@ -164,10 +164,10 @@ public struct TurnWork: Identifiable, Equatable, Sendable {
         let end = running ? Int(date.timeIntervalSince1970 * 1000) : lastAt
         let seconds = max(0, end - startedAt) / 1000
         let elapsed = Duration.seconds(seconds).formatted(.units(allowed: [.minutes, .seconds], width: .narrow))
-        if running { return String(localized: "Working for \(elapsed)") }
-        if stopStatus == .stopped { return String(localized: "You stopped after \(elapsed)") }
-        if stopStatus == .unconfirmed { return String(localized: "Stop unconfirmed after \(elapsed)") }
-        return String(localized: "Worked for \(elapsed)")
+        if running { return SecretaryUI.localized("Working for \(elapsed)") }
+        if stopStatus == .stopped { return SecretaryUI.localized("You stopped after \(elapsed)") }
+        if stopStatus == .unconfirmed { return SecretaryUI.localized("Stop unconfirmed after \(elapsed)") }
+        return SecretaryUI.localized("Worked for \(elapsed)")
     }
 
     /// The one line shown while the work runs: what is happening right now. A progress card's
@@ -531,12 +531,12 @@ public struct ToolActivity: Identifiable, Equatable, Sendable {
 
         public var label: String {
             switch self {
-            case .pending: String(localized: "Pending")
-            case .running: String(localized: "Running")
-            case .awaitingApproval: String(localized: "Awaiting approval")
-            case .completed: String(localized: "Completed")
-            case .failed: String(localized: "Failed")
-            case .denied: String(localized: "Denied")
+            case .pending: SecretaryUI.localized("Pending")
+            case .running: SecretaryUI.localized("Running")
+            case .awaitingApproval: SecretaryUI.localized("Awaiting approval")
+            case .completed: SecretaryUI.localized("Completed")
+            case .failed: SecretaryUI.localized("Failed")
+            case .denied: SecretaryUI.localized("Denied")
             }
         }
     }
@@ -581,12 +581,12 @@ public struct ToolActivity: Identifiable, Equatable, Sendable {
     public var currentAction: String {
         let path = args["file_path"]?.compact ?? args["path"]?.compact ?? name
         switch actionKind {
-        case .read: return String(localized: "Reading \(path)")
-        case .edit: return String(localized: "Changing \(path)")
-        case .command: return String(localized: "Running \(args["command"]?.compact ?? args["cmd"]?.compact ?? name)")
-        case .search: return String(localized: "Searching \(args["pattern"]?.compact ?? args["query"]?.compact ?? name)")
-        case .delegation: return String(localized: "Delegating \(name)")
-        case .other: return String(localized: "Using \(name)")
+        case .read: return SecretaryUI.localized("Reading \(path)")
+        case .edit: return SecretaryUI.localized("Changing \(path)")
+        case .command: return SecretaryUI.localized("Running \(args["command"]?.compact ?? args["cmd"]?.compact ?? name)")
+        case .search: return SecretaryUI.localized("Searching \(args["pattern"]?.compact ?? args["query"]?.compact ?? name)")
+        case .delegation: return SecretaryUI.localized("Delegating \(name)")
+        case .other: return SecretaryUI.localized("Using \(name)")
         }
     }
 
@@ -720,12 +720,12 @@ public func toolSummary(_ activities: [ToolActivity]) -> String {
         let count = activities.filter { $0.actionKind == kind }.count
         guard count > 0 else { return nil }
         switch kind {
-        case .read: return count == 1 ? String(localized: "Read \(count) file") : String(localized: "Read \(count) files")
-        case .command: return count == 1 ? String(localized: "ran \(count) command") : String(localized: "ran \(count) commands")
-        case .edit: return count == 1 ? String(localized: "changed \(count) file") : String(localized: "changed \(count) files")
-        case .search: return count == 1 ? String(localized: "searched \(count) time") : String(localized: "searched \(count) times")
-        case .delegation: return count == 1 ? String(localized: "delegated \(count) task") : String(localized: "delegated \(count) tasks")
-        case .other: return count == 1 ? String(localized: "used \(count) tool") : String(localized: "used \(count) tools")
+        case .read: return count == 1 ? SecretaryUI.localized("Read \(count) file") : SecretaryUI.localized("Read \(count) files")
+        case .command: return count == 1 ? SecretaryUI.localized("ran \(count) command") : SecretaryUI.localized("ran \(count) commands")
+        case .edit: return count == 1 ? SecretaryUI.localized("changed \(count) file") : SecretaryUI.localized("changed \(count) files")
+        case .search: return count == 1 ? SecretaryUI.localized("searched \(count) time") : SecretaryUI.localized("searched \(count) times")
+        case .delegation: return count == 1 ? SecretaryUI.localized("delegated \(count) task") : SecretaryUI.localized("delegated \(count) tasks")
+        case .other: return count == 1 ? SecretaryUI.localized("used \(count) tool") : SecretaryUI.localized("used \(count) tools")
         }
     }.joined(separator: ", ")
 }

@@ -1233,14 +1233,14 @@ public enum ReasoningEffort: String, Codable, Equatable, Sendable, CaseIterable,
     public var id: Self { self }
     public var label: String {
         switch self {
-        case .minimal: String(localized: "Minimal")
-        case .low: String(localized: "Low")
-        case .medium: String(localized: "Medium")
-        case .high: String(localized: "High")
-        case .xhigh: String(localized: "Extra high")
-        case .max: String(localized: "Max")
-        case .ultra: String(localized: "Ultra")
-        case .persistent: String(localized: "Persistent")
+        case .minimal: SecretaryUI.localized("Minimal")
+        case .low: SecretaryUI.localized("Low")
+        case .medium: SecretaryUI.localized("Medium")
+        case .high: SecretaryUI.localized("High")
+        case .xhigh: SecretaryUI.localized("Extra high")
+        case .max: SecretaryUI.localized("Max")
+        case .ultra: SecretaryUI.localized("Ultra")
+        case .persistent: SecretaryUI.localized("Persistent")
         }
     }
 }
@@ -1383,7 +1383,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     }
 
     /// What a list draws: an untitled thread is one the runtime has not named yet.
-    public var displayTitle: String { title.isEmpty ? String(localized: "New chat") : title }
+    public var displayTitle: String { title.isEmpty ? SecretaryUI.localized("New chat") : title }
 
     /// The last path component of ``cwd``: the repo a coding agent's row is subtitled with.
     public var repoName: String? {

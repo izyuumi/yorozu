@@ -14,7 +14,7 @@ public enum TraceTarget: Hashable, Sendable {
 
     public var title: String {
         switch self {
-        case .main: String(localized: "Working")
+        case .main: SecretaryUI.localized("Working")
         case .delegation(let agentId, _): agentId
         }
     }
@@ -83,7 +83,7 @@ public struct DelegationCardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(card.agentId)
                         .font(.scaled(.subheadline).weight(.semibold))
-                    Text(card.done ? "\(String(localized: "Done")) · \(card.events.count)" : String(localized: "Running…"))
+                    Text(card.done ? "\(SecretaryUI.localized("Done")) · \(card.events.count)" : SecretaryUI.localized("Running…"))
                         .font(.scaled(.caption))
                         .foregroundStyle(.secondary)
                 }
@@ -98,7 +98,7 @@ public struct DelegationCardView: View {
         .yorozuPaperCard(padding: LayoutMetrics.inner)
         .frame(maxWidth: .infinity, alignment: .leading)
         .buttonStyle(.plain)
-        .accessibilityHint(expanded ? String(localized: "Hides the trace") : String(localized: "Shows the trace"))
+        .accessibilityHint(expanded ? SecretaryUI.localized("Hides the trace") : SecretaryUI.localized("Shows the trace"))
     }
 }
 

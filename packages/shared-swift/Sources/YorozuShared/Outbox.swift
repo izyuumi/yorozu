@@ -107,16 +107,16 @@ public enum OutboxStatus: String, Sendable, Equatable {
     /// The caption under the bubble.
     public var label: String {
         switch self {
-        case .queued: String(localized: "Queued")
-        case .confirming: String(localized: "Confirming delivery…")
-        case .unconfirmed: String(localized: "Delivery unconfirmed")
-        case .failed: String(localized: "Not sent")
-        case .checking: String(localized: "Checking delivery…")
-        case .expired: String(localized: "Expired · Still send?")
-        case .rejected: String(localized: "Not sent")
-        case .withdrawalPending: String(localized: "Withdrawal pending")
-        case .withdrawn: String(localized: "Cancelled")
-        case .resent: String(localized: "Reconfirmed as new message")
+        case .queued: SecretaryUI.localized("Queued")
+        case .confirming: SecretaryUI.localized("Confirming delivery…")
+        case .unconfirmed: SecretaryUI.localized("Delivery unconfirmed")
+        case .failed: SecretaryUI.localized("Not sent")
+        case .checking: SecretaryUI.localized("Checking delivery…")
+        case .expired: SecretaryUI.localized("Expired · Still send?")
+        case .rejected: SecretaryUI.localized("Not sent")
+        case .withdrawalPending: SecretaryUI.localized("Withdrawal pending")
+        case .withdrawn: SecretaryUI.localized("Cancelled")
+        case .resent: SecretaryUI.localized("Reconfirmed as new message")
         }
     }
 

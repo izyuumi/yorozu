@@ -31,9 +31,9 @@ struct DevicesView: View {
                         Image(systemName: isMac(device) ? "laptopcomputer" : device.name?.hasPrefix("iPadOS") == true ? "ipad" : "iphone")
                             .foregroundStyle(.secondary)
                             .frame(width: 20)
-                            .accessibilityLabel(isMac(device) ? String(localized: "Mac") : device.name?.hasPrefix("iPadOS") == true ? String(localized: "iPad") : String(localized: "Phone"))
+                            .accessibilityLabel(isMac(device) ? SecretaryUI.localized("Mac") : device.name?.hasPrefix("iPadOS") == true ? SecretaryUI.localized("iPad") : SecretaryUI.localized("Phone"))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(device.via == .local ? String(localized: "This Mac") : device.name ?? device.shortId)
+                            Text(device.via == .local ? SecretaryUI.localized("This Mac") : device.name ?? device.shortId)
                                 .font(.scaled(.body))
                             Button {
                                 if !expandedDeviceIDs.insert(device.pub).inserted {
@@ -64,7 +64,7 @@ struct DevicesView: View {
                         Circle()
                             .fill(device.online ? YorozuPalette.sage : Color.secondary.opacity(0.4))
                             .frame(width: 8, height: 8)
-                            .accessibilityLabel(device.online ? String(localized: "online") : String(localized: "offline"))
+                            .accessibilityLabel(device.online ? SecretaryUI.localized("online") : SecretaryUI.localized("offline"))
                         if removable(device) {
                             Button("Remove…", role: .destructive) { confirmingRemoval = device }
                                 .accessibilityLabel("Remove device \(device.shortId)")
@@ -126,13 +126,13 @@ struct DevicesView: View {
     }
 
     private func subtitle(_ device: DeviceInfo) -> String {
-        if device.via == .local { return String(localized: "Connected locally") }
+        if device.via == .local { return SecretaryUI.localized("Connected locally") }
         let status: String
-        if device.online { status = String(localized: "Online now") }
+        if device.online { status = SecretaryUI.localized("Online now") }
         else if device.lastSeen > 0 {
             let seen = Date(timeIntervalSince1970: device.lastSeen / 1000)
-            status = String(localized: "Last seen \(seen.formatted(.relative(presentation: .named)))")
-        } else { status = String(localized: "Paired") }
+            status = SecretaryUI.localized("Last seen \(seen.formatted(.relative(presentation: .named)))")
+        } else { status = SecretaryUI.localized("Paired") }
         return device.name == nil ? status : "\(status) · \(device.shortId)"
     }
 }

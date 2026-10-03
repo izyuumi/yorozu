@@ -11,10 +11,10 @@ enum ChatActivity: Hashable, Sendable {
 
     var label: String {
         switch self {
-        case .thinking: String(localized: "Thinking…")
-        case .waitingForApproval: String(localized: "Waiting for your approval")
-        case .waitingForAnswer: String(localized: "Waiting for your answer")
-        case .waitingForOpenClaw: String(localized: "Waiting for OpenClaw")
+        case .thinking: SecretaryUI.localized("Thinking…")
+        case .waitingForApproval: SecretaryUI.localized("Waiting for your approval")
+        case .waitingForAnswer: SecretaryUI.localized("Waiting for your answer")
+        case .waitingForOpenClaw: SecretaryUI.localized("Waiting for OpenClaw")
         }
     }
 

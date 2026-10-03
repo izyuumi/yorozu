@@ -114,7 +114,7 @@ public struct MessageBubble: View {
 
     private func messageText(_ english: String, _ japanese: String) -> String {
         SecretaryUI.enabled ? locale.secretaryText(english, japanese)
-            : String(localized: String.LocalizationValue(english))
+            : SecretaryUI.localized(String.LocalizationValue(english))
     }
 
     private var copyLabel: String {
@@ -244,7 +244,7 @@ public struct MessageBubble: View {
         }
         if let onRetry {
             Button(rejectionReason?.hasPrefix("thread-create-rejected:") == true || rejectionReason == "thread-not-created"
-                ? String(localized: "Use in new chat") : String(localized: "Retry"),
+                ? SecretaryUI.localized("Use in new chat") : SecretaryUI.localized("Retry"),
                 systemImage: "arrow.clockwise", action: onRetry)
         }
         if let onWithdraw {
@@ -344,11 +344,11 @@ public struct MessageBubble: View {
         let label = Label {
             // "tap" on a Mac is a phone app talking to the wrong person.
             #if os(macOS)
-                Text(status == .failed ? String(localized: "Not sent — click to retry") :
-                    status == .unconfirmed ? String(localized: "Delivery unconfirmed — click to retry") : description)
+                Text(status == .failed ? SecretaryUI.localized("Not sent — click to retry") :
+                    status == .unconfirmed ? SecretaryUI.localized("Delivery unconfirmed — click to retry") : description)
             #else
-                Text(status == .failed ? String(localized: "Not sent — tap to retry") :
-                    status == .unconfirmed ? String(localized: "Delivery unconfirmed — tap to retry") : description)
+                Text(status == .failed ? SecretaryUI.localized("Not sent — tap to retry") :
+                    status == .unconfirmed ? SecretaryUI.localized("Delivery unconfirmed — tap to retry") : description)
             #endif
         } icon: {
             // The icon carries the red; caption-sized red text is under 4.5:1.
@@ -370,23 +370,23 @@ public struct MessageBubble: View {
 
     private var rejectionDescription: String {
         if rejectionReason?.hasPrefix("thread-create-rejected:") == true {
-            return String(localized: "Not sent · chat could not be created. Use in new chat to keep attachments.")
+            return SecretaryUI.localized("Not sent · chat could not be created. Use in new chat to keep attachments.")
         }
         return switch rejectionReason {
-        case "oversized-attachments": String(localized: "Not sent · attachments too large")
+        case "oversized-attachments": SecretaryUI.localized("Not sent · attachments too large")
         case "invalid-attachment-upload", "invalid-attachment-chunk", "invalid-attachment-commit":
-            String(localized: "Not sent · attachment could not be read")
+            SecretaryUI.localized("Not sent · attachment could not be read")
         case "conflicting-attachment-upload", "corrupt-attachment-upload":
-            String(localized: "Not sent · attachment changed during transfer")
-        case "attachment-storage-failed": String(localized: "Not sent · host could not save attachment")
-        case "client-clock-ahead": String(localized: "Not sent · device clock is ahead")
-        case "conflicting-message-id": String(localized: "Not sent · message changed after sending")
-        case "invalid-admission-deadline": String(localized: "Not sent · invalid message deadline")
-        case "thread-not-created": String(localized: "Not sent · chat does not exist. Use in new chat to keep attachments.")
+            SecretaryUI.localized("Not sent · attachment changed during transfer")
+        case "attachment-storage-failed": SecretaryUI.localized("Not sent · host could not save attachment")
+        case "client-clock-ahead": SecretaryUI.localized("Not sent · device clock is ahead")
+        case "conflicting-message-id": SecretaryUI.localized("Not sent · message changed after sending")
+        case "invalid-admission-deadline": SecretaryUI.localized("Not sent · invalid message deadline")
+        case "thread-not-created": SecretaryUI.localized("Not sent · chat does not exist. Use in new chat to keep attachments.")
         case "attachments-unsupported":
-            String(localized: "Not sent · OpenClaw can't receive attachments. Update the Yorozu plugin.")
-        case "conflicting-thread-create": String(localized: "Not sent · chat creation changed")
-        default: String(localized: "Not sent · rejected by host")
+            SecretaryUI.localized("Not sent · OpenClaw can't receive attachments. Update the Yorozu plugin.")
+        case "conflicting-thread-create": SecretaryUI.localized("Not sent · chat creation changed")
+        default: SecretaryUI.localized("Not sent · rejected by host")
         }
     }
 

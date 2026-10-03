@@ -38,7 +38,7 @@ public struct QuestionCardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if answered {
-                Label(chosen.map { String(localized: "Answered: \($0)") } ?? String(localized: "Answered"), systemImage: "checkmark.circle.fill")
+                Label(chosen.map { SecretaryUI.localized("Answered: \($0)") } ?? SecretaryUI.localized("Answered"), systemImage: "checkmark.circle.fill")
                     .font(.scaled(.caption))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

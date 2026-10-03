@@ -53,12 +53,14 @@ public enum LoginItem {
 
     /// What to show next to the toggle. `.requiresApproval` is the one worth spelling out:
     /// the app has asked, and the user has to finish it in System Settings.
-    public static var statusText: String {
+    public static var statusText: String { localizedStatusText { String(localized: $0) } }
+
+    public static func localizedStatusText(_ localize: (String.LocalizationValue) -> String) -> String {
         switch status {
-        case .enabled: String(localized: "Registered with macOS.")
-        case .requiresApproval: String(localized: "Waiting for you to allow it in System Settings › General › Login Items.")
-        case .notFound: String(localized: "Not available — this build is not an installed app bundle.")
-        default: String(localized: "Not registered.")
+        case .enabled: localize("Registered with macOS.")
+        case .requiresApproval: localize("Waiting for you to allow it in System Settings › General › Login Items.")
+        case .notFound: localize("Not available — this build is not an installed app bundle.")
+        default: localize("Not registered.")
         }
     }
 

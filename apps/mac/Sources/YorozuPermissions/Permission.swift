@@ -47,61 +47,65 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
     /// among them, so the helper has nothing to say about those.
     public static let requestable = allCases.filter { !$0.isAppSetting }
 
-    public var title: String {
+    public var title: String { localizedTitle { String(localized: $0) } }
+
+    public func localizedTitle(_ localize: (String.LocalizationValue) -> String) -> String {
         switch self {
-        case .accessibility: String(localized: "Accessibility")
-        case .screenRecording: String(localized: "Screen Recording")
-        case .inputMonitoring: String(localized: "Input Monitoring")
-        case .fullDiskAccess: String(localized: "Full Disk Access")
-        case .calendars: String(localized: "Calendars")
-        case .reminders: String(localized: "Reminders")
-        case .contacts: String(localized: "Contacts")
-        case .photos: String(localized: "Photos")
-        case .music: String(localized: "Music")
-        case .location: String(localized: "Location")
-        case .camera: String(localized: "Camera")
-        case .microphone: String(localized: "Microphone")
-        case .files: String(localized: "Files & Folders")
-        case .automation: String(localized: "Automation")
-        case .startAtLogin: String(localized: "Start at Login")
-        case .neverSleep: String(localized: "Never Sleep")
+        case .accessibility: localize("Accessibility")
+        case .screenRecording: localize("Screen Recording")
+        case .inputMonitoring: localize("Input Monitoring")
+        case .fullDiskAccess: localize("Full Disk Access")
+        case .calendars: localize("Calendars")
+        case .reminders: localize("Reminders")
+        case .contacts: localize("Contacts")
+        case .photos: localize("Photos")
+        case .music: localize("Music")
+        case .location: localize("Location")
+        case .camera: localize("Camera")
+        case .microphone: localize("Microphone")
+        case .files: localize("Files & Folders")
+        case .automation: localize("Automation")
+        case .startAtLogin: localize("Start at Login")
+        case .neverSleep: localize("Never Sleep")
         }
     }
 
-    public var detail: String {
+    public var detail: String { localizedDetail { String(localized: $0) } }
+
+    public func localizedDetail(_ localize: (String.LocalizationValue) -> String) -> String {
         switch self {
         case .accessibility:
-            String(localized: "Lets the agent read the window you are looking at as an accessibility tree, and click or type in it.")
+            localize("Lets the agent read the window you are looking at as an accessibility tree, and click or type in it.")
         case .screenRecording:
-            String(localized: "Used only when a window exposes no accessibility tree, so the agent can fall back to a screenshot.")
+            localize("Used only when a window exposes no accessibility tree, so the agent can fall back to a screenshot.")
         case .inputMonitoring:
-            String(localized: "Lets the agent synthesise keystrokes and clicks so it can act on what it sees.")
+            localize("Lets the agent synthesise keystrokes and clicks so it can act on what it sees.")
         case .fullDiskAccess:
-            String(localized: "Lets the agent read and write files anywhere you can, including Mail and Safari data.")
+            localize("Lets the agent read and write files anywhere you can, including Mail and Safari data.")
         case .calendars:
-            String(localized: "Lets the agent read your calendar and make, move and cancel events when you ask.")
+            localize("Lets the agent read your calendar and make, move and cancel events when you ask.")
         case .reminders:
-            String(localized: "Lets the agent read your reminder lists and add to or tick off items.")
+            localize("Lets the agent read your reminder lists and add to or tick off items.")
         case .contacts:
-            String(localized: "Lets the agent look up the people you write to, so you can say a name instead of an address.")
+            localize("Lets the agent look up the people you write to, so you can say a name instead of an address.")
         case .photos:
-            String(localized: "Lets the agent find and attach pictures from your library.")
+            localize("Lets the agent find and attach pictures from your library.")
         case .music:
-            String(localized: "Lets the agent see your music library so it can play what you ask for.")
+            localize("Lets the agent see your music library so it can play what you ask for.")
         case .location:
-            String(localized: "Lets the agent answer questions about where you are — travel time, the weather, what is nearby.")
+            localize("Lets the agent answer questions about where you are — travel time, the weather, what is nearby.")
         case .camera:
-            String(localized: "Lets the agent take a picture when you ask it to. Never used without you asking.")
+            localize("Lets the agent take a picture when you ask it to. Never used without you asking.")
         case .microphone:
-            String(localized: "Lets the agent listen when you ask it to. Never used without you asking.")
+            localize("Lets the agent listen when you ask it to. Never used without you asking.")
         case .files:
-            String(localized: "Your Desktop, Documents, Downloads and cloud drives. macOS asks once per folder.")
+            localize("Your Desktop, Documents, Downloads and cloud drives. macOS asks once per folder.")
         case .automation:
-            String(localized: "Lets the agent drive Finder, Safari, Mail, Calendar, Messages and the rest. Each app asks separately and may launch while it does; anything that was not already open is quit again.")
+            localize("Lets the agent drive Finder, Safari, Mail, Calendar, Messages and the rest. Each app asks separately and may launch while it does; anything that was not already open is quit again.")
         case .startAtLogin:
-            String(localized: "Starts Yorozu whenever you log in, so a Mac that restarted overnight is answering your phone again before you notice it rebooted.")
+            localize("Starts Yorozu whenever you log in, so a Mac that restarted overnight is answering your phone again before you notice it rebooted.")
         case .neverSleep:
-            String(localized: "Keeps this Mac awake so the agent can answer your phone while you are away. Reversible here or in the menu at any time.")
+            localize("Keeps this Mac awake so the agent can answer your phone while you are away. Reversible here or in the menu at any time.")
         }
     }
 

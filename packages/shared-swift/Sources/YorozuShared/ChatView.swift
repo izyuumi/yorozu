@@ -312,7 +312,7 @@ public struct ChatView: View {
                     dismiss: { model.dismissPluginNotice() })
             }
             if model.hasUnconfirmedStop(in: thread.id) {
-                Banner(text: String(localized: "Could not confirm whether this task stopped. Check the host before retrying."),
+                Banner(text: SecretaryUI.localized("Could not confirm whether this task stopped. Check the host before retrying."),
                     systemImage: "exclamationmark.triangle")
             }
             if thread.interruptedTurnId != nil { interruptedTurnNotice }
@@ -477,7 +477,7 @@ public struct ChatView: View {
                             }
                         }
                         .accessibilityElement(children: .combine)
-                        .accessibilityValue(model.ownerOnline ? String(localized: "Mac online") : String(localized: "Mac offline"))
+                        .accessibilityValue(model.ownerOnline ? SecretaryUI.localized("Mac online") : SecretaryUI.localized("Mac offline"))
                     }
                 }
                 if #available(iOS 27.1, *) {
@@ -647,7 +647,7 @@ public struct ChatView: View {
     /// thread is still running on a concrete first model; hiding that identity made the shipped
     /// toolbar materially different from the design and forced a menu open to discover it.
     private var macModelCaption: String {
-        if presentation.needsFolder && thread.model == nil { return String(localized: "Auto") }
+        if presentation.needsFolder && thread.model == nil { return SecretaryUI.localized("Auto") }
         let spec = thread.model ?? model.models(for: thread).first?.id
         guard let spec, !spec.isEmpty else { return "" }
         if let option = model.models(for: thread).first(where: { $0.id == spec }) {
@@ -918,7 +918,7 @@ public struct ChatView: View {
         case .work(let work):
             WorkRowView(work: work).id(work.id)
         case .unreadable(let event):
-            Label(String(localized: "Update Yorozu to see this event"), systemImage: "arrow.up.circle")
+            Label(SecretaryUI.localized("Update Yorozu to see this event"), systemImage: "arrow.up.circle")
                 .font(.scaled(.subheadline))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
@@ -1060,7 +1060,7 @@ public struct ChatView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(localized: "Project folder: \(path)"))
+        .accessibilityLabel(SecretaryUI.localized("Project folder: \(path)"))
         #if os(macOS)
             .help(path)
         #endif
@@ -1122,7 +1122,7 @@ public struct ChatView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
             .onChange(of: choices.count, initial: true) { _, count in
-                AccessibilityNotification.Announcement(String(localized: "\(count) skills")).post()
+                AccessibilityNotification.Announcement(SecretaryUI.localized("\(count) skills")).post()
             }
         }
     }
@@ -1223,7 +1223,7 @@ public struct ChatView: View {
             .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
             .padding(.horizontal, 12)
             .sheet(item: $editingApprovalRule) { rule in
-                RuleEditorView(rule: rule, title: String(localized: "Always allow")) { edited in
+                RuleEditorView(rule: rule, title: SecretaryUI.localized("Always allow")) { edited in
                     model.answer(editingApprovalId, in: thread.id, .always, rule: edited)
                     editingApprovalRule = nil
                 } onCancel: {
@@ -1371,7 +1371,7 @@ public struct ChatView: View {
             HStack {
                 Text(thread.model.flatMap { selected in
                     model.channelModels[thread.id]?.first(where: { $0.id == selected })?.label ?? selected
-                } ?? String(localized: "Default"))
+                } ?? SecretaryUI.localized("Default"))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
             }
@@ -1380,7 +1380,7 @@ public struct ChatView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("channelModelMenu")
         .accessibilityLabel("Model")
-        .accessibilityValue(thread.model ?? String(localized: "Default"))
+        .accessibilityValue(thread.model ?? SecretaryUI.localized("Default"))
         .popover(isPresented: $channelModelPicker) {
             VStack(alignment: .leading) {
                 HStack {
@@ -1410,9 +1410,9 @@ public struct ChatView: View {
 
     private var channelModelChoices: some View {
         YorozuChoiceCard([
-            Choice(String(localized: "Default"), selected: thread.model == nil) { model.setModel(thread, nil) }
+            Choice(SecretaryUI.localized("Default"), selected: thread.model == nil) { model.setModel(thread, nil) }
         ] + (model.channelModels[thread.id] ?? []).map { option in
-            Choice(option.available ? option.label : "\(option.label) — \(option.unavailableReason ?? String(localized: "Unavailable"))",
+            Choice(option.available ? option.label : "\(option.label) — \(option.unavailableReason ?? SecretaryUI.localized("Unavailable"))",
                    selected: thread.model == option.id, enabled: option.available) {
                 model.setModel(thread, option.id)
             }
@@ -1429,7 +1429,7 @@ public struct ChatView: View {
                 Button {
                     model.restoreStash(stash.id, in: thread.id)
                 } label: {
-                    Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? String(localized: "Draft")) : stash.text)
+                    Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? SecretaryUI.localized("Draft")) : stash.text)
                         .lineLimit(1)
                 }
                 .disabled(!draft.wrappedValue.isEmpty || !attachments.wrappedValue.isEmpty || attachmentLoading)
@@ -1456,7 +1456,7 @@ public struct ChatView: View {
 
     private func pasteImages() {
         guard !attachmentLoading else {
-            reportAttachmentFailure(String(localized: "Wait for attachments to finish loading, then paste again."))
+            reportAttachmentFailure(SecretaryUI.localized("Wait for attachments to finish loading, then paste again."))
             return
         }
         attachmentFailure = nil
@@ -1494,7 +1494,7 @@ public struct ChatView: View {
         let result = addingAttachments(picked, to: attachments.wrappedValue)
         attachments.wrappedValue = result.attachments
         if result.rejectedCount > 0 {
-            reportAttachmentFailure(String(localized: "Some attachments couldn’t be added. A message can contain up to 10 attachments and 20 MB in total."))
+            reportAttachmentFailure(SecretaryUI.localized("Some attachments couldn’t be added. A message can contain up to 10 attachments and 20 MB in total."))
         }
     }
 
@@ -1510,13 +1510,13 @@ public struct ChatView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("runSettingsMenu")
                 .accessibilityLabel("Model and effort")
-                .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? String(localized: "Default effort"))")
+                .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? SecretaryUI.localized("Default effort"))")
         }
     #else
     private var runSettingsButton: some View {
         Menu {
             Text("Current model: \(composerModelLabel)")
-            Text("Effort: \(thread.effort?.label ?? String(localized: "Default"))")
+            Text("Effort: \(thread.effort?.label ?? SecretaryUI.localized("Default"))")
             Divider()
 
             Picker("Model", selection: modelBinding) {
@@ -1548,7 +1548,7 @@ public struct ChatView: View {
         .menuIndicator(.hidden)
         .accessibilityIdentifier("runSettingsMenu")
         .accessibilityLabel("Model and effort")
-        .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? String(localized: "Default effort"))")
+        .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? SecretaryUI.localized("Default effort"))")
     }
     #endif
 
@@ -1565,7 +1565,7 @@ public struct ChatView: View {
     }
 
     private var composerModelLabel: String {
-        guard let spec = thread.model else { return String(localized: "Auto") }
+        guard let spec = thread.model else { return SecretaryUI.localized("Auto") }
         return model.models(for: thread).first(where: { $0.id == spec })?.label ?? spec
     }
 
@@ -2210,12 +2210,12 @@ private struct SearchHitBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(total == 0 ? String(localized: "No matches") : String(localized: "\(index + 1) of \(total)"))
+            Text(total == 0 ? SecretaryUI.localized("No matches") : SecretaryUI.localized("\(index + 1) of \(total)"))
                 .font(.scaled(.footnote).monospacedDigit())
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
-            arrow("chevron.up", String(localized: "Previous match"), -1)
-            arrow("chevron.down", String(localized: "Next match"), 1)
+            arrow("chevron.up", SecretaryUI.localized("Previous match"), -1)
+            arrow("chevron.down", SecretaryUI.localized("Next match"), 1)
         }
         .padding(.leading, 16)
         .padding(.trailing, 4)

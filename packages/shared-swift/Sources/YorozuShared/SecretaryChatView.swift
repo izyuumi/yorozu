@@ -10,6 +10,17 @@ public enum SecretaryUI {
     public static var enabled: Bool { Bundle.main.infoDictionary?["YorozuSecretaryEnabled"] as? Bool == true }
     public static let threadID = "yorozu-secretary-v1"
     public static let languageKey = "secretaryInterfaceLanguage"
+
+    /// Foundation's locale argument formats values but does not select a bundle's
+    /// language. Native titles and computed labels need the same catalog as SwiftUI.
+    public static func localized(_ value: String.LocalizationValue, locale: Locale? = nil) -> String {
+        guard enabled else { return String(localized: value) }
+        let language = SecretaryLanguage(rawValue: UserDefaults.standard.string(forKey: languageKey) ?? "") ?? .system
+        let locale = locale ?? language.locale
+        let code = locale.language.languageCode?.identifier == "ja" ? "ja" : "en"
+        let bundle = Bundle.main.path(forResource: code, ofType: "lproj").flatMap(Bundle.init(path:)) ?? .main
+        return String(localized: value, bundle: bundle, locale: locale)
+    }
 }
 
 public enum SecretaryLanguage: String, CaseIterable {
@@ -29,7 +40,10 @@ public struct SecretaryLocale: ViewModifier {
     @AppStorage(SecretaryUI.languageKey) private var language = SecretaryLanguage.system
     public init() {}
     public func body(content: Content) -> some View {
-        if SecretaryUI.enabled { content.environment(\.locale, language.locale) }
+        if SecretaryUI.enabled {
+            // Rebuild computed/native labels too; their chat state stays in ChatModel.
+            content.environment(\.locale, language.locale).id(language)
+        }
         else { content }
     }
 }
@@ -114,7 +128,7 @@ public struct SecretaryChatView: View {
             }
         }
         .background(YorozuPalette.canvas)
-        .navigationTitle("Yorozu")
+        .navigationTitle(SecretaryUI.localized("Yorozu"))
         .toolbar {
             ToolbarItem(placement: historyPlacement) {
                 Button(locale.secretaryText("History", "履歴"), systemImage: "clock.arrow.circlepath", action: onHistory)

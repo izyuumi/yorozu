@@ -814,25 +814,25 @@ struct RootView: View {
     @ViewBuilder private var historyContent: some View {
         #if DEBUG
         if launchArgument("yorozuShowcase") == "pairing-manual" {
-            PairView(onPair: { _ in String(localized: "Not a Yorozu pairing code.") })
+            PairView(onPair: { _ in SecretaryUI.localized("Not a Yorozu pairing code.") })
         } else if let pairingScene = launchArgument("yorozuShowcase"), pairingScene.hasPrefix("pairing") {
             PairingFlowView(
                 onPair: { _ in
                     guard pairingScene == "pairing-connection-failure" else {
-                        return String(localized: "Not a Yorozu pairing code.")
+                        return SecretaryUI.localized("Not a Yorozu pairing code.")
                     }
                     showcasePairingError = nil
                     showcasePairingConnecting = true
                     Task {
                         try? await Task.sleep(for: .seconds(2))
                         showcasePairingConnecting = false
-                        showcasePairingError = String(localized: "Couldn’t connect. Generate a new pairing code and try again.")
+                        showcasePairingError = SecretaryUI.localized("Couldn’t connect. Generate a new pairing code and try again.")
                     }
                     return nil
                 },
                 onDemo: {},
                 externalError: pairingScene == "pairing-error"
-                    ? String(localized: "Not a Yorozu pairing code.") : showcasePairingError,
+                    ? SecretaryUI.localized("Not a Yorozu pairing code.") : showcasePairingError,
                 connecting: pairingScene == "pairing-connecting" || showcasePairingConnecting
             )
         } else if session.showingHosts {
@@ -1001,7 +1001,7 @@ struct RootView: View {
             onPair: pair,
             onDemo: session.startDemo,
             externalError: session.pairingFailure ?? session.model?.failure.map { _ in
-                String(localized: "Couldn’t connect. Generate a new pairing code and try again.")
+                SecretaryUI.localized("Couldn’t connect. Generate a new pairing code and try again.")
             },
             connecting: session.isPairing && session.pairingFailure == nil
         )
@@ -1014,7 +1014,7 @@ struct RootView: View {
             return nil
         } catch {
             if session.pendingPairing != nil { return nil }
-            return (error as? Session.PairingFailure)?.errorDescription ?? String(localized: "Not a Yorozu pairing code.")
+            return (error as? Session.PairingFailure)?.errorDescription ?? SecretaryUI.localized("Not a Yorozu pairing code.")
         }
     }
 }
@@ -1025,18 +1025,18 @@ struct PairingConfirmation: ViewModifier {
     var enabled = true
 
     func body(content: Content) -> some View {
-        content.alert(session.pendingPairing?.existingHostID == nil ? String(localized: "Add host?") : String(localized: "Already connected"),
+        content.alert(session.pendingPairing?.existingHostID == nil ? SecretaryUI.localized("Add host?") : SecretaryUI.localized("Already connected"),
             isPresented: Binding(get: { enabled && session.pendingPairing != nil },
                                  set: { if !$0 && enabled { session.cancelPendingPairing() } }),
             presenting: session.pendingPairing) { pending in
-                Button(pending.existingHostID == nil ? String(localized: "Add host") : String(localized: "Repair connection")) {
+                Button(pending.existingHostID == nil ? SecretaryUI.localized("Add host") : SecretaryUI.localized("Repair connection")) {
                     Task { await session.confirmPairing(pending) }
                 }
                 Button("Cancel", role: .cancel) { session.cancelPendingPairing() }
             } message: { pending in
                 Text(pending.existingHostID == nil
-                    ? String(localized: "Add this Mac to Yorozu?\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)")
-                    : String(localized: "This Mac is already paired. Repair replaces only its connection.\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)"))
+                    ? SecretaryUI.localized("Add this Mac to Yorozu?\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)")
+                    : SecretaryUI.localized("This Mac is already paired. Repair replaces only its connection.\n\nRelay: \(pending.relayHost)\nMac key: \(pending.macKeyFingerprint)"))
             }
     }
 }

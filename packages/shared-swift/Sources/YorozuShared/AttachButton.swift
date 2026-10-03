@@ -54,12 +54,12 @@ func stagePastedImage(
     onFailure: ((String) -> Void)? = nil
 ) {
     guard image.bytes.count <= MessageAttachment.maxBytes else {
-        if let onFailure { onFailure(String(localized: "Each attachment must be 5 MB or smaller.")) }
+        if let onFailure { onFailure(SecretaryUI.localized("Each attachment must be 5 MB or smaller.")) }
         else { onTooLarge() }
         return
     }
     guard let attachment = pastedImageAttachment(bytes: image.bytes) else {
-        onFailure?(String(localized: "Couldn’t read the image. Copy it again or choose another file."))
+        onFailure?(SecretaryUI.localized("Couldn’t read the image. Copy it again or choose another file."))
         return
     }
     onPick(attachment)
@@ -130,10 +130,10 @@ struct AttachButton: View {
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .accessibilityLabel(isLoading ? String(localized: "Loading attachments") : String(localized: "Attach photos or files"))
+        .accessibilityLabel(isLoading ? SecretaryUI.localized("Loading attachments") : SecretaryUI.localized("Attach photos or files"))
         .disabled(isLoading || remaining <= 0)
-        .help(remaining <= 0 ? String(localized: "Remove an attachment to add another") : String(localized: "Attach photos or files"))
-        .accessibilityHint(remaining <= 0 ? String(localized: "Remove an attachment to add another") : String(localized: "Choose photos or files for this message"))
+        .help(remaining <= 0 ? SecretaryUI.localized("Remove an attachment to add another") : SecretaryUI.localized("Attach photos or files"))
+        .accessibilityHint(remaining <= 0 ? SecretaryUI.localized("Remove an attachment to add another") : SecretaryUI.localized("Choose photos or files for this message"))
         .alert("Attachments couldn’t be added", isPresented: Binding(
             get: { failureMessage != nil },
             set: { if !$0 { failureMessage = nil } }
@@ -165,7 +165,7 @@ struct AttachButton: View {
             case .failure(let error):
                 guard (error as NSError).code != NSUserCancelledError else { return }
                 retrySources = []
-                reportFailure(String(localized: "Couldn’t open the selected files. Choose them again and check that they’re available on this device."))
+                reportFailure(SecretaryUI.localized("Couldn’t open the selected files. Choose them again and check that they’re available on this device."))
             }
         }
         #if os(iOS)
@@ -175,7 +175,7 @@ struct AttachButton: View {
                     // same way the library's is.
                     stage([(name: "photo.jpg", mime: "image/jpeg", bytes: data)])
                 } onFailure: {
-                    reportFailure(String(localized: "Couldn’t read the photo. Try taking it again."))
+                    reportFailure(SecretaryUI.localized("Couldn’t read the photo. Try taking it again."))
                 }
                 .ignoresSafeArea()
             }
@@ -240,12 +240,12 @@ struct AttachButton: View {
             if !result.picks.isEmpty { stage(result.picks) }
             if !result.failed.isEmpty {
                 let names = result.failed.map(\.name).joined(separator: ", ")
-                reportFailure(String(localized: "Couldn’t load: \(names). Try again, or choose another file."))
+                reportFailure(SecretaryUI.localized("Couldn’t load: \(names). Try again, or choose another file."))
             }
         } catch is CancellationError {
             // Leaving the conversation cancels acquisition; never attach later to another draft.
         } catch {
-            reportFailure(String(localized: "Couldn’t load the attachments. Choose them again."))
+            reportFailure(SecretaryUI.localized("Couldn’t load the attachments. Choose them again."))
         }
     }
 
@@ -283,7 +283,7 @@ func stageAttachments(
     onFailure: ((String) -> Void)? = nil
 ) {
     guard !picks.isEmpty else {
-        onFailure?(String(localized: "Couldn’t read the image. Copy it again or choose another file."))
+        onFailure?(SecretaryUI.localized("Couldn’t read the image. Copy it again or choose another file."))
         return
     }
     var staged: [MessageAttachment] = []
@@ -310,13 +310,13 @@ func stageAttachments(
         var messages: [String] = []
         if !unreadable.isEmpty {
             let names = unreadable.joined(separator: ", ")
-            messages.append(String(localized: "Couldn’t read: \(names). Choose another file."))
+            messages.append(SecretaryUI.localized("Couldn’t read: \(names). Choose another file."))
         }
         if !oversized.isEmpty {
             let names = oversized.joined(separator: ", ")
-            messages.append(String(localized: "Too large: \(names). Each attachment must be 5 MB or smaller."))
+            messages.append(SecretaryUI.localized("Too large: \(names). Each attachment must be 5 MB or smaller."))
         }
-        if overCount { messages.append(String(localized: "A message can contain up to 10 attachments. Remove one to add another.")) }
+        if overCount { messages.append(SecretaryUI.localized("A message can contain up to 10 attachments. Remove one to add another.")) }
         if !messages.isEmpty { onFailure(messages.joined(separator: "\n\n")) }
     } else if !oversized.isEmpty || overCount {
         onTooLarge()
@@ -456,8 +456,8 @@ private struct StagedThumbnail: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel(
                 attachment.isImage
-                    ? String(localized: "Attached image, \(attachment.name)")
-                    : String(localized: "Attached file, \(attachment.name), \(attachment.size)")
+                    ? SecretaryUI.localized("Attached image, \(attachment.name)")
+                    : SecretaryUI.localized("Attached file, \(attachment.name), \(attachment.size)")
             )
     }
 

@@ -76,7 +76,7 @@ public struct AgentIdentifierView: View {
 
 /// Shared wording for the existing iOS and macOS Settings surfaces.
 public enum ProviderMarkAttribution {
-    public static let notice = String(localized:
+    public static var notice: String { SecretaryUI.localized(
         "Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. Their marks identify the selected agent only; Yorozu is independent and is not affiliated with or endorsed by either provider."
-    )
+    ) }
 }

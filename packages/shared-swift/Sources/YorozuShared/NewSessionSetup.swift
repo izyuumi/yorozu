@@ -98,7 +98,7 @@ struct NewSessionSetup: View {
                         HStack {
                             Image(systemName: "folder")
                             VStack(alignment: .leading) {
-                                Text(presentation.projectName ?? String(localized: "Choose a project folder"))
+                                Text(presentation.projectName ?? SecretaryUI.localized("Choose a project folder"))
                                 if let path = presentation.projectPath {
                                     Text(path)
                                         .font(.scaled(.caption).monospaced())
@@ -132,9 +132,9 @@ struct NewSessionSetup: View {
         let selected = descriptor.id == presentation.agent
         let summary: String
         switch descriptor.id {
-        case .yorozu: summary = String(localized: "Everyday tasks, files, mail, and more.")
-        case .claudeCode: summary = String(localized: "Anthropic’s coding agent.")
-        case .codex: summary = String(localized: "OpenAI’s coding agent.")
+        case .yorozu: summary = SecretaryUI.localized("Everyday tasks, files, mail, and more.")
+        case .claudeCode: summary = SecretaryUI.localized("Anthropic’s coding agent.")
+        case .codex: summary = SecretaryUI.localized("OpenAI’s coding agent.")
         default: summary = descriptor.description ?? ""
         }
         let label = ThreadAgent.allCases.contains(descriptor.id) ? descriptor.id.label : descriptor.label
@@ -164,10 +164,10 @@ struct NewSessionSetup: View {
         .buttonStyle(.plain)
         .disabled(needsUpdate(model))
         .accessibilityLabel(summary.isEmpty ? label : "\(label), \(summary)")
-        .accessibilityValue(selected ? String(localized: "Selected") : String(localized: "Not selected"))
+        .accessibilityValue(selected ? SecretaryUI.localized("Selected") : SecretaryUI.localized("Not selected"))
         .accessibilityIdentifier("session-agent-\(descriptor.id.rawValue)")
         .accessibilityAddTraits(selected ? [.isSelected] : [])
-        .accessibilityHint(descriptor.needsFolder ? String(localized: "Choose a project folder for this agent") : String(localized: "Use this agent for the session"))
+        .accessibilityHint(descriptor.needsFolder ? SecretaryUI.localized("Choose a project folder for this agent") : SecretaryUI.localized("Use this agent for the session"))
     }
 
     private func needsUpdate(_ model: ChatModel) -> Bool {
@@ -185,7 +185,7 @@ struct NewSessionSetup: View {
                 .font(.scaled(.caption))
                 .foregroundStyle(secondaryInk)
         } else {
-            YorozuStatusLabel(String(localized: "Connected"), tint: YorozuPalette.sage)
+            YorozuStatusLabel(SecretaryUI.localized("Connected"), tint: YorozuPalette.sage)
                 .font(.scaled(.caption))
         }
     }

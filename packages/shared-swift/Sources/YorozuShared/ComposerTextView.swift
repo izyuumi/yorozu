@@ -30,7 +30,7 @@
             view.textContainerInset = .zero
             view.textContainer.lineFragmentPadding = 0
             view.isScrollEnabled = false
-            view.accessibilityLabel = String(localized: "Message")
+            view.accessibilityLabel = SecretaryUI.localized("Message")
             view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
             let label = view.placeholderLabel
@@ -50,6 +50,7 @@
 
         func updateUIView(_ view: PastingTextView, context: Context) {
             context.coordinator.text = $text
+            view.accessibilityLabel = SecretaryUI.localized("Message")
             if view.text != text { view.text = text }
             view.placeholderLabel.text = placeholder
             view.placeholderLabel.isHidden = !text.isEmpty

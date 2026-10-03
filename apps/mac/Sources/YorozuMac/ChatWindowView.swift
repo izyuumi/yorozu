@@ -216,7 +216,7 @@ private struct ClientChatWindowView: View {
                         .id(selection)
                 } else {
                     ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right",
-                        description: Text(hosts.sessions.isEmpty ? String(localized: "Add a host in Settings to start chatting.") : String(localized: "Choose a thread or start a new one.")))
+                        description: Text(hosts.sessions.isEmpty ? SecretaryUI.localized("Add a host in Settings to start chatting.") : SecretaryUI.localized("Choose a thread or start a new one.")))
                 }
             }
             .id(selection?.hostID)
@@ -260,8 +260,8 @@ private struct ClientChatWindowView: View {
 
     private var connectionLabel: String {
         guard !hosts.hasMultipleHosts else { return hosts.connectionSummary }
-        guard let host = hosts.sessions.first else { return String(localized: "Not connected") }
-        if case .updateRequired = host.model.compatibility { return String(localized: "Update required") }
+        guard let host = hosts.sessions.first else { return SecretaryUI.localized("Not connected") }
+        if case .updateRequired = host.model.compatibility { return SecretaryUI.localized("Update required") }
         return ClientConnectionStatus(host.model, failure: session.hostFailures[host.id] ?? host.model.failure).label
     }
 
@@ -370,7 +370,7 @@ private struct LocalChatWindowView: View {
                     .id(thread.id)
                 } else {
                     ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right",
-                        description: Text(String(localized: "Choose a thread or start a new one.")))
+                        description: Text(SecretaryUI.localized("Choose a thread or start a new one.")))
                 }
             }
             // The canvas and update banner belong to the chat; the sidebar keeps its own material.
@@ -419,8 +419,8 @@ private struct LocalChatWindowView: View {
 
     /// A sidecar restart shorter than the grace keeps saying Connected.
     private var connectionLabel: String {
-        if model.link.state == .connected { return String(localized: "Connected") }
-        return model.state == .closed ? String(localized: "Offline") : String(localized: "Connecting")
+        if model.link.state == .connected { return SecretaryUI.localized("Connected") }
+        return model.state == .closed ? SecretaryUI.localized("Offline") : SecretaryUI.localized("Connecting")
     }
 }
 
@@ -488,7 +488,7 @@ struct SettingsView: View {
     @State private var visited: [String] = []
     @State private var position = 0
 
-    private typealias Pane = (id: String, title: LocalizedStringKey, icon: String)
+    private typealias Pane = (id: String, title: String.LocalizationValue, icon: String)
 
     private var panes: [Pane] {
         var panes: [Pane] = [("general", "General", "gearshape")]
@@ -507,7 +507,7 @@ struct SettingsView: View {
     var body: some View {
         let pane = panes.first { $0.id == selection } ?? panes[0]
         NavigationSplitView {
-            List(panes, id: \.id, selection: $selection) { Label($0.title, systemImage: $0.icon) }
+            List(panes, id: \.id, selection: $selection) { Label(SecretaryUI.localized($0.title), systemImage: $0.icon) }
                 .toolbar(removing: .sidebarToggle)
         } detail: {
             Group {
@@ -519,7 +519,7 @@ struct SettingsView: View {
                 default: GeneralView(sidecar: sidecar)
                 }
             }
-            .navigationTitle(pane.title)
+            .navigationTitle(SecretaryUI.localized(pane.title))
             .toolbar {
                 ToolbarItemGroup(placement: .navigation) {
                     Button("Back", systemImage: "chevron.left") { go(-1) }

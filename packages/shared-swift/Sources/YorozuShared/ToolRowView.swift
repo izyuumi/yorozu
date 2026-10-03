@@ -55,7 +55,7 @@ public struct ToolGroupView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(summary)
-                .accessibilityHint(expanded ? String(localized: "Hides the steps") : String(localized: "Shows the steps"))
+                .accessibilityHint(expanded ? SecretaryUI.localized("Hides the steps") : SecretaryUI.localized("Shows the steps"))
 
                 if expanded {
                     VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
@@ -73,9 +73,9 @@ public struct ToolGroupView: View {
     /// One action count per kind, and how the run went.
     private var summary: String {
         let actions = toolSummary(activities)
-        if running { return String(localized: "\(actions) · working…") }
-        if awaitingApproval { return String(localized: "\(actions) · awaiting approval") }
-        return !failed.isEmpty ? String(localized: "\(actions) · \(failed.count) failed") : actions
+        if running { return SecretaryUI.localized("\(actions) · working…") }
+        if awaitingApproval { return SecretaryUI.localized("\(actions) · awaiting approval") }
+        return !failed.isEmpty ? SecretaryUI.localized("\(actions) · \(failed.count) failed") : actions
     }
 }
 
@@ -117,7 +117,7 @@ public struct ToolRowView: View {
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
-            .accessibilityHint(expanded ? String(localized: "Hides the details") : String(localized: "Shows the arguments and output"))
+            .accessibilityHint(expanded ? SecretaryUI.localized("Hides the details") : SecretaryUI.localized("Shows the arguments and output"))
 
             if expanded { details }
         }
@@ -208,7 +208,7 @@ public struct ToolRowView: View {
                         } label: {
                             HStack(spacing: LayoutMetrics.tight) {
                                 if fetching { ProgressView().controlSize(.mini) }
-                                Text(fetching ? String(localized: "Fetching the rest…") : String(localized: "Output was cut · Show full output"))
+                                Text(fetching ? SecretaryUI.localized("Fetching the rest…") : SecretaryUI.localized("Output was cut · Show full output"))
                             }
                         }
                         .font(.scaled(.caption))

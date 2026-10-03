@@ -59,7 +59,7 @@ public struct WorkRowView: View {
             HStack(spacing: LayoutMetrics.inner) {
                 YorozuMark(dimension: 20)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(work.running ? String(localized: "IN PROGRESS") : String(localized: "ACTIVITY"))
+                    Text(work.running ? SecretaryUI.localized("IN PROGRESS") : SecretaryUI.localized("ACTIVITY"))
                         .font(.scaled(.caption2).weight(.semibold))
                         .tracking(0.8)
                         .foregroundStyle(work.running ? YorozuPalette.vermilion : YorozuPalette.sage)

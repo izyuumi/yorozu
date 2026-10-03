@@ -25,14 +25,14 @@ public struct UpdateStatusData: Codable, Equatable, Sendable {
     public func label(at date: Date = Date()) -> String {
         switch phase {
         case .none: return ""
-        case .unknown: return String(localized: "Update waiting · checking agent status")
+        case .unknown: return SecretaryUI.localized("Update waiting · checking agent status")
         case .waiting:
-            return activeThreads == 1 ? String(localized: "Update queued · 1 agent working")
-                : String(localized: "Update queued · \(activeThreads ?? 0) agents working")
-        case .countdown: return String(localized: "Restarting in \(max(0, Int(ceil((deadline ?? 0) / 1000 - date.timeIntervalSince1970))))s")
-        case .postponed: return String(localized: "Update postponed until \(Date(timeIntervalSince1970: (postponedUntil ?? 0) / 1000).formatted(date: .omitted, time: .shortened))")
-        case .draining: return String(localized: "Finishing agent work before update")
-        case .installing: return String(localized: "Updating · waiting for Mac to restart")
+            return activeThreads == 1 ? SecretaryUI.localized("Update queued · 1 agent working")
+                : SecretaryUI.localized("Update queued · \(activeThreads ?? 0) agents working")
+        case .countdown: return SecretaryUI.localized("Restarting in \(max(0, Int(ceil((deadline ?? 0) / 1000 - date.timeIntervalSince1970))))s")
+        case .postponed: return SecretaryUI.localized("Update postponed until \(Date(timeIntervalSince1970: (postponedUntil ?? 0) / 1000).formatted(date: .omitted, time: .shortened))")
+        case .draining: return SecretaryUI.localized("Finishing agent work before update")
+        case .installing: return SecretaryUI.localized("Updating · waiting for Mac to restart")
         }
     }
 }

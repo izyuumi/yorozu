@@ -49,7 +49,7 @@ struct RunSettingsCard: View {
     private var choices: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
             YorozuQuestion("Which model?")
-            YorozuChoiceCard([Choice(String(localized: "Auto"), selected: model == nil) { model = nil }])
+            YorozuChoiceCard([Choice(SecretaryUI.localized("Auto"), selected: model == nil) { model = nil }])
             ForEach(ModelOption.groupedByProvider(models), id: \.label) { group in
                 YorozuCaption(group.label).padding(.top, LayoutMetrics.tight)
                 YorozuChoiceCard(group.options.map { option in
@@ -62,7 +62,7 @@ struct RunSettingsCard: View {
             YorozuQuestion("How much effort?")
                 .padding(.top, LayoutMetrics.inner)
             YorozuPillPicker(
-                [Choice(String(localized: "Default"), selected: effort == nil) { effort = nil }]
+                [Choice(SecretaryUI.localized("Default"), selected: effort == nil) { effort = nil }]
                     + efforts.map { level in Choice(level.label, selected: effort == level) { effort = level } }
             )
         }

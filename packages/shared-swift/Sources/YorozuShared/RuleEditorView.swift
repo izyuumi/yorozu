@@ -165,12 +165,12 @@ public struct RuleEditorView: View {
 
             var label: String {
                 switch id {
-                case "target": String(localized: "Target")
-                case "operation": String(localized: "Operation")
-                case "recipient": String(localized: "Recipient")
-                case "account": String(localized: "Account")
-                case "merchant": String(localized: "Merchant")
-                case "category": String(localized: "Category")
+                case "target": SecretaryUI.localized("Target")
+                case "operation": SecretaryUI.localized("Operation")
+                case "recipient": SecretaryUI.localized("Recipient")
+                case "account": SecretaryUI.localized("Account")
+                case "merchant": SecretaryUI.localized("Merchant")
+                case "category": SecretaryUI.localized("Category")
                 default: id.capitalized
                 }
             }
@@ -206,7 +206,7 @@ public struct RuleEditorView: View {
         public var currencyLabel: String {
             guard let code = currency?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
                   Locale.commonISOCurrencyCodes.contains(code) else {
-                return String(localized: "Unspecified")
+                return SecretaryUI.localized("Unspecified")
             }
             return code
         }
@@ -251,13 +251,13 @@ public struct RuleEditorView: View {
             if let field = fields.first(where: {
                 !$0.isAny && $0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }) {
-                return String(localized: "Enter a value for \(field.label), or switch it to Any.")
+                return SecretaryUI.localized("Enter a value for \(field.label), or switch it to Any.")
             }
             guard isNarrowEnough else {
-                return String(localized: "Choose at least one scope field before saving.")
+                return SecretaryUI.localized("Choose at least one scope field before saving.")
             }
             if hasCap, !maxAmount.isFinite || maxAmount < 0 {
-                return String(localized: "Enter a valid amount of zero or more.")
+                return SecretaryUI.localized("Enter a valid amount of zero or more.")
             }
             return nil
         }
@@ -364,7 +364,7 @@ public struct RuleProposalCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if handled || dismissed {
-                Text(dismissed ? String(localized: "Not now") : String(localized: "Reviewed"))
+                Text(dismissed ? SecretaryUI.localized("Not now") : SecretaryUI.localized("Reviewed"))
                     .font(.scaled(.subheadline))
                     .foregroundStyle(.secondary)
                     .frame(minHeight: 32)
@@ -391,7 +391,7 @@ public struct RuleProposalCardView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Rule suggestion: \(proposal.rule.summary)")
         .sheet(item: $editing) { rule in
-            RuleEditorView(rule: rule, title: String(localized: "New rule")) { edited in
+            RuleEditorView(rule: rule, title: SecretaryUI.localized("New rule")) { edited in
                 editing = nil
                 onSave(edited)
             } onCancel: {
@@ -467,11 +467,11 @@ public struct RuleRowView: View {
     /// What the rule has actually been doing, which is what tells the user whether to keep it.
     private var usage: String {
         let count = rule.useCount ?? 0
-        guard count > 0, let last = rule.lastUsed else { return String(localized: "Never used") }
+        guard count > 0, let last = rule.lastUsed else { return SecretaryUI.localized("Never used") }
         let when = Date(timeIntervalSince1970: last / 1000)
             .formatted(date: .abbreviated, time: .shortened)
-        return count == 1 ? String(localized: "Used \(count) time · last \(when)")
-            : String(localized: "Used \(count) times · last \(when)")
+        return count == 1 ? SecretaryUI.localized("Used \(count) time · last \(when)")
+            : SecretaryUI.localized("Used \(count) times · last \(when)")
     }
 }
 
