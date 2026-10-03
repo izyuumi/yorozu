@@ -2,7 +2,7 @@
 use crate::{history::History, now_ms, private_dir, private_open};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -28,7 +28,9 @@ pub struct Conversation {
     pub profile: PathBuf,
     pub workspace: PathBuf,
     events: Vec<Value>,
-    runs: HashMap<String, String>,
+    runs: HashMap<String, Value>,
+    secretary_run: Option<String>,
+    _secretary_lock: Option<File>,
     pub active: Option<String>,
 }
 impl Conversation {
@@ -62,6 +64,97 @@ impl Conversation {
         }
         let workspace = profile.join("workspace");
         private_dir(&workspace)?;
+        Self::load(profile, workspace, None, None)
+    }
+    /// Explicit opt-in only: this root never contains the legacy production store.
+    pub fn prepare_secretary(root: &Path, workspace: &Path) -> io::Result<PathBuf> {
+        if root.file_name().and_then(|n| n.to_str()) != Some("secretary-v1")
+            || !workspace.is_absolute()
+        {
+            return Err(invalid());
+        }
+        let parent = root.parent().ok_or_else(invalid)?.canonicalize()?;
+        let root = parent.join("secretary-v1");
+        if workspace.file_name().and_then(|name| name.to_str()) != Some("Yorozu Secretary")
+            || workspace
+                .parent()
+                .ok_or_else(invalid)?
+                .canonicalize()?
+                .join("Yorozu Secretary")
+                != workspace
+            || workspace.starts_with(&root)
+        {
+            return Err(invalid());
+        }
+        private_dir(&root)?;
+        let marker = root.join(".yorozu-secretary-v1");
+        let contents = format!("yorozu-secretary-v1\n{}\n", workspace.display());
+        match fs::symlink_metadata(&marker) {
+            Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => {
+                if crate::read_private(&marker, 8192)? != contents.as_bytes() {
+                    return Err(invalid());
+                }
+            }
+            Ok(_) => return Err(invalid()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if fs::read_dir(&root)?.next().is_some() {
+                    return Err(invalid());
+                }
+                let mut file = private_open(&marker, true)?;
+                file.write_all(contents.as_bytes())?;
+                file.sync_all()?;
+                crate::sync_dir(&root)?;
+            }
+            Err(error) => return Err(error),
+        }
+        private_dir(workspace)?;
+        // A dedicated, marked workspace cannot adopt an existing populated project.
+        let workspace_marker = workspace.join(".yorozu-secretary-workspace-v1");
+        let identity = format!("{}\n", root.display());
+        match fs::symlink_metadata(&workspace_marker) {
+            Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => {
+                if crate::read_private(&workspace_marker, 8192)? != identity.as_bytes() {
+                    return Err(invalid());
+                }
+            }
+            Ok(_) => return Err(invalid()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if fs::read_dir(workspace)?.next().is_some() {
+                    return Err(invalid());
+                }
+                let mut file = private_open(&workspace_marker, true)?;
+                file.write_all(identity.as_bytes())?;
+                file.sync_all()?;
+                crate::sync_dir(workspace)?;
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(root)
+    }
+    pub fn open_secretary(root: &Path, run: &str, workspace: &Path) -> io::Result<Self> {
+        if identifier(&json!(run)).is_none() {
+            return Err(invalid());
+        }
+        let root = Self::prepare_secretary(root, workspace)?;
+        let lock = private_open(&root.join(".secretary-owner.lock"), false)?;
+        lock.try_lock().map_err(io::Error::other)?;
+        let runs = root.join("runs");
+        private_dir(&runs)?;
+        let profile = runs.join(run);
+        private_dir(&profile)?;
+        Self::load(
+            profile,
+            workspace.canonicalize()?,
+            Some(run.to_owned()),
+            Some(lock),
+        )
+    }
+    fn load(
+        profile: PathBuf,
+        workspace: PathBuf,
+        secretary_run: Option<String>,
+        secretary_lock: Option<File>,
+    ) -> io::Result<Self> {
         let mut store = History::open(&profile.join("state"))?;
         let mut events = Vec::new();
         let mut cursor: Option<Value> = None;
@@ -97,7 +190,7 @@ impl Conversation {
             if event["kind"] == "accepted" {
                 runs.insert(
                     run.clone(),
-                    event["text"].as_str().ok_or_else(invalid)?.to_owned(),
+                    json!({"text": event["text"].as_str().ok_or_else(invalid)?, "turn":event.get("data").unwrap_or(&Value::Null)}),
                 );
                 unresolved = Some(run.clone());
             } else if terminal(event["kind"].as_str().unwrap_or(""))
@@ -113,6 +206,8 @@ impl Conversation {
             events,
             runs,
             active: unresolved.clone(),
+            secretary_run,
+            _secretary_lock: secretary_lock,
         };
         // Restart never reissues provider work, including an accepted-but-unlaunched task.
         if let Some(run) = unresolved {
@@ -140,6 +235,16 @@ impl Conversation {
             .filter(|event| {
                 let kind = event["kind"].as_str().unwrap_or("");
                 let run = event["runId"].as_str().unwrap_or("");
+                if self.secretary_run.is_some() {
+                    if ["request", "response", "tool_boundary"].contains(&kind) {
+                        return false;
+                    }
+                    if kind == "session" {
+                        let count = detail.entry((run, kind)).or_default();
+                        *count += 1;
+                        return *count == 1;
+                    }
+                }
                 if kind == "update" && self.active.as_deref() != Some(run) {
                     return false;
                 }
@@ -195,9 +300,25 @@ impl Conversation {
         else {
             return Ok((json!({"error":"invalid-text"}), None));
         };
+        if self
+            .secretary_run
+            .as_deref()
+            .is_some_and(|expected| expected != run)
+        {
+            return Ok((json!({"error":"invalid-run"}), None));
+        }
+        let turn = if self.secretary_run.is_some() {
+            match validated_turn(&request["turn"]) {
+                Some(turn) => turn,
+                None => return Ok((json!({"error":"invalid-turn"}), None)),
+            }
+        } else {
+            Value::Null
+        };
+        let admission = json!({"text":text,"turn":turn});
         if let Some(original) = self.runs.get(run) {
             return Ok((
-                if original == text {
+                if original == &admission {
                     json!({"accepted":true,"runId":run,"replayed":true})
                 } else {
                     json!({"error":"conflicting-run"})
@@ -223,8 +344,13 @@ impl Conversation {
         if retained + encoded + 2 * EVENT_BYTES + 16 * 1024 > FRAME_BYTES as usize - 16 * 1024 {
             return Ok((json!({"error":"profile-size-limit"}), None));
         }
-        let event = self.record(run, "accepted", Some(text), None)?;
-        self.runs.insert(run.to_owned(), text.to_owned());
+        let event = self.record(
+            run,
+            "accepted",
+            Some(text),
+            if turn.is_null() { None } else { Some(turn) },
+        )?;
+        self.runs.insert(run.to_owned(), admission);
         self.active = Some(run.to_owned());
         Ok((
             json!({"accepted":true,"runId":run,"replayed":false}),
@@ -248,4 +374,63 @@ impl Conversation {
         let event = self.record(run, "stop_requested", None, None)?;
         Ok((json!({"requested":true,"runId":run}), Some(event)))
     }
+}
+
+/// Bound the data crossing the subprocess boundary. Permissions are never accepted here.
+fn validated_turn(value: &Value) -> Option<Value> {
+    let object = value.as_object()?;
+    if object.keys().any(|key| {
+        !["sessionId", "model", "effort", "attachments", "skill"].contains(&key.as_str())
+    }) {
+        return None;
+    }
+    for key in ["sessionId", "model", "effort"] {
+        if let Some(value) = object.get(key) {
+            let text = value.as_str()?;
+            if text.is_empty() || text.len() > 256 || text.chars().any(char::is_control) {
+                return None;
+            }
+        }
+    }
+    if let Some(effort) = object.get("effort") {
+        if ![
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        ]
+        .contains(&effort.as_str()?)
+        {
+            return None;
+        }
+    }
+    if let Some(files) = object.get("attachments") {
+        let files = files.as_array()?;
+        if files.len() > 32 {
+            return None;
+        }
+        for file in files {
+            for key in ["name", "mime", "path"] {
+                let text = file.get(key)?.as_str()?;
+                if text.is_empty() || text.len() > 4096 || text.contains('\0') {
+                    return None;
+                }
+            }
+            if !Path::new(file["path"].as_str()?).is_absolute() {
+                return None;
+            }
+        }
+    }
+    if let Some(skill) = object.get("skill") {
+        let name = skill.get("name")?.as_str()?;
+        let path = skill.get("path")?.as_str()?;
+        if name.is_empty()
+            || name.len() > 256
+            || path.len() > 4096
+            || !Path::new(path).is_absolute()
+        {
+            return None;
+        }
+    }
+    if serde_json::to_vec(value).ok()?.len() > 16 * 1024 {
+        return None;
+    }
+    Some(value.clone())
 }

@@ -72,7 +72,8 @@ fn launch(
     script: &str,
     owner: &Conversation,
     run: &str,
-    text: &str,
+    request: &Value,
+    secretary: bool,
     sender: SyncSender<Input>,
 ) -> io::Result<Worker> {
     let mut child = Command::new(node)
@@ -87,7 +88,8 @@ fn launch(
     std::thread::spawn(move || read_frames(stdout, sender, Some(key)));
     if let Err(error) = send(
         &mut child,
-        &json!({"version":1,"op":"run","runId":run,"cwd":owner.workspace,"text":text}),
+        &json!({"version":1,"op":"run","runId":run,"cwd":owner.workspace,"text":request["text"],
+            "secretary":secretary,"turn":request["turn"]}),
     ) {
         let _ = child.kill();
         let _ = child.wait();
@@ -104,10 +106,25 @@ fn launch(
 }
 fn run() -> io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() != 3 || !Path::new(&args[2]).is_absolute() {
+    if args.len() == 3 && args[0] == "--secretary-init" {
+        let root = Conversation::prepare_secretary(Path::new(&args[1]), Path::new(&args[2]))?;
+        return output(json!({"root":root,"workspace":args[2]}));
+    }
+    let secretary = args.first().is_some_and(|arg| arg == "--secretary");
+    let (mut owner, node, script) = if secretary && args.len() == 6 {
+        (
+            Conversation::open_secretary(Path::new(&args[1]), &args[2], Path::new(&args[3]))?,
+            &args[4],
+            &args[5],
+        )
+    } else if !secretary && args.len() == 3 {
+        (Conversation::open(Path::new(&args[0]))?, &args[1], &args[2])
+    } else {
+        return Err(io::ErrorKind::InvalidInput.into());
+    };
+    if !Path::new(script).is_absolute() {
         return Err(io::ErrorKind::InvalidInput.into());
     }
-    let mut owner = Conversation::open(Path::new(&args[0]))?;
     let (sender, receiver) = mpsc::sync_channel(32);
     let input_sender = sender.clone();
     std::thread::spawn(move || read_frames(io::stdin(), input_sender, None));
@@ -144,6 +161,26 @@ fn run() -> io::Result<()> {
                                 result
                             }
                         }
+                        Some("respond") if secretary => {
+                            if let Some(current) = &mut worker
+                                && !current.terminal
+                                && owner.active.as_deref() == request["runId"].as_str()
+                                && request["requestId"]
+                                    .as_str()
+                                    .is_some_and(|id| !id.is_empty() && id.len() <= 128)
+                            {
+                                // Record UI decisions before delivering them back to the provider.
+                                owner.record(&current.run, "response", None, Some(json!({"requestId":request["requestId"],"value":request["value"]})))?;
+                                send(
+                                    &mut current.child,
+                                    &json!({"version":1,"op":"respond","runId":current.run,
+                                    "requestId":request["requestId"],"value":request["value"]}),
+                                )?;
+                                json!({"delivered":true})
+                            } else {
+                                json!({"delivered":false})
+                            }
+                        }
                         Some("stop") => {
                             let (result, event) = owner.stop(&request)?;
                             emitted = event;
@@ -159,11 +196,12 @@ fn run() -> io::Result<()> {
                     event(emitted)?;
                     if kind == "accepted" {
                         match launch(
-                            &args[1],
-                            &args[2],
+                            node,
+                            script,
                             &owner,
                             &run,
-                            request["text"].as_str().unwrap(),
+                            &request,
+                            secretary,
                             sender.clone(),
                         ) {
                             Ok(child) => worker = Some(child),
@@ -200,6 +238,18 @@ fn run() -> io::Result<()> {
                     let proof = packet["data"]["evidence"].as_str().unwrap_or("");
                     let valid = match kind {
                         "running" | "update" | "activity" | "unconfirmed" => true,
+                        "session" => {
+                            secretary
+                                && packet["data"]["sessionId"]
+                                    .as_str()
+                                    .is_some_and(|id| !id.is_empty() && id.len() <= 256)
+                        }
+                        "request" => {
+                            secretary
+                                && ["approve", "ask", "beforeTool"]
+                                    .contains(&packet["data"]["type"].as_str().unwrap_or(""))
+                        }
+                        "tool_boundary" => secretary,
                         "completed" => proof == "provider-terminal",
                         "stopped" => ["provider-terminal", "process-exited"].contains(&proof),
                         _ => false,
@@ -244,7 +294,8 @@ fn run() -> io::Result<()> {
         }
         if let Some(current) = &mut worker {
             if !current.terminal
-                && current.started.elapsed() > Duration::from_secs(190)
+                && current.started.elapsed()
+                    > Duration::from_secs(if secretary { 24 * 60 * 60 } else { 190 })
                 && current.stopping.is_none()
             {
                 event(owner.record(
