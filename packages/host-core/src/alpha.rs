@@ -294,9 +294,14 @@ impl Conversation {
         let Some(run) = identifier(&request["runId"]) else {
             return Ok((json!({"error":"invalid-run"}), None));
         };
+        let text_limit = if self.secretary_run.is_some() {
+            EVENT_BYTES - 4096
+        } else {
+            16000
+        };
         let Some(text) = request["text"]
             .as_str()
-            .filter(|t| !t.trim().is_empty() && t.len() <= 16000)
+            .filter(|t| !t.trim().is_empty() && t.len() <= text_limit)
         else {
             return Ok((json!({"error":"invalid-text"}), None));
         };
@@ -394,7 +399,15 @@ fn validated_turn(value: &Value) -> Option<Value> {
     }
     if let Some(effort) = object.get("effort") {
         if ![
-            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+            "persistent",
         ]
         .contains(&effort.as_str()?)
         {

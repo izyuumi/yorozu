@@ -115,7 +115,10 @@ fn invalid_payloads_and_conflicting_admissions_never_start_a_run() {
         assert!(event.is_none());
     }
     assert!(owner.snapshot()["events"].as_array().unwrap().is_empty());
-    let request = json!({"runId":"one-run","text":"task","turn":{"sessionId":"resume-me"}});
+    let oversized = json!({"runId":"one-run","text":"あ".repeat(22000),"turn":{}});
+    assert_eq!(owner.submit(&oversized).unwrap().0["error"], "invalid-text");
+    // Long Japanese context and a model-supported effort must survive admission and replay.
+    let request = json!({"runId":"one-run","text":"日本語".repeat(6000),"turn":{"sessionId":"resume-me","effort":"persistent"}});
     assert_eq!(owner.submit(&request).unwrap().0["accepted"], true);
     assert_eq!(
         owner
