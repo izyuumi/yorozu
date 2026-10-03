@@ -16,17 +16,25 @@ const secretaryHost = (): string => {
 };
 const workerScript = (): string => fileURLToPath(new URL("./secretary-worker.js", import.meta.url));
 
-function prepareSecretary(dir: string): { root: string; workspace: string } {
+export function prepareSecretary(dir: string, threadId = SECRETARY_THREAD_ID): { root: string; workspace: string } {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   mkdirSync(projectsRoot(), { recursive: true, mode: 0o700 });
-  const root = join(realpathSync(dir), "secretary-v1");
-  const workspace = join(realpathSync(projectsRoot()), "Yorozu Secretary");
-  const existing = listThreads(dir).find((thread) => thread.id === SECRETARY_THREAD_ID);
+  if (threadId !== SECRETARY_THREAD_ID && !/^secretary-task-[a-f0-9]{64}$/.test(threadId)) throw new Error("Invalid secretary task identity");
+  const task = threadId !== SECRETARY_THREAD_ID;
+  const stateParent = task ? join(realpathSync(dir), "secretary-tasks-v1", threadId) : realpathSync(dir);
+  const workParent = task ? join(realpathSync(projectsRoot()), "Yorozu Secretary Tasks", threadId) : realpathSync(projectsRoot());
+  for (const parent of [stateParent, workParent]) {
+    mkdirSync(parent, { recursive: true, mode: 0o700 });
+    if (realpathSync(parent) !== parent) throw new Error("Secretary task parent must not be a symlink");
+  }
+  const root = join(stateParent, "secretary-v1");
+  const workspace = join(workParent, "Yorozu Secretary");
+  const existing = listThreads(dir).find((thread) => thread.id === threadId);
   if (existing && (existing.agent !== "codex" || existing.cwd !== workspace)) throw new Error("Secretary thread identity conflicts with existing data");
   const prepared = spawnSync(secretaryHost(), ["--secretary-init", root, workspace], { encoding: "utf8", timeout: 10000 });
   if (prepared.error) throw new Error(`Secretary host could not start (${(prepared.error as NodeJS.ErrnoException).code ?? "unknown error"})`);
   if (prepared.status !== 0) throw new Error("The host refused the dedicated secretary profile or workspace");
-  createThread("Yorozu", dir, SECRETARY_THREAD_ID, { agent: "codex", cwd: workspace });
+  createThread(task ? "Secretary task" : "Yorozu", dir, threadId, { agent: "codex", cwd: workspace });
   return { root, workspace };
 }
 
@@ -55,7 +63,7 @@ export function secretaryRunner(dir: string, ordinaryCodex: NativeAgentRunner,
 }
 
 type LedgerEvent = { seq: number; runId: string; kind: string; text?: string; data?: Record<string, any> };
-function runSecretary(root: string, workspace: string, runId: string, turn: NativeTurn): Promise<NativeTurnResult> {
+export function runSecretary(root: string, workspace: string, runId: string, turn: NativeTurn): Promise<NativeTurnResult> {
   return new Promise((resolve) => {
     const runAbsent = (): boolean => {
       try { lstatSync(join(root, "runs", runId)); return false; }
@@ -178,7 +186,7 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
             if (events.length) { uncertain(); return; }
             emptySnapshot = true;
             if (turn.signal.aborted) { finish({ text: "", sessionId }); return; }
-            const metadata = Object.fromEntries(["sessionId", "model", "effort", "attachments", "skill"]
+            const metadata = Object.fromEntries(["sessionId", "model", "effort", "attachments", "skill", "secretaryCoordinator"]
               .flatMap((key) => turn[key as keyof NativeTurn] === undefined ? [] : [[key, turn[key as keyof NativeTurn]]]));
             submitted = true;
             write("submit", { text: turn.text, turn: metadata });

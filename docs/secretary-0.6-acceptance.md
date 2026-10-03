@@ -26,19 +26,33 @@ synthetic fixtures, not proof from the user's installed live task. Raw tool
 payloads are hidden by default; More exposes retained diagnostics. Retired
 approval cards no longer leave a false waiting label in any ChatView.
 
+## Coordinator candidate evidence
+
+A real standard-tier Codex acceptance run in a disposable profile took 54.9 seconds:
+two specialists waited, the main answered an unrelated question, and a live
+correction changed First task to B while Second task produced A. The first
+attempt timed out after a worker interpreted temporary workspace ambiguously;
+the assigned path is now explicit. Final exact-source rerun, Opus review, native
+checks and CI remain release gates.
+
+Planning disables execution tools and inherited connectors per session, uses a
+read-only sandbox and no environments. Damaged task records are held without
+automatic replay. Explicit reconciliation, recursive delegation, preference
+memory and real schedules remain unfinished.
+
 ## Accepted requirements
 
 | ID | Requirement | Current evidence / remaining acceptance |
 |---|---|---|
-| R01 | One continuing conversation across topics | Main thread exists. Nonblocking cross-topic continuity remains missing. |
-| R02 | Every execution is a specialized independent worker | Current Rust bridge is serial. Require two actual workers plus a main reply before either finishes. |
+| R01 | One continuing conversation across topics | Coordinator candidate retains the main session and releases it after short decisions. Isolated and live tests answer an unrelated question while two specialists wait. |
+| R02 | Every execution is a specialized independent worker | Candidate admits specialized independent workers with separate Rust roots/workspaces and a four-task bound. Live result: corrected First=B, Second=A. |
 | R03 | Bounded recursive delegation and upward reporting | Unverified. Require parent IDs, cancellation, child failure propagation and exactly-once results. |
-| R04 | Real Steer, no Queue/Steer choice | Candidate implements real delivery and durable receipts. Real official-provider test changed A to exact B in the active turn with provider-terminal evidence; isolated tests cover disconnect/restart/lost receipt. Selector/default stays unchanged until coordinator routing distinguishes new topics from corrections. |
-| R05 | Distinguish new topic from targeted correction | Missing integrated proof. Ambiguous targets must be clarified; never inject a new topic into an arbitrary worker. |
+| R04 | Real Steer, no Queue/Steer choice | Real durable Steer shipped at96d9409. Coordinator candidate targets a named worker; signed native UI change removes the selector and forces main follow-ups through semantic routing. Final integrated review pending. |
+| R05 | Distinguish new topic from targeted correction | Live candidate answered 17+25 with42 while both workers waited, then corrected only First task. Host validates known IDs. Ambiguity asks for clarification; broader language cases remain to verify. |
 | R06 | Quiet tools, three dots, useful milestones and final | Source implemented in `8ce3527`; focused tests and native fixture evidence above. Actual isolated app journey and disconnect remain to verify. |
 | R07 | Persistent advanced diagnostics and model settings | Diagnostics implemented. Complete provider/model settings journey remains unverified. |
-| R08 | Task conversations and progress details | Existing History is not yet an integrated secretary task view. Direct user chat inside workers is deferred. |
-| R09 | Routine autonomy by default within granted access | Do not equate this with bypassPermissions. Required approvals and setup/OS boundaries remain mandatory. Fresh-profile behavior unverified. |
+| R08 | Task conversations and progress details | Candidate exposes task conversations in existing History with scoped approval/question and Stop controls; main notices are nonblocking. Live corrections work; new standalone worker requests are refused. Dedicated task browser unfinished. |
+| R09 | Routine autonomy by default within granted access | Candidate uses workspace-write/on-request. Legacy global bypass cannot auto-answer secretary approvals. Required approvals and setup/OS boundaries remain; no grants are changed. Routine disposable file work ran autonomously. |
 | R10 | Learn corrected stable preferences | Unverified. Latest correction must win across topics/relaunch; memory cannot grant authority. |
 | R11 | Durable accepted IDs, truthful terminal/Stop/reconnect | Baseline covers specific journeys. App quit can leave an unconfirmed hold; explicit safe reconciliation still missing. |
 | R12 | Preserve history, connections, settings and languages | Prior baseline preservation verified by release owner. Every new install requires fresh idle snapshot and post-install checks. |
@@ -53,7 +67,7 @@ approval cards no longer leave a false waiting label in any ChatView.
 | R21 | Dedicated computer-use worker, bounded context and evidence | Prior adapters do not prove integrated live journey. Require safe native task, blocked permission and cancellation proof. |
 | R22 | Mac-first shared desktop, no competing clickers | Scope constraint. No new Cua Spaces dependency or cursor-arbitration product. |
 | R23 | Real schedules, scoped discussion, details and history | Prototype only is not acceptance. Authorized backend integration remains unverified; no fabricated live schedules. |
-| R24 | Results anchored once to original tasks | Multiworker/out-of-order/reconnect projection unverified. |
+| R24 | Results anchored once to original tasks | Candidate projects stable cards beside original requests. Isolated test covers out-of-order results, direct Steer receipts, duplicate submission and restart. Native visual acceptance pending. |
 | R25 | Work independent of UI availability | Distinguish window close, app quit and crash. Baseline quit can hold uncertain work; never falsely complete or blindly replay. |
 | R26 | Signed incremental pushes, actual final Opus review | First checkpoint meets source/signature/review requirements. Exact-commit CI and release are separate gates. |
 | R27 | Internal-only same-app update preserving data | New source not installed. Never stop live work for deployment; public 0.5 feed/main untouched. |

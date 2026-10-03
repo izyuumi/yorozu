@@ -6,6 +6,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { serve as serveRuntime } from "../dist/serve.js";
 import { serveSecretary } from "../dist/secretary-serve.js";
 import { dirname, join } from "node:path";
 import { secretaryRunner, SECRETARY_THREAD_ID } from "../dist/secretary-runner.js";
@@ -35,6 +36,7 @@ lines.on('line', line => {
       return;
     } else send({ id: frame.id, result: {} });
   }
+  if (frame.method === 'config/read') send({ id: frame.id, result: { config: { mcp_servers: { fixture_connector: { enabled: true } } } } });
   if (frame.method === 'skills/list') send({ id: frame.id, result: { data: [] } });
   if (frame.method === 'model/list') {
     const reply = () => send({ id: frame.id, result: { data: [{ model: 'fixture-model', displayName: 'Fixture', isDefault: true }] } });
@@ -51,6 +53,35 @@ lines.on('line', line => {
     const records = JSON.parse(fs.readFileSync(process.env.CODEX_FIXTURE_STATE + '/threads.json', 'utf8'));
     log({ persistedBeforeStart: records.find(t => t.id === 'yorozu-secretary-v1')?.nativeSessionId === session });
     mode = frame.params.input[0].text;
+    if (frame.params.outputSchema) {
+      const input = mode.split('User message:\\n').at(-1).trim();
+      const records = fs.existsSync(process.env.CODEX_FIXTURE_STATE + '/secretary-tasks-v1')
+        ? fs.readdirSync(process.env.CODEX_FIXTURE_STATE + '/secretary-tasks-v1').flatMap(name => { try { return [JSON.parse(fs.readFileSync(process.env.CODEX_FIXTURE_STATE + '/secretary-tasks-v1/' + name + '/task.json', 'utf8'))]; } catch { return []; } }) : [];
+      const target = records.find(task => task.title === 'First task')?.id || '';
+      const actions = input === 'TASKS' ? [
+        { kind: 'start', target: '', title: 'First task', specialty: 'file', instruction: 'CONTROLLED_ONE' },
+        { kind: 'start', target: '', title: 'Second task', specialty: 'file', instruction: 'CONTROLLED_TWO' },
+      ] : input === 'CHANGE_FIRST' ? [{ kind: 'steer', target, title: '', specialty: '', instruction: 'write B instead' }]
+        : input === 'STOP_FIRST' ? [{ kind: 'stop', target, title: '', specialty: '', instruction: '' }] : [];
+      send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } });
+      send({ method: 'item/completed', params: { threadId: session, item: { id: 'reply', type: 'agentMessage', text: JSON.stringify({ reply: input === 'HELLO' ? 'Hello, how can I help?' : '', actions }) } } });
+      send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: 'completed' } } });
+      return;
+    }
+    if (mode.includes('Task: CONTROLLED_')) {
+      const first = mode.includes('Task: CONTROLLED_ONE');
+      const suffix = first ? 'one' : 'two';
+      if (first && process.env.CODEX_FIXTURE_TASK_APPROVAL) send({ id: 'task-approval', method: 'item/commandExecution/requestApproval', params: { threadId: session, turnId: 'fixture-turn', command: 'controlled approval' } });
+      send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } });
+      const timer = setInterval(() => {
+        if (!fs.existsSync(process.env.CODEX_FIXTURE_RELEASE + '-' + suffix)) return;
+        clearInterval(timer);
+        fs.writeFileSync(process.env.CODEX_FIXTURE_RESULT + '-' + suffix, changed);
+        send({ method: 'item/completed', params: { threadId: session, item: { id: 'reply', type: 'agentMessage', text: suffix + ' wrote ' + changed } } });
+        send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: 'completed' } } });
+      }, 20);
+      return;
+    }
     send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } });
     if (mode === 'STEER' || mode === 'STEER_LOST') {
       setTimeout(() => send({ method: 'item/agentMessage/delta', params: { threadId: session, itemId: 'reply', delta: 'Waiting for controlled change' } }), 30);
@@ -90,6 +121,7 @@ lines.on('line', line => {
     }
     send({ id: 'approval', method: 'item/commandExecution/requestApproval', params: { threadId: session, turnId: 'fixture-turn', command: 'fixture command' } });
   }
+  if (frame.id === 'task-approval' && frame.result) log({ taskApproval: frame.result });
   if (frame.id === 'approval' && frame.result) {
     log({ approval: frame.result });
     send({ id: 'question', method: 'item/tool/requestUserInput', params: { threadId: session, turnId: 'fixture-turn', questions: [{ id: 'choice', question: 'Which fixture?', options: [{ label: 'One' }, { label: 'Two' }] }] } });
@@ -119,6 +151,15 @@ lines.on('line', line => {
   }
 });
 `;
+
+function serveLedger(options: Parameters<typeof serveSecretary>[0]) {
+  let unavailable: string | undefined;
+  return serveRuntime({ ...options, secretaryUnavailable: () => unavailable,
+    decorateNativeRunners: (runners) => ({ ...runners, codex: secretaryRunner(options!.stateDir!, runners.codex!, (reason) => {
+      unavailable = reason; options?.log?.(`STATE secretary-unavailable ${reason}`);
+    }) }),
+  });
+}
 
 function fixture() {
   const temp = realpathSync(mkdtempSync(join(tmpdir(), "ys-wire-")));
@@ -296,7 +337,7 @@ test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never 
     ts: Date.now(), agentId: "main", kind: "message", data: { role: "user", text, ...(delivery ? { delivery } : {}) } });
   const send = (event: unknown) => socket!.write(`${JSON.stringify(event)}\n`);
   try {
-    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    sidecar = serveLedger({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
     await connect();
     send(message("steer-original", mode));
     await vi.waitFor(() => expect(events.some((event) => event.kind === "message" && event.data.text === "Waiting for controlled change")).toBe(true));
@@ -327,7 +368,7 @@ test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never 
     expect(JSON.parse(readFileSync(join(state, "native-turn-queue.json"), "utf8"))).not.toContainEqual({ threadId: SECRETARY_THREAD_ID, eventId: change.id });
     socket!.destroy();
     await sidecar.close();
-    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    sidecar = serveLedger({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
     await connect();
     send(change);
     if (mode === "STEER") {
@@ -358,7 +399,7 @@ test("restart declines an accepted steer that crashed before the delivery journa
     appendThreadEvent({ id: "unsent-change", threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now(), kind: "message",
       data: { role: "user", text: "write B instead", delivery: "queue", secretarySteerTarget: "prior-task" } } as any, state);
     writeFileSync(join(state, "native-turn-queue.json"), JSON.stringify([{ threadId: SECRETARY_THREAD_ID, eventId: "unsent-change" }]));
-    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    sidecar = serveLedger({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
     await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:unsent-change:final")?.data.text).toContain("not delivered"));
     expect(JSON.parse(readFileSync(join(state, "native-turn-queue.json"), "utf8"))).toEqual([]);
     socket = createConnection(join(state, "local.sock"));
@@ -420,7 +461,7 @@ test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL", 
     heldProvider = undefined;
   };
   try {
-    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    sidecar = serveLedger({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
     await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
     socket = createConnection(join(state, "local.sock"));
     const events: any[] = [];
@@ -499,7 +540,7 @@ test.each(["unmarked workspace", "missing host", "bad host", "conflicting thread
   let sidecar: ReturnType<typeof serveSecretary> | undefined;
   let socket: ReturnType<typeof createConnection> | undefined;
   try {
-    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: (line) => log.push(line) });
+    sidecar = serveLedger({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: (line) => log.push(line) });
     expect(log.some((line) => line.startsWith("STATE secretary-unavailable "))).toBe(true);
     await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
     socket = createConnection(join(state, "local.sock"));
@@ -528,7 +569,7 @@ test.each(["initialize", "session", "missing-codex"])("%s failure before submiss
   let socket: ReturnType<typeof createConnection> | undefined;
   const fixturePath = process.env.PATH!;
   try {
-    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    sidecar = serveLedger({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
     await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
     socket = createConnection(join(state, "local.sock"));
     const events: any[] = [];
@@ -621,4 +662,154 @@ test.each(["missing-host", "raced-run", "locked-host", "before-submit-stop"])("%
     if (holder) { const closed = new Promise<void>((resolve) => holder!.once("close", () => resolve())); holder.stdin!.end(); await closed; }
     vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
   }
+}, 10000);
+
+// Primary coordinator contract: actual host admissions and real Rust/Node workers with an
+// official-protocol peer. The peer only supplies model decisions and controlled completion;
+// the runtime must create, route, persist and project the independent work itself.
+test("coordinator answers another topic while two specialists run and targets only the corrected task", async () => {
+  const { temp, state, rows } = fixture();
+  const release = join(temp, "release-task");
+  const result = join(temp, "result");
+  vi.stubEnv("CODEX_FIXTURE_RELEASE", release);
+  vi.stubEnv("CODEX_FIXTURE_RESULT", result);
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  const events: any[] = [];
+  const connect = async () => {
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    createInterface({ input: socket }).on("line", (line) => events.push(JSON.parse(line))).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+  };
+  const send = (id: string, text: string) => socket!.write(`${JSON.stringify({ id, threadId: SECRETARY_THREAD_ID,
+    ts: Date.now(), agentId: "main", kind: "message", data: { role: "user", text, delivery: "steer" } })}\n`);
+  const completed = (id: string) => readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === `native:${id}:final` && event.data.done);
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await connect();
+    send("coordinate-tasks", "TASKS");
+    await vi.waitFor(() => expect(completed("coordinate-tasks")?.data.text).toContain("delegated (file)"));
+    await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(3));
+    const workers = listThreads(state).filter((thread) => thread.id.startsWith("secretary-task-"));
+    expect(workers).toHaveLength(2);
+    expect(new Set(workers.map((thread) => thread.cwd)).size).toBe(2);
+    send("separate-topic", "HELLO");
+    await vi.waitFor(() => expect(completed("separate-topic")?.data.text).toBe("Hello, how can I help?"));
+    expect(existsSync(result + "-one")).toBe(false);
+    expect(existsSync(result + "-two")).toBe(false);
+    expect(rows().filter((row) => row.method === "turn/steer")).toHaveLength(0);
+    send("correct-first", "CHANGE_FIRST");
+    await vi.waitFor(() => expect(completed("correct-first")?.data.text).toContain("change received by the active task"));
+    const corrections = rows().filter((row) => row.method === "turn/steer");
+    expect(corrections).toHaveLength(1);
+    const correctedStart = rows().find((row) => row.method === "turn/start" && row.pid === corrections[0].pid);
+    expect(correctedStart.params.input[0].text).toContain("Task: CONTROLLED_ONE");
+    const first = workers.find((thread) => thread.title === "First task")!;
+    socket!.write(`${JSON.stringify({ id: "direct-task-change", threadId: first.id, ts: Date.now(), agentId: "main",
+      kind: "message", data: { role: "user", text: "write B instead", delivery: "steer" } })}\n`);
+    await vi.waitFor(() => expect(readThreadEvents(first.id, state).find((event) => event.id === "native:direct-task-change:final")?.data.done).toBe(true));
+    expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === `task-card:${first.id}`)?.data.done).toBe(false);
+    writeFileSync(release + "-two", "finish second first");
+    await vi.waitFor(() => expect(readFileSync(result + "-two", "utf8")).toBe("A"));
+    writeFileSync(release + "-one", "finish corrected first");
+    await vi.waitFor(() => expect(readFileSync(result + "-one", "utf8")).toBe("B"));
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).filter((event) => event.parentAgentId && event.data.done)).toHaveLength(2));
+    const cards = [...new Map(readThreadEvents(SECRETARY_THREAD_ID, state).filter((event) => event.parentAgentId).map((event) => [event.id, event])).values()];
+    expect(cards.every((event) => event.data.replyTo === "coordinate-tasks")).toBe(true);
+    expect(cards.every((event) => event.ts < completed("separate-topic")!.ts)).toBe(true);
+    expect(cards.map((event) => event.data.text).sort()).toEqual(["one wrote B", "two wrote A"]);
+    const planningStarts = rows().filter((row) => ["thread/start", "thread/resume"].includes(row.method) && row.params.developerInstructions);
+    expect(planningStarts).toHaveLength(3);
+    for (const start of planningStarts) {
+      expect(start.params.sandbox).toBe("read-only");
+      expect(start.params.config).toMatchObject({ "features.apps": false, "features.plugins": false,
+        "features.shell_tool": false, "features.unified_exec": false, "mcp_servers.fixture_connector.enabled": false, web_search: "disabled" });
+    }
+    expect(rows().filter((row) => row.method === "turn/start" && row.params.outputSchema).every((row) => row.params.environments.length === 0)).toBe(true);
+    const count = rows().filter((row) => row.method === "turn/start").length;
+    socket!.destroy(); await sidecar.close();
+    events.length = 0;
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await connect();
+    // Replay exact accepted identities, preserving original timestamp and immutable payload.
+    for (const id of ["coordinate-tasks", "correct-first"]) {
+      const original = readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === id)!;
+      socket!.write(`${JSON.stringify(original)}\n`);
+    }
+    await vi.waitFor(() => expect(events.some((event) => event.kind === "receipt" && event.data.eventId === "correct-first")).toBe(true));
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(count);
+    expect(rows().filter((row) => row.method === "turn/steer")).toHaveLength(2);
+    expect(new Set(readThreadEvents(SECRETARY_THREAD_ID, state).filter((event) => event.parentAgentId).map((event) => event.id)).size).toBe(2);
+  } finally {
+    writeFileSync(release + "-one", "cleanup"); writeFileSync(release + "-two", "cleanup");
+    socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
+  }
+}, 20000);
+
+test("specialist approval remains required under legacy YOLO and Stop leaves other work and main chat usable", async () => {
+  const { temp, state, rows } = fixture();
+  const release = join(temp, "release-task");
+  vi.stubEnv("CODEX_FIXTURE_RELEASE", release);
+  vi.stubEnv("CODEX_FIXTURE_RESULT", join(temp, "result"));
+  vi.stubEnv("CODEX_FIXTURE_TASK_APPROVAL", "1");
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  const events: any[] = [];
+  const send = (id: string, text: string) => socket!.write(`${JSON.stringify({ id, threadId: SECRETARY_THREAD_ID,
+    ts: Date.now(), agentId: "main", kind: "message", data: { role: "user", text, delivery: "steer" } })}\n`);
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    createInterface({ input: socket }).on("line", (line) => events.push(JSON.parse(line))).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    socket.write(`${JSON.stringify({ id: "legacy-yolo", threadId: SECRETARY_THREAD_ID, ts: Date.now(), agentId: "main",
+      kind: "approval_settings", data: { yolo: true, hours: 1 } })}\n`);
+    send("approval-tasks", "TASKS");
+    await vi.waitFor(() => expect(events.some((event) => event.kind === "approval_card")).toBe(true));
+    const card = events.find((event) => event.kind === "approval_card");
+    expect(card.threadId).not.toBe(SECRETARY_THREAD_ID);
+    expect(card.data.actionClass).toContain("First task");
+    expect(rows().some((row) => row.taskApproval)).toBe(false);
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).findLast((event) => event.id === `task-card:${card.threadId}`)?.data.text).toContain("Your answer is needed"));
+    send("during-approval", "HELLO");
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:during-approval:final")?.data.text).toBe("Hello, how can I help?"));
+    expect(rows().some((row) => row.taskApproval)).toBe(false);
+    send("stop-first", "STOP_FIRST");
+    await vi.waitFor(() => expect(events.some((event) => event.kind === "stop_status" && event.threadId === card.threadId && event.data.status === "stopped"), JSON.stringify(events.filter((event) => event.kind === "stop_status" || event.kind === "message" && event.data.done))).toBe(true));
+    expect(events.some((event) => event.kind === "approval_answer" && event.data.actionId === card.data.actionId && event.data.answer === "no")).toBe(true);
+    expect(rows().filter((row) => row.method === "turn/interrupt")).toHaveLength(1);
+    expect(existsSync(join(temp, "result-one"))).toBe(false);
+    writeFileSync(release + "-two", "finish unaffected task");
+    await vi.waitFor(() => expect(readFileSync(join(temp, "result-two"), "utf8")).toBe("A"));
+    send("after-stop", "HELLO");
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:after-stop:final")?.data.text).toBe("Hello, how can I help?"));
+  } finally {
+    writeFileSync(release + "-two", "cleanup"); socket?.destroy(); await sidecar?.close();
+    vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
+  }
+}, 20000);
+
+test("a damaged task record is held while the secretary still answers new conversation", async () => {
+  const { temp, state, rows } = fixture();
+  const id = `secretary-task-${"a".repeat(64)}`;
+  const path = join(state, "secretary-tasks-v1", id);
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, "task.json"), '{"version":');
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    createInterface({ input: socket }).on("line", () => {}).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    socket.write(`${JSON.stringify({ id: "after-corruption", threadId: SECRETARY_THREAD_ID, ts: Date.now(), agentId: "main",
+      kind: "message", data: { role: "user", text: "HELLO", delivery: "steer" } })}\n`);
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:after-corruption:final")?.data.text).toBe("Hello, how can I help?"));
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
+    expect(readFileSync(join(path, "task.json"), "utf8")).toBe('{"version":');
+    expect(readThreadEvents(SECRETARY_THREAD_ID, state).some((event) => event.data.text?.includes("task record needs repair"))).toBe(true);
+  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
 }, 10000);

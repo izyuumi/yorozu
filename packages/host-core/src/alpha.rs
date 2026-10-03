@@ -458,8 +458,11 @@ impl Conversation {
 fn validated_turn(value: &Value) -> Option<Value> {
     let object = value.as_object()?;
     if object.keys().any(|key| {
-        !["sessionId", "model", "effort", "attachments", "skill"].contains(&key.as_str())
+        !["sessionId", "model", "effort", "attachments", "skill", "secretaryCoordinator"].contains(&key.as_str())
     }) {
+        return None;
+    }
+    if object.get("secretaryCoordinator").is_some_and(|value| value != &json!(true)) {
         return None;
     }
     for key in ["sessionId", "model", "effort"] {

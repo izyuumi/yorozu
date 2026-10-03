@@ -64,7 +64,7 @@ lines.on("line", (line) => {
 });
 lines.on("close", () => { abort.abort(); terminate?.(); });
 
-async function run(cwd: string, text: string, metadata: Pick<NativeTurn, "model" | "effort" | "sessionId" | "attachments" | "skill">): Promise<void> {
+async function run(cwd: string, text: string, metadata: Pick<NativeTurn, "model" | "effort" | "sessionId" | "attachments" | "skill" | "secretaryCoordinator">): Promise<void> {
   let sessionAck: Promise<unknown> = Promise.resolve(undefined);
   let client: ReturnType<typeof connectCodex> | undefined;
   let connectionAttempted = false;

@@ -6,7 +6,7 @@ import type { NativeAgentRunner } from "./native.js";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { constants } from "node:os";
-import { secretaryRunner } from "./secretary-runner.js";
+import { secretaryCoordinator, type SecretaryCoordinatorHost } from "./secretary-coordinator.js";
 
 function requireProductionRuntime(): void {
   if (!("secretaryRunnerDecorator" in runtime) || runtime.secretaryRunnerDecorator !== true) {
@@ -19,17 +19,23 @@ export function serveSecretary(options: ServeOptions = {}): Sidecar {
   const dir = options.stateDir ?? stateDir();
   let decorated = false;
   let unavailable: string | undefined;
+  let coordinator: ReturnType<typeof secretaryCoordinator>;
   // A local variable also type-checks against the unpatched development ServeOptions.
   const decoratedOptions = { ...options, stateDir: dir,
     secretaryUnavailable: () => unavailable,
-    decorateNativeRunners: (runners: Record<string, NativeAgentRunner>) => {
+    secretaryCoordinator: true,
+    secretaryOwnsTask: (id: string) => coordinator?.owns(id) ?? false,
+    secretaryTask: (id: string) => coordinator?.task(id),
+    secretaryObserve: (event: Parameters<ReturnType<typeof secretaryCoordinator>["observe"]>[0]) => coordinator?.observe(event),
+    decorateNativeRunners: (runners: Record<string, NativeAgentRunner>, host: SecretaryCoordinatorHost) => {
       if (!runners.codex) throw new Error("The secretary requires the Codex adapter");
-      const codex = secretaryRunner(dir, runners.codex, (reason) => {
+      coordinator = secretaryCoordinator(dir, runners.codex, (reason) => {
         unavailable = reason;
         (options.log ?? ((line: string) => process.stdout.write(`${line}\n`)))(`STATE secretary-unavailable ${reason}`);
       });
+      coordinator.bind(host);
       decorated = true;
-      return { ...runners, codex };
+      return { ...runners, codex: coordinator.runner };
     },
   };
   const sidecar = runtime.serve(decoratedOptions);
@@ -37,6 +43,7 @@ export function serveSecretary(options: ServeOptions = {}): Sidecar {
     void sidecar.close().catch(() => {});
     throw new Error("The production runtime is missing its secretary decorator patch");
   }
+  coordinator!.reconcile();
   return sidecar;
 }
 

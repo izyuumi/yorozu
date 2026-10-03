@@ -176,12 +176,14 @@ fn run() -> io::Result<()> {
                             {
                                 // Record UI decisions before delivering them back to the provider.
                                 owner.record(&current.run, "response", None, Some(json!({"requestId":request["requestId"],"value":request["value"]})))?;
-                                send(
+                                // Stop can settle a card while the worker is exiting. A closed
+                                // input must not discard its buffered terminal evidence.
+                                let delivered = send(
                                     &mut current.child,
                                     &json!({"version":1,"op":"respond","runId":current.run,
                                     "requestId":request["requestId"],"value":request["value"]}),
-                                )?;
-                                json!({"delivered":true})
+                                ).is_ok();
+                                json!({"delivered":delivered})
                             } else {
                                 json!({"delivered":false})
                             }

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { REASONING_EFFORTS, type ModelOption } from "@yorozu/shared";
 import { childEnv, nativeProcessExited, turnCwd } from "./native.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
+import { SECRETARY_COORDINATOR_INSTRUCTIONS, SECRETARY_PLAN_SCHEMA } from "./secretary-coordinator.js";
 
 type ObjectValue = Record<string, unknown>;
 const object = (value: unknown): ObjectValue => value !== null && typeof value === "object" && !Array.isArray(value) ? value as ObjectValue : {};
@@ -229,11 +230,24 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
       turn.signal.addEventListener("abort", abort, { once: true });
       try {
         await initialize(client);
+        let coordinatorConfig: ObjectValue | undefined;
+        if (turn.secretaryCoordinator) {
+          const configured = await client.request("config/read", { includeLayers: false, cwd });
+          if (!configured.config || typeof configured.config !== "object" || Array.isArray(configured.config)) throw new Error("Coordinator tool isolation could not be checked");
+          coordinatorConfig = { "features.apps": false, "features.plugins": false, "features.hooks": false,
+            "features.shell_tool": false, "features.unified_exec": false, "features.multi_agent": false,
+            "web_search": "disabled", "tools.view_image": false };
+          for (const name of Object.keys(object(object(configured.config).mcp_servers))) {
+            if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error("Coordinator cannot isolate this connector name");
+            coordinatorConfig[`mcp_servers.${name}.enabled`] = false;
+          }
+        }
         const home = await client.request(sessionId ? "thread/resume" : "thread/start", {
           ...(sessionId ? { threadId: sessionId, excludeTurns: true } : {}),
           cwd, model: turn.model ?? null,
           approvalPolicy: turn.bypass ? "never" : "on-request", approvalsReviewer: "user",
-          sandbox: turn.bypass ? "danger-full-access" : "workspace-write",
+          sandbox: turn.secretaryCoordinator ? "read-only" : turn.bypass ? "danger-full-access" : "workspace-write",
+          ...(turn.secretaryCoordinator ? { config: coordinatorConfig, developerInstructions: SECRETARY_COORDINATOR_INSTRUCTIONS } : {}),
         });
         sessionId = string(object(home.thread).id);
         if (!sessionId) throw new Error("Codex did not return a thread id");
@@ -246,7 +260,8 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
           // Pictures go in as pictures; any other file is a path in the text, read with Codex's own tools.
             ...(turn.attachments ?? []).filter((file) => file.mime.startsWith("image/"))
               .map((file) => ({ type: "localImage", path: file.path }))],
-          model: turn.model ?? null, effort: turn.effort ?? null });
+          model: turn.model ?? null, effort: turn.effort ?? null,
+          ...(turn.secretaryCoordinator ? { outputSchema: SECRETARY_PLAN_SCHEMA, environments: [] } : {}) });
         const startedId = string(object(started.turn).id);
         if (!startedId || turnId && turnId !== startedId) throw new Error("Codex turn identity remains unconfirmed");
         turnId = startedId;

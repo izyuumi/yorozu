@@ -29,6 +29,8 @@ export interface NativeTurn {
   /** The agent's own session id from the thread's last turn; absent starts a new session. */
   sessionId?: string;
   bypass?: boolean;
+  /** Host-only short planning turn: no execution tools or inherited connectors. */
+  secretaryCoordinator?: true;
   model?: string;
   effort?: ReasoningEffort;
   signal: AbortSignal;
