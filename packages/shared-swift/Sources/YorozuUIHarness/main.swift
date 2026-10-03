@@ -62,6 +62,70 @@ actor HarnessTransport: ChatTransport {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/tmp/yorozu-ui")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--secretary-activity") {
+            let transport = HarnessTransport()
+            let model = ChatModel(transport: transport)
+            model.start()
+            while !model.ownerOnline { await Task.yield() }
+            let id = SecretaryUI.threadID
+            let thread = ThreadSummary(id: id, title: "Yorozu", archived: false, lastActivity: 0, agent: .codex)
+            func event(_ name: String, _ payload: YorozuEvent.Payload) -> YorozuEvent {
+                YorozuEvent(id: name, threadId: id, ts: Int(Date().timeIntervalSince1970 * 1000), agentId: "main", payload: payload)
+            }
+            await transport.deliver(event("threads", .threadList(ThreadListData(threads: [thread]))))
+            while !model.listed { await Task.yield() }
+            let previous = UserDefaults.standard.object(forKey: SecretaryUI.technicalDetailsKey)
+            defer {
+                if let previous { UserDefaults.standard.set(previous, forKey: SecretaryUI.technicalDetailsKey) }
+                else { UserDefaults.standard.removeObject(forKey: SecretaryUI.technicalDetailsKey) }
+                model.close()
+            }
+            UserDefaults.standard.set(false, forKey: SecretaryUI.technicalDetailsKey)
+            var events = [
+                event("request", .message(MessageData(role: .user, text: "Check the draft and save a copy.", completionId: "fixture:request:final"))),
+                event("milestone", .message(MessageData(role: .agent, text: "I’ve checked the draft. I’m saving a copy now."))),
+                event("command", .toolCall(ToolCallData(callId: "command", name: "commandExecution", args: ["command": .string("COMMAND_DETAIL_MARKER")]))),
+            ]
+            func show(_ name: String, running: Bool, japanese: Bool = false) async throws {
+                var currentThread = thread
+                currentThread.activeEventId = running ? events.last(where: {
+                    if case .message(let message) = $0.payload { return message.role == .user }
+                    return false
+                })?.id : nil
+                currentThread.turnState = name == "unconfirmed" ? .stoppedUnconfirmed : running ? .running : .idle
+                await transport.deliver(event("threads", .threadList(ThreadListData(threads: [currentThread]))))
+                await transport.deliver(event(UUID().uuidString, .syncDelta(SyncDeltaData(events: events, threadId: id, workingThreadIds: running ? [id] : []))))
+                try await Task.sleep(for: .milliseconds(100))
+                try await render(NavigationStack {
+                    SecretaryChatView(model: model, onHistory: {})
+                }.environment(\.locale, Locale(identifier: japanese ? "ja" : "en")),
+                    name: "secretary-\(name)", width: 880, height: 650, dark: false, output: output)
+            }
+            try await show("working", running: true)
+            UserDefaults.standard.set(true, forKey: SecretaryUI.technicalDetailsKey)
+            try await show("details", running: true)
+            UserDefaults.standard.set(false, forKey: SecretaryUI.technicalDetailsKey)
+            events += [event("approval", .approvalCard(ApprovalCardData(actionId: "approve", actionClass: "run", target: "Save outside the granted folder")))]
+            try await show("approval", running: true)
+            events.removeLast()
+            events += [event("result", .toolResult(ToolResultData(callId: "command", ok: false, output: "OUTPUT_DETAIL_MARKER"))),
+                event("final", .message(MessageData(role: .agent, text: "I couldn’t save the copy. Choose another folder to try again.", done: true, failed: true)))]
+            await transport.deliver(event("approval-resolved", .approvalStatus(ApprovalStatusData(requestId: "fixture", actionId: "approve", status: .noLongerNeeded))))
+            try await show("error", running: false)
+            try await show("error-ja", running: false, japanese: true)
+            events += [event("result", .toolResult(ToolResultData(callId: "command", ok: true, output: "OUTPUT_DETAIL_MARKER"))),
+                event("final", .message(MessageData(role: .agent, text: "Saved the copy in your chosen folder.", done: true)))]
+            try await show("completed", running: false)
+            events += [event("second-request", .message(MessageData(role: .user, text: "Check another copy."))),
+                event("second-command", .toolCall(ToolCallData(callId: "second-command", name: "commandExecution", args: [:]))),
+                event("stop", .stopStatus(StopStatusData(targetEventId: "second-request", requestId: "stop-request", status: .unconfirmed)))]
+            try await show("unconfirmed", running: true)
+            // A later host-owned running turn must not inherit the old stop's missing cue.
+            events += [event("third-request", .message(MessageData(role: .user, text: "Continue after recovery."))),
+                event("third-command", .toolCall(ToolCallData(callId: "third-command", name: "commandExecution", args: [:])))]
+            try await show("running-after-old-stop", running: true)
+            return
+        }
         if CommandLine.arguments.contains("--send-freeze") {
             let cache = ThreadCache(directory: output.appendingPathComponent("send-cache"), key: SymmetricKey(size: .bits256))
             let thread = ThreadSummary(id: "send-fixture", title: "Synthetic send", archived: false, lastActivity: 1)

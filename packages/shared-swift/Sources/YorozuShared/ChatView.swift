@@ -46,6 +46,7 @@ public struct ChatView: View {
     @Environment(\.onPairingLink) private var onPairingLink
     @Environment(\.threadSearchRequest) private var threadSearchRequest
     @Environment(\.secretaryPresentation) private var secretaryPresentation
+    @AppStorage(SecretaryUI.technicalDetailsKey) private var technicalDetails = false
     @Environment(\.locale) private var locale
 
     /// Whether geometry currently reaches the newest message. Reader intent is tracked
@@ -159,16 +160,21 @@ public struct ChatView: View {
     private var events: [YorozuEvent] { model.timeline(thread.id).events }
 
     private var rows: [ChatRow] { model.rows(in: thread.id) }
+    private var quiet: Bool { secretaryPresentation && !technicalDetails }
+    private var showingActiveWork: Bool {
+        generating && !(quiet && thread.turnState == .stoppedUnconfirmed)
+    }
 
     /// Pending decisions take precedence over progress, on both timeline implementations.
     private var activity: ChatActivity? {
         chatActivity(
             in: rows,
-            generating: generating,
+            generating: showingActiveWork,
             streamingId: streamingId,
             answeredApprovals: model.answered,
             answeredQuestions: model.answeredQuestions,
-            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id)
+            approvalOutcomes: model.approvalOutcomes,
+            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id), quiet: quiet
         )
     }
 
@@ -662,9 +668,10 @@ public struct ChatView: View {
     }
 
     @ViewBuilder private func messages(rows: [ChatRow], queuedStatuses: [String: String]) -> some View {
-        let activity = chatActivity(in: rows, generating: generating, streamingId: streamingId,
+        let activity = chatActivity(in: rows, generating: showingActiveWork, streamingId: streamingId,
             answeredApprovals: model.answered, answeredQuestions: model.answeredQuestions,
-            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id))
+            approvalOutcomes: model.approvalOutcomes,
+            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id), quiet: quiet)
         #if os(iOS)
             nativeMessages(rows: rows, activity: activity, queuedStatuses: queuedStatuses)
         #else
@@ -707,6 +714,7 @@ public struct ChatView: View {
                 presentation: TimelinePresentation(
                     localeIdentifier: locale.identifier,
                     secretaryPresentation: secretaryPresentation,
+                    technicalDetails: technicalDetails,
                     search: search,
                     outbox: model.outbox,
                     queuedStatuses: queuedStatuses,
@@ -916,7 +924,7 @@ public struct ChatView: View {
     @ViewBuilder private func rowView(_ row: ChatRow, queuedStatuses: [String: String]) -> some View {
         switch row {
         case .work(let work):
-            WorkRowView(work: work).id(work.id)
+            WorkRowView(work: work, quiet: quiet).id(work.id)
         case .unreadable(let event):
             Label(SecretaryUI.localized("Update Yorozu to see this event"), systemImage: "arrow.up.circle")
                 .font(.scaled(.subheadline))
@@ -1702,6 +1710,7 @@ public struct ChatView: View {
     private struct TimelinePresentation: Equatable {
         let localeIdentifier: String
         let secretaryPresentation: Bool
+        let technicalDetails: Bool
         let search: String
         let outbox: [OutboxItem]
         let queuedStatuses: [String: String]
@@ -2254,17 +2263,21 @@ private struct ChatActivityRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            AgentMarkView(agent, size: 16)
-            if let symbol = activity.symbol {
-                Image(systemName: symbol).foregroundStyle(YorozuPalette.vermilion)
-            } else {
-                ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
+        if secretaryPresentation && activity == .thinking {
+            SecretaryWorkingIndicator()
+        } else {
+            HStack(spacing: 8) {
+                AgentMarkView(agent, size: 16)
+                if let symbol = activity.symbol {
+                    Image(systemName: symbol).foregroundStyle(YorozuPalette.vermilion)
+                } else {
+                    ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
+                }
+                Text(label).font(.scaled(.caption)).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
-            Text(label).font(.scaled(.caption)).foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+            .accessibilityElement(children: .combine)
         }
-        .accessibilityElement(children: .combine)
     }
 }
 

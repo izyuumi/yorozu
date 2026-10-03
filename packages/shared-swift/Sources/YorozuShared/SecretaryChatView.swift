@@ -10,6 +10,7 @@ public enum SecretaryUI {
     public static var enabled: Bool { Bundle.main.infoDictionary?["YorozuSecretaryEnabled"] as? Bool == true }
     public static let threadID = "yorozu-secretary-v1"
     public static let languageKey = "secretaryInterfaceLanguage"
+    public static let technicalDetailsKey = "secretaryTechnicalDetails"
 
     /// Foundation's locale argument formats values but does not select a bundle's
     /// language. Native titles and computed labels need the same catalog as SwiftUI.
@@ -81,6 +82,29 @@ extension Locale {
     }
 }
 
+/// A small native activity cue; the timer belongs to the dots, never the transcript.
+struct SecretaryWorkingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locale) private var locale
+    private let dotSize: CGFloat = 5
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.25, paused: reduceMotion)) { context in
+            let phase = Int(context.date.timeIntervalSinceReferenceDate * 4) % 3
+            HStack(spacing: dotSize) {
+                ForEach(0..<3) { index in
+                    Circle().fill(.secondary.opacity(reduceMotion || phase == index ? 1 : 0.3))
+                        .frame(width: dotSize, height: dotSize)
+                }
+            }
+            .padding(.vertical, dotSize)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(locale.secretaryText("Working", "作業中"))
+        .accessibilityIdentifier("secretary-working")
+    }
+}
+
 /// Uses the same ChatView as History: drafts, attachments, approvals and Stop retain
 /// their production behavior. A missing host-created thread never becomes a new draft.
 public struct SecretaryChatView: View {
@@ -89,6 +113,7 @@ public struct SecretaryChatView: View {
     private let onHistory: () -> Void
     @Environment(\.locale) private var locale
     @AppStorage(SecretaryUI.languageKey) private var language = SecretaryLanguage.system
+    @AppStorage(SecretaryUI.technicalDetailsKey) private var technicalDetails = false
 
     public init(model: ChatModel, hostLabel: String? = nil, onHistory: @escaping () -> Void) {
         self.model = model
@@ -143,6 +168,7 @@ public struct SecretaryChatView: View {
                 Menu(locale.secretaryText("More", "その他"), systemImage: "ellipsis") {
                     if let hostLabel { Text(hostLabel) }
                     Button(locale.secretaryText("Reconnect", "再接続"), systemImage: "arrow.clockwise") { model.reconnect() }
+                    Toggle(locale.secretaryText("Show technical details", "技術的な詳細を表示"), isOn: $technicalDetails)
                     Picker(locale.secretaryText("Language", "言語"), selection: $language) {
                         Text(locale.secretaryText("System", "システムに合わせる")).tag(SecretaryLanguage.system)
                         Text(verbatim: "English").tag(SecretaryLanguage.english)
