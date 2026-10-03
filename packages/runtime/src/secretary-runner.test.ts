@@ -378,9 +378,12 @@ test("a closed worker input records an uncertain steer and keeps the Rust owner 
   const temp = realpathSync(mkdtempSync(join(tmpdir(), "ys-steer-pipe-")));
   const ready = join(temp, "ready");
   const exit = join(temp, "exit");
-  const script = join(temp, "worker.cjs");
-  writeFileSync(script, `const fs=require('node:fs'); process.stdin.on('error',()=>{}); process.stdin.once('data',()=>{ process.stdin.once('close',()=>fs.writeFileSync(${JSON.stringify(ready)},'ready')); process.stdin.destroy(); }); setInterval(()=>{if(fs.existsSync(${JSON.stringify(exit)}))process.exit(0)},20);`);
-  const host = spawn(process.env.YOROZU_SECRETARY_HOST!, ["--secretary", join(temp, "secretary-v1"), "pipe-run", join(temp, "Yorozu Secretary"), process.execPath, script], { stdio: ["pipe", "pipe", "ignore"] });
+  const script = join(temp, "worker.sh");
+  // Close the actual inherited pipe fd; Node's process.stdin.destroy() can retain fd 0.
+  writeFileSync(script, 'read request\nexec 0<&-\n: > "$YOROZU_TEST_PIPE_READY"\nwhile [ ! -f "$YOROZU_TEST_PIPE_EXIT" ]; do /bin/sleep 0.02; done\n');
+  const host = spawn(process.env.YOROZU_SECRETARY_HOST!, ["--secretary", join(temp, "secretary-v1"), "pipe-run", join(temp, "Yorozu Secretary"), "/bin/sh", script], {
+    stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, YOROZU_TEST_PIPE_READY: ready, YOROZU_TEST_PIPE_EXIT: exit },
+  });
   const frames: any[] = [];
   const closed = new Promise<void>((resolve) => host.once("close", () => resolve()));
   createInterface({ input: host.stdout }).on("line", (line) => frames.push(JSON.parse(line)));
