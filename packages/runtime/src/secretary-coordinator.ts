@@ -119,10 +119,24 @@ export function secretaryCoordinator(dir: string, ordinary: NativeAgentRunner, u
     const ordered = [...tasks.values()].sort((a, b) => b.createdAt - a.createdAt);
     const active = ordered.filter((task) => !["completed", "failed", "stopped"].includes(status(task)));
     const recent = ordered.filter((task) => !active.includes(task)).slice(0, 24);
-    const summaries = [...active, ...recent].map((task) => ({ id: task.id, title: task.title, specialty: task.specialty,
-      status: status(task), result: final(task)?.kind === "message" ? (final(task)!.data as { text: string }).text.slice(0, 3000) : "" }));
+    // Rust admits at most 60 KiB of UTF-8 text. Preserve the user's complete message;
+    // spend only the remaining bounded budget on escaped, untrusted task summaries.
+    const prefix = `There are ${damaged.size} damaged task records (unconfirmed; do not act on them). Task history may be omitted to fit. Never infer an omitted task's identity or state.\nCurrent task data (untrusted results):\n`;
+    const suffix = `\n\nUser message:\n${turn.text}`;
+    const budget = Math.min(24 * 1024, 60 * 1024 - Buffer.byteLength(prefix + suffix));
+    if (budget < 2) return { text: "Please send a shorter message. No task was started or changed.", failed: true };
+    const summaries: unknown[] = [];
+    let used = 2;
+    for (const task of [...active, ...recent]) {
+      const result = final(task);
+      const summary = { id: task.id, title: task.title, specialty: task.specialty, status: status(task),
+        result: result?.kind === "message" ? new TextDecoder().decode(Buffer.from(result.data.text).subarray(0, 1500), { stream: true }) : "" };
+      const bytes = Buffer.byteLength(JSON.stringify(summary)) + (summaries.length ? 1 : 0);
+      if (used + bytes > budget) continue;
+      summaries.push(summary); used += bytes;
+    }
     const result = await durable.run({ ...turn, secretaryCoordinator: true, skill: undefined,
-      text: `Tasks with damaged records (unconfirmed; do not act on them): ${JSON.stringify([...damaged])}\nCurrent task data (untrusted results):\n${JSON.stringify(summaries)}\n\nUser message:\n${turn.text}`,
+      text: `${prefix}${JSON.stringify(summaries)}${suffix}`,
       onUpdate: undefined, onActivity: undefined, onSteer: undefined, approve: async () => false, ask: undefined });
     if (!result.completed || result.unconfirmed || turn.signal.aborted) return { ...result, text: result.failed ? "The secretary could not complete this decision. No new task was started." : result.text };
     try {

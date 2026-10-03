@@ -6,6 +6,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { serve as serveRuntime } from "../dist/serve.js";
 import { serveSecretary } from "../dist/secretary-serve.js";
 import { dirname, join } from "node:path";
@@ -725,7 +726,7 @@ test("coordinator answers another topic while two specialists run and targets on
     expect(firstHistory.some((event) => event.kind === "message" && event.data.role === "user" && event.data.delivery === "steer" && event.data.text === "write B instead")).toBe(true);
     const first = workers.find((thread) => thread.title === "First task")!;
     socket!.write(`${JSON.stringify({ id: "direct-task-change", threadId: first.id, ts: Date.now(), agentId: "main",
-      kind: "message", data: { role: "user", text: "write B instead", delivery: "steer" } })}\n`);
+      kind: "message", data: { role: "user", text: "write B instead", delivery: "queue" } })}\n`);
     await vi.waitFor(() => expect(readThreadEvents(first.id, state).find((event) => event.id === "native:direct-task-change:final")?.data.done).toBe(true));
     expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === `task-card:${first.id}`)?.data.done).toBe(false);
     writeFileSync(release + "-two", "finish second first");
@@ -737,6 +738,9 @@ test("coordinator answers another topic while two specialists run and targets on
     expect(cards.every((event) => event.data.replyTo === "coordinate-tasks")).toBe(true);
     expect(cards.every((event) => event.ts < completed("separate-topic")!.ts)).toBe(true);
     expect(cards.map((event) => event.data.text).sort()).toEqual(["one wrote B", "two wrote A"]);
+    socket!.write(`${JSON.stringify({ id: "late-task-change", threadId: first.id, ts: Date.now(), agentId: "main",
+      kind: "message", data: { role: "user", text: "write C instead", delivery: "queue" } })}\n`);
+    await vi.waitFor(() => expect(readThreadEvents(first.id, state).find((event) => event.id === "native:late-task-change:final")?.data.text).toContain("not queued"));
     const planningStarts = rows().filter((row) => ["thread/start", "thread/resume"].includes(row.method) && row.params.developerInstructions);
     expect(planningStarts).toHaveLength(3);
     for (const start of planningStarts) {
@@ -764,6 +768,40 @@ test("coordinator answers another topic while two specialists run and targets on
     socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
   }
 }, 20000);
+
+test("long Japanese task history leaves room for conversation and an oversized message does not poison later turns", async () => {
+  const { temp, state, rows } = fixture();
+  for (let index = 0; index < 24; index++) {
+    const id = `secretary-task-${index.toString(16).padStart(64, "0")}`;
+    const requestId = `task-request-${createHash("sha256").update(id).digest("hex")}`;
+    const path = join(state, "secretary-tasks-v1", id);
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, "task.json"), JSON.stringify({ version: 1, id, requestId, parentEventId: `old-${index}`,
+      createdAt: index + 1, title: `過去の作業 ${index}`, specialty: "調査", instruction: "完了済みの作業" }));
+    createThread(`過去の作業 ${index}`, state, id, { agent: "codex", cwd: temp });
+    appendThreadEvent({ id: `native:${requestId}:final`, threadId: id, ts: index + 2, agentId: "main", kind: "message",
+      data: { role: "agent", text: "調査結果です。".repeat(1500), done: true } }, state);
+  }
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  const send = (id: string, text: string) => socket!.write(`${JSON.stringify({ id, threadId: SECRETARY_THREAD_ID,
+    ts: Date.now(), agentId: "main", kind: "message", data: { role: "user", text, delivery: "steer" } })}\n`);
+  const final = (id: string) => readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === `native:${id}:final`);
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    createInterface({ input: socket }).on("line", () => {}).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    send("long-history", "HELLO");
+    await vi.waitFor(() => expect(final("long-history")?.data.text).toBe("Hello, how can I help?"));
+    send("too-long", "界".repeat(22000));
+    await vi.waitFor(() => expect(final("too-long")?.data.text).toContain("shorter message"));
+    send("after-long", "HELLO");
+    await vi.waitFor(() => expect(final("after-long")?.data.text).toBe("Hello, how can I help?"));
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(2);
+  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+}, 10000);
 
 test("specialist approval remains required under legacy YOLO and Stop leaves other work and main chat usable", async () => {
   const { temp, state, rows } = fixture();
