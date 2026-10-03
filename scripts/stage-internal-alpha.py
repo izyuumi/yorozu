@@ -60,6 +60,7 @@ def stage(destination):
         "runtimeEntry": "runtime/dist/secretary-serve.js",
         "workerBinary": "yorozu-alpha-host", "workerStore": "secretary-v1",
         "legacyStorageMigration": False, "publicUpdateFeed": False,
+        "dependencyLockSha256": hashlib.sha256((destination / "pnpm-lock.yaml").read_bytes()).hexdigest(),
         "overlaySha256": hashes,
     }
     (destination / "internal-source.json").write_text(json.dumps(manifest, indent=2) + "\n")

@@ -25,6 +25,11 @@ info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
 assert info['YorozuSecretaryEnabled'] and 'SUFeedURL' not in info
 manifest = json.loads((root / 'internal-source.json').read_text())
 manifest.update(version=info['CFBundleShortVersionString'], build=info['CFBundleVersion'])
+runtime = app / 'Contents/Resources/runtime'
+manifest['runtimeDependencies'] = {
+    name: json.loads((runtime / 'node_modules' / name / 'package.json').read_text())['version']
+    for name in json.loads((runtime / 'package.json').read_text())['dependencies']
+}
 manifest['files'] = {str(p.relative_to(app)): hashlib.file_digest(p.open('rb'), 'sha256').hexdigest()
                      for p in sorted(app.rglob('*')) if p.is_file() and not p.is_symlink()}
 manifest['symlinks'] = {str(p.relative_to(app)): str(p.readlink())

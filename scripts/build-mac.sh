@@ -173,8 +173,14 @@ rm -rf "$APP/Contents/Resources/runtime"
 # node-linker=hoisted: pnpm's default layout is a thicket of symlinks into .pnpm, and
 # codesign refuses to seal a bundle containing them ("invalid destination for symbolic
 # link in bundle"). Hoisted is the flat node_modules the signature can cover.
-pnpm --filter @yorozu/runtime --prod --legacy --config.node-linker=hoisted \
-  deploy "$APP/Contents/Resources/runtime"
+if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
+  # Export the reviewed lockfile instead of re-resolving dependency ranges.
+  pnpm --config.inject-workspace-packages=true --filter @yorozu/runtime --prod \
+    --config.node-linker=hoisted deploy "$APP/Contents/Resources/runtime"
+else
+  pnpm --filter @yorozu/runtime --prod --legacy --config.node-linker=hoisted \
+    deploy "$APP/Contents/Resources/runtime"
+fi
 # --prod above leaves the *workspace* modules directory pruned to production too, which
 # breaks the next `pnpm -r build` (no typescript). Put the dev dependencies back.
 pnpm install --frozen-lockfile

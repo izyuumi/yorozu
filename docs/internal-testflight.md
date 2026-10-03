@@ -92,6 +92,13 @@ the lane rather than submitting an external review.
 
 ## Evidence and remaining device validation
 
+The internal Mac bundles the pinned production runtime baseline plus the explicit
+secretary overlay recorded in `internal-source.json`. Its dependency export uses
+the baseline lockfile without resolving newer versions. Provenance records that
+lockfile's SHA-256, the installed direct dependency versions, and sealed file hashes.
+The temporary Node bridge remains part of this candidate; a complete Rust migration
+has not shipped. The coding/review model does not select the user's runtime model.
+
 Actions retains a ZIP of the signed Mac app, DMG, signed IPA, export options,
 exact source/build metadata, Apple build ID, availability result, and SHA-256
 artifact hashes for 30 days. Failed processing still retains existing build
@@ -103,6 +110,15 @@ successful install. Validate installation, existing pairing/history/drafts,
 streaming, Stop, reconnect, Japanese input, and the approved Mac/iOS pairing on
 real devices before claiming those behaviors work. Never use the old standalone
 Mac alpha's local pipe interface as evidence of iOS connectivity.
+
+An interrupted task whose provider cessation cannot be proved is not replayed.
+Its secretary queue stays held across reconnects and restarts. A crashed worker's
+descendants may still run or write in `Yorozu Secretary`; reconnecting does not
+prove that they stopped. This candidate has no user-facing release control for
+that exceptional hold. Stop using the secretary and request an inspected recovery
+before allowing new work. Do not delete the ledger, reset the profile, or edit the
+stop journal to force a retry. Ordinary threads remain available. Failures proved
+to occur before a provider turn starts must report a failed task without this hold.
 
 ## Focused checks
 
