@@ -9,7 +9,8 @@ No main merge, release upload, beta feed, TestFlight, installation or profile mi
 
 - Installed official `codex-cli 0.157.0`: `codex login status` reports ChatGPT login.
   Authentication was checked through the official client; auth files/tokens were not read
-  or copied. A successful inference turn is still required to prove model access.
+  or copied. The sealed `ec1a0e3` bundle subsequently passed real `gpt-6-sol`
+  English/Japanese file tasks, Stop and reconnect; this does not prove Astra runtime access.
 - [Official app-server protocol](https://developers.openai.com/codex/app-server) and
   [authentication](https://developers.openai.com/codex/auth) support the existing official
   client route. The bridge must use `codexNativeRunner`; no new provider SDK or login.
@@ -104,3 +105,25 @@ retain a tested app rollback copy, separately approved connection/history backup
 compatibility against a copied profile with supported migration interfaces, and verify
 the exact candidate. Current alpha deliberately refuses installed-profile paths and is
 not an upgrade candidate. No old recovery/SQLite fault-injection test may be resumed.
+
+## Latest bounded checkpoint
+
+The signed `ec1a0e3e12d7551115d34e624c0b28adf78de85b` bundle passed real
+English/Japanese file bytes and independently computed SHA-256, same-run replay,
+durable Stop with process-exit evidence, and reconnect retaining terminal events.
+Its source CI passed. Archive extraction preserved all 6,390 sealed file hashes
+and passed `codesign --verify --deep --strict`. See `alpha-qa-results.json` for
+exact local artifact paths and hashes; the tested runtime model is `gpt-6-sol`.
+
+This is runtime evidence, not final native acceptance. The native app automation
+call stalled and ended with `Transport closed`. The UI lane has not released its
+files or supplied the Finder PATH, actual-model label, and neutral pending-Stop
+wording follow-up. The candidate remains internal and the PR remains draft.
+Installed application hashes match the earlier baseline; no old-profile
+migration or installed-app replacement was performed.
+
+Keep the archive in the workspace and extract the app into a fresh OS temporary
+directory: File Provider adds Finder metadata to raw app copies in Documents,
+which makes strict signature verification fail without changing sealed file bytes.
+The adjacent `READ-ME.txt` gives an explicit existing-client PATH launch command
+for manual development testing and states the unresolved UI gates.
