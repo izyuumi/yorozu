@@ -18,11 +18,16 @@ export function serveSecretary(options: ServeOptions = {}): Sidecar {
   requireProductionRuntime();
   const dir = options.stateDir ?? stateDir();
   let decorated = false;
+  let unavailable: string | undefined;
   // A local variable also type-checks against the unpatched development ServeOptions.
   const decoratedOptions = { ...options, stateDir: dir,
+    secretaryUnavailable: () => unavailable,
     decorateNativeRunners: (runners: Record<string, NativeAgentRunner>) => {
       if (!runners.codex) throw new Error("The secretary requires the Codex adapter");
-      const codex = secretaryRunner(dir, runners.codex);
+      const codex = secretaryRunner(dir, runners.codex, (reason) => {
+        unavailable = reason;
+        (options.log ?? ((line: string) => process.stdout.write(`${line}\n`)))(`STATE secretary-unavailable ${reason}`);
+      });
       decorated = true;
       return { ...runners, codex };
     },

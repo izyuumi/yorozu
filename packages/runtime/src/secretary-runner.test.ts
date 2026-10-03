@@ -1,6 +1,6 @@
 /** Real Rust/Node/official-adapter boundary, with a local protocol peer instead of live Codex. */
 import { expect, test, vi } from "vitest";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
@@ -40,15 +40,29 @@ lines.on('line', line => {
   if (['thread/start', 'thread/resume'].includes(frame.method)) send({ id: frame.id, result: { thread: { id: session } } });
   if (frame.method === 'turn/start') {
     const records = JSON.parse(fs.readFileSync(process.env.CODEX_FIXTURE_STATE + '/threads.json', 'utf8'));
-    log({ persistedBeforeStart: records.find(t => t.id === 'yorozu-secretary-v1').nativeSessionId === session });
+    log({ persistedBeforeStart: records.find(t => t.id === 'yorozu-secretary-v1')?.nativeSessionId === session });
     mode = frame.params.input[0].text;
     send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } });
     if (mode === 'FAIL') { process.exit(8); return; }
+    if (mode === 'DONE') {
+      send({ method: 'item/completed', params: { threadId: session, item: { id: 'reply', type: 'agentMessage', text: 'Fixture completed' } } });
+      send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: 'completed' } } });
+      return;
+    }
+    if (mode === 'BURST') {
+      for (let i = 0; i < 400; i += 1) send({ method: 'item/agentMessage/delta', params: { threadId: session, itemId: 'reply', delta: 'x' } });
+      send({ method: 'item/completed', params: { threadId: session, item: { id: 'reply', type: 'agentMessage', text: 'x'.repeat(400) } } });
+      send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: 'completed' } } });
+      return;
+    }
     if (mode === 'FAIL_TERMINAL' || mode === 'INTERRUPTED_TERMINAL') {
       send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: mode === 'FAIL_TERMINAL' ? 'failed' : 'interrupted', error: { message: 'Fixture provider failed' } } } });
       return;
     }
-    if (mode === 'STOP') return;
+    if (mode === 'STOP') {
+      send({ method: 'item/agentMessage/delta', params: { threadId: session, itemId: 'reply', delta: 'Partial fixture reply' } });
+      return;
+    }
     if (mode === 'STOP_UNCONFIRMED') {
       process.on('SIGTERM', () => {});
       setInterval(() => {}, 1000);
@@ -145,11 +159,35 @@ test("secretary preserves legacy data, durable replay, session continuity and na
     const running = invoke("stop", "STOP", { signal: stopped.signal });
     await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(starts + 1));
     stopped.abort();
-    expect(await running).toMatchObject({ cessation: "provider-terminal" });
+    const liveStopped = await running;
+    expect(liveStopped).toMatchObject({ cessation: "provider-terminal" });
+    expect(liveStopped.failed).not.toBe(true);
+    runner = secretaryRunner(state, ordinary);
+    expect(await runner.run({ threadId: SECRETARY_THREAD_ID, cwd: home.cwd!, text: "Never replay stopped work", signal: new AbortController().signal }))
+      .toMatchObject({ cessation: "provider-terminal", failed: true, text: expect.stringMatching(/Partial fixture reply[\s\S]*Stopped before completion/) });
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(starts + 1);
     expect(await runner.run({ threadId: "legacy-thread", cwd: temp, text: "ordinary", signal: new AbortController().signal })).toEqual({ text: "ordinary result" });
     expect(ordinary.run).toHaveBeenCalledTimes(1);
     expect(listThreads(state).find((thread) => thread.id === "legacy-thread")).toEqual(legacyRecord);
     expect(readFileSync(join(state, "threads", "legacy-thread.jsonl"))).toEqual(legacyBytes);
+  } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+}, 30000);
+
+test("streamed bursts retain the exact final reply with fewer durable updates", async () => {
+  const { temp, state } = fixture();
+  try {
+    const runner = secretaryRunner(state, { run: async () => ({ text: "unused" }) });
+    appendThreadEvent({ id: "burst", threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now(), kind: "message", data: { role: "user", text: "BURST" } }, state);
+    setNativeTurn(SECRETARY_THREAD_ID, { id: "native:burst:final", userEventId: "burst", state: "running" }, state);
+    const result = await runner.run({ threadId: SECRETARY_THREAD_ID, cwd: threadHome(SECRETARY_THREAD_ID, state).cwd!, text: "BURST", signal: new AbortController().signal,
+      onSession: (id) => setThreadSession(SECRETARY_THREAD_ID, id, state) });
+    expect(result).toMatchObject({ text: "x".repeat(400), completed: true });
+    const runs = join(state, "secretary-v1", "runs");
+    const threads = join(runs, readdirSync(runs)[0], "state", "threads");
+    const events = readFileSync(join(threads, readdirSync(threads)[0]), "utf8").trim().split("\n").map((line) => JSON.parse(line).data);
+    expect(events.filter((event) => event.kind === "update").length).toBeGreaterThan(0);
+    expect(events.filter((event) => event.kind === "update").length).toBeLessThan(400);
+    expect(events.find((event) => event.kind === "completed")?.text).toBe("x".repeat(400));
   } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
 }, 30000);
 
@@ -207,8 +245,12 @@ test("settings subcommands retain the baseline CLI without starting the secretar
 });
 
 
-test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL"])("service preserves %s outcome, replay and queue semantics", async (mode) => {
+test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL", "SYMLINK_TERMINAL"])("service preserves %s outcome, replay and queue semantics", async (mode) => {
   const { temp, state, rows } = fixture();
+  if (mode === "SYMLINK_TERMINAL") {
+    mkdirSync(join(temp, "real-projects"));
+    symlinkSync(join(temp, "real-projects"), join(temp, "projects"));
+  }
   let sidecar: ReturnType<typeof serveSecretary> | undefined;
   let socket: ReturnType<typeof createConnection> | undefined;
   let heldProvider: number | undefined;
@@ -231,7 +273,8 @@ test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL"])
       socket!.write(`${JSON.stringify(event)}\n`);
       return event;
     };
-    const first = send("uncertain-user", "message", { role: "user", text: mode });
+    const prompt = mode === "SYMLINK_TERMINAL" ? "FAIL_TERMINAL" : mode;
+    const first = send("uncertain-user", "message", { role: "user", text: prompt });
     await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1));
     if (mode === "STOP_UNCONFIRMED") {
       heldProvider = rows().find((row) => row.method === "turn/start").pid;
@@ -242,9 +285,9 @@ test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL"])
     }
     await vi.waitFor(() => expect(events.find((event) => event.id === `native:${first.id}:final` && event.data.done)?.data.failed).toBe(true), { timeout: 6000 });
     if (mode.endsWith("_TERMINAL")) {
-      expect(events.find((event) => event.id === `native:${first.id}:final`)?.data.text).toContain(mode === "FAIL_TERMINAL" ? "Fixture provider failed" : "without completing");
+      expect(events.find((event) => event.id === `native:${first.id}:final`)?.data.text).toContain(prompt === "FAIL_TERMINAL" ? "Fixture provider failed" : "without completing");
       socket.write(`${JSON.stringify(first)}\n`);
-      send("later-user", "message", { role: "user", text: mode });
+      send("later-user", "message", { role: "user", text: prompt });
       await vi.waitFor(() => expect(events.find((event) => event.id === "native:later-user:final" && event.data.done)?.data.failed).toBe(true));
       expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(2);
       expect(events.filter((event) => event.kind === "stop_status")).toHaveLength(0);
@@ -272,3 +315,51 @@ test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL"])
     rmSync(temp, { recursive: true, force: true });
   }
 }, 15000);
+
+test.each(["unmarked workspace", "missing host", "bad host", "conflicting thread"])("%s disables only the secretary", async (failure) => {
+  const { temp, state, rows } = fixture();
+  const workspace = join(temp, "projects", "Yorozu Secretary");
+  const ordinaryWorkspace = join(temp, "projects", "Ordinary");
+  mkdirSync(ordinaryWorkspace, { recursive: true });
+  createThread("Existing", state, "ordinary-thread", { agent: "codex", cwd: ordinaryWorkspace });
+  appendThreadEvent({ id: "history", threadId: "ordinary-thread", agentId: "main", ts: 1, kind: "message", data: { role: "user", text: "Keep existing history" } }, state);
+  const history = readFileSync(join(state, "threads", "ordinary-thread.jsonl"), "utf8");
+  if (failure === "unmarked workspace") {
+    mkdirSync(workspace);
+    writeFileSync(join(workspace, "user-file"), "Leave me unchanged");
+  } else if (failure === "conflicting thread") {
+    createThread("Existing non-secretary", state, SECRETARY_THREAD_ID, { agent: "yorozu" });
+  } else {
+    const host = join(temp, "unusable-host");
+    if (failure === "bad host") {
+      writeFileSync(host, `#!${process.execPath}\nprocess.exit(1);\n`);
+      chmodSync(host, 0o700);
+    }
+    vi.stubEnv("YOROZU_SECRETARY_HOST", host);
+  }
+  const log: string[] = [];
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: (line) => log.push(line) });
+    expect(log.some((line) => line.startsWith("STATE secretary-unavailable "))).toBe(true);
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    const events: any[] = [];
+    createInterface({ input: socket }).on("line", (line) => events.push(JSON.parse(line))).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    for (const threadId of [SECRETARY_THREAD_ID, "ordinary-thread"]) socket.write(`${JSON.stringify({ id: `request-${threadId}`, threadId, agentId: "main", ts: Date.now(), kind: "message", data: { role: "user", text: "DONE" } })}\n`);
+    await vi.waitFor(() => expect(events.find((event) => event.threadId === SECRETARY_THREAD_ID && event.kind === "message" && event.data.done)?.data)
+      .toMatchObject({ failed: true, text: expect.stringContaining("Secretary unavailable:") }));
+    await vi.waitFor(() => expect(events.find((event) => event.threadId === "ordinary-thread" && event.kind === "message" && event.data.done)?.data.text).toBe("Fixture completed"));
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
+    expect(rows().find((row) => row.method === "thread/start")?.params.cwd).toBe(ordinaryWorkspace);
+    expect(readFileSync(join(state, "threads", "ordinary-thread.jsonl"), "utf8").startsWith(history)).toBe(true);
+    if (failure === "unmarked workspace") expect(readFileSync(join(workspace, "user-file"), "utf8")).toBe("Leave me unchanged");
+  } finally {
+    socket?.destroy();
+    await sidecar?.close();
+    vi.unstubAllEnvs();
+    rmSync(temp, { recursive: true, force: true });
+  }
+}, 10000);

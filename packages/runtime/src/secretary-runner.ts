@@ -24,13 +24,23 @@ function prepareSecretary(dir: string): { root: string; workspace: string } {
   const existing = listThreads(dir).find((thread) => thread.id === SECRETARY_THREAD_ID);
   if (existing && (existing.agent !== "codex" || existing.cwd !== workspace)) throw new Error("Secretary thread identity conflicts with existing data");
   const prepared = spawnSync(secretaryHost(), ["--secretary-init", root, workspace], { encoding: "utf8", timeout: 10000 });
-  if (prepared.error || prepared.status !== 0) throw new Error("Could not open the dedicated secretary profile and workspace");
+  if (prepared.error) throw new Error(`Secretary host could not start (${(prepared.error as NodeJS.ErrnoException).code ?? "unknown error"})`);
+  if (prepared.status !== 0) throw new Error("The host refused the dedicated secretary profile or workspace");
   createThread("Yorozu", dir, SECRETARY_THREAD_ID, { agent: "codex", cwd: workspace });
   return { root, workspace };
 }
 
-export function secretaryRunner(dir: string, ordinaryCodex: NativeAgentRunner): NativeAgentRunner {
-  const { root, workspace } = prepareSecretary(dir);
+export function secretaryRunner(dir: string, ordinaryCodex: NativeAgentRunner,
+  onUnavailable = (reason: string): void => { process.stdout.write(`STATE secretary-unavailable ${reason}\n`); }): NativeAgentRunner {
+  let prepared: ReturnType<typeof prepareSecretary>;
+  try { prepared = prepareSecretary(dir); }
+  catch (error) {
+    const reason = `Secretary unavailable: ${error instanceof Error ? error.message : String(error)}`.replace(/[\r\n]+/g, " ");
+    onUnavailable(reason);
+    return { ...ordinaryCodex, run: (turn) => turn.threadId === SECRETARY_THREAD_ID
+      ? Promise.resolve({ text: reason, failed: true }) : ordinaryCodex.run(turn) };
+  }
+  const { root, workspace } = prepared;
   return { ...ordinaryCodex, async run(turn) {
     if (turn.threadId !== SECRETARY_THREAD_ID) return ordinaryCodex.run(turn);
     if (turn.cwd !== workspace) throw new Error("Secretary workspace changed");
@@ -107,9 +117,11 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
         else if (data.type === "beforeTool") value = await turn.beforeTool?.(signal) ?? true;
         respond(data.requestId, value);
       } else if (["completed", "stopped", "unconfirmed"].includes(event.kind)) {
-        finish({ text: event.text ?? "", sessionId,
+        const interrupted = event.kind === "stopped" && replay && !turn.signal.aborted && data.failed !== true;
+        const text = [event.text, ...(interrupted ? ["Stopped before completion (Yorozu closed or restarted). This task will not run again automatically."] : [])].filter(Boolean).join("\n");
+        finish({ text, sessionId,
           ...(event.kind === "unconfirmed" ? { unconfirmed: true as const } : {}),
-          ...(event.kind === "stopped" && data.failed === true ? { failed: true } : {}),
+          ...(event.kind === "stopped" && (data.failed === true || interrupted) ? { failed: true } : {}),
           ...(event.kind === "completed" ? { completed: true, cessation: "provider-terminal" as const } : {}),
           ...(event.kind === "stopped" && ["provider-terminal", "process-exited"].includes(data.evidence) ? { cessation: data.evidence } : {}) });
       }
