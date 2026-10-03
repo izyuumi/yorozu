@@ -88,7 +88,9 @@ if [ "$INTERNAL_ONLY" = 1 ]; then
     -authenticationKeyID "$ASC_KEY_ID" \
     -authenticationKeyIssuerID "$ASC_ISSUER_ID"
   set -- "$DIST"/ipa/*.ipa
-  [ "$#" = 1 ] && [ -f "$1" ] || { echo 'Expected one retained internal IPA' >&2; exit 1; }
+  if [ "$#" != 1 ] || [ ! -f "$1" ]; then
+    echo 'Expected one retained internal IPA' >&2; exit 1
+  fi
 fi
 
 env -u SDKROOT xcodebuild -exportArchive \

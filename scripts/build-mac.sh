@@ -44,9 +44,9 @@ STAGE="$DIST/stage"
 pnpm --filter @yorozu/shared --filter @yorozu/runtime build
 if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
   # Internal builds are staged over the verified production runtime first.
-  [ -f internal-source.json ] && [ -f packages/runtime/dist/secretary-serve.js ] || {
-    echo "secretary builds require scripts/build-internal-alpha.sh" >&2; exit 1;
-  }
+  if [ ! -f internal-source.json ] || [ ! -f packages/runtime/dist/secretary-serve.js ]; then
+    echo "secretary builds require scripts/build-internal-alpha.sh" >&2; exit 1
+  fi
   cargo build --locked --release --manifest-path packages/host-core/Cargo.toml --bin yorozu-alpha-host
 else
   sh scripts/build-host-core.sh --release
