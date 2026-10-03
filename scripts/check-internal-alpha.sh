@@ -7,7 +7,9 @@ python3 scripts/stage-internal-alpha.py "$SOURCE"
 cd "$SOURCE"
 pnpm install --frozen-lockfile
 pnpm --filter @yorozu/shared --filter @yorozu/runtime build
-pnpm --filter @yorozu/runtime exec vitest run secretary- --maxWorkers=2
 cargo test --locked --manifest-path packages/host-core/Cargo.toml --test alpha
+cargo test --locked --manifest-path packages/host-core/Cargo.toml --test secretary
+export YOROZU_SECRETARY_HOST="$SOURCE/packages/host-core/target/debug/yorozu-alpha-host"
+pnpm --filter @yorozu/runtime exec vitest run secretary- --maxWorkers=2
 env -u SDKROOT swift build --package-path apps/mac --product YorozuMac
 echo "Internal secretary checks passed for $(python3 -c 'import json; print(json.load(open("internal-source.json"))["sourceSha"])')"
