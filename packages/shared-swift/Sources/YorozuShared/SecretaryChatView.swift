@@ -131,8 +131,8 @@ public struct SecretaryChatView: View {
                     Button(locale.secretaryText("Reconnect", "再接続"), systemImage: "arrow.clockwise") { model.reconnect() }
                     Picker(locale.secretaryText("Language", "言語"), selection: $language) {
                         Text(locale.secretaryText("System", "システムに合わせる")).tag(SecretaryLanguage.system)
-                        Text("English").tag(SecretaryLanguage.english)
-                        Text("日本語").tag(SecretaryLanguage.japanese)
+                        Text(verbatim: "English").tag(SecretaryLanguage.english)
+                        Text(verbatim: "日本語").tag(SecretaryLanguage.japanese)
                     }
                 }
                 .accessibilityIdentifier("secretary-more")
