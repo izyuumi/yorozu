@@ -24,7 +24,7 @@ export interface CodexConnection {
   request(method: string, params: ObjectValue): Promise<ObjectValue>;
   notify(method: string, params: ObjectValue): void;
   close(): void;
-  /** Resolves only for this connection's child exit event. */
+  /** Resolves when this child exits, or spawn fails before any child exists. */
   exited?: Promise<void>;
 }
 export type ConnectCodex = (handlers: CodexHandlers) => CodexConnection;
@@ -35,7 +35,10 @@ export type ConnectCodex = (handlers: CodexHandlers) => CodexConnection;
  */
 export const connectCodex = (handlers: CodexHandlers, trackProcess?: (pid: number) => () => void): CodexConnection => {
   const child = spawn("codex", ["app-server"], { stdio: ["pipe", "pipe", "ignore"], env: childEnv() });
-  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  const exited = new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+    child.once("error", () => { if (child.pid === undefined) resolve(); });
+  });
   let untrack: (() => void) | undefined;
   try { if (child.pid) untrack = trackProcess?.(child.pid); }
   catch (error) { child.once("error", () => {}); child.kill("SIGTERM"); throw error; }

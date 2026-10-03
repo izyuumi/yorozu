@@ -53,20 +53,42 @@ lines.on("close", () => { abort.abort(); terminate?.(); });
 
 async function run(cwd: string, text: string, metadata: Pick<NativeTurn, "model" | "effort" | "sessionId" | "attachments" | "skill">): Promise<void> {
   let sessionAck: Promise<unknown> = Promise.resolve(undefined);
+  let client: ReturnType<typeof connectCodex> | undefined;
+  let connectionAttempted = false;
+  let forwarded = false;
+  let sessionId = metadata?.sessionId;
+  const finishBeforeSubmission = async (): Promise<boolean> => {
+    if (forwarded) return false;
+    client?.close();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let ceased = !connectionAttempted;
+    try {
+      if (client?.exited) ceased = await Promise.race([client.exited.then(() => true),
+        new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), 2000); })]);
+    } finally { clearTimeout(timer); }
+    if (!ceased) return false;
+    emit("stopped", "The task did not start; no Codex turn was submitted.",
+      { evidence: "process-exited", failed: !abort.signal.aborted, sessionId });
+    return true;
+  };
   try {
     // The Rust owner validated metadata and admitted this exact immutable payload.
     const runner = codexNativeRunner((handlers) => {
-      const client = connectCodex(handlers);
-      return { ...client, request: async (method, params) => {
-        if (method === "turn/start" && await sessionAck !== true) throw new Error("session persistence unconfirmed");
-        return client.request(method, params);
+      connectionAttempted = true;
+      const connection = client = connectCodex(handlers);
+      return { ...connection, request: async (method, params) => {
+        if (method === "turn/start") {
+          if (await sessionAck !== true || abort.signal.aborted) throw new Error("session persistence unconfirmed");
+          forwarded = true;
+        }
+        return connection.request(method, params);
       } };
     });
     emit("running");
     const result = await runner.run({ ...metadata, threadId: "yorozu-secretary-v1", cwd: realpathSync(cwd), text,
       // This bridge never enables bypass; approvals retain the host's existing policy.
       bypass: false, signal: abort.signal,
-      onSession: (sessionId) => { sessionAck = request("session", { sessionId }); },
+      onSession: (id) => { sessionId = id; sessionAck = request("session", { sessionId }); },
       onTerminate: (close) => { terminate = close; },
       onUpdate: (text) => {
         const now = performance.now();
@@ -85,11 +107,13 @@ async function run(cwd: string, text: string, metadata: Pick<NativeTurn, "model"
       },
       beforeTool: async (signal) => await request("beforeTool", {}, signal) === true,
     });
+    if (await finishBeforeSubmission()) return;
     if (result.completed && result.cessation === "provider-terminal") emit("completed", clipped(result.text), { evidence: result.cessation, sessionId: result.sessionId });
     else if (result.cessation) emit("stopped", clipped(result.text || "Codex ended the turn without completing it."),
       { evidence: result.cessation, sessionId: result.sessionId, failed: result.failed === true || !abort.signal.aborted });
     else emit("unconfirmed", "Codex stopped without confirmed completion. The accepted task will not run again automatically.");
   } catch {
+    if (await finishBeforeSubmission()) return;
     emit("unconfirmed", "The secretary connection ended without confirmed completion. The accepted task will not run again automatically.");
   }
 }

@@ -2,7 +2,7 @@
 import { expect, test, vi } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -26,7 +26,14 @@ let mode = '';
 lines.on('line', line => {
   const frame = JSON.parse(line);
   if (frame.method) log({ method: frame.method, params: frame.params, pid: process.pid });
-  if (frame.method === 'initialize') send({ id: frame.id, result: {} });
+  if (frame.method === 'initialize') {
+    if (process.env.CODEX_FIXTURE_PRESTART === 'initialize') send({ id: frame.id, error: { message: 'Fixture initialization failed' } });
+    else if (process.env.CODEX_FIXTURE_PRESTART?.startsWith('stop-')) {
+      setInterval(() => {}, 1000);
+      process.on('SIGTERM', () => setTimeout(() => process.exit(0), Number(process.env.CODEX_FIXTURE_PRESTART.slice(5))));
+      return;
+    } else send({ id: frame.id, result: {} });
+  }
   if (frame.method === 'skills/list') send({ id: frame.id, result: { data: [] } });
   if (frame.method === 'model/list') {
     const reply = () => send({ id: frame.id, result: { data: [{ model: 'fixture-model', displayName: 'Fixture', isDefault: true }] } });
@@ -37,7 +44,8 @@ lines.on('line', line => {
       }, 20);
     }
   }
-  if (['thread/start', 'thread/resume'].includes(frame.method)) send({ id: frame.id, result: { thread: { id: session } } });
+  if (['thread/start', 'thread/resume'].includes(frame.method)) send(process.env.CODEX_FIXTURE_PRESTART === 'session'
+    ? { id: frame.id, error: { message: 'Fixture session rejected' } } : { id: frame.id, result: { thread: { id: session } } });
   if (frame.method === 'turn/start') {
     const records = JSON.parse(fs.readFileSync(process.env.CODEX_FIXTURE_STATE + '/threads.json', 'utf8'));
     log({ persistedBeforeStart: records.find(t => t.id === 'yorozu-secretary-v1')?.nativeSessionId === session });
@@ -361,5 +369,106 @@ test.each(["unmarked workspace", "missing host", "bad host", "conflicting thread
     await sidecar?.close();
     vi.unstubAllEnvs();
     rmSync(temp, { recursive: true, force: true });
+  }
+}, 10000);
+
+test.each(["initialize", "session", "missing-codex"])("%s failure before submission leaves later secretary work usable", async (fault) => {
+  const { temp, state, rows } = fixture();
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  const fixturePath = process.env.PATH!;
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    const events: any[] = [];
+    createInterface({ input: socket }).on("line", (line) => events.push(JSON.parse(line))).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    await vi.waitFor(() => expect(events.some((event) => event.kind === "model_list" && event.data.agents.some((agent: any) => agent.id === "codex"))).toBe(true));
+    if (fault === "missing-codex") { mkdirSync(join(temp, "empty-bin")); vi.stubEnv("PATH", join(temp, "empty-bin")); }
+    else vi.stubEnv("CODEX_FIXTURE_PRESTART", fault);
+    const send = (id: string) => socket!.write(`${JSON.stringify({ id, threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now(), kind: "message", data: { role: "user", text: "DONE" } })}\n`);
+    send("before-start");
+    await vi.waitFor(() => expect(events.find((event) => event.id === "native:before-start:final")?.data)
+      .toMatchObject({ failed: true, text: expect.stringContaining("no Codex turn was submitted") }), { timeout: 5000 });
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(0);
+    if (fault === "missing-codex") vi.stubEnv("PATH", fixturePath);
+    else vi.stubEnv("CODEX_FIXTURE_PRESTART", "");
+    send("before-start"); // An accepted failure remains final; it is never replayed.
+    send("next-start");
+    await vi.waitFor(() => expect(events.find((event) => event.id === "native:next-start:final")?.data.text).toBe("Fixture completed"));
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
+    expect(events.some((event) => event.kind === "stop_status" && event.data.status === "unconfirmed")).toBe(false);
+  } finally {
+    socket?.destroy();
+    await sidecar?.close();
+    vi.unstubAllEnvs();
+    rmSync(temp, { recursive: true, force: true });
+  }
+}, 10000);
+
+test.each(["stop-300", "stop-3000", "session-ack"])("%s retains honest cessation before forwarding turn/start", async (fault) => {
+  const { temp, state, rows } = fixture();
+  try {
+    const runner = secretaryRunner(state, { run: async () => ({ text: "unused" }) });
+    const abort = new AbortController();
+    if (fault.startsWith("stop-")) vi.stubEnv("CODEX_FIXTURE_PRESTART", fault);
+    appendThreadEvent({ id: "early-stop", threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now(), kind: "message", data: { role: "user", text: "DONE" } }, state);
+    setNativeTurn(SECRETARY_THREAD_ID, { id: "native:early-stop:final", userEventId: "early-stop", state: "running" }, state);
+    const running = runner.run({ threadId: SECRETARY_THREAD_ID, cwd: threadHome(SECRETARY_THREAD_ID, state).cwd!, text: "DONE", signal: abort.signal,
+      onSession: () => { throw new Error("Fixture session persistence failed"); } });
+    if (fault.startsWith("stop-")) {
+      await vi.waitFor(() => expect(rows().some((row) => row.method === "initialize")).toBe(true));
+      abort.abort();
+    }
+    const result = await running;
+    if (fault === "stop-3000") expect(result).toMatchObject({ unconfirmed: true });
+    else {
+      expect(result).toMatchObject({ cessation: "process-exited", text: expect.stringContaining("no Codex turn was submitted") });
+      expect(result.failed === true).toBe(fault === "session-ack");
+    }
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(0);
+  } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+}, 15000);
+
+test.each(["missing-host", "raced-run", "locked-host", "before-submit-stop"])("%s requires host closure and race-safe admission evidence", async (fault) => {
+  const { temp, state } = fixture();
+  const host = process.env.YOROZU_SECRETARY_HOST!;
+  let holder: ReturnType<typeof spawn> | undefined;
+  try {
+    const runner = secretaryRunner(state, { run: async () => ({ text: "unused" }) });
+    const workspace = threadHome(SECRETARY_THREAD_ID, state).cwd!;
+    const root = join(state, "secretary-v1");
+    if (fault === "missing-host") vi.stubEnv("YOROZU_SECRETARY_HOST", join(temp, "missing-host"));
+    if (fault === "raced-run") {
+      const racer = join(temp, "racing-host");
+      writeFileSync(racer, `#!${process.execPath}\nrequire('node:fs').mkdirSync(require('node:path').join(process.argv[3], 'runs', process.argv[4]), {recursive:true});\n`);
+      chmodSync(racer, 0o700);
+      vi.stubEnv("YOROZU_SECRETARY_HOST", racer);
+    }
+    if (fault === "locked-host") {
+      holder = spawn(host, ["--secretary", root, "held-fixture", workspace, process.execPath, fileURLToPath(new URL("../dist/secretary-worker.js", import.meta.url))], { stdio: ["pipe", "pipe", "ignore"] });
+      const opened = new Promise<void>((resolve) => holder!.stdout!.once("data", () => resolve()));
+      holder.stdin!.write(`${JSON.stringify({ version: 1, id: "1", op: "snapshot" })}\n`);
+      await opened;
+    }
+    appendThreadEvent({ id: "host-start", threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now(), kind: "message", data: { role: "user", text: "DONE" } }, state);
+    setNativeTurn(SECRETARY_THREAD_ID, { id: "native:host-start:final", userEventId: "host-start", state: "running" }, state);
+    const abort = new AbortController();
+    if (fault === "before-submit-stop") abort.abort();
+    const result = await runner.run({ threadId: SECRETARY_THREAD_ID, cwd: workspace, text: "DONE", signal: abort.signal });
+    if (fault === "raced-run") {
+      expect(result).toMatchObject({ unconfirmed: true });
+      vi.stubEnv("YOROZU_SECRETARY_HOST", join(temp, "missing-host"));
+      expect(await runner.run({ threadId: SECRETARY_THREAD_ID, cwd: workspace, text: "DONE", signal: abort.signal }))
+        .toMatchObject({ unconfirmed: true }); // The same run now predates this invocation.
+    }
+    else {
+      expect(result).toMatchObject({ cessation: "process-exited", text: expect.stringContaining("no Codex turn was submitted") });
+      expect(result.failed === true).toBe(fault !== "before-submit-stop");
+    }
+  } finally {
+    if (holder) { const closed = new Promise<void>((resolve) => holder!.once("close", () => resolve())); holder.stdin!.end(); await closed; }
+    vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
   }
 }, 10000);

@@ -1,7 +1,7 @@
 /** Additive production adapter. Only the fixed secretary thread uses the Rust ledger. */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
@@ -59,6 +59,13 @@ export function secretaryRunner(dir: string, ordinaryCodex: NativeAgentRunner,
 type LedgerEvent = { seq: number; runId: string; kind: string; text?: string; data?: Record<string, any> };
 function runSecretary(root: string, workspace: string, runId: string, turn: NativeTurn): Promise<NativeTurnResult> {
   return new Promise((resolve) => {
+    const runAbsent = (): boolean => {
+      try { lstatSync(join(root, "runs", runId)); return false; }
+      catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
+    };
+    const absentBefore = runAbsent();
+    let emptySnapshot = false;
+    let submitted = false;
     const host = spawn(secretaryHost(), ["--secretary", root, runId, workspace, process.execPath, workerScript()], { stdio: ["pipe", "pipe", "ignore"] });
     const lines = createInterface({ input: host.stdout });
     let settled = false;
@@ -70,6 +77,13 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
     let nextId = 0;
     const callbacks = new AbortController();
     const signal = AbortSignal.any([turn.signal, callbacks.signal]);
+    const deliver = (result: NativeTurnResult): void => {
+      // Only after host/stdio closure: a competing owner may have created this run meanwhile.
+      if (!submitted && (emptySnapshot || absentBefore && runAbsent())) {
+        resolve({ text: "The task did not start; no Codex turn was submitted.", sessionId,
+          failed: !turn.signal.aborted, cessation: "process-exited" });
+      } else resolve(result);
+    };
     const write = (op: string, data: Record<string, unknown> = {}): void => {
       if (!host.stdin.destroyed) host.stdin.write(`${JSON.stringify({ version: 1, id: String(++nextId), op, runId, ...data })}\n`);
     };
@@ -77,24 +91,25 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
       if (settled) return;
       settled = true; callbacks.abort(); turn.signal.removeEventListener("abort", stop); clearTimeout(stopping);
       resultToDeliver = result;
-      host.stdin.end(); lines.close();
+      host.stdin.end(); lines.close(); host.stdout.resume();
       // Release the shared workspace lock before the baseline queue starts another turn.
-      if (exited) resolve(result);
+      if (exited) deliver(result);
       else stopping = setTimeout(() => { host.kill(); }, 15000);
     };
-    const uncertain = (): void => finish({ text: "The secretary outcome is unconfirmed. This accepted task will not run again automatically.", sessionId, unconfirmed: true });
+    const uncertain = (): void => finish({ text: "The secretary outcome is unconfirmed. This request will not run again automatically.", sessionId, unconfirmed: true });
     const stop = (): void => {
       write("stop");
       stopping ??= setTimeout(() => { host.kill(); uncertain(); }, 15000);
     };
     turn.signal.addEventListener("abort", stop, { once: true });
     turn.onTerminate?.(stop);
-    host.once("error", () => { exited = true; uncertain(); });
+    host.once("error", () => uncertain());
     host.stdin.on("error", () => uncertain());
-    host.once("exit", () => {
+    // close follows exit/spawn failure and drains all buffered terminal frames first.
+    host.once("close", () => {
       exited = true; clearTimeout(stopping);
       if (!settled) uncertain();
-      else if (resultToDeliver) resolve(resultToDeliver);
+      else if (resultToDeliver) deliver(resultToDeliver);
     });
     const respond = (requestId: unknown, value: unknown): void => {
       if (!settled && typeof requestId === "string") write("respond", { requestId, value: value ?? null });
@@ -121,7 +136,7 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
         const text = [event.text, ...(interrupted ? ["Stopped before completion (Yorozu closed or restarted). This task will not run again automatically."] : [])].filter(Boolean).join("\n");
         finish({ text, sessionId,
           ...(event.kind === "unconfirmed" ? { unconfirmed: true as const } : {}),
-          ...(event.kind === "stopped" && (data.failed === true || interrupted) ? { failed: true } : {}),
+          ...(event.kind === "stopped" && (data.failed === true || !turn.signal.aborted) ? { failed: true } : {}),
           ...(event.kind === "completed" ? { completed: true, cessation: "provider-terminal" as const } : {}),
           ...(event.kind === "stopped" && ["provider-terminal", "process-exited"].includes(data.evidence) ? { cessation: data.evidence } : {}) });
       }
@@ -131,7 +146,7 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
         if (Buffer.byteLength(line) > 1024 * 1024) throw new Error("Invalid secretary frame");
         const packet = JSON.parse(line);
         if (packet.version !== 1) throw new Error("Invalid secretary protocol");
-        if (packet.event) void consume(packet.event).catch(() => { stop(); uncertain(); });
+        if (packet.event) void consume(packet.event).catch(() => { stop(); });
         else if (packet.id === "1") {
           const events: LedgerEvent[] = packet.result?.events;
           if (!Array.isArray(events)) throw new Error("Invalid secretary snapshot");
@@ -139,9 +154,11 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
             for (const event of events) await consume(event, true);
             if (settled) return;
             if (events.length) { uncertain(); return; }
+            emptySnapshot = true;
             if (turn.signal.aborted) { finish({ text: "", sessionId }); return; }
             const metadata = Object.fromEntries(["sessionId", "model", "effort", "attachments", "skill"]
               .flatMap((key) => turn[key as keyof NativeTurn] === undefined ? [] : [[key, turn[key as keyof NativeTurn]]]));
+            submitted = true;
             write("submit", { text: turn.text, turn: metadata });
           })().catch(() => { stop(); uncertain(); });
         } else if (packet.result?.error) {
