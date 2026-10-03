@@ -117,6 +117,14 @@ fn invalid_payloads_and_conflicting_admissions_never_start_a_run() {
     assert!(owner.snapshot()["events"].as_array().unwrap().is_empty());
     let oversized = json!({"runId":"one-run","text":"あ".repeat(22000),"turn":{}});
     assert_eq!(owner.submit(&oversized).unwrap().0["error"], "invalid-text");
+    // Metadata shares the same durable event budget as text. Refuse before acceptance,
+    // so a large attachment list cannot turn a never-started planner into an uncertain hold.
+    let large_files = vec![json!({"name":"image.png","mime":"image/png","path":format!("/{}", "x".repeat(4000))}); 4];
+    let combined = json!({"runId":"one-run","text":"x".repeat(55000),"turn":{"secretaryCoordinator":true,"attachments":large_files}});
+    let (receipt, event) = owner.submit(&combined).unwrap();
+    assert_eq!(receipt["error"], "invalid-turn");
+    assert!(event.is_none());
+    assert!(owner.snapshot()["events"].as_array().unwrap().is_empty());
     // Long Japanese context and a model-supported effort must survive admission and replay.
     let request = json!({"runId":"one-run","text":"日本語".repeat(6000),"turn":{"sessionId":"resume-me","effort":"persistent"}});
     assert_eq!(owner.submit(&request).unwrap().0["accepted"], true);

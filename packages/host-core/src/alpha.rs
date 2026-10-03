@@ -341,6 +341,11 @@ impl Conversation {
         if encoded > EVENT_BYTES - 1024 {
             return Ok((json!({"error":"invalid-text"}), None));
         }
+        // Text and attachment metadata share one accepted record. Leave room for the
+        // bounded record envelope and refuse before persistence or worker admission.
+        if serde_json::to_vec(&admission).map_err(io::Error::other)?.len() > EVENT_BYTES - 1024 {
+            return Ok((json!({"error":"invalid-turn"}), None));
+        }
         // Reserve an accepted event, full terminal/partial text, bounded activity and controls.
         // Refuse before admission rather than lose a retained message or exceed the UI pipe.
         let retained = serde_json::to_vec(&self.snapshot())
