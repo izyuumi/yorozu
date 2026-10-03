@@ -203,6 +203,7 @@ jobs:
     runs-on: macos-latest
     env:
       YOROZU_SECRETARY_ENABLED: ${{ needs.changes.outputs.internal == 'true' && '1' || '0' }}
+      TUIST_SECRETARY_ENABLED: ${{ needs.changes.outputs.internal == 'true' && 'true' || 'false' }}
     # PR CI compiles the app; the canonical Release requires the separate iOS UI-test
     # workflow before either candidate is built or uploaded.
     timeout-minutes: 20
@@ -232,6 +233,9 @@ jobs:
             -derivedDataPath .build/ci-ios \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO SWIFT_EMIT_LOC_STRINGS=YES
+      - name: Verify internal interface in the built app
+        if: needs.changes.outputs.internal == 'true'
+        run: test "$(/usr/libexec/PlistBuddy -c 'Print :YorozuSecretaryEnabled' .build/ci-ios/Build/Products/Debug-iphonesimulator/YorozuIOS.app/Info.plist)" = true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 26

@@ -14,7 +14,7 @@ SCRIPTS = Path(__file__).resolve().parent
 
 @unittest.skipUnless(sys.platform == "darwin", "iOS build script uses Apple's PlistBuddy")
 class IOSExportTests(unittest.TestCase):
-    def run_build(self, internal, version="0.6.0"):
+    def run_build(self, internal, version="0.6.0", archive_enabled=True):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "scripts").mkdir()
@@ -26,6 +26,13 @@ class IOSExportTests(unittest.TestCase):
 import json, os, pathlib, plistlib, sys
 args = sys.argv[1:]
 row = {"args": args, "secretary": os.environ.get("YOROZU_SECRETARY_ENABLED"), "sdkroot": os.environ.get("SDKROOT")}
+if "archive" in args:
+    archive = pathlib.Path(args[args.index("-archivePath") + 1])
+    app = archive / "Products/Applications/YorozuIOS.app"
+    app.mkdir(parents=True)
+    (archive / "Info.plist").write_bytes(plistlib.dumps({"ApplicationProperties": {"ApplicationPath": "Applications/YorozuIOS.app"}}))
+    enabled = os.environ.get("TUIST_SECRETARY_ENABLED") == "true" and os.environ["ARCHIVE_ENABLED"] == "true"
+    (app / "Info.plist").write_bytes(plistlib.dumps({"YorozuSecretaryEnabled": enabled}))
 if "-exportArchive" in args:
     row["options"] = plistlib.loads(pathlib.Path(args[args.index("-exportOptionsPlist") + 1]).read_bytes())
     if row["options"]["destination"] == "export":
@@ -38,7 +45,8 @@ with open(os.environ["TRACE"], "a") as trace: trace.write(json.dumps(row) + "\\n
             trace = root / "trace.jsonl"
             env = {**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}", "VERSION": version, "BUILD": "7",
                    "INTERNAL_ONLY": internal, "ASC_KEY_ID": "test", "ASC_ISSUER_ID": "test", "ASC_KEY_PATH": str(root / "inert-key"),
-                   "DIST": "output with spaces", "TRACE": str(trace), "SDKROOT": "wrong-sdk"}
+                   "DIST": "output with spaces", "TRACE": str(trace), "SDKROOT": "wrong-sdk",
+                   "ARCHIVE_ENABLED": "true" if archive_enabled else "false"}
             for key in ("ASC_KEY_P8", "YOROZU_SECRETARY_ENABLED", "VERSION_LABEL", "VERSION_BUILD"):
                 env.pop(key, None)
             result = subprocess.run(["sh", str(root / "scripts/build-ios.sh")], env=env, capture_output=True, text=True)
@@ -72,6 +80,11 @@ with open(os.environ["TRACE"], "a") as trace: trace.write(json.dumps(row) + "\\n
             result, rows = self.run_build(mode, version)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(rows, [])
+
+    def test_internal_archive_without_secretary_cannot_export_or_upload(self):
+        result, rows = self.run_build("1", archive_enabled=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(rows), 1)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,9 @@ case "$INTERNAL_ONLY" in 0|1) ;; *) echo 'INTERNAL_ONLY must be 0 or 1' >&2; exi
 if [ "$INTERNAL_ONLY" = 1 ]; then
   [ "$VERSION" = 0.6.0 ] || { echo 'Internal builds require VERSION=0.6.0' >&2; exit 1; }
   export YOROZU_SECRETARY_ENABLED=1
+  export TUIST_SECRETARY_ENABLED=true
+else
+  export TUIST_SECRETARY_ENABLED=false
 fi
 TEAM_ID=${TEAM_ID:-AN5KM8QGEF}
 ASC_KEY_ID=${ASC_KEY_ID:?ASC_KEY_ID is required}
@@ -77,6 +80,10 @@ env -u SDKROOT xcodebuild archive \
   YOROZU_VERSION_LABEL="$VERSION_LABEL"
 
 if [ "$INTERNAL_ONLY" = 1 ]; then
+  APP_PATH=$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:ApplicationPath' "$ARCHIVE/Info.plist")
+  [ "$(/usr/libexec/PlistBuddy -c 'Print :YorozuSecretaryEnabled' "$ARCHIVE/Products/$APP_PATH/Info.plist")" = true ] || {
+    echo 'Internal archive is missing the secretary interface; refusing upload' >&2; exit 1;
+  }
   # Retain a signed IPA from the same archive. Xcode's upload export does not
   # promise to retain an IPA; the upload below still uses the internal-only flag.
   cp "$OPTIONS" "$DIST/ipa-export-options.plist"
