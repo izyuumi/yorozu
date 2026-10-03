@@ -38,8 +38,7 @@ restarting this channel; an in-flight request retains the configuration it start
 
 `openclaw channels status` then lists **Yorozu** as connected while Yorozu is running.
 
-To work on it from a checkout, link `packages/openclaw-channel` instead and run
-`pnpm --filter @yorozu/openclaw-channel test`.
+To work on it from a checkout, link `packages/openclaw-channel` instead; see [Development](#development).
 
 ## Config
 
@@ -128,3 +127,21 @@ Text only for now. The Yorozu side lives in
 ```sh
 npm test
 ```
+
+## Development
+
+Plain JS ESM, no dependencies. Tests: `pnpm --filter @yorozu/openclaw-channel test`.
+They fake the SDK at the boundary; copy the pattern in `test/runs.test.js`.
+
+- **SDK source.** The installed OpenClaw is at `/opt/homebrew/lib/node_modules/openclaw`. Read
+  its `dist/plugin-sdk/*.d.ts` and `docs/` for real APIs; do not guess. The plugin imports only
+  these `openclaw/plugin-sdk/*` entry points: `channel-core`, `channel-inbound`,
+  `channel-reply-pipeline`, `error-runtime`, `media-store`, `model-session-runtime`,
+  `models-provider-runtime`, `runtime-config-snapshot`, `session-store-runtime`.
+- **Load check.** To prove the plugin loads against the real SDK, copy it to a scratch dir
+  under `/tmp`, symlink `node_modules/openclaw` there to the installed package, and import
+  `index.js`. Never commit `node_modules`.
+- **Capabilities.** Announced capabilities live in `CAPABILITIES` in `channel.js`; announce
+  only what works. Host side: `packages/runtime/src/channel.ts` and `serve.ts`.
+- **Protocol.** Update the [Protocol](#protocol) table and `docs/architecture.md` (channel
+  socket section) for every frame or capability you add.
