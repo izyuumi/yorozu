@@ -144,19 +144,21 @@ pub struct Record {
     pub redacted: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Receipt {
     pub record: Record,
     pub replayed: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Context {
     pub project_id: Option<String>,
     pub task_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Budget {
     pub max_records: usize,
     /// Bytes in the compact JSON records array, including brackets and separators.
@@ -370,6 +372,23 @@ impl Preferences {
             tx.commit()?;
         }
         Ok(Self { db, _owner: lock })
+    }
+
+    /// Read a receipt for idempotent authenticated-admission replay, respecting redaction.
+    pub fn receipt(&self, event_id: &str) -> Result<Option<Record>, Error> {
+        if !valid_id(event_id) {
+            return Err(Error::InvalidInput);
+        }
+        let row = self
+            .db
+            .query_row(
+                "SELECT record FROM events WHERE event_id=?",
+                [event_id],
+                record,
+            )
+            .optional()?;
+        row.map(|text| serde_json::from_str(&text).map_err(|_| Error::InvalidInput))
+            .transpose()
     }
 
     pub fn latest(&self, scope: &Scope, key: Key) -> Result<Option<Record>, Error> {

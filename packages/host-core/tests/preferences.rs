@@ -1,14 +1,11 @@
-//! Synthetic admission/storage contracts. The module is intentionally not wired into the host.
-#[path = "../src/preferences.rs"]
-mod preferences;
-
-use preferences::*;
+//! Synthetic admission/storage contracts for the public application preference owner.
 use std::{
     fs,
     path::PathBuf,
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
+use yorozu_host_core::preferences::*;
 
 static ID: AtomicU64 = AtomicU64::new(0);
 struct Temp(PathBuf);

@@ -6,6 +6,7 @@ import type { MessageAttachment, YorozuEvent } from "@yorozu/shared";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import { listThreads, readThreadEvents } from "./threads.js";
 import { prepareSecretary, runSecretary, secretaryRunner, SECRETARY_THREAD_ID } from "./secretary-runner.js";
+import { secretaryPreferences, type PreferenceOwner, type PreferenceSource } from "./secretary-preferences.js";
 import type { SteerReceipt } from "./secretary-steering.js";
 
 export const SECRETARY_PLAN_SCHEMA = {
@@ -28,6 +29,8 @@ Use an empty target for start; empty title and specialty for steer or stop; empt
 type Action = { kind: "start" | "steer" | "stop"; target: string; title: string; specialty: string; instruction: string };
 export type SecretaryTask = { version: 1; id: string; requestId: string; parentEventId: string; createdAt: number; title: string; specialty: string; instruction: string };
 export interface SecretaryCoordinatorHost {
+  preferenceOwner: PreferenceOwner;
+  preferenceSource(eventId: string): Promise<PreferenceSource | undefined>;
   dispatch(task: SecretaryTask, attachments: MessageAttachment[]): void;
   steer(task: SecretaryTask, id: string, text: string, attachments: NonNullable<NativeTurn["attachments"]>): Promise<SteerReceipt>;
   stop(task: SecretaryTask, id: string): void;
@@ -60,6 +63,7 @@ export function secretaryCoordinator(dir: string, ordinary: NativeAgentRunner, u
     } catch { damaged.add(name); }
   }
   let host: SecretaryCoordinatorHost;
+  let preferences: ReturnType<typeof secretaryPreferences>;
   const durable = secretaryRunner(dir, ordinary, unavailable);
   const final = (task: SecretaryTask) => readThreadEvents(task.id, dir).findLast((event) =>
     event.id === `native:${task.requestId}:final` && !event.parentAgentId && event.kind === "message" && event.data.role === "agent" && event.data.done === true);
@@ -110,18 +114,28 @@ export function secretaryCoordinator(dir: string, ordinary: NativeAgentRunner, u
       const marker = listThreads(dir).find((thread) => thread.id === task.id)?.nativeTurn;
       if (turn.cwd !== prepared.workspace || !marker?.userEventId || !readThreadEvents(task.id, dir).some((event) => event.id === marker.userEventId && event.kind === "message" && event.data.role === "user")) throw new Error("Specialist admission is missing");
       if (marker.userEventId !== task.requestId) return { text: "This specialist accepts only its original task and live corrections. Send a new request to Yorozu.", failed: true, cessation: "process-exited" };
-      return runSecretary(prepared.root, prepared.workspace, digest(`${task.id}\0${marker.userEventId}`), { ...turn, bypass: false });
+      return runSecretary(prepared.root, prepared.workspace, digest(`${task.id}\0${marker.userEventId}`), { ...turn, text: preferences.context(task.id) + turn.text, bypass: false });
     }
     if (turn.threadId !== SECRETARY_THREAD_ID) return durable.run(turn);
     const parentEventId = listThreads(dir).find((thread) => thread.id === SECRETARY_THREAD_ID)?.nativeTurn?.userEventId;
     const original = readThreadEvents(SECRETARY_THREAD_ID, dir).find((event) => event.id === parentEventId && event.kind === "message" && event.data.role === "user");
     if (!parentEventId || original?.kind !== "message") throw new Error("Secretary admission is missing");
+    const source = await host.preferenceSource(parentEventId);
+    if (source) {
+      try {
+        const receipt = preferences.accept(source, [...tasks.values()]);
+        if (receipt) return { text: receipt, completed: true, cessation: "process-exited" };
+      } catch (error) {
+        return { text: error instanceof Error ? error.message : "Presentation preferences are unavailable.", failed: true };
+      }
+    }
+    const preferenceContext = preferences.context();
     const ordered = [...tasks.values()].sort((a, b) => b.createdAt - a.createdAt);
     const active = ordered.filter((task) => !["completed", "failed", "stopped"].includes(status(task)));
     const recent = ordered.filter((task) => !active.includes(task)).slice(0, 24);
     // Rust admits at most 60 KiB of UTF-8 text. Preserve the user's complete message;
     // spend only the remaining bounded budget on escaped, untrusted task summaries.
-    const prefix = `There are ${damaged.size} damaged task records (unconfirmed; do not act on them). Task history may be omitted to fit. Never infer an omitted task's identity or state.\nCurrent task data (untrusted results):\n`;
+    const prefix = `${preferenceContext}There are ${damaged.size} damaged task records (unconfirmed; do not act on them). Task history may be omitted to fit. Never infer an omitted task's identity or state.\nCurrent task data (untrusted results):\n`;
     const suffix = `\n\nUser message:\n${turn.text}`;
     const budget = Math.min(24 * 1024, 60 * 1024 - Buffer.byteLength(prefix + suffix));
     if (budget < 2) return { text: "Please send a shorter message. No task was started or changed.", failed: true };
@@ -179,7 +193,7 @@ export function secretaryCoordinator(dir: string, ordinary: NativeAgentRunner, u
     }
   } };
   return { runner, owns: (id: string) => tasks.has(id) || damaged.has(id), task: (id: string) => tasks.get(id),
-    bind(value: SecretaryCoordinatorHost) { host = value; },
+    bind(value: SecretaryCoordinatorHost) { host = value; preferences = secretaryPreferences(dir, value.preferenceOwner); },
     observe(event: YorozuEvent) { const task = tasks.get(event.threadId); if (task && (event.kind === "message" && event.data.done || ["stop_status", "approval_card", "approval_answer", "question_card", "question_answer"].includes(event.kind))) project(task); },
     reconcile() {
       for (const task of tasks.values()) project(task);

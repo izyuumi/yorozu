@@ -12,6 +12,8 @@ pub mod operational;
 pub mod outbox;
 pub mod paging;
 pub mod peers;
+pub mod preference_protocol;
+pub mod preferences;
 pub mod relay;
 pub mod sequences;
 pub mod steering;

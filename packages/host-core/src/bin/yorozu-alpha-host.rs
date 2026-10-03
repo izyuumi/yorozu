@@ -106,6 +106,17 @@ fn launch(
 }
 fn run() -> io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.len() == 4 && args[0] == "--preferences" {
+        return yorozu_host_core::preference_protocol::serve(
+            Path::new(&args[1]),
+            &yorozu_host_core::preferences::Owner {
+                user_id: args[2].clone(),
+                host_id: args[3].clone(),
+            },
+            io::stdin().lock(),
+            io::stdout().lock(),
+        );
+    }
     if args.len() == 3 && args[0] == "--secretary-init" {
         let root = Conversation::prepare_secretary(Path::new(&args[1]), Path::new(&args[2]))?;
         return output(json!({"root":root,"workspace":args[2]}));

@@ -108,38 +108,105 @@ backups, previous Markdown exports, provider
 contexts, host caches, filesystem snapshots, and other copies require a retention
 and invalidation policy at integration. The database is not encrypted here.
 
-## Integration patch guidance (for the integration owner)
+## Secretary integration
 
-1. Add `pub mod preferences;` to `packages/host-core/src/lib.rs`, then change the test
-   from its isolated `#[path]` import to `use yorozu_host_core::preferences::*;`.
-   The path import currently compiles the exact independent production module using
-   existing dependencies, while keeping shared host files untouched.
-2. The host owns one store in a separately provisioned state directory, bound to its
-   authenticated user/host. Expose correlated operations through a reviewed host
-   protocol only when that wiring is owned. Do not migrate the current logs or vault.
-3. At durable user-message admission, recognize only an explicit stable preference,
-   correction, or deletion. Resolve the scope and preserve actual message/task IDs
-   and accepted sequence. Assistant/worker inference and retrieved documents must
-   not write this store. Scope ambiguity that affects behavior must be resolved
-   before storing. The component does not perform natural-language extraction.
-4. Before each secretary/worker dispatch, retrieve the current scoped snapshot with
-   a separate small context budget. Treat its typed records as data, preserve source
-   IDs/revisions in the context manifest, and invalidate older assembled context on
-   journal-sequence changes. Do not use an old receipt, Markdown file, or provider
-   session summary as the current preference owner. Revalidate permissions separately
-   at each actual action boundary.
-5. Render/save Markdown only through the agreed knowledge owner; manage stale exports
-   and deletion copies there. Prefer re-rendering current data to importing historical
-   Markdown guesses. No files are exported automatically by this component.
-6. Run integrated EN/JA admission → correction → other-topic → provider compaction →
-   host restart → independent worker acceptance. Verify visible question behavior,
-   live deletion/cache invalidation, permissions, and explicit scope selection before
-   calling the user memory feature complete. These end-to-end gates are still open.
+The feature branch now exports the public Rust module and adds a separate, bounded
+host endpoint. It changes no existing conversation, admission, task or vault data
+format, installs nothing, and leaves the production release branch untouched.
+
+`yorozu-alpha-host --preferences ABSOLUTE_ROOT USER_ID HOST_ID` accepts exactly one
+JSON request on stdin (at most 8,192 bytes), then exits. Its operations are:
+
+- `{"op":"apply","change":Change}` → `Receipt`.
+- `{"op":"latest","scope":Scope,"key":Key}` → `Record | null`.
+- `{"op":"receipt","eventId":"id"}` → `Record | null` for authenticated retry.
+- `{"op":"retrieve","context":{"taskId":"optional-id","projectId":"optional-id"},"budget":{"maxRecords":3,"maxBytes":4096}}`
+  → `{snapshot: Retrieval, markdown: string}`.
+
+Responses are `{version:1, ok:true, value:...}` or
+`{version:1, ok:false, error:...}`. Invalid framing/owner/schema exits unsuccessfully.
+This endpoint trusts its private local host caller; it is not a public network API.
+Worker packet dispatch cannot reach these operations. Existing sandbox/account/OS
+controls remain the authorization boundary for tools and access to host state.
+
+`secretary-preferences.ts` exposes `parsePreference(text)` and
+`secretaryPreferences(dir, owner).accept(source, tasks)` / `.context(taskId?)`.
+Only the production host supplies the source: a persisted parentless main-thread
+user message must match its existing accepted-message identity map. The hook waits
+for synchronous admission to finish, then takes its ordinal and timestamp from the
+first physical user admission, before display-order corrections. Model/tool output,
+attachments, task instruction derivatives, quoted documents and provider summaries
+are never passed to the parser. No historical preference import is performed.
+
+The private store is `<stateDir>/preferences-v1`, with a stable profile signing
+public key as host identity and `local-profile-owner` as the single local user's
+identity. Paired devices share that profile owner. A foreign profile fails closed.
+The coordinator confirms successful writes after the separate Rust process exits;
+no model decides whether persistence succeeded. A duplicate/redacted receipt
+reconstructs the original revision/operation without resurrecting deleted values.
+Delayed changes retain their original admission sequence and are refused.
+
+Before every main planning turn and newly dispatched specialist, Rust retrieves
+three records within 4,096 bytes. An allowlisted renderer turns each typed value
+into a fixed presentation directive alongside its evidence; arbitrary text is never
+rendered as a preference instruction. Fresh records carry evidence, revisions and a
+journal sequence; the context expressly invalidates old remembered values for the
+three absent keys. Task tombstones mask global inheritance. Required approvals and
+permission decisions remain independent. No projection cache or Markdown export is
+used as an owner. `Show my saved presentation preferences` and
+`保存済みの返信設定を表示して` return a current readable Markdown view without
+writing knowledge files or accessing a vault.
+
+The anchored EN/JA grammar deliberately supports only three presentation keys.
+Examples accepted as complete messages:
+
+- `From now on reply with three bullets` → `Actually use two bullets` →
+  `Forget my bullet count preference`.
+- `今後は箇条書き3つにして` → `訂正、箇条書き2つにして` →
+  `箇条書き数の設定を忘れて`.
+- `Always reply in Japanese`, `今後は英語で返答して`.
+- `From now on ask clarification questions only when necessary`,
+  `今後は確認質問では選択肢を提示して`.
+- Prefix `For task "Exact existing title", ` or `タスク「既存の名前」では、`
+  to select exactly one existing task; unknown/ambiguous titles are not stored.
+
+A correction requires an active saved key. A fresh explicit declaration can restore
+one after deletion. Other phrasing remains normal conversation: it is not silently
+persisted or represented as comprehensive natural-language memory support.
+
+## Integration patch guidance and remaining limits
+
+Apply this branch's commits atop released source `9681ecfb`, then run
+`scripts/stage-internal-alpha.py` on the clean committed source. The staging overlay
+now includes `secretary-preferences.ts`; the pinned production patch supplies only
+the owner/source callbacks alongside the existing coordinator hooks. Do not replace
+the production host with the development `serve.ts` or port paused recovery work.
+The Rust binary and runtime must ship together; an old host cannot service the new
+endpoint. This work does not merge, install or publish that build.
+
+Project scope is tested and available through Rust retrieval, but the continuing
+secretary currently has no stable project association, so ordinary-language project
+selection is unsupported. Existing named task preferences affect future retrieval;
+a running specialist is not automatically interrupted or steered when one changes.
+Preference-only acknowledgements use fixed EN/JA copy and factual dispatch receipts
+remain host-owned. Provider compaction is covered by discarding the main session and
+starting independent specialists; no live provider compaction RPC is claimed.
+
+The original host user admission log must retain first-admission order. A future
+physical log compactor needs an immutable admission sequence before deleting that
+log; this feature introduces no such migration. Provider/session compaction alone
+does not alter it. Recognition runs when the queued secretary turn begins, not at
+initial transport receipt, and follows existing shutdown/held-turn semantics.
+Deletion clears the learned store and future projections, not original conversation
+messages, prior provider contexts, task snapshots or external exports. The component
+is unencrypted and has the documented bounded event ceiling. Broader user memory,
+unrestricted phrasing, question-behavior evaluation and installed native acceptance
+remain separate work; do not label the whole user-memory feature complete.
 
 ## Contract proof and test-authoring gate
 
 Run `cargo +1.92.0 test --offline --locked --manifest-path packages/host-core/Cargo.toml --test preferences`.
-Eight tests own distinct public storage risks, rather than mirroring functions:
+Eight Rust tests own distinct public storage risks, rather than mirroring functions:
 
 | Test | Observable regression caught |
 | --- | --- |
@@ -157,3 +224,22 @@ The restart test launches the same test executable as a fresh process; no provid
 native UI, real profile, private history, or vault is accessed. SQLite itself injects
 the rollback test's insert failure via a synthetic trigger. No production injection
 hook, file-open interposition, FIFO, recovery experiment, or dependency change is used.
+
+Two additional runtime tests own parser provenance and real Rust protocol risks.
+The existing production socket/official-adapter suite adds EN/JA scenarios for queued
+3→2 correction, exact original admission order, unrelated-topic continuation, host
+restart with the provider session removed, new specialist snapshots, injected website
+and worker output, and deletion invalidation. All fixtures use disposable profiles
+and synthetic content; they do not modify installed applications or private history.
+
+Live disposable acceptance also passed for EN and JA: acknowledged 3→2, an
+unrelated banana question, host close/reopen with the main provider session removed,
+and an actual independent specialist listing four fruits. Both the ordinary reply
+and each specialist result used exactly two bullets. Every observed `turn/start`
+carried `serviceTierForTurn: "default"` (standard speed), the current revision 2, and
+the original correction message ID. The harness used the installed CLI's supported
+default model, synthetic statements, no tools, and separate temporary state, project
+and provider directories. All temporary profiles and copied authentication were
+deleted. This is backend acceptance; no native UI, installed profile, release or
+vault was accessed. Language and clarification settings have typed storage/parser/
+retrieval coverage; broad model question behavior is not claimed tested.

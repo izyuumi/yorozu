@@ -18,6 +18,7 @@ OVERLAYS = [
     "packages/runtime/src/secretary-serve.ts",
     "packages/runtime/src/secretary-steering.ts",
     "packages/runtime/src/secretary-coordinator.ts",
+    "packages/runtime/src/secretary-preferences.ts",
     "scripts/build-mac.sh", "scripts/build-version.sh",
     "scripts/secretary-production.patch",
 ]

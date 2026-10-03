@@ -10,7 +10,7 @@ import { projectsRoot } from "./projects.js";
 import type { NativeAgentRunner, NativeTurn, NativeTurnResult } from "./native.js";
 
 export const SECRETARY_THREAD_ID = "yorozu-secretary-v1";
-const secretaryHost = (): string => {
+export const secretaryHost = (): string => {
   const bundled = fileURLToPath(new URL("../../yorozu-alpha-host", import.meta.url));
   return process.env.YOROZU_SECRETARY_HOST ?? (existsSync(bundled) ? bundled : fileURLToPath(new URL("../../host-core/target/debug/yorozu-alpha-host", import.meta.url)));
 };
