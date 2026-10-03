@@ -62,6 +62,33 @@ actor HarnessTransport: ChatTransport {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/tmp/yorozu-ui")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if let index = CommandLine.arguments.firstIndex(of: "--secretary-history"), CommandLine.arguments.count > index + 1 {
+            // Replay captured wire events in the real model; never connect to a user profile.
+            let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+            let events = try JSONDecoder().decode([YorozuEvent].self, from: data)
+            let transport = HarnessTransport()
+            let model = ChatModel(transport: transport)
+            model.start()
+            while !model.ownerOnline { await Task.yield() }
+            let id = SecretaryUI.threadID
+            let thread = ThreadSummary(id: id, title: "Yorozu", archived: false, lastActivity: 0, agent: .codex)
+            await transport.deliver(YorozuEvent(id: "threads", threadId: id, ts: 0, agentId: "main",
+                payload: .threadList(ThreadListData(threads: [thread]))))
+            while !model.listed { await Task.yield() }
+            let previous = UserDefaults.standard.object(forKey: SecretaryUI.technicalDetailsKey)
+            defer {
+                if let previous { UserDefaults.standard.set(previous, forKey: SecretaryUI.technicalDetailsKey) }
+                else { UserDefaults.standard.removeObject(forKey: SecretaryUI.technicalDetailsKey) }
+                model.close()
+            }
+            UserDefaults.standard.set(false, forKey: SecretaryUI.technicalDetailsKey)
+            await transport.deliver(YorozuEvent(id: "history", threadId: id, ts: 0, agentId: "main",
+                payload: .syncDelta(SyncDeltaData(events: events, threadId: id, workingThreadIds: []))))
+            try await Task.sleep(for: .milliseconds(100))
+            try await render(NavigationStack { SecretaryChatView(model: model, onHistory: {}) },
+                name: "secretary-history", width: 880, height: 1000, dark: false, output: output)
+            return
+        }
         if CommandLine.arguments.contains("--secretary-activity") {
             let transport = HarnessTransport()
             let model = ChatModel(transport: transport)
