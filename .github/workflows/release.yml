@@ -87,6 +87,7 @@ jobs:
       PUBLIC: ${{ github.repository }}
       SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.source_branch }}
       REQUESTED_VERSION: ${{ inputs.version }}
+      ASC_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -191,16 +192,80 @@ jobs:
           ./scripts/build-mac.sh
           CHANNEL=beta DOWNLOAD_PREFIX="https://github.com/$GITHUB_REPOSITORY/releases/download/$CANDIDATE_TAG/" \
             ./scripts/appcast.sh
+          shasum -a 256 dist/Yorozu.dmg dist/appcast.xml > dist/mac-sha256.txt
+      - name: Install App Store Connect CLI 5.9.0
+        run: |
+          set -eu
+          case "$(uname -m)" in
+            arm64) arch=arm64; checksum=6d46e477c565d45972decbde84d055eb028874a1c8322a450355b98b629ba382 ;;
+            x86_64) arch=amd64; checksum=c293cdce9c4b9e0d6e0627a26cabf6843cfe93f28a1c69ffa49bca5d849a0691 ;;
+            *) echo 'unsupported ASC CLI architecture' >&2; exit 1 ;;
+          esac
+          directory="$RUNNER_TEMP/asc-cli"
+          asset="asc_5.9.0_macOS_$arch"
+          gh release download 5.9.0 --repo rorkai/App-Store-Connect-CLI --pattern "$asset" --dir "$directory"
+          printf '%s  %s\n' "$checksum" "$directory/$asset" | shasum -a 256 -c -
+          mv "$directory/$asset" "$directory/asc"
+          chmod 755 "$directory/asc"
+          "$directory/asc" --version
+          echo "$directory" >> "$GITHUB_PATH"
       - name: Upload and identify the iOS candidate
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+          ASC_PRIVATE_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+          ASC_BYPASS_KEYCHAIN: '1'
         run: |
           set -eu
           IOS_BUILD=$(node scripts/asc-candidate.mjs next-build "$VERSION")
           BUILD="$IOS_BUILD" ./scripts/build-ios.sh
+          deadline=$((SECONDS + 1800))
+          selector=(--app 6811274963 --build-number "$IOS_BUILD" --version "$VERSION" --platform IOS)
+          while :; do
+            remaining=$((deadline - SECONDS))
+            [ "$remaining" -gt 0 ] || { echo 'iOS processing is pending; resume the retained receipt, do not reupload' >&2; exit 7; }
+            window=50
+            [ "$remaining" -ge "$window" ] || window=$remaining
+            status=0
+            asc --read-only builds wait "${selector[@]}" --timeout "${window}s" \
+              --report-pending --fail-on-invalid --output json > dist/ios-processing.json || status=$?
+            if [ "$status" -eq 7 ]; then
+              cp dist/ios-processing.json dist/ios-processing-pending.json
+              cat dist/ios-processing-pending.json
+              known_id=$(python3 -c 'import json; print(json.load(open("dist/ios-processing-pending.json")).get("buildId", ""))')
+              [ -z "$known_id" ] || selector=(--build-id "$known_id")
+              continue
+            fi
+            [ "$status" -eq 0 ] || exit "$status"
+            break
+          done
           node scripts/asc-candidate.mjs resolve "$VERSION" "$IOS_BUILD" dist/ios.json
+          BUILD_ID=$(python3 - <<'PY_BUILD_ID'
+          import json
+          receipt = json.load(open('dist/ios-processing.json'))
+          ios = json.load(open('dist/ios.json'))
+          assert receipt['buildId'] == ios['build_id'], 'processing receipt belongs to a different build'
+          print(ios['build_id'])
+          PY_BUILD_ID
+          )
+          asc --read-only builds test-notes list --build-id "$BUILD_ID" --output json > dist/ios-test-notes-before.json
+          notes_action=$(python3 - <<'PY_NOTES'
+          import json
+          notes = next((note['attributes'] for note in json.load(open('dist/ios-test-notes-before.json'))['data']
+                        if note['attributes']['locale'] == 'en-US'), None)
+          print('keep' if notes and (notes.get('whatsNew') or '').strip() else 'update' if notes else 'create')
+          PY_NOTES
+          )
+          if [ "$notes_action" = keep ]; then
+            cp dist/ios-test-notes-before.json dist/ios-test-notes.json
+          else
+            asc builds test-notes "$notes_action" --build-id "$BUILD_ID" --locale en-US \
+              --whats-new 'Please test pairing, reconnection, streamed replies, tool approvals, and reply layout at normal and accessibility text sizes.' \
+              --output json > dist/ios-test-notes.json
+          fi
+          asc --read-only validate testflight --app 6811274963 --build-id "$BUILD_ID" \
+            --output json > dist/ios-testflight-validation.json
           node scripts/asc-candidate.mjs distribute dist/ios.json
       - name: Publish candidate
         run: |
@@ -208,6 +273,27 @@ jobs:
           python3 scripts/release.py candidate --manifest dist/candidate.json --ios dist/ios.json --dist dist
           printf 'Candidate: [%s](https://github.com/%s/releases/tag/%s)\n' \
             "$CANDIDATE_TAG" "$GITHUB_REPOSITORY" "$CANDIDATE_TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain processing receipts and signed candidate on failure
+        if: failure() && hashFiles('dist/mac-sha256.txt') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-processing
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            dist/candidate.json
+            dist/Yorozu.dmg
+            dist/appcast.xml
+            dist/mac-sha256.txt
+            dist/export/*.ipa
+            dist/ios-sha256.txt
+            dist/asc-version.txt
+            dist/ios-upload.json
+            dist/ios.json
+            dist/ios-processing*.json
+            dist/ios-test-notes.json
+            dist/ios-test-notes-before.json
+            dist/ios-testflight-validation.json
       - name: Forget signing credentials
         if: always()
         run: |

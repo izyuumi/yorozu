@@ -245,10 +245,38 @@ Do not merge an entire hotfix branch into `main` just to transfer its old versio
 
 ## Failures and retries
 
+Xcode signs and exports the IPA; App Store Connect CLI 5.9.0 uploads it once through Apple's
+public build-upload API and verifies the exact processed build. CI pins the upstream binary
+hashes. Export no longer uploads, so there is only one uploader. Every CLI process disables
+telemetry with `ASC_TELEMETRY_DISABLED=1` and reuses the existing API credentials. Processing
+waits run in at most 50-second windows; exit 7 means pending. Once Apple exposes the build ID,
+further waits use that exact ID. The workflow saves the pending receipt and its `resumeCommand`,
+adds What to Test notes, then runs the TestFlight-specific preflight before external distribution.
+
+If processing remains pending after 30 minutes, the failed run retains a `candidate-processing`
+artifact for seven days with redacted upload/processing receipts, source manifest, exported IPA,
+binary hashes, and the signed Mac DMG/appcast. It also retains failures after Mac signing. Resume
+the saved wait using the existing build identity; do not upload it again or restart Release merely
+because Apple is still processing. Verify the retained source CI and signed artifact hashes before
+continuing publication. If external distribution already started, inspect Apple's actual group and
+review state before further writes. A terminal upload/processing failure still needs a fresh candidate.
+
+For a known build, use bounded read-only checks with the existing credentials:
+
+```sh
+ASC_TELEMETRY_DISABLED=1 asc --read-only builds wait --build-id "$BUILD_ID" \
+  --timeout 50s --report-pending --fail-on-invalid --output json
+ASC_TELEMETRY_DISABLED=1 asc --read-only validate testflight --app 6811274963 \
+  --build-id "$BUILD_ID" --output json
+```
+
+TestFlight preflight checks processing, beta review details, and What to Test notes. App Store
+submission, pricing, and iPad screenshot gates belong to stable submission, not this beta lane.
+
 | Failure | Recovery |
 | --- | --- |
 | CI fails | Fix source, push signed commit, wait for successful CI |
-| Candidate build/upload/Apple processing fails | Start a fresh `release.yml` dispatch; rerunning the old build would reuse an Apple build number |
+| Candidate build/upload or terminal Apple processing fails | Start a fresh `release.yml` dispatch; rerunning the old build would reuse an Apple build number |
 | Candidate published but needs code changes | Commit the fix and build a new candidate; publication replaces the previous main beta |
 | Promotion fails before completion | Correct the cause and rerun `promote.yml` for the same candidate; it reuses and revalidates existing bytes |
 | Newer stable version/build overtook the candidate | Build and test a fresh eligible candidate; do not move stable tags backwards |

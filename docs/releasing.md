@@ -156,15 +156,17 @@ without one Xcode can mint a certificate per run until the team reaches Apple's 
 
 Use the canonical workflow for any distributable build. `scripts/build-ios.sh` requires explicit
 `VERSION` and `BUILD`, plus `ASC_KEY_ID`, `ASC_ISSUER_ID`, and the private key described below.
+It also requires `asc` on PATH; CI downloads and checksum-verifies CLI 5.9.0.
 Running it locally performs a real upload and is not a dry run; choose an unused Apple build
 number without colliding with the CI sequence.
 
 Signing is automatic. `apps/ios/Project.swift` carries `DEVELOPMENT_TEAM` and
 `CODE_SIGN_STYLE = Automatic`, and given `-allowProvisioningUpdates` plus an App Store Connect
 key, `xcodebuild` issues the distribution certificate and the App Store profile on its own — so
-Xcode manages the distribution profile; the development `.p12` is imported temporarily by CI. The same key authenticates the upload,
-which is why the export options say `destination: upload` rather than writing an `.ipa` for a
-second tool to send: one invocation, one credential, nothing on disk to leak. The key may be a
+Xcode manages the distribution profile; the development `.p12` is imported temporarily by CI.
+Xcode exports the signed IPA with `destination: export`; the ASC CLI uploads it once using
+the same API key. The script retains a redacted upload receipt and the IPA's SHA-256, disables
+CLI telemetry, and avoids persistent keychain profiles. The key may be a
 path (`ASC_KEY_PATH`, defaulting to `~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8`) or
 base64 in `ASC_KEY_P8`, which is written out at mode 600 and removed on exit.
 
@@ -184,9 +186,8 @@ API key spaceship talks to that same endpoint, so it gets the same refusal. The 
 can create one is an Apple ID web session, which means 2FA and a person. So the first upload for a
 new app needs one visit to [App Store Connect](https://appstoreconnect.apple.com/apps) → **+** →
 **New App**: iOS, name **Yorozu**, primary language English (U.S.), the bundle ID above, SKU
-`yorozu-ios`. Until that exists `xcodebuild -exportArchive` stops before it uploads, with
-`IDEDistributionFetchAppRecordStep … missingApp(bundleId: "to.yumi.yorozu.ios")` in its
-distribution log. Candidate uploads are automated after this setup; App Review and the
+`yorozu-ios`. Upload requires that app record; the CLI must resolve its App Store Connect app ID.
+Candidate uploads are automated after this setup; App Review and the
 App Store release remain explicit maintainer actions.
 
 `node scripts/asc-listing.mjs --check` validates the 0.4.0 listing and screenshots locally from
