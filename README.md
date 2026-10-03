@@ -54,6 +54,7 @@ project. CI pins `latest-stable` because the hosted image's default Xcode can la
 ```sh
 pnpm install
 pnpm -r build
+git config core.hooksPath .githooks   # checks commit messages locally
 ```
 
 **Mac app** — the sidecar must be built first, and the package has two executables, so name the

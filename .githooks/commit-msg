@@ -1,0 +1,5 @@
+#!/bin/sh
+# Merge and fixup subjects are left alone; the PR check sees what lands.
+subject=$(head -n 1 "$1")
+case "$subject" in Merge*|fixup!*|squash!*) exit 0 ;; esac
+exec "$(git rev-parse --show-toplevel)/scripts/check-commit-msg.sh" "$subject"

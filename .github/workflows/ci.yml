@@ -52,6 +52,21 @@ jobs:
             flag web "^apps/web/|$build"
           } >> "$GITHUB_OUTPUT"
 
+  commit-messages:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - name: Check PR title and commit subjects
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mapfile -t subjects < <(git log --no-merges --format=%s "$BASE..$HEAD")
+          scripts/check-commit-msg.sh "$TITLE" "${subjects[@]}"
+
   release-checks:
     runs-on: ubuntu-latest
     steps:
@@ -64,7 +79,7 @@ jobs:
       - name: Lint workflows and release scripts
         run: |
           "$(go env GOPATH)/bin/actionlint"
-          shellcheck scripts/release.sh scripts/appcast.sh scripts/build-version.sh scripts/build-mac.sh scripts/build-ios.sh scripts/dev-bundle.sh
+          shellcheck scripts/check-commit-msg.sh .githooks/commit-msg scripts/release.sh scripts/appcast.sh scripts/build-version.sh scripts/build-mac.sh scripts/build-ios.sh scripts/dev-bundle.sh
       - name: Check publication success and failure paths
         run: |
           python3 scripts/test-release.py
