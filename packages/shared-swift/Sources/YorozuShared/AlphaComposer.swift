@@ -43,7 +43,7 @@ public struct AlphaComposer: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if stopPending {
-                    Label("Stop requested / 停止要求済み", systemImage: "hourglass")
+                    Label("Stop pending / 停止処理待ち", systemImage: "hourglass")
                         .font(.caption)
                 } else if canStop {
                     Button("Stop / 停止", systemImage: "stop.fill", action: onStop)

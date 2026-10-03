@@ -128,6 +128,10 @@ private struct AlphaTaskCard: View {
                 Button(expanded ? "Less / 閉じる" : "Details / 詳細") { expanded.toggle() }
                     .font(.caption)
             }
+            if let model = run.model {
+                Text("Model / モデル: \(model)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if run.kind == "stop_requested", !disconnected {
                 Text("Waiting for worker cessation; the request alone does not confirm Stop. / ワーカー終了待ち。要求だけでは停止確認になりません。")
                     .font(.caption).foregroundStyle(.secondary)

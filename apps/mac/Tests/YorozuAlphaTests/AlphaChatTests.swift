@@ -8,7 +8,8 @@ final class AlphaChatTests: XCTestCase {
         let second = UUID().uuidString
         let events = [
             event(1, first, "accepted", "こんにちは\nFirst request"),
-            event(3, first, "running"),
+            AlphaEvent(seq: 3, runId: first, kind: "running", text: nil,
+                       data: .object(["model": .string("actual-provider-model")]), ts: 3),
             event(8, first, "stop_requested"),
             event(12, first, "update", "Partial result"),
             event(15, first, "activity"),
@@ -24,6 +25,23 @@ final class AlphaChatTests: XCTestCase {
         XCTAssertEqual(replay.map(\.prompt), ["こんにちは\nFirst request", "New topic, same chat"])
         XCTAssertEqual(replay.map(\.kind), ["stopped", "completed"])
         XCTAssertEqual(replay.map(\.answer), ["Verified stopped result", "Independent result"])
+        XCTAssertEqual(replay.first?.model, "actual-provider-model")
+        XCTAssertNil(replay.last?.model)
+    }
+
+    func testLoginEnvironmentDiscoversPathWithoutImportingShellVariables() throws {
+        let shell = FileManager.default.temporaryDirectory.appendingPathComponent("alpha-login-\(UUID().uuidString)")
+        let script = "#!/bin/sh\necho 'Profile greeting'\nexport ALPHA_SHELL_ONLY=private\nPATH=/provider/bin:/usr/bin:/bin\nexec /bin/sh -c \"$2\"\n"
+        try Data(script.utf8).write(to: shell)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+        defer { try? FileManager.default.removeItem(at: shell) }
+        let inherited = ["SHELL": shell.path, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+        let resolved = AlphaConfiguration.loginEnvironment(inherited)
+        XCTAssertEqual(resolved["PATH"], "/provider/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+        XCTAssertNil(resolved["ALPHA_SHELL_ONLY"])
+        XCTAssertEqual(resolved["SHELL"], shell.path)
+        let failing = ["SHELL": "/usr/bin/false", "PATH": "/usr/bin:/bin"]
+        XCTAssertEqual(AlphaConfiguration.loginEnvironment(failing), failing)
     }
 
     @MainActor
