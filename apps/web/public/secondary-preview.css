@@ -1,0 +1,3 @@
+/* Preview chrome only. Legal text and pairing behavior remain unchanged. */
+:root { color-scheme: light; --display: var(--text); --mono: var(--text); --canvas: #EFEBCE; --raised: #F8F6E8; --ink: #2E3022; --muted: #4F513A; --line: #A3A380; --red: #7E474D; --on-red: #EFEBCE; --red-bg: #EFEBCE; --amber: #A3A380; --amber-deep: #2E3022; --amber-ink: #2E3022; }
+.copy.done { background: #D8A48F; color: #2E3022; }
