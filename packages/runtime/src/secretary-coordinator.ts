@@ -99,7 +99,7 @@ export function secretaryCoordinator(dir: string, ordinary: NativeAgentRunner, u
         targets.add(action.target);
       }
     }
-    if (starts + damaged.size + [...tasks.values()].filter((task) => !["completed", "failed", "stopped"].includes(status(task))).length > 4) throw new Error("Four tasks are already active or awaiting recovery; finish or reconcile one before starting more");
+    if (starts + [...tasks.values()].filter((task) => ["starting", "running", "stopping", "needs-answer"].includes(host.state(task.id))).length > 4) throw new Error("Four tasks are already active; finish or stop one before starting more");
     return plan;
   };
   const runner: NativeAgentRunner = { ...durable, async run(turn) {

@@ -55,6 +55,7 @@ lines.on('line', line => {
     mode = frame.params.input[0].text;
     if (frame.params.outputSchema) {
       const input = mode.split('User message:\\n').at(-1).trim();
+      if (input === 'CRASH_PLANNER') { send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } }); setTimeout(() => process.exit(8), 30); return; }
       const records = fs.existsSync(process.env.CODEX_FIXTURE_STATE + '/secretary-tasks-v1')
         ? fs.readdirSync(process.env.CODEX_FIXTURE_STATE + '/secretary-tasks-v1').flatMap(name => { try { return [JSON.parse(fs.readFileSync(process.env.CODEX_FIXTURE_STATE + '/secretary-tasks-v1/' + name + '/task.json', 'utf8'))]; } catch { return []; } }) : [];
       const target = records.find(task => task.title === 'First task')?.id || '';
@@ -506,6 +507,21 @@ test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL", 
     expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
     expect(JSON.parse(readFileSync(join(state, "native-turn-queue.json"), "utf8"))).toContainEqual({ threadId: SECRETARY_THREAD_ID, eventId: "later-user" });
     expect(JSON.parse(readFileSync(join(state, "stopped-turns.jsonl"), "utf8").trim().split("\n").at(-1)!)).toMatchObject({ targetEventId: first.id, status: "unconfirmed" });
+    if (mode === "FAIL") {
+      // A new coordinator may release only proven tool-free plans, never legacy execution.
+      socket.destroy(); await sidecar.close();
+      const previousModelRequests = rows().filter((row) => row.method === "model/list").length;
+      sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+      await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+      socket = createConnection(join(state, "local.sock"));
+      createInterface({ input: socket }).on("line", (line) => events.push(JSON.parse(line))).on("error", () => {});
+      await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+      send("legacy-hold-upgrade", "message", { role: "user", text: "HELLO" });
+      await vi.waitFor(() => expect(events.some((event) => event.kind === "receipt" && event.data.eventId === "legacy-hold-upgrade")).toBe(true));
+      expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
+      await vi.waitFor(() => expect(rows().filter((row) => row.method === "model/list").length).toBeGreaterThan(previousModelRequests));
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(join(state, "native-agent-processes.json"), "utf8"))).toEqual([]));
+    }
   } finally {
     stopFixture();
     socket?.destroy();
@@ -705,6 +721,8 @@ test("coordinator answers another topic while two specialists run and targets on
     expect(corrections).toHaveLength(1);
     const correctedStart = rows().find((row) => row.method === "turn/start" && row.pid === corrections[0].pid);
     expect(correctedStart.params.input[0].text).toContain("Task: CONTROLLED_ONE");
+    const firstHistory = readThreadEvents(workers.find((thread) => thread.title === "First task")!.id, state);
+    expect(firstHistory.some((event) => event.kind === "message" && event.data.role === "user" && event.data.delivery === "steer" && event.data.text === "write B instead")).toBe(true);
     const first = workers.find((thread) => thread.title === "First task")!;
     socket!.write(`${JSON.stringify({ id: "direct-task-change", threadId: first.id, ts: Date.now(), agentId: "main",
       kind: "message", data: { role: "user", text: "write B instead", delivery: "steer" } })}\n`);
@@ -770,12 +788,15 @@ test("specialist approval remains required under legacy YOLO and Stop leaves oth
     await vi.waitFor(() => expect(events.some((event) => event.kind === "approval_card")).toBe(true));
     const card = events.find((event) => event.kind === "approval_card");
     expect(card.threadId).not.toBe(SECRETARY_THREAD_ID);
-    expect(card.data.actionClass).toContain("First task");
+    expect(card.data.actionClass).toBe("commandExecution");
     expect(rows().some((row) => row.taskApproval)).toBe(false);
     await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).findLast((event) => event.id === `task-card:${card.threadId}`)?.data.text).toContain("Your answer is needed"));
     send("during-approval", "HELLO");
     await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:during-approval:final")?.data.text).toBe("Hello, how can I help?"));
     expect(rows().some((row) => row.taskApproval)).toBe(false);
+    send("change-during-approval", "CHANGE_FIRST");
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:change-during-approval:final")?.data.text).toContain("not delivered and was not queued"));
+    expect(rows().filter((row) => row.method === "turn/steer")).toHaveLength(0);
     send("stop-first", "STOP_FIRST");
     await vi.waitFor(() => expect(events.some((event) => event.kind === "stop_status" && event.threadId === card.threadId && event.data.status === "stopped"), JSON.stringify(events.filter((event) => event.kind === "stop_status" || event.kind === "message" && event.data.done))).toBe(true));
     expect(events.some((event) => event.kind === "approval_answer" && event.data.actionId === card.data.actionId && event.data.answer === "no")).toBe(true);
@@ -795,8 +816,12 @@ test("a damaged task record is held while the secretary still answers new conver
   const { temp, state, rows } = fixture();
   const id = `secretary-task-${"a".repeat(64)}`;
   const path = join(state, "secretary-tasks-v1", id);
-  mkdirSync(path, { recursive: true });
-  writeFileSync(join(path, "task.json"), '{"version":');
+  for (const letter of ["a", "b", "c", "d"]) {
+    const damaged = join(state, "secretary-tasks-v1", `secretary-task-${letter.repeat(64)}`);
+    mkdirSync(damaged, { recursive: true }); writeFileSync(join(damaged, "task.json"), '{"version":');
+  }
+  vi.stubEnv("CODEX_FIXTURE_RELEASE", join(temp, "release-task"));
+  vi.stubEnv("CODEX_FIXTURE_RESULT", join(temp, "result"));
   let sidecar: ReturnType<typeof serveSecretary> | undefined;
   let socket: ReturnType<typeof createConnection> | undefined;
   try {
@@ -811,5 +836,58 @@ test("a damaged task record is held while the secretary still answers new conver
     expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
     expect(readFileSync(join(path, "task.json"), "utf8")).toBe('{"version":');
     expect(readThreadEvents(SECRETARY_THREAD_ID, state).some((event) => event.data.text?.includes("task record needs repair"))).toBe(true);
+    socket.write(`${JSON.stringify({ id: "fresh-after-corruption", threadId: SECRETARY_THREAD_ID, ts: Date.now(), agentId: "main",
+      kind: "message", data: { role: "user", text: "TASKS", delivery: "steer" } })}\n`);
+    await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(4));
+    expect(listThreads(state).filter((thread) => thread.id.startsWith("secretary-task-")).length).toBe(2);
+  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+}, 10000);
+
+test("a lost tool-free planning turn does not hold later conversation or execution after restart", async () => {
+  const { temp, state, rows } = fixture();
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  const connect = async () => {
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    createInterface({ input: socket }).on("line", () => {}).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+  };
+  const send = (id: string, text: string) => socket!.write(`${JSON.stringify({ id, threadId: SECRETARY_THREAD_ID,
+    ts: Date.now(), agentId: "main", kind: "message", data: { role: "user", text, delivery: "steer" } })}\n`);
+  const final = (id: string) => readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === `native:${id}:final`);
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} }); await connect();
+    send("lost-plan", "CRASH_PLANNER");
+    await vi.waitFor(() => expect(final("lost-plan")?.data.text).toContain("No new task was dispatched"));
+    send("after-lost-plan", "HELLO");
+    await vi.waitFor(() => expect(final("after-lost-plan")?.data.text).toBe("Hello, how can I help?"));
+    socket!.destroy(); await sidecar.close();
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} }); await connect();
+    send("after-plan-restart", "HELLO");
+    await vi.waitFor(() => expect(final("after-plan-restart")?.data.text).toBe("Hello, how can I help?"));
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(3);
+    expect(listThreads(state).filter((thread) => thread.id.startsWith("secretary-task-"))).toHaveLength(0);
+  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+}, 10000);
+
+test("refused specialist setup reports not-started and preserves the conflicting user file", async () => {
+  const { temp, state, rows } = fixture();
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    const conflict = join(temp, "projects", "Yorozu Secretary Tasks");
+    writeFileSync(conflict, "preserve this existing file");
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    createInterface({ input: socket }).on("line", () => {}).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    socket.write(`${JSON.stringify({ id: "refused-task", threadId: SECRETARY_THREAD_ID, ts: Date.now(), agentId: "main",
+      kind: "message", data: { role: "user", text: "TASKS", delivery: "steer" } })}\n`);
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.parentAgentId)?.data)
+      .toMatchObject({ failed: true, done: true, text: expect.stringContaining("task was not started") }));
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
+    expect(readFileSync(conflict, "utf8")).toBe("preserve this existing file");
   } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
 }, 10000);

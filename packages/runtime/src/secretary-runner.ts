@@ -1,7 +1,7 @@
 /** Additive production adapter. Only the fixed secretary thread uses the Rust ledger. */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
@@ -60,6 +60,23 @@ export function secretaryRunner(dir: string, ordinaryCodex: NativeAgentRunner,
     const runId = createHash("sha256").update(`${SECRETARY_THREAD_ID}\0${eventId}`).digest("hex");
     return runSecretary(root, workspace, runId, turn);
   } };
+}
+
+/** Rust admission, rather than a client message field, proves this run had no execution tools. */
+export function secretaryPlanningOnly(dir: string, eventId: string): boolean {
+  const runId = createHash("sha256").update(`${SECRETARY_THREAD_ID}\0${eventId}`).digest("hex");
+  let fd: number | undefined;
+  try {
+    fd = openSync(join(dir, "secretary-v1", "runs", runId, "state", "threads", "alpha-main-v1.jsonl"), "r");
+    // Admission is the first Rust record, bounded by its 64 KiB frame budget.
+    const buffer = Buffer.alloc(128 * 1024);
+    const bytes = readSync(fd, buffer, 0, buffer.length, 0);
+    const lineEnd = buffer.subarray(0, bytes).indexOf(10);
+    if (lineEnd < 0) return false;
+    const record = JSON.parse(buffer.subarray(0, lineEnd).toString("utf8"));
+    return record.kind === "alpha_event" && record.data?.runId === runId && record.data.kind === "accepted" && record.data.data?.secretaryCoordinator === true;
+  } catch { return false; }
+  finally { if (fd !== undefined) closeSync(fd); }
 }
 
 type LedgerEvent = { seq: number; runId: string; kind: string; text?: string; data?: Record<string, any> };
