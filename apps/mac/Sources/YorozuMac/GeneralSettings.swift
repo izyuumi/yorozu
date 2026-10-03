@@ -75,19 +75,23 @@ struct GeneralView: View {
             } footer: {
                 Text("Searching threads still finds archived ones.").leadingFooter()
             }
-            // The one approval setting Yorozu itself still owns: the global bypass the
-            // native agents read. Same toggle as the phone's; the runtime stores it.
             if session.role == .host {
                 Section {
-                    Toggle("YOLO mode — skip all approvals", isOn: Binding(
-                        get: { session.model.yoloMode },
-                        set: { session.model.setYoloMode($0) }
-                    ))
+                    if SecretaryUI.enabled {
+                        Text("Routine tasks run automatically within existing access.")
+                    } else {
+                        Toggle("YOLO mode — skip all approvals", isOn: Binding(
+                            get: { session.model.yoloMode },
+                            set: { session.model.setYoloMode($0) }
+                        ))
+                    }
                 } header: {
                     Text("Agent runtime")
                 } footer: {
                     Group {
-                        if session.model.yoloMode {
+                        if SecretaryUI.enabled {
+                            Text("Required approvals remain in place. If more access is needed, Yorozu asks before proceeding.")
+                        } else if session.model.yoloMode {
                             Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
                                 .foregroundStyle(.red)
                             if let until = session.model.yoloUntil {
@@ -100,7 +104,7 @@ struct GeneralView: View {
                     }
                     .leadingFooter()
                 }
-                .onAppear { session.model.requestApprovalSettings() }
+                .onAppear { if !SecretaryUI.enabled { session.model.requestApprovalSettings() } }
             }
             if session.role == .host {
                 Section {

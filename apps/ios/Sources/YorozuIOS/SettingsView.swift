@@ -328,8 +328,12 @@ private struct HostAdvancedSection: View {
 
     var body: some View {
         Section {
-            Toggle("Skip approvals for all agents", isOn: Binding(get: { host.model.yoloMode }, set: host.model.setYoloMode))
-                .accessibilityHint(label)
+            if SecretaryUI.enabled {
+                Text("Routine tasks run automatically within existing access.")
+            } else {
+                Toggle("Skip approvals for all agents", isOn: Binding(get: { host.model.yoloMode }, set: host.model.setYoloMode))
+                    .accessibilityHint(label)
+            }
             Button("Copy diagnostics", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = ConnectionDiagnostics.snapshot(for: host.model)
                 AccessibilityNotification.Announcement(SecretaryUI.localized("Diagnostics copied")).post()
@@ -341,12 +345,14 @@ private struct HostAdvancedSection: View {
             approvalsFooter
         }
         .listRowBackground(YorozuPalette.paper)
-        .onAppear { host.model.requestApprovalSettings() }
+        .onAppear { if !SecretaryUI.enabled { host.model.requestApprovalSettings() } }
     }
 
     /// Off, or on with its expiry. Pairing is the grant, so the switch applies at once.
     @ViewBuilder private var approvalsFooter: some View {
-        if host.model.yoloMode {
+        if SecretaryUI.enabled {
+            Text("Required approvals remain in place. If more access is needed, Yorozu asks before proceeding.")
+        } else if host.model.yoloMode {
             // One view: a footer given two lays out only the first.
             VStack(alignment: .leading) {
                 Label {
