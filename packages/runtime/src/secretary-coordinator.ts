@@ -135,8 +135,10 @@ export function secretaryCoordinator(dir: string, ordinary: NativeAgentRunner, u
       if (used + bytes > budget) continue;
       summaries.push(summary); used += bytes;
     }
+    const text = `${prefix}${JSON.stringify(summaries)}${suffix}`;
+    if (Buffer.byteLength(JSON.stringify(text)) > 63 * 1024) return { text: "Please send a shorter message. No task was started or changed.", failed: true };
     const result = await durable.run({ ...turn, secretaryCoordinator: true, skill: undefined,
-      text: `${prefix}${JSON.stringify(summaries)}${suffix}`,
+      text,
       onUpdate: undefined, onActivity: undefined, onSteer: undefined, approve: async () => false, ask: undefined });
     if (!result.completed || result.unconfirmed || turn.signal.aborted) return { ...result, text: result.failed ? "The secretary could not complete this decision. No new task was started." : result.text };
     try {

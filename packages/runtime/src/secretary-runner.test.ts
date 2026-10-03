@@ -797,6 +797,8 @@ test("long Japanese task history leaves room for conversation and an oversized m
     await vi.waitFor(() => expect(final("long-history")?.data.text).toBe("Hello, how can I help?"));
     send("too-long", "界".repeat(22000));
     await vi.waitFor(() => expect(final("too-long")?.data.text).toContain("shorter message"));
+    send("too-escaped", '"'.repeat(40000));
+    await vi.waitFor(() => expect(final("too-escaped")?.data.text).toContain("shorter message"));
     send("after-long", "HELLO");
     await vi.waitFor(() => expect(final("after-long")?.data.text).toBe("Hello, how can I help?"));
     expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(2);

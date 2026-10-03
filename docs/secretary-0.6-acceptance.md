@@ -35,6 +35,21 @@ attempt timed out after a worker interpreted temporary workspace ambiguously;
 the assigned path is now explicit. Final exact-source rerun, Opus review, native
 checks and CI remain release gates.
 
+The exact signed `73e9fc6` candidate subsequently passed the real journey in
+53.3 seconds: main answered42 while both workers waited, First wroteB, Second
+wroteA, and main made no tool calls. Native replay keeps those task cards beside
+the original request. The second worker's prose misnamed itself despite correct
+workspace and file results; the host now explicitly includes its assigned title
+and ID and limits it to that task. Final rerun covers this prompt correction.
+
+At that same candidate,35 runtime tests, Rust4+4 contracts, eight Swift tests,
+Mac build and iOS Simulator build passed. Actual read-only Opus5.5 final review
+reported no blockers. Follow-up fixes also count escaped planner input and
+handle old-client Queue messages as live task corrections. Negative controls
+cover lost planner recovery, damaged-record capacity, context overflow, direct
+worker delivery, and Swift normal/alternate sends. Exact final CI and internal
+installation remain separate gates; none of this evidence is installed behavior.
+
 Planning disables execution tools and inherited connectors per session, uses a
 read-only sandbox and no environments. Damaged task records are held without
 automatic replay. Explicit reconciliation, recursive delegation, preference
@@ -47,7 +62,7 @@ memory and real schedules remain unfinished.
 | R01 | One continuing conversation across topics | Coordinator candidate retains the main session and releases it after short decisions. Isolated and live tests answer an unrelated question while two specialists wait. |
 | R02 | Every execution is a specialized independent worker | Candidate admits specialized independent workers with separate Rust roots/workspaces and a four-task bound. Live result: corrected First=B, Second=A. |
 | R03 | Bounded recursive delegation and upward reporting | Unverified. Require parent IDs, cancellation, child failure propagation and exactly-once results. |
-| R04 | Real Steer, no Queue/Steer choice | Real durable Steer shipped at96d9409. Coordinator candidate targets a named worker; signed native UI change removes the selector and forces main follow-ups through semantic routing. Final integrated review pending. |
+| R04 | Real Steer, no Queue/Steer choice | Real durable Steer shipped at96d9409. Coordinator candidate targets a named worker; native UI removes the selector, forces main semantic routing and worker Steer even with alternate send. Host also handles old-client Queue corrections and immediately declines terminal-task corrections without queueing. |
 | R05 | Distinguish new topic from targeted correction | Live candidate answered 17+25 with42 while both workers waited, then corrected only First task. Host validates known IDs. Ambiguity asks for clarification; broader language cases remain to verify. |
 | R06 | Quiet tools, three dots, useful milestones and final | Source implemented in `8ce3527`; focused tests and native fixture evidence above. Actual isolated app journey and disconnect remain to verify. |
 | R07 | Persistent advanced diagnostics and model settings | Diagnostics implemented. Complete provider/model settings journey remains unverified. |
@@ -67,7 +82,7 @@ memory and real schedules remain unfinished.
 | R21 | Dedicated computer-use worker, bounded context and evidence | Prior adapters do not prove integrated live journey. Require safe native task, blocked permission and cancellation proof. |
 | R22 | Mac-first shared desktop, no competing clickers | Scope constraint. No new Cua Spaces dependency or cursor-arbitration product. |
 | R23 | Real schedules, scoped discussion, details and history | Prototype only is not acceptance. Authorized backend integration remains unverified; no fabricated live schedules. |
-| R24 | Results anchored once to original tasks | Candidate projects stable cards beside original requests. Isolated test covers out-of-order results, direct Steer receipts, duplicate submission and restart. Native visual acceptance pending. |
+| R24 | Results anchored once to original tasks | Candidate projects stable cards beside original requests. Isolated test covers out-of-order results, direct Steer receipts, duplicate submission and restart. Native replay of captured real history verifies original-position working and terminal cards; installed-app proof remains separate. |
 | R25 | Work independent of UI availability | Distinguish window close, app quit and crash. Baseline quit can hold uncertain work; never falsely complete or blindly replay. |
 | R26 | Signed incremental pushes, actual final Opus review | First checkpoint meets source/signature/review requirements. Exact-commit CI and release are separate gates. |
 | R27 | Internal-only same-app update preserving data | New source not installed. Never stop live work for deployment; public 0.5 feed/main untouched. |
