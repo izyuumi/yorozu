@@ -3267,11 +3267,13 @@ func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData
     let model = ChatModel(transport: FakeTransport())
     let thread = model.newDraft()
     let secretary = ThreadSummary(id: SecretaryUI.threadID, title: "Yorozu", archived: false, lastActivity: 0)
+    let worker = ThreadSummary(id: "secretary-task-" + String(repeating: "a", count: 64),
+        title: "Research", archived: false, lastActivity: 0)
     #expect(model.followUpBehavior == .queue)
     for (setting, alternate, expected) in [(MessageDelivery.queue, false, MessageDelivery.queue),
         (.queue, true, .steer), (.steer, false, .steer), (.steer, true, .queue)] {
         model.followUpBehavior = setting
-        for (target, delivery) in [(thread, expected), (secretary, .steer)] {
+        for (target, delivery) in [(thread, expected), (secretary, .steer), (worker, .steer)] {
             model.drafts[target.id] = "follow \(setting) \(alternate)"
             model.send(in: target, alternateDelivery: alternate)
             let sent = try #require(model.outbox.last)

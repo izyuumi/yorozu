@@ -90,7 +90,7 @@ struct GeneralView: View {
                 } footer: {
                     Group {
                         if SecretaryUI.enabled {
-                            Text("Required approvals remain in place. If more access is needed, Yorozu asks before proceeding.")
+                            Text("Yorozu tasks retain required approvals. If more access is needed, Yorozu asks before proceeding.")
                         } else if session.model.yoloMode {
                             Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
                                 .foregroundStyle(.red)

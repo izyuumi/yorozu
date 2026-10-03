@@ -6,9 +6,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "通常の作業は、許可済みのアクセス権の範囲で自動的に実行します。" } }
       }
     },
-    "Required approvals remain in place. If more access is needed, Yorozu asks before proceeding." : {
+    "Yorozu tasks retain required approvals. If more access is needed, Yorozu asks before proceeding." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "必要な承認は引き続き求められます。追加のアクセス権が必要な場合は、実行前に確認します。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuのタスクでは、必要な承認は引き続き求められます。追加のアクセス権が必要な場合は、実行前に確認します。" } }
       }
     },
     "Confirming delivery…" : {

@@ -351,7 +351,7 @@ private struct HostAdvancedSection: View {
     /// Off, or on with its expiry. Pairing is the grant, so the switch applies at once.
     @ViewBuilder private var approvalsFooter: some View {
         if SecretaryUI.enabled {
-            Text("Required approvals remain in place. If more access is needed, Yorozu asks before proceeding.")
+            Text("Yorozu tasks retain required approvals. If more access is needed, Yorozu asks before proceeding.")
         } else if host.model.yoloMode {
             // One view: a footer given two lays out only the first.
             VStack(alignment: .leading) {

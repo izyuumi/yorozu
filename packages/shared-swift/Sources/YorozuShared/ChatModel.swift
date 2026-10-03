@@ -1061,7 +1061,7 @@ public final class ChatModel {
         let createdAt = Int(Date().timeIntervalSince1970 * 1000)
         // The secretary routes follow-ups to the appropriate task. Keep the saved delivery
         // preference and alternate-send behavior for ordinary conversations.
-        let delivery: MessageDelivery = threadId == SecretaryUI.threadID ? .steer
+        let delivery: MessageDelivery = threadId == SecretaryUI.threadID || threadId.hasPrefix("secretary-task-") ? .steer
             : alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior
         let event = YorozuEvent(
             id: UUID().uuidString,
