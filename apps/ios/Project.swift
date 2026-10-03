@@ -88,6 +88,7 @@ let project = Project(
                 "UILaunchScreen": [:],
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
+                "YorozuSecretaryEnabled": .boolean(ProcessInfo.processInfo.environment["YOROZU_SECRETARY_ENABLED"] == "1"),
                 "LSApplicationCategoryType": "public.app-category.productivity",
                 // Two uses, one key: scanning the pairing code, and taking a photo to send from
                 // the composer. The string has to cover both, because iOS only asks once.

@@ -15,11 +15,43 @@ import YorozuShared
 /// place the chat lives.
 struct ChatWindowView: View {
     @State private var session = MacChatSession.shared
+    @State private var showingHistory = false
+    @State private var router = ChatWindowRouter.shared
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.controlActiveState) private var controlActiveState
     var body: some View {
         Group {
-            if session.role == .client { ClientChatWindowView(session: session) }
+            if SecretaryUI.enabled && !showingHistory {
+                NavigationStack {
+                    SecretaryChatView(model: session.model,
+                        hostLabel: session.role == .client ? session.hosts.sessions.first { $0.model === session.model }?.label : nil,
+                        onHistory: { showingHistory = true })
+                        .id(ObjectIdentifier(session.model))
+                }
+                .onChange(of: controlActiveState, initial: true) { _, state in
+                    session.model.foreground = state == .key
+                }
+                .onDisappear { session.model.foreground = false }
+            } else if session.role == .client { ClientChatWindowView(session: session) }
             else { LocalChatWindowView() }
         }
+        .toolbar {
+            if SecretaryUI.enabled {
+                if showingHistory {
+                    ToolbarItem(placement: .navigation) {
+                        Button("Yorozu", systemImage: "bubble.left.and.bubble.right") { showingHistory = false }
+                            .accessibilityIdentifier("secretary-return")
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Settings", systemImage: "gearshape") { openWindow(id: YorozuMacApp.settingsWindow) }
+                }
+            }
+        }
+        .onChange(of: router.threadID, initial: true) { _, id in
+            if id != nil { showingHistory = true }
+        }
+        .modifier(SecretaryLocale())
         // Text with no font of its own, the composer's included, follows ⌘+ and ⌘− too.
         .font(.scaled(.body))
         .overlay(alignment: .top) { ThreadNotificationToast() }
@@ -44,6 +76,11 @@ struct QuickChatView: View {
     private var target: QuickChatTarget? { router.target?.threadID == selection ? router.target : nil }
 
     var body: some View {
+        if SecretaryUI.enabled && router.target == nil { ChatWindowView() }
+        else { legacyChat }
+    }
+
+    private var legacyChat: some View {
         NavigationStack {
             if let thread {
                 ChatView(model: model, thread: thread,

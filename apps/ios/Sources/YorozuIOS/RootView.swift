@@ -629,6 +629,7 @@ struct RootView: View {
     @State private var path: [String] = Session.shared.openPath
     @State private var hostPath: [HostThreadID] = Session.shared.hostPath
     @State private var settings = launchArgument("yorozuShowcase") == "settings"
+    @State private var showingSecretaryHistory = Session.shared.notificationOpen != nil
     /// Screenshot only: `-yorozuShowcase share` draws the share extension's composer here,
     /// because a simulator cannot be made to open a real share sheet.
     @State private var shareShowcase = ChatShowcase.share
@@ -644,6 +645,7 @@ struct RootView: View {
 
     var body: some View {
         content
+            .modifier(SecretaryLocale())
             // Four things arrive as a `yorozu://` link and they are told apart by the host, not
             // by trying each parser in turn: `pair` is the pairing string tapped in Messages,
             // `thread` and `ref` name a thread to open, `share` is the share extension handing
@@ -651,10 +653,12 @@ struct RootView: View {
             .onOpenURL { url in
                 switch url.host() {
                 case "thread":
+                    if SecretaryUI.enabled { showingSecretaryHistory = true }
                     // `yorozu://thread/<id>`, so the id is the path with its leading slash off.
                     // Decoded once, by `path`: decoding again would eat a literal `%` in an id.
                     session.open(threadId: String(url.path(percentEncoded: false).dropFirst()), hostID: URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "host" }?.value)
                 case "ref":
+                    if SecretaryUI.enabled { showingSecretaryHistory = true }
                     // `yorozu://ref/<threadRef>` — a notification being tapped, which knows the
                     // thread only by the reference a push carried.
                     session.open(threadRef: String(url.path(percentEncoded: false).dropFirst()), hostID: URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "host" }?.value)
@@ -680,9 +684,11 @@ struct RootView: View {
             .sheet(isPresented: $settings) {
                 SettingsView(session: session) { threadID, hostID in
                     settings = false
+                    showingSecretaryHistory = true
                     if let hostID { hostPath = [HostThreadID(hostID: hostID, threadID: threadID)] }
                     else { path = [threadID] }
                 }
+                .modifier(SecretaryLocale())
             }
             // iOS suspends the app and its socket with it. Coming back is the moment to re-dial,
             // rather than waiting out a backoff that ran down while nothing was executing — and
@@ -717,6 +723,19 @@ struct RootView: View {
             .onChange(of: settings) { _, shown in
                 session.hosts.foreground = scenePhase == .active && !shown
                 if session.hosts.sessions.isEmpty { session.model?.foreground = scenePhase == .active && !shown }
+            }
+            .onChange(of: session.hostPath) { _, opened in
+                if SecretaryUI.enabled, !opened.isEmpty { showingSecretaryHistory = true; hostPath = opened }
+            }
+            .onChange(of: session.openPath) { _, opened in
+                if SecretaryUI.enabled, !opened.isEmpty { showingSecretaryHistory = true; path = opened }
+            }
+            .onChange(of: session.notificationOpen?.id) { _, id in
+                if SecretaryUI.enabled, id != nil {
+                    showingSecretaryHistory = true
+                    hostPath = session.hostPath
+                    path = session.openPath
+                }
             }
             .onChange(of: session.hosts.sessions.map { $0.model.compatibility }) { _, _ in
                 session.finishIncompatiblePairing()
@@ -757,6 +776,42 @@ struct RootView: View {
     }
 
     @ViewBuilder private var content: some View {
+        if SecretaryUI.enabled && !session.isDemo, let model = secretaryModel {
+            if showingSecretaryHistory {
+                historyContent
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        HStack {
+                            Button("Yorozu", systemImage: "bubble.left.and.bubble.right") { showingSecretaryHistory = false }
+                                .accessibilityIdentifier("secretary-return")
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, LayoutMetrics.inner)
+                        .background(YorozuPalette.canvas)
+                    }
+            } else {
+                NavigationStack {
+                    SecretaryChatView(model: model,
+                        hostLabel: session.hosts.sessions.first { $0.model === model }?.label,
+                        onHistory: { showingSecretaryHistory = true })
+                        .id(ObjectIdentifier(model))
+                        .toolbar {
+                            ToolbarItem {
+                                Button("Settings", systemImage: "gearshape") { settings = true }
+                            }
+                        }
+                }
+            }
+        } else { historyContent }
+    }
+
+    private var secretaryModel: ChatModel? {
+        guard !session.isPairing else { return nil }
+        return session.hosts.session(for: session.hosts.lastUsedHostID ?? "")?.model
+            ?? session.hosts.sessions.first?.model ?? session.model
+    }
+
+    @ViewBuilder private var historyContent: some View {
         #if DEBUG
         if launchArgument("yorozuShowcase") == "pairing-manual" {
             PairView(onPair: { _ in String(localized: "Not a Yorozu pairing code.") })

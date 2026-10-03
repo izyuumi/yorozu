@@ -99,13 +99,16 @@ final class Sidecar: ObservableObject {
         if let command = environment["YOROZU_RUNTIME_CMD"], !shellWords(command).isEmpty {
             return launch(words: shellWords(command), environment: environment)
         }
+        // An internal secretary bundle must never fall back to a development runtime.
+        if SecretaryUI.enabled { return bundledLaunch() }
         return bundledLaunch() ?? devLaunch(environment: environment)
     }
 
     private static func bundledLaunch() -> Launch? {
         guard let resources = Bundle.main.resourceURL else { return nil }
         let node = resources.appendingPathComponent("node")
-        let serve = resources.appendingPathComponent("runtime/dist/serve.js")
+        let entry = SecretaryUI.enabled ? "secretary-serve.js" : "serve.js"
+        let serve = resources.appendingPathComponent("runtime/dist/\(entry)")
         guard FileManager.default.isExecutableFile(atPath: node.path),
               FileManager.default.isReadableFile(atPath: serve.path)
         else { return nil }
@@ -703,6 +706,7 @@ struct YorozuMacApp: App {
         // own, which stops the sidebar short of the top and leaves the pane without a toolbar.
         Window("Settings", id: Self.settingsWindow) {
             SettingsView(sidecar: sidecar)
+                .modifier(SecretaryLocale())
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .defaultSize(width: 800, height: 580)

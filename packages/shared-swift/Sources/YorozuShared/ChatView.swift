@@ -45,6 +45,8 @@ public struct ChatView: View {
     /// the link. See ``OpenURLAction/chatLinks(onPairingLink:)``.
     @Environment(\.onPairingLink) private var onPairingLink
     @Environment(\.threadSearchRequest) private var threadSearchRequest
+    @Environment(\.secretaryPresentation) private var secretaryPresentation
+    @Environment(\.locale) private var locale
 
     /// Whether geometry currently reaches the newest message. Reader intent is tracked
     /// separately because async row growth can make this false without any manual scroll.
@@ -280,7 +282,9 @@ public struct ChatView: View {
     }
 
     @ViewBuilder private var emptyTranscript: some View {
-        if model.isDraft(thread.id) {
+        if secretaryPresentation {
+            SecretaryGreeting()
+        } else if model.isDraft(thread.id) {
             ScrollView { draftSelectors.padding(LayoutMetrics.gutter) }
                 .scrollDismissesKeyboard(.interactively)
         } else {
@@ -312,7 +316,7 @@ public struct ChatView: View {
                     systemImage: "exclamationmark.triangle")
             }
             if thread.interruptedTurnId != nil { interruptedTurnNotice }
-            if !model.isDraft(thread.id), let path = presentation.projectPath {
+            if !secretaryPresentation, !model.isDraft(thread.id), let path = presentation.projectPath {
                 projectContext(path)
             }
             Group {
@@ -431,16 +435,16 @@ public struct ChatView: View {
         .onChange(of: model.state, initial: true) { _, state in
             if state == .paired { model.requestApprovalSettings() }
         }
-        .navigationTitle(thread.displayTitle)
+        .navigationTitle(secretaryPresentation ? "Yorozu" : thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
-            .modifier(AgentSubtitle(text: presentation.agentLabel))
+            .modifier(AgentSubtitle(text: secretaryPresentation ? "" : presentation.agentLabel))
         #else
             // A thread on a model of its own says so beside its title. Only then — the default
             // is the case that needs no caption. The Mac has a title bar subtitle for exactly
             // this; the phone has one from iOS 26, and a compact identity in its `.principal`
             // item before that.
-            .navigationSubtitle(macModelCaption)
+            .navigationSubtitle(secretaryPresentation ? "" : macModelCaption)
             // The bar draws its own backdrop, always. Left to decide for itself it went clear
             // over a transcript that reached it and opaque over a project row that did not,
             // so the bar had an edge in one kind of thread and none in the other.
@@ -452,7 +456,7 @@ public struct ChatView: View {
                 // tells it how much room there is — on every iPhone, and worse on Duo's side
                 // bar — so a long title ran under the buttons. The system title is the one
                 // view the bar does truncate; only older bars, which clamp `titleView`, get this.
-                if #unavailable(iOS 26) {
+                if #unavailable(iOS 26), !secretaryPresentation {
                     ToolbarItem(placement: .principal) {
                         HStack(spacing: 7) {
                             AgentMarkView(presentation.agent, size: 20)
@@ -701,6 +705,8 @@ public struct ChatView: View {
                 notificationRequest: notificationRequest,
                 highlightedRow: highlightedNotificationRow,
                 presentation: TimelinePresentation(
+                    localeIdentifier: locale.identifier,
+                    secretaryPresentation: secretaryPresentation,
                     search: search,
                     outbox: model.outbox,
                     queuedStatuses: queuedStatuses,
@@ -717,6 +723,7 @@ public struct ChatView: View {
                 content: { row in
                     AnyView(
                         rowView(row, queuedStatuses: queuedStatuses)
+                            .environment(\.locale, locale)
                             .environment(\.searchHighlight, search)
                             .environment(\.openURL, linkAction)
                     )
@@ -957,7 +964,7 @@ public struct ChatView: View {
                         else { model.retry(event.id) }
                     },
                     agent: presentation.agent,
-                    agentLabel: presentation.agentLabel
+                    agentLabel: secretaryPresentation ? "Yorozu" : presentation.agentLabel
                 )
                 .id(event.id)
                 .onAppear { model.requestAttachmentDownloads(event) }
@@ -1132,7 +1139,12 @@ public struct ChatView: View {
         return false
     }
     private var composerPlaceholder: String {
-        model.composerPlaceholder(in: thread.id, default: presentation.composerPlaceholder)
+        guard secretaryPresentation else {
+            return model.composerPlaceholder(in: thread.id, default: presentation.composerPlaceholder)
+        }
+        if hasPendingApproval { return locale.secretaryText("Resolve approval to continue", "続けるには承認が必要です") }
+        if hasPendingQuestion { return locale.secretaryText("Type a custom answer or pick an option", "回答を入力するか選択肢を選んでください") }
+        return locale.secretaryText("Message Yorozu…", "Yorozuにメッセージ…")
     }
 
     @ViewBuilder private var composerCards: some View {
@@ -1688,6 +1700,8 @@ public struct ChatView: View {
     /// reconfigure only the growing reply while search, queue and card actions refresh all
     /// visible hosted rows when their presentation really changed.
     private struct TimelinePresentation: Equatable {
+        let localeIdentifier: String
+        let secretaryPresentation: Bool
         let search: String
         let outbox: [OutboxItem]
         let queuedStatuses: [String: String]
@@ -1791,7 +1805,10 @@ public struct ChatView: View {
                                 self.parent.content(row).compactQuietTranscriptLayout()
                             }
                         case .activity(let activity):
-                            ChatActivityRow(activity: activity, agent: self.parent.agent).compactQuietTranscriptLayout()
+                            ChatActivityRow(activity: activity, agent: self.parent.agent)
+                                .environment(\.locale, Locale(identifier: self.parent.presentation.localeIdentifier))
+                                .environment(\.secretaryPresentation, self.parent.presentation.secretaryPresentation)
+                                .compactQuietTranscriptLayout()
                         }
                     }
                     .margins(.horizontal, 10)
@@ -2223,6 +2240,18 @@ private struct SearchHitBar: View {
 private struct ChatActivityRow: View {
     let activity: ChatActivity
     let agent: ThreadAgent
+    @Environment(\.locale) private var locale
+    @Environment(\.secretaryPresentation) private var secretaryPresentation
+
+    private var label: String {
+        guard secretaryPresentation else { return activity.label }
+        switch activity {
+        case .thinking: return locale.secretaryText("Thinking…", "考え中…")
+        case .waitingForApproval: return locale.secretaryText("Waiting for your approval", "承認をお待ちしています")
+        case .waitingForAnswer: return locale.secretaryText("Waiting for your answer", "回答をお待ちしています")
+        case .waitingForOpenClaw: return locale.secretaryText("Waiting for OpenClaw", "OpenClawの応答を待っています")
+        }
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -2232,7 +2261,7 @@ private struct ChatActivityRow: View {
             } else {
                 ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
             }
-            Text(activity.label).font(.scaled(.caption)).foregroundStyle(.secondary)
+            Text(label).font(.scaled(.caption)).foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .combine)
