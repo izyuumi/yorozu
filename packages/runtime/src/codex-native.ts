@@ -261,6 +261,8 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         if (turn.signal.aborted) abort();
         await completion;
       } catch (error) {
+        if (terminal) return { text: error instanceof Error ? error.message : String(error),
+          failed: true, cessation: "provider-terminal", ...(sessionId ? { sessionId } : {}) };
         if (!turn.signal.aborted) throw error;
       } finally {
         cancel.abort();

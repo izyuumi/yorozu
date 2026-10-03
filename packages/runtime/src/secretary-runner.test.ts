@@ -2,7 +2,7 @@
 import { expect, test, vi } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -44,7 +44,16 @@ lines.on('line', line => {
     mode = frame.params.input[0].text;
     send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } });
     if (mode === 'FAIL') { process.exit(8); return; }
+    if (mode === 'FAIL_TERMINAL' || mode === 'INTERRUPTED_TERMINAL') {
+      send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: mode === 'FAIL_TERMINAL' ? 'failed' : 'interrupted', error: { message: 'Fixture provider failed' } } } });
+      return;
+    }
     if (mode === 'STOP') return;
+    if (mode === 'STOP_UNCONFIRMED') {
+      process.on('SIGTERM', () => {});
+      setInterval(() => {}, 1000);
+      return;
+    }
     send({ id: 'approval', method: 'item/commandExecution/requestApproval', params: { threadId: session, turnId: 'fixture-turn', command: 'fixture command' } });
   }
   if (frame.id === 'approval' && frame.result) {
@@ -59,6 +68,7 @@ lines.on('line', line => {
     send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: 'completed' } } });
   }
   if (frame.method === 'turn/interrupt') {
+    if (mode === 'STOP_UNCONFIRMED') return;
     send({ id: frame.id, result: {} });
     send({ method: 'turn/completed', params: { threadId: session, turn: { id: 'fixture-turn', status: 'interrupted' } } });
   }
@@ -126,6 +136,7 @@ test("secretary preserves legacy data, durable replay, session continuity and na
     const failed = await invoke("uncertain", "FAIL");
     expect(failed.text).toMatch(/unconfirmed|without confirmed completion/);
     expect(failed.completed).not.toBe(true);
+    expect(failed.unconfirmed).toBe(true);
     const starts = rows().filter((row) => row.method === "turn/start").length;
     runner = secretaryRunner(state, ordinary);
     expect((await runner.run({ threadId: SECRETARY_THREAD_ID, cwd: home.cwd!, text: "FAIL", signal: new AbortController().signal })).completed).not.toBe(true);
@@ -194,3 +205,70 @@ test("settings subcommands retain the baseline CLI without starting the secretar
     expect(existsSync(join(temp, "state", "local.sock"))).toBe(false);
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
+
+
+test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL"])("service preserves %s outcome, replay and queue semantics", async (mode) => {
+  const { temp, state, rows } = fixture();
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  let heldProvider: number | undefined;
+  const stopFixture = (): void => {
+    if (!heldProvider) return;
+    let command = "";
+    try { command = execFileSync("/bin/ps", ["-p", String(heldProvider), "-o", "command="], { encoding: "utf8" }); } catch {}
+    if (command.includes(`${temp}/bin/codex`)) process.kill(heldProvider, "SIGKILL");
+    heldProvider = undefined;
+  };
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock"));
+    const events: any[] = [];
+    createInterface({ input: socket }).on("line", (line) => events.push(JSON.parse(line))).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    const send = (id: string, kind: string, data: unknown) => {
+      const event = { id, kind, data, threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now() };
+      socket!.write(`${JSON.stringify(event)}\n`);
+      return event;
+    };
+    const first = send("uncertain-user", "message", { role: "user", text: mode });
+    await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1));
+    if (mode === "STOP_UNCONFIRMED") {
+      heldProvider = rows().find((row) => row.method === "turn/start").pid;
+      send("stop-inflight", "interrupt", { targetEventId: first.id });
+      await vi.waitFor(() => expect(events.some((event) => event.kind === "stop_status" && event.data.status === "unconfirmed")).toBe(true), { timeout: 6000 });
+      // The adapter already reported no cessation evidence; clean up only our stubborn peer.
+      stopFixture();
+    }
+    await vi.waitFor(() => expect(events.find((event) => event.id === `native:${first.id}:final` && event.data.done)?.data.failed).toBe(true), { timeout: 6000 });
+    if (mode.endsWith("_TERMINAL")) {
+      expect(events.find((event) => event.id === `native:${first.id}:final`)?.data.text).toContain(mode === "FAIL_TERMINAL" ? "Fixture provider failed" : "without completing");
+      socket.write(`${JSON.stringify(first)}\n`);
+      send("later-user", "message", { role: "user", text: mode });
+      await vi.waitFor(() => expect(events.find((event) => event.id === "native:later-user:final" && event.data.done)?.data.failed).toBe(true));
+      expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(2);
+      expect(events.filter((event) => event.kind === "stop_status")).toHaveLength(0);
+      expect(listThreads(state).find((thread) => thread.id === SECRETARY_THREAD_ID)?.nativeTurn).toBeUndefined();
+      return;
+    }
+    send("stop-again", "interrupt", { targetEventId: first.id });
+    await vi.waitFor(() => expect(events.findLast((event) => event.kind === "stop_status" && event.data.requestId === "stop-again")?.data.status).toBe("unconfirmed"));
+    expect(events.filter((event) => event.kind === "stop_status" && event.data.targetEventId === first.id).some((event) => ["stopped", "completed"].includes(event.data.status))).toBe(false);
+    socket.write(`${JSON.stringify(first)}\n`);
+    send("later-user", "message", { role: "user", text: "RUN" });
+    send("query-uncertain", "admission_query", { eventId: first.id });
+    await vi.waitFor(() => expect(events.find((event) => event.kind === "admission_status" && event.data.requestId === "query-uncertain")?.data.status).toBe("indeterminate"));
+    await vi.waitFor(() => expect(events.findLast((event) => event.kind === "thread_list")?.data.threads.find((thread: any) => thread.id === SECRETARY_THREAD_ID)).toMatchObject({ turnState: "stopped-unconfirmed", queuedEventIds: ["later-user"] }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(listThreads(state).find((thread) => thread.id === SECRETARY_THREAD_ID)?.nativeTurn).toBeUndefined();
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(state, "native-turn-queue.json"), "utf8"))).toContainEqual({ threadId: SECRETARY_THREAD_ID, eventId: "later-user" });
+    expect(JSON.parse(readFileSync(join(state, "stopped-turns.jsonl"), "utf8").trim().split("\n").at(-1)!)).toMatchObject({ targetEventId: first.id, status: "unconfirmed" });
+  } finally {
+    stopFixture();
+    socket?.destroy();
+    await sidecar?.close();
+    vi.unstubAllEnvs();
+    rmSync(temp, { recursive: true, force: true });
+  }
+}, 15000);

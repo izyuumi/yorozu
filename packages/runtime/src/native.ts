@@ -103,6 +103,8 @@ export interface NativeTurnResult {
   text: string;
   /** The SDK reported a terminal failure rather than a completed answer. */
   failed?: boolean;
+  /** The secretary has no conclusive outcome; hold queued work instead of retrying it. */
+  unconfirmed?: true;
   /** The agent reported a successful turn, even if Stop was requested meanwhile. */
   completed?: true;
   /** Explicit terminal turn or this invocation's observed child exit; close/settlement alone is insufficient. */

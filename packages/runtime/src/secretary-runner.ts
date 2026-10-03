@@ -72,7 +72,7 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
       if (exited) resolve(result);
       else stopping = setTimeout(() => { host.kill(); }, 15000);
     };
-    const uncertain = (): void => finish({ text: "The secretary outcome is unconfirmed. This accepted task will not run again automatically.", sessionId });
+    const uncertain = (): void => finish({ text: "The secretary outcome is unconfirmed. This accepted task will not run again automatically.", sessionId, unconfirmed: true });
     const stop = (): void => {
       write("stop");
       stopping ??= setTimeout(() => { host.kill(); uncertain(); }, 15000);
@@ -108,6 +108,8 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
         respond(data.requestId, value);
       } else if (["completed", "stopped", "unconfirmed"].includes(event.kind)) {
         finish({ text: event.text ?? "", sessionId,
+          ...(event.kind === "unconfirmed" ? { unconfirmed: true as const } : {}),
+          ...(event.kind === "stopped" && data.failed === true ? { failed: true } : {}),
           ...(event.kind === "completed" ? { completed: true, cessation: "provider-terminal" as const } : {}),
           ...(event.kind === "stopped" && ["provider-terminal", "process-exited"].includes(data.evidence) ? { cessation: data.evidence } : {}) });
       }
@@ -131,7 +133,7 @@ function runSecretary(root: string, workspace: string, runId: string, turn: Nati
             write("submit", { text: turn.text, turn: metadata });
           })().catch(() => { stop(); uncertain(); });
         } else if (packet.result?.error) {
-          finish({ text: `The secretary could not accept this task (${String(packet.result.error)}).`, sessionId });
+          finish({ text: `The secretary could not accept this task (${String(packet.result.error)}).`, sessionId, failed: true });
         }
       } catch { stop(); uncertain(); }
     });

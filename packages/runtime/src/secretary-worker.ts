@@ -78,7 +78,8 @@ async function run(cwd: string, text: string, metadata: Pick<NativeTurn, "model"
       beforeTool: async (signal) => await request("beforeTool", {}, signal) === true,
     });
     if (result.completed && result.cessation === "provider-terminal") emit("completed", clipped(result.text), { evidence: result.cessation, sessionId: result.sessionId });
-    else if (result.cessation) emit("stopped", clipped(result.text), { evidence: result.cessation, sessionId: result.sessionId });
+    else if (result.cessation) emit("stopped", clipped(result.text || "Codex ended the turn without completing it."),
+      { evidence: result.cessation, sessionId: result.sessionId, failed: result.failed === true || !abort.signal.aborted });
     else emit("unconfirmed", "Codex stopped without confirmed completion. The accepted task will not run again automatically.");
   } catch {
     emit("unconfirmed", "The secretary connection ended without confirmed completion. The accepted task will not run again automatically.");
