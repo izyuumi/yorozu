@@ -2,153 +2,200 @@ import AppKit
 import SwiftUI
 import YorozuShared
 
+private enum AlphaLanguage: String, CaseIterable {
+    case system, english, japanese
+
+    var isJapanese: Bool {
+        self == .japanese || (self == .system && Locale.preferredLanguages.first?.hasPrefix("ja") == true)
+    }
+    var locale: Locale { Locale(identifier: isJapanese ? "ja" : "en") }
+    func text(_ english: String, _ japanese: String) -> String { isJapanese ? japanese : english }
+
+    // Existing transport messages remain unchanged; only their presentation is localized.
+    func message(_ bilingual: String) -> String {
+        let parts = bilingual.components(separatedBy: " / ")
+        return parts.count == 2 ? parts[isJapanese ? 1 : 0] : bilingual
+    }
+}
+
 @main
 struct YorozuAlphaApp: App {
     @State private var model = AlphaChatModel(configuration: .launch())
+    @AppStorage("uiLanguage", store: UserDefaults(suiteName: "to.yumi.yorozu.alpha.internal"))
+    private var language = AlphaLanguage.system
 
     var body: some Scene {
-        Window("Yorozu 0.6 — Internal Alpha", id: "main-chat") {
-            AlphaChatView(model: model)
+        Window("Yorozu", id: "main-chat") {
+            AlphaChatView(model: model, language: language)
+                .environment(\.locale, language.locale)
                 .onAppear { NSApp.activate(ignoringOtherApps: true); model.reconnect() }
                 .onDisappear { model.close() }
         }
         .defaultSize(width: 900, height: 700)
+        .windowToolbarStyle(.unifiedCompact)
         .commands {
             CommandGroup(replacing: .newItem) {}
-            CommandMenu("Chat") {
-                Button("Reconnect / 再接続") { model.reconnect() }
+            CommandMenu(language.text("Chat", "チャット")) {
+                Button(language.text("Reconnect", "再接続")) { model.reconnect() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
-                Button("Stop / 停止") { model.stop() }
+                Button(language.text("Stop", "停止")) { model.stop() }
                     .keyboardShortcut(".", modifiers: .command)
                     .disabled(!model.canStop)
             }
         }
+        Settings {
+            Form {
+                Picker(language.text("Language", "言語"), selection: $language) {
+                    Text(language.text("System", "システムに合わせる")).tag(AlphaLanguage.system)
+                    Text("English").tag(AlphaLanguage.english)
+                    Text("日本語").tag(AlphaLanguage.japanese)
+                }
+                .accessibilityIdentifier("alpha-language")
+                Text(language.text("Applies immediately to the app interface.", "アプリの表示にすぐ反映されます。"))
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            .formStyle(.grouped)
+            .navigationTitle(language.text("Settings", "設定"))
+            .environment(\.locale, language.locale)
+        }
+        .defaultSize(width: 420, height: 200)
     }
 }
 
-struct AlphaChatView: View {
+private struct AlphaChatView: View {
     @Bindable var model: AlphaChatModel
-    @State private var showsWorkspace = false
+    let language: AlphaLanguage
+
+    // A typographic reading measure scales with the native body font, not a window-size guess.
+    private var readingWidth: CGFloat {
+        (String(repeating: "0", count: 88) as NSString)
+            .size(withAttributes: [.font: NSFont.preferredFont(forTextStyle: .body)]).width
+    }
+    private var connectionLabel: String {
+        if model.connecting { return language.text("Connecting…", "接続中…") }
+        return model.ready ? language.text("Connected", "接続済み") : language.text("Disconnected", "未接続")
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                YorozuMark()
-                VStack(alignment: .leading) {
-                    Text("Yorozu / よろず").font(.headline)
-                    Text("One continuous conversation / ひとつの会話").font(.caption).foregroundStyle(.secondary)
+            if model.runs.isEmpty {
+                VStack(spacing: LayoutMetrics.stack) {
+                    YorozuMark(dimension: 48).accessibilityHidden(true)
+                    Text(language.text("What can I help you with?", "今日は何をお手伝いしましょうか？"))
+                        .font(.title2.weight(.medium))
+                    Text(language.text("A place to think, write, and get things done.", "考えること、書くこと、日々の仕事を一緒に。"))
+                        .foregroundStyle(.secondary)
                 }
-                Spacer()
-                Label(model.connecting ? "Connecting / 接続中" : model.ready ? "Connected / 接続済み" : "Disconnected / 未接続",
-                    systemImage: model.ready ? "circle.fill" : "circle.dotted")
-                    .font(.caption)
-                    .foregroundStyle(model.ready ? YorozuPalette.sage : YorozuPalette.warning)
-                Button("Reconnect / 再接続", systemImage: "arrow.clockwise") { model.reconnect() }
-                    .disabled(model.connecting)
-                    .accessibilityIdentifier("alpha-reconnect")
-            }
-            .padding()
-            Divider()
-            if let failure = model.transportFailure {
-                Label(failure, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(YorozuPalette.warning)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-                    .accessibilityIdentifier("alpha-connection-failure")
-            }
-            ScrollViewReader { scroll in
-                ScrollView {
-                    LazyVStack(alignment: .leading) {
-                        if model.runs.isEmpty {
-                            ContentUnavailableView("Start with Yorozu / よろずに依頼する", systemImage: "bubble.left.and.bubble.right",
-                                description: Text("Ask for a small text file and checksum in the temporary workspace. / 一時作業フォルダに短いテキストファイルとチェックサムを作成できます。"))
-                        }
-                        ForEach(model.runs) { run in
-                            MessageBubble(id: run.id, data: MessageData(role: .user, text: run.prompt))
-                            AlphaTaskCard(run: run, disconnected: !model.ready && !run.terminal)
-                            if !run.answer.isEmpty {
-                                MessageBubble(id: "reply-\(run.id)", data: MessageData(role: .agent, text: run.answer,
-                                    done: run.terminal, failed: run.kind == "failed", interrupted: run.kind == "stopped"),
-                                    streaming: model.ready && !run.terminal, agentLabel: "Yorozu")
+                .multilineTextAlignment(.center)
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                            ForEach(model.runs) { run in
+                                MessageBubble(id: run.id, data: MessageData(role: .user, text: run.prompt))
+                                AlphaTaskStatus(run: run, disconnected: !model.ready && !run.terminal, language: language)
+                                if !run.answer.isEmpty {
+                                    MessageBubble(id: "reply-\(run.id)", data: MessageData(role: .agent, text: run.answer,
+                                        done: run.terminal, failed: run.kind == "failed", interrupted: run.kind == "stopped"),
+                                        streaming: model.ready && !run.terminal, agentLabel: "Yorozu")
+                                }
                             }
+                            Color.clear.frame(height: 1).id("latest")
                         }
-                        Color.clear.frame(height: 1).id("latest")
+                        .frame(maxWidth: readingWidth)
+                        .padding()
+                        .frame(maxWidth: .infinity)
                     }
-                    .padding()
+                    .onChange(of: model.events.last?.seq) { _, _ in scroll.scrollTo("latest", anchor: .bottom) }
+                    .onAppear { scroll.scrollTo("latest", anchor: .bottom) }
                 }
-                .onChange(of: model.events.last?.seq) { _, _ in scroll.scrollTo("latest", anchor: .bottom) }
-                .onAppear { scroll.scrollTo("latest", anchor: .bottom) }
             }
-            Divider()
             VStack(alignment: .leading) {
-                if let notice = model.notice {
-                    Text(notice).font(.caption).foregroundStyle(.secondary)
+                if let failure = model.transportFailure {
+                    Label(language.message(failure), systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(YorozuPalette.warning)
+                        .accessibilityIdentifier("alpha-connection-failure")
+                } else if let notice = model.notice {
+                    Text(language.message(notice)).font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("alpha-notice")
                 }
                 if model.draft.utf8.count > 16000 {
-                    Text("Message exceeds 16,000 UTF-8 bytes; shorten it / メッセージを短くしてください")
+                    Text(language.text("This message is too long. Please shorten it.", "メッセージが長すぎます。短くしてください。"))
                         .font(.caption).foregroundStyle(YorozuPalette.warning)
                 }
                 AlphaComposer(text: $model.draft, canSend: model.canSend, canStop: model.canStop,
-                    stopPending: model.stopPending, onSend: model.send, onStop: model.stop)
-                HStack {
-                    Text("Internal alpha · isolated temporary workspace / 内部アルファ版・一時フォルダ")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Workspace / 作業フォルダ", systemImage: "folder") { showsWorkspace.toggle() }
-                        .disabled(model.workspace == nil)
-                }
-                if showsWorkspace, let workspace = model.workspace {
-                    Text(workspace).font(.caption.monospaced()).textSelection(.enabled)
-                    Button("Open workspace in Finder / Finderで開く") {
-                        NSWorkspace.shared.open(URL(fileURLWithPath: workspace))
-                    }
-                }
+                    stopPending: model.stopPending,
+                    placeholder: language.text("Message Yorozu…", "Yorozuにメッセージ…"),
+                    sendLabel: language.text("Send", "送信"), stopLabel: language.text("Stop", "停止"),
+                    stopPendingLabel: language.text("Stopping…", "停止処理中…"),
+                    onSend: model.send, onStop: model.stop)
             }
+            .frame(maxWidth: readingWidth)
             .padding()
+            .frame(maxWidth: .infinity)
         }
         .background(YorozuPalette.canvas)
         .foregroundStyle(YorozuPalette.ink)
         .tint(YorozuPalette.vermilion)
+        .navigationTitle("Yorozu")
+        .toolbar {
+            ToolbarItem {
+                Label(connectionLabel, systemImage: model.ready ? "checkmark.circle" : "circle.dotted")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            }
+            ToolbarItem {
+                Button(language.text("Reconnect", "再接続"), systemImage: "arrow.clockwise") { model.reconnect() }
+                    .disabled(model.connecting)
+                    .help(language.text("Reconnect", "再接続"))
+                    .accessibilityIdentifier("alpha-reconnect")
+            }
+            ToolbarItem {
+                Menu(language.text("More", "その他"), systemImage: "ellipsis") {
+                    Button(language.text("Open workspace", "作業フォルダを開く"), systemImage: "folder") {
+                        if let workspace = model.workspace { NSWorkspace.shared.open(URL(fileURLWithPath: workspace)) }
+                    }
+                    .disabled(model.workspace == nil)
+                    Divider()
+                    SettingsLink { Label(language.text("Settings…", "設定…"), systemImage: "gearshape") }
+                }
+                .help(language.text("More", "その他"))
+                .accessibilityIdentifier("alpha-more")
+            }
+        }
     }
 }
 
-private struct AlphaTaskCard: View {
+private struct AlphaTaskStatus: View {
     let run: AlphaRun
     let disconnected: Bool
+    let language: AlphaLanguage
     @State private var expanded = false
 
     var body: some View {
-        VStack(alignment: .leading) {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading) {
+                if let model = run.model { Text(language.text("Model: ", "モデル: ") + model) }
+                if let detail = run.detail { Text(language.message(detail)).textSelection(.enabled) }
+                Text(language.text("Task: ", "タスク: ") + run.id).font(.caption.monospaced()).textSelection(.enabled)
+                Text(language.text("Worker updates: ", "作業の更新: ") + String(run.activityCount))
+                if run.kind == "stop_requested", !disconnected {
+                    Text(language.text("Waiting for the worker to stop.", "ワーカーの停止を確認しています。"))
+                }
+            }
+            .font(.caption).foregroundStyle(.secondary)
+            .padding(.vertical, LayoutMetrics.tight)
+        } label: {
             HStack {
-                if !run.terminal && !disconnected { ProgressView().controlSize(.small) }
+                if !run.terminal && !disconnected { ProgressView().controlSize(.mini) }
                 else { Image(systemName: run.kind == "completed" ? "checkmark.circle" : "exclamationmark.circle") }
-                Text(disconnected ? "Outcome unconfirmed / 結果未確認" : run.label).font(.subheadline.weight(.semibold))
-                Spacer()
-                Button(expanded ? "Less / 閉じる" : "Details / 詳細") { expanded.toggle() }
-                    .font(.caption)
+                Text(disconnected ? language.text("Outcome unconfirmed", "結果未確認") : language.message(run.label))
+                if let model = run.model { Text("· \(model)").foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle) }
             }
-            if let model = run.model {
-                Text("Model / モデル: \(model)")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if run.kind == "stop_requested", !disconnected {
-                Text("Waiting for worker cessation; the request alone does not confirm Stop. / ワーカー終了待ち。要求だけでは停止確認になりません。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if let detail = run.detail {
-                Text(detail).font(.callout).textSelection(.enabled)
-            }
-            if expanded {
-                Text("Task / タスク: \(run.id)").font(.caption.monospaced()).textSelection(.enabled)
-                Text("Retained worker notifications / 保存された作業通知: \(run.activityCount)").font(.caption)
-                Text("Verify files in the workspace before relying on the result. / 作業フォルダで成果物を確認してください。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            .font(.caption).foregroundStyle(.secondary)
         }
-        .padding()
-        .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
-        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("alpha-task-\(run.id)")
     }
 }
