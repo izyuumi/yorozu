@@ -223,11 +223,14 @@ fn run() -> io::Result<()> {
                     } else if kind == "steer_requested" {
                         if let Some(current) = &mut worker {
                             // A failed write remains uncertain in the durable intent ledger.
-                            send(
+                            if send(
                                 &mut current.child,
                                 &json!({"version":1,"op":"steer","runId":run,
                                 "deliveryId":request["deliveryId"],"text":request["text"],"attachments":request["attachments"]}),
-                            )?;
+                            ).is_err() {
+                                event(owner.record(&run, "steer_result", None,
+                                    Some(json!({"deliveryId":request["deliveryId"],"accepted":null})))?)?;
+                            }
                         }
                     } else if kind == "stop_requested"
                         && let Some(worker) = &mut worker

@@ -33,7 +33,7 @@ approval cards no longer leave a false waiting label in any ChatView.
 | R01 | One continuing conversation across topics | Main thread exists. Nonblocking cross-topic continuity remains missing. |
 | R02 | Every execution is a specialized independent worker | Current Rust bridge is serial. Require two actual workers plus a main reply before either finishes. |
 | R03 | Bounded recursive delegation and upward reporting | Unverified. Require parent IDs, cancellation, child failure propagation and exactly-once results. |
-| R04 | Real Steer, no Queue/Steer choice | Existing secretary declines live steering. Require same-run provider receipt, changed file result, disconnect test and no uncertain replay. |
+| R04 | Real Steer, no Queue/Steer choice | Candidate implements real delivery and durable receipts. Real official-provider test changed A to exact B in the active turn with provider-terminal evidence; isolated tests cover disconnect/restart/lost receipt. Selector/default stays unchanged until coordinator routing distinguishes new topics from corrections. |
 | R05 | Distinguish new topic from targeted correction | Missing integrated proof. Ambiguous targets must be clarified; never inject a new topic into an arbitrary worker. |
 | R06 | Quiet tools, three dots, useful milestones and final | Source implemented in `8ce3527`; focused tests and native fixture evidence above. Actual isolated app journey and disconnect remain to verify. |
 | R07 | Persistent advanced diagnostics and model settings | Diagnostics implemented. Complete provider/model settings journey remains unverified. |

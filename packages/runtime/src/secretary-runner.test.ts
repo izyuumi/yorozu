@@ -104,7 +104,13 @@ lines.on('line', line => {
   if (frame.method === 'turn/steer') {
     changed = frame.params.input[0].text === 'write B instead' ? 'B' : 'unexpected';
     if (mode === 'STEER_LOST') { fs.writeFileSync(process.env.CODEX_FIXTURE_RESULT, changed); process.exit(8); return; }
-    send({ id: frame.id, result: { turnId: 'fixture-turn' } });
+    const receipt = () => send({ id: frame.id, result: { turnId: 'fixture-turn' } });
+    if (!process.env.CODEX_FIXTURE_STEER_RECEIPT) receipt();
+    else {
+      const timer = setInterval(() => {
+        if (fs.existsSync(process.env.CODEX_FIXTURE_STEER_RECEIPT)) { clearInterval(timer); receipt(); }
+      }, 20);
+    }
   }
   if (frame.method === 'turn/interrupt') {
     if (mode === 'STOP_UNCONFIRMED') return;
@@ -275,6 +281,8 @@ test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never 
   const resultFile = join(temp, "result.txt");
   vi.stubEnv("CODEX_FIXTURE_RELEASE", release);
   vi.stubEnv("CODEX_FIXTURE_RESULT", resultFile);
+  const receiptRelease = join(temp, "release-receipt");
+  vi.stubEnv("CODEX_FIXTURE_STEER_RECEIPT", receiptRelease);
   let sidecar: ReturnType<typeof serveSecretary> | undefined;
   let socket: ReturnType<typeof createConnection> | undefined;
   const events: any[] = [];
@@ -295,12 +303,23 @@ test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never 
     const change = message("steer-change", "write B instead", "steer");
     send(change);
     await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/steer")).toHaveLength(1));
+    socket!.write(`${JSON.stringify({ id: "withdraw-change", kind: "interrupt", data: { targetEventId: change.id },
+      threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now() })}\n`);
+    if (mode === "STEER") {
+      socket!.write(`${JSON.stringify({ id: "query-pending", kind: "admission_query", data: { eventId: change.id },
+        threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now() })}\n`);
+      await vi.waitFor(() => expect(events.some((event) => event.kind === "admission_status" && event.data.requestId === "query-pending")).toBe(true));
+      expect(events.some((event) => event.kind === "stop_status" && event.data.requestId === "withdraw-change")).toBe(false);
+      writeFileSync(receiptRelease, "acknowledge change");
+      await vi.waitFor(() => expect(events.some((event) => event.kind === "stop_status" && event.data.requestId === "withdraw-change")).toBe(true));
+    }
     socket!.destroy();
     await connect();
     send(change); // same client submission after losing its connection
     await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:steer-change:final")?.data.text)
       .toContain(mode === "STEER" ? "received your change" : "unconfirmed"));
     expect(rows().find((row) => row.method === "turn/steer").params.expectedTurnId).toBe("fixture-turn");
+    expect(events.some((event) => event.kind === "stop_status" && event.data.targetEventId === change.id && event.data.status === "withdrawn")).toBe(false);
     if (mode === "STEER") writeFileSync(release, "finish original task");
     await vi.waitFor(() => expect(readFileSync(resultFile, "utf8")).toBe("B"));
     await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).some((event) => event.id === "native:steer-original:final" && event.data.done)).toBe(true));
@@ -318,7 +337,7 @@ test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never 
     } else {
       socket!.write(`${JSON.stringify({ id: "query-steer", kind: "admission_query", data: { eventId: change.id },
         threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now() })}\n`);
-      await vi.waitFor(() => expect(events.some((event) => event.kind === "admission_status" && event.data.requestId === "query-steer")).toBe(true));
+      await vi.waitFor(() => expect(events.find((event) => event.kind === "admission_status" && event.data.requestId === "query-steer")?.data.status).toBe("indeterminate"));
       expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
     }
     expect(rows().filter((row) => row.method === "turn/steer")).toHaveLength(1);
@@ -329,6 +348,56 @@ test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never 
     rmSync(temp, { recursive: true, force: true });
   }
 }, 15000);
+
+test("restart declines an accepted steer that crashed before the delivery journal", async () => {
+  const { temp, state, rows } = fixture();
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  try {
+    secretaryRunner(state, { run: async () => ({ text: "unused" }) });
+    appendThreadEvent({ id: "unsent-change", threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now(), kind: "message",
+      data: { role: "user", text: "write B instead", delivery: "queue", secretarySteerTarget: "prior-task" } } as any, state);
+    writeFileSync(join(state, "native-turn-queue.json"), JSON.stringify([{ threadId: SECRETARY_THREAD_ID, eventId: "unsent-change" }]));
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:unsent-change:final")?.data.text).toContain("not delivered"));
+    expect(JSON.parse(readFileSync(join(state, "native-turn-queue.json"), "utf8"))).toEqual([]);
+    socket = createConnection(join(state, "local.sock"));
+    socket.on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    socket.write(`${JSON.stringify({ id: "after-unsent", threadId: SECRETARY_THREAD_ID, agentId: "main", ts: Date.now(),
+      kind: "message", data: { role: "user", text: "DONE" } })}\n`);
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).some((event) => event.id === "native:after-unsent:final" && event.data.done)).toBe(true));
+    expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
+    expect(rows().find((row) => row.method === "turn/start").params.input[0].text).toBe("DONE");
+  } finally {
+    socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
+  }
+}, 10000);
+
+test("a closed worker input records an uncertain steer and keeps the Rust owner alive", async () => {
+  const temp = realpathSync(mkdtempSync(join(tmpdir(), "ys-steer-pipe-")));
+  const ready = join(temp, "ready");
+  const exit = join(temp, "exit");
+  const script = join(temp, "worker.cjs");
+  writeFileSync(script, `const fs=require('node:fs'); process.stdin.once('data',()=>{ fs.closeSync(0); fs.writeFileSync(${JSON.stringify(ready)},'ready'); }); setInterval(()=>{if(fs.existsSync(${JSON.stringify(exit)}))process.exit(0)},20);`);
+  const host = spawn(process.env.YOROZU_SECRETARY_HOST!, ["--secretary", join(temp, "state"), "pipe-run", join(temp, "workspace"), process.execPath, script], { stdio: ["pipe", "pipe", "ignore"] });
+  const frames: any[] = [];
+  const closed = new Promise<void>((resolve) => host.once("close", () => resolve()));
+  createInterface({ input: host.stdout }).on("line", (line) => frames.push(JSON.parse(line)));
+  const send = (id: string, op: string, data = {}) => host.stdin.write(`${JSON.stringify({ version: 1, id, op, runId: "pipe-run", ...data })}\n`);
+  try {
+    send("1", "submit", { text: "one task", turn: {} });
+    await vi.waitFor(() => expect(existsSync(ready)).toBe(true));
+    send("2", "steer", { deliveryId: "change", text: "change task", attachments: [] });
+    await vi.waitFor(() => expect(frames.find((frame) => frame.event?.kind === "steer_result")?.event.data).toEqual({ deliveryId: "change", accepted: null }));
+    send("3", "snapshot");
+    await vi.waitFor(() => expect(frames.find((frame) => frame.id === "3")?.result.activeRunId).toBe("pipe-run"));
+    expect(host.exitCode).toBe(null);
+  } finally {
+    writeFileSync(exit, "finish fixture"); host.stdin.end(); await closed;
+    rmSync(temp, { recursive: true, force: true });
+  }
+}, 10000);
 
 
 test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL", "SYMLINK_TERMINAL"])("service preserves %s outcome, replay and queue semantics", async (mode) => {
