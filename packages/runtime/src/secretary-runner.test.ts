@@ -765,7 +765,10 @@ test("coordinator answers another topic while two specialists run and targets on
     expect(new Set(readThreadEvents(SECRETARY_THREAD_ID, state).filter((event) => event.parentAgentId).map((event) => event.id)).size).toBe(2);
   } finally {
     writeFileSync(release + "-one", "cleanup"); writeFileSync(release + "-two", "cleanup");
-    socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
+    socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs();
+    // A restarted host's background model probe can finish during recursive removal.
+    // Retry only filesystem cleanup races; all behavior assertions have already run.
+    rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 20000);
 
