@@ -3266,19 +3266,30 @@ func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData
     UserDefaults.standard.removeObject(forKey: key)
     let model = ChatModel(transport: FakeTransport())
     let thread = model.newDraft()
+    let secretary = ThreadSummary(id: SecretaryUI.threadID, title: "Yorozu", archived: false, lastActivity: 0)
     #expect(model.followUpBehavior == .queue)
     for (setting, alternate, expected) in [(MessageDelivery.queue, false, MessageDelivery.queue),
         (.queue, true, .steer), (.steer, false, .steer), (.steer, true, .queue)] {
         model.followUpBehavior = setting
-        model.drafts[thread.id] = "follow \(setting) \(alternate)"
-        model.send(in: thread, alternateDelivery: alternate)
-        let sent = try #require(model.outbox.last)
-        guard case .message(let message) = sent.event.payload else { Issue.record("Missing message"); return }
-        #expect(message.delivery == expected)
-        let wire = try JSONDecoder().decode(YorozuEvent.self, from: JSONEncoder().encode(sent.event))
-        #expect(wire == sent.event)
+        for (target, delivery) in [(thread, expected), (secretary, .steer)] {
+            model.drafts[target.id] = "follow \(setting) \(alternate)"
+            model.send(in: target, alternateDelivery: alternate)
+            let sent = try #require(model.outbox.last)
+            guard case .message(let message) = sent.event.payload else { Issue.record("Missing message"); return }
+            #expect(sent.event.threadId == target.id)
+            #expect(message.delivery == delivery)
+            let wire = try JSONDecoder().decode(YorozuEvent.self, from: JSONEncoder().encode(sent.event))
+            #expect(wire == sent.event)
+        }
+        #expect(model.followUpBehavior == setting)
     }
     #expect(ChatModel(transport: FakeTransport()).followUpBehavior == .steer)
+    model.followUpBehavior = .queue
+    model.send("follow from another entry point", in: secretary.id)
+    let sent = try #require(model.outbox.last)
+    guard case .message(let message) = sent.event.payload else { Issue.record("Missing message"); return }
+    #expect(message.delivery == .steer)
+    #expect(model.followUpBehavior == .queue)
 }
 
 @MainActor

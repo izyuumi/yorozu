@@ -1059,6 +1059,10 @@ public final class ChatModel {
             }
         }
         let createdAt = Int(Date().timeIntervalSince1970 * 1000)
+        // The secretary routes follow-ups to the appropriate task. Keep the saved delivery
+        // preference and alternate-send behavior for ordinary conversations.
+        let delivery: MessageDelivery = threadId == SecretaryUI.threadID ? .steer
+            : alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior
         let event = YorozuEvent(
             id: UUID().uuidString,
             threadId: threadId,
@@ -1066,7 +1070,7 @@ public final class ChatModel {
             agentId: device,
             payload: .message(MessageData(role: .user, text: text, attachments: attachments,
                 admissionDeadline: createdAt + 30 * 60_000,
-                delivery: alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior,
+                delivery: delivery,
                 channelModel: channelChoice))
         )
         // Persist creation and its first message in one encrypted write. A failed write leaves

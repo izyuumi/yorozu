@@ -43,13 +43,15 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Chat") {
-                Picker("Follow-up messages", selection: $followUpBehavior) {
-                    Text("Queue").tag(MessageDelivery.queue)
-                    Text("Steer running turn").tag(MessageDelivery.steer)
-                }
-                    Text("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
-                        .foregroundStyle(.secondary)
+                if !SecretaryUI.enabled {
+                    Section("Chat") {
+                        Picker("Follow-up messages", selection: $followUpBehavior) {
+                            Text("Queue").tag(MessageDelivery.queue)
+                            Text("Steer running turn").tag(MessageDelivery.steer)
+                        }
+                        Text("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 if !session.isDemo {
                     Section(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Hosts") : SecretaryUI.localized("Connection")) {

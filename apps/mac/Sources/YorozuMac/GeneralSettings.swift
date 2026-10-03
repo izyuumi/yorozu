@@ -43,9 +43,11 @@ struct GeneralView: View {
                     Text("Enter").tag(false)
                     Text("⌘ Enter").tag(true)
                 }
-                Picker("Follow-up messages", selection: $followUpBehavior) {
-                    Text("Queue").tag(MessageDelivery.queue)
-                    Text("Steer running turn").tag(MessageDelivery.steer)
+                if !SecretaryUI.enabled {
+                    Picker("Follow-up messages", selection: $followUpBehavior) {
+                        Text("Queue").tag(MessageDelivery.queue)
+                        Text("Steer running turn").tag(MessageDelivery.steer)
+                    }
                 }
                 ReplyFontPicker()
             } header: {
@@ -53,9 +55,11 @@ struct GeneralView: View {
             } footer: {
                 VStack(alignment: .leading) {
                     Text(sendWithCommandReturn ? SecretaryUI.localized("Enter starts a new line.") : SecretaryUI.localized("Shift-Enter starts a new line."))
-                    Text(sendWithCommandReturn
-                        ? SecretaryUI.localized("⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
-                        : SecretaryUI.localized("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now."))
+                    if !SecretaryUI.enabled {
+                        Text(sendWithCommandReturn
+                            ? SecretaryUI.localized("⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                            : SecretaryUI.localized("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now."))
+                    }
                 }
                 .leadingFooter()
             }
