@@ -202,8 +202,8 @@
     /// The Mac message field's keys that the field must not get. The field is AppKit's text
     /// editor, which handles its keys below the pipeline SwiftUI delivers key presses through:
     /// a key equivalent on the send button and a SwiftUI paste command both go unseen. This
-    /// sees the keystroke before the window does and lets it through unless it is the send key
-    /// with something to send — see ``isSendKey`` — or ⌘V with an image on the pasteboard.
+    /// sees the keystroke before the window does, sending or inserting a native newline for
+    /// Return, and handling ⌘V when an image is on the pasteboard.
     /// `onPaste` is nil while images cannot be attached, and Paste is text-only again.
     struct ComposerKeyMonitor: NSViewRepresentable {
         let isActive: Bool
@@ -277,6 +277,16 @@
                     case .sendNextQueued: if self.onSendNextQueued() { return nil }
                     case .send(let alternate): if self.onSend(alternate) { return nil }
                     case nil: break
+                    }
+                    // SwiftUI's submit action has already ended editing and lost the caret.
+                    // Insert through the native editor before that happens; it updates the binding.
+                    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                        .subtracting([.numericPad, .function])
+                    if !composing, event.keyCode == 36 || event.keyCode == 76,
+                        modifiers.isEmpty || modifiers == .shift,
+                        let editor = self.window?.firstResponder as? NSTextView {
+                        editor.insertNewlineIgnoringFieldEditor(nil)
+                        return nil
                     }
                     if let onPaste = self.onPaste,
                         event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,

@@ -3,6 +3,7 @@
 /// swift run --package-path packages/shared-swift YorozuUIHarness /tmp/yorozu-ui --screenshots-only
 /// Add --round-two for adversarial questions, messages, agent states, folders and search.
 /// --send-freeze measures native Mac Send stalls; --verify-send checks the 250 ms budget.
+/// --composer-caret verifies native newline selection and send keys in an isolated window.
 import AppKit
 import CryptoKit
 import Foundation
@@ -62,6 +63,81 @@ actor HarnessTransport: ChatTransport {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/tmp/yorozu-ui")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--composer-caret") {
+            // Exercise the real composer in this process only; never send system keystrokes.
+            let key = ChatView.sendWithCommandReturnKey
+            let previous = UserDefaults.standard.object(forKey: key)
+            let model = ChatModel(transport: HarnessTransport(), device: "composer-fixture")
+            let thread = model.newDraft()
+            let host = NSHostingView(rootView: NavigationStack {
+                ChatView(model: model, thread: thread, focusComposerOnAppear: true)
+            })
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 720),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "Yorozu isolated composer verification"
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer {
+                window.orderOut(nil)
+                model.close()
+                if let previous { UserDefaults.standard.set(previous, forKey: key) }
+                else { UserDefaults.standard.removeObject(forKey: key) }
+            }
+            var report = [String]()
+            var failures = 0
+            func record(_ name: String, _ passed: Bool, _ details: String) {
+                report.append("\(passed ? "PASS" : "FAIL") \(name): \(details)")
+                if !passed { failures += 1 }
+            }
+            func editor() throws -> NSTextView {
+                guard let editor = window.firstResponder as? NSTextView else {
+                    throw NSError(domain: "ComposerHarness", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Composer did not become the native first responder: \(String(describing: window.firstResponder))"])
+                }
+                return editor
+            }
+            func pressReturn(_ modifiers: NSEvent.ModifierFlags) throws {
+                guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                    modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, characters: "\r",
+                    charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36) else {
+                    throw NSError(domain: "ComposerHarness", code: 2)
+                }
+                NSApp.postEvent(event, atStart: false)
+            }
+            for commandToSend in [false, true] {
+                UserDefaults.standard.set(commandToSend, forKey: key)
+                for (position, expected) in [(0, "\nalpha beta"), (5, "alpha\n beta"), (10, "alpha beta\n")] {
+                    model.drafts[thread.id] = "alpha beta"
+                    try await Task.sleep(for: .milliseconds(150))
+                    let field = try editor()
+                    field.setSelectedRange(NSRange(location: position, length: 0))
+                    try pressReturn(commandToSend ? [] : .shift)
+                    try await Task.sleep(for: .milliseconds(150))
+                    let actual = model.drafts[thread.id] ?? ""
+                    record("\(commandToSend ? "Return" : "Shift-Return") at \(position)",
+                        actual == expected && field.selectedRange() == NSRange(location: position + 1, length: 0),
+                        "draft=\(String(reflecting: actual)), caret=\(field.selectedRange())")
+                }
+                model.drafts[thread.id] = "send this"
+                try await Task.sleep(for: .milliseconds(150))
+                let before = model.outbox.count
+                try pressReturn(commandToSend ? .command : [])
+                try await Task.sleep(for: .milliseconds(150))
+                let sent = model.outbox.dropFirst(before).contains { item in
+                    if case .message(let message) = item.event.payload { return message.text == "send this" }
+                    return false
+                }
+                record("\(commandToSend ? "Command-Return" : "Return") sends", sent && model.drafts[thread.id] == "",
+                    "message enqueued=\(sent), composer empty=\(model.drafts[thread.id] == "")")
+            }
+            report.append("IME conversion, undo/redo, paste and quotes are not covered by this fixture.")
+            let text = report.joined(separator: "\n") + "\n"
+            try text.write(to: output.appendingPathComponent("composer-caret.txt"), atomically: true, encoding: .utf8)
+            print(text)
+            guard failures == 0 else { throw NSError(domain: "ComposerHarness", code: failures) }
+            return
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--secretary-history"), CommandLine.arguments.count > index + 1 {
             // Replay captured wire events in the real model; never connect to a user profile.
             let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
