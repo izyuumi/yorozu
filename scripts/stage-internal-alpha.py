@@ -17,6 +17,7 @@ OVERLAYS = [
     "packages/runtime/src/secretary-worker.ts",
     "packages/runtime/src/secretary-serve.ts",
     "scripts/build-mac.sh", "scripts/build-version.sh",
+    "scripts/secretary-production.patch",
 ]
 
 
@@ -35,6 +36,11 @@ def stage(destination):
     for revision, paths in [(BASELINE, []), (source, OVERLAYS)]:
         with tarfile.open(fileobj=io.BytesIO(git("archive", revision, *paths))) as archive:
             archive.extractall(destination, filter="data")
+    # This small, version-pinned hook decorates the production runtime's existing
+    # tracked runners. Its recovery and readiness paths stay in the baseline.
+    patch = destination / "scripts/secretary-production.patch"
+    subprocess.run(["git", "apply", "--check", str(patch)], cwd=destination, check=True)
+    subprocess.run(["git", "apply", str(patch)], cwd=destination, check=True)
     # Keep the production manifest and lockfile together. Only these explicit new
     # files and the reviewed adapter replace runtime source; serve/storage do not.
     tests = git("ls-tree", "-r", "--name-only", source, "packages/runtime/src").decode().splitlines()
@@ -44,7 +50,7 @@ def stage(destination):
     with tarfile.open(fileobj=io.BytesIO(git("archive", source, *tests))) as archive:
         archive.extractall(destination, filter="data")
     hashes = {}
-    for name in OVERLAYS + tests:
+    for name in OVERLAYS + tests + ["packages/runtime/src/serve.ts", "packages/runtime/src/threads.ts"]:
         path = destination / name
         for file in ([path] if path.is_file() else sorted(path.rglob("*"))):
             if file.is_file() and not file.is_symlink():
