@@ -26,9 +26,11 @@ work into `main` simply to make internal distribution possible.
   preserve the approved production runtime/data compatibility, and publish
   nothing. The workflow uses the existing signing secrets and `yorozu-notary`
   profile, without a Sparkle key.
-- The iOS `Project.swift` must interpret `YOROZU_SECRETARY_ENABLED=1` as the
-  internal `YorozuSecretaryEnabled` feature flag before Tuist generates the
-  project. The ordinary app defaults to that feature being disabled.
+- The internal iOS builder sets `TUIST_SECRETARY_ENABLED=true` before Tuist
+  generates the project. `Project.swift` reads it through Tuist’s `Environment`
+  API; the ordinary app defaults to the feature being disabled. CI checks the
+  compiled app, and the builder refuses export or upload unless the archived
+  app contains `YorozuSecretaryEnabled=true`.
 
 After these gates, dispatch the reviewed branch itself:
 
