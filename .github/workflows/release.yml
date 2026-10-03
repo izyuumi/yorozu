@@ -16,6 +16,15 @@ on:
         description: 'Optional X.Y.Z override; otherwise release-as in source release-please-config.json'
         required: false
         type: string
+      internal_only:
+        description: 'Internal 0.6 only: no public release, beta feed, or external TestFlight'
+        default: false
+        required: false
+        type: boolean
+      reviewed_source_sha:
+        description: 'Internal only: exact SHA that passed Opus 5.5 review and native QA'
+        required: false
+        type: string
 
 # Superseded pending beta builds may be skipped; never interrupt signing/upload mid-run.
 concurrency:
@@ -26,7 +35,10 @@ permissions: {}
 jobs:
   source:
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' &&
+       ((!inputs.internal_only && github.ref == 'refs/heads/main') ||
+        (inputs.internal_only && startsWith(github.ref, 'refs/heads/') &&
+         github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/heads/release/')))) ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
@@ -39,6 +51,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || inputs.source_branch }}
       SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      INTERNAL_ONLY: ${{ inputs.internal_only }}
+      REQUESTED_VERSION: ${{ inputs.version }}
+      REVIEWED_SOURCE_SHA: ${{ inputs.reviewed_source_sha }}
     steps:
       - name: Pin trusted source
         id: resolve
@@ -46,20 +61,31 @@ jobs:
           set -eu
           python3 - <<'PY_SOURCE'
           import os, re
-          assert re.fullmatch(r"main|release/[0-9]+\.[0-9]+", os.environ["SOURCE_BRANCH"]), "use main or release/X.Y"
+          if os.environ["INTERNAL_ONLY"] == "true":
+              branch = os.environ["SOURCE_BRANCH"]
+              assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch) and ".." not in branch, "invalid internal source branch"
+              assert branch != "main" and not branch.startswith("release/"), "internal source must be isolated"
+              assert os.environ["REQUESTED_VERSION"] == "0.6.0", "internal version must be explicit 0.6.0"
+              assert re.fullmatch(r"[0-9a-f]{40}", os.environ["REVIEWED_SOURCE_SHA"]), "provide the reviewed source SHA"
+          else:
+              assert re.fullmatch(r"main|release/[0-9]+\.[0-9]+", os.environ["SOURCE_BRANCH"]), "use main or release/X.Y"
           assert os.environ["GITHUB_RUN_ATTEMPT"] == "1", "dispatch a fresh Release run to rebuild; use Promote for publication retries"
           PY_SOURCE
           if [ -z "$SOURCE_SHA" ]; then
             SOURCE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$SOURCE_BRANCH" --jq .object.sha)
           fi
+          if [ "$INTERNAL_ONLY" = true ]; then
+            test "$SOURCE_SHA" = "$REVIEWED_SOURCE_SHA" || { echo 'Source moved after review; review the new commit' >&2; exit 1; }
+            test "$GITHUB_SHA" = "$SOURCE_SHA" || { echo 'Dispatch the reviewed source branch so workflow code has the same SHA' >&2; exit 1; }
+          fi
           printf 'sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
-  # Nothing is signed or uploaded until the iOS UI tests have passed on the source commit,
-  # here or in an earlier run.
+  # Public candidates require the existing iOS UI tests. The internal lane below
+  # has its own safe checks and explicitly reviewed native QA commit.
   ui-tests:
     needs: source
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && !inputs.internal_only && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
@@ -73,7 +99,7 @@ jobs:
   candidate:
     needs: [source, ui-tests]
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && !inputs.internal_only && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
@@ -213,3 +239,157 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/sparkle.key" "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/ios-cert.p12"
           security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true
+
+  internal:
+    needs: source
+    if: github.event_name == 'workflow_dispatch' && inputs.internal_only
+    runs-on: macos-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: 0.6.0
+      SOURCE_BRANCH: ${{ inputs.source_branch }}
+      SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      YOROZU_SECRETARY_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          fetch-depth: 0
+      - name: Verify exact reviewed source and CI
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA" --jq .commit.verification.verified)" = true
+          CI_RUN_ID=$(python3 scripts/release.py check-ci --source "$SOURCE_SHA" --branch "$SOURCE_BRANCH")
+          printf 'CI_RUN_ID=%s\n' "$CI_RUN_ID" >> "$GITHUB_ENV"
+          BUILD=$((10000 + GITHUB_RUN_NUMBER))
+          export BUILD
+          printf 'BUILD=%s\n' "$BUILD" >> "$GITHUB_ENV"
+          mkdir -p dist/internal
+          python3 - <<'PY'
+          import json, os
+          json.dump({
+              "source_sha": os.environ["SOURCE_SHA"], "source_branch": os.environ["SOURCE_BRANCH"],
+              "version": os.environ["VERSION"], "mac_build": os.environ["BUILD"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"], "internal_only": True,
+          }, open("dist/internal/source.json", "w"), indent=2)
+          PY
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with: { xcode-version: latest-stable }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Tuist 4.209.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          command -v mise >/dev/null || brew install mise
+          mise use -g tuist@4.209.0
+          mise bin-paths tuist@4.209.0 >> "$GITHUB_PATH"
+      - name: Safe internal checks
+        # Deliberately does not invoke the legacy UI harness, pnpm -r build,
+        # or protected Rust recovery/interposer/FIFO tests.
+        run: |
+          node --test scripts/asc-internal.test.mjs scripts/asc-candidate.test.mjs
+          python3 scripts/test-build-ios.py
+          ./scripts/check-internal-alpha.sh
+      - name: Prepare existing signing credentials
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -eu
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/internal-release.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$DEVELOPER_ID_P12" | base64 -d > "$RUNNER_TEMP/internal-mac.p12"
+          printf '%s' "$MAC_CERT_P12" | base64 -d > "$RUNNER_TEMP/internal-ios.p12"
+          security import "$RUNNER_TEMP/internal-mac.p12" -P "$DEVELOPER_ID_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security import "$RUNNER_TEMP/internal-ios.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm -f "$RUNNER_TEMP/internal-mac.p12" "$RUNNER_TEMP/internal-ios.p12"
+          for ca in DeveloperIDG2CA AppleWWDRCAG3; do
+            curl -fsSL -o "$RUNNER_TEMP/$ca.cer" "https://www.apple.com/certificateauthority/$ca.cer"
+            security import "$RUNNER_TEMP/$ca.cer" -t cert -k "$KEYCHAIN" 2>&1 | grep -v 'already exists' || true
+          done
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security default-keychain -s "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -q 'Developer ID Application'
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -q 'Apple Development'
+          printf '%s' "$ASC_KEY_P8" | base64 -d > "$RUNNER_TEMP/internal-AuthKey.p8"
+          xcrun notarytool store-credentials yorozu-notary --key "$RUNNER_TEMP/internal-AuthKey.p8" \
+            --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID"
+      - name: Build signed internal Mac package
+        env:
+          DIST: dist/internal/mac
+        run: |
+          ./scripts/build-internal-alpha.sh
+          test -d dist/internal/mac/Yorozu.app
+          test -s dist/internal/mac/Yorozu.dmg
+          ditto -c -k --keepParent dist/internal/mac/Yorozu.app dist/internal/Yorozu.app.zip
+      - name: Upload internal-only iOS build
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_PATH: ${{ runner.temp }}/internal-AuthKey.p8
+        run: |
+          set -eu
+          node scripts/asc-internal.mjs preflight
+          IOS_BUILD=$(node scripts/asc-candidate.mjs next-build "$VERSION")
+          printf 'IOS_BUILD=%s\n' "$IOS_BUILD" >> "$GITHUB_ENV"
+          BUILD="$IOS_BUILD" INTERNAL_ONLY=1 DIST=dist/internal/ios ./scripts/build-ios.sh
+          node scripts/asc-internal.mjs resolve "$VERSION" "$IOS_BUILD" dist/internal/ios.json
+          node scripts/asc-internal.mjs distribute dist/internal/ios.json dist/internal/availability.json
+      - name: Record internal artifact provenance
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path("dist/internal")
+          paths = [root / "Yorozu.app.zip", root / "mac/Yorozu.dmg", *sorted((root / "ios/ipa").glob("*.ipa"))]
+          assert len(paths) == 3 and all(p.is_file() and p.stat().st_size > 0 for p in paths)
+          ios = json.loads((root / "availability.json").read_text())
+          assert ios["available"] and ios["internal_only"]
+          json.dump({
+              **json.loads((root / "source.json").read_text()),
+              "ci_run_id": os.environ["CI_RUN_ID"], "ios": ios,
+              "ipa_origin": "signed export of the same archive supplied to Xcode internal-only upload",
+              "artifacts": [{"path": str(p.relative_to(root)), "sha256": hashlib.file_digest(p.open("rb"), "sha256").hexdigest(),
+                             "size": p.stat().st_size} for p in paths],
+          }, (root / "provenance.json").open("w"), indent=2)
+          PY
+      - name: Retain internal packages and evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: internal-0.6.0-${{ github.run_number }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            dist/internal/Yorozu.app.zip
+            dist/internal/mac/*.dmg
+            dist/internal/mac/*provenance*.json
+            dist/internal/ios/ipa/*.ipa
+            dist/internal/ios/*.plist
+            dist/internal/*.json
+      - name: Forget internal signing credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/internal-AuthKey.p8" "$RUNNER_TEMP/internal-mac.p12" "$RUNNER_TEMP/internal-ios.p12"
+          security delete-keychain "$RUNNER_TEMP/internal-release.keychain-db" 2>/dev/null || true

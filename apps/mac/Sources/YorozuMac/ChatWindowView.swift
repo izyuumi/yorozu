@@ -15,29 +15,43 @@ import YorozuShared
 /// place the chat lives.
 struct ChatWindowView: View {
     @State private var session = MacChatSession.shared
-    @State private var destination = AppDestination.chat
+    @State private var showingHistory = false
     @State private var router = ChatWindowRouter.shared
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.controlActiveState) private var controlActiveState
     var body: some View {
-        TabView(selection: $destination) {
-            Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: .chat) {
-                if session.role == .client { ClientChatWindowView(session: session, isChatVisible: destination == .chat) }
-                else { LocalChatWindowView(isChatVisible: destination == .chat) }
-            }
-            Tab("Schedules", systemImage: "calendar", value: .schedules) {
+        Group {
+            if SecretaryUI.enabled && !showingHistory {
                 NavigationStack {
-                    SchedulesUnavailableView(models: session.role == .client ? session.hosts.sessions.map(\.model) : [session.model]) {
-                        openWindow(id: YorozuMacApp.settingsWindow)
+                    SecretaryChatView(model: session.model,
+                        hostLabel: session.role == .client ? session.hosts.sessions.first { $0.model === session.model }?.label : nil,
+                        onHistory: { showingHistory = true })
+                        .id(ObjectIdentifier(session.model))
+                }
+                .onChange(of: controlActiveState, initial: true) { _, state in
+                    session.model.foreground = state == .key
+                }
+                .onDisappear { session.model.foreground = false }
+            } else if session.role == .client { ClientChatWindowView(session: session) }
+            else { LocalChatWindowView() }
+        }
+        .toolbar {
+            if SecretaryUI.enabled {
+                if showingHistory {
+                    ToolbarItem(placement: .navigation) {
+                        Button("Yorozu", systemImage: "bubble.left.and.bubble.right") { showingHistory = false }
+                            .accessibilityIdentifier("secretary-return")
                     }
-                    .scrollContentBackground(.hidden)
-                    .background(YorozuPalette.canvas)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Settings", systemImage: "gearshape") { openWindow(id: YorozuMacApp.settingsWindow) }
                 }
             }
         }
-        .toolbar { ToolbarItem(placement: .primaryAction) {
-            Button("Settings", systemImage: "gearshape") { openWindow(id: YorozuMacApp.settingsWindow) }
-        } }
-        .onChange(of: router.threadID) { _, id in if id != nil { destination = .chat } }
+        .onChange(of: router.threadID, initial: true) { _, id in
+            if id != nil { showingHistory = true }
+        }
+        .modifier(SecretaryLocale())
         // Text with no font of its own, the composer's included, follows ⌘+ and ⌘− too.
         .font(.scaled(.body))
         .overlay(alignment: .top) { ThreadNotificationToast() }
@@ -62,6 +76,11 @@ struct QuickChatView: View {
     private var target: QuickChatTarget? { router.target?.threadID == selection ? router.target : nil }
 
     var body: some View {
+        if SecretaryUI.enabled && router.target == nil { ChatWindowView() }
+        else { legacyChat }
+    }
+
+    private var legacyChat: some View {
         NavigationStack {
             if let thread {
                 ChatView(model: model, thread: thread,
@@ -159,7 +178,6 @@ private struct QuickChatToolbar: ToolbarContent {
 
 private struct ClientChatWindowView: View {
     let session: MacChatSession
-    let isChatVisible: Bool
     @State private var router = ChatWindowRouter.shared
     @State private var selection: HostThreadID?
     @State private var searchedThread: HostThreadID?
@@ -198,7 +216,7 @@ private struct ClientChatWindowView: View {
                         .id(selection)
                 } else {
                     ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right",
-                        description: Text(hosts.sessions.isEmpty ? String(localized: "Add a host in Settings to start chatting.") : String(localized: "Choose a thread or start a new one.")))
+                        description: Text(hosts.sessions.isEmpty ? SecretaryUI.localized("Add a host in Settings to start chatting.") : SecretaryUI.localized("Choose a thread or start a new one.")))
                 }
             }
             .id(selection?.hostID)
@@ -220,7 +238,6 @@ private struct ClientChatWindowView: View {
         }
         .onChange(of: hosts.lastUsedHostID) { _, _ in session.rememberLastHost() }
         .onChange(of: controlActiveState, initial: true) { _, _ in updateReading() }
-        .onChange(of: isChatVisible) { _, _ in updateReading() }
         .onChange(of: hosts.sessions.map(\.id)) { _, _ in
             if let selection, hosts.session(for: selection.hostID) == nil { self.selection = nil }
             if selection == nil { open() }
@@ -243,8 +260,8 @@ private struct ClientChatWindowView: View {
 
     private var connectionLabel: String {
         guard !hosts.hasMultipleHosts else { return hosts.connectionSummary }
-        guard let host = hosts.sessions.first else { return String(localized: "Not connected") }
-        if case .updateRequired = host.model.compatibility { return String(localized: "Update required") }
+        guard let host = hosts.sessions.first else { return SecretaryUI.localized("Not connected") }
+        if case .updateRequired = host.model.compatibility { return SecretaryUI.localized("Update required") }
         return ClientConnectionStatus(host.model, failure: session.hostFailures[host.id] ?? host.model.failure).label
     }
 
@@ -255,7 +272,7 @@ private struct ClientChatWindowView: View {
         }
         for host in hosts.sessions {
             let selected = selection?.hostID == host.id
-            host.model.foreground = selected && isChatVisible && controlActiveState == .key
+            host.model.foreground = selected && controlActiveState == .key
             host.model.openThread = selected ? selection?.threadID : nil
         }
     }
@@ -273,7 +290,6 @@ private struct ClientChatWindowView: View {
 }
 
 private struct LocalChatWindowView: View {
-    let isChatVisible: Bool
     @State private var session = MacChatSession.shared
     @State private var router = ChatWindowRouter.shared
     @State private var selection: String?
@@ -354,7 +370,7 @@ private struct LocalChatWindowView: View {
                     .id(thread.id)
                 } else {
                     ContentUnavailableView("No thread", systemImage: "bubble.left.and.bubble.right",
-                        description: Text(String(localized: "Choose a thread or start a new one.")))
+                        description: Text(SecretaryUI.localized("Choose a thread or start a new one.")))
                 }
             }
             // The canvas and update banner belong to the chat; the sidebar keeps its own material.
@@ -380,9 +396,8 @@ private struct LocalChatWindowView: View {
         // A window sitting on a thread behind everything else is nobody reading it, so the
         // thread is only reported read while this window is the key one of the active app.
         .onChange(of: controlActiveState, initial: true) { _, state in
-            model.foreground = isChatVisible && state == .key
+            model.foreground = state == .key
         }
-        .onChange(of: isChatVisible) { _, visible in model.foreground = visible && controlActiveState == .key }
         .onAppear {
             if model.listed { open() }
             // Screenshot harness only — see ``Showcase``.
@@ -404,8 +419,8 @@ private struct LocalChatWindowView: View {
 
     /// A sidecar restart shorter than the grace keeps saying Connected.
     private var connectionLabel: String {
-        if model.link.state == .connected { return String(localized: "Connected") }
-        return model.state == .closed ? String(localized: "Offline") : String(localized: "Connecting")
+        if model.link.state == .connected { return SecretaryUI.localized("Connected") }
+        return model.state == .closed ? SecretaryUI.localized("Offline") : SecretaryUI.localized("Connecting")
     }
 }
 
@@ -473,7 +488,7 @@ struct SettingsView: View {
     @State private var visited: [String] = []
     @State private var position = 0
 
-    private typealias Pane = (id: String, title: LocalizedStringKey, icon: String)
+    private typealias Pane = (id: String, title: String.LocalizationValue, icon: String)
 
     private var panes: [Pane] {
         var panes: [Pane] = [("general", "General", "gearshape")]
@@ -492,7 +507,7 @@ struct SettingsView: View {
     var body: some View {
         let pane = panes.first { $0.id == selection } ?? panes[0]
         NavigationSplitView {
-            List(panes, id: \.id, selection: $selection) { Label($0.title, systemImage: $0.icon) }
+            List(panes, id: \.id, selection: $selection) { Label(SecretaryUI.localized($0.title), systemImage: $0.icon) }
                 .toolbar(removing: .sidebarToggle)
         } detail: {
             Group {
@@ -504,7 +519,7 @@ struct SettingsView: View {
                 default: GeneralView(sidecar: sidecar)
                 }
             }
-            .navigationTitle(pane.title)
+            .navigationTitle(SecretaryUI.localized(pane.title))
             .toolbar {
                 ToolbarItemGroup(placement: .navigation) {
                     Button("Back", systemImage: "chevron.left") { go(-1) }

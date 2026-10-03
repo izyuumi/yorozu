@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main, 'release/*', v0.6.0-alpha]
+    branches: [main, 'release/*', v0.6.0-alpha, integration-0.6-worker]
   pull_request:
 
 # One run per ref: a newer push cancels the one it supersedes.
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   # Pull requests run only the jobs their paths can break; a job skipped here passes required
-  # checks. All listed branch pushes, including the isolated alpha, run everything.
+  # checks. The isolated secretary candidate has its own assembled-runtime checks.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -27,6 +27,7 @@ jobs:
       swift: ${{ steps.paths.outputs.swift }}
       ios: ${{ steps.paths.outputs.ios }}
       web: ${{ steps.paths.outputs.web }}
+      internal: ${{ github.base_ref == 'v0.6.0-alpha' || github.ref == 'refs/heads/v0.6.0-alpha' || github.ref == 'refs/heads/integration-0.6-worker' }}
     steps:
       # Depth 2 holds the pull request's merge commit and the base it merges into.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -53,6 +54,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   rust-host:
+    needs: changes
+    if: needs.changes.outputs.internal != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -91,7 +94,9 @@ jobs:
         with:
           node-version: 26
       - name: Verify App Store candidate checks without credentials
-        run: node --test scripts/asc-candidate.test.mjs scripts/asc-alpha-audit.test.mjs
+        run: |
+          node --test scripts/asc-candidate.test.mjs scripts/asc-alpha-audit.test.mjs scripts/asc-internal.test.mjs
+          python3 scripts/test-build-ios.py
       - name: Verify English and Japanese catalogs
         run: node scripts/check-localizations.mjs
 
@@ -148,7 +153,7 @@ jobs:
   # install and build, and each runner boot costs more than the steps a pull request skips.
   macos:
     needs: changes
-    if: needs.changes.outputs.ts == 'true' || needs.changes.outputs.swift == 'true'
+    if: needs.changes.outputs.internal != 'true' && (needs.changes.outputs.ts == 'true' || needs.changes.outputs.swift == 'true')
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -175,10 +180,30 @@ jobs:
       - if: needs.changes.outputs.swift == 'true'
         run: bash scripts/check-mac-multi-host.sh
 
+  internal-secretary:
+    needs: changes
+    if: needs.changes.outputs.internal == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with: { xcode-version: latest-stable }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 26 }
+      - name: Check the assembled production baseline and isolated Rust secretary
+        # No legacy migration or recovery process is part of this candidate.
+        run: ./scripts/check-internal-alpha.sh
+
   ios:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
     runs-on: macos-latest
+    env:
+      YOROZU_SECRETARY_ENABLED: ${{ needs.changes.outputs.internal == 'true' && '1' || '0' }}
+      TUIST_SECRETARY_ENABLED: ${{ needs.changes.outputs.internal == 'true' && 'true' || 'false' }}
     # PR CI compiles the app; the canonical Release requires the separate iOS UI-test
     # workflow before either candidate is built or uploaded.
     timeout-minutes: 20
@@ -208,6 +233,9 @@ jobs:
             -derivedDataPath .build/ci-ios \
             ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO SWIFT_EMIT_LOC_STRINGS=YES
+      - name: Verify internal interface in the built app
+        if: needs.changes.outputs.internal == 'true'
+        run: test "$(/usr/libexec/PlistBuddy -c 'Print :YorozuSecretaryEnabled' .build/ci-ios/Build/Products/Debug-iphonesimulator/YorozuIOS.app/Info.plist)" = true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 26

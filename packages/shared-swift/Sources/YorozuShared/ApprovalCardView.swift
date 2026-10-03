@@ -80,8 +80,8 @@ public struct ApprovalCardView: View {
                 }
                 if card.nativeAgent != nil {
                     HStack {
-                        choice(.yes, String(localized: "Allow"), prominent: true)
-                        choice(.no, String(localized: "Don't allow"), prominent: false)
+                        choice(.yes, SecretaryUI.localized("Allow"), prominent: true)
+                        choice(.no, SecretaryUI.localized("Don't allow"), prominent: false)
                     }
                 } else {
                     choices
@@ -109,7 +109,7 @@ public struct ApprovalCardView: View {
         .accessibilityLabel("\(agentLabel ?? card.nativeAgent?.label ?? "Yorozu") approval needed: \(verb.sentence)")
         // The rule the "Always allow" button is really about. Nothing is saved until Save.
         .sheet(item: $editingRule) { rule in
-            RuleEditorView(rule: rule, title: String(localized: "Always allow")) { edited in
+            RuleEditorView(rule: rule, title: SecretaryUI.localized("Always allow")) { edited in
                 editingRule = nil
                 answer(.always, edited)
             } onCancel: {
@@ -121,11 +121,11 @@ public struct ApprovalCardView: View {
     // MARK: Pieces
 
     private var headerTitle: String {
-        if !answered { return agentLabel ?? card.nativeAgent?.label ?? String(localized: "Yorozu wants to") }
+        if !answered { return agentLabel ?? card.nativeAgent?.label ?? SecretaryUI.localized("Yorozu wants to") }
         if let agent = card.nativeAgent, !ThreadAgent.allCases.contains(agent) {
-            return String(localized: "Approval · \(agentLabel ?? agent.label)")
+            return SecretaryUI.localized("Approval · \(agentLabel ?? agent.label)")
         }
-        return String(localized: "Approval")
+        return SecretaryUI.localized("Approval")
     }
 
     private var header: some View {
@@ -231,7 +231,7 @@ public struct ApprovalCardView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("approvalItemsDisclosure")
-                .accessibilityValue(itemsExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
+                .accessibilityValue(itemsExpanded ? SecretaryUI.localized("Expanded") : SecretaryUI.localized("Collapsed"))
                 .accessibilityHint("This decision covers exactly these items")
 
                 ForEach(itemsExpanded ? items : Array(items.prefix(Self.itemsShown))) { item in
@@ -293,15 +293,15 @@ public struct ApprovalCardView: View {
     private var choices: some View {
         VStack(spacing: LayoutMetrics.inner) {
             #if os(macOS)
-                choice(.yes, String(localized: "Allow once"), prominent: true)
+                choice(.yes, SecretaryUI.localized("Allow once"), prominent: true)
                 HStack(spacing: LayoutMetrics.inner) {
-                    choice(.task, String(localized: "Allow for this task"), prominent: false)
-                    choice(.no, String(localized: "Don't allow"), prominent: false)
+                    choice(.task, SecretaryUI.localized("Allow for this task"), prominent: false)
+                    choice(.no, SecretaryUI.localized("Don't allow"), prominent: false)
                 }
             #else
                 HStack(spacing: LayoutMetrics.inner) {
-                    choice(.yes, String(localized: "Allow once"), prominent: true)
-                    choice(.task, String(localized: "For this task"), prominent: false)
+                    choice(.yes, SecretaryUI.localized("Allow once"), prominent: true)
+                    choice(.task, SecretaryUI.localized("For this task"), prominent: false)
                 }
             #endif
             // A grant that ends with the turn, so it is offered wherever a card is — but it
@@ -319,7 +319,7 @@ public struct ApprovalCardView: View {
             }
             #if !os(macOS)
                 HStack(spacing: LayoutMetrics.inner) {
-                    choice(.no, String(localized: "Don't allow"), prominent: false)
+                    choice(.no, SecretaryUI.localized("Don't allow"), prominent: false)
                     Button { answer(.discuss, nil) } label: {
                         Text("Discuss first")
                             .font(.scaled(.subheadline))
@@ -388,30 +388,30 @@ public struct ApprovalCardView: View {
 
     private var outcomeText: String {
         switch chosen {
-        case .yes: String(localized: "Allowed once")
-        case .task: String(localized: "Allowed for this task")
-        case .always: String(localized: "Allowed, and saved as a rule")
-        case .no: String(localized: "Not allowed")
-        case .discuss: String(localized: "Discussing")
-        case nil: String(localized: "Answered on another device")
+        case .yes: SecretaryUI.localized("Allowed once")
+        case .task: SecretaryUI.localized("Allowed for this task")
+        case .always: SecretaryUI.localized("Allowed, and saved as a rule")
+        case .no: SecretaryUI.localized("Not allowed")
+        case .discuss: SecretaryUI.localized("Discussing")
+        case nil: SecretaryUI.localized("Answered on another device")
         }
     }
 
     /// The always button names the scope it would actually cover, because a button that says
     /// "don't ask again" and then means something narrower is a promise the card cannot keep.
     private var alwaysTitle: String {
-        guard let narrowed = card.suggestedRule?.summary else { return String(localized: "Always allow…") }
-        return String(localized: "Always allow \(narrowed)…")
+        guard let narrowed = card.suggestedRule?.summary else { return SecretaryUI.localized("Always allow…") }
+        return SecretaryUI.localized("Always allow \(narrowed)…")
     }
 
     /// What the grants under the first one actually promise. It only mentions rules when one
     /// is on offer: a batch is not offered one, and neither is anything that must be confirmed.
     private var grantNote: String {
-        if card.mustConfirm == true { return String(localized: "This one cannot be turned into a rule.") }
+        if card.mustConfirm == true { return SecretaryUI.localized("This one cannot be turned into a rule.") }
         if card.suggestedRule == nil {
-            return String(localized: "“Allow for this task” lasts until this task is done. This decision covers exactly the items listed above.")
+            return SecretaryUI.localized("“Allow for this task” lasts until this task is done. This decision covers exactly the items listed above.")
         }
-        return String(localized: "“Allow for this task” lasts until this task is done. A rule lasts until you revoke it.")
+        return SecretaryUI.localized("“Allow for this task” lasts until this task is done. A rule lasts until you revoke it.")
     }
 
     private var cardBackground: Color { YorozuPalette.paper }
@@ -432,13 +432,13 @@ public struct ApprovalCardView: View {
 
     nonisolated static func verb(for actionClass: String) -> Verb {
         switch actionClass {
-        case "send-message": return Verb(sentence: String(localized: "Send a message"), noun: String(localized: "message"), isCode: false)
-        case "purchase": return Verb(sentence: String(localized: "Make a purchase"), noun: String(localized: "purchase"), isCode: false)
-        case "transfer-money": return Verb(sentence: String(localized: "Transfer money"), noun: String(localized: "transfer"), isCode: false)
-        case "book": return Verb(sentence: String(localized: "Make a booking"), noun: String(localized: "booking"), isCode: false)
-        case "run-command": return Verb(sentence: String(localized: "Run a command"), noun: String(localized: "command"), isCode: true)
-        case "edit-file": return Verb(sentence: String(localized: "Change a file"), noun: String(localized: "file change"), isCode: true)
-        case "delete-file": return Verb(sentence: String(localized: "Delete a file"), noun: String(localized: "file deletion"), isCode: true)
+        case "send-message": return Verb(sentence: SecretaryUI.localized("Send a message"), noun: SecretaryUI.localized("message"), isCode: false)
+        case "purchase": return Verb(sentence: SecretaryUI.localized("Make a purchase"), noun: SecretaryUI.localized("purchase"), isCode: false)
+        case "transfer-money": return Verb(sentence: SecretaryUI.localized("Transfer money"), noun: SecretaryUI.localized("transfer"), isCode: false)
+        case "book": return Verb(sentence: SecretaryUI.localized("Make a booking"), noun: SecretaryUI.localized("booking"), isCode: false)
+        case "run-command": return Verb(sentence: SecretaryUI.localized("Run a command"), noun: SecretaryUI.localized("command"), isCode: true)
+        case "edit-file": return Verb(sentence: SecretaryUI.localized("Change a file"), noun: SecretaryUI.localized("file change"), isCode: true)
+        case "delete-file": return Verb(sentence: SecretaryUI.localized("Delete a file"), noun: SecretaryUI.localized("file deletion"), isCode: true)
         default:
             let words = actionClass.replacingOccurrences(of: "-", with: " ")
             return Verb(sentence: words.prefix(1).uppercased() + words.dropFirst(), noun: words, isCode: false)
@@ -491,7 +491,7 @@ private struct ApprovalDetailText: View {
                 .foregroundStyle(.tint)
                 .accessibilityIdentifier(identifier)
                 .accessibilityLabel(expanded ? collapseLabel : expandLabel)
-                .accessibilityValue(expanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
+                .accessibilityValue(expanded ? SecretaryUI.localized("Expanded") : SecretaryUI.localized("Collapsed"))
             }
         }
     }
@@ -503,16 +503,16 @@ extension ApprovalRule {
     public var summary: String {
         let noun = ApprovalCardView.verb(for: actionClass).noun
         var phrase = noun
-        if let recipient = scope?["recipient"] { phrase = String(localized: "\(phrase) to \(recipient.phrase)") }
-        if let merchant = scope?["merchant"] { phrase = String(localized: "\(phrase) at \(merchant.phrase)") }
-        if let account = scope?["account"] { phrase = String(localized: "\(phrase) from \(account.phrase)") }
-        if let category = scope?["category"] { phrase = String(localized: "\(phrase) in \(category.phrase)") }
-        if let target = scope?["target"] { phrase = String(localized: "\(phrase) on \(target.phrase)") }
+        if let recipient = scope?["recipient"] { phrase = SecretaryUI.localized("\(phrase) to \(recipient.phrase)") }
+        if let merchant = scope?["merchant"] { phrase = SecretaryUI.localized("\(phrase) at \(merchant.phrase)") }
+        if let account = scope?["account"] { phrase = SecretaryUI.localized("\(phrase) from \(account.phrase)") }
+        if let category = scope?["category"] { phrase = SecretaryUI.localized("\(phrase) in \(category.phrase)") }
+        if let target = scope?["target"] { phrase = SecretaryUI.localized("\(phrase) on \(target.phrase)") }
         if let cap = maxAmount {
             let amount = ApprovalAmountFormatter.string(amount: cap, currency: currency)
-            phrase = String(localized: "\(phrase) up to \(amount)")
+            phrase = SecretaryUI.localized("\(phrase) up to \(amount)")
         } else if let currency, !currency.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            phrase = String(localized: "\(phrase) in \(currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())")
+            phrase = SecretaryUI.localized("\(phrase) in \(currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())")
         }
         return phrase
     }

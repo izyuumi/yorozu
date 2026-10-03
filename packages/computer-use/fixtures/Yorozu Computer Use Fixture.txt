@@ -1,0 +1,4 @@
+Yorozu computer-use fixture (disposable task-owned document)
+Place the caret on the blank line below before the coordinated run.
+
+End of disposable fixture.

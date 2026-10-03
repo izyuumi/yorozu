@@ -19,7 +19,7 @@ public func threadMarkdown(
     stamp.locale = locale
     stamp.timeZone = timeZone
 
-    var lines = ["# \(thread.displayTitle)", "", "*Exported \(now.formatted(stamp))*"]
+    var lines = ["# \(thread.displayTitle)", "", "*\(String(localized: "Exported \(now.formatted(stamp))", locale: locale))*"]
     for row in chatRows(from: events) {
         switch row {
         case .work(let work):
@@ -28,7 +28,7 @@ public func threadMarkdown(
                 case .thought(let thought):
                     lines += ["", "> \(thought.text)"]
                 case .tools(let activities):
-                    lines += ["", collapsed(title: toolsTitle(activities), body: activities.map(toolLine))]
+                    lines += ["", collapsed(title: toolsTitle(activities, locale: locale), body: activities.map { toolLine($0, locale: locale) })]
                 case .delegation(let card):
                     let inner = card.events.compactMap { event -> String? in
                         guard case .message(let data) = event.payload, !data.text.isEmpty else { return nil }
@@ -37,8 +37,8 @@ public func threadMarkdown(
                     lines += [
                         "",
                         collapsed(
-                            title: "Delegated to \(card.agentId)",
-                            body: inner.isEmpty ? ["*(no reply)*"] : inner
+                            title: String(localized: "Delegated to \(card.agentId)", locale: locale),
+                            body: inner.isEmpty ? ["*\(String(localized: "(no reply)", locale: locale))*"] : inner
                         ),
                     ]
                 case .progress(let event):
@@ -47,35 +47,35 @@ public func threadMarkdown(
                         "",
                         collapsed(
                             title: card.title,
-                            body: (card.note.map { [$0, ""] } ?? []) + card.steps.map { "- \($0.label) — \($0.state.rawValue)" }
+                            body: (card.note.map { [$0, ""] } ?? []) + card.steps.map { "- \($0.label) — \(progressState($0.state, locale: locale))" }
                         ),
                     ]
                 }
             }
         case .message(let event):
             guard case .message(let data) = event.payload else { break }
-            lines += ["", "## \(data.role == .user ? "You" : "Yorozu") — \(event.date.formatted(stamp))", ""]
+            lines += ["", "## \(data.role == .user ? String(localized: "You", locale: locale) : "Yorozu") — \(event.date.formatted(stamp))", ""]
             for attachment in data.attachments {
-                lines += ["*Attached: \(attachment.name) (\(attachment.size))*", ""]
+                lines += ["*\(String(localized: "Attached: \(attachment.name) (\(attachment.size))", locale: locale))*", ""]
             }
             if !data.text.isEmpty { lines.append(data.text) }
-            if data.interrupted == true { lines += ["", "*Stopped*"] }
-            else if data.text.isEmpty { lines.append("*(no text)*") }
+            if data.interrupted == true { lines += ["", "*\(String(localized: "Stopped", locale: locale))*"] }
+            else if data.text.isEmpty { lines.append("*\(String(localized: "(no text)", locale: locale))*") }
         case .changes(let event):
             guard case .turnChanges(let data) = event.payload else { break }
-            lines += ["", data.files.count == 1 ? "1 changed file" : "\(data.files.count) changed files"]
+            lines += ["", data.files.count == 1 ? String(localized: "1 changed file", locale: locale) : String(localized: "\(data.files.count) changed files", locale: locale)]
             lines += data.files.map { "- \($0.path): +\($0.added) −\($0.removed)" }
         case .approval(let event):
             guard case .approvalCard(let card) = event.payload else { break }
-            lines += ["", "> **Approval asked** — \(card.actionClass): \(card.target)"]
+            lines += ["", "> **\(String(localized: "Approval asked", locale: locale))** — \(card.actionClass): \(card.target)"]
         case .unreadable:
-            lines += ["", "> *Update Yorozu to see this event.*"]
+            lines += ["", "> *\(String(localized: "Update Yorozu to see this event.", locale: locale))*"]
         case .proposal(let event):
             guard case .ruleProposal(let data) = event.payload else { break }
-            lines += ["", "> **Rule suggested** — \(data.rule.summary)"]
+            lines += ["", "> **\(String(localized: "Rule suggested", locale: locale))** — \(data.rule.summary)"]
         case .question(let event):
             guard case .questionCard(let card) = event.payload else { break }
-            lines += ["", "> **Question asked** — \(card.question)"]
+            lines += ["", "> **\(String(localized: "Question asked", locale: locale))** — \(card.question)"]
         }
     }
     return lines.joined(separator: "\n") + "\n"
@@ -93,14 +93,23 @@ private func collapsed(title: String, body: [String]) -> String {
     """
 }
 
-private func toolsTitle(_ activities: [ToolActivity]) -> String {
-    activities.count == 1 ? "Ran \(activities[0].name)" : "Ran \(activities.count) tools"
+private func toolsTitle(_ activities: [ToolActivity], locale: Locale) -> String {
+    activities.count == 1 ? String(localized: "Ran \(activities[0].name)", locale: locale) : String(localized: "Ran \(activities.count) tools", locale: locale)
 }
 
-private func toolLine(_ activity: ToolActivity) -> String {
+private func toolLine(_ activity: ToolActivity, locale: Locale) -> String {
     let args = activity.argsSummary
-    let mark = activity.running ? "…" : (activity.ok ? "ok" : "failed")
+    let mark = activity.running ? "…" : (activity.ok ? String(localized: "ok", locale: locale) : String(localized: "failed", locale: locale))
     return "- `\(activity.name)` \(args.isEmpty ? "" : "(\(args)) ")— \(mark)"
+}
+
+private func progressState(_ state: ProgressStep.State, locale: Locale) -> String {
+    switch state {
+    case .pending: String(localized: "pending", locale: locale)
+    case .running: String(localized: "running", locale: locale)
+    case .done: String(localized: "done", locale: locale)
+    case .failed: String(localized: "failed", locale: locale)
+    }
 }
 
 extension YorozuEvent {
@@ -125,7 +134,7 @@ public struct ThreadMarkdown: Transferable, Sendable {
             separator: "-"
         )
         let trimmed = safe.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (trimmed.isEmpty ? "Thread" : String(trimmed.prefix(60))) + ".md"
+        return (trimmed.isEmpty ? String(localized: "Thread") : String(trimmed.prefix(60))) + ".md"
     }
 
     public static var transferRepresentation: some TransferRepresentation {

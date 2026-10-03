@@ -16,19 +16,14 @@ struct AttachmentLoadResult {
 
 @MainActor
 enum AttachmentAcquisition {
-    nonisolated static let maxSourceBytes = 25 * 1024 * 1024
-    nonisolated static let maxBatchBytes = 50 * 1024 * 1024
-
     static func load(_ sources: [AttachmentSource]) async throws -> AttachmentLoadResult {
         var result = AttachmentLoadResult()
-        var retainedBytes = 0
-        for source in sources.prefix(MessageAttachment.maxCount) {
+        for source in sources {
             try Task.checkCancellation()
             do {
                 let bytes = try await source.load()
                 try Task.checkCancellation()
-                if let bytes, bytes.count <= maxSourceBytes, retainedBytes + bytes.count <= maxBatchBytes {
-                    retainedBytes += bytes.count
+                if let bytes {
                     result.picks.append((source.name, source.mime, bytes))
                 } else {
                     result.failed.append(source)
@@ -40,7 +35,6 @@ enum AttachmentAcquisition {
                 result.failed.append(source)
             }
         }
-        result.failed.append(contentsOf: sources.dropFirst(MessageAttachment.maxCount))
         return result
     }
 }

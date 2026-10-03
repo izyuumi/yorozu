@@ -110,8 +110,8 @@ struct HostsView: View {
             Text("Relay: \(pairing?.relayUrl ?? "")\nMac key: \(pairing?.macKeyFingerprint ?? "")\n\nRepair replaces this connection. Chats, drafts, and queued messages stay saved.")
             if session.hosts.hasMultipleHosts { Text("Other hosts stay connected.") }
         }
-        .alert(session.hosts.hasMultipleHosts ? String(localized: "Remove host?") : String(localized: "Unpair this Mac?"), isPresented: Binding(get: { removingHost != nil }, set: { if !$0 { removingHost = nil } }), presenting: removingHost) { host in
-            Button(session.hosts.hasMultipleHosts ? String(localized: "Remove Host") : String(localized: "Unpair"), role: .destructive) {
+        .alert(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Remove host?") : SecretaryUI.localized("Unpair this Mac?"), isPresented: Binding(get: { removingHost != nil }, set: { if !$0 { removingHost = nil } }), presenting: removingHost) { host in
+            Button(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Remove Host") : SecretaryUI.localized("Unpair"), role: .destructive) {
                 busy = true
                 Task { await session.removeHost(host.id); busy = false }
             }
@@ -143,7 +143,7 @@ struct HostsView: View {
     }
 
     private func connectionLabel(_ host: HostSession) -> String {
-        if case .updateRequired = host.model.compatibility { return String(localized: "Update required") }
+        if case .updateRequired = host.model.compatibility { return SecretaryUI.localized("Update required") }
         return ClientConnectionStatus(host.model, failure: session.hostFailures[host.id] ?? host.model.failure).label
     }
 }
@@ -170,12 +170,12 @@ private struct HostConnectionDetails: View {
             }
             switch host.model.compatibility {
             case .legacy:
-                LabeledContent("Compatibility", value: String(localized: "Legacy host · chat supported"))
+                LabeledContent("Compatibility", value: SecretaryUI.localized("Legacy host · chat supported"))
             case .compatible(let version, _):
-                LabeledContent("Compatibility", value: String(localized: "Compatible · protocol \(version)"))
+                LabeledContent("Compatibility", value: SecretaryUI.localized("Compatible · protocol \(version)"))
                 if let version = host.model.peerInfo?.appVersion { LabeledContent("Host version", value: version) }
             case .updateRequired(let reason):
-                Label(String(localized: "Update required"), systemImage: "exclamationmark.triangle")
+                Label(SecretaryUI.localized("Update required"), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
                 Text(reason).font(.scaled(.callout)).foregroundStyle(.secondary)
             }
@@ -190,7 +190,7 @@ private struct HostConnectionDetails: View {
             Button("Copy diagnostics") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(ConnectionDiagnostics.snapshot(for: host.model), forType: .string)
-                AccessibilityNotification.Announcement(String(localized: "Diagnostics copied")).post()
+                AccessibilityNotification.Announcement(SecretaryUI.localized("Diagnostics copied")).post()
             }
             Toggle("YOLO mode — skip all approvals", isOn: Binding(
                 get: { host.model.yoloMode }, set: { host.model.setYoloMode($0) }))
@@ -199,7 +199,7 @@ private struct HostConnectionDetails: View {
                 Text("Every tool request on this host runs without asking, including purchases, messages, commands, and deletes.")
                     .font(.scaled(.caption)).foregroundStyle(.red)
             }
-            Button(session.hosts.hasMultipleHosts ? String(localized: "Remove Host…") : String(localized: "Unpair…"), role: .destructive, action: remove)
+            Button(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Remove Host…") : SecretaryUI.localized("Unpair…"), role: .destructive, action: remove)
                 .buttonStyle(.bordered)
         }
         .onAppear { host.model.requestApprovalSettings() }

@@ -42,7 +42,15 @@ STAGE="$DIST/stage"
 # The app embeds shared + runtime. Relay is deployed separately and compiling it here adds work
 # to every local package/release build without changing a byte in the bundle.
 pnpm --filter @yorozu/shared --filter @yorozu/runtime build
-sh scripts/build-host-core.sh --release
+if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
+  # Internal builds are staged over the verified production runtime first.
+  if [ ! -f internal-source.json ] || [ ! -f packages/runtime/dist/secretary-serve.js ]; then
+    echo "secretary builds require scripts/build-internal-alpha.sh" >&2; exit 1
+  fi
+  cargo build --locked --release --manifest-path packages/host-core/Cargo.toml --bin yorozu-alpha-host
+else
+  sh scripts/build-host-core.sh --release
+fi
 env -u SDKROOT swift build --package-path apps/mac -c release
 BIN="$(env -u SDKROOT swift build --package-path apps/mac -c release --show-bin-path | tail -1)"
 
@@ -155,13 +163,24 @@ cp "$DIST/$NODE_DIR/bin/node" "$APP/Contents/Resources/node"
 "$APP/Contents/Resources/node" --version >/dev/null
 # The Rust core has no Swift/SDK dependency and needs no JIT or privacy entitlements.
 # It is signed by the nested-code loop below, without the Node runtime exceptions.
-cp packages/host-core/target/release/yorozu-host-core "$APP/Contents/Resources/yorozu-host-core"
+if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
+  cp packages/host-core/target/release/yorozu-alpha-host "$APP/Contents/Resources/yorozu-alpha-host"
+  cp internal-source.json "$APP/Contents/Resources/internal-source.json"
+else
+  cp packages/host-core/target/release/yorozu-host-core "$APP/Contents/Resources/yorozu-host-core"
+fi
 rm -rf "$APP/Contents/Resources/runtime"
 # node-linker=hoisted: pnpm's default layout is a thicket of symlinks into .pnpm, and
 # codesign refuses to seal a bundle containing them ("invalid destination for symbolic
 # link in bundle"). Hoisted is the flat node_modules the signature can cover.
-pnpm --filter @yorozu/runtime --prod --legacy --config.node-linker=hoisted \
-  deploy "$APP/Contents/Resources/runtime"
+if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
+  # Export the reviewed lockfile instead of re-resolving dependency ranges.
+  pnpm --config.inject-workspace-packages=true --filter @yorozu/runtime --prod \
+    --config.node-linker=hoisted deploy "$APP/Contents/Resources/runtime"
+else
+  pnpm --filter @yorozu/runtime --prod --legacy --config.node-linker=hoisted \
+    deploy "$APP/Contents/Resources/runtime"
+fi
 # --prod above leaves the *workspace* modules directory pruned to production too, which
 # breaks the next `pnpm -r build` (no typescript). Put the dev dependencies back.
 pnpm install --frozen-lockfile
@@ -213,6 +232,14 @@ $USAGE
 </dict>
 </plist>
 PLIST
+
+if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
+  /usr/libexec/PlistBuddy -c 'Add :YorozuSecretaryEnabled bool true' "$APP/Contents/Info.plist"
+  # Absence of SUFeedURL disables Updates without mutating existing preferences.
+  for key in SUFeedURL SUPublicEDKey SUEnableAutomaticChecks SUAutomaticallyUpdate SUAllowsAutomaticUpdates SUScheduledCheckInterval; do
+    /usr/libexec/PlistBuddy -c "Delete :$key" "$APP/Contents/Info.plist"
+  done
+fi
 
 # Sign inside out without --deep: nested code has to be sealed before the bundle that
 # contains it, and every binary should get only the entitlements it needs. `find -depth`

@@ -57,6 +57,17 @@ let project = Project(
     packages: [.local(path: "../../packages/shared-swift")],
     targets: [
         .target(
+            name: "YorozuRenderingTests",
+            destinations: .iOS,
+            product: .unitTests,
+            bundleId: "to.yumi.yorozu.rendering-tests",
+            deploymentTargets: .iOS("18.0"),
+            infoPlist: .default,
+            sources: ["Tests/RenderingTests/**"],
+            dependencies: [.target(name: "YorozuIOS"), .package(product: "YorozuShared")],
+            settings: signing()
+        ),
+        .target(
             name: "YorozuUITests",
             destinations: .iOS,
             product: .uiTests,
@@ -77,6 +88,7 @@ let project = Project(
                 "UILaunchScreen": [:],
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
+                "YorozuSecretaryEnabled": .boolean(Environment.secretaryEnabled.getBoolean(default: false)),
                 "LSApplicationCategoryType": "public.app-category.productivity",
                 // Two uses, one key: scanning the pairing code, and taking a photo to send from
                 // the composer. The string has to cover both, because iOS only asks once.

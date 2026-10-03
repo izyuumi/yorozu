@@ -1,0 +1,72 @@
+{
+  "format": 1,
+  "profile": "/var/folders/kf/512zw4hj7l5bm566xkcqyt500000gn/T/yorozu-alpha-qa-rosnwf4n",
+  "checks": {
+    "isolatedSnapshot": true,
+    "english": {
+      "runId": "ecac5d5d-5650-41e4-9a87-9aa02dff79f3",
+      "sha256": "7463440468f33daa272fc0795c5db7ef6ec89cb363cd0eb1bab7d54366ba2a9a",
+      "terminal": "completed",
+      "idempotentReplay": true
+    },
+    "japanese": {
+      "runId": "2cf8363c-1bc0-4ba6-bd2d-d188855fc329",
+      "sha256": "51b6bbb8e7625f0ed009e63ee62b0d0de002bdaf2af345b30327a75297237446",
+      "terminal": "completed",
+      "idempotentReplay": true
+    },
+    "stop": {
+      "seq": 25,
+      "runId": "068fa098-d83c-4560-8781-2435a7c2f750",
+      "kind": "stopped",
+      "ts": 1790961729306,
+      "text": "",
+      "data": {
+        "evidence": "process-exited"
+      }
+    },
+    "reconnect": {
+      "retainedEvents": 14,
+      "activeRunId": null
+    }
+  },
+  "nativeComputerUse": "blocked; no existing TCC grants proven",
+  "passed": true,
+  "source": "ec1a0e3e12d7551115d34e624c0b28adf78de85b",
+  "testedModel": "gpt-6-sol",
+  "scope": "Sealed app bundled Rust host + Node official app-server worker; native GUI acceptance remains unverified.",
+  "evidenceSha256": "e8ceb10b067c90c707fc9c02b52d6488f0f18893c54f7f55b0bd49194831187e",
+  "evidencePath": "/Users/yumi/Documents/Codex/2026-10-03/task-6/evidence/bundled-ec1a0e3-smoke.json",
+  "bundleManifestSha256": "d215ed1e86b6f878f92888a71b4a660f772bf434207c2613e6b12c813274711f",
+  "archiveSha256": "ceb87ae2216b84d3f8c1ef947e69648932275e6df07c9179b89596ec65773652",
+  "archivePath": "/Users/yumi/Documents/Codex/2026-10-03/task-6/artifacts/ec1a0e3e12d7551115d34e624c0b28adf78de85b/YorozuAlpha.zip",
+  "archiveReadback": {
+    "allSealedFilesMatch": true,
+    "sealedFiles": 6390,
+    "codesignDeepStrict": "passed"
+  },
+  "sourceCI": {
+    "url": "https://github.com/izyuumi/yorozu/actions/runs/37038182863",
+    "conclusion": "success"
+  },
+  "sourceSignature": {
+    "local": "G",
+    "githubVerified": true,
+    "reason": "valid"
+  },
+  "nativeUI": {
+    "passed": false,
+    "blocker": "cua.getApp stalled 1595 seconds and failed Transport closed; no native launch or screen acceptance claimed."
+  },
+  "uiHandoff": {
+    "released": false,
+    "source": "35e0baaaf916eb9a65937c04e579d265681b7563",
+    "pending": [
+      "Finder PATH discovery",
+      "actual model label from running.data.model",
+      "neutral Stop pending wording before acknowledgement"
+    ]
+  },
+  "finalAcceptance": false,
+  "updatedAtUtc": "2026-10-03T00:15:21.584860+00:00"
+}

@@ -15,7 +15,7 @@ private extension ConnectionState {
 
 @MainActor
 private func hostStatus(_ host: HostSession) -> String {
-    if case .updateRequired = host.model.compatibility { return String(localized: "Update required") }
+    if case .updateRequired = host.model.compatibility { return SecretaryUI.localized("Update required") }
     return host.model.link.state.label
 }
 
@@ -28,11 +28,9 @@ private func statusTint(_ host: HostSession) -> Color {
 
 struct SettingsView: View {
     let session: Session
-    var showsDone = true
     let onOpenThread: (String, HostID?) -> Void
     @AppStorage(ChatModel.followUpBehaviorKey) private var followUpBehavior = MessageDelivery.queue
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var addingHost = false
     @State private var repairHostID: HostID?
 
@@ -45,24 +43,18 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                if !session.allModels.isEmpty {
-                    Section("Chat connection") {
-                        ForEach(session.allModels.indices, id: \.self) { index in
-                            ChatConnectionSummary(model: session.allModels[index])
+                if !SecretaryUI.enabled {
+                    Section("Chat") {
+                        Picker("Follow-up messages", selection: $followUpBehavior) {
+                            Text("Queue").tag(MessageDelivery.queue)
+                            Text("Steer running turn").tag(MessageDelivery.steer)
                         }
+                        Text("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                            .foregroundStyle(.secondary)
                     }
-                    .listRowBackground(YorozuPalette.paper)
-                }
-                Section("Chat") {
-                Picker("Follow-up messages", selection: $followUpBehavior) {
-                    Text("Queue").tag(MessageDelivery.queue)
-                    Text("Steer running turn").tag(MessageDelivery.steer)
-                }
-                    Text("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
-                        .foregroundStyle(.secondary)
                 }
                 if !session.isDemo {
-                    Section(session.hosts.hasMultipleHosts ? String(localized: "Hosts") : String(localized: "Connection")) {
+                    Section(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Hosts") : SecretaryUI.localized("Connection")) {
                         ForEach(session.hosts.sessions) { host in
                             NavigationLink {
                                 HostSettingsView(session: session, host: host) {
@@ -78,7 +70,7 @@ struct SettingsView: View {
                                     }
                                     .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : String(localized: "Your Mac"))
+                                        Text(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : SecretaryUI.localized("Your Mac"))
                                             .font(.headline)
                                             .foregroundStyle(YorozuPalette.ink)
                                         YorozuStatusLabel(hostStatus(host), tint: statusTint(host))
@@ -89,7 +81,7 @@ struct SettingsView: View {
                                 .accessibilityElement(children: .combine)
                             }
                         }
-                        Button(String(localized: "Add host"), systemImage: "plus") {
+                        Button(SecretaryUI.localized("Add host"), systemImage: "plus") {
                             repairHostID = nil
                             addingHost = true
                         }
@@ -160,24 +152,21 @@ struct SettingsView: View {
                 }
             }
             .paperList()
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(horizontalSizeClass == .regular ? .inline : .automatic)
-            .toolbar {
-                if showsDone { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            }
+            .navigationTitle(SecretaryUI.localized("Settings"))
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(isPresented: $addingHost) {
                 NavigationStack {
                     PairingFlowView(onPair: { code in
                         do {
                             if let repairHostID, try QrPayload.decode(code).hostID != repairHostID {
-                                return String(localized: "Scan a new pairing code from this host Mac to repair its connection.")
+                                return SecretaryUI.localized("Scan a new pairing code from this host Mac to repair its connection.")
                             }
                             try session.pair(with: code)
                             return nil
                         } catch { return session.pendingPairing == nil ? error.localizedDescription : nil }
                     }, onDemo: {}, externalError: session.pairingFailure,
                     connecting: session.isPairing && session.pairingFailure == nil, addingHost: true)
-                    .navigationTitle(repairHostID == nil ? String(localized: "Add host") : String(localized: "Repair connection"))
+                    .navigationTitle(repairHostID == nil ? SecretaryUI.localized("Add host") : SecretaryUI.localized("Repair connection"))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { addingHost = false } } }
                     .modifier(PairingConfirmation(session: session))
@@ -215,7 +204,7 @@ private struct HostSettingsView: View {
 
     var body: some View {
         List {
-            Section(session.hosts.hasMultipleHosts ? String(localized: "Host") : String(localized: "Connection")) {
+            Section(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Host") : SecretaryUI.localized("Connection")) {
                 if session.hosts.hasMultipleHosts {
                     TextField("Nickname", text: $nickname)
                         .autocorrectionDisabled()
@@ -225,48 +214,44 @@ private struct HostSettingsView: View {
                 LabeledContent("Status") {
                     YorozuStatusLabel(hostStatus(host), tint: statusTint(host))
                 }
-                DisclosureGroup("Connection details") {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Relay")
-                        Text(host.relayURL)
-                            .font(.callout.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .accessibilityElement(children: .combine)
-                    LabeledContent("Mac key", value: QrPayload.fingerprint(ofBase64URLKey: host.id) ?? host.id)
-                    if let date = PairingStore.load(hostID: host.id)?.pairedAt {
-                        LabeledContent("Paired since", value: date.formatted(date: .abbreviated, time: .shortened))
-                    }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Relay")
+                    Text(host.relayURL)
+                        .font(.callout.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                LabeledContent("Mac key", value: QrPayload.fingerprint(ofBase64URLKey: host.id) ?? host.id)
+                if let date = PairingStore.load(hostID: host.id)?.pairedAt {
+                    LabeledContent("Paired since", value: date.formatted(date: .abbreviated, time: .shortened))
                 }
             }
             .listRowBackground(YorozuPalette.paper)
             Section("Compatibility") {
                 switch host.model.compatibility {
                 case .legacy:
-                    Text(session.hosts.hasMultipleHosts ? String(localized: "Compatible legacy host") : String(localized: "Compatible"))
+                    Text(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Compatible legacy host") : SecretaryUI.localized("Compatible"))
                     Text(session.hosts.hasMultipleHosts
-                         ? String(localized: "Chat is available. Update this Mac to share its computer name and newer features.")
-                         : String(localized: "Chat is available. Update Yorozu on your Mac for newer features."))
+                         ? SecretaryUI.localized("Chat is available. Update this Mac to share its computer name and newer features.")
+                         : SecretaryUI.localized("Chat is available. Update Yorozu on your Mac for newer features."))
                         .font(.footnote).foregroundStyle(.secondary)
                 case .compatible(let version, _):
-                    Text("Compatible")
-                    DisclosureGroup("Compatibility details") { LabeledContent("Protocol", value: String(version)) }
+                    LabeledContent("Protocol", value: String(version))
                 case .updateRequired(let reason):
                     Label("Update required", systemImage: "arrow.down.circle")
-                    Text("Update Yorozu on your Mac before sending messages.")
-                    DisclosureGroup("Compatibility details") { Text(reason).font(.footnote).foregroundStyle(.secondary) }
+                    Text(reason).font(.footnote).foregroundStyle(.secondary)
                 }
-                if let version = host.model.peerInfo?.appVersion { LabeledContent(session.hosts.hasMultipleHosts ? String(localized: "Host version") : String(localized: "Mac version"), value: version) }
+                if let version = host.model.peerInfo?.appVersion { LabeledContent(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Host version") : SecretaryUI.localized("Mac version"), value: version) }
             }
             .listRowBackground(YorozuPalette.paper)
             Section {
                 Button("Retry connection") { host.model.start(); host.model.reconnect() }
                     .disabled(host.model.canDeliver)
-                Button(String(localized: "Repair connection"), action: onRepair)
-                Button(session.hosts.hasMultipleHosts ? String(localized: "Remove host") : String(localized: "Remove connection"), role: .destructive) {
+                Button(SecretaryUI.localized("Repair connection"), action: onRepair)
+                Button(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Remove host") : SecretaryUI.localized("Remove connection"), role: .destructive) {
                     confirmingRemoval = true
                 }.disabled(removing)
             } footer: {
@@ -277,10 +262,10 @@ private struct HostSettingsView: View {
             .listRowBackground(YorozuPalette.paper)
         }
         .paperList()
-        .navigationTitle(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : String(localized: "Connection"))
+        .navigationTitle(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : SecretaryUI.localized("Connection"))
         .onAppear { nickname = host.nickname ?? "" }
-        .alert(session.hosts.hasMultipleHosts ? String(localized: "Remove \(session.hosts.label(for: host))?") : String(localized: "Remove connection?"), isPresented: $confirmingRemoval) {
-            Button(session.hosts.hasMultipleHosts ? String(localized: "Remove host") : String(localized: "Remove connection"), role: .destructive) {
+        .alert(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Remove \(session.hosts.label(for: host))?") : SecretaryUI.localized("Remove connection?"), isPresented: $confirmingRemoval) {
+            Button(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Remove host") : SecretaryUI.localized("Remove connection"), role: .destructive) {
                 removing = true
                 Task {
                     await session.removeHost(host.id)
@@ -291,8 +276,8 @@ private struct HostSettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(session.hosts.hasMultipleHosts
-                 ? String(localized: "This removes this host's keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again.")
-                 : String(localized: "This removes pairing keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again."))
+                 ? SecretaryUI.localized("This removes this host's keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again.")
+                 : SecretaryUI.localized("This removes pairing keys, cached chats, queued sends, and notifications from this device. Scan a new pairing code to connect again."))
         }
         .yorozuTint()
     }
@@ -332,7 +317,7 @@ private struct AdvancedSettingsView: View {
             }
         }
         .paperList()
-        .navigationTitle("Advanced")
+        .navigationTitle(SecretaryUI.localized("Advanced"))
         .navigationBarTitleDisplayMode(.inline)
     }
 }
@@ -343,11 +328,15 @@ private struct HostAdvancedSection: View {
 
     var body: some View {
         Section {
-            Toggle("Skip approvals for all agents", isOn: Binding(get: { host.model.yoloMode }, set: host.model.setYoloMode))
-                .accessibilityHint(label)
+            if SecretaryUI.enabled {
+                Text("Routine tasks run automatically within existing access.")
+            } else {
+                Toggle("Skip approvals for all agents", isOn: Binding(get: { host.model.yoloMode }, set: host.model.setYoloMode))
+                    .accessibilityHint(label)
+            }
             Button("Copy diagnostics", systemImage: "doc.on.doc") {
                 UIPasteboard.general.string = ConnectionDiagnostics.snapshot(for: host.model)
-                AccessibilityNotification.Announcement(String(localized: "Diagnostics copied")).post()
+                AccessibilityNotification.Announcement(SecretaryUI.localized("Diagnostics copied")).post()
             }
         } header: {
             Text(label)
@@ -356,12 +345,14 @@ private struct HostAdvancedSection: View {
             approvalsFooter
         }
         .listRowBackground(YorozuPalette.paper)
-        .onAppear { host.model.requestApprovalSettings() }
+        .onAppear { if !SecretaryUI.enabled { host.model.requestApprovalSettings() } }
     }
 
     /// Off, or on with its expiry. Pairing is the grant, so the switch applies at once.
     @ViewBuilder private var approvalsFooter: some View {
-        if host.model.yoloMode {
+        if SecretaryUI.enabled {
+            Text("Yorozu tasks retain required approvals. If more access is needed, Yorozu asks before proceeding.")
+        } else if host.model.yoloMode {
             // One view: a footer given two lays out only the first.
             VStack(alignment: .leading) {
                 Label {

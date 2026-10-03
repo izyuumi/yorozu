@@ -26,10 +26,10 @@ public struct ThreadSection: Equatable, Sendable, Identifiable {
 
         var title: String {
             switch self {
-            case .today: String(localized: "Today")
-            case .yesterday: String(localized: "Yesterday")
-            case .thisWeek: String(localized: "This week")
-            case .earlier: String(localized: "Earlier")
+            case .today: SecretaryUI.localized("Today")
+            case .yesterday: SecretaryUI.localized("Yesterday")
+            case .thisWeek: SecretaryUI.localized("This week")
+            case .earlier: SecretaryUI.localized("Earlier")
             }
         }
     }
@@ -213,13 +213,13 @@ public let openWindow: TimeInterval = 2 * 60 * 60
 /// replace vague large relative numbers after a year.
 public func compactThreadTime(_ date: Date, now: Date = Date()) -> String {
     let seconds = max(0, now.timeIntervalSince(date))
-    if seconds < 60 { return String(localized: "\(Int(seconds))s") }
-    if seconds < 120 { return String(localized: "1m \(Int(seconds) - 60)s") }
-    if seconds < 3_600 { return String(localized: "\(Int(seconds / 60))m") }
-    if seconds < 86_400 { return String(localized: "\(Int(seconds / 3_600))h") }
-    if seconds < 604_800 { return String(localized: "\(Int(seconds / 86_400))d") }
-    if seconds < 2_629_800 { return String(localized: "\(Int(seconds / 604_800))w") }
-    if seconds < 31_557_600 { return String(localized: "\(Int(seconds / 2_629_800))mo") }
+    if seconds < 60 { return SecretaryUI.localized("\(Int(seconds))s") }
+    if seconds < 120 { return SecretaryUI.localized("1m \(Int(seconds) - 60)s") }
+    if seconds < 3_600 { return SecretaryUI.localized("\(Int(seconds / 60))m") }
+    if seconds < 86_400 { return SecretaryUI.localized("\(Int(seconds / 3_600))h") }
+    if seconds < 604_800 { return SecretaryUI.localized("\(Int(seconds / 86_400))d") }
+    if seconds < 2_629_800 { return SecretaryUI.localized("\(Int(seconds / 604_800))w") }
+    if seconds < 31_557_600 { return SecretaryUI.localized("\(Int(seconds / 2_629_800))mo") }
     return date.formatted(.dateTime.month(.abbreviated).day())
 }
 
@@ -321,12 +321,12 @@ public enum ThreadStatus: Int, Comparable, Sendable {
     /// What VoiceOver reads for the mark, and the tail of the row's summary.
     var label: String {
         switch self {
-        case .needsApproval: String(localized: "Needs approval")
-        case .needsInput: String(localized: "Needs input")
-        case .failed: String(localized: "Failed")
-        case .working: String(localized: "Working")
-        case .doneUnread: String(localized: "Done, unread")
-        case .idle: String(localized: "Idle")
+        case .needsApproval: SecretaryUI.localized("Needs approval")
+        case .needsInput: SecretaryUI.localized("Needs input")
+        case .failed: SecretaryUI.localized("Failed")
+        case .working: SecretaryUI.localized("Working")
+        case .doneUnread: SecretaryUI.localized("Done, unread")
+        case .idle: SecretaryUI.localized("Idle")
         }
     }
 
@@ -430,7 +430,7 @@ struct ThreadRow: View {
                 }
                 if marksArchived && thread.archived {
                     Label {
-                        Text(hostLabel.map { "\(String(localized: "Archived")) · \($0)" } ?? String(localized: "Archived"))
+                        Text(hostLabel.map { "\(SecretaryUI.localized("Archived")) · \($0)" } ?? SecretaryUI.localized("Archived"))
                     } icon: {
                         Image(systemName: "archivebox")
                     }
@@ -492,7 +492,7 @@ struct ThreadRow: View {
         parts.append(thread.displayTitle)
         if status != .working, let preview = preview ?? thread.lastMessage, !preview.isEmpty { parts.append(preview) }
         if status != .idle { parts.append(status.label) }
-        if marksArchived && thread.archived { parts.append(String(localized: "Archived")) }
+        if marksArchived && thread.archived { parts.append(SecretaryUI.localized("Archived")) }
         return parts.joined(separator: ". ")
     }
 
@@ -529,9 +529,9 @@ public enum ConnectionState: Hashable, Sendable {
 
     public var label: String {
         switch self {
-        case .connected: String(localized: "Connected")
-        case .reconnecting: String(localized: "Reconnecting")
-        case .offline: String(localized: "Host isn’t reachable")
+        case .connected: SecretaryUI.localized("Connected")
+        case .reconnecting: SecretaryUI.localized("Reconnecting")
+        case .offline: SecretaryUI.localized("Host isn’t reachable")
         }
     }
 
@@ -865,7 +865,7 @@ public struct ThreadListView<Destination: View>: View {
         messageText: @escaping (String) -> String = { _ in "" },
         remoteMatches: [String: ThreadSearchMatch] = [:],
         remoteQuery: String? = nil,
-        searchScope: String = "Downloaded conversations only",
+        searchScope: String = SecretaryUI.localized("Downloaded conversations only"),
         onSearchQueryChange: ((String) -> Void)? = nil,
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
         onSettings: (() -> Void)? = nil,
@@ -924,7 +924,7 @@ public struct ThreadListView<Destination: View>: View {
         remoteQuery == searchNeedle ? remoteMatches : [:]
     }
     private var shownSearchScope: String {
-        remoteQuery == searchNeedle ? searchScope : "Downloaded conversations only"
+        remoteQuery == searchNeedle ? searchScope : SecretaryUI.localized("Downloaded conversations only")
     }
 
     private var searchResults: ThreadSearchResults {
@@ -1029,7 +1029,7 @@ public struct ThreadListView<Destination: View>: View {
             if searchNeedle.isEmpty {
                 if !groups.pinned.isEmpty {
                     Section { rows(groups.pinned) } header: {
-                        ThreadGroupHeader(title: String(localized: "Pinned"), threads: groups.pinned,
+                        ThreadGroupHeader(title: SecretaryUI.localized("Pinned"), threads: groups.pinned,
                                           workingThreads: workingThreads)
                     }
                 }
@@ -1136,7 +1136,7 @@ public struct ThreadListView<Destination: View>: View {
         // pulling a transcript down reveals "Search threads" above the conversation.
         .threadListSearch(text: $query, enabled: splitLayout || path.isEmpty)
         .refreshable { await onRefresh?() }
-        .navigationTitle("Threads")
+        .navigationTitle(SecretaryUI.localized("Threads"))
         .toolbarTitleDisplayMode(.inline)
         .toolbar {
             if let onSettings {
@@ -1153,8 +1153,7 @@ public struct ThreadListView<Destination: View>: View {
                         }
                     }
                     .accessibilityLabel("Settings")
-                    .accessibilityIdentifier("chat-settings")
-                    .accessibilityValue(connectionSummary ?? (connectionStatus ?? shownConnection).map { String(localized: "Mac connection: \($0.label)") } ?? "")
+                    .accessibilityValue(connectionSummary ?? (connectionStatus ?? shownConnection).map { SecretaryUI.localized("Mac connection: \($0.label)") } ?? "")
                 }
             }
             #if os(iOS)
@@ -1220,7 +1219,7 @@ public struct ThreadListView<Destination: View>: View {
                     readButton(thread)
                         .tint(.blue)
                     Button(
-                        thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
+                        thread.pinned ? SecretaryUI.localized("Unpin") : SecretaryUI.localized("Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"
                     ) { movePin(thread, !thread.pinned) }
                         .tint(.orange)
@@ -1241,7 +1240,7 @@ public struct ThreadListView<Destination: View>: View {
                 Button("Rename", systemImage: "pencil") { renaming = thread }
                 if !thread.archived {
                     Button(
-                        thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
+                        thread.pinned ? SecretaryUI.localized("Unpin") : SecretaryUI.localized("Pin"),
                         systemImage: thread.pinned ? "pin.slash" : "pin"
                     ) { movePin(thread, !thread.pinned) }
                 }
@@ -1250,7 +1249,7 @@ public struct ThreadListView<Destination: View>: View {
                     ExportThreadButton(title: thread.displayTitle) { exportMarkdown(thread) }
                 }
                 Button(
-                    thread.archived ? String(localized: "Restore") : String(localized: "Archive"),
+                    thread.archived ? SecretaryUI.localized("Restore") : SecretaryUI.localized("Archive"),
                     systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
                 ) { moveArchive(thread, !thread.archived) }
             }
@@ -1373,7 +1372,7 @@ public struct ThreadSidebar: View {
         messageText: @escaping (String) -> String = { _ in "" },
         remoteMatches: [String: ThreadSearchMatch] = [:],
         remoteQuery: String? = nil,
-        searchScope: String = "Downloaded conversations only",
+        searchScope: String = SecretaryUI.localized("Downloaded conversations only"),
         onSearchQueryChange: ((String) -> Void)? = nil,
         exportMarkdown: ((ThreadSummary) -> String)? = nil,
         onSearchSelect: ((ThreadSearchRequest?) -> Void)? = nil
@@ -1411,7 +1410,7 @@ public struct ThreadSidebar: View {
         remoteQuery == searchNeedle ? remoteMatches : [:]
     }
     private var shownSearchScope: String {
-        remoteQuery == searchNeedle ? searchScope : "Downloaded conversations only"
+        remoteQuery == searchNeedle ? searchScope : SecretaryUI.localized("Downloaded conversations only")
     }
 
     private var searchResults: ThreadSearchResults {
@@ -1459,7 +1458,7 @@ public struct ThreadSidebar: View {
             if searchNeedle.isEmpty {
                 if !groups.pinned.isEmpty {
                     Section { rows(groups.pinned) } header: {
-                        ThreadGroupHeader(title: String(localized: "Pinned"), threads: groups.pinned,
+                        ThreadGroupHeader(title: SecretaryUI.localized("Pinned"), threads: groups.pinned,
                                           workingThreads: workingThreads)
                     }
                 }
@@ -1514,7 +1513,7 @@ public struct ThreadSidebar: View {
         // In the sidebar itself rather than in the toolbar: the chat next to it has a search
         // field of its own, and two searchable views in one window fight over the toolbar.
         .searchable(text: $query, placement: .sidebar, prompt: "Search threads")
-        .navigationTitle("Threads")
+        .navigationTitle(SecretaryUI.localized("Threads"))
         .toolbar {
             if threads.contains(where: \.isUnread), let onReadAll {
                 Button("Mark all as read", systemImage: "envelope.open", action: onReadAll)
@@ -1597,7 +1596,7 @@ public struct ThreadSidebar: View {
         Button("Rename", systemImage: "pencil") { renaming = thread }
         if !thread.archived {
             Button(
-                thread.pinned ? String(localized: "Unpin") : String(localized: "Pin"),
+                thread.pinned ? SecretaryUI.localized("Unpin") : SecretaryUI.localized("Pin"),
                 systemImage: thread.pinned ? "pin.slash" : "pin"
             ) { movePin(thread, !thread.pinned) }
         }
@@ -1613,7 +1612,7 @@ public struct ThreadSidebar: View {
             ExportThreadButton(title: thread.displayTitle) { exportMarkdown(thread) }
         }
         Button(
-            thread.archived ? String(localized: "Restore") : String(localized: "Archive"),
+            thread.archived ? SecretaryUI.localized("Restore") : SecretaryUI.localized("Archive"),
             systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox"
         ) { moveArchive(thread, !thread.archived) }
     }

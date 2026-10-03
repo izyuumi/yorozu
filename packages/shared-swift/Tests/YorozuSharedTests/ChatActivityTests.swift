@@ -29,6 +29,12 @@ private func activityEvent(_ id: String, _ payload: YorozuEvent.Payload) -> Yoro
         in: rows, generating: false, streamingId: nil,
         answeredApprovals: ["action"], answeredQuestions: []
     ) == nil)
+    for outcome in [ApprovalStatusData.Status.noLongerNeeded, .expired] {
+        #expect(chatActivity(in: rows, generating: false, streamingId: nil,
+            answeredApprovals: [], answeredQuestions: [], approvalOutcomes: ["action": outcome], quiet: true) == nil)
+        #expect(chatActivity(in: rows, generating: true, streamingId: nil,
+            answeredApprovals: [], answeredQuestions: [], approvalOutcomes: ["action": outcome], quiet: true) == .thinking)
+    }
 }
 
 @Test func chatActivityWaitsForQuestionAndResumesAfterItsAnswer() {
@@ -60,6 +66,18 @@ private func activityEvent(_ id: String, _ payload: YorozuEvent.Payload) -> Yoro
         answeredApprovals: [], answeredQuestions: []
     ) == nil)
 
+    // Quiet secretary presentation hides that work row. Its activity cue must stay
+    // visible through both tool execution and a streamed natural-language milestone.
+    for events in [[work], [work, reply]] {
+      for streamingId in [nil, "reply"] as [String?] {
+        let rows = chatRows(from: events, generating: true)
+        #expect(chatActivity(in: rows, generating: true, streamingId: streamingId,
+            answeredApprovals: [], answeredQuestions: [], quiet: true) == .thinking)
+        #expect(chatActivity(in: rows, generating: false, streamingId: streamingId,
+            answeredApprovals: [], answeredQuestions: [], quiet: true) == nil)
+      }
+    }
+
     // Finished work from an earlier turn must not suppress a new turn's initial status.
     let finished = activityEvent("finished", .message(MessageData(role: .agent, text: "Done", done: true)))
     let next = activityEvent("next", .message(MessageData(role: .user, text: "Continue")))
@@ -84,7 +102,7 @@ private func activityEvent(_ id: String, _ payload: YorozuEvent.Payload) -> Yoro
     // Approval is the immediate decision even if live status or streamed text is also present.
     #expect(chatActivity(
         in: rows, generating: true, streamingId: "stream",
-        answeredApprovals: [], answeredQuestions: []
+        answeredApprovals: [], answeredQuestions: [], quiet: true
     ) == .waitingForApproval)
     #expect(chatActivity(
         in: rows, generating: false, streamingId: nil,
@@ -92,7 +110,7 @@ private func activityEvent(_ id: String, _ payload: YorozuEvent.Payload) -> Yoro
     ) == .waitingForApproval)
     #expect(chatActivity(
         in: rows, generating: false, streamingId: nil,
-        answeredApprovals: ["delegated-action"], answeredQuestions: []
+        answeredApprovals: ["delegated-action"], answeredQuestions: [], quiet: true
     ) == .waitingForAnswer)
     #expect(chatActivity(
         in: rows, generating: false, streamingId: nil,

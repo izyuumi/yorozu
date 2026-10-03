@@ -2,6 +2,8 @@
 /// Layout fixtures briefly host native windows so AppKit lists actually draw.
 /// swift run --package-path packages/shared-swift YorozuUIHarness /tmp/yorozu-ui --screenshots-only
 /// Add --round-two for adversarial questions, messages, agent states, folders and search.
+/// --send-freeze measures native Mac Send stalls; --verify-send checks the 250 ms budget.
+/// --composer-caret verifies native newline selection and send keys in an isolated window.
 import AppKit
 import CryptoKit
 import Foundation
@@ -61,6 +63,232 @@ actor HarnessTransport: ChatTransport {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/tmp/yorozu-ui")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if CommandLine.arguments.contains("--composer-caret") {
+            // Exercise the real composer in this process only; never send system keystrokes.
+            let key = ChatView.sendWithCommandReturnKey
+            let previous = UserDefaults.standard.object(forKey: key)
+            let model = ChatModel(transport: HarnessTransport(), device: "composer-fixture")
+            let thread = model.newDraft()
+            let host = NSHostingView(rootView: NavigationStack {
+                ChatView(model: model, thread: thread, focusComposerOnAppear: true)
+            })
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 720),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "Yorozu isolated composer verification"
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer {
+                window.orderOut(nil)
+                model.close()
+                if let previous { UserDefaults.standard.set(previous, forKey: key) }
+                else { UserDefaults.standard.removeObject(forKey: key) }
+            }
+            var report = [String]()
+            var failures = 0
+            func record(_ name: String, _ passed: Bool, _ details: String) {
+                report.append("\(passed ? "PASS" : "FAIL") \(name): \(details)")
+                if !passed { failures += 1 }
+            }
+            func editor() throws -> NSTextView {
+                guard let editor = window.firstResponder as? NSTextView else {
+                    throw NSError(domain: "ComposerHarness", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Composer did not become the native first responder: \(String(describing: window.firstResponder))"])
+                }
+                return editor
+            }
+            func pressReturn(_ modifiers: NSEvent.ModifierFlags) throws {
+                guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                    modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, characters: "\r",
+                    charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36) else {
+                    throw NSError(domain: "ComposerHarness", code: 2)
+                }
+                NSApp.postEvent(event, atStart: false)
+            }
+            for commandToSend in [false, true] {
+                UserDefaults.standard.set(commandToSend, forKey: key)
+                for (position, expected) in [(0, "\nalpha beta"), (5, "alpha\n beta"), (10, "alpha beta\n")] {
+                    model.drafts[thread.id] = "alpha beta"
+                    try await Task.sleep(for: .milliseconds(150))
+                    let field = try editor()
+                    field.setSelectedRange(NSRange(location: position, length: 0))
+                    try pressReturn(commandToSend ? [] : .shift)
+                    try await Task.sleep(for: .milliseconds(150))
+                    let actual = model.drafts[thread.id] ?? ""
+                    record("\(commandToSend ? "Return" : "Shift-Return") at \(position)",
+                        actual == expected && field.selectedRange() == NSRange(location: position + 1, length: 0),
+                        "draft=\(String(reflecting: actual)), caret=\(field.selectedRange())")
+                }
+                model.drafts[thread.id] = "send this"
+                try await Task.sleep(for: .milliseconds(150))
+                let before = model.outbox.count
+                try pressReturn(commandToSend ? .command : [])
+                try await Task.sleep(for: .milliseconds(150))
+                let sent = model.outbox.dropFirst(before).contains { item in
+                    if case .message(let message) = item.event.payload { return message.text == "send this" }
+                    return false
+                }
+                record("\(commandToSend ? "Command-Return" : "Return") sends", sent && model.drafts[thread.id] == "",
+                    "message enqueued=\(sent), composer empty=\(model.drafts[thread.id] == "")")
+            }
+            report.append("IME conversion, undo/redo, paste and quotes are not covered by this fixture.")
+            let text = report.joined(separator: "\n") + "\n"
+            try text.write(to: output.appendingPathComponent("composer-caret.txt"), atomically: true, encoding: .utf8)
+            print(text)
+            guard failures == 0 else { throw NSError(domain: "ComposerHarness", code: failures) }
+            return
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--secretary-history"), CommandLine.arguments.count > index + 1 {
+            // Replay captured wire events in the real model; never connect to a user profile.
+            let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+            let events = try JSONDecoder().decode([YorozuEvent].self, from: data)
+            let transport = HarnessTransport()
+            let model = ChatModel(transport: transport)
+            model.start()
+            while !model.ownerOnline { await Task.yield() }
+            let id = SecretaryUI.threadID
+            let thread = ThreadSummary(id: id, title: "Yorozu", archived: false, lastActivity: 0, agent: .codex)
+            await transport.deliver(YorozuEvent(id: "threads", threadId: id, ts: 0, agentId: "main",
+                payload: .threadList(ThreadListData(threads: [thread]))))
+            while !model.listed { await Task.yield() }
+            let previous = UserDefaults.standard.object(forKey: SecretaryUI.technicalDetailsKey)
+            defer {
+                if let previous { UserDefaults.standard.set(previous, forKey: SecretaryUI.technicalDetailsKey) }
+                else { UserDefaults.standard.removeObject(forKey: SecretaryUI.technicalDetailsKey) }
+                model.close()
+            }
+            UserDefaults.standard.set(false, forKey: SecretaryUI.technicalDetailsKey)
+            await transport.deliver(YorozuEvent(id: "history", threadId: id, ts: 0, agentId: "main",
+                payload: .syncDelta(SyncDeltaData(events: events, threadId: id, workingThreadIds: []))))
+            try await Task.sleep(for: .milliseconds(100))
+            try await render(NavigationStack { SecretaryChatView(model: model, onHistory: {}) },
+                name: "secretary-history", width: 880, height: 1000, dark: false, output: output)
+            return
+        }
+        if CommandLine.arguments.contains("--secretary-activity") {
+            let transport = HarnessTransport()
+            let model = ChatModel(transport: transport)
+            model.start()
+            while !model.ownerOnline { await Task.yield() }
+            let id = SecretaryUI.threadID
+            let thread = ThreadSummary(id: id, title: "Yorozu", archived: false, lastActivity: 0, agent: .codex)
+            func event(_ name: String, _ payload: YorozuEvent.Payload) -> YorozuEvent {
+                YorozuEvent(id: name, threadId: id, ts: Int(Date().timeIntervalSince1970 * 1000), agentId: "main", payload: payload)
+            }
+            await transport.deliver(event("threads", .threadList(ThreadListData(threads: [thread]))))
+            while !model.listed { await Task.yield() }
+            let previous = UserDefaults.standard.object(forKey: SecretaryUI.technicalDetailsKey)
+            defer {
+                if let previous { UserDefaults.standard.set(previous, forKey: SecretaryUI.technicalDetailsKey) }
+                else { UserDefaults.standard.removeObject(forKey: SecretaryUI.technicalDetailsKey) }
+                model.close()
+            }
+            UserDefaults.standard.set(false, forKey: SecretaryUI.technicalDetailsKey)
+            var events = [
+                event("request", .message(MessageData(role: .user, text: "Check the draft and save a copy.", completionId: "fixture:request:final"))),
+                event("milestone", .message(MessageData(role: .agent, text: "I’ve checked the draft. I’m saving a copy now."))),
+                event("command", .toolCall(ToolCallData(callId: "command", name: "commandExecution", args: ["command": .string("COMMAND_DETAIL_MARKER")]))),
+            ]
+            func show(_ name: String, running: Bool, japanese: Bool = false) async throws {
+                var currentThread = thread
+                currentThread.activeEventId = running ? events.last(where: {
+                    if case .message(let message) = $0.payload { return message.role == .user }
+                    return false
+                })?.id : nil
+                currentThread.turnState = name == "unconfirmed" ? .stoppedUnconfirmed : running ? .running : .idle
+                await transport.deliver(event("threads", .threadList(ThreadListData(threads: [currentThread]))))
+                await transport.deliver(event(UUID().uuidString, .syncDelta(SyncDeltaData(events: events, threadId: id, workingThreadIds: running ? [id] : []))))
+                try await Task.sleep(for: .milliseconds(100))
+                try await render(NavigationStack {
+                    SecretaryChatView(model: model, onHistory: {})
+                }.environment(\.locale, Locale(identifier: japanese ? "ja" : "en")),
+                    name: "secretary-\(name)", width: 880, height: 650, dark: false, output: output)
+            }
+            try await show("working", running: true)
+            UserDefaults.standard.set(true, forKey: SecretaryUI.technicalDetailsKey)
+            try await show("details", running: true)
+            UserDefaults.standard.set(false, forKey: SecretaryUI.technicalDetailsKey)
+            events += [event("approval", .approvalCard(ApprovalCardData(actionId: "approve", actionClass: "run", target: "Save outside the granted folder")))]
+            try await show("approval", running: true)
+            events.removeLast()
+            events += [event("result", .toolResult(ToolResultData(callId: "command", ok: false, output: "OUTPUT_DETAIL_MARKER"))),
+                event("final", .message(MessageData(role: .agent, text: "I couldn’t save the copy. Choose another folder to try again.", done: true, failed: true)))]
+            await transport.deliver(event("approval-resolved", .approvalStatus(ApprovalStatusData(requestId: "fixture", actionId: "approve", status: .noLongerNeeded))))
+            try await show("error", running: false)
+            try await show("error-ja", running: false, japanese: true)
+            events += [event("result", .toolResult(ToolResultData(callId: "command", ok: true, output: "OUTPUT_DETAIL_MARKER"))),
+                event("final", .message(MessageData(role: .agent, text: "Saved the copy in your chosen folder.", done: true)))]
+            try await show("completed", running: false)
+            events += [event("second-request", .message(MessageData(role: .user, text: "Check another copy."))),
+                event("second-command", .toolCall(ToolCallData(callId: "second-command", name: "commandExecution", args: [:]))),
+                event("stop", .stopStatus(StopStatusData(targetEventId: "second-request", requestId: "stop-request", status: .unconfirmed)))]
+            try await show("unconfirmed", running: true)
+            // A later host-owned running turn must not inherit the old stop's missing cue.
+            events += [event("third-request", .message(MessageData(role: .user, text: "Continue after recovery."))),
+                event("third-command", .toolCall(ToolCallData(callId: "third-command", name: "commandExecution", args: [:])))]
+            try await show("running-after-old-stop", running: true)
+            return
+        }
+        if CommandLine.arguments.contains("--send-freeze") {
+            let cache = ThreadCache(directory: output.appendingPathComponent("send-cache"), key: SymmetricKey(size: .bits256))
+            let thread = ThreadSummary(id: "send-fixture", title: "Synthetic send", archived: false, lastActivity: 1)
+            let count = Int(ProcessInfo.processInfo.environment["YOROZU_SEND_HISTORY_COUNT"] ?? "1000") ?? 1000
+            cache.save(threads: [thread])
+            cache.save(events: (0..<count).map { index in
+                YorozuEvent(id: "history-\(index)", threadId: thread.id, ts: index, agentId: "main",
+                    payload: .message(MessageData(role: index.isMultiple(of: 2) ? .user : .agent,
+                        text: "Synthetic history \(index). " + String(repeating: "日本語の文章。 ", count: 20), done: true)))
+            }, threadId: thread.id)
+            let transport = HarnessTransport()
+            let model = ChatModel(transport: transport, cache: cache, device: "mac")
+            model.start()
+            let host = NSHostingView(rootView: NavigationStack { ChatView(model: model, thread: thread) })
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 720),
+                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            window.title = "Yorozu synthetic send investigation"
+            window.contentView = host
+            window.orderFrontRegardless()
+            var maxGap: Duration = .zero
+            let heartbeat = Task { @MainActor in
+                var last = ContinuousClock.now
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(10))
+                    let now = ContinuousClock.now
+                    maxGap = max(maxGap, last.duration(to: now))
+                    last = now
+                }
+            }
+            try await Task.sleep(for: .seconds(2))
+            var report = "Synthetic Mac view: \(count) history messages\n"
+            var worstGap: Duration = .zero
+            for index in 0..<5 {
+                model.drafts[thread.id] = "Synthetic send \(index)"
+                try await Task.sleep(for: .milliseconds(100))
+                maxGap = .zero
+                let start = ContinuousClock.now
+                // Exercise the shipping model with the native ChatView mounted. This measures
+                // submission and ensuing rendering; it does not inject a button or Return event.
+                model.send(in: thread)
+                let submitted = start.duration(to: .now)
+                try await Task.sleep(for: .milliseconds(500))
+                worstGap = max(worstGap, maxGap)
+                report += "send \(index): submission=\(submitted), UI heartbeat max gap=\(maxGap)\n"
+            }
+            heartbeat.cancel()
+            await model.shutdown()
+            window.orderOut(nil)
+            print(report)
+            try report.write(to: output.appendingPathComponent("send-timing.txt"), atomically: true, encoding: .utf8)
+            let restored = ChatModel(transport: HarnessTransport(), cache: cache, device: "mac")
+            guard restored.outbox.filter({ $0.event.payload.kind == .message }).count == 5,
+                  restored.drafts[thread.id]?.isEmpty == true else {
+                throw NSError(domain: "SendHarness", code: 1, userInfo: [NSLocalizedDescriptionKey: "Synthetic sends were not preserved in the offline outbox"])
+            }
+            if CommandLine.arguments.contains("--verify-send"), worstGap >= .milliseconds(250) {
+                throw NSError(domain: "SendHarness", code: 2, userInfo: [NSLocalizedDescriptionKey: "Mac Send blocked the UI for \(worstGap)"])
+            }
+            return
+        }
         if CommandLine.arguments.contains("--channel-model") {
             NSApplication.shared.setActivationPolicy(.regular)
             let transport = HarnessTransport()

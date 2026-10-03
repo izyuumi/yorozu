@@ -24,7 +24,7 @@ struct GeneralView: View {
                 }
                 .pickerStyle(.segmented)
                 if session.role == .client {
-                    Text(session.hosts.hasMultipleHosts ? String(localized: "Manage paired Macs in Hosts.") : String(localized: "Manage pairing in Connection."))
+                    Text(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Manage paired Macs in Hosts.") : SecretaryUI.localized("Manage pairing in Connection."))
                         .foregroundStyle(.secondary)
                 } else if session.role == .host {
                     Toggle(isOn: $backgroundOnlyHost) {
@@ -38,36 +38,34 @@ struct GeneralView: View {
                 }
             }
             if session.role == .host { RelayView(status: sidecar.state) }
-            if session.role == .host {
-                Section("Assistant setup") {
-                    ChatConnectionSummary(model: session.model)
-                    AgentReadinessList(model: session.model)
-                }
-            }
             Section {
                 Picker("Send message with", selection: $sendWithCommandReturn) {
                     Text("Enter").tag(false)
                     Text("⌘ Enter").tag(true)
                 }
-                Picker("Follow-up messages", selection: $followUpBehavior) {
-                    Text("Queue").tag(MessageDelivery.queue)
-                    Text("Steer running turn").tag(MessageDelivery.steer)
+                if !SecretaryUI.enabled {
+                    Picker("Follow-up messages", selection: $followUpBehavior) {
+                        Text("Queue").tag(MessageDelivery.queue)
+                        Text("Steer running turn").tag(MessageDelivery.steer)
+                    }
                 }
                 ReplyFontPicker()
             } header: {
                 Text("Chat")
             } footer: {
                 VStack(alignment: .leading) {
-                    Text(sendWithCommandReturn ? String(localized: "Enter starts a new line.") : String(localized: "Shift-Enter starts a new line."))
-                    Text(sendWithCommandReturn
-                        ? String(localized: "⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
-                        : String(localized: "⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now."))
+                    Text(sendWithCommandReturn ? SecretaryUI.localized("Enter starts a new line.") : SecretaryUI.localized("Shift-Enter starts a new line."))
+                    if !SecretaryUI.enabled {
+                        Text(sendWithCommandReturn
+                            ? SecretaryUI.localized("⌥ ⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now.")
+                            : SecretaryUI.localized("⌘ Enter flips delivery. ⌘ Shift Enter sends the next queued message now."))
+                    }
                 }
                 .leadingFooter()
             }
             Section {
                 LabeledContent("Archived threads") {
-                    Text(archivedCount == 0 ? String(localized: "None") : archivedCount.formatted())
+                    Text(archivedCount == 0 ? SecretaryUI.localized("None") : archivedCount.formatted())
                         .foregroundStyle(.secondary)
                     Button("Show…") { showingArchive = true }
                         .disabled(archivedCount == 0)
@@ -77,19 +75,23 @@ struct GeneralView: View {
             } footer: {
                 Text("Searching threads still finds archived ones.").leadingFooter()
             }
-            // The one approval setting Yorozu itself still owns: the global bypass the
-            // native agents read. Same toggle as the phone's; the runtime stores it.
             if session.role == .host {
                 Section {
-                    Toggle("YOLO mode — skip all approvals", isOn: Binding(
-                        get: { session.model.yoloMode },
-                        set: { session.model.setYoloMode($0) }
-                    ))
+                    if SecretaryUI.enabled {
+                        Text("Routine tasks run automatically within existing access.")
+                    } else {
+                        Toggle("YOLO mode — skip all approvals", isOn: Binding(
+                            get: { session.model.yoloMode },
+                            set: { session.model.setYoloMode($0) }
+                        ))
+                    }
                 } header: {
                     Text("Agent runtime")
                 } footer: {
                     Group {
-                        if session.model.yoloMode {
+                        if SecretaryUI.enabled {
+                            Text("Yorozu tasks retain required approvals. If more access is needed, Yorozu asks before proceeding.")
+                        } else if session.model.yoloMode {
                             Text("Every tool request runs without asking, including purchases, messages, commands, and deletes.")
                                 .foregroundStyle(.red)
                             if let until = session.model.yoloUntil {
@@ -102,7 +104,7 @@ struct GeneralView: View {
                     }
                     .leadingFooter()
                 }
-                .onAppear { session.model.requestApprovalSettings() }
+                .onAppear { if !SecretaryUI.enabled { session.model.requestApprovalSettings() } }
             }
             if session.role == .host {
                 Section {
@@ -215,7 +217,7 @@ struct UpdatesSettingsSection: View {
         let info = Bundle.main.infoDictionary
         let version = info?["YorozuVersionLabel"] as? String
             ?? info?["CFBundleShortVersionString"] as? String
-            ?? String(localized: "Development")
+            ?? SecretaryUI.localized("Development")
         guard let build = info?["YorozuVersionBuild"] as? String else { return version }
         return "\(version) (\(build))"
     }
@@ -242,7 +244,7 @@ struct KeepaliveView: View {
         .task {
             while !Task.isCancelled {
                 startsAtLogin = LoginItem.isEnabled
-                loginStatus = LoginItem.statusText
+                loginStatus = LoginItem.localizedStatusText { SecretaryUI.localized($0) }
                 try? await Task.sleep(for: .seconds(2))
             }
         }

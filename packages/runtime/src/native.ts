@@ -29,6 +29,8 @@ export interface NativeTurn {
   /** The agent's own session id from the thread's last turn; absent starts a new session. */
   sessionId?: string;
   bypass?: boolean;
+  /** Host-only short planning turn: no execution tools or inherited connectors. */
+  secretaryCoordinator?: true;
   model?: string;
   effort?: ReasoningEffort;
   signal: AbortSignal;
@@ -44,7 +46,7 @@ export interface NativeTurn {
   onTerminate?: (terminate: () => void) => void;
   /** Register delivery into this live turn. False proves no input was accepted;
    * a thrown error leaves delivery uncertain and must never imply a safe retry. */
-  onSteer?: (steer: (text: string, attachments: NonNullable<NativeTurn["attachments"]>) => Promise<boolean>) => void;
+  onSteer?: (steer: (text: string, attachments: NonNullable<NativeTurn["attachments"]>, deliveryId?: string) => Promise<boolean>) => void;
   approve?: (tool: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<boolean>;
   ask?: (question: string, options: string[], signal: AbortSignal) => Promise<string | undefined>;
   beforeTool?: (signal: AbortSignal) => Promise<boolean>;
@@ -103,6 +105,8 @@ export interface NativeTurnResult {
   text: string;
   /** The SDK reported a terminal failure rather than a completed answer. */
   failed?: boolean;
+  /** The secretary has no conclusive outcome; hold queued work instead of retrying it. */
+  unconfirmed?: true;
   /** The agent reported a successful turn, even if Stop was requested meanwhile. */
   completed?: true;
   /** Explicit terminal turn or this invocation's observed child exit; close/settlement alone is insufficient. */

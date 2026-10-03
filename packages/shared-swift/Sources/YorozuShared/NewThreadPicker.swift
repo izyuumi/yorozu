@@ -105,9 +105,9 @@ public struct NewThreadPicker: View {
     /// One line under each runtime's name: what it is, and what choosing it costs.
     static func summary(_ agent: ThreadAgent) -> String {
         switch agent {
-        case .yorozu: String(localized: "Your assistant on OpenClaw, with its own tools. Starts right away.")
-        case .claudeCode: String(localized: "Anthropic’s coding agent, working in a project on your Mac.")
-        case .codex: String(localized: "OpenAI’s coding agent, working in a project on your Mac.")
+        case .yorozu: SecretaryUI.localized("Your assistant on OpenClaw, with its own tools. Starts right away.")
+        case .claudeCode: SecretaryUI.localized("Anthropic’s coding agent, working in a project on your Mac.")
+        case .codex: SecretaryUI.localized("OpenAI’s coding agent, working in a project on your Mac.")
         default: agent.label
         }
     }
@@ -117,7 +117,7 @@ public struct NewThreadPicker: View {
             Group {
                 if let folderAgent { folders(for: folderAgent) } else { runtimes }
             }
-                .navigationTitle(folderAgent.map(label) ?? String(localized: "Choose agent"))
+                .navigationTitle(folderAgent.map(label) ?? SecretaryUI.localized("Choose agent"))
                 #if os(iOS)
                     .navigationBarTitleDisplayMode(.inline)
                 #endif

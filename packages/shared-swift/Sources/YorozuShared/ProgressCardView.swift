@@ -60,7 +60,7 @@ public struct ProgressCardView: View {
             if card.running {
                 ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
             } else {
-                Label(failed ? String(localized: "Failed") : String(localized: "Done"),
+                Label(failed ? SecretaryUI.localized("Failed") : SecretaryUI.localized("Done"),
                       systemImage: failed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                     .labelStyle(.iconOnly)
                     .foregroundStyle(failed ? AnyShapeStyle(.red) : AnyShapeStyle(YorozuPalette.sage))
@@ -122,10 +122,10 @@ public struct ProgressCardView: View {
 
     private func stateLabel(_ state: ProgressStep.State) -> String {
         switch state {
-        case .pending: String(localized: "Waiting")
-        case .running: String(localized: "Current")
-        case .done: String(localized: "Done")
-        case .failed: String(localized: "Failed")
+        case .pending: SecretaryUI.localized("Waiting")
+        case .running: SecretaryUI.localized("Current")
+        case .done: SecretaryUI.localized("Done")
+        case .failed: SecretaryUI.localized("Failed")
         }
     }
 
@@ -163,7 +163,7 @@ public struct ProgressCardView: View {
     private var spoken: String {
         let done = card.steps.filter { $0.state == .done }.count
         return card.running
-            ? String(localized: "\(done) of \(card.steps.count) steps done")
-            : failed ? String(localized: "failed") : String(localized: "finished")
+            ? SecretaryUI.localized("\(done) of \(card.steps.count) steps done")
+            : failed ? SecretaryUI.localized("failed") : SecretaryUI.localized("finished")
     }
 }

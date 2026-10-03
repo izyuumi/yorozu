@@ -15,7 +15,7 @@ struct PermissionBadge: View {
             Label("Asking macOS…", systemImage: "hourglass")
                 .foregroundStyle(.secondary)
         } else {
-            Label(granted ? String(localized: "Granted") : String(localized: "Waiting…"), systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
+            Label(granted ? SecretaryUI.localized("Granted") : SecretaryUI.localized("Waiting…"), systemImage: granted ? "checkmark.circle.fill" : "circle.dotted")
                 .foregroundStyle(granted ? YorozuPalette.sage : Color.secondary)
         }
     }
@@ -37,7 +37,7 @@ struct PermissionStatusRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(permission.title).fontWeight(.medium)
+                Text(permission.localizedTitle { SecretaryUI.localized($0) }).fontWeight(.medium)
                 Spacer()
                 if permission == .startAtLogin {
                     Toggle("Start Yorozu at login", isOn: Binding(
@@ -55,7 +55,7 @@ struct PermissionStatusRow: View {
                     PermissionBadge(granted: granted, asking: asking)
                 }
             }
-            Text(permission.detail)
+            Text(permission.localizedDetail { SecretaryUI.localized($0) })
                 .font(.scaled(.caption))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -96,27 +96,27 @@ private struct PermissionSection: Identifiable {
     let systemImage: String
     let permissions: [Permission]
 
-    static let availability = PermissionSection(
+    static var availability: PermissionSection { PermissionSection(
         id: "availability",
-        title: String(localized: "Stay available"),
-        detail: String(localized: "Keep Yorozu reachable from your iPhone, including after login and while you are away."),
+        title: SecretaryUI.localized("Stay available"),
+        detail: SecretaryUI.localized("Keep Yorozu reachable from your iPhone, including after login and while you are away."),
         systemImage: "antenna.radiowaves.left.and.right",
         permissions: [.startAtLogin, .neverSleep]
-    )
-    static let control = PermissionSection(
+    ) }
+    static var control: PermissionSection { PermissionSection(
         id: "control",
-        title: String(localized: "Control this Mac"),
-        detail: String(localized: "Let Claude Code and Codex threads see and operate apps on this Mac."),
+        title: SecretaryUI.localized("Control this Mac"),
+        detail: SecretaryUI.localized("Let Claude Code and Codex threads see and operate apps on this Mac."),
         systemImage: "macwindow.on.rectangle",
         permissions: [.accessibility, .screenRecording, .automation]
-    )
-    static let files = PermissionSection(
+    ) }
+    static var files: PermissionSection { PermissionSection(
         id: "files",
-        title: String(localized: "Files"),
-        detail: String(localized: "Let Claude Code and Codex threads work with documents, downloads, cloud drives, and app data."),
+        title: SecretaryUI.localized("Files"),
+        detail: SecretaryUI.localized("Let Claude Code and Codex threads work with documents, downloads, cloud drives, and app data."),
         systemImage: "folder",
         permissions: [.files, .fullDiskAccess]
-    )
+    ) }
 }
 
 /// Grants grouped by what they enable. They reach the Claude Code and Codex processes Yorozu

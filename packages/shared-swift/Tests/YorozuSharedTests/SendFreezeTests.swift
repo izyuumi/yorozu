@@ -98,3 +98,32 @@ private actor SinkTransport: ChatTransport {
     try reopened.savePending([])
     #expect(try files().isEmpty)
 }
+
+@MainActor
+@Test func removeAvailabilityTracksTerminalRepliesStopsAndTimelineChanges() {
+    let model = ChatModel(transport: SinkTransport())
+    func message(_ id: String, _ role: MessageData.Role, completion: String? = nil, done: Bool? = nil) -> YorozuEvent {
+        YorozuEvent(id: id, threadId: "t", ts: 1, agentId: "main",
+            payload: .message(MessageData(role: role, text: "Synthetic", done: done, completionId: completion)))
+    }
+    let prompt = message("group:prompt", .user, completion: "reply")
+    #expect(!model.canWithdraw(prompt))
+    model.applyEvent(prompt)
+    #expect(model.canWithdraw(prompt))
+    // Another message's legacy final must not retire this prompt.
+    model.applyEvent(message("agent:prompt:final", .agent, done: true))
+    #expect(model.canWithdraw(prompt))
+    model.applyEvent(message("agent:group:prompt:final", .agent, done: true))
+    #expect(!model.canWithdraw(prompt))
+    model.delete("agent:group:prompt:final", in: "t")
+    #expect(model.canWithdraw(prompt))
+    model.applyEvent(message("reply", .agent, done: true))
+    #expect(!model.canWithdraw(prompt))
+    model.delete("reply", in: "t")
+    #expect(model.canWithdraw(prompt))
+    for status in [StopStatusData.Status.requested, .unknown, .stopped] {
+        model.applyEvent(YorozuEvent(id: "stop", threadId: "t", ts: 2, agentId: "main",
+            payload: .stopStatus(StopStatusData(targetEventId: prompt.id, requestId: "request", status: status))))
+        #expect(model.canWithdraw(prompt) == (status != .stopped))
+    }
+}

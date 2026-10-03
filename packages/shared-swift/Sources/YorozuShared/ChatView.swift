@@ -45,12 +45,12 @@ public struct ChatView: View {
     /// the link. See ``OpenURLAction/chatLinks(onPairingLink:)``.
     @Environment(\.onPairingLink) private var onPairingLink
     @Environment(\.threadSearchRequest) private var threadSearchRequest
+    @Environment(\.secretaryPresentation) private var secretaryPresentation
+    @AppStorage(SecretaryUI.technicalDetailsKey) private var technicalDetails = false
+    @Environment(\.locale) private var locale
 
     /// Whether geometry currently reaches the newest message. Reader intent is tracked
     /// separately because async row growth can make this false without any manual scroll.
-    @State private var clipboardTask: Task<Void, Never>?
-    @State private var clipboardLoadID: UUID?
-    @State private var savedDraftRecovered = false
     @State private var atBottom = true
     /// The shortcut stays out of the way while the reader is still at the newest edge.
     @State private var showJumpToLatest = false
@@ -84,7 +84,6 @@ public struct ChatView: View {
         @FocusState private var composerFocused: Bool
         @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
     #endif
-    @State private var replyFocusRequest: UUID?
     @State private var channelModelPicker = false
     @State private var channelPickerWidth: CGFloat?
     @State private var searching = false
@@ -161,16 +160,21 @@ public struct ChatView: View {
     private var events: [YorozuEvent] { model.timeline(thread.id).events }
 
     private var rows: [ChatRow] { model.rows(in: thread.id) }
+    private var quiet: Bool { secretaryPresentation && !technicalDetails }
+    private var showingActiveWork: Bool {
+        generating && !(quiet && thread.turnState == .stoppedUnconfirmed)
+    }
 
     /// Pending decisions take precedence over progress, on both timeline implementations.
     private var activity: ChatActivity? {
         chatActivity(
             in: rows,
-            generating: generating,
+            generating: showingActiveWork,
             streamingId: streamingId,
             answeredApprovals: model.answered,
-            answeredQuestions: model.resolvedQuestionIds(in: thread.id),
-            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id)
+            answeredQuestions: model.answeredQuestions,
+            approvalOutcomes: model.approvalOutcomes,
+            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id), quiet: quiet
         )
     }
 
@@ -284,7 +288,9 @@ public struct ChatView: View {
     }
 
     @ViewBuilder private var emptyTranscript: some View {
-        if model.isDraft(thread.id) {
+        if secretaryPresentation {
+            SecretaryGreeting()
+        } else if model.isDraft(thread.id) {
             ScrollView { draftSelectors.padding(LayoutMetrics.gutter) }
                 .scrollDismissesKeyboard(.interactively)
         } else {
@@ -312,11 +318,11 @@ public struct ChatView: View {
                     dismiss: { model.dismissPluginNotice() })
             }
             if model.hasUnconfirmedStop(in: thread.id) {
-                Banner(text: "Could not confirm whether this task stopped. Check the host before retrying.",
+                Banner(text: SecretaryUI.localized("Could not confirm whether this task stopped. Check the host before retrying."),
                     systemImage: "exclamationmark.triangle")
             }
             if thread.interruptedTurnId != nil { interruptedTurnNotice }
-            if !model.isDraft(thread.id), let path = presentation.projectPath {
+            if !secretaryPresentation, !model.isDraft(thread.id), let path = presentation.projectPath {
                 projectContext(path)
             }
             Group {
@@ -435,33 +441,28 @@ public struct ChatView: View {
         .onChange(of: model.state, initial: true) { _, state in
             if state == .paired { model.requestApprovalSettings() }
         }
-        .navigationTitle(thread.displayTitle)
+        .navigationTitle(secretaryPresentation ? "Yorozu" : thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
-            .modifier(AgentSubtitle(text: presentation.agentLabel))
+            .modifier(AgentSubtitle(text: secretaryPresentation ? "" : presentation.agentLabel))
         #else
             // A thread on a model of its own says so beside its title. Only then — the default
             // is the case that needs no caption. The Mac has a title bar subtitle for exactly
             // this; the phone has one from iOS 26, and a compact identity in its `.principal`
             // item before that.
-            .navigationSubtitle(macModelCaption)
+            .navigationSubtitle(secretaryPresentation ? "" : macModelCaption)
             // The bar draws its own backdrop, always. Left to decide for itself it went clear
             // over a transcript that reached it and opaque over a project row that did not,
             // so the bar had an edge in one kind of thread and none in the other.
             .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
         #endif
-        .toolbar {
-            if !(model.stashes[thread.id] ?? []).isEmpty {
-                ToolbarItem { savedDraftsMenu }
-            }
-        }
         #if os(iOS)
         .toolbar {
                 // From iOS 26 the bar lays a custom title view out at its ideal width and never
                 // tells it how much room there is — on every iPhone, and worse on Duo's side
                 // bar — so a long title ran under the buttons. The system title is the one
                 // view the bar does truncate; only older bars, which clamp `titleView`, get this.
-                if #unavailable(iOS 26) {
+                if #unavailable(iOS 26), !secretaryPresentation {
                     ToolbarItem(placement: .principal) {
                         HStack(spacing: 7) {
                             AgentMarkView(presentation.agent, size: 20)
@@ -482,7 +483,7 @@ public struct ChatView: View {
                             }
                         }
                         .accessibilityElement(children: .combine)
-                        .accessibilityValue(model.ownerOnline ? String(localized: "Mac online") : String(localized: "Mac offline"))
+                        .accessibilityValue(model.ownerOnline ? SecretaryUI.localized("Mac online") : SecretaryUI.localized("Mac offline"))
                     }
                 }
                 if #available(iOS 27.1, *) {
@@ -521,9 +522,7 @@ public struct ChatView: View {
         }
         // The Mac reuses this detail view while its sidebar selection changes. A new thread is
         // a new opening intent even when the surrounding `ChatView` value keeps its state.
-        .onDisappear { cancelClipboardImport() }
         .onChange(of: thread.id, initial: true) { _, _ in
-            cancelClipboardImport()
             dismissedSkillDraft = nil
             #if os(macOS)
                 skillIndex = 0
@@ -654,7 +653,7 @@ public struct ChatView: View {
     /// thread is still running on a concrete first model; hiding that identity made the shipped
     /// toolbar materially different from the design and forced a menu open to discover it.
     private var macModelCaption: String {
-        if presentation.needsFolder && thread.model == nil { return String(localized: "Auto") }
+        if presentation.needsFolder && thread.model == nil { return SecretaryUI.localized("Auto") }
         let spec = thread.model ?? model.models(for: thread).first?.id
         guard let spec, !spec.isEmpty else { return "" }
         if let option = model.models(for: thread).first(where: { $0.id == spec }) {
@@ -669,9 +668,10 @@ public struct ChatView: View {
     }
 
     @ViewBuilder private func messages(rows: [ChatRow], queuedStatuses: [String: String]) -> some View {
-        let activity = chatActivity(in: rows, generating: generating, streamingId: streamingId,
-            answeredApprovals: model.answered, answeredQuestions: model.resolvedQuestionIds(in: thread.id),
-            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id))
+        let activity = chatActivity(in: rows, generating: showingActiveWork, streamingId: streamingId,
+            answeredApprovals: model.answered, answeredQuestions: model.answeredQuestions,
+            approvalOutcomes: model.approvalOutcomes,
+            waitingForOpenClaw: model.isWaitingForOpenClaw(in: thread.id), quiet: quiet)
         #if os(iOS)
             nativeMessages(rows: rows, activity: activity, queuedStatuses: queuedStatuses)
         #else
@@ -712,14 +712,16 @@ public struct ChatView: View {
                 notificationRequest: notificationRequest,
                 highlightedRow: highlightedNotificationRow,
                 presentation: TimelinePresentation(
+                    localeIdentifier: locale.identifier,
+                    secretaryPresentation: secretaryPresentation,
+                    technicalDetails: technicalDetails,
                     search: search,
                     outbox: model.outbox,
                     queuedStatuses: queuedStatuses,
                     answered: model.answered,
                     approvalOutcomes: model.approvalOutcomes,
-                    answeredQuestions: model.resolvedQuestionIds(in: thread.id),
-                    questionChoices: model.questionChoices(in: thread.id),
-                    questionOutcomes: model.questionDispositions(in: thread.id),
+                    answeredQuestions: model.answeredQuestions,
+                    questionChoices: model.questionChoices,
                     handledProposals: model.handledProposals,
                     choices: model.choices
                 ),
@@ -729,6 +731,7 @@ public struct ChatView: View {
                 content: { row in
                     AnyView(
                         rowView(row, queuedStatuses: queuedStatuses)
+                            .environment(\.locale, locale)
                             .environment(\.searchHighlight, search)
                             .environment(\.openURL, linkAction)
                     )
@@ -921,9 +924,9 @@ public struct ChatView: View {
     @ViewBuilder private func rowView(_ row: ChatRow, queuedStatuses: [String: String]) -> some View {
         switch row {
         case .work(let work):
-            WorkRowView(work: work).id(work.id)
+            WorkRowView(work: work, quiet: quiet).id(work.id)
         case .unreadable(let event):
-            Label(String(localized: "Update Yorozu to see this event"), systemImage: "arrow.up.circle")
+            Label(SecretaryUI.localized("Update Yorozu to see this event"), systemImage: "arrow.up.circle")
                 .font(.scaled(.subheadline))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
@@ -948,12 +951,6 @@ public struct ChatView: View {
                     queuedStatus: queuedStatus,
                     rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
-                    onReply: model.canReply(to: event) ? {
-                        if model.beginReply(to: event) {
-                            focusReplyComposer()
-                        }
-                    } : nil,
-                    replyPreview: model.replyPreview(for: data, in: thread.id),
                     onEditFromHere: data.role == .user && model.supportsRewind(in: thread.id)
                         ? { model.editFromHere(event) } : nil,
                     editFromHereEnabled: model.canEditFromHere(event),
@@ -962,9 +959,6 @@ public struct ChatView: View {
                         ? { if needsNewChat {
                                 recoveryMessage = data
                                 choosingAgent = true
-                            } else if rejectionReason?.hasPrefix("reply-") == true {
-                                model.recoverRejectedReply(event.id)
-                                focusReplyComposer()
                             } else { retry(data) } } : messageActions.retry.map { prompt in
                                 { retry(prompt) }
                             },
@@ -978,7 +972,7 @@ public struct ChatView: View {
                         else { model.retry(event.id) }
                     },
                     agent: presentation.agent,
-                    agentLabel: presentation.agentLabel
+                    agentLabel: secretaryPresentation ? "Yorozu" : presentation.agentLabel
                 )
                 .id(event.id)
                 .onAppear { model.requestAttachmentDownloads(event) }
@@ -1035,10 +1029,8 @@ public struct ChatView: View {
                 QuestionCardView(
                     card: card,
                     agentLabel: card.nativeAgent.map(model.agentLabel),
-                    answered: model.questionAnswered(card.questionId, in: thread.id),
-                    chosen: model.questionChoices(in: thread.id)[card.questionId],
-                    pending: model.questionPending(card.questionId, in: thread.id),
-                    disposition: model.questionDispositions(in: thread.id)[card.questionId]
+                    answered: model.answeredQuestions.contains(card.questionId),
+                    chosen: model.questionChoices[card.questionId]
                 ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
                 .id(event.id)
                 .notificationHighlight(highlightedNotificationRow == event.id)
@@ -1076,7 +1068,7 @@ public struct ChatView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(localized: "Project folder: \(path)"))
+        .accessibilityLabel(SecretaryUI.localized("Project folder: \(path)"))
         #if os(macOS)
             .help(path)
         #endif
@@ -1138,7 +1130,7 @@ public struct ChatView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
             .onChange(of: choices.count, initial: true) { _, count in
-                AccessibilityNotification.Announcement(String(localized: "\(count) skills")).post()
+                AccessibilityNotification.Announcement(SecretaryUI.localized("\(count) skills")).post()
             }
         }
     }
@@ -1155,7 +1147,12 @@ public struct ChatView: View {
         return false
     }
     private var composerPlaceholder: String {
-        model.composerPlaceholder(in: thread.id, default: presentation.composerPlaceholder)
+        guard secretaryPresentation else {
+            return model.composerPlaceholder(in: thread.id, default: presentation.composerPlaceholder)
+        }
+        if hasPendingApproval { return locale.secretaryText("Resolve approval to continue", "続けるには承認が必要です") }
+        if hasPendingQuestion { return locale.secretaryText("Type a custom answer or pick an option", "回答を入力するか選択肢を選んでください") }
+        return locale.secretaryText("Message Yorozu…", "Yorozuにメッセージ…")
     }
 
     @ViewBuilder private var composerCards: some View {
@@ -1234,7 +1231,7 @@ public struct ChatView: View {
             .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius))
             .padding(.horizontal, 12)
             .sheet(item: $editingApprovalRule) { rule in
-                RuleEditorView(rule: rule, title: String(localized: "Always allow")) { edited in
+                RuleEditorView(rule: rule, title: SecretaryUI.localized("Always allow")) { edited in
                     model.answer(editingApprovalId, in: thread.id, .always, rule: edited)
                     editingApprovalRule = nil
                 } onCancel: {
@@ -1258,10 +1255,6 @@ public struct ChatView: View {
         // send control all live inside the same rounded container, so the eye reads one thing
         // to type into rather than three controls in a row.
         VStack(alignment: .leading, spacing: 0) {
-            if let target = model.replyTargets[thread.id] {
-                ReplyComposerContext(target: target) { model.cancelReply(in: thread.id) }
-                    .padding(.leading, 12).padding(.trailing, 4).padding(.top, 8)
-            }
             if let attachmentFailure {
                 HStack(alignment: .top, spacing: 8) {
                     Label(attachmentFailure, systemImage: "exclamationmark.circle")
@@ -1283,17 +1276,11 @@ public struct ChatView: View {
                 .padding(.top, 8)
             }
             if attachmentLoading {
-                HStack {
-                    Label("Loading attachments…", systemImage: "paperclip")
-                    if clipboardLoadID != nil {
-                        Spacer()
-                        Button("Cancel", action: cancelClipboardImport)
-                    }
-                }
-                .font(.scaled(.caption))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
+                Label("Loading attachments…", systemImage: "paperclip")
+                    .font(.scaled(.caption))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
             }
             if !attachments.wrappedValue.isEmpty {
                 StagedStrip(attachments: attachments.wrappedValue) { index in
@@ -1310,15 +1297,15 @@ public struct ChatView: View {
                     onSendNextQueued: { model.sendNextQueued(in: thread.id) },
                     onQuestionOption: questionOption,
                     onPromptHistory: { model.recallPrompt(in: thread.id, older: $0) },
-                    onPasteProviders: { pasteAttachments(sources: clipboardAttachmentSources($0)) },
-                    focusThread: startsFocused ? thread.id : nil,
-                    focusRequest: replyFocusRequest
+                    onPasteImage: { pasteImages() },
+                    focusThread: startsFocused ? thread.id : nil
                 )
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
+                    stashMenu
                     if model.offersChannelModels(for: thread) { channelModelButton }
                     else if !model.models(for: thread).isEmpty { runSettingsButton }
                     Spacer(minLength: 4)
@@ -1342,13 +1329,13 @@ public struct ChatView: View {
                     .padding(.top, 12)
                     .padding(.bottom, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .onSubmit { draft.wrappedValue += "\n" }
                     .focused($composerFocused)
                     .background(composerKeyMonitor)
                     .accessibilityLabel(composerPlaceholder)
 
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
+                    stashMenu
                     if model.offersChannelModels(for: thread) { channelModelButton }
                     else if !model.models(for: thread).isEmpty {
                         runSettingsButton.frame(maxWidth: 280, alignment: .leading)
@@ -1391,7 +1378,7 @@ public struct ChatView: View {
             HStack {
                 Text(thread.model.flatMap { selected in
                     model.channelModels[thread.id]?.first(where: { $0.id == selected })?.label ?? selected
-                } ?? String(localized: "Default"))
+                } ?? SecretaryUI.localized("Default"))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
             }
@@ -1400,7 +1387,7 @@ public struct ChatView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("channelModelMenu")
         .accessibilityLabel("Model")
-        .accessibilityValue(thread.model ?? String(localized: "Default"))
+        .accessibilityValue(thread.model ?? SecretaryUI.localized("Default"))
         .popover(isPresented: $channelModelPicker) {
             VStack(alignment: .leading) {
                 HStack {
@@ -1430,37 +1417,35 @@ public struct ChatView: View {
 
     private var channelModelChoices: some View {
         YorozuChoiceCard([
-            Choice(String(localized: "Default"), selected: thread.model == nil) { model.setModel(thread, nil) }
+            Choice(SecretaryUI.localized("Default"), selected: thread.model == nil) { model.setModel(thread, nil) }
         ] + (model.channelModels[thread.id] ?? []).map { option in
-            Choice(option.available ? option.label : "\(option.label) — \(option.unavailableReason ?? String(localized: "Unavailable"))",
+            Choice(option.available ? option.label : "\(option.label) — \(option.unavailableReason ?? SecretaryUI.localized("Unavailable"))",
                    selected: thread.model == option.id, enabled: option.available) {
                 model.setModel(thread, option.id)
             }
         })
     }
 
-    private var savedDraftsMenu: some View {
+    private var stashMenu: some View {
         Menu {
+            Button("Stash draft", systemImage: "tray.and.arrow.down") {
+                model.stashDraft(in: thread.id)
+            }
+            .disabled(draft.wrappedValue.isEmpty && attachments.wrappedValue.isEmpty || attachmentLoading)
             ForEach((model.stashes[thread.id] ?? []).reversed()) { stash in
                 Button {
-                    if let id = model.recoverStash(stash.id, in: thread.id) {
-                        if let hostID { onDraftMove?(HostThreadID(hostID: hostID, threadID: id)) }
-                        savedDraftRecovered = true
-                    }
+                    model.restoreStash(stash.id, in: thread.id)
                 } label: {
-                    Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? String(localized: "Draft")) : stash.text)
+                    Text(stash.text.isEmpty ? (stash.attachments.first?.name ?? SecretaryUI.localized("Draft")) : stash.text)
                         .lineLimit(1)
                 }
+                .disabled(!draft.wrappedValue.isEmpty || !attachments.wrappedValue.isEmpty || attachmentLoading)
             }
         } label: {
-            Label("Recover saved draft", systemImage: "clock.arrow.circlepath")
+            Image(systemName: "tray")
         }
-        .help("Open an older saved draft separately. Your current draft is kept.")
-        .alert("Saved draft recovered", isPresented: $savedDraftRecovered) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("The recovered draft is in your conversation list. Your current draft and the original saved copy are kept.")
-        }
+        .accessibilityLabel("Draft stash")
+        .help("Stash draft or restore a saved draft")
     }
 
     private var attachButton: some View {
@@ -1468,8 +1453,6 @@ public struct ChatView: View {
             remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
             onPick: addAttachments,
             onTooLarge: { attachmentTooLarge = true },
-            onPaste: { pasteAttachments() },
-            externalLoading: attachmentLoading,
             onLoadingChanged: { loading in
                 if loading { attachmentFailure = nil }
                 attachmentLoading = loading
@@ -1478,58 +1461,19 @@ public struct ChatView: View {
         .id(thread.id)
     }
 
-    private func pasteAttachments(sources provided: [AttachmentSource]? = nil) {
+    private func pasteImages() {
         guard !attachmentLoading else {
-            reportAttachmentFailure(String(localized: "Wait for attachments to finish loading, then paste again."))
+            reportAttachmentFailure(SecretaryUI.localized("Wait for attachments to finish loading, then paste again."))
             return
         }
         attachmentFailure = nil
-        let sources = provided ?? clipboardAttachmentSources()
-        guard !sources.isEmpty else {
-            reportAttachmentFailure(String(localized: "No readable files or images were copied. Use Photos or Files to attach them."))
-            return
-        }
-        let target = thread.id
-        let loadID = UUID()
-        clipboardLoadID = loadID
-        attachmentLoading = true
-        clipboardTask = Task { @MainActor in
-            defer {
-                if clipboardLoadID == loadID {
-                    clipboardLoadID = nil
-                    clipboardTask = nil
-                    attachmentLoading = false
-                }
-            }
-            do {
-                let result = try await AttachmentAcquisition.load(sources)
-                try Task.checkCancellation()
-                guard clipboardLoadID == loadID else { return }
-                if !result.picks.isEmpty {
-                    stageAttachments(result.picks,
-                        remaining: MessageAttachment.maxCount - (model.attachments[target] ?? []).count,
-                        onPick: { picked in
-                            let added = addingAttachments(picked, to: model.attachments[target] ?? [])
-                            model.attachments[target] = added.attachments
-                            if added.rejectedCount > 0 { attachmentTooLarge = true }
-                        }, onTooLarge: { attachmentTooLarge = true }, onFailure: reportAttachmentFailure)
-                }
-                if !result.failed.isEmpty {
-                    reportAttachmentFailure(String(localized: "Some attachments couldn’t be read or exceeded the import limit. Copy them again or use Files."))
-                }
-            } catch is CancellationError {
-                // Closing/switching the conversation cancels the user's import intent.
-            } catch {
-                reportAttachmentFailure(String(localized: "Couldn’t load the attachments. Choose them again."))
-            }
-        }
-    }
-
-    private func cancelClipboardImport() {
-        clipboardLoadID = nil
-        clipboardTask?.cancel()
-        clipboardTask = nil
-        attachmentLoading = false
+        stageAttachments(
+            pasteboardImagePicks(),
+            remaining: MessageAttachment.maxCount - attachments.wrappedValue.count,
+            onPick: addAttachments,
+            onTooLarge: { attachmentTooLarge = true },
+            onFailure: reportAttachmentFailure
+        )
     }
 
     private func dropFiles(_ files: [DroppedFile]) -> Bool {
@@ -1557,7 +1501,7 @@ public struct ChatView: View {
         let result = addingAttachments(picked, to: attachments.wrappedValue)
         attachments.wrappedValue = result.attachments
         if result.rejectedCount > 0 {
-            reportAttachmentFailure(String(localized: "Some attachments couldn’t be added. A message can contain up to 10 attachments and 20 MB in total."))
+            reportAttachmentFailure(SecretaryUI.localized("Some attachments couldn’t be added. A message can contain up to 10 attachments and 20 MB in total."))
         }
     }
 
@@ -1573,13 +1517,13 @@ public struct ChatView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("runSettingsMenu")
                 .accessibilityLabel("Model and effort")
-                .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? String(localized: "Default effort"))")
+                .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? SecretaryUI.localized("Default effort"))")
         }
     #else
     private var runSettingsButton: some View {
         Menu {
             Text("Current model: \(composerModelLabel)")
-            Text("Effort: \(thread.effort?.label ?? String(localized: "Default"))")
+            Text("Effort: \(thread.effort?.label ?? SecretaryUI.localized("Default"))")
             Divider()
 
             Picker("Model", selection: modelBinding) {
@@ -1611,7 +1555,7 @@ public struct ChatView: View {
         .menuIndicator(.hidden)
         .accessibilityIdentifier("runSettingsMenu")
         .accessibilityLabel("Model and effort")
-        .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? String(localized: "Default effort"))")
+        .accessibilityValue("\(composerModelLabel), \(thread.effort?.label ?? SecretaryUI.localized("Default effort"))")
     }
     #endif
 
@@ -1628,7 +1572,7 @@ public struct ChatView: View {
     }
 
     private var composerModelLabel: String {
-        guard let spec = thread.model else { return String(localized: "Auto") }
+        guard let spec = thread.model else { return SecretaryUI.localized("Auto") }
         return model.models(for: thread).first(where: { $0.id == spec })?.label ?? spec
     }
 
@@ -1654,7 +1598,7 @@ public struct ChatView: View {
             model.interrupt(in: thread.id)
         } label: {
             Image(systemName: "stop.fill")
-                .font(.system(size: sendCircle / 2, weight: .bold))
+                .font(.scaled(.footnote).weight(.bold))
                 .foregroundStyle(.background)
                 .frame(width: sendCircle, height: sendCircle)
                 .background(Color.primary, in: Circle())
@@ -1674,7 +1618,7 @@ public struct ChatView: View {
             send()
         } label: {
             Image(systemName: "arrow.up")
-                .font(.system(size: sendCircle / 2, weight: .bold))
+                .font(.scaled(.body).weight(.bold))
                 .foregroundStyle(canSend ? Color.white : Color.secondary)
                 .frame(width: sendCircle, height: sendCircle)
                 .background(canSend ? YorozuPalette.vermilion : Color.clear, in: Circle())
@@ -1699,7 +1643,7 @@ public struct ChatView: View {
     #if os(macOS)
         /// The field handles Return, alternate delivery, and Send now before AppKit inserts a newline.
         private var composerKeyMonitor: some View {
-            let onPaste: (() -> Void)? = { pasteAttachments() }
+            let onPaste: (() -> Void)? = { pasteImages() }
             let onPickerKey: ((SkillPickerKey) -> Void)? = skillChoices.isEmpty ? nil : { skillKey($0) }
             return ComposerKeyMonitor(
                 isActive: composerFocused,
@@ -1733,16 +1677,8 @@ public struct ChatView: View {
 
     /// Sends the same thing again, as a new message. The original stays where it is — a
     /// transcript that quietly rewrote itself would not be one.
-    private func focusReplyComposer() {
-        #if os(macOS)
-            composerFocused = true
-        #else
-            replyFocusRequest = UUID()
-        #endif
-    }
-
     private func retry(_ data: MessageData) {
-        model.send(data.text, in: thread.id, attachments: data.attachments, replyTo: data.replyTo)
+        model.send(data.text, in: thread.id, attachments: data.attachments)
         sends += 1
         atBottom = true
         newestScroll.followLatest()
@@ -1771,6 +1707,9 @@ public struct ChatView: View {
     /// reconfigure only the growing reply while search, queue and card actions refresh all
     /// visible hosted rows when their presentation really changed.
     private struct TimelinePresentation: Equatable {
+        let localeIdentifier: String
+        let secretaryPresentation: Bool
+        let technicalDetails: Bool
         let search: String
         let outbox: [OutboxItem]
         let queuedStatuses: [String: String]
@@ -1778,7 +1717,6 @@ public struct ChatView: View {
         let approvalOutcomes: [String: ApprovalStatusData.Status]
         let answeredQuestions: Set<String>
         let questionChoices: [String: String]
-        let questionOutcomes: [String: QuestionStatusData.Status]
         let handledProposals: Set<String>
         let choices: [String: ApprovalAnswerData.Answer]
     }
@@ -1875,7 +1813,10 @@ public struct ChatView: View {
                                 self.parent.content(row).compactQuietTranscriptLayout()
                             }
                         case .activity(let activity):
-                            ChatActivityRow(activity: activity, agent: self.parent.agent).compactQuietTranscriptLayout()
+                            ChatActivityRow(activity: activity, agent: self.parent.agent)
+                                .environment(\.locale, Locale(identifier: self.parent.presentation.localeIdentifier))
+                                .environment(\.secretaryPresentation, self.parent.presentation.secretaryPresentation)
+                                .compactQuietTranscriptLayout()
                         }
                     }
                     .margins(.horizontal, 10)
@@ -2277,12 +2218,12 @@ private struct SearchHitBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(total == 0 ? String(localized: "No matches") : String(localized: "\(index + 1) of \(total)"))
+            Text(total == 0 ? SecretaryUI.localized("No matches") : SecretaryUI.localized("\(index + 1) of \(total)"))
                 .font(.scaled(.footnote).monospacedDigit())
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
-            arrow("chevron.up", String(localized: "Previous match"), -1)
-            arrow("chevron.down", String(localized: "Next match"), 1)
+            arrow("chevron.up", SecretaryUI.localized("Previous match"), -1)
+            arrow("chevron.down", SecretaryUI.localized("Next match"), 1)
         }
         .padding(.leading, 16)
         .padding(.trailing, 4)
@@ -2307,19 +2248,35 @@ private struct SearchHitBar: View {
 private struct ChatActivityRow: View {
     let activity: ChatActivity
     let agent: ThreadAgent
+    @Environment(\.locale) private var locale
+    @Environment(\.secretaryPresentation) private var secretaryPresentation
+
+    private var label: String {
+        guard secretaryPresentation else { return activity.label }
+        switch activity {
+        case .thinking: return locale.secretaryText("Thinking…", "考え中…")
+        case .waitingForApproval: return locale.secretaryText("Waiting for your approval", "承認をお待ちしています")
+        case .waitingForAnswer: return locale.secretaryText("Waiting for your answer", "回答をお待ちしています")
+        case .waitingForOpenClaw: return locale.secretaryText("Waiting for OpenClaw", "OpenClawの応答を待っています")
+        }
+    }
 
     var body: some View {
-        HStack(spacing: 8) {
-            AgentMarkView(agent, size: 16)
-            if let symbol = activity.symbol {
-                Image(systemName: symbol).foregroundStyle(YorozuPalette.vermilion)
-            } else {
-                ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
+        if secretaryPresentation && activity == .thinking {
+            SecretaryWorkingIndicator()
+        } else {
+            HStack(spacing: 8) {
+                AgentMarkView(agent, size: 16)
+                if let symbol = activity.symbol {
+                    Image(systemName: symbol).foregroundStyle(YorozuPalette.vermilion)
+                } else {
+                    ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
+                }
+                Text(label).font(.scaled(.caption)).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
-            Text(activity.label).font(.scaled(.caption)).foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+            .accessibilityElement(children: .combine)
         }
-        .accessibilityElement(children: .combine)
     }
 }
 

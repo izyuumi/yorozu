@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import YorozuShared
 
 /// The opt-in direct path to paired phones over Tailscale. Off by default: nothing listens and
 /// phones are told nothing. On, the sidecar listens on 127.0.0.1 and `tailscale serve`
@@ -121,7 +122,7 @@ struct DirectConnectionRow: View {
         case .off:
             EmptyView()
         case .working:
-            LabeledContent("Direct", value: String(localized: "Setting up…"))
+            LabeledContent("Direct", value: SecretaryUI.localized("Setting up…"))
         case .on(let url):
             LabeledContent("Direct", value: url).textSelection(.enabled)
         case .manual(let reason, let command):

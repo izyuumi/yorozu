@@ -26,20 +26,20 @@ struct ThreadPresentation {
         projectPath.map { $0.split(separator: "/").last.map(String.init) ?? $0 }
     }
 
-    var composerPlaceholder: String { String(localized: "Message \(agentLabel)") }
+    var composerPlaceholder: String { SecretaryUI.localized("Message \(agentLabel)") }
 
     var emptyTitle: String {
-        needsFolder ? String(localized: "Start with \(agentLabel)") : String(localized: "Start the conversation")
+        needsFolder ? SecretaryUI.localized("Start with \(agentLabel)") : SecretaryUI.localized("Start the conversation")
     }
 
     var emptyMessage: String {
         guard needsFolder else {
             return agent == .yorozu
-                ? String(localized: "Ask for anything your Mac can do — files, mail, calendars, or the browser.")
-                : String(localized: "Ask \(agentLabel) to get started.")
+                ? SecretaryUI.localized("Ask for anything your Mac can do — files, mail, calendars, or the browser.")
+                : SecretaryUI.localized("Ask \(agentLabel) to get started.")
         }
         return projectPath == nil
-            ? String(localized: "Start a new thread and choose a project folder for this coding agent.")
-            : String(localized: "Describe a change, ask about the code, or investigate a problem in this project.")
+            ? SecretaryUI.localized("Start a new thread and choose a project folder for this coding agent.")
+            : SecretaryUI.localized("Describe a change, ask about the code, or investigate a problem in this project.")
     }
 }

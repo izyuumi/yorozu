@@ -1,0 +1,42 @@
+name: Computer use package CI
+
+# Independent feature pushes only. Do not invoke the repository CI workflow or
+# its paused host-core recovery suite; no PR trigger in this slice.
+on:
+  push:
+    branches: [computer-use-alpha, mac-helper-integration]
+    paths:
+      - 'packages/computer-use/**'
+      - '.github/workflows/computer-use.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: computer-use-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  computer-use:
+    name: computer-use (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install the tested Rust toolchain
+        run: rustup toolchain install 1.92.0 --profile minimal --component rustfmt --component clippy
+      - name: Check package formatting
+        run: cargo +1.92.0 fmt --manifest-path packages/computer-use/Cargo.toml --check
+      - name: Lint this package only
+        run: cargo +1.92.0 clippy --locked --manifest-path packages/computer-use/Cargo.toml --all-targets -- -D warnings
+      - name: Run inert desktop and synthetic provider tests
+        run: cargo +1.92.0 test --locked --manifest-path packages/computer-use/Cargo.toml
+      - name: Compile examples without running native helpers
+        run: cargo +1.92.0 build --locked --manifest-path packages/computer-use/Cargo.toml --all-targets
+      - name: Typecheck isolated Mac launcher
+        if: runner.os == 'macOS'
+        run: swiftc -typecheck packages/computer-use/mac/HelperClient.swift

@@ -16,6 +16,15 @@ cd "$(dirname "$0")/.."
 . ./scripts/build-version.sh
 
 DIST=${DIST:-dist}
+INTERNAL_ONLY=${INTERNAL_ONLY:-0}
+case "$INTERNAL_ONLY" in 0|1) ;; *) echo 'INTERNAL_ONLY must be 0 or 1' >&2; exit 1 ;; esac
+if [ "$INTERNAL_ONLY" = 1 ]; then
+  [ "$VERSION" = 0.6.0 ] || { echo 'Internal builds require VERSION=0.6.0' >&2; exit 1; }
+  export YOROZU_SECRETARY_ENABLED=1
+  export TUIST_SECRETARY_ENABLED=true
+else
+  export TUIST_SECRETARY_ENABLED=false
+fi
 TEAM_ID=${TEAM_ID:-AN5KM8QGEF}
 ASC_KEY_ID=${ASC_KEY_ID:?ASC_KEY_ID is required}
 ASC_ISSUER_ID=${ASC_ISSUER_ID:?ASC_ISSUER_ID is required}
@@ -32,8 +41,9 @@ ASC_KEY_PATH=${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KE
 # -authenticationKeyPath rejects a relative path.
 case "$ASC_KEY_PATH" in /*) ;; *) ASC_KEY_PATH="$PWD/$ASC_KEY_PATH" ;; esac
 
-ARCHIVE="$PWD/$DIST/YorozuIOS.xcarchive"
-OPTIONS="$PWD/$DIST/export-options.plist"
+case "$DIST" in /*) ;; *) DIST="$PWD/$DIST" ;; esac
+ARCHIVE="$DIST/YorozuIOS.xcarchive"
+OPTIONS="$DIST/export-options.plist"
 mkdir -p "$DIST"
 
 tuist generate --no-open --path apps/ios
@@ -52,6 +62,11 @@ cat > "$OPTIONS" <<PLIST
 </plist>
 PLIST
 
+if [ "$INTERNAL_ONLY" = 1 ]; then
+  # The upload itself is restricted by Apple, independently of group membership.
+  /usr/libexec/PlistBuddy -c 'Add :testFlightInternalTestingOnly bool true' "$OPTIONS"
+fi
+
 # env -u SDKROOT: a SDKROOT inherited from the shell points xcodebuild at the wrong SDK.
 env -u SDKROOT xcodebuild archive \
   -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \
@@ -63,6 +78,27 @@ env -u SDKROOT xcodebuild archive \
   -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
   MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
   YOROZU_VERSION_LABEL="$VERSION_LABEL"
+
+if [ "$INTERNAL_ONLY" = 1 ]; then
+  APP_PATH=$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:ApplicationPath' "$ARCHIVE/Info.plist")
+  [ "$(/usr/libexec/PlistBuddy -c 'Print :YorozuSecretaryEnabled' "$ARCHIVE/Products/$APP_PATH/Info.plist")" = true ] || {
+    echo 'Internal archive is missing the secretary interface; refusing upload' >&2; exit 1;
+  }
+  # Retain a signed IPA from the same archive. Xcode's upload export does not
+  # promise to retain an IPA; the upload below still uses the internal-only flag.
+  cp "$OPTIONS" "$DIST/ipa-export-options.plist"
+  /usr/libexec/PlistBuddy -c 'Set :destination export' "$DIST/ipa-export-options.plist"
+  env -u SDKROOT xcodebuild -exportArchive \
+    -archivePath "$ARCHIVE" -exportOptionsPlist "$DIST/ipa-export-options.plist" -exportPath "$DIST/ipa" \
+    -allowProvisioningUpdates \
+    -authenticationKeyPath "$ASC_KEY_PATH" \
+    -authenticationKeyID "$ASC_KEY_ID" \
+    -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+  set -- "$DIST"/ipa/*.ipa
+  if [ "$#" != 1 ] || [ ! -f "$1" ]; then
+    echo 'Expected one retained internal IPA' >&2; exit 1
+  fi
+fi
 
 env -u SDKROOT xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS" -exportPath "$DIST/export" \

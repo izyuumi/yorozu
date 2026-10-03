@@ -157,7 +157,7 @@
 
                     Section {
                         ShareThreadRow(
-                            title: String(localized: "New session"),
+                            title: SecretaryUI.localized("New session"),
                             symbol: "plus.bubble",
                             selected: destination == nil
                         ) {
@@ -198,7 +198,7 @@
                 }
                 .scrollContentBackground(.hidden)
                 .background(YorozuPalette.canvas)
-                .navigationTitle("Yorozu")
+                .navigationTitle(SecretaryUI.localized("Yorozu"))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -314,7 +314,7 @@
         private func size(of attachment: MessageAttachment) -> String {
             (attachment.bytes?.count).map {
                 ByteCountFormatStyle(style: .file).format(Int64($0))
-            } ?? String(localized: "Picture")
+            } ?? SecretaryUI.localized("Picture")
         }
     }
 

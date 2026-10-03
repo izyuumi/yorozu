@@ -11,10 +11,10 @@ enum ChatActivity: Hashable, Sendable {
 
     var label: String {
         switch self {
-        case .thinking: String(localized: "Thinking…")
-        case .waitingForApproval: String(localized: "Waiting for your approval")
-        case .waitingForAnswer: String(localized: "Waiting for your answer")
-        case .waitingForOpenClaw: String(localized: "Waiting for OpenClaw")
+        case .thinking: SecretaryUI.localized("Thinking…")
+        case .waitingForApproval: SecretaryUI.localized("Waiting for your approval")
+        case .waitingForAnswer: SecretaryUI.localized("Waiting for your answer")
+        case .waitingForOpenClaw: SecretaryUI.localized("Waiting for OpenClaw")
         }
     }
 
@@ -36,14 +36,18 @@ func chatActivity(
     streamingId: String?,
     answeredApprovals: Set<String>,
     answeredQuestions: Set<String>,
-    waitingForOpenClaw: Bool = false
+    approvalOutcomes: [String: ApprovalStatusData.Status] = [:],
+    waitingForOpenClaw: Bool = false,
+    quiet: Bool = false
 ) -> ChatActivity? {
     var waitingForAnswer = false
     for row in rows {
         switch row {
         case .approval(let event):
             if case .approvalCard(let card) = event.payload,
-                !answeredApprovals.contains(card.actionId)
+                !answeredApprovals.contains(card.actionId),
+                approvalOutcomes[card.actionId] != .noLongerNeeded,
+                approvalOutcomes[card.actionId] != .expired
             {
                 return .waitingForApproval
             }
@@ -59,8 +63,9 @@ func chatActivity(
     }
     if waitingForAnswer { return .waitingForAnswer }
 
-    guard generating, streamingId == nil else { return nil }
+    guard generating, quiet || streamingId == nil else { return nil }
     if waitingForOpenClaw { return .waitingForOpenClaw }
+    if quiet { return .thinking }
     if case .work(let work) = rows.last, work.running { return nil }
     return .thinking
 }

@@ -3,7 +3,6 @@ import CoreImage.CIFilterBuiltins
 import CoreServices
 import SwiftUI
 import YorozuKeepalive
-import YorozuPermissions
 import YorozuShared
 
 /// The Node runtime sidecar, spawned by the app and killed with it. Its stdout is the
@@ -38,23 +37,41 @@ final class Sidecar: ObservableObject {
 
     static func statusLabel(_ state: String) -> String {
         switch state {
-        case "starting": return String(localized: "Starting…")
-        case "connecting": return String(localized: "Connecting…")
-        case "connected", "local-connected": return String(localized: "Connected")
-        case "paired": return String(localized: "Paired")
-        case "registered": return String(localized: "Waiting for a device")
-        case "disconnected", "closed": return String(localized: "Disconnected")
-        case "stopped": return String(localized: "Stopped")
+        case "starting": return SecretaryUI.localized("Starting…")
+        case "connecting": return SecretaryUI.localized("Connecting…")
+        case "connected", "local-connected": return SecretaryUI.localized("Connected")
+        case "paired": return SecretaryUI.localized("Paired")
+        case "registered": return SecretaryUI.localized("Waiting for a device")
+        case "disconnected", "closed": return SecretaryUI.localized("Disconnected")
+        case "stopped": return SecretaryUI.localized("Stopped")
         case "openclaw": return "OpenClaw"
-        case "revoked": return String(localized: "Pairing revoked")
+        case "revoked": return SecretaryUI.localized("Pairing revoked")
+        case "peer-update-required": return SecretaryUI.localized("Update required")
+        case "heartbeat-timeout": return SecretaryUI.localized("Connection timed out")
+        case "native-cwd-refused": return SecretaryUI.localized("Project folder was refused")
+        case "native-model-list-unavailable claude-code", "native-model-list-unavailable codex":
+            return SecretaryUI.localized("Model list unavailable")
+        case "missing-previous-message": return SecretaryUI.localized("Waiting for the previous message")
+        case "duplicate-message": return SecretaryUI.localized("Duplicate message ignored")
+        case "duplicate-command": return SecretaryUI.localized("Duplicate command ignored")
+        case "tool-result-missing": return SecretaryUI.localized("Tool result unavailable")
+        case "rejected-oversized-attachments": return SecretaryUI.localized("Attachments exceed the size limit")
+        case "rejected-attachments-unsupported": return SecretaryUI.localized("Attachments are not supported")
+        case "rejected-conflicting-message-id": return SecretaryUI.localized("Conflicting message rejected")
+        case "malformed-frame", "frame-error malformed body", "hello-refused", "hello-spub-ignored":
+            return SecretaryUI.localized("Invalid connection data ignored")
+        case "replayed-frame": return SecretaryUI.localized("Replayed connection data ignored")
+        case "hello-refused device-limit": return SecretaryUI.localized("Device limit reached")
+        case "relay-notify rate limit": return SecretaryUI.localized("Notification rate limit reached")
+
         default:
             if state.hasPrefix("restarting in "), state.hasSuffix("s"), let seconds = Int(state.dropFirst("restarting in ".count).dropLast()) {
-                return String(localized: "Restarting in \(seconds) seconds")
+                return SecretaryUI.localized("Restarting in \(seconds) seconds")
             }
-            if state == "failed: no runtime found" { return String(localized: "Background service not found") }
-            if state.hasPrefix("failed: ") { return String(localized: "Service failed: \(String(state.dropFirst("failed: ".count)))") }
+            if state == "failed: no runtime found" { return SecretaryUI.localized("Background service not found") }
+            if state.hasPrefix("failed: ") { return SecretaryUI.localized("Service failed: \(String(state.dropFirst("failed: ".count)))") }
             // Diagnostic details come from the runtime and stay available verbatim.
-            return String(localized: "Service status: \(state)")
+            return SecretaryUI.localized("Service status: \(state)")
         }
     }
 
@@ -82,13 +99,16 @@ final class Sidecar: ObservableObject {
         if let command = environment["YOROZU_RUNTIME_CMD"], !shellWords(command).isEmpty {
             return launch(words: shellWords(command), environment: environment)
         }
+        // An internal secretary bundle must never fall back to a development runtime.
+        if SecretaryUI.enabled { return bundledLaunch() }
         return bundledLaunch() ?? devLaunch(environment: environment)
     }
 
     private static func bundledLaunch() -> Launch? {
         guard let resources = Bundle.main.resourceURL else { return nil }
         let node = resources.appendingPathComponent("node")
-        let serve = resources.appendingPathComponent("runtime/dist/serve.js")
+        let entry = SecretaryUI.enabled ? "secretary-serve.js" : "serve.js"
+        let serve = resources.appendingPathComponent("runtime/dist/\(entry)")
         guard FileManager.default.isExecutableFile(atPath: node.path),
               FileManager.default.isReadableFile(atPath: serve.path)
         else { return nil }
@@ -408,10 +428,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 if explicitQuitRequested && !MacChatSession.shared.model.generating.isEmpty {
                     let alert = NSAlert()
-                    alert.messageText = String(localized: "Tasks are still running")
-                    alert.informativeText = String(localized: "Quitting Yorozu stops this Mac's active tasks and disconnects paired devices.")
-                    alert.addButton(withTitle: String(localized: "Keep Yorozu Running"))
-                    alert.addButton(withTitle: String(localized: "Quit Yorozu"))
+                    alert.messageText = SecretaryUI.localized("Tasks are still running")
+                    alert.informativeText = SecretaryUI.localized("Quitting Yorozu stops this Mac's active tasks and disconnects paired devices.")
+                    alert.addButton(withTitle: SecretaryUI.localized("Keep Yorozu Running"))
+                    alert.addButton(withTitle: SecretaryUI.localized("Quit Yorozu"))
                     if alert.runModal() == .alertFirstButtonReturn {
                         explicitQuitRequested = false
                         return .terminateCancel
@@ -420,9 +440,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if Updates.pending.status.phase != .none && !Updates.installing && !HostWindowMode.active {
                 let alert = NSAlert()
-                alert.messageText = String(localized: "Update is waiting")
-                alert.informativeText = String(localized: "Yorozu will restart after this Mac’s agents finish, any postponement expires, and the 10-second countdown completes.")
-                alert.addButton(withTitle: String(localized: "Keep Yorozu Running"))
+                alert.messageText = SecretaryUI.localized("Update is waiting")
+                alert.informativeText = SecretaryUI.localized("Yorozu will restart after this Mac’s agents finish, any postponement expires, and the 10-second countdown completes.")
+                alert.addButton(withTitle: SecretaryUI.localized("Keep Yorozu Running"))
                 alert.runModal()
                 explicitQuitRequested = false
                 return .terminateCancel
@@ -473,9 +493,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Re-registered rather than only written once: an update moves the bundle, and an
                 // agent pointing at the old path supervises nothing.
                 if Watchdog.isEnabled { Watchdog.install() }
-                LoginItem.enableByDefaultOnce()
             }
-            Task { await Permission.logAll() }
+            // Permission status can itself prompt (e.g. listing protected folders).
+            // Inspect grants only from host setup/settings or an invoked native tool.
             // Starts Sparkle here rather than when Settings is first opened: the whole point of
             // an automatic update is that nobody had to go looking for it.
             Updates.start()
@@ -644,10 +664,10 @@ struct YorozuMacApp: App {
             Divider()
             // Not a control: the sidecar's own word for where the relay stands, which is the
             // one thing worth knowing without opening anything.
-            Text(session.role == .host ? sidecar.displayStatus : String(localized: "Client")).disabled(true)
+            Text(session.role == .host ? sidecar.displayStatus : SecretaryUI.localized("Client")).disabled(true)
             Divider()
             Button(HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)
-                ? String(localized: "Quit Yorozu…") : String(localized: "Quit Yorozu")) {
+                ? SecretaryUI.localized("Quit Yorozu…") : SecretaryUI.localized("Quit Yorozu")) {
                 // SwiftUI owns NSApp.delegate; use the adaptor instance for this action.
                 delegate.requestQuit()
             }
@@ -660,7 +680,7 @@ struct YorozuMacApp: App {
                         HostAttentionIndicator()
                     }
                 }
-                .accessibilityLabel((session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? String(localized: "Yorozu, connected") : String(localized: "Yorozu, not connected"))
+                .accessibilityLabel((session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? SecretaryUI.localized("Yorozu, connected") : SecretaryUI.localized("Yorozu, not connected"))
                 .task {
                     // The setup window's way into the chat: it is an NSWindow outside this
                     // scene graph, and this is the `openWindow` that works.
@@ -686,6 +706,7 @@ struct YorozuMacApp: App {
         // own, which stops the sidebar short of the top and leaves the pane without a toolbar.
         Window("Settings", id: Self.settingsWindow) {
             SettingsView(sidecar: sidecar)
+                .modifier(SecretaryLocale())
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .defaultSize(width: 800, height: 580)

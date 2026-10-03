@@ -7,16 +7,50 @@ import SwiftUI
 /// below it on its own, which is what keeps a long turn from reading as a stack.
 public struct WorkRowView: View {
     private let work: TurnWork
+    private let quiet: Bool
+    @Environment(\.locale) private var locale
     @State private var expanded: Bool
 
-    public init(work: TurnWork) {
+    public init(work: TurnWork, quiet: Bool = false) {
         self.work = work
+        self.quiet = quiet
         _expanded = State(initialValue: work.running)
     }
 
     public var body: some View {
         Group {
-            if let liveProgress {
+            if quiet {
+                VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+                    ForEach(work.entries) { entry in
+                        if case .progress(let event) = entry, case .progressCard(let card) = event.payload {
+                            ProgressCardView(card: card)
+                        } else if case .delegation(let card) = entry {
+                            Text(card.agentId).font(.scaled(.caption)).foregroundStyle(.secondary)
+                            Text(card.done
+                                ? locale.secretaryText("Task ended", "タスク終了")
+                                : locale.secretaryText("Working", "作業中"))
+                                .font(.scaled(.caption)).foregroundStyle(.secondary)
+                            ForEach(card.events, id: \.id) { event in
+                                if case .message(let message) = event.payload, !message.text.isEmpty {
+                                    Text(message.text).textSelection(.enabled)
+                                }
+                            }
+                            if card.done, !card.events.contains(where: {
+                                if case .message(let message) = $0.payload { return !message.text.isEmpty && message.done == true }
+                                return false
+                            }) {
+                                Text(locale.secretaryText("No result was reported.", "結果は報告されていません。"))
+                                    .font(.scaled(.caption)).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    if work.stopStatus != nil { Text(work.label()).font(.scaled(.caption)).foregroundStyle(.secondary) }
+                    if !failedTools.isEmpty {
+                        Label(locale.secretaryText("Some tool actions did not complete. Technical details are available from More.", "一部のツール操作が完了しませんでした。「その他」から技術的な詳細を確認できます。"), systemImage: "exclamationmark.triangle")
+                            .font(.scaled(.caption)).foregroundStyle(.secondary)
+                    }
+                }
+            } else if let liveProgress {
                 VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                     WorkDurationLabel(work: work)
                         .font(.scaled(.caption))
@@ -59,7 +93,7 @@ public struct WorkRowView: View {
             HStack(spacing: LayoutMetrics.inner) {
                 YorozuMark(dimension: 20)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(work.running ? String(localized: "IN PROGRESS") : String(localized: "ACTIVITY"))
+                    Text(work.running ? SecretaryUI.localized("IN PROGRESS") : SecretaryUI.localized("ACTIVITY"))
                         .font(.scaled(.caption2).weight(.semibold))
                         .tracking(0.8)
                         .foregroundStyle(work.running ? YorozuPalette.vermilion : YorozuPalette.sage)

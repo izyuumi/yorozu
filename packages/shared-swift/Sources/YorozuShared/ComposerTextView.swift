@@ -2,7 +2,9 @@
     import SwiftUI
     import UIKit
 
-    /// Native multiline editing and keyboard handling, with explicit Paste for files and images.
+    /// The phone's message field. SwiftUI's `TextField` offers Paste only for text, so an image
+    /// on the pasteboard could reach the composer only through the + menu; this is a
+    /// `UITextView` that takes the edit menu's Paste and ⌘V for images too.
     struct ComposerTextView: UIViewRepresentable {
         @Binding var text: String
         let placeholder: String
@@ -10,11 +12,12 @@
         let onSendNextQueued: () -> Bool
         let onQuestionOption: (Int) -> Bool
         let onPromptHistory: (Bool) -> Bool
-        var onPasteProviders: (([NSItemProvider]) -> Void)? = nil
+        /// Called when Paste finds an image; nil while images cannot be attached, so Paste goes
+        /// back to being text-only.
+        let onPasteImage: (() -> Void)?
         /// The thread to take the keyboard for, once each: a thread just started. Nil leaves
         /// focus wherever it is.
         var focusThread: String?
-        var focusRequest: UUID?
 
         private static let maxLines: CGFloat = 6
 
@@ -27,19 +30,8 @@
             view.textContainerInset = .zero
             view.textContainer.lineFragmentPadding = 0
             view.isScrollEnabled = false
-            view.accessibilityLabel = String(localized: "Message")
+            view.accessibilityLabel = SecretaryUI.localized("Message")
             view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            // iPhone's native tab bar is hidden while typing. A native keyboard action gives
-            // touch and VoiceOver users a reliable way back to navigation without editing input.
-            let keyboardToolbar = UIToolbar()
-            let hideKeyboard = UIBarButtonItem(title: String(localized: "Hide keyboard"),
-                image: UIImage(systemName: "keyboard.chevron.compact.down"),
-                primaryAction: UIAction { [weak view] _ in view?.resignFirstResponder() })
-            hideKeyboard.accessibilityLabel = String(localized: "Hide keyboard")
-            hideKeyboard.accessibilityIdentifier = "hide-composer-keyboard"
-            keyboardToolbar.items = [UIBarButtonItem(systemItem: .flexibleSpace), hideKeyboard]
-            keyboardToolbar.sizeToFit()
-            view.inputAccessoryView = keyboardToolbar
 
             let label = view.placeholderLabel
             label.text = placeholder
@@ -58,6 +50,7 @@
 
         func updateUIView(_ view: PastingTextView, context: Context) {
             context.coordinator.text = $text
+            view.accessibilityLabel = SecretaryUI.localized("Message")
             if view.text != text { view.text = text }
             view.placeholderLabel.text = placeholder
             view.placeholderLabel.isHidden = !text.isEmpty
@@ -65,11 +58,7 @@
             view.onSendNextQueued = onSendNextQueued
             view.onQuestionOption = onQuestionOption
             view.onPromptHistory = onPromptHistory
-            view.onPasteProviders = onPasteProviders
-            if focusRequest != view.focusRequest {
-                view.focusRequest = focusRequest
-                if focusRequest != nil { view.focus() }
-            }
+            view.onPasteImage = onPasteImage
             if focusThread != view.focusThread {
                 view.focusThread = focusThread
                 if focusThread != nil { view.focus() }
@@ -110,9 +99,8 @@
         var onSendNextQueued: () -> Bool = { false }
         var onQuestionOption: (Int) -> Bool = { _ in false }
         var onPromptHistory: (Bool) -> Bool = { _ in false }
-        var onPasteProviders: (([NSItemProvider]) -> Void)?
+        var onPasteImage: (() -> Void)?
         var focusThread: String?
-        var focusRequest: UUID?
         private var focusPending = false
 
         /// A view not yet in a window cannot be first responder, so the request waits for one.
@@ -128,29 +116,16 @@
         }
 
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-            if action == #selector(paste(_:)), onPasteProviders != nil { return true }
+            // `hasImages` only asks; it does not read, so showing the menu raises no banner.
+            if action == #selector(paste(_:)), onPasteImage != nil, pasteboardHasImages() {
+                return true
+            }
             return super.canPerformAction(action, withSender: sender)
         }
 
-        override func canPaste(_ itemProviders: [NSItemProvider]) -> Bool {
-            if onPasteProviders != nil, itemProviders.contains(where: { clipboardFileType($0.registeredTypeIdentifiers) != nil }) {
-                return true
-            }
-            return super.canPaste(itemProviders)
-        }
-
         override func paste(_ sender: Any?) {
-            guard onPasteProviders != nil else { return super.paste(sender) }
-            // The user explicitly chose Paste. Never access itemProviders to show the menu.
-            paste(itemProviders: UIPasteboard.general.itemProviders)
-        }
-
-        override func paste(itemProviders: [NSItemProvider]) {
-            guard let onPasteProviders else { return super.paste(itemProviders: itemProviders) }
-            let files = itemProviders.filter { clipboardFileType($0.registeredTypeIdentifiers) != nil }
-            if !files.isEmpty { onPasteProviders(files) }
-            let text = itemProviders.filter { clipboardFileType($0.registeredTypeIdentifiers) == nil }
-            if !text.isEmpty { super.paste(itemProviders: text) }
+            guard let onPasteImage, pasteboardHasImages() else { return super.paste(sender) }
+            onPasteImage()
         }
 
         /// A hardware keyboard's Return sends; Shift-Return is a new line.
@@ -227,8 +202,8 @@
     /// The Mac message field's keys that the field must not get. The field is AppKit's text
     /// editor, which handles its keys below the pipeline SwiftUI delivers key presses through:
     /// a key equivalent on the send button and a SwiftUI paste command both go unseen. This
-    /// sees the keystroke before the window does and lets it through unless it is the send key
-    /// with something to send — see ``isSendKey`` — or ⌘V with an image on the pasteboard.
+    /// sees the keystroke before the window does, sending or inserting a native newline for
+    /// Return, and handling ⌘V when an image is on the pasteboard.
     /// `onPaste` is nil while images cannot be attached, and Paste is text-only again.
     struct ComposerKeyMonitor: NSViewRepresentable {
         let isActive: Bool
@@ -303,9 +278,19 @@
                     case .send(let alternate): if self.onSend(alternate) { return nil }
                     case nil: break
                     }
+                    // SwiftUI's submit action has already ended editing and lost the caret.
+                    // Insert through the native editor before that happens; it updates the binding.
+                    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                        .subtracting([.numericPad, .function])
+                    if !composing, event.keyCode == 36 || event.keyCode == 76,
+                        modifiers.isEmpty || modifiers == .shift,
+                        let editor = self.window?.firstResponder as? NSTextView {
+                        editor.insertNewlineIgnoringFieldEditor(nil)
+                        return nil
+                    }
                     if let onPaste = self.onPaste,
                         event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-                        event.charactersIgnoringModifiers == "v", pasteboardHasAttachments()
+                        event.charactersIgnoringModifiers == "v", pasteboardHasImages()
                     {
                         onPaste()
                         return nil

@@ -24,7 +24,7 @@ struct DroppedFile: Transferable {
     let bytes: Data
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(importedContentType: .data) { received in
-            DroppedFile(name: received.file.lastPathComponent, bytes: try readAttachmentFile(received.file))
+            DroppedFile(name: received.file.lastPathComponent, bytes: try Data(contentsOf: received.file))
         }
     }
 
@@ -54,12 +54,12 @@ func stagePastedImage(
     onFailure: ((String) -> Void)? = nil
 ) {
     guard image.bytes.count <= MessageAttachment.maxBytes else {
-        if let onFailure { onFailure(String(localized: "Each attachment must be 5 MB or smaller.")) }
+        if let onFailure { onFailure(SecretaryUI.localized("Each attachment must be 5 MB or smaller.")) }
         else { onTooLarge() }
         return
     }
     guard let attachment = pastedImageAttachment(bytes: image.bytes) else {
-        onFailure?(String(localized: "Couldn’t read the image. Copy it again or choose another file."))
+        onFailure?(SecretaryUI.localized("Couldn’t read the image. Copy it again or choose another file."))
         return
     }
     onPick(attachment)
@@ -74,14 +74,11 @@ func stagePastedImage(
 /// is refused here, in front of the person who chose it, rather than at the other end where
 /// there is nobody to tell.
 struct AttachButton: View {
-    private static let glyphSize: CGFloat = 18
     /// How many more attachments this message may take. The pickers select up to it, and the
     /// composer disables the whole button at zero.
     let remaining: Int
     let onPick: ([MessageAttachment]) -> Void
     let onTooLarge: () -> Void
-    var onPaste: (() -> Void)? = nil
-    var externalLoading = false
     var onLoadingChanged: (Bool) -> Void = { _ in }
 
     @State private var photos: [PhotosPickerItem] = []
@@ -114,13 +111,18 @@ struct AttachButton: View {
                 }
             #endif
             Button("Files", systemImage: "folder") { browsingFiles = true }
-            if let onPaste {
-                Button("Paste attachments", systemImage: "doc.on.clipboard", action: onPaste)
-            }
+            #if os(iOS)
+                // The phone's way to the paste the Mac gets from ⌘V. `hasImages` is only a
+                // question about the pasteboard and does not read it, so it raises no banner;
+                // the read itself happens on the tap, which is somebody asking for it.
+                if UIPasteboard.general.hasImages {
+                    Button("Paste", systemImage: "doc.on.clipboard") { pasteImage() }
+                }
+            #endif
         } label: {
             Group {
                 if isLoading { ProgressView().controlSize(.small) }
-                else { Image(systemName: "plus").font(.system(size: Self.glyphSize, weight: .semibold)) }
+                else { Image(systemName: "plus").font(.scaled(.body).weight(.semibold)) }
             }
                 .foregroundStyle(.secondary)
                 .frame(width: controlTarget, height: controlTarget)
@@ -128,10 +130,10 @@ struct AttachButton: View {
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .accessibilityLabel(isLoading ? String(localized: "Loading attachments") : String(localized: "Attach photos or files"))
-        .disabled(isLoading || externalLoading || remaining <= 0)
-        .help(remaining <= 0 ? String(localized: "Remove an attachment to add another") : String(localized: "Attach photos or files"))
-        .accessibilityHint(remaining <= 0 ? String(localized: "Remove an attachment to add another") : String(localized: "Choose photos or files for this message"))
+        .accessibilityLabel(isLoading ? SecretaryUI.localized("Loading attachments") : SecretaryUI.localized("Attach photos or files"))
+        .disabled(isLoading || remaining <= 0)
+        .help(remaining <= 0 ? SecretaryUI.localized("Remove an attachment to add another") : SecretaryUI.localized("Attach photos or files"))
+        .accessibilityHint(remaining <= 0 ? SecretaryUI.localized("Remove an attachment to add another") : SecretaryUI.localized("Choose photos or files for this message"))
         .alert("Attachments couldn’t be added", isPresented: Binding(
             get: { failureMessage != nil },
             set: { if !$0 { failureMessage = nil } }
@@ -163,7 +165,7 @@ struct AttachButton: View {
             case .failure(let error):
                 guard (error as NSError).code != NSUserCancelledError else { return }
                 retrySources = []
-                reportFailure(String(localized: "Couldn’t open the selected files. Choose them again and check that they’re available on this device."))
+                reportFailure(SecretaryUI.localized("Couldn’t open the selected files. Choose them again and check that they’re available on this device."))
             }
         }
         #if os(iOS)
@@ -173,7 +175,7 @@ struct AttachButton: View {
                     // same way the library's is.
                     stage([(name: "photo.jpg", mime: "image/jpeg", bytes: data)])
                 } onFailure: {
-                    reportFailure(String(localized: "Couldn’t read the photo. Try taking it again."))
+                    reportFailure(SecretaryUI.localized("Couldn’t read the photo. Try taking it again."))
                 }
                 .ignoresSafeArea()
             }
@@ -207,7 +209,7 @@ struct AttachButton: View {
                     try await Task.detached(priority: .userInitiated) {
                         let scoped = url.startAccessingSecurityScopedResource()
                         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                        return try readAttachmentFile(url)
+                        return try Data(contentsOf: url)
                     }.value
                 }
             )
@@ -238,18 +240,24 @@ struct AttachButton: View {
             if !result.picks.isEmpty { stage(result.picks) }
             if !result.failed.isEmpty {
                 let names = result.failed.map(\.name).joined(separator: ", ")
-                reportFailure(String(localized: "Couldn’t load: \(names). Try again, or choose another file."))
+                reportFailure(SecretaryUI.localized("Couldn’t load: \(names). Try again, or choose another file."))
             }
         } catch is CancellationError {
             // Leaving the conversation cancels acquisition; never attach later to another draft.
         } catch {
-            reportFailure(String(localized: "Couldn’t load the attachments. Choose them again."))
+            reportFailure(SecretaryUI.localized("Couldn’t load the attachments. Choose them again."))
         }
     }
 
     private func reportFailure(_ message: String) {
         failureMessage = failureMessage.map { $0 + "\n\n" + message } ?? message
     }
+
+    #if os(iOS)
+        private func pasteImage() {
+            stage(pasteboardImagePicks())
+        }
+    #endif
 
     private func stage(_ picks: [(name: String, mime: String, bytes: Data)]) {
         // Camera and menu Paste start here; async acquisition already began its attempt.
@@ -275,7 +283,7 @@ func stageAttachments(
     onFailure: ((String) -> Void)? = nil
 ) {
     guard !picks.isEmpty else {
-        onFailure?(String(localized: "Couldn’t read the image. Copy it again or choose another file."))
+        onFailure?(SecretaryUI.localized("Couldn’t read the image. Copy it again or choose another file."))
         return
     }
     var staged: [MessageAttachment] = []
@@ -302,13 +310,13 @@ func stageAttachments(
         var messages: [String] = []
         if !unreadable.isEmpty {
             let names = unreadable.joined(separator: ", ")
-            messages.append(String(localized: "Couldn’t read: \(names). Choose another file."))
+            messages.append(SecretaryUI.localized("Couldn’t read: \(names). Choose another file."))
         }
         if !oversized.isEmpty {
             let names = oversized.joined(separator: ", ")
-            messages.append(String(localized: "Too large: \(names). Each attachment must be 5 MB or smaller."))
+            messages.append(SecretaryUI.localized("Too large: \(names). Each attachment must be 5 MB or smaller."))
         }
-        if overCount { messages.append(String(localized: "A message can contain up to 10 attachments. Remove one to add another.")) }
+        if overCount { messages.append(SecretaryUI.localized("A message can contain up to 10 attachments. Remove one to add another.")) }
         if !messages.isEmpty { onFailure(messages.joined(separator: "\n\n")) }
     } else if !oversized.isEmpty || overCount {
         onTooLarge()
@@ -425,8 +433,7 @@ private struct StagedThumbnail: View {
     let attachment: MessageAttachment
     let onRemove: () -> Void
 
-    private static let side: CGFloat = 100
-    private static let dismissGlyph: CGFloat = 16
+    private static let side: CGFloat = 56
 
     var body: some View {
         thumbnail
@@ -437,7 +444,7 @@ private struct StagedThumbnail: View {
                     Image(systemName: "xmark.circle.fill")
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(.white, .black.opacity(0.6))
-                        .font(.system(size: Self.dismissGlyph))
+                        .font(.scaled(.body))
                         .padding(2)
                         // Hit area wider than the glyph; hangs past the thumbnail's corner.
                         .frame(width: controlTarget, height: controlTarget, alignment: .topTrailing)
@@ -449,20 +456,20 @@ private struct StagedThumbnail: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel(
                 attachment.isImage
-                    ? String(localized: "Attached image, \(attachment.name)")
-                    : String(localized: "Attached file, \(attachment.name), \(attachment.size)")
+                    ? SecretaryUI.localized("Attached image, \(attachment.name)")
+                    : SecretaryUI.localized("Attached file, \(attachment.name), \(attachment.size)")
             )
     }
 
     @ViewBuilder private var thumbnail: some View {
         if attachment.isImage, let bytes = attachment.bytes, let image = Image.from(data: bytes) {
-            image.resizable().scaledToFit()
+            image.resizable().scaledToFill()
         } else {
             VStack(spacing: 2) {
                 Image(systemName: "doc").font(.scaled(.title3)).foregroundStyle(.secondary)
                 Text(attachment.name)
                     .font(.scaled(.caption2))
-                    .lineLimit(2)
+                    .lineLimit(1)
                     .truncationMode(.middle)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 2)

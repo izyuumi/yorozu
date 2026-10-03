@@ -51,7 +51,7 @@ struct MacAttentionItem: Identifiable {
             if thread.awaitingQuestion == true {
                 let questions = events.filter { event in
                     guard case .questionCard(let card) = event.payload,
-                          !model.resolvedQuestionIds(in: thread.id).contains(card.questionId) else { return false }
+                          !model.answeredQuestions.contains(card.questionId) else { return false }
                     return true
                 }
                 for (index, event) in questions.enumerated() {
@@ -129,7 +129,7 @@ final class LocalNotifications: NSObject, UNUserNotificationCenterDelegate {
                 return kind == .approval && !model.answered.contains(card.actionId)
                     && model.approvalOutcomes[card.actionId] != .expired
                     && model.approvalOutcomes[card.actionId] != .noLongerNeeded
-            case .questionCard(let card): return kind == .question && !model.resolvedQuestionIds(in: threadID).contains(card.questionId)
+            case .questionCard(let card): return kind == .question && !model.answeredQuestions.contains(card.questionId)
             default: return false
             }
         }
