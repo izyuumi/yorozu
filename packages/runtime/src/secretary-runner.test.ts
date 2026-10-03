@@ -379,8 +379,8 @@ test("a closed worker input records an uncertain steer and keeps the Rust owner 
   const ready = join(temp, "ready");
   const exit = join(temp, "exit");
   const script = join(temp, "worker.cjs");
-  writeFileSync(script, `const fs=require('node:fs'); process.stdin.once('data',()=>{ fs.closeSync(0); fs.writeFileSync(${JSON.stringify(ready)},'ready'); }); setInterval(()=>{if(fs.existsSync(${JSON.stringify(exit)}))process.exit(0)},20);`);
-  const host = spawn(process.env.YOROZU_SECRETARY_HOST!, ["--secretary", join(temp, "state"), "pipe-run", join(temp, "workspace"), process.execPath, script], { stdio: ["pipe", "pipe", "ignore"] });
+  writeFileSync(script, `const fs=require('node:fs'); process.stdin.on('error',()=>{}); process.stdin.once('data',()=>{ process.stdin.once('close',()=>fs.writeFileSync(${JSON.stringify(ready)},'ready')); process.stdin.destroy(); }); setInterval(()=>{if(fs.existsSync(${JSON.stringify(exit)}))process.exit(0)},20);`);
+  const host = spawn(process.env.YOROZU_SECRETARY_HOST!, ["--secretary", join(temp, "secretary-v1"), "pipe-run", join(temp, "Yorozu Secretary"), process.execPath, script], { stdio: ["pipe", "pipe", "ignore"] });
   const frames: any[] = [];
   const closed = new Promise<void>((resolve) => host.once("close", () => resolve()));
   createInterface({ input: host.stdout }).on("line", (line) => frames.push(JSON.parse(line)));
