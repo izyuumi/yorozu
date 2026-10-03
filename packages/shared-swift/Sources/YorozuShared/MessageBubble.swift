@@ -65,6 +65,7 @@ public struct MessageBubble: View {
     @State private var hovering = false
     @State private var copied = false
     @State private var confirmingEdit = false
+    @State private var detectedLink: (text: String, url: URL?)?
 
     public init(
         id: String = "",
@@ -120,7 +121,8 @@ public struct MessageBubble: View {
 
     /// The one link worth previewing, and only under a reply: what the user typed is their own
     /// text and is not decorated back at them.
-    private var link: URL? { isUser ? nil : firstLink(in: data.text) }
+    private var previewText: String? { isUser || streaming ? nil : data.text }
+    private var link: URL? { detectedLink?.text == previewText ? detectedLink?.url : nil }
 
     public var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: LayoutMetrics.tight) {
@@ -156,7 +158,7 @@ public struct MessageBubble: View {
             }
             // Only once the reply has finished arriving: previewing a URL that is still being
             // typed would fetch whatever prefix of it happened to be on screen.
-            if let link, !streaming {
+            if let link {
                 LinkPreviewRow(url: link)
             }
             if speaking {
@@ -193,6 +195,14 @@ public struct MessageBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        .task(id: previewText) {
+            guard let text = previewText else { detectedLink = nil; return }
+            // Data detection can tokenize an entire CJK reply. Keep it outside the UI
+            // update, and rerun only when the finished reply's text changes.
+            let url = await Task.detached(priority: .utility) { firstLink(in: text) }.value
+            guard !Task.isCancelled else { return }
+            detectedLink = (text, url)
+        }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: speaking)
         .confirmationDialog("Edit from here?", isPresented: $confirmingEdit, titleVisibility: .visible) {
             Button("Edit from here", role: .destructive) { onEditFromHere?() }
