@@ -1775,17 +1775,8 @@ public final class ChatModel {
             return item.admissionStatus != .withdrawn && item.admissionStatus != .rejected &&
                 item.replacementId == nil && !stopPending(for: event.id)
         }
-        let history = timeline(event.threadId).events
-        guard history.contains(where: { $0.id == event.id }), !stopPending(for: event.id) else { return false }
-        return !history.contains { known in
-            if case .stopStatus(let status) = known.payload {
-                return status.targetEventId == event.id && status.status != .requested && status.status != .unknown
-            }
-            if case .message(let reply) = known.payload, reply.role == .agent, reply.done == true {
-                return known.id == data.completionId || known.id.hasSuffix(":\(event.id):final")
-            }
-            return false
-        }
+        return !stopPending(for: event.id) && timeline(event.threadId).isUnfinishedMessage(
+            id: event.id, completionID: data.completionId)
     }
 
     private func stopPending(for eventId: String) -> Bool {
