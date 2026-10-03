@@ -1309,7 +1309,6 @@ public struct ChatView: View {
                     .padding(.top, 12)
                     .padding(.bottom, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .onSubmit { draft.wrappedValue += "\n" }
                     .focused($composerFocused)
                     .background(composerKeyMonitor)
                     .accessibilityLabel(composerPlaceholder)
