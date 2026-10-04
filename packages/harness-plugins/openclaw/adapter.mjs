@@ -102,7 +102,7 @@ export async function prepareRuntime(params) {
   const node = await realpath(absolute(params.node, 'node'));
   const packageInfo = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'));
   if (packageInfo.name !== 'openclaw' || packageInfo.version !== UPSTREAM.version) throw invalid('OpenClaw package version does not match the pin');
-  const gitOptions = { maxBuffer: 4096, env: { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0' } };
+  const gitOptions = { maxBuffer: 4096, env: { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
   const revision = await exec('/usr/bin/git', ['-C', source, 'rev-parse', 'HEAD'], gitOptions);
   if (revision.stdout.trim() !== UPSTREAM.commit) throw invalid('OpenClaw source commit does not match the pin');
   await exec('/usr/bin/git', ['-C', source, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
@@ -129,7 +129,8 @@ export async function prepareRuntime(params) {
     if (JSON.stringify(JSON.parse(await readFile(marker, 'utf8'))) !== JSON.stringify(owner)) throw invalid('profile belongs to another agent, version, scope or sandbox');
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    if ((await readdir(scoped.profileDir)).some(name => name !== 'proof-provider.json')) throw invalid('refusing to adopt an existing OpenClaw profile');
+    const bootstrapNames = scoped.workspace === join(scoped.profileDir, 'scratch') ? ['proof-provider.json', 'scratch'] : ['proof-provider.json'];
+    if ((await readdir(scoped.profileDir)).some(name => !bootstrapNames.includes(name))) throw invalid('refusing to adopt an existing OpenClaw profile');
     await writeFile(marker, JSON.stringify(owner), { flag: 'wx', mode: 0o600 });
   }
   const home = join(scoped.profileDir, 'isolated-home');
