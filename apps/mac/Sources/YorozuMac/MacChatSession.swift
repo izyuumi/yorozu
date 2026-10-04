@@ -9,7 +9,18 @@ enum MacRole: String, CaseIterable, Identifiable { case host, client; var id: Se
 
 @MainActor @Observable
 final class MacChatSession {
-    static let shared = MacChatSession()
+    static let shared: MacChatSession = {
+        #if DEBUG
+        // Refuse a disposable bundle before opening any default cache or Keychain.
+        if let expected = Bundle.main.object(forInfoDictionaryKey: "YorozuIsolatedStateDir") as? String {
+            let environment = ProcessInfo.processInfo.environment
+            precondition(environment["YOROZU_EPHEMERAL_RUN"] == "1" && environment["YOROZU_STATE_DIR"] == expected
+                && environment["YOROZU_TEST_KEYCHAIN_SERVICE"]?.isEmpty == false,
+                "The disposable bundle did not receive its isolated environment")
+        }
+        #endif
+        return MacChatSession()
+    }()
     private static let roleKey = "macRole"
     private(set) var role: MacRole?
     private var local: ChatModel
