@@ -22,11 +22,11 @@ export interface PersonAgentExecution {
  * This factory is never invoked with model-selected code, environment, or profile paths.
  */
 export type PersonAgentRuntimeFactory = (agent: PersonAgent, scope: EffectiveAgentScope, execution: PersonAgentExecution) =>
-  Promise<{ configuration: HarnessConfiguration; runtime: AgentIsolationRuntime }> | { configuration: HarnessConfiguration; runtime: AgentIsolationRuntime };
+  Promise<{ configuration: HarnessConfiguration; runtime: AgentIsolationRuntime; release?(): void | Promise<void> }> | { configuration: HarnessConfiguration; runtime: AgentIsolationRuntime; release?(): void | Promise<void> };
 interface Binding { agentId: string; title: string; epochs: string[]; legacyMetadataDigest?: string }
 interface Instance { agentId: string; chain: string[]; conversationId: string; epoch: string; state: "preparing" | "running" | "completed" | "failed" | "unknown"; result?: HarnessHandoffResult }
 interface Manifest { version: 1; bindings: Record<string, Binding>; taskOwners: Record<string, string>; holds: Record<string, string>; instances: Record<string, Instance> }
-interface Actor { agent: PersonAgent; scope: EffectiveAgentScope; signature: string; execution: PersonAgentExecution; configuration: SupervisedHarnessConfiguration; process: HarnessProcess; owners: Set<string> }
+interface Actor { agent: PersonAgent; scope: EffectiveAgentScope; signature: string; execution: PersonAgentExecution; configuration: SupervisedHarnessConfiguration; process: HarnessProcess; owners: Set<string>; release?(): void | Promise<void> }
 interface Owner { harness: SecretaryHarness; actor: Actor; epoch: string; transient: boolean }
 const owned = new Set<string>();
 const MAX_OWNERS = 4, MAX_HANDOFFS = 2, MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
@@ -271,11 +271,11 @@ export class PersonAgentRuntime {
         initialize: { ...initialize, agentId: agent.id, workspace: execution.workspace, model: agent.model,
           scope: scoped, isolation: launch.isolation, platform: { team: tools.includes("team"), computer: false },
           ...(agent.pluginId === "hermes" ? { profileRoot: join(scratchRoot, "profile") } : { profileDir: join(scratchRoot, "profile") }) } };
-      return { agent, scope, signature: this.signature(agent, scope), execution, configuration, process: new HarnessProcess(configuration), owners: new Set() };
+      return { agent, scope, signature: this.signature(agent, scope), execution, configuration, process: new HarnessProcess(configuration), owners: new Set(), release: built.release };
     } catch (error) {
       let held = [] as ReturnType<typeof validateHostListeners>;
       try { held = validateHostListeners(built?.runtime?.inheritedListeners ?? [], agent.id); } catch { /* Unowned handles stay with their original host. */ }
-      await Promise.all(held.map(releaseHostListener)); throw error;
+      await Promise.all(held.map(releaseHostListener)); await built.release?.(); throw error;
     }
   }
   /** Bind a new ordinary chat, or reopen its immutable agent binding. */
@@ -295,8 +295,8 @@ export class PersonAgentRuntime {
         if (!this.idle(selected)) throw new Error("Agent settings switch requires all owned execution to be confirmed idle");
         // Validate the candidate before disturbing the selected idle owner.
         const candidate = await this.prepare(agent, scope, "ordinary", signature);
-        for (const ownerId of [...actor.owners]) { await this.owners.get(ownerId)!.harness.close(); this.owners.delete(ownerId); }
-        await actor.process.close(); this.actors.set(selected, candidate); actor = candidate;
+        for (const ownerId of [...actor.owners]) { await this.owners.get(ownerId)?.harness.close(); this.owners.delete(ownerId); actor.owners.delete(ownerId); }
+        await this.closeActor(actor); this.actors.set(selected, candidate); actor = candidate;
       }
       if (actor?.process.unavailable) throw new Error("Agent daemon exited; no implicit respawn");
       if (!actor) { actor = await this.prepare(agent, scope, "ordinary", signature); this.actors.set(selected, actor); }
@@ -331,8 +331,8 @@ export class PersonAgentRuntime {
       const updated = this.store.update(id, patch, expectedRevision);
       const actor = this.actors.get(id);
       if (actor) {
-        for (const ownerId of [...actor.owners]) { await this.owners.get(ownerId)!.harness.close(); this.owners.delete(ownerId); }
-        await actor.process.close(); this.actors.delete(id);
+        for (const ownerId of [...actor.owners]) { await this.owners.get(ownerId)?.harness.close(); this.owners.delete(ownerId); actor.owners.delete(ownerId); }
+        await this.closeActor(actor); this.actors.delete(id);
       }
       return updated;
     });
@@ -422,7 +422,7 @@ export class PersonAgentRuntime {
     } finally {
       clearTimeout(timer);
       // This closes only the fresh execution instance, never the teammate's ordinary daemon.
-      if (actor) await actor.process.close();
+      if (actor) await this.closeActor(actor);
       if (child) { await child.close(); this.owners.delete(id); }
       this.activeHandoffs.delete(key); this.refresh(); this.services?.changed();
     }
@@ -431,9 +431,36 @@ export class PersonAgentRuntime {
     if (this.closing) return; this.closing = true;
     try {
       await Promise.allSettled([...this.owners.values()].map(o => o.harness.stop(`manager-close-${randomUUID()}`)));
-      for (const actor of new Set([...this.actors.values(), ...[...this.owners.values()].map(o => o.actor)])) await actor.process.close();
+      for (const actor of new Set([...this.actors.values(), ...[...this.owners.values()].map(o => o.actor)])) await this.closeActor(actor);
       for (const owner of [...this.owners.values()]) await owner.harness.close();
       this.refresh(); this.save(); this.owners.clear(); this.actors.clear();
     } finally { this.release(); owned.delete(this.root); }
+  }
+  private async closeActor(actor: Actor): Promise<void> {
+    const release = actor.release; actor.release = undefined;
+    try { await actor.process.close(); } finally { await release?.(); }
+  }
+  /** Host-only account retirement. Fence inference synchronously outside this manager,
+   * then retire the exact actors. Active work retains uncertainty and cannot respawn. */
+  retireAccount(binding: string): Promise<void> {
+    const affected = [...new Set([...this.actors.values(), ...[...this.owners.values()].map(owner => owner.actor)])]
+      .filter(actor => actor.agent.accountBindingId === binding);
+    for (const actor of affected) if (!this.idle(actor.agent.id)) this.hold(actor.scope.chain, "Account access was retired during unconfirmed execution");
+    this.save();
+    return this.serialized(async () => {
+      for (const actor of affected) {
+        for (const ownerId of [...actor.owners]) {
+          const owner = this.owners.get(ownerId); if (owner?.actor !== actor) { actor.owners.delete(ownerId); continue; }
+          try { await owner.harness.stop(`account-retire-${randomUUID()}`); } finally {
+            try { await owner.harness.close(); } finally { this.owners.delete(ownerId); actor.owners.delete(ownerId); }
+          }
+        }
+        // Keep an ordinary retired actor as a tombstone: another chat must not
+        // silently respawn the same execution. An explicit idle settings revision
+        // selects a fresh execution identity through the existing switch path.
+        await this.closeActor(actor);
+      }
+      this.refresh(); this.save(); this.services?.changed();
+    });
   }
 }

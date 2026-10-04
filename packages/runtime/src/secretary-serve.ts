@@ -9,9 +9,13 @@ import { constants } from "node:os";
 import { secretaryCoordinator, type SecretaryCoordinatorHost } from "./secretary-coordinator.js";
 import { harnessConfiguration, SecretaryHarness } from "./harness-runner.js";
 import { PersonAgentHost, type PersonAgentPlatform } from "./person-agent-host.js";
-import { packagedPersonAgentPlatformFromEntry } from "./packaged-agent-runtime.js";
+import { packagedResourcesFromEntry } from "./packaged-agent-runtime.js";
+import { createNativeAccountHost, type NativeAccountSender } from "./native-account-host.js";
 
-export interface SecretaryServeOptions extends ServeOptions { personAgentPlatform?: PersonAgentPlatform }
+export interface SecretaryServeOptions extends ServeOptions {
+  personAgentPlatform?: PersonAgentPlatform;
+  nativeAccountHost?: ReturnType<typeof createNativeAccountHost>;
+}
 
 function requireProductionRuntime(): void {
   if (!("secretaryRunnerDecorator" in runtime) || runtime.secretaryRunnerDecorator !== true) {
@@ -27,7 +31,11 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   let coordinator: ReturnType<typeof secretaryCoordinator>;
   let harness: SecretaryHarness | undefined;
   let harnessHost: SecretaryCoordinatorHost | undefined;
-  const people = options.personAgentPlatform ? new PersonAgentHost(dir, options.personAgentPlatform) : undefined;
+  const accounts = options.nativeAccountHost;
+  const platform = accounts?.platform ?? options.personAgentPlatform;
+  if (accounts && options.personAgentPlatform && options.personAgentPlatform !== accounts.platform) throw new Error("Native account platform owner mismatch");
+  const people = platform ? new PersonAgentHost(dir, platform) : undefined;
+  if (people && accounts) accounts.bindPeople(people);
   const configuration = people?.owns("yorozu-secretary-v1") ? undefined : harnessConfiguration(dir);
   const legacySecretary = !configuration && !people?.owns("yorozu-secretary-v1");
   // A local variable also type-checks against the unpatched development ServeOptions.
@@ -46,6 +54,8 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
     personAgentRegistry: people ? () => people.registry() : undefined,
     personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => people.control(event) : undefined,
     personAgentCreate: people ? (event: Parameters<PersonAgentHost["create"]>[0]) => people.create(event) : undefined,
+    siwcAccountStatus: accounts ? () => accounts.status() : undefined,
+    siwcAccountControl: accounts ? (event: Parameters<NonNullable<typeof accounts>["control"]>[0], sender: NativeAccountSender) => accounts.control(event, sender) : undefined,
     secretaryObserve: (event: Parameters<ReturnType<typeof secretaryCoordinator>["observe"]>[0]) => coordinator?.observe(event),
     decorateNativeRunners: (runners: Record<string, NativeAgentRunner>, host: SecretaryCoordinatorHost) => {
       if (configuration) {
@@ -97,6 +107,7 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   if (people && harnessHost) {
     const host = harnessHost;
     people.bind({ emit: host.emit, changed: () => host.publishThreads?.() });
+    accounts?.bindChanged(() => host.publishThreads?.());
   }
   if (harness && harnessHost) {
     const host = harnessHost;
@@ -104,7 +115,7 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   }
   if (legacySecretary) coordinator!.reconcile();
   return { ...sidecar, async close() {
-    try { await people?.close(); await harness?.close(); } finally { await sidecar.close(); }
+    try { await accounts?.close(); await people?.close(); await harness?.close(); } finally { await sidecar.close(); }
   } };
 }
 
@@ -117,7 +128,9 @@ if (import.meta.main && process.argv.length > 2) {
   child.once("error", () => process.exit(1));
   child.once("exit", (code, signal) => process.exit(code ?? (signal ? 128 + constants.signals[signal] : 1)));
 } else if (import.meta.main) {
-  const sidecar = serveSecretary({ personAgentPlatform: packagedPersonAgentPlatformFromEntry(new URL(import.meta.url)) });
+  const resources = packagedResourcesFromEntry(new URL(import.meta.url)), dir = stateDir();
+  const accounts = resources ? createNativeAccountHost(resources, dir) : undefined;
+  const sidecar = serveSecretary({ stateDir: dir, nativeAccountHost: accounts });
   process.once("SIGTERM", () => {
     const deadline = setTimeout(() => process.exit(143), 15000);
     deadline.unref();

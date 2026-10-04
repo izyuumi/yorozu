@@ -25,7 +25,7 @@ export interface AgentKnowledgeEntry {
   agentId?: string; allAgents?: true; fromAgentId?: string; toAgentIds?: string[];
 }
 export interface AgentKnowledgeJournal { version: 1; revision: number; entries: AgentKnowledgeEntry[] }
-export interface PersonAgentStoreOptions { resourceRoots?: DirectoryGrant[] }
+export interface PersonAgentStoreOptions { resourceRoots?: DirectoryGrant[]; protectedRoots?: readonly string[] }
 
 const MAX_AGENTS = 64, MAX_TEAMS = 32, MAX_JOURNAL = 512, MAX_BYTES = 2 * 1024 * 1024;
 const clone = <T>(value: T): T => structuredClone(value);
@@ -51,6 +51,7 @@ function revision(value: unknown): asserts value is number {
 export class PersonAgentStore {
   readonly root: string;
   private readonly resourceRoots: DirectoryGrant[];
+  private readonly protectedRoots: string[];
   private readonly scopes = new WeakSet<object>();
   constructor(stateDir: string, options: PersonAgentStoreOptions = {}) {
     safeAgentPath(stateDir);
@@ -59,6 +60,8 @@ export class PersonAgentStore {
     mkdirSync(this.root, { recursive: true, mode: 0o700 });
     this.assertRoot();
     this.resourceRoots = normalizeDirectoryGrants(options.resourceRoots ?? []);
+    if (options.protectedRoots !== undefined && (!Array.isArray(options.protectedRoots) || options.protectedRoots.length > 16)) throw new Error("Invalid host protected roots");
+    this.protectedRoots = [...new Set((options.protectedRoots ?? []).map(path => safeAgentPath(path)))];
     if (this.resourceRoots.some(g => pathWithin(g.path, this.root) || pathWithin(this.root, g.path))) throw new Error("Agent state cannot be a shared resource");
     this.readRegistry(); this.readJournal(); // Corruption never silently resets permissions.
   }
@@ -212,7 +215,7 @@ export class PersonAgentStore {
     });
   }
   private mint(agent: PersonAgent, state: AgentRegistry, selected: ScopeSelection, chain: string[], priorDenied: string[] = []): EffectiveAgentScope {
-    const deniedRoots = [...new Set([...priorDenied, ...state.agents.filter(a => a.id !== agent.id).map(a => join(this.root, "private", a.id)),
+    const deniedRoots = [...new Set([...priorDenied, ...this.protectedRoots, ...state.agents.filter(a => a.id !== agent.id).map(a => join(this.root, "private", a.id)),
       join(this.root, "registry.json"), join(this.root, "journal.json"), join(this.root, ".writer-lock"), this.derived(agent.id).runtimeDir])].sort();
     const scope: EffectiveAgentScope = { version: 1, agentId: agent.id, revision: state.revision, chain, ...selected, deniedRoots };
     Object.freeze(scope.allowedTools); for (const grant of scope.directories) Object.freeze(grant); Object.freeze(scope.directories); Object.freeze(scope.knowledgeIds); Object.freeze(scope.chain); Object.freeze(scope.deniedRoots); Object.freeze(scope);

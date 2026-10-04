@@ -21,7 +21,12 @@ interface FileRow { path: string; sha256: string; mode: 420 | 493 }
 interface LinkRow { path: string; link: string }
 type Row = FileRow | LinkRow;
 interface Artifact { files: Row[]; inventorySha256: string; adapterSourceSha: string; hashStage: string }
-export interface PackagedRuntimeServices { selectBroker: CuratedAgentRuntimeConfiguration["selectBroker"] }
+export interface PackagedRuntimeServices {
+  selectBroker: CuratedAgentRuntimeConfiguration["selectBroker"];
+  releaseBroker?(agentId: string, executionId: string): Promise<void>;
+  protectedRoots?: readonly string[];
+  bindStore?(store: import("./agent-store.js").PersonAgentStore): void;
+}
 export interface VerifiedPackagedHermesRuntime {
   readonly productionReady: false; readonly inventorySha256: string; readonly adapterSourceSha: string;
   readonly hashStage: "assembled-before-signing" | "after-nested-signing-before-outer-bundle-signing";
@@ -185,11 +190,15 @@ export async function verifyPackagedHermesArtifact(resourcesRoot: string): Promi
  */
 export function packagedPersonAgentPlatform(resourcesRoot: string, services: PackagedRuntimeServices): PersonAgentPlatform {
   if (typeof resourcesRoot !== "string" || resourcesRoot.length > 4096 || !isAbsolute(resourcesRoot) || resolve(resourcesRoot) !== resourcesRoot || /[\0\r\n]/.test(resourcesRoot)
-    || !object(services) || Object.keys(services).some(k => k !== "selectBroker") || typeof services.selectBroker !== "function")
+    || !object(services) || Object.keys(services).some(k => !["selectBroker", "releaseBroker", "protectedRoots", "bindStore"].includes(k)) || typeof services.selectBroker !== "function"
+    || services.releaseBroker !== undefined && typeof services.releaseBroker !== "function"
+    || services.bindStore !== undefined && typeof services.bindStore !== "function")
     throw new CuratedRuntimeUnavailable("runtime", "Explicit trusted packaged resources and broker selector are required.");
   const selected = services.selectBroker, root = join(resourcesRoot, "agent-runtimes", "hermes");
   return { initialAgent: { id: "yorozu", name: "Yorozu", role: "Secretary", pluginId: "hermes", allowedTools: ["file", "memory", "delegation"], directories: [] },
+    protectedRoots: services.protectedRoots,
     createFactory: store => {
+      services.bindStore?.(store);
       const factory = createCuratedAgentRuntimeFactory(store, { node: { executable: join(resourcesRoot, "node"), version: "26.10.0" },
         hermes: { ...HERMES_RUNTIME_PIN, source: join(root, PATHS.source), adapter: join(root, PATHS.adapter),
           python: { executable: join(root, PATHS.python), canonicalExecutable: join(root, PATHS.python), version: PIN.pythonVersion, libraryRoots: [join(root, "python", "lib"), join(root, "python", "share")] } }, selectBroker: selected });
@@ -197,8 +206,16 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
         if (agent.pluginId !== "hermes") throw new CuratedRuntimeUnavailable("runtime", "The selected plugin has no packaged runtime.");
         // Deliberately no cached success: changed payload bytes must fail the next preparation.
         await verifyPackagedHermesArtifact(resourcesRoot);
-        try { return await factory(agent, scope, execution); }
+        try {
+          const built = await factory(agent, scope, execution);
+          let released = false;
+          return { ...built, release: async () => {
+            if (released) return; released = true;
+            await services.releaseBroker?.(agent.id, execution.id);
+          } };
+        }
         catch (error) {
+          await services.releaseBroker?.(agent.id, execution.id);
           const capability = error instanceof CuratedRuntimeUnavailable ? error.capability : "runtime";
           throw new CuratedRuntimeUnavailable(capability, capability === "auth" ? "A supported trusted account broker is unavailable for this agent."
             : capability === "scope" ? "The selected agent execution scope is unavailable." : BAD);
@@ -211,7 +228,7 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
  * older bundles retain their existing execution route. Account onboarding is not
  * implemented here; preparation reports unavailable instead of discovering auth.
  */
-export function packagedPersonAgentPlatformFromEntry(entry: URL): PersonAgentPlatform | undefined {
+export function packagedResourcesFromEntry(entry: URL): string | undefined {
   const path = fileURLToPath(entry), dist = dirname(path), runtime = dirname(dist), resources = dirname(runtime);
   if (basename(path) !== "secretary-serve.js" || basename(dist) !== "dist" || basename(runtime) !== "runtime" || basename(resources) !== "Resources") return;
   let fd: number;
@@ -224,6 +241,12 @@ export function packagedPersonAgentPlatformFromEntry(entry: URL): PersonAgentPla
     fields(marker.personAgentPlatform, ["kind", "productionReady"]);
     if (marker.schemaVersion !== 1 || marker.runtimeEntry !== "runtime/dist/secretary-serve.js" || marker.harnessProtocolVersion !== 1
       || marker.personAgentPlatform.kind !== "packaged-hermes-v1" || marker.personAgentPlatform.productionReady !== false) throw new Error(BAD);
-    return packagedPersonAgentPlatform(safeAgentPath(resources, true), { selectBroker: () => undefined });
+    return safeAgentPath(resources, true);
   } catch { throw new CuratedRuntimeUnavailable("runtime", BAD); } finally { closeSync(fd); }
+}
+
+/** Compatibility read-only entry helper; production supplies its explicit account owner. */
+export function packagedPersonAgentPlatformFromEntry(entry: URL): PersonAgentPlatform | undefined {
+  const resources = packagedResourcesFromEntry(entry);
+  return resources ? packagedPersonAgentPlatform(resources, { selectBroker: () => undefined }) : undefined;
 }

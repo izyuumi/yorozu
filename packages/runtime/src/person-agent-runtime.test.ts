@@ -68,9 +68,9 @@ function fixture(mode = "complete") {
     return Promise.resolve({ status: "unsupported" });
   });
   const factory: PersonAgentRuntimeFactory = (agent, scope, execution) => {
-    factories.push({ agent, scope, execution });
+    const release = vi.fn(async () => {}); factories.push({ agent, scope, execution, release });
     return { configuration: { pluginId: agent.pluginId, upstreamVersion: "fixture-1", command: process.execPath, args: [], initialize: {} },
-      runtime: { command: process.execPath, args: [], runtimeDir: execution.scratchRoot, readPaths: [], brokerPorts: [] } };
+      runtime: { command: process.execPath, args: [], runtimeDir: execution.scratchRoot, readPaths: [], brokerPorts: [] }, release };
   };
   const manager = new PersonAgentRuntime(dir, store, factory); manager.bind({ emit: e => appendThreadEvent(e, dir), changed() {} });
   cleanup.push(async () => { await manager.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -95,6 +95,28 @@ test("one agent shares a daemon across chats while sessions, bindings and host l
   expect(policy).toContain("(deny default)"); expect(policy).toContain(join(f.dir, "threads")); expect(policy).toContain(f.store.paths("bob").workspace.split("/workspace")[0]);
   expect(() => new PersonAgentRuntime(f.dir, f.store, () => { throw new Error("unused"); })).toThrow("already owned");
   await expect(f.manager.conversation("alice-chat-1", "bob")).rejects.toThrow("immutable");
+});
+
+test("retiring an idle account releases once and requires an explicit settings revision before another chat", async () => {
+  const f = fixture(); f.store.update("alice", { accountBindingId: "fixture-account" }, f.store.list().revision);
+  const owner = await f.manager.conversation("account-chat", "alice"); await f.invoke(owner, "first-account-input", "hello");
+  const old = f.factories[0]; await f.manager.retireAccount("fixture-account");
+  expect(old.release).toHaveBeenCalledOnce();
+  await expect(f.manager.conversation("account-chat")).rejects.toThrow("no implicit respawn");
+  await f.manager.configure("alice", { accountBindingId: "another-account" }, f.store.list().revision);
+  const next = await f.manager.conversation("account-chat"); expect(next.process).not.toBe(owner.process);
+  expect(f.factories).toHaveLength(2); expect(f.factories[1].agent.accountBindingId).toBe("another-account");
+  await f.manager.close(); expect(old.release).toHaveBeenCalledOnce(); expect(f.factories[1].release).toHaveBeenCalledOnce();
+});
+
+test("retiring an active account holds its exact chain while other people remain usable", async () => {
+  const f = fixture("hold"); f.store.update("alice", { accountBindingId: "fixture-account" }, f.store.list().revision);
+  const owner = await f.manager.conversation("active-account-chat", "alice"), running = f.invoke(owner, "active-account-input", "wait");
+  await vi.waitFor(() => expect(f.traces.some(t => t.method === "turn.submit")).toBe(true));
+  await f.manager.retireAccount("fixture-account"); await running;
+  expect(f.manager.held("alice")).toContain("retired"); expect(f.manager.held("bob")).toBeUndefined();
+  await expect(f.manager.conversation("active-account-chat")).rejects.toThrow();
+  expect(await f.manager.conversation("bob-account-chat", "bob")).toBeDefined(); expect(f.factories[0].release).toHaveBeenCalledOnce();
 });
 
 test("explicit secretary migration preserves legacy metadata and history without inheriting its folder authority", async () => {

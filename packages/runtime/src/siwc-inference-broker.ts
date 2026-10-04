@@ -376,6 +376,7 @@ export function createSiwcBrokerSelector(config: SiwcBrokerSelectorConfiguration
   }, release: async (agentId: string, executionId: string) => {
     if (!validAgentId(agentId) || !/^[a-f0-9]{64}$/.test(executionId)) fail("binding");
     const instance = `${agentId}:${executionId}`; retired.add(instance); selecting.get(instance)?.abort();
+    const key = instanceKeys.get(instance); if (key) pending.delete(key);
     const value = owned.get(instance); owned.delete(instance);
     if (value) { value.broker.close(); await closeEndpoint(value.endpoint); }
   }, close: async () => {

@@ -13,6 +13,8 @@ export interface PersonAgentPlatform {
   createFactory(store: PersonAgentStore): PersonAgentRuntimeFactory;
   /** Previously selected resources, supplied only by trusted host configuration. */
   resourceRoots?: DirectoryGrant[];
+  /** Trusted host credential/helper/lock roots excluded from every minted scope. */
+  protectedRoots?: readonly string[];
   /** A fresh installation may explicitly provision its default person. */
   initialAgent?: PersonAgentInput;
   /** Explicit execution overlay; legacy backend metadata/history are retained for rollback. */
@@ -25,7 +27,7 @@ export class PersonAgentHost {
   readonly controls: PersonAgentControls;
   readonly runner: NativeAgentRunner;
   constructor(readonly dir: string, platform: PersonAgentPlatform) {
-    this.store = new PersonAgentStore(dir, { resourceRoots: platform.resourceRoots });
+    this.store = new PersonAgentStore(dir, { resourceRoots: platform.resourceRoots, protectedRoots: platform.protectedRoots });
     this.runtime = new PersonAgentRuntime(dir, this.store, platform.createFactory(this.store));
     let controls: PersonAgentControls | undefined;
     try {

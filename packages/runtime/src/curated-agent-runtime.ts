@@ -31,7 +31,7 @@ export interface SelectedAgentBroker {
 }
 export interface CuratedAgentRuntimeConfiguration {
   node: CuratedNodeRuntime; hermes: CuratedHermesRuntime; openclaw?: CuratedOpenClawRuntime;
-  selectBroker(agent: Readonly<PersonAgent>, execution: Readonly<PersonAgentExecution>): SelectedAgentBroker | undefined | Promise<SelectedAgentBroker | undefined>;
+  selectBroker(agent: Readonly<PersonAgent>, execution: Readonly<PersonAgentExecution>, scope: EffectiveAgentScope): SelectedAgentBroker | undefined | Promise<SelectedAgentBroker | undefined>;
   /** Curated tool executables, granted as code reads only when terminal is selected.
    * The OS compiler currently does not implement a command allowlist.
    */
@@ -134,7 +134,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
     let selected: SelectedAgentBroker | undefined, timer: NodeJS.Timeout | undefined;
     try {
       selected = await Promise.race([
-        Promise.resolve().then(() => selector(Object.freeze(structuredClone(agent)), Object.freeze({ ...execution }))),
+        Promise.resolve().then(() => selector(Object.freeze(structuredClone(agent)), Object.freeze({ ...execution }), scope)),
         new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error()), 10_000); }),
       ]);
     } catch { throw new CuratedRuntimeUnavailable("auth", "Host broker selection is unavailable; no fallback was attempted"); }

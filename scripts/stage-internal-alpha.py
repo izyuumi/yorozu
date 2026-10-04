@@ -32,11 +32,16 @@ OVERLAYS = [
     "packages/runtime/src/siwc-https-transport.ts",
     "packages/runtime/src/siwc-account-lifecycle.ts", "packages/runtime/src/siwc-account-https.ts",
     "packages/runtime/src/siwc-id-token-verifier.ts",
+    "packages/runtime/src/siwc-person-broker.ts", "packages/runtime/src/siwc-broker-endpoint.ts",
+    "packages/runtime/src/siwc-protected-store.ts", "packages/runtime/src/siwc-control-journal.ts",
+    "packages/runtime/src/native-account-coordinator.ts", "packages/runtime/src/native-account-callback.ts",
+    "packages/runtime/src/native-account-host.ts",
     "packages/runtime/src/fixtures/hermes-siwc-shape.json",
     "packages/runtime/src/host-core-command.ts",
     "packages/runtime/src/rust-sync.ts", "packages/runtime/src/rust-sync-worker.ts",
     "packages/shared/src/events.ts",
     "packages/shared/src/peer-info.ts", "packages/shared/src/person-agents.ts",
+    "packages/shared/src/siwc-accounts.ts",
     "packages/shared/src/index.ts",
     "packages/harness-plugins",
     "scripts/harness-proof.mjs",
@@ -45,6 +50,8 @@ OVERLAYS = [
     "docs/siwc-inference-broker.md", "scripts/capture-hermes-siwc-shape.py",
     "docs/siwc-account-lifecycle.md",
     "docs/siwc-id-token-verifier.md",
+    "docs/siwc-account-fences.md", "docs/siwc-native-protected-store.md", "docs/siwc-control-journal.md",
+    "docs/native-siwc-account-coordinator.md", "docs/native-siwc-account-host.md",
     "docs/hermes-runtime-packaging.md", "scripts/package-hermes-runtime.py", "scripts/test-package-hermes-runtime.py",
     "scripts/build-mac.sh", "scripts/build-version.sh",
     "scripts/build-internal-alpha.sh", "scripts/check-internal-alpha.sh", "scripts/stage-internal-alpha.py",
@@ -75,9 +82,9 @@ def stage(destination):
     # Keep the production manifest and lockfile together. Only these explicit new
     # files and the reviewed adapter replace runtime source; serve/storage do not.
     tests = git("ls-tree", "-r", "--name-only", source, "packages/runtime/src").decode().splitlines()
-    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness", "agent-", "person-agent-", "curated-agent-", "packaged-agent-", "siwc-")) and name.endswith(".test.ts")]
+    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness", "agent-", "person-agent-", "curated-agent-", "packaged-agent-", "siwc-", "native-account-")) and name.endswith(".test.ts")]
     shared_tests = git("ls-tree", "-r", "--name-only", source, "packages/shared/src").decode().splitlines()
-    tests += [name for name in shared_tests if Path(name).name.startswith(("person-agents", "peer-info")) and name.endswith(".test.ts")]
+    tests += [name for name in shared_tests if Path(name).name.startswith(("person-agents", "peer-info", "siwc-")) and name.endswith(".test.ts")]
     if not tests:
         raise SystemExit("Secretary regression tests are missing")
     with tarfile.open(fileobj=io.BytesIO(git("archive", source, *tests))) as archive:
