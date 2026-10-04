@@ -96,6 +96,24 @@ export function validateGatewayListener(params) {
   only(params.gatewayListener, ['transport', 'fd', 'host', 'port'], 'gatewayListener');
   if (params.gatewayListener.transport !== CURATED_RUNTIME.transport || params.gatewayListener.fd !== 3 || params.gatewayListener.host !== '127.0.0.1' || params.gatewayListener.port !== params.gatewayPort) throw invalid('the exact host-owned numeric-loopback Gateway listener must be inherited as FD3');
 }
+/** Trusted host bootstrap only. Validation errors never include provider values or secrets. */
+export function parseProviderBootstrap(encoded) {
+  try {
+    if (typeof encoded !== 'string' || Buffer.byteLength(encoded) > 4096) throw new Error();
+    const provider = JSON.parse(encoded);
+    only(provider, ['baseUrl', 'model', 'api', 'bearer'], 'private inference broker');
+    // Check the literal spelling before URL normalization can accept IP aliases.
+    if (typeof provider.baseUrl !== 'string' || !/^http:\/\/127\.0\.0\.1:[1-9]\d{3,4}\/v1\/?$/.test(provider.baseUrl)) throw new Error();
+    const endpoint = new URL(provider.baseUrl);
+    if (Number(endpoint.port) < 1024 || Number(endpoint.port) > 65535) throw new Error();
+    if (typeof provider.model !== 'string' || !/^[a-zA-Z0-9_.:-]{1,128}$/.test(provider.model) || provider.api !== 'openai-responses') throw new Error();
+    if (provider.bearer !== undefined && (typeof provider.bearer !== 'string' || provider.bearer.length > 256 || !/^[a-zA-Z0-9._~+\/-]{32,256}={0,2}$/.test(provider.bearer))) throw new Error();
+    return { baseUrl: provider.baseUrl, model: provider.model, api: provider.api,
+      ...(provider.bearer !== undefined ? { bearer: provider.bearer } : {}) };
+  } catch {
+    throw invalid('Invalid private inference broker bootstrap');
+  }
+}
 export async function prepareRuntime(params) {
   only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener'], 'initialize');
   if (params.platform !== undefined) {
@@ -152,11 +170,7 @@ export async function prepareRuntime(params) {
     const file = absolute(params.providerConfigPath, 'providerConfigPath');
     if (!contains(scoped.profileDir, file) || await realpath(file) !== file) throw invalid('proof provider must be in this explicit private profile');
     await regular(file, 4096);
-    provider = JSON.parse(await readFile(file, 'utf8'));
-    only(provider, ['baseUrl', 'model', 'api'], 'proof provider');
-    const endpoint = new URL(required(provider.baseUrl, 'baseUrl', 2048));
-    if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(endpoint.hostname) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) throw invalid('only explicit loopback proof inference is supported');
-    if (!/^[a-zA-Z0-9_.:-]{1,128}$/.test(provider.model) || provider.api !== 'openai-responses') throw invalid('proof provider requires bounded model and native openai-responses API');
+    provider = parseProviderBootstrap(await readFile(file, 'utf8'));
   }
   return { ...scoped, source, node, home, state, temporary, provider, gatewayPort: params.gatewayPort, authAvailable: Boolean(provider), journalPath: join(scoped.profileDir, 'adapter-journal-v1.json') };
 }
@@ -171,7 +185,7 @@ export function runtimeConfig(runtime, port, token) {
     commands: { restart: false }, mcp: { apps: { enabled: false } },
     browser: { enabled: false }, cron: { enabled: false }, plugins: { enabled: false, slots: { memory: 'none' } },
     update: { checkOnStart: false, auto: { enabled: false } },
-    models: { mode: 'replace', catalogRefresh: { enabled: false }, providers: runtime.provider ? { 'yorozu-local-proof': { baseUrl: runtime.provider.baseUrl, apiKey: 'yorozu-loopback-proof', auth: 'api-key', api: runtime.provider.api, authHeader: false,
+    models: { mode: 'replace', catalogRefresh: { enabled: false }, providers: runtime.provider ? { 'yorozu-local-proof': { baseUrl: runtime.provider.baseUrl, apiKey: runtime.provider.bearer ?? 'yorozu-loopback-proof', auth: 'api-key', api: runtime.provider.api, authHeader: runtime.provider.bearer !== undefined,
       models: [{ id: runtime.provider.model, name: runtime.provider.model, reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } : {} },
   };
 }

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath } from 'node
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createAdapter, NativeGateway, CAPABILITIES, UPSTREAM, CURATED_RUNTIME, validateScope, validateGatewayListener, nativeGatewayLaunch, runtimeConfig, runtimeEnvironment } from './adapter.mjs';
+import { createAdapter, NativeGateway, CAPABILITIES, UPSTREAM, CURATED_RUNTIME, validateScope, validateGatewayListener, parseProviderBootstrap, nativeGatewayLaunch, runtimeConfig, runtimeEnvironment } from './adapter.mjs';
 
 // Contract tests deliberately fake the Gateway. They are not native execution,
 // subscription authentication or interchangeable-harness acceptance evidence.
@@ -284,6 +284,32 @@ test('native config and environment stay strictly below harness grants and inher
   assert.equal(env.HOME, runtime.home); assert.equal(env.CODEX_HOME, join(runtime.profileDir, 'isolated-codex'));
   for (const key of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENCLAW_GATEWAY_TOKEN', 'NODE_OPTIONS', 'HTTP_PROXY', 'SSH_AUTH_SOCK', 'AWS_PROFILE']) assert.equal(env[key], undefined);
   assert.equal(env.OPENCLAW_NO_RESPAWN, '1'); assert.equal(env.OPENCLAW_SKIP_CRON, '1'); assert.equal(env.OPENCLAW_EXEC_SHELL_SNAPSHOT, '0');
+});
+test('private broker bearer uses native authorization only and retains isolated configuration', () => {
+  const bearer = 'fixture-only-host-bearer-'.padEnd(64, 'x');
+  const provider = parseProviderBootstrap(JSON.stringify({ baseUrl: 'http://127.0.0.1:32146/v1', model: 'synthetic', api: 'openai-responses', bearer }));
+  const runtime = { agentId: 'secretary', workspace: '/own/scratch', profileDir: '/own/runtime', home: '/own/runtime/home', state: '/own/runtime/state', temporary: '/own/runtime/tmp', node: '/curated/node', provider };
+  const config = runtimeConfig(runtime, 32147, 'separate-gateway-token');
+  const inference = config.models.providers['yorozu-local-proof'];
+  assert.equal(inference.apiKey, bearer); assert.equal(inference.authHeader, true);
+  assert.equal(inference.baseUrl, provider.baseUrl); assert.equal(inference.api, 'openai-responses');
+  assert.equal(config.gateway.auth.token, 'separate-gateway-token'); assert.deepEqual(config.agents.defaults.model.fallbacks, []);
+  assert.equal(JSON.stringify(runtimeEnvironment(runtime)).includes(bearer), false);
+  const synthetic = runtimeConfig({ ...runtime, provider: parseProviderBootstrap(JSON.stringify({ baseUrl: provider.baseUrl, model: 'synthetic', api: provider.api })) }, 32147, 'separate-gateway-token').models.providers['yorozu-local-proof'];
+  assert.equal(synthetic.apiKey, 'yorozu-loopback-proof'); assert.equal(synthetic.authHeader, false);
+});
+test('broker bootstrap rejects IP aliases, wider endpoints and malformed secrets without echoing values', () => {
+  const bearer = 'fixture-only-secret-must-never-appear-in-errors';
+  const valid = { baseUrl: 'http://127.0.0.1:32146/v1', model: 'synthetic', api: 'openai-responses', bearer };
+  for (const baseUrl of ['http://localhost:32146/v1', 'http://127.1:32146/v1', 'http://2130706433:32146/v1', 'http://[::1]:32146/v1', 'http://127.0.0.1/v1', 'http://127.0.0.1:1023/v1', 'http://127.0.0.1:65536/v1', 'http://127.0.0.1:032146/v1', 'https://127.0.0.1:32146/v1', `http://${bearer}@127.0.0.1:32146/v1`, 'http://127.0.0.1:32146/v1?key=secret', 'http://127.0.0.1:32146/v1#secret', 'http://127.0.0.1:32146/other']) {
+    assert.throws(() => parseProviderBootstrap(JSON.stringify({ ...valid, baseUrl })), error => error.code === -32602 && error.message === 'Invalid private inference broker bootstrap' && !error.message.includes(bearer));
+  }
+  for (const value of [{ ...valid, bearer: 'short' }, { ...valid, bearer: `${bearer}\r\nInjected: yes` }, { ...valid, bearer: 'x'.repeat(257) }, { ...valid, bearer: { env: 'OPENAI_API_KEY' } }, { ...valid, api: 'ambient-provider' }, { ...valid, ambientCredential: bearer }, [valid], null]) {
+    assert.throws(() => parseProviderBootstrap(JSON.stringify(value)), error => error.message === 'Invalid private inference broker bootstrap' && !error.message.includes(bearer));
+  }
+  for (const encoded of [`{"bearer":"${bearer}",`, JSON.stringify({ ...valid, model: bearer + ' '.repeat(4096) })]) {
+    assert.throws(() => parseProviderBootstrap(encoded), error => error.message === 'Invalid private inference broker bootstrap' && !error.message.includes(bearer));
+  }
 });
 test('zero-tool scope permits only private runtime scratch without minting user directory grants', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'yorozu-openclaw-empty-')));
