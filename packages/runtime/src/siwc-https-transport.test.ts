@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { checkServerIdentity, rootCertificates } from "node:tls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSiwcHttpsTransport } from "./siwc-https-transport.js";
-import { SIWC_RESPONSES_URL, type SiwcTransportRequest } from "./siwc-inference-broker.js";
+import { createSiwcExecutionBroker, SIWC_RESPONSES_URL, type SiwcTransportRequest } from "./siwc-inference-broker.js";
 
 const network = vi.hoisted(() => ({ agents: [] as any[], calls: [] as any[] }));
 vi.mock("node:https", async () => {
@@ -164,5 +164,32 @@ describe("fixed SIWC HTTPS transport with inert network", () => {
     controllers.forEach(controller => controller.abort()); await Promise.all(pending);
     expect(network.calls).toHaveLength(33);
     expect(network.agents.every(agent => agent.destroy.mock.calls.length === 1)).toBe(true);
+  });
+
+  it("composes with the execution broker without exposing either bearer or replaying the request", async () => {
+    const identity = { accountBindingId: "synthetic-account", clientId: "oaiapp_fixture", subject: "synthetic-subject",
+      verification: "host-validated-siwc-v1" as const, storage: "os-protected" as const };
+    const broker = createSiwcExecutionBroker({ agentId: "alice", executionId: "a".repeat(64), scopeDigest: "b".repeat(64),
+      account: identity, model: "synthetic-model", allowedFunctionNames: [], isCurrent: () => true,
+      budget: { maxRequests: 1, maxConcurrent: 1, maxRequestBytes: 8192, maxResponseBytes: 16384,
+        maxTotalBytes: 64000, maxEventBytes: 8192, requestTimeoutMs: 1000, expiresAt: Date.now() + 60000 },
+      getAccessToken: async () => ({ ...identity, audience: "https://api.openai.com/v1", scopes: ["resource.invoke", "chatgpt.tokens.use.direct"],
+        expiresAt: Date.now() + 60000, accessToken: TOKEN }) }, createSiwcHttpsTransport());
+    const selected = broker.selected("127.0.0.1", 54321), output: string[] = [], statuses: number[] = [];
+    const pending = broker.dispatch({ method: "POST", path: "/v1/responses", host: "127.0.0.1:54321", remoteAddress: "127.0.0.1",
+      authorization: `Bearer ${selected.bearer}`, contentType: "application/json",
+      body: { async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify({ model: "synthetic-model", store: false,
+        stream: true, input: [{ role: "user", content: "Synthetic prompt" }] })); } } },
+      { start: status => statuses.push(status), write: async value => { output.push(Buffer.from(value).toString()); }, end: () => {} });
+    await vi.waitFor(() => expect(network.calls).toHaveLength(1));
+    expect(network.calls[0].options.headers.authorization).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.parse(network.calls[0].request.end.mock.calls[0][0])).toMatchObject({ store: false, stream: true, service_tier: "default" });
+    const completed = { type: "response.completed", response: { id: "resp_synthetic", status: "completed", service_tier: "default", output: [] } };
+    network.calls[0].reply(response([Buffer.from(`event: response.completed\ndata: ${JSON.stringify(completed)}\n\n`)]).incoming);
+    await pending;
+    expect(statuses).toEqual([200]); expect(output.join("")).toContain("response.completed");
+    expect(output.join("")).not.toContain(TOKEN); expect(output.join("")).not.toContain(selected.bearer);
+    expect(network.calls).toHaveLength(1); expect(network.agents[0].destroy).toHaveBeenCalledOnce();
+    expect(broker.status()).toMatchObject({ requests: 1, active: 0 }); broker.close();
   });
 });
