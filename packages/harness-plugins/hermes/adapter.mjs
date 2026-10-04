@@ -415,28 +415,33 @@ export function createAdapter({ emit, launch = launchGateway }) {
     }
   }
   async function control(method, params) {
-    const { session, task, reason } = currentTask(params);
-    if (reason) return { status: 'rejected', reason };
-    if (!(method === 'task.steer' ? task.canSteer && task.state !== 'stopping' : task.canStop)) return { status: 'unsupported', reason: 'Hermes has not established live control for this child' };
+    const session = sessionFor(params); currency(params); required(params.taskId, 'taskId');
     required(params.operationId, 'operationId');
+    if (method === 'task.steer') required(params.text, 'text', 32 * 1024);
     const fingerprint = JSON.stringify([method, params.taskId, params.runId, params.attemptId, params.text]);
     const previous = session.operations.get(params.operationId);
     if (previous) return previous.fingerprint === fingerprint ? previous.result : { status: 'rejected', reason: 'operationId was used for different control currency' };
+    const { task, reason } = currentTask(params);
+    if (reason) return { status: 'rejected', reason };
+    if (!(method === 'task.steer' ? task.canSteer && task.state !== 'stopping' : task.canStop)) return { status: 'unsupported', reason: 'Hermes has not established live control for this child' };
     if (session.operations.size >= 1024) return { status: 'rejected', reason: 'control receipt capacity exceeded' };
     // Reserve before sending: a lost upstream response is never an excuse to replay.
-    const receipt = { fingerprint, result: { status: 'rejected', reason: 'control acknowledgement uncertain; do not replay' } };
+    const receipt = { fingerprint, result: { status: 'unknown', reason: 'control acknowledgement uncertain; do not replay' } };
     session.operations.set(params.operationId, receipt);
     try {
       const result = await runtime.gateway.call(method === 'task.steer' ? 'subagent.steer' : 'subagent.interrupt', {
         session_id: session.liveId, subagent_id: task.upstreamId,
-        ...(method === 'task.steer' ? { text: required(params.text, 'text', 32 * 1024) } : {}),
+        ...(method === 'task.steer' ? { text: params.text } : {}),
       });
-      receipt.result = method === 'task.steer'
-        ? { status: result.status === 'queued' ? 'queued' : 'rejected', ...(result.status !== 'queued' ? { reason: 'Hermes rejected the steer' } : {}) }
-        : { status: result.found === true ? 'requested' : 'rejected', ...(result.found !== true ? { reason: 'Hermes no longer owns this live task' } : {}) };
+      if (method === 'task.steer') {
+        if (result.status === 'queued') receipt.result = { status: 'queued' };
+        else if (result.status === 'rejected') receipt.result = { status: 'rejected', reason: 'Hermes rejected the steer' };
+      } else if (result.found === true) receipt.result = { status: 'requested' };
+      else if (result.found === false) receipt.result = { status: 'rejected', reason: 'Hermes no longer owns this live task' };
       if (receipt.result.status === 'requested' && ACTIVE.has(task.state)) { task.state = 'stopping'; publishTask(session, task); }
     } catch (error) {
       if (error.code === 4010 || error.code === -32601) receipt.result = { status: 'unsupported', reason: error.message };
+      else receipt.result = { status: 'unknown', reason: `control acknowledgement uncertain; do not replay: ${text(error.message, 1024)}` };
     }
     return receipt.result;
   }
@@ -503,7 +508,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
         // silently turn a fresh user topic into steering of another attempt.
         try {
           const status = await runtime.gateway.call('session.activate', { session_id: session.liveId, omit_messages: true });
-          if (status.running || status.inflight?.streaming || status.queued || session.current || session.probe || session.unattributedTurn) return { status: 'rejected', reason: 'native secretary is busy; host must retain its accepted queue' };
+          if (status.running || status.inflight?.streaming || status.queued || session.current || session.probe || session.unattributedTurn) return { status: 'busy', handoff: 'not-submitted', reason: 'native secretary is busy; host must retain its accepted queue' };
         } catch (error) { return { status: 'rejected', reason: `native readiness could not be verified: ${text(error.message, 1024)}` }; }
         if (session.attempts.size >= 4096) return { status: 'rejected', reason: 'admission capacity exceeded' };
         session.attempts.add(key);
@@ -515,17 +520,20 @@ export function createAdapter({ emit, launch = launchGateway }) {
             // Queued/redirected/steered are not fresh admission receipts.
             event(session, 'turn.terminal', { text: run.text, state: 'unknown', reason: `unexpected Hermes submit acknowledgement: ${result.status ?? 'missing'}` }, run);
             if (session.current === run) session.current = null;
-            return { status: 'rejected', reason: 'upstream admission differs from requested fresh turn; do not replay' };
+            return { status: 'unknown', reason: 'upstream admission differs from requested fresh turn; do not replay' };
           }
           return { status: 'accepted' };
         } catch (error) {
           if (session.current === run) { event(session, 'turn.terminal', { text: run.text, state: error.code >= 4000 && error.code < 5000 ? 'failed' : 'unknown', reason: text(error.message, 2048) }, run); session.lastRun = run; session.current = null; }
-          return { status: 'rejected', reason: text(error.message, 2048) };
+          return { status: error.code >= 4000 && error.code < 5000 ? 'rejected' : 'unknown', reason: text(error.message, 2048) };
         }
       }
       if (method === 'task.steer' || method === 'task.stop') return control(method, params);
       if (method === 'run.stop') {
         const session = sessionFor(params); currency(params); required(params.operationId, 'operationId');
+        const previous = session.operations.get(params.operationId);
+        const fingerprint = JSON.stringify([method, params.runId, params.attemptId]);
+        if (previous) return previous.fingerprint === fingerprint ? previous.result : { status: 'rejected', reason: 'operationId currency mismatch' };
         const run = session.current;
         const children = [...session.tasks.values()].filter(task => ACTIVE.has(task.state));
         const matches = task => task.originRunId === params.runId && task.originAttemptId === params.attemptId;
@@ -533,16 +541,17 @@ export function createAdapter({ emit, launch = launchGateway }) {
         if (!run && !children.some(matches)) return { status: 'rejected', reason: 'run currency is stale or settled' };
         if (children.some(task => !matches(task))) return { status: 'unsupported', reason: 'Hermes session interrupt would also stop tasks from another origin; use exact task.stop' };
         if (session.operations.size >= 1024) return { status: 'rejected', reason: 'control receipt capacity exceeded' };
-        const previous = session.operations.get(params.operationId);
-        const fingerprint = JSON.stringify([method, params.runId, params.attemptId]);
-        if (previous) return previous.fingerprint === fingerprint ? previous.result : { status: 'rejected', reason: 'operationId currency mismatch' };
-        const receipt = { fingerprint, result: { status: 'rejected', reason: 'stop acknowledgement uncertain; do not replay' } };
+        const receipt = { fingerprint, result: { status: 'unknown', reason: 'stop acknowledgement uncertain; do not replay' } };
         session.operations.set(params.operationId, receipt);
         session.stoppedOrigins.add(JSON.stringify([params.runId, params.attemptId]));
         try {
           const result = await runtime.gateway.call('session.interrupt', { session_id: session.liveId });
-          receipt.result = { status: result.status === 'interrupted' ? 'requested' : 'rejected', ...(result.status !== 'interrupted' ? { reason: 'Hermes reported no active turn to stop' } : {}) };
-        } catch (error) { if (error.code === -32601 || error.code === 4010) receipt.result = { status: 'unsupported', reason: error.message }; }
+          if (result.status === 'interrupted') receipt.result = { status: 'requested' };
+          else if (result.status === 'not_interrupted') receipt.result = { status: 'rejected', reason: 'Hermes reported no active turn to stop' };
+        } catch (error) {
+          if (error.code === -32601 || error.code === 4010) receipt.result = { status: 'unsupported', reason: error.message };
+          else receipt.result = { status: 'unknown', reason: `stop acknowledgement uncertain; do not replay: ${text(error.message, 1024)}` };
+        }
         return receipt.result;
       }
       if (method === 'request.answer') {

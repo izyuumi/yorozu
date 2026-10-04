@@ -18,6 +18,12 @@ go to stderr (16 KiB maximum). Maximum frame: 256 KiB; 32 pending calls; upstrea
 write queue: 8 MiB. Gateway acknowledgements time out after 30 seconds and remain
 uncertain. A timed-out action is never replayed.
 
+Task and run controls return `unknown` when their acknowledgement is lost or
+malformed. Repeating the same operation ID and currency returns that cached
+receipt without another upstream call, even if the task has since settled.
+`rejected` and `unsupported` require an explicit corresponding receipt or a
+known refusal before handoff; neither means an uncertain Stop was declined.
+
 `initialize` accepts `{protocolVersion:1, upstreamVersion:'0.21.5', profileRoot,
 workspace, python, sourcePath, providerConfigPath?, provider?, model?}`. Paths are
 absolute. The result declares plugin/version/capabilities and explicit auth status.
@@ -46,7 +52,7 @@ The remaining methods are:
 | Method | Important semantics |
 | --- | --- |
 | `session.open` | Host conversation/binding IDs; create or lazy resume of an opaque durable ID. Hidden preference/context seed on new sessions; no automatic crash replay. |
-| `turn.submit` | Host run/attempt and text. Only native `streaming` acknowledges a fresh admission. Duplicate attempts reject; host must persist its admission journal before sending. |
+| `turn.submit` | Host run/attempt and text. Only native `streaming` acknowledges a fresh admission. Preflight `busy` with `handoff:'not-submitted'` consumes no attempt and permits bounded retry of that same host currency. An ambiguous handoff returns `unknown`; duplicate admitted attempts reject. Host must persist its admission journal before sending. |
 | `task.steer` | Exact conversation/task/origin run/attempt/operation ID. `queued` means queued, never consumed. |
 | `task.stop` | Exact native child interrupt. `requested` waits for native terminal evidence. |
 | `run.stop` | Matching current turn or active children origin only. If other origin tasks would be interrupted, returns `unsupported`; exact child Stop remains available. |
@@ -110,6 +116,8 @@ public atomic idle-only admission API. A native busy race can still produce a
 queued acknowledgement after preflight: that outcome remains unknown and held,
 without replay. Complete ownership of that race is an unresolved release gate;
 the host also waits for observed autonomous attempts before dispatching its queue.
+Only the typed preflight `busy`/`not-submitted` receipt permits a bounded host
+readiness retry. Lost RPCs and queued/redirected native receipts never do.
 
 Hermes `session.interrupt` clears its prompt queues and origin-owned async children,
 so it cannot serve as a selective per-turn cancellation when other origins coexist.

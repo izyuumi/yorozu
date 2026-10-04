@@ -287,7 +287,7 @@ test('safe resume is lazy and inspection only; duplicate event cursors do not du
 test('uncertain admission rejects retries and does not convert queued or redirected replies into accepted', async () => {
   const { adapter, gateway, events } = await setup();
   gateway.override = method => method === 'prompt.submit' ? { status: 'queued' } : undefined;
-  assert.equal((await adapter.handle('turn.submit', { ...currency, text: 'Check.' })).status, 'rejected');
+  assert.equal((await adapter.handle('turn.submit', { ...currency, text: 'Check.' })).status, 'unknown');
   assert.equal(events.at(-1).data.state, 'unknown');
   assert.equal((await adapter.handle('turn.submit', { ...currency, text: 'Check.' })).status, 'rejected');
   assert.equal(gateway.calls.filter(call => call.method === 'prompt.submit').length, 1);
@@ -296,11 +296,42 @@ test('uncertain admission rejects retries and does not convert queued or redirec
 test('native busy preflight does not submit or consume an attempt; fresh topics force queue instead of steer', async () => {
   const { adapter, gateway } = await setup();
   gateway.running = true;
-  assert.equal((await adapter.handle('turn.submit', { ...currency, text: 'A new topic.' })).status, 'rejected');
+  const busy = await adapter.handle('turn.submit', { ...currency, text: 'A new topic.' });
+  assert.equal(busy.status, 'busy'); assert.equal(busy.handoff, 'not-submitted');
   assert.equal(gateway.calls.some(call => call.method === 'prompt.submit'), false);
   gateway.running = false;
   assert.equal((await adapter.handle('turn.submit', { ...currency, text: 'A new topic.' })).status, 'accepted');
   assert.equal(gateway.calls.find(call => call.method === 'prompt.submit').params.queued, true);
+});
+
+test('lost control acknowledgements stay cached unknown without replay, including after task or run settlement', async () => {
+  for (const method of ['task.steer', 'task.stop', 'run.stop']) {
+    const { adapter, gateway, events } = await setup();
+    await adapter.handle('turn.submit', { ...currency, text: 'Delegate.' }); startChild(gateway, 'one');
+    const nativeMethod = method === 'task.steer' ? 'subagent.steer' : method === 'task.stop' ? 'subagent.interrupt' : 'session.interrupt';
+    gateway.override = called => called === nativeMethod ? Promise.reject(Object.assign(new Error('acknowledgement lost'), { code: -32004 })) : undefined;
+    const params = { ...currency, operationId: `lost-${method}`, ...(method.startsWith('task.') ? { taskId: taskEvent(events, 'one').data.taskId } : {}), ...(method === 'task.steer' ? { text: 'Use example A.' } : {}) };
+    const receipt = await adapter.handle(method, params);
+    assert.equal(receipt.status, 'unknown'); assert.match(receipt.reason, /do not replay/);
+    gateway.event('subagent.complete', { goal: 'one', task_count: 1, task_index: 0, subagent_id: 'one', status: 'completed' });
+    gateway.event('message.complete', { text: 'Done.', status: 'complete' });
+    assert.deepEqual(await adapter.handle(method, params), receipt);
+    assert.equal(gateway.calls.filter(call => call.method === nativeMethod).length, 1);
+    assert.equal((await adapter.handle(method, { ...params, attemptId: 'foreign-attempt' })).status, 'rejected');
+  }
+});
+
+test('malformed controls are unknown; unsupported native methods remain explicit unsupported', async () => {
+  for (const method of ['task.steer', 'task.stop', 'run.stop']) {
+    const { adapter, gateway, events } = await setup();
+    await adapter.handle('turn.submit', { ...currency, text: 'Delegate.' }); startChild(gateway, 'one');
+    const nativeMethod = method === 'task.steer' ? 'subagent.steer' : method === 'task.stop' ? 'subagent.interrupt' : 'session.interrupt';
+    gateway.override = called => called === nativeMethod ? {} : undefined;
+    const params = { ...currency, operationId: `malformed-${method}`, ...(method.startsWith('task.') ? { taskId: taskEvent(events, 'one').data.taskId } : {}), ...(method === 'task.steer' ? { text: 'Use example A.' } : {}) };
+    assert.equal((await adapter.handle(method, params)).status, 'unknown');
+    gateway.override = called => called === nativeMethod ? Promise.reject(Object.assign(new Error('unsupported'), { code: -32601 })) : undefined;
+    assert.equal((await adapter.handle(method, { ...params, operationId: `unsupported-${method}` })).status, 'unsupported');
+  }
 });
 
 test('real subscription auth unavailable is explicit and never triggers session/provider probes', async () => {
