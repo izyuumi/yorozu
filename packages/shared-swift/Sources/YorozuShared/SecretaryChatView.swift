@@ -159,6 +159,24 @@ public struct SecretaryChatView: View {
                 Button(locale.secretaryText("History", "履歴"), systemImage: "clock.arrow.circlepath", action: onHistory)
                     .accessibilityIdentifier("secretary-history")
             }
+            if model.supportsPersonAgents {
+                ToolbarItem(placement: historyPlacement) {
+                    NavigationLink { PersonAgentsView(model: model) } label: {
+                        Label("Agents", systemImage: "person.2")
+                    }
+                    .labelStyle(.iconOnly)
+                    .help(SecretaryUI.localized("Agents"))
+                    .accessibilityIdentifier("secretary-agents")
+                }
+                ToolbarItem(placement: historyPlacement) {
+                    NavigationLink { PersonChatsView(model: model) } label: {
+                        Label("Chats", systemImage: "bubble.left.and.bubble.right")
+                    }
+                    .labelStyle(.iconOnly)
+                    .help(SecretaryUI.localized("Chats"))
+                    .accessibilityIdentifier("secretary-chats")
+                }
+            }
             ToolbarItem {
                 Label(connectionLabel, systemImage: connected ? "checkmark.circle" : "circle.dotted")
                     .font(.callout).foregroundStyle(.secondary)
@@ -180,6 +198,7 @@ public struct SecretaryChatView: View {
         }
         .onChange(of: model.listed, initial: true) { _, _ in selectThread() }
         .onChange(of: thread?.id) { _, _ in selectThread() }
+        .onAppear { selectThread() }
         .onDisappear {
             if model.openThread == SecretaryUI.threadID { model.openThread = nil }
             Task { await model.flushCache() }

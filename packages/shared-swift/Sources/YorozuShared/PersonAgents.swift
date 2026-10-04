@@ -103,6 +103,7 @@ public struct PersonAgentInput: Codable, Equatable, Sendable {
 }
 
 public struct PersonAgentPatch: Codable, Equatable, Sendable {
+    public enum Clear: String, Codable, Sendable { case model, accountBindingId }
     public var name: String?
     public var role: String?
     public var pluginId: PersonAgentPlugin?
@@ -110,27 +111,33 @@ public struct PersonAgentPatch: Codable, Equatable, Sendable {
     public var accountBindingId: String?
     public var allowedTools: [PersonAgentTool]?
     public var directories: [PersonAgentDirectoryGrant]?
+    public var clear: [Clear]?
     public init(name: String? = nil, role: String? = nil, pluginId: PersonAgentPlugin? = nil,
         model: String? = nil, accountBindingId: String? = nil, allowedTools: [PersonAgentTool]? = nil,
-        directories: [PersonAgentDirectoryGrant]? = nil) {
+        directories: [PersonAgentDirectoryGrant]? = nil, clear: [Clear]? = nil) {
         self.name = name; self.role = role; self.pluginId = pluginId; self.model = model
         self.accountBindingId = accountBindingId; self.allowedTools = allowedTools; self.directories = directories
+        self.clear = clear
     }
     public var isValid: Bool {
         (name.map { PersonAgentWire.text($0, 80) } ?? true) && (role.map { PersonAgentWire.text($0, 512) } ?? true)
             && (model.map { PersonAgentWire.text($0, 128) } ?? true)
             && (accountBindingId.map { PersonAgentWire.text($0, 256) } ?? true)
             && (allowedTools.map(PersonAgentWire.tools) ?? true) && (directories.map(PersonAgentWire.directories) ?? true)
+            && (clear.map { $0.count <= 2 && Set($0).count == $0.count } ?? true)
+            && !(clear?.contains(.model) == true && model != nil)
+            && !(clear?.contains(.accountBindingId) == true && accountBindingId != nil)
     }
-    private enum CodingKeys: String, CodingKey { case name, role, pluginId, model, accountBindingId, allowedTools, directories }
+    private enum CodingKeys: String, CodingKey { case name, role, pluginId, model, accountBindingId, allowedTools, directories, clear }
     public init(from decoder: Decoder) throws {
-        try PersonAgentWire.keys(decoder, ["name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories"])
+        try PersonAgentWire.keys(decoder, ["name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories", "clear"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decodeIfPresent(String.self, forKey: .name); role = try c.decodeIfPresent(String.self, forKey: .role)
         pluginId = try c.decodeIfPresent(PersonAgentPlugin.self, forKey: .pluginId)
         model = try c.decodeIfPresent(String.self, forKey: .model); accountBindingId = try c.decodeIfPresent(String.self, forKey: .accountBindingId)
         allowedTools = try c.decodeIfPresent([PersonAgentTool].self, forKey: .allowedTools)
         directories = try c.decodeIfPresent([PersonAgentDirectoryGrant].self, forKey: .directories)
+        clear = try c.decodeIfPresent([Clear].self, forKey: .clear)
         guard isValid else { throw PersonAgentWire.invalid(decoder) }
     }
 }

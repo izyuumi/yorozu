@@ -160,7 +160,7 @@ public struct ChatView: View {
     private var events: [YorozuEvent] { model.timeline(thread.id).events }
 
     private var rows: [ChatRow] { model.rows(in: thread.id) }
-    private var quiet: Bool { (secretaryPresentation || thread.harnessTask != nil) && !technicalDetails }
+    private var quiet: Bool { (secretaryPresentation || thread.harnessTask != nil || thread.personAgentId != nil) && !technicalDetails }
     private var showingActiveWork: Bool {
         (generating || model.threads.contains {
             guard let task = $0.harnessTask else { return false }
@@ -293,6 +293,8 @@ public struct ChatView: View {
     @ViewBuilder private var emptyTranscript: some View {
         if secretaryPresentation {
             SecretaryGreeting()
+        } else if let name = thread.personAgentName {
+            ContentUnavailableView(name, systemImage: "bubble.left.and.bubble.right", description: Text("Start a conversation."))
         } else if model.isDraft(thread.id) {
             ScrollView { draftSelectors.padding(LayoutMetrics.gutter) }
                 .scrollDismissesKeyboard(.interactively)
@@ -325,7 +327,7 @@ public struct ChatView: View {
                     systemImage: "exclamationmark.triangle")
             }
             if thread.interruptedTurnId != nil { interruptedTurnNotice }
-            if !secretaryPresentation, !model.isDraft(thread.id), let path = presentation.projectPath {
+            if !quiet, !model.isDraft(thread.id), let path = presentation.projectPath {
                 projectContext(path)
             }
             Group {
@@ -447,13 +449,13 @@ public struct ChatView: View {
         .navigationTitle(secretaryPresentation ? "Yorozu" : thread.displayTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
-            .modifier(AgentSubtitle(text: secretaryPresentation ? "" : presentation.agentLabel))
+            .modifier(AgentSubtitle(text: quiet ? thread.personAgentName ?? "" : presentation.agentLabel))
         #else
             // A thread on a model of its own says so beside its title. Only then — the default
             // is the case that needs no caption. The Mac has a title bar subtitle for exactly
             // this; the phone has one from iOS 26, and a compact identity in its `.principal`
             // item before that.
-            .navigationSubtitle(secretaryPresentation ? "" : macModelCaption)
+            .navigationSubtitle(quiet ? thread.personAgentName ?? "" : macModelCaption)
             // The bar draws its own backdrop, always. Left to decide for itself it went clear
             // over a transcript that reached it and opaque over a project row that did not,
             // so the bar had an edge in one kind of thread and none in the other.
@@ -465,7 +467,7 @@ public struct ChatView: View {
                 // tells it how much room there is — on every iPhone, and worse on Duo's side
                 // bar — so a long title ran under the buttons. The system title is the one
                 // view the bar does truncate; only older bars, which clamp `titleView`, get this.
-                if #unavailable(iOS 26), !secretaryPresentation {
+                if #unavailable(iOS 26), !quiet {
                     ToolbarItem(placement: .principal) {
                         HStack(spacing: 7) {
                             AgentMarkView(presentation.agent, size: 20)
@@ -1165,11 +1167,12 @@ public struct ChatView: View {
         return false
     }
     private var composerPlaceholder: String {
-        guard secretaryPresentation else {
+        guard secretaryPresentation || thread.personAgentId != nil else {
             return model.composerPlaceholder(in: thread.id, default: presentation.composerPlaceholder)
         }
         if hasPendingApproval { return locale.secretaryText("Resolve approval to continue", "続けるには承認が必要です") }
         if hasPendingQuestion { return locale.secretaryText("Type a custom answer or pick an option", "回答を入力するか選択肢を選んでください") }
+        if let name = thread.personAgentName { return SecretaryUI.localized("Message \(name)…") }
         return locale.secretaryText("Message Yorozu…", "Yorozuにメッセージ…")
     }
 
@@ -1324,8 +1327,10 @@ public struct ChatView: View {
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
                     stashMenu
-                    if model.offersChannelModels(for: thread) { channelModelButton }
-                    else if !model.models(for: thread).isEmpty { runSettingsButton }
+                    if !quiet {
+                        if model.offersChannelModels(for: thread) { channelModelButton }
+                        else if !model.models(for: thread).isEmpty { runSettingsButton }
+                    }
                     Spacer(minLength: 4)
                     if model.stopPending(in: thread.id) {
                         stopPendingLabel
@@ -1354,9 +1359,11 @@ public struct ChatView: View {
                 HStack(alignment: .center, spacing: 4) {
                     attachButton
                     stashMenu
-                    if model.offersChannelModels(for: thread) { channelModelButton }
-                    else if !model.models(for: thread).isEmpty {
-                        runSettingsButton.frame(maxWidth: 280, alignment: .leading)
+                    if !quiet {
+                        if model.offersChannelModels(for: thread) { channelModelButton }
+                        else if !model.models(for: thread).isEmpty {
+                            runSettingsButton.frame(maxWidth: 280, alignment: .leading)
+                        }
                     }
                     Spacer(minLength: 4)
                     if model.stopPending(in: thread.id) {

@@ -3660,3 +3660,35 @@ func harnessStopRefusalSettlesOnlyTheMatchedCommand(status: HarnessControlReceip
     #expect(model.canStop(in: task.id))
     #expect(model.threads.first { $0.id == task.id }?.harnessTask?.state == .running)
 }
+
+@MainActor
+@Test func personAgentSettingsSubmissionBlocksDuplicateAndStaleSaves() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["person-agents-v1"])))
+    var catalog = personAgentCatalog()
+    await transport.yield(.event(event("catalog", .threadList(ThreadListData(threads: [], personAgents: catalog)))))
+    #expect(await eventually { model.personAgents != nil })
+    var submission = PersonAgentSubmission()
+    let request = PersonAgentControlData(expectedRevision: 2, action: .update(agentId: "agent-a", patch: PersonAgentPatch(name: "Ada Notes")))
+    submission.submit(request, to: model)
+    let operationId = try #require(submission.operationId)
+    submission.submit(request, to: model) // A second click before the view redraws is still one operation.
+    #expect(submission.operationId == operationId)
+    #expect(await eventually { await transport.sent.filter { $0.payload.kind == .personAgentControl }.count == 1 })
+    #expect(model.personAgents?.agents[0].name == "Ada")
+    catalog.lastControlResult = PersonAgentControlResult(operationId: operationId, status: .unknown, revision: 2)
+    await transport.yield(.event(event("uncertain", .threadList(ThreadListData(threads: [], personAgents: catalog)))))
+    #expect(await eventually { submission.result(in: model.personAgents)?.status == .unknown })
+    submission.submit(request, to: model)
+    #expect(submission.operationId == operationId)
+    catalog.revision = 3
+    await transport.yield(.event(event("newer-settings", .threadList(ThreadListData(threads: [], personAgents: catalog)))))
+    #expect(await eventually { model.personAgents?.revision == 3 })
+    var staleEditor = PersonAgentSubmission()
+    staleEditor.submit(request, to: model)
+    #expect(staleEditor.operationId == nil && staleEditor.failure != nil)
+    #expect(await transport.sent.filter { $0.payload.kind == .personAgentControl }.count == 1)
+    #expect(model.events.values.allSatisfy { $0.allSatisfy { $0.payload.kind != .personAgentControl } })
+}

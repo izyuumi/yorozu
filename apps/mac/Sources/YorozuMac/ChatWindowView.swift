@@ -492,6 +492,7 @@ struct SettingsView: View {
 
     private var panes: [Pane] {
         var panes: [Pane] = [("general", "General", "gearshape")]
+        if SecretaryUI.enabled || session.model.supportsPersonAgents { panes.append(("agents", "Agents", "person.2")) }
         if session.role == .host {
             panes.append(("devices", "Devices", "iphone.and.arrow.forward"))
             panes.append(("permissions", "Permissions", "lock.shield"))
@@ -512,6 +513,7 @@ struct SettingsView: View {
         } detail: {
             Group {
                 switch pane.id {
+                case "agents": NavigationStack { PersonAgentsView(model: session.model, settings: true) }
                 case "devices": DevicesView(sidecar: sidecar)
                 case "permissions": PermissionsView()
                 case "notifications": MacNotificationsView()

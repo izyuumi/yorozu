@@ -54,6 +54,18 @@ struct SettingsView: View {
                     }
                 }
                 if !session.isDemo {
+                    if session.hosts.sessions.contains(where: { $0.model.supportsPersonAgents }) {
+                        Section("Agents") {
+                            ForEach(session.hosts.sessions.filter { $0.model.supportsPersonAgents }) { host in
+                                NavigationLink {
+                                    PersonAgentsView(model: host.model, settings: true)
+                                } label: {
+                                    Label(session.hosts.hasMultipleHosts ? session.hosts.label(for: host) : SecretaryUI.localized("Agents"), systemImage: "person.2")
+                                }
+                            }
+                        }
+                        .listRowBackground(YorozuPalette.paper)
+                    }
                     Section(session.hosts.hasMultipleHosts ? SecretaryUI.localized("Hosts") : SecretaryUI.localized("Connection")) {
                         ForEach(session.hosts.sessions) { host in
                             NavigationLink {
