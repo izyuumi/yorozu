@@ -83,17 +83,20 @@ provider recognizes these scripted, harmless prompts:
 
 The scripted task-A correction is
 `YOROZU_HOST_STEER_A_ONLY: write A: steered instead of A: original.` Child tools
-wait 20 seconds in UI-provider mode to allow native control inspection. Close
-stdin or signal the provider to finish and retain evidence. Native UI observation
+wait 20 seconds in UI-provider mode to allow native control inspection. Signal
+the provider to finish and retain evidence; terminal stdin EOF also stops it,
+while noninteractive stdin EOF does not. Native UI observation
 and acceptance belong to the UI owner, not this provider fixture.
 
-Provider-only mode was syntax-checked but **not executed**: automatic approval
-review rejected its process launch, generated-launcher writes and provider
-keepalive, citing the earlier read-only instruction. No retry through another
-route was attempted. A supported approval is required before running that mode.
+Automatic approval review initially rejected the provider-only launch, citing
+the earlier read-only instruction. After verbatim authorization to implement and
+run the app was supplied, one exact retry was approved. That retry prepared the
+fixture successfully but closed immediately because its stdin was already at
+EOF. The fixture now keeps the provider alive until a signal when stdin is
+noninteractive. No native UI acceptance was claimed by that short startup.
 
 `--interactive` instead runs the regular host proof through the preservation
-phase and keeps its host/provider alive until stdin closes. It explicitly skips
+phase and keeps its host/provider alive until signaled. It explicitly skips
 crash/restart checks and is unsuitable for an app that needs to launch its own
 host.
 

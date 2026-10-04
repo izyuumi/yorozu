@@ -37,7 +37,7 @@ const event = (id, threadId, kind, data) => ({ id, threadId, ts: Date.now(), age
 // never development serve.ts, and supplies no real Codex/Claude runner or credentials.
 if (args.includes('--host')) {
   const threads = await moduleAt('threads');
-  if (args.includes('--seed')) {
+  if (args.includes('--seed') && !await exists(join(state, 'approval.json'))) {
     await mkdir(workspace, { recursive: true, mode: 0o700 });
     threads.createThread('Saved ordinary chat', state, 'ordinary', { agent: 'codex', cwd: workspace });
     threads.setThreadSession('ordinary', 'fixture-old-native-session', state);
@@ -219,7 +219,13 @@ if (args.includes('--host')) {
         prompts: ['Please create and verify a harmless note.', 'Please create two harmless notes using two independent specialists.', 'Can we keep talking while specialists work?'],
         controlText: 'YOROZU_HOST_STEER_A_ONLY: write A: steered instead of A: original.' }));
       console.log('Only the loopback provider is running. The app must launch the generated wrapper with its isolated cache and Keychain configuration.');
-      await new Promise(done => { process.stdin.resume(); process.stdin.once('end', done); process.once('SIGTERM', done); process.once('SIGINT', done); });
+      await new Promise(done => {
+        process.stdin.resume();
+        // Exec tools commonly close stdin immediately. The listening provider keeps
+        // this disposable process alive until its owner explicitly stops it.
+        if (process.stdin.isTTY) process.stdin.once('end', done);
+        process.once('SIGTERM', done); process.once('SIGINT', done);
+      });
     } else {
     await launch(true); const before = await snapshot();
     prompt('artifact-input', 'YOROZU_HOST_ARTIFACT: create and verify the harmless artifact.');
@@ -268,7 +274,11 @@ if (args.includes('--host')) {
       evidence.status = 'interactive'; evidence.limitations.push('Interactive mode skips crash/restart; use default mode for that proof');
       console.log(JSON.stringify({ interactive: true, state, workspace, provider: `http://127.0.0.1:${provider.address().port}/v1`, hostPid: host.pid }));
       console.log('Provider and host stay alive until stdin closes. This is a new fixture profile, not an installed app profile.');
-      await new Promise(done => { process.stdin.resume(); process.stdin.once('end', done); process.once('SIGTERM', done); process.once('SIGINT', done); });
+      await new Promise(done => {
+        process.stdin.resume();
+        if (process.stdin.isTTY) process.stdin.once('end', done);
+        process.once('SIGTERM', done); process.once('SIGINT', done);
+      });
     } else {
     prompt('crash-input', 'YOROZU_HOST_CRASH: append once, then pause.');
     await waitFor(() => exists(join(workspace, 'crashwaiting.txt')), 'once-only action before actual host crash');
