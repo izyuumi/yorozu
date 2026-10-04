@@ -8,12 +8,14 @@ import SwiftUI
 public struct WorkRowView: View {
     private let work: TurnWork
     private let quiet: Bool
+    private let taskDestination: ((String) -> AnyView?)?
     @Environment(\.locale) private var locale
     @State private var expanded: Bool
 
-    public init(work: TurnWork, quiet: Bool = false) {
+    public init(work: TurnWork, quiet: Bool = false, taskDestination: ((String) -> AnyView?)? = nil) {
         self.work = work
         self.quiet = quiet
+        self.taskDestination = taskDestination
         _expanded = State(initialValue: work.running)
     }
 
@@ -25,7 +27,7 @@ public struct WorkRowView: View {
                         if case .progress(let event) = entry, case .progressCard(let card) = event.payload {
                             ProgressCardView(card: card)
                         } else if case .delegation(let card) = entry {
-                            Text(card.agentId).font(.scaled(.caption)).foregroundStyle(.secondary)
+                            delegationTitle(card)
                             Text(card.done
                                 ? locale.secretaryText("Task ended", "タスク終了")
                                 : locale.secretaryText("Working", "作業中"))
@@ -63,6 +65,27 @@ public struct WorkRowView: View {
             }
         }
         .onChange(of: work.running) { _, running in expanded = running }
+    }
+
+    @ViewBuilder private func delegationTitle(_ card: DelegationCard) -> some View {
+        let taskThreadId = card.events.reversed().compactMap { event -> String? in
+            guard case .message(let message) = event.payload else { return nil }
+            return message.harnessTask?.threadId
+        }.first
+        if let taskThreadId, let destination = taskDestination?(taskThreadId) {
+            NavigationLink {
+                destination
+            } label: {
+                Label(card.agentId, systemImage: "arrow.up.right")
+                    .font(.scaled(.caption))
+                    .lineLimit(2)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(locale.secretaryText("Open task: ", "タスクを開く: ") + card.agentId)
+            .accessibilityIdentifier("harness-task-open")
+        } else {
+            Text(card.agentId).font(.scaled(.caption)).foregroundStyle(.secondary)
+        }
     }
 
     private var activity: some View {

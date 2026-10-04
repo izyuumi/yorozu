@@ -927,7 +927,10 @@ public struct ChatView: View {
     @ViewBuilder private func rowView(_ row: ChatRow, queuedStatuses: [String: String]) -> some View {
         switch row {
         case .work(let work):
-            WorkRowView(work: work, quiet: quiet).id(work.id)
+            WorkRowView(work: work, quiet: quiet, taskDestination: { taskThreadId in
+                guard model.threads.contains(where: { $0.id == taskThreadId }) else { return nil }
+                return AnyView(HarnessTaskConversation(model: model, threadId: taskThreadId, parentThreadId: thread.id))
+            }).id(work.id)
         case .unreadable(let event):
             Label(SecretaryUI.localized("Update Yorozu to see this event"), systemImage: "arrow.up.circle")
                 .font(.scaled(.subheadline))
