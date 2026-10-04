@@ -40,7 +40,10 @@ export function serveSecretary(options: ServeOptions = {}): Sidecar {
         try { harness = new SecretaryHarness(dir, configuration); }
         catch (error) { unavailable = `Harness unavailable: ${error instanceof Error ? error.message : String(error)}`; }
         decorated = true;
-        const selected: NativeAgentRunner = harness?.runner ?? { run: async () => ({ text: unavailable ?? "Harness unavailable", failed: true }) };
+        const selected: NativeAgentRunner = harness?.runner ?? {
+          descriptor: { id: "harness", label: "Yorozu", description: "Selected agent harness", needsFolder: true },
+          run: async () => ({ text: unavailable ?? "Harness unavailable", failed: true }),
+        };
         // Old main history keeps its immutable agent/session metadata. Only its execution
         // route changes; ordinary Codex conversations keep their existing runner.
         return { ...runners, harness: selected, codex: { ...runners.codex, run: (turn: NativeTurn) =>

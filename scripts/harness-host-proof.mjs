@@ -51,7 +51,7 @@ if (args.includes('--host')) {
   const { serveSecretary } = await moduleAt('secretary-serve');
   const sidecar = serveSecretary({ stateDir: state, relayUrl: 'ws://127.0.0.1:1', titler: async () => '',
     nativeRunners: { codex: { run: async () => { throw new Error('Ordinary native execution was not authorized by this fixture'); } } },
-    log: line => process.stderr.write(`${line}\n`) });
+    log: line => (args.includes('--native-ui-host') ? process.stdout : process.stderr).write(`${line}\n`) });
   process.stdout.write(JSON.stringify({ ready: true }) + '\n');
   let buffer = '';
   process.stdin.setEncoding('utf8');
@@ -105,8 +105,11 @@ if (args.includes('--host')) {
     assert(!record.queuedInputInContext, 'Withdrawn queued input leaked into bootstrap or inference');
     if (scenario === 'artifact' && step === 1) {
       const history = (await readFile(join(state, 'threads', `${main}.jsonl`), 'utf8')).split('\n').filter(Boolean).map(JSON.parse);
-      assert(history.some(e => e.id === 'artifact-input' && e.kind === 'message' && e.data.role === 'user' && e.data.delivery === 'queue'), 'Main input was not persisted before model handoff');
-      evidence.claims.acceptedBeforeHandoff = { passed: true, eventId: 'artifact-input' };
+      const admitted = args.includes('--ui-provider-only')
+        ? history.findLast(e => e.kind === 'message' && e.data.role === 'user' && e.data.delivery === 'queue' && serialized.includes(e.data.text))
+        : history.find(e => e.id === 'artifact-input' && e.kind === 'message' && e.data.role === 'user' && e.data.delivery === 'queue');
+      assert(admitted, 'Main input was not persisted before model handoff');
+      evidence.claims.acceptedBeforeHandoff = { passed: true, eventId: admitted.id };
     }
     const call = (name, params) => {
       const tool = body.tools.find(t => t.name === name || t.name?.endsWith(`_${name}`) || t.name?.endsWith(`.${name}`));
@@ -126,7 +129,7 @@ if (args.includes('--host')) {
       return text('専門タスクを開始しました。引き続きお話しできます。');
     }
     if (child) {
-      if (step === 1) return call('terminal', { command: args.includes('--ui-provider-only') ? '/bin/sleep 20' : '/bin/sleep 6', workdir: workspace, timeout: 25 });
+      if (step === 1) return call('terminal', { command: args.includes('--ui-provider-only') ? '/bin/sleep 90' : '/bin/sleep 6', workdir: workspace, timeout: args.includes('--ui-provider-only') ? 100 : 25 });
       if (step === 2) return call('write_file', { path: join(workspace, `child-${child.toLowerCase()}.txt`), content: child === 'A' && record.steerA ? 'A: steered\n' : `${child}: original\n` });
       if (step === 3) return call('read_file', { path: join(workspace, `child-${child.toLowerCase()}.txt`) });
       return text(`専門タスク${child}を確認しました。`);
@@ -207,7 +210,7 @@ if (args.includes('--host')) {
     if (args.includes('--ui-provider-only')) {
       const wrapper = join(output, 'launch-fixture-host.mjs');
       const hostArgs = ['--candidate', candidate, '--source', source, '--python', python, '--output', output,
-        '--host', '--seed', ...(hostCore ? ['--host-core', hostCore] : [])];
+        '--host', '--seed', '--native-ui-host', ...(hostCore ? ['--host-core', hostCore] : [])];
       const environment = { PATH: `${dirname(python)}:/usr/bin:/bin:/usr/sbin:/sbin`, LANG: 'en_US.UTF-8',
         YOROZU_STATE_DIR: state, YOROZU_MEMORY_DIR: join(state, 'memory'), YOROZU_PROJECTS_DIR: projects,
         YOROZU_HARNESS_PLUGIN: 'hermes', YOROZU_HERMES_PYTHON: python, YOROZU_HERMES_SOURCE: source,
@@ -226,6 +229,7 @@ if (args.includes('--host')) {
         if (process.stdin.isTTY) process.stdin.once('end', done);
         process.once('SIGTERM', done); process.once('SIGINT', done);
       });
+      process.stdin.pause();
     } else {
     await launch(true); const before = await snapshot();
     prompt('artifact-input', 'YOROZU_HOST_ARTIFACT: create and verify the harmless artifact.');
@@ -279,6 +283,7 @@ if (args.includes('--host')) {
         if (process.stdin.isTTY) process.stdin.once('end', done);
         process.once('SIGTERM', done); process.once('SIGINT', done);
       });
+      process.stdin.pause();
     } else {
     prompt('crash-input', 'YOROZU_HOST_CRASH: append once, then pause.');
     await waitFor(() => exists(join(workspace, 'crashwaiting.txt')), 'once-only action before actual host crash');

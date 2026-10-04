@@ -83,10 +83,17 @@ provider recognizes these scripted, harmless prompts:
 
 The scripted task-A correction is
 `YOROZU_HOST_STEER_A_ONLY: write A: steered instead of A: original.` Child tools
-wait 20 seconds in UI-provider mode to allow native control inspection. Signal
+wait 90 seconds in UI-provider mode to allow native control inspection. Signal
 the provider to finish and retain evidence; terminal stdin EOF also stops it,
 while noninteractive stdin EOF does not. Native UI observation
 and acceptance belong to the UI owner, not this provider fixture.
+
+Use canonical paths for the test profile (on macOS, `/private/tmp` rather than
+its `/tmp` alias). The harness refuses a saved workspace whose spelling differs
+from its canonical path. The native launcher sends service state on stdout,
+matching the app's sidecar protocol; normal proof mode keeps diagnostic logs on
+stderr. UI admission checks use the actual native event ID, not the fixed ID
+from the scripted socket proof.
 
 Automatic approval review initially rejected the provider-only launch, citing
 the earlier read-only instruction. After verbatim authorization to implement and

@@ -27,6 +27,7 @@ OVERLAYS = [
     "packages/shared/src/events.ts",
     "packages/harness-plugins",
     "scripts/harness-proof.mjs",
+    "scripts/harness-host-proof.mjs", "docs/harness-host-proof.md",
     "docs/harness-proof.md", "docs/harness-contract.md",
     "scripts/build-mac.sh", "scripts/build-version.sh",
     "scripts/secretary-production.patch",
