@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 1,
+  "pluginId": "hermes",
+  "version": "0.21.5",
+  "entry": "adapter.mjs",
+  "upstream": {
+    "version": "0.21.5",
+    "sourceSha": "f97608f178d1ffeca59860195ab7da295f7c8e5f"
+  },
+  "runtime": { "kind": "external-python", "entry": "tui_gateway.entry", "python": ">=3.11,<3.14" },
+  "productionReady": false,
+  "permissionEnforcement": "native-heuristic-approvals-only; verified-host-policy-and-os-sandbox-required",
+  "capabilities": {
+    "backgroundTasks": true,
+    "targetedSteer": true,
+    "taskStop": true,
+    "approvals": true,
+    "reconnect": true,
+    "attachments": false,
+    "crashAutoResume": false,
+    "schedules": false,
+    "nativeComputerUse": false
+  },
+  "authentication": {
+    "subscriptionAccess": "unsupported-pending-fresh-onboarding",
+    "siwc": false,
+    "ambientCredentials": false,
+    "billedFallback": false,
+    "localProofProvider": "explicit-loopback-native-responses"
+  }
+}
