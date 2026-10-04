@@ -34,6 +34,8 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     /// Host-fsynced byte offsets, one per attachment. Missing on older encrypted caches.
     public var uploadOffsets: [Int]?
     public var uploadDescriptors: [AttachmentDescriptor]?
+    /// Delivery evidence for a task control. Requested means wait for task state, never resend.
+    public var harnessControlReceipt: HarnessControlReceipt?
 
     public init(event: YorozuEvent, tries: Int = 0, attemptedAt: Date? = nil,
                 nextAttemptAt: Date? = nil, deliveryAttempts: Int? = nil, reconfirmedAt: Date? = nil,
@@ -41,7 +43,8 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
                 replacementId: String? = nil, lastStatusQueryAt: Date? = nil,
                 lastStatusQueryId: String? = nil,
                 legacyHoldUntil: Date? = nil, uploadOffsets: [Int]? = nil,
-                uploadDescriptors: [AttachmentDescriptor]? = nil) {
+                uploadDescriptors: [AttachmentDescriptor]? = nil,
+                harnessControlReceipt: HarnessControlReceipt? = nil) {
         self.event = event
         self.tries = tries
         self.attemptedAt = attemptedAt
@@ -56,9 +59,16 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
         self.legacyHoldUntil = legacyHoldUntil
         self.uploadOffsets = uploadOffsets
         self.uploadDescriptors = uploadDescriptors
+        self.harnessControlReceipt = harnessControlReceipt
     }
 
     public var id: String { event.id }
+
+    var harnessStopDelivered: Bool {
+        guard case .interrupt(let stop) = event.payload, stop.targetEventId != nil,
+              let receipt = harnessControlReceipt, receipt.operationId == id else { return false }
+        return receipt.status == .requested || receipt.status == .queued
+    }
 
     /// When it was typed, which is the event's own timestamp.
     public var queuedAt: Date { Date(timeIntervalSince1970: Double(event.ts) / 1000) }

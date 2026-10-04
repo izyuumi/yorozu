@@ -3568,3 +3568,95 @@ private func personAgentCatalog() -> PersonAgentRegistry {
     #expect(message.delivery == .queue)
     #expect(!model.outbox.contains { $0.event.threadId == draft.id && [.threadSetModel, .threadSetEffort].contains($0.event.payload.kind) })
 }
+
+@MainActor
+@Test func harnessStopAcknowledgementSurvivesRestartWithoutRetryOrFalseCessation() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let key = SymmetricKey(size: .bits256)
+    let cache = ThreadCache(directory: directory, key: key)
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    defer { model.close() }
+    await transport.yield(.state(.paired))
+    await transport.yield(.ownerOnline(true))
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    model.start()
+    let task = ThreadSummary(id: "task", title: "Task", archived: false, lastActivity: 1,
+        activeEventId: "exact-task-target", turnState: .running,
+        harnessTask: HarnessTaskSummary(taskId: "child-42", parentThreadId: SecretaryUI.threadID,
+            state: .running, canSteer: true, canStop: true))
+    await transport.yield(.event(event("tasks", .threadList(ThreadListData(threads: [task])))))
+    #expect(await eventually { model.canStop(in: task.id) })
+    model.interrupt(in: task.id)
+    let stop = try #require(await sent(by: transport, payload: .interrupt(InterruptData(targetEventId: "exact-task-target")), in: task.id))
+    await transport.yield(.event(event("wire-receipt", .receipt(ReceiptData(eventId: stop.id)))))
+    let receipt = MessageData(role: .agent, text: "Stop requested.", done: true,
+        controlReceipt: HarnessControlReceipt(status: .requested, operationId: stop.id))
+    // The operation ID alone cannot acknowledge another task's control.
+    model.applyEvent(event("foreign-receipt", .message(receipt), thread: "another-task"))
+    #expect(model.outbox.first { $0.id == stop.id }?.harnessControlReceipt == nil)
+    model.applyEvent(event("stop-receipt", .message(receipt), thread: task.id))
+    #expect(model.outbox.first { $0.id == stop.id }?.harnessControlReceipt?.status == .requested)
+    #expect(model.stopPending(in: task.id))
+    #expect(model.generating.contains(task.id)) // Requested is delivery, not cessation.
+    #expect(!model.canStop(in: task.id))
+    // A duplicate cannot replace the delivery evidence already saved for this operation.
+    model.applyEvent(event("late-rejection", .message(MessageData(role: .agent, text: "Late rejection", done: true,
+        controlReceipt: HarnessControlReceipt(status: .rejected, operationId: stop.id))), thread: task.id))
+    #expect(model.outbox.first { $0.id == stop.id }?.harnessControlReceipt?.status == .requested)
+    await model.shutdown()
+    var pending = cache.outbox()
+    #expect(pending.first { $0.id == stop.id }?.harnessControlReceipt?.status == .requested)
+    for index in pending.indices { pending[index].nextAttemptAt = .distantPast }
+    try cache.savePending(pending)
+
+    let reopenedTransport = FakeTransport()
+    let reopened = ChatModel(transport: reopenedTransport, cache: ThreadCache(directory: directory, key: key))
+    defer { reopened.close() }
+    await reopenedTransport.yield(.state(.paired))
+    await reopenedTransport.yield(.ownerOnline(true))
+    await reopenedTransport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    reopened.start()
+    await reopenedTransport.yield(.event(event("reopened-tasks", .threadList(ThreadListData(threads: [task])))))
+    #expect(await eventually { reopened.generating.contains(task.id) && reopened.canDeliver })
+    reopened.flush()
+    try await Task.sleep(for: .milliseconds(1400))
+    #expect(await reopenedTransport.sent.filter { $0.payload.kind == .interrupt }.isEmpty)
+    #expect(reopened.stopPending(in: task.id))
+    var terminal = task
+    terminal.activeEventId = nil
+    terminal.turnState = .idle
+    terminal.harnessTask?.state = .stopped
+    terminal.harnessTask?.canStop = false
+    await reopenedTransport.yield(.event(event("task-stopped", .threadList(ThreadListData(threads: [terminal])))))
+    #expect(await eventually { reopened.outbox.allSatisfy { $0.id != stop.id } && !reopened.generating.contains(task.id) })
+}
+
+@MainActor
+@Test(arguments: [HarnessControlReceipt.Status.rejected, .unsupported, .unknown])
+func harnessStopRefusalSettlesOnlyTheMatchedCommand(status: HarnessControlReceipt.Status) async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    let task = ThreadSummary(id: "task", title: "Task", archived: false, lastActivity: 1,
+        activeEventId: "exact-task-target", turnState: .running,
+        harnessTask: HarnessTaskSummary(taskId: "child-42", parentThreadId: SecretaryUI.threadID,
+            state: .running, canSteer: true, canStop: true))
+    await transport.yield(.event(event("tasks", .threadList(ThreadListData(threads: [task])))))
+    #expect(await eventually { model.canStop(in: task.id) })
+    model.interrupt(in: task.id)
+    let stop = try #require(await sent(by: transport, payload: .interrupt(InterruptData(targetEventId: "exact-task-target")), in: task.id))
+    model.applyEvent(event("wrong-operation", .message(MessageData(role: .agent, text: "Unrelated control", done: true,
+        controlReceipt: HarnessControlReceipt(status: status, operationId: "another-operation"))), thread: task.id))
+    #expect(model.stopPending(in: task.id))
+    let receipt = event("refused-stop", .message(MessageData(role: .agent, text: "Control was not confirmed.", done: true,
+        controlReceipt: HarnessControlReceipt(status: status, operationId: stop.id))), thread: task.id)
+    // History pages use the same reducer as live delivery receipts.
+    await transport.yield(.event(event("history", .syncDelta(SyncDeltaData(events: [receipt], threadId: task.id)))))
+    #expect(await eventually { !model.stopPending(in: task.id) })
+    #expect(model.generating.contains(task.id))
+    #expect(model.canStop(in: task.id))
+    #expect(model.threads.first { $0.id == task.id }?.harnessTask?.state == .running)
+}

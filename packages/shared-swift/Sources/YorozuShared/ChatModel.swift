@@ -1667,7 +1667,8 @@ public final class ChatModel {
                 $0.event.payload.kind != .questionAnswer }
         return prioritized.filter { item in
             guard !item.isExpired(at: now), item.admissionStatus != .rejected,
-                  item.admissionStatus != .withdrawn, item.replacementId == nil else { return false }
+                  item.admissionStatus != .withdrawn, item.replacementId == nil,
+                  !item.harnessStopDelivered else { return false }
             if item.event.payload.kind == .approvalAnswer || item.event.payload.kind == .questionAnswer {
                 return !blockedThreads.contains(item.event.threadId)
             }
@@ -1915,6 +1916,44 @@ public final class ChatModel {
         }
         saveOutbox()
         flush()
+    }
+
+    private func reconcileHarnessControlReceipt(_ event: YorozuEvent) {
+        guard case .message(let message) = event.payload, message.role == .agent, message.done == true,
+              let receipt = message.controlReceipt,
+              synced.contains(where: { $0.id == event.threadId && $0.harnessTask != nil }),
+              let index = outbox.firstIndex(where: { item in
+                  guard item.id == receipt.operationId, item.event.threadId == event.threadId,
+                        case .interrupt(let stop) = item.event.payload else { return false }
+                  return stop.targetEventId != nil
+              }), !outbox[index].harnessStopDelivered else { return }
+        switch receipt.status {
+        case .requested, .queued:
+            // A delivered Stop remains pending until a host task summary settles its target.
+            outbox[index].harnessControlReceipt = receipt
+            retireDeliveredHarnessStops()
+        case .rejected, .unsupported, .unknown:
+            // This settles the command's delivery, never the task's execution state.
+            outbox.remove(at: index)
+        }
+        saveOutbox()
+        flush()
+    }
+
+    @discardableResult
+    private func retireDeliveredHarnessStops() -> Bool {
+        let count = outbox.count
+        outbox.removeAll { item in
+            guard item.harnessStopDelivered, case .interrupt(let stop) = item.event.payload,
+                  let summary = synced.first(where: { $0.id == item.event.threadId }),
+                  let task = summary.harnessTask else { return false }
+            if let active = summary.activeEventId, active != stop.targetEventId { return true }
+            switch task.state {
+            case .completed, .failed, .stopped: return true
+            default: return false
+            }
+        }
+        return outbox.count != count
     }
 
     private func restoreWithdrawals(in threadId: String) {
@@ -2628,6 +2667,7 @@ public final class ChatModel {
                     merged.lastReadAt = pending
                     return merged
                 }
+                if retireDeliveredHarnessStops() { saveOutbox() }
                 if hostOwnsTurnState {
                     generating = Set(data.threads.filter { $0.turnState.map { $0 != .idle } == true }.map(\.id))
                 }
@@ -3208,6 +3248,7 @@ public final class ChatModel {
     }
 
     private func upsert(_ incoming: YorozuEvent, persist: Bool = true) {
+        reconcileHarnessControlReceipt(incoming)
         var event = incoming
         if case .threadRewound(let data) = event.payload {
             receipted(data.requestId)
@@ -3283,7 +3324,7 @@ public final class ChatModel {
         }
         // The agent's last message ends the turn, whether it streamed or arrived whole.
         if !hostOwnsTurnState, case .message(let data) = event.payload, data.role == .agent, data.done == true,
-            event.parentAgentId == nil
+            data.controlReceipt == nil, event.parentAgentId == nil
         {
             generating.remove(event.threadId)
         }
