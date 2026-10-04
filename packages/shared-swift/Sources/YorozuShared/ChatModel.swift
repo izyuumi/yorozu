@@ -2596,6 +2596,14 @@ public final class ChatModel {
                 if data.more != true { for id in syncedThreads { restoreRewoundPrompt(in: id) } }
                 if let workingThreadIds = data.workingThreadIds {
                     generating = Set(workingThreadIds)
+                    if hostOwnsTurnState {
+                        // History inventories cover native runners; harness turns use host summaries.
+                        for thread in synced where thread.harness != nil || thread.harnessTask != nil {
+                            guard let state = thread.turnState else { continue }
+                            if state == .idle { generating.remove(thread.id) }
+                            else { generating.insert(thread.id) }
+                        }
+                    }
                 }
                 if data.more == true {
                     if data.threadId != nil { requestOpenHistory() }

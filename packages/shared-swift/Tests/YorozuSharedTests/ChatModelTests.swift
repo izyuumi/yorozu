@@ -3441,3 +3441,63 @@ func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData
     await transport.yield(.event(event("task-unknown", .threadList(ThreadListData(threads: [summary])))))
     #expect(await eventually { !model.canStop(in: summary.id) })
 }
+
+@MainActor
+@Test func harnessTaskStopSurvivesHistoryAndReopenUntilHostTerminal() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let task = ThreadSummary(id: "task-conversation", title: "Task", archived: false, lastActivity: 10,
+        activeEventId: "current-task-target", turnState: .running,
+        harnessTask: HarnessTaskSummary(taskId: "child-42", parentThreadId: SecretaryUI.threadID,
+            state: .running, canSteer: true, canStop: true))
+    let native = ThreadSummary(id: "native-chat", title: "Native", archived: false, lastActivity: 10,
+        activeEventId: "native-target", turnState: .running)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1", "steer-v1"])))
+    await transport.yield(.event(event("live-tasks", .threadList(ThreadListData(threads: [task, native])))))
+    #expect(await eventually { model.canStop(in: task.id) })
+    model.openThread = task.id
+    let history = event("task-history", .message(MessageData(role: .user, text: "Original task")), thread: task.id)
+    await transport.yield(.event(event("task-delta", .syncDelta(SyncDeltaData(
+        events: [history], threadId: task.id, workingThreadIds: [native.id])))))
+    #expect(await eventually { model.events[task.id]?.contains(where: { $0.id == history.id }) == true })
+    #expect(model.canStop(in: task.id))
+    #expect(model.generating == Set([task.id, native.id]))
+
+    model.openThread = native.id
+    model.openThread = task.id
+    let reopened = event("task-reopened", .message(MessageData(role: .agent, text: "Working…")), thread: task.id)
+    await transport.yield(.event(event("reopened-delta", .syncDelta(SyncDeltaData(
+        events: [reopened], threadId: task.id, workingThreadIds: [])))))
+    #expect(await eventually { model.events[task.id]?.contains(where: { $0.id == reopened.id }) == true })
+    #expect(model.canStop(in: task.id))
+    #expect(model.generating == Set([task.id])) // Ordinary native working IDs retain legacy delta behavior.
+    model.interrupt(in: task.id)
+    #expect(await sent(by: transport, payload: .interrupt(InterruptData(targetEventId: "current-task-target")), in: task.id) != nil)
+
+    var terminal = task
+    terminal.activeEventId = nil
+    terminal.turnState = .idle
+    terminal.harnessTask?.state = .stopped
+    terminal.harnessTask?.canSteer = false
+    terminal.harnessTask?.canStop = false
+    await transport.yield(.event(event("task-terminal", .threadList(ThreadListData(threads: [terminal])))))
+    #expect(await eventually { !model.canStop(in: task.id) && !model.generating.contains(task.id) })
+    // An older history snapshot must not restore a task after the authoritative terminal summary.
+    let stale = event("stale-task-history", .message(MessageData(role: .agent, text: "Earlier progress")), thread: task.id)
+    await transport.yield(.event(event("stale-task-delta", .syncDelta(SyncDeltaData(
+        events: [stale], threadId: task.id, workingThreadIds: [task.id])))))
+    #expect(await eventually { model.events[task.id]?.contains(where: { $0.id == stale.id }) == true })
+    #expect(!model.generating.contains(task.id))
+    #expect(!model.canStop(in: task.id))
+
+    // A view captured while running can still invoke an action after the task ended.
+    let controlCount = await transport.sent.filter { $0.threadId == task.id && $0.payload.kind == .interrupt }.count
+    model.interrupt(in: task.id)
+    model.drafts[task.id] = "Change the ended task"
+    model.send(in: task)
+    #expect(model.drafts[task.id] == "Change the ended task")
+    #expect(model.failure != nil)
+    #expect(await transport.sent.filter { $0.threadId == task.id && $0.payload.kind == .interrupt }.count == controlCount)
+    #expect(!model.outbox.contains { $0.event.threadId == task.id && $0.event.payload.kind == .message })
+}
