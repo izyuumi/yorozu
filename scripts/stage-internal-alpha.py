@@ -22,9 +22,14 @@ OVERLAYS = [
     "packages/runtime/src/harness-process.ts",
     "packages/runtime/src/harness-ledger.ts",
     "packages/runtime/src/harness-runner.ts",
+    "packages/runtime/src/agent-store.ts", "packages/runtime/src/agent-scope.ts",
+    "packages/runtime/src/agent-isolation.ts", "packages/runtime/src/agent-listener.ts",
+    "packages/runtime/src/person-agent-runtime.ts",
     "packages/runtime/src/host-core-command.ts",
     "packages/runtime/src/rust-sync.ts", "packages/runtime/src/rust-sync-worker.ts",
     "packages/shared/src/events.ts",
+    "packages/shared/src/peer-info.ts", "packages/shared/src/person-agents.ts",
+    "packages/shared/src/index.ts",
     "packages/harness-plugins",
     "scripts/harness-proof.mjs",
     "scripts/harness-host-proof.mjs", "docs/harness-host-proof.md",
@@ -57,7 +62,7 @@ def stage(destination):
     # Keep the production manifest and lockfile together. Only these explicit new
     # files and the reviewed adapter replace runtime source; serve/storage do not.
     tests = git("ls-tree", "-r", "--name-only", source, "packages/runtime/src").decode().splitlines()
-    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness")) and name.endswith(".test.ts")]
+    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness", "agent-", "person-agent-")) and name.endswith(".test.ts")]
     if not tests:
         raise SystemExit("Secretary regression tests are missing")
     with tarfile.open(fileobj=io.BytesIO(git("archive", source, *tests))) as archive:

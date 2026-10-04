@@ -366,6 +366,10 @@ export class SecretaryHarness {
   }
   private async control(method: "task.steer" | "task.stop", task: HarnessTask, operationId: string, text?: string): Promise<Omit<HarnessReceipt, "status"> & { status: HarnessReceipt["status"] | "unknown" }> {
     const run = this.runById(task.originRunId);
+    // A delivery receipt remains the receipt after the task settles. Validate
+    // the original identity before returning it; never resend an old operation.
+    if (run && task.originAttemptId && Object.hasOwn(this.ledger.state.controls, operationId))
+      return this.controlRun(method, run, operationId, text, task.taskId, task.originAttemptId);
     if (!run || !["running", "waiting"].includes(task.state) || method === "task.steer" && !task.canSteer || method === "task.stop" && !task.canStop)
       return { status: "rejected", reason: "This task is not accepting that control." };
     if (!task.originAttemptId) return { status: "rejected", reason: "The task attempt identity is unavailable." };

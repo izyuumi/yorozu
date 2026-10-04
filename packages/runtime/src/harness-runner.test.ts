@@ -119,6 +119,10 @@ test("stale task Stop never reaches upstream and a terminal before its receipt r
   await f.harness.taskStop(interrupt("exact-stop", target));
   expect(f.harness.summary(threadId)?.harnessTask?.state).toBe("completed");
   expect(f.rows().filter(row => row.method === "task.stop")).toHaveLength(1);
+  await f.harness.taskStop(interrupt("exact-stop", target));
+  expect(f.rows().filter(row => row.method === "task.stop")).toHaveLength(1);
+  expect(f.events.filter(e => e.kind === "message" && e.data.controlReceipt?.operationId === "exact-stop")
+    .every(e => e.kind === "message" && e.data.controlReceipt?.status === "requested")).toBe(true);
   await f.emit("turn.terminal", { state: "completed", text: "done", cessation: "provider-terminal" }, run); await pending;
 });
 

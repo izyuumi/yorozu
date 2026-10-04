@@ -120,6 +120,20 @@ export class PersonAgentRuntime {
   private save(): void { writeObject(this.file, this.manifest); }
   private hold(ids: string[], reason: string): void { for (const id of ids) this.manifest.holds[id] = reason.slice(0, 2000); }
   held(agentId: string): string | undefined { this.refresh(); return this.manifest.holds[agentId]; }
+  /** Configuration cannot change an execution chain while its outcome is unsettled. */
+  assertControlsIdle(): void {
+    this.refresh();
+    if (this.closing || Object.keys(this.manifest.holds).length || this.activeHandoffs.size
+      || [...this.owners.values()].some(owner => !owner.harness.idleConfirmed))
+      throw new Error("Agent settings require confirmed idle execution");
+  }
+  bindingForThread(id: string): { agentId: string; name: string; workspace: string } | undefined {
+    const conversation = this.manifest.taskOwners[id] ?? id;
+    const binding = this.manifest.bindings[conversation];
+    if (!binding) return;
+    const agent = this.agent(binding.agentId);
+    return { agentId: agent.id, name: agent.name, workspace: agent.workspace };
+  }
   private ledgerDir(id: string, epoch: string): string { return join(this.root, "ledgers", harnessDigest(id), epoch); }
   private ledgerFile(id: string, epoch: string): string { return join(this.ledgerDir(id, epoch), "harness-v1", "binding.json"); }
   private signature(agent: PersonAgent, scope: EffectiveAgentScope): string { return harnessDigest({ agent, scope }); }
@@ -178,8 +192,8 @@ export class PersonAgentRuntime {
       if (existsSync(join(scratchRoot, "profile"))) throw new Error("Refusing to adopt an unowned vendor profile");
       writeObject(markerPath, expected);
     }
-    const execution: PersonAgentExecution = { kind, id, scratchRoot, workspace: kind === "ordinary" ? agent.workspace : join(scratchRoot, "workspace"),
-      memoryDir: kind === "ordinary" ? agent.memoryDir : join(scratchRoot, "memory") };
+    const execution: PersonAgentExecution = { kind, id, scratchRoot, workspace: kind === "ordinary" ? agent.workspace : join(scratchRoot, "profile", "scratch"),
+      memoryDir: kind === "ordinary" ? agent.memoryDir : join(scratchRoot, "profile", "memory") };
     for (const path of [execution.workspace, execution.memoryDir]) { safeAgentPath(path); mkdirSync(path, { recursive: true, mode: 0o700 }); }
     const scratchBase = join(this.root, "scratch");
     const overlaps = (a: string, b: string): boolean => pathWithin(a, b) || pathWithin(b, a);
