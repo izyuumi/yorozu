@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 const ioNow = performance.now.bind(performance);
 import { resolve } from "node:path";
-import { rustHostCommand } from "./rust-host.js";
+import { rustHostCommand } from "./host-core-command.js";
 type Bridge = { thread: Worker; life: Int32Array; signal: Int32Array; output: Uint8Array };
 const bridges = new Map<string, Bridge>();
 const owners = new Map<string, symbol>();

@@ -22,6 +22,8 @@ OVERLAYS = [
     "packages/runtime/src/harness-process.ts",
     "packages/runtime/src/harness-ledger.ts",
     "packages/runtime/src/harness-runner.ts",
+    "packages/runtime/src/host-core-command.ts",
+    "packages/runtime/src/rust-sync.ts", "packages/runtime/src/rust-sync-worker.ts",
     "packages/shared/src/events.ts",
     "packages/harness-plugins",
     "scripts/harness-proof.mjs",

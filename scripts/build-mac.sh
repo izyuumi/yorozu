@@ -48,6 +48,7 @@ if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
     echo "secretary builds require scripts/build-internal-alpha.sh" >&2; exit 1
   fi
   cargo build --locked --release --manifest-path packages/host-core/Cargo.toml --bin yorozu-alpha-host
+  cargo build --locked --release --manifest-path packages/host-core/Cargo.toml --bin yorozu-host-core
 else
   sh scripts/build-host-core.sh --release
 fi
@@ -165,6 +166,7 @@ cp "$DIST/$NODE_DIR/bin/node" "$APP/Contents/Resources/node"
 # It is signed by the nested-code loop below, without the Node runtime exceptions.
 if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
   cp packages/host-core/target/release/yorozu-alpha-host "$APP/Contents/Resources/yorozu-alpha-host"
+  cp packages/host-core/target/release/yorozu-host-core "$APP/Contents/Resources/yorozu-host-core"
   cp internal-source.json "$APP/Contents/Resources/internal-source.json"
 else
   cp packages/host-core/target/release/yorozu-host-core "$APP/Contents/Resources/yorozu-host-core"

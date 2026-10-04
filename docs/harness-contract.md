@@ -8,8 +8,9 @@ no harness plugin is selected. No model classifies or plans above the plugin.
 ## Process and language boundary
 
 The existing Node host uses TypeScript supervision and a small durable JSON ledger.
-It reuses the current Rust history writer's kernel-backed lease; it does not add a
-Rust harness runtime or migrate history. A supervised Node adapter speaks the
+It reuses the existing Rust core's kernel-backed lease in a plugin-only store;
+the production history writer remains unchanged. It does not add a Rust harness
+runtime or migrate history. A supervised Node adapter speaks the
 upstream's public stdio JSON-RPC to native Python Hermes. SwiftUI sees normalized
 conversation/task metadata. The iOS app remains a client of its paired Mac.
 

@@ -27,7 +27,7 @@ interface State {
   pendingResults: Record<string, string>;
 }
 const owned = new Set<string>();
-/** The existing kernel-backed history writer lease protects this narrow TS store too. */
+/** Reuse the existing core's kernel lease in a separate plugin-only namespace. */
 export class HarnessLedger {
   private readonly file: string;
   private release: () => void;
@@ -37,7 +37,7 @@ export class HarnessLedger {
   constructor(dir: string, pluginId: HarnessPluginId, upstreamVersion: string) {
     this.key = resolve(dir);
     if (owned.has(this.key)) throw new Error("Harness binding already owned");
-    this.release = retainSharedSyncHost(dir);
+    this.release = retainSharedSyncHost(join(dir, "harness-v1"));
     owned.add(this.key);
     try {
       const root = join(dir, "harness-v1"); mkdirSync(root, { recursive: true, mode: 0o700 });
