@@ -63,6 +63,8 @@ cp "$BIN/YorozuMac" "$APP/Contents/MacOS/Yorozu"
 # The native tool host ships inside the bundle so it shares the app's signature: TCC keys
 # Accessibility and Screen Recording on that, and the helper is what needs them.
 cp "$BIN/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
+# Separate protected account helper: fixed host-only path, no generic native-tool API.
+cp "$BIN/yorozu-accounts" "$APP/Contents/Resources/yorozu-accounts"
 cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
 # SwiftPM keeps package resources in a companion bundle. The Bundle.module accessor that
 # `swift build` generates looks for it only at the app bundle's root, and codesign refuses a
@@ -310,6 +312,8 @@ JS
 fi
 codesign --force --options runtime --timestamp \
   --entitlements apps/mac/Node.entitlements --sign "$IDENTITY" "$APP/Contents/Resources/node"
+codesign --force --options runtime --timestamp --identifier to.yumi.yorozu.accounts \
+  --sign "$IDENTITY" "$APP/Contents/Resources/yorozu-accounts"
 codesign --force --options runtime --timestamp \
   --entitlements apps/mac/Yorozu.entitlements --sign "$IDENTITY" "$APP/Contents/MacOS/yorozu-native"
 codesign --force --options runtime --timestamp \

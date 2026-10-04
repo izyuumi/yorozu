@@ -4,10 +4,12 @@ import PackageDescription
 /// Absolute, because `swift build --package-path apps/mac` is run from the repository root
 /// and the linker flag below is resolved against the *invoking* directory, not this one.
 let helperPlist = "\(String(#filePath.dropLast("Package.swift".count)))Sources/YorozuNative/Info.plist"
+let accountsPlist = "\(String(#filePath.dropLast("Package.swift".count)))Sources/YorozuAccounts/Info.plist"
 
 let package = Package(
     name: "YorozuMac",
     platforms: [.macOS(.v15)],
+    products: [.library(name: "YorozuAccountsCore", targets: ["YorozuAccountsCore"])],
     dependencies: [
         .package(path: "../../packages/shared-swift"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0")
@@ -19,6 +21,12 @@ let package = Package(
         // rather than part of the app because the parts worth testing — the agent it writes
         // and the pause a deliberate Quit leaves — are pure text.
         .target(name: "YorozuKeepalive"),
+        .target(name: "YorozuAccountsCore"),
+        .executableTarget(
+            name: "yorozu-accounts", dependencies: ["YorozuAccountsCore"], path: "Sources/YorozuAccounts",
+            exclude: ["Info.plist"],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", accountsPlist])]
+        ),
         .executableTarget(
             name: "YorozuMac",
             dependencies: [
@@ -45,6 +53,7 @@ let package = Package(
                 ])
             ]
         ),
-        .testTarget(name: "YorozuKeepaliveTests", dependencies: ["YorozuKeepalive", "YorozuMac"])
+        .testTarget(name: "YorozuKeepaliveTests", dependencies: ["YorozuKeepalive", "YorozuMac"]),
+        .testTarget(name: "YorozuAccountsCoreTests", dependencies: ["YorozuAccountsCore"])
     ]
 )
