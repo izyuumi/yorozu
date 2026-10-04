@@ -180,6 +180,11 @@ export async function prepareRuntime(params) {
     desktop: { auto_continue: { enabled: false } },
     display: { busy_input_mode: 'queue' },
     approvals: { mode: 'manual' },
+    // Curated runtimes never install changing dependencies or a latest-release
+    // scanner on demand. Until a pinned scanner is bundled, terminal scanning
+    // fails closed against this explicit, unavailable path.
+    security: { allow_lazy_installs: false, tirith_enabled: true,
+      tirith_path: join(hermesHome, 'curated-tirith-unavailable'), tirith_fail_open: false },
     delegation: { orchestrator_enabled: true, max_spawn_depth: 3, max_concurrent_children: 2 },
     custom_providers: fixture ? [{ name: 'yorozu-local-proof', base_url: fixture.baseUrl, api_key: fixture.bearer ?? 'yorozu-loopback-proof', api_mode: 'codex_responses' }] : [],
   };
@@ -218,6 +223,8 @@ export async function prepareRuntime(params) {
       HOME: home, CODEX_HOME: codexHome, HERMES_HOME: hermesHome,
       TMPDIR: join(profileRoot, 'tmp'), LANG: 'en_US.UTF-8',
       PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1', PYTHONNOUSERSITE: '1',
+      HERMES_DISABLE_LAZY_INSTALLS: '1',
+      TIRITH_ENABLED: '1', TIRITH_BIN: config.security.tirith_path, TIRITH_FAIL_OPEN: '0',
       ...(agent ? { HERMES_TUI_TOOLSETS: [...agent.scope.allowedTools.filter(name => NATIVE_TOOLS.includes(name)),
         ...(agent.platform.team ? ['yorozu_platform'] : []), 'yorozu_empty'].join(',') } : {}),
       // No inherited env, .env, sidecars, auth variables or scheduler settings.

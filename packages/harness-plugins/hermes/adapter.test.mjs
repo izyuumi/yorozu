@@ -503,7 +503,7 @@ test('owned real runtime config disables recovery/fallback/priority and strips a
     workspace, sourcePath: process.env.YOROZU_HERMES_TEST_SOURCE, python: '/usr/bin/python3' };
   const runtime = await prepareRuntime(params);
   assert.equal(runtime.authAvailable, false);
-  assert.deepEqual(Object.keys(runtime.env).sort(), ['CODEX_HOME', 'HERMES_HOME', 'HOME', 'LANG', 'PATH', 'PYTHONDONTWRITEBYTECODE', 'PYTHONNOUSERSITE', 'PYTHONUNBUFFERED', 'TMPDIR'].sort());
+  assert.deepEqual(Object.keys(runtime.env).sort(), ['CODEX_HOME', 'HERMES_DISABLE_LAZY_INSTALLS', 'HERMES_HOME', 'HOME', 'LANG', 'PATH', 'PYTHONDONTWRITEBYTECODE', 'PYTHONNOUSERSITE', 'PYTHONUNBUFFERED', 'TIRITH_BIN', 'TIRITH_ENABLED', 'TIRITH_FAIL_OPEN', 'TMPDIR'].sort());
   assert.equal(runtime.env.CODEX_HOME.startsWith(await realpath(directory)), true);
   const config = JSON.parse(await readFile(join(directory, 'hermes-runtime', 'config.yaml'), 'utf8'));
   assert.equal(config.desktop.auto_continue.enabled, false);
@@ -511,9 +511,36 @@ test('owned real runtime config disables recovery/fallback/priority and strips a
   assert.deepEqual(config.agent.disabled_toolsets, ['cronjob', 'computer_use']);
   assert.equal(config.approvals.mode, 'manual'); assert.equal(config.delegation.orchestrator_enabled, true);
   assert.equal(config.display.busy_input_mode, 'queue');
+  assert.equal(config.security.allow_lazy_installs, false);
+  assert.equal(config.security.tirith_enabled, true); assert.equal(config.security.tirith_fail_open, false);
+  assert.equal(config.security.tirith_path, join(runtime.env.HERMES_HOME, 'curated-tirith-unavailable'));
+  assert.equal(runtime.env.HERMES_DISABLE_LAZY_INSTALLS, '1'); assert.equal(runtime.env.TIRITH_FAIL_OPEN, '0');
+  assert.equal(runtime.env.TIRITH_BIN, config.security.tirith_path);
   await rm(join(directory, 'hermes-runtime', 'config.yaml'));
   await symlink(join(directory, 'outside'), join(directory, 'hermes-runtime', 'config.yaml'));
   await assert.rejects(prepareRuntime(params), /must not be a symlink/);
+});
+
+test('upstream security refuses unavailable scanner without starting an installer', {
+  skip: !process.env.YOROZU_HERMES_TEST_SOURCE || !process.env.YOROZU_HERMES_TEST_PYTHON,
+}, async t => {
+  const { params } = await scopeFixture(t, []);
+  params.python = process.env.YOROZU_HERMES_TEST_PYTHON;
+  const runtime = await prepareRuntime(params);
+  const result = await exec(params.python, ['-c', `
+import json
+from tools import lazy_deps, tirith_security
+def forbidden(*args, **kwargs):
+    raise AssertionError("curated runtime must not start an installer")
+tirith_security._install_tirith = forbidden
+tirith_security._background_install = forbidden
+assert lazy_deps._allow_lazy_installs() is False
+assert tirith_security.ensure_installed() is None
+verdict = tirith_security.check_command_security("echo harmless-curated-probe")
+assert verdict["action"] == "block", verdict
+print(json.dumps({"lazyInstall": False, "command": verdict["action"]}))
+`], { cwd: runtime.sourcePath, env: runtime.env, maxBuffer: 16 * 1024 });
+  assert.deepEqual(JSON.parse(result.stdout), { lazyInstall: false, command: 'block' });
 });
 
 test('native discovery exposes exact scoped subsets, empty chat scope, and bounded platform handoff', {
