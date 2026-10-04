@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 1,
+  "pluginId": "openclaw",
+  "version": "2026.9.8",
+  "entry": "adapter.mjs",
+  "upstream": {
+    "version": "2026.9.8",
+    "sourceSha": "fc23bc864e4553c2d215e479eeec47b67a0bf943"
+  },
+  "runtime": { "kind": "external-node", "entry": "openclaw.mjs gateway", "node": ">=24.16.0 <25 || >=26.1.0" },
+  "productionReady": false,
+  "permissionEnforcement": "native-tools-disabled; verified-per-agent-host-policy-and-macos-sandbox-required",
+  "capabilities": {
+    "backgroundTasks": false,
+    "targetedSteer": false,
+    "taskStop": false,
+    "approvals": false,
+    "reconnect": false,
+    "attachments": false,
+    "crashAutoResume": false,
+    "schedules": false,
+    "nativeComputerUse": false
+  },
+  "authentication": {
+    "gateway": "adapter-generated-local-token; no-device-pairing",
+    "subscriptionAccess": "unsupported-pending-fresh-onboarding",
+    "ambientCredentials": false,
+    "billedFallback": false,
+    "localProofProvider": "explicit-loopback-native-openai-responses"
+  }
+}
