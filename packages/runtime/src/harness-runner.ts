@@ -27,6 +27,8 @@ export interface SecretaryHarnessOptions {
   historyBootstrap?: boolean; context?: string;
   /** Agent-wide admission gate, including unknown outcomes in other threads. */
   beforeAdmission?(): void;
+  /** Explicit host migration: retain the legacy backend metadata as rollback evidence. */
+  preserveLegacyMetadata?: true;
 }
 
 export interface HarnessServices {
@@ -66,7 +68,8 @@ export class SecretaryHarness {
     this.ledger = new HarnessLedger(options.ledgerDir ?? dir, configuration.pluginId, configuration.upstreamVersion);
     try {
       const existing = listThreads(dir).find(t => t.id === this.conversationId);
-      if (options.workspace && existing?.cwd && existing.cwd !== options.workspace) throw new Error("Existing conversation workspace cannot be reassigned");
+      if (options.workspace && existing?.cwd && existing.cwd !== options.workspace && !options.preserveLegacyMetadata)
+        throw new Error("Existing conversation workspace cannot be reassigned");
       if (!options.workspace) mkdirSync(projectsRoot(), { recursive: true, mode: 0o700 });
       this.workspace = options.workspace ?? existing?.cwd ?? join(realpathSync(projectsRoot()), "Yorozu Secretary");
       mkdirSync(this.workspace, { recursive: true, mode: 0o700 });

@@ -12,6 +12,7 @@ test("person-agent catalog and all settings actions share the bounded wire shape
   const requests: PersonAgentControlData[] = [
     { version: 1, expectedRevision: 2, action: "create", agent: { name: "Ada", role: "Keep notes", pluginId: "hermes", allowedTools: ["file"] } },
     { version: 1, expectedRevision: 2, action: "update", agentId: "agent-a", patch: { model: "subscription/model" } },
+    { version: 1, expectedRevision: 2, action: "update", agentId: "agent-a", patch: { clear: ["model", "accountBindingId"] } },
     { version: 1, expectedRevision: 2, action: "default", agentId: "agent-a" },
     { version: 1, expectedRevision: 2, action: "create-team", team: { name: "Notes", agentIds: ["agent-a"] } },
     { version: 1, expectedRevision: 2, action: "update-team", teamId: "team-a", patch: { agentIds: ["agent-a"] } },
@@ -31,6 +32,9 @@ test("settings controls reject credentials, grants in preferences, wrong audienc
     { ...create, agent: { ...create.agent, allowedTools: ["file", "file"] } },
     { ...create, agent: { ...create.agent, allowedTools: ["anything"] } },
     { ...create, agent: { ...create.agent, model: null } },
+    { version: 1, expectedRevision: 2, action: "update", agentId: "agent-a", patch: { clear: ["model"], model: "conflict" } },
+    { version: 1, expectedRevision: 2, action: "update", agentId: "agent-a", patch: { clear: ["model", "model"] } },
+    { version: 1, expectedRevision: 2, action: "update", agentId: "agent-a", patch: { clear: ["directories"] } },
     { ...create, agent: { ...create.agent, directories: [{ path: "/tmp/../outside", access: "write" }] } },
     { version: 1, expectedRevision: 2, action: "default", agentId: "Unknown Agent" },
     { version: 1, expectedRevision: 2, action: "default", agentId: "agent-a\n" },

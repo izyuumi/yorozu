@@ -25,6 +25,8 @@ OVERLAYS = [
     "packages/runtime/src/agent-store.ts", "packages/runtime/src/agent-scope.ts",
     "packages/runtime/src/agent-isolation.ts", "packages/runtime/src/agent-listener.ts",
     "packages/runtime/src/person-agent-runtime.ts",
+    "packages/runtime/src/person-agent-host.ts", "packages/runtime/src/person-agent-controls.ts",
+    "packages/runtime/src/curated-agent-runtime.ts",
     "packages/runtime/src/host-core-command.ts",
     "packages/runtime/src/rust-sync.ts", "packages/runtime/src/rust-sync-worker.ts",
     "packages/shared/src/events.ts",
@@ -62,7 +64,9 @@ def stage(destination):
     # Keep the production manifest and lockfile together. Only these explicit new
     # files and the reviewed adapter replace runtime source; serve/storage do not.
     tests = git("ls-tree", "-r", "--name-only", source, "packages/runtime/src").decode().splitlines()
-    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness", "agent-", "person-agent-")) and name.endswith(".test.ts")]
+    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness", "agent-", "person-agent-", "curated-agent-")) and name.endswith(".test.ts")]
+    shared_tests = git("ls-tree", "-r", "--name-only", source, "packages/shared/src").decode().splitlines()
+    tests += [name for name in shared_tests if Path(name).name.startswith(("person-agents", "peer-info")) and name.endswith(".test.ts")]
     if not tests:
         raise SystemExit("Secretary regression tests are missing")
     with tarfile.open(fileobj=io.BytesIO(git("archive", source, *tests))) as archive:

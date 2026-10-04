@@ -32,6 +32,24 @@ test("records persist with host-derived private paths, cloned snapshots, indepen
   expect(lstatSync(join(f.store.root, "registry.json")).mode & 0o777).toBe(0o600);
 });
 
+test("explicit optional-field resets persist and ambiguous resets leave the registry intact", () => {
+  const f = fixture(); f.create("alice", { model: "chosen-model", accountBindingId: "account-opaque" });
+  const before = f.store.list();
+  for (const patch of [{ clear: ["model"], model: "replacement" }, { clear: ["model", "model"] },
+    { clear: ["directories"] }, { model: null }, { accountBindingId: null }]) {
+    expect(() => f.store.update("alice", patch as any, before.revision)).toThrow();
+    expect(f.store.list()).toEqual(before);
+  }
+  f.store.update("alice", { clear: ["model"], name: "Updated" }, before.revision);
+  expect(f.store.list().agents[0]).toMatchObject({ name: "Updated", accountBindingId: "account-opaque" });
+  expect(f.store.list().agents[0]).not.toHaveProperty("model");
+  f.store.update("alice", { clear: ["accountBindingId"] }, 2);
+  const reloaded = new PersonAgentStore(join(f.root, "state"), { resourceRoots: [{ path: f.shared, access: "write" }] });
+  expect(reloaded.list().revision).toBe(3);
+  expect(reloaded.list().agents[0]).not.toHaveProperty("accountBindingId");
+  expect(reloaded.paths("alice")).toEqual(f.store.paths("alice"));
+});
+
 test("root/id/tool forgery and widened resources fail without mutating registry", () => {
   const f = fixture(); f.create("alice");
   for (const id of ["../bob", "a/b", "..", "BOB", "", "a\\b"]) expect(() => f.create(id)).toThrow();

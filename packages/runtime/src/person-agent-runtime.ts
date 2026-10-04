@@ -4,7 +4,7 @@ import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, open
 import { join } from "node:path";
 import type { ThreadSummary, YorozuEvent } from "@yorozu/shared";
 import type { NativeTurnResult } from "./native.js";
-import { PersonAgentStore, type PersonAgent, type PersonAgentInput, type AgentRegistry } from "./agent-store.js";
+import { PersonAgentStore, type PersonAgent, type PersonAgentPatch, type AgentRegistry } from "./agent-store.js";
 import { normalizeDirectoryGrants, pathWithin, safeAgentPath, validAgentId, validateKnowledgeIds, validateTools, type EffectiveAgentScope, type ScopeSelection } from "./agent-scope.js";
 import { releaseHostListener, validateHostListeners } from "./agent-listener.js";
 import { isolatedAgentLaunch, type AgentIsolationRuntime } from "./agent-isolation.js";
@@ -12,7 +12,7 @@ import { HarnessProcess, type SupervisedHarnessConfiguration } from "./harness-p
 import { harnessDigest } from "./harness-ledger.js";
 import type { HarnessConfiguration } from "./harness-contract.js";
 import { SecretaryHarness, type HarnessServices, type HarnessHandoffIdentity, type HarnessHandoffInput, type HarnessHandoffResult } from "./harness-runner.js";
-import { appendThreadEvent, readThreadEvents, setNativeTurn } from "./threads.js";
+import { appendThreadEvent, listThreads, readThreadEvents, setNativeTurn } from "./threads.js";
 import { retainSharedSyncHost } from "./rust-sync.js";
 
 export interface PersonAgentExecution {
@@ -23,7 +23,7 @@ export interface PersonAgentExecution {
  */
 export type PersonAgentRuntimeFactory = (agent: PersonAgent, scope: EffectiveAgentScope, execution: PersonAgentExecution) =>
   Promise<{ configuration: HarnessConfiguration; runtime: AgentIsolationRuntime }> | { configuration: HarnessConfiguration; runtime: AgentIsolationRuntime };
-interface Binding { agentId: string; title: string; epochs: string[] }
+interface Binding { agentId: string; title: string; epochs: string[]; legacyMetadataDigest?: string }
 interface Instance { agentId: string; chain: string[]; conversationId: string; epoch: string; state: "preparing" | "running" | "completed" | "failed" | "unknown"; result?: HarnessHandoffResult }
 interface Manifest { version: 1; bindings: Record<string, Binding>; taskOwners: Record<string, string>; holds: Record<string, string>; instances: Record<string, Instance> }
 interface Actor { agent: PersonAgent; scope: EffectiveAgentScope; signature: string; execution: PersonAgentExecution; configuration: SupervisedHarnessConfiguration; process: HarnessProcess; owners: Set<string> }
@@ -76,7 +76,8 @@ function validateManifest(s: any): Manifest {
     || Object.keys(s.bindings).length > 512 || Object.keys(s.taskOwners).length > 2048 || Object.keys(s.instances).length > 512) throw new Error("Damaged agent runtime journal");
   for (const [id, b] of Object.entries(s.bindings) as [string, Binding][]) if (!threadId(id) || !record(b) || !validAgentId(b.agentId)
     || typeof b.title !== "string" || b.title.length > 200 || !Array.isArray(b.epochs) || b.epochs.length > 64 || b.epochs.some(e => !hash(e))
-    || Object.keys(b).some(k => !["agentId", "title", "epochs"].includes(k))) throw new Error("Damaged conversation ownership");
+    || b.legacyMetadataDigest !== undefined && (!hash(b.legacyMetadataDigest) || id !== "yorozu-secretary-v1")
+    || Object.keys(b).some(k => !["agentId", "title", "epochs", "legacyMetadataDigest"].includes(k))) throw new Error("Damaged conversation ownership");
   for (const [task, owner] of Object.entries(s.taskOwners)) if (!threadId(task) || !threadId(owner) || !s.bindings[owner]) throw new Error("Damaged task ownership");
   for (const [id, reason] of Object.entries(s.holds)) if (!validAgentId(id) || typeof reason !== "string" || reason.length > 2000) throw new Error("Damaged agent hold");
   for (const [id, v] of Object.entries(s.instances) as [string, Instance][]) if (!hash(id) || !record(v) || !validAgentId(v.agentId) || !threadId(v.conversationId) || !hash(v.epoch)
@@ -99,6 +100,7 @@ export class PersonAgentRuntime {
   private actors = new Map<string, Actor>();
   private owners = new Map<string, Owner>();
   private operations: Promise<unknown> = Promise.resolve();
+  private pendingOperations = 0;
   private activeHandoffs = new Set<string>();
   private handoffPromises = new Map<string, Promise<HarnessHandoffResult>>();
   private closing = false;
@@ -123,7 +125,7 @@ export class PersonAgentRuntime {
   /** Configuration cannot change an execution chain while its outcome is unsettled. */
   assertControlsIdle(): void {
     this.refresh();
-    if (this.closing || Object.keys(this.manifest.holds).length || this.activeHandoffs.size
+    if (this.closing || this.pendingOperations || Object.keys(this.manifest.holds).length || this.activeHandoffs.size
       || [...this.owners.values()].some(owner => !owner.harness.idleConfirmed))
       throw new Error("Agent settings require confirmed idle execution");
   }
@@ -134,11 +136,48 @@ export class PersonAgentRuntime {
     const agent = this.agent(binding.agentId);
     return { agentId: agent.id, name: agent.name, workspace: agent.workspace };
   }
+  isTaskThread(id: string): boolean { return Object.hasOwn(this.manifest.taskOwners, id); }
+  /** Persist host identity without opening a vendor session or resolving account access. */
+  bindConversation(id: string, agentId: string, title = "Conversation"): void {
+    if (this.closing || !threadId(id) || typeof title !== "string" || title.length > 200 || this.manifest.taskOwners[id])
+      throw new Error("Invalid owned conversation");
+    this.agent(agentId);
+    const previous = this.manifest.bindings[id];
+    if (previous && previous.agentId !== agentId) throw new Error("Conversation agent identity is immutable");
+    if (previous) return;
+    if (Object.keys(this.manifest.bindings).length >= 512) throw new Error("Conversation binding budget exceeded");
+    this.manifest.bindings[id] = { agentId, title, epochs: [] }; this.save();
+  }
+  /** Trusted opt-in only. History/backend sessions remain intact and grant no file access. */
+  bindSecretary(agentId: string): void {
+    this.assertControlsIdle(); this.agent(agentId);
+    const id = "yorozu-secretary-v1", previous = this.manifest.bindings[id];
+    if (previous) {
+      if (previous.agentId !== agentId) throw new Error("The secretary person identity is immutable");
+      return;
+    }
+    const existing = listThreads(this.dir).find(t => t.id === id);
+    if (existing?.nativeTurn || unsettled(join(this.dir, "harness-v1", "binding.json")))
+      throw new Error("Legacy secretary execution must be confirmed idle before migration");
+    const queue = readObject(join(this.dir, "native-turn-queue.json"), MAX_MANIFEST_BYTES);
+    if (queue && (!Array.isArray(queue) || queue.length)) throw new Error("Legacy queued work must settle before migration");
+    const legacyMetadataDigest = existing ? this.legacyMetadata(id) : undefined;
+    this.manifest.bindings[id] = { agentId, title: existing?.title || "Yorozu", epochs: [],
+      ...(legacyMetadataDigest ? { legacyMetadataDigest } : {}) };
+    this.save();
+  }
+  private legacyMetadata(id: string): string {
+    const existing = listThreads(this.dir).find(t => t.id === id);
+    if (!existing) throw new Error("Legacy conversation record is missing");
+    return harnessDigest({ agent: existing.agent, cwd: existing.cwd, nativeSessionId: existing.nativeSessionId });
+  }
   private ledgerDir(id: string, epoch: string): string { return join(this.root, "ledgers", harnessDigest(id), epoch); }
   private ledgerFile(id: string, epoch: string): string { return join(this.ledgerDir(id, epoch), "harness-v1", "binding.json"); }
   private signature(agent: PersonAgent, scope: EffectiveAgentScope): string { return harnessDigest({ agent, scope }); }
   private serialized<T>(fn: () => Promise<T>): Promise<T> {
-    const p = this.operations.then(fn); this.operations = p.catch(() => {}); return p;
+    this.pendingOperations++;
+    const p = this.operations.then(fn).finally(() => { this.pendingOperations--; });
+    this.operations = p.catch(() => {}); return p;
   }
   private refresh(): void {
     let changed = false;
@@ -217,10 +256,12 @@ export class PersonAgentRuntime {
         if (sibling !== scratchRoot) siblingScratch.push(sibling);
       }
       const deniedRoots = [...new Set([...scope.deniedRoots, ...siblingScratch, join(this.root, "ledgers"), this.file, join(this.root, "lease"),
-        join(this.dir, "threads"), join(this.dir, "threads.json")])];
+        join(this.dir, "threads"), join(this.dir, "threads.json"), join(this.dir, "person-agent-controls-v1")])];
       const osScope = { ...scope, deniedRoots };
       const launch = isolatedAgentLaunch(osScope, built.runtime);
-      const scoped = { allowedTools: tools, directories: scope.directories.map(g => ({ ...g })), workspace: execution.workspace, memoryDir: execution.memoryDir,
+      const scoped = { allowedTools: tools, directories: scope.directories.map(g => ({ ...g })),
+        workspace: agent.pluginId === "openclaw" ? agent.workspace : execution.workspace,
+        memoryDir: agent.pluginId === "openclaw" ? agent.memoryDir : execution.memoryDir,
         ...(agent.pluginId === "openclaw" ? { deniedRoots } : {}) };
       const configuration: SupervisedHarnessConfiguration = { ...built.configuration, command: launch.command, args: launch.args, inheritedListeners: built.runtime.inheritedListeners,
         initialize: { ...initialize, agentId: agent.id, workspace: execution.workspace, model: agent.model,
@@ -239,6 +280,8 @@ export class PersonAgentRuntime {
       if (this.closing || !threadId(id) || typeof title !== "string" || title.length > 200) throw new Error("Invalid owned conversation");
       const previous = this.manifest.bindings[id]; const selected = agentId ?? previous?.agentId ?? this.store.list().defaultAgentId;
       if (!selected || previous && previous.agentId !== selected || this.manifest.taskOwners[id]) throw new Error("Conversation agent identity is immutable");
+      if (previous?.legacyMetadataDigest && previous.legacyMetadataDigest !== this.legacyMetadata(id))
+        throw new Error("Legacy backend metadata changed; the agent binding requires inspection");
       const agent = this.agent(selected), scope = this.store.resolveScope(selected), signature = this.signature(agent, scope);
       this.refresh(); if (this.manifest.holds[selected]) throw new Error(this.manifest.holds[selected]);
       const existing = this.owners.get(id);
@@ -258,7 +301,8 @@ export class PersonAgentRuntime {
       if (Object.keys(this.manifest.bindings).length >= 512 && !previous || binding.epochs.length >= 64 && !binding.epochs.includes(signature)) throw new Error("Conversation binding budget exceeded");
       this.manifest.bindings[id] = binding; if (!binding.epochs.includes(signature)) binding.epochs.push(signature); this.save();
       const harness = new SecretaryHarness(this.dir, actor.configuration, { conversationId: id, workspace: agent.workspace,
-        title: binding.title, ledgerDir: this.ledgerDir(id, signature), sharedProcess: actor.process, beforeAdmission: () => this.admission(actor!) });
+        title: binding.title, ledgerDir: this.ledgerDir(id, signature), sharedProcess: actor.process,
+        ...(binding.legacyMetadataDigest ? { preserveLegacyMetadata: true as const } : {}), beforeAdmission: () => this.admission(actor!) });
       const owner = { harness, actor, epoch: signature, transient: false }; this.owners.set(id, owner); actor.owners.add(id); this.bindOwner(id, owner);
       return harness;
     });
@@ -276,7 +320,7 @@ export class PersonAgentRuntime {
   }
   async taskStop(event: YorozuEvent): Promise<boolean> { return await (await this.owner(event.threadId))?.taskStop(event) ?? false; }
   /** Trusted settings operation. History and prior binding evidence remain in place. */
-  configure(id: string, patch: Partial<Omit<PersonAgentInput, "id">>, expectedRevision: number): Promise<AgentRegistry> {
+  configure(id: string, patch: PersonAgentPatch, expectedRevision: number): Promise<AgentRegistry> {
     return this.serialized(async () => {
       this.refresh(); if (this.closing || !this.idle(id)) throw new Error("Agent configuration requires confirmed idle execution; unknown work cannot be escaped by switching");
       // CAS/validation failure must leave the healthy selected runtime intact.

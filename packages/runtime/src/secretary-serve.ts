@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 import { constants } from "node:os";
 import { secretaryCoordinator, type SecretaryCoordinatorHost } from "./secretary-coordinator.js";
 import { harnessConfiguration, SecretaryHarness } from "./harness-runner.js";
+import { PersonAgentHost, type PersonAgentPlatform } from "./person-agent-host.js";
+
+export interface SecretaryServeOptions extends ServeOptions { personAgentPlatform?: PersonAgentPlatform }
 
 function requireProductionRuntime(): void {
   if (!("secretaryRunnerDecorator" in runtime) || runtime.secretaryRunnerDecorator !== true) {
@@ -15,7 +18,7 @@ function requireProductionRuntime(): void {
   }
 }
 
-export function serveSecretary(options: ServeOptions = {}): Sidecar {
+export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   requireProductionRuntime();
   const dir = options.stateDir ?? stateDir();
   let decorated = false;
@@ -23,18 +26,30 @@ export function serveSecretary(options: ServeOptions = {}): Sidecar {
   let coordinator: ReturnType<typeof secretaryCoordinator>;
   let harness: SecretaryHarness | undefined;
   let harnessHost: SecretaryCoordinatorHost | undefined;
-  const configuration = harnessConfiguration(dir);
+  const people = options.personAgentPlatform ? new PersonAgentHost(dir, options.personAgentPlatform) : undefined;
+  const configuration = people ? undefined : harnessConfiguration(dir);
   // A local variable also type-checks against the unpatched development ServeOptions.
   const decoratedOptions = { ...options, stateDir: dir,
     secretaryUnavailable: () => unavailable,
-    secretaryCoordinator: !configuration,
-    secretaryHarness: !!configuration,
-    secretaryOwnsTask: (id: string) => configuration ? id !== "yorozu-secretary-v1" && (harness?.owns(id) ?? false) : coordinator?.owns(id) ?? false,
+    secretaryCoordinator: !configuration && !people,
+    secretaryHarness: !!configuration || !!people,
+    secretaryOwnsConversation: (id: string) => people?.owns(id) ?? false,
+    secretaryOwnsTask: (id: string) => people ? people.ownsTask(id) : configuration ? id !== "yorozu-secretary-v1" && (harness?.owns(id) ?? false) : coordinator?.owns(id) ?? false,
     secretaryTask: (id: string) => coordinator?.task(id),
-    secretaryThreadSummary: (id: string) => harness?.summary(id),
-    secretaryTaskStop: (event: Parameters<SecretaryHarness["taskStop"]>[0]) => harness?.taskStop(event) ?? Promise.resolve(false),
+    secretaryThreadSummary: (id: string) => people?.summary(id) ?? harness?.summary(id),
+    secretaryThreadWorkspace: (id: string) => people?.workspace(id),
+    secretaryTaskStop: (event: Parameters<SecretaryHarness["taskStop"]>[0]) => people?.runtime.taskStop(event) ?? harness?.taskStop(event) ?? Promise.resolve(false),
+    personAgentRegistry: people ? () => people.registry() : undefined,
+    personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => people.control(event) : undefined,
+    personAgentCreate: people ? (event: Parameters<PersonAgentHost["create"]>[0]) => people.create(event) : undefined,
     secretaryObserve: (event: Parameters<ReturnType<typeof secretaryCoordinator>["observe"]>[0]) => coordinator?.observe(event),
     decorateNativeRunners: (runners: Record<string, NativeAgentRunner>, host: SecretaryCoordinatorHost) => {
+      if (people) {
+        harnessHost = host; decorated = true;
+        return { ...runners, harness: people.runner, codex: { ...runners.codex,
+          run: (turn: NativeTurn) => people.owns(turn.threadId) ? people.runner.run(turn)
+            : runners.codex?.run(turn) ?? Promise.resolve({ text: "Codex unavailable", failed: true }) } };
+      }
       if (configuration) {
         harnessHost = host;
         try { harness = new SecretaryHarness(dir, configuration); }
@@ -65,12 +80,15 @@ export function serveSecretary(options: ServeOptions = {}): Sidecar {
     void sidecar.close().catch(() => {});
     throw new Error("The production runtime is missing its secretary decorator patch");
   }
-  if (harness && harnessHost) {
+  if (people && harnessHost) {
+    const host = harnessHost;
+    people.bind({ emit: host.emit, changed: () => host.publishThreads?.() });
+  } else if (harness && harnessHost) {
     const host = harnessHost;
     harness.bind({ emit: host.emit, changed: () => host.publishThreads?.() });
   } else if (!configuration) coordinator!.reconcile();
   return { ...sidecar, async close() {
-    try { await harness?.close(); } finally { await sidecar.close(); }
+    try { await people?.close(); await harness?.close(); } finally { await sidecar.close(); }
   } };
 }
 

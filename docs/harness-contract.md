@@ -99,6 +99,26 @@ scheduler, marketplace, updater, installed-profile migration or release is added
 
 ## Local candidate validation
 
+The additive person host is `person-agent-host.ts`. `serveSecretary` accepts its
+trusted `PersonAgentPlatform` explicitly; client settings cannot supply a runtime
+factory, interpreter, source path, broker, or permission roots. The default CLI
+does not activate this platform yet. `person-agents-v1` is advertised only when
+the production host supplies the registry/control callbacks.
+
+Person settings and chat creation use separate durable control receipts and
+immutable creation identities. They do not enter the conversation transcript.
+Creating a chat binds its published person without resolving authentication or
+starting a harness. Model/account removal uses the explicit `clear` array;
+omission preserves a value and JSON null is rejected. Registry revisions protect
+against stale edits, and preparation, running work, and unknown outcomes hold
+settings changes.
+
+The registry default applies to new chats. Continuous secretary migration remains
+an explicit trusted host operation. It requires idle legacy work and an empty
+queue, retains the legacy backend session and workspace metadata as rollback
+evidence, and grants none of that old workspace to the new person. Existing chat
+identities are immutable; this slice does not offer live secretary reassignment.
+
 Host tests exercise immutable admission/control IDs, uncertainty after restart,
 single ownership, quiescent switch preparation and process failure. Adapter
 checks exercise actual upstream frame translations and current scope. A separate

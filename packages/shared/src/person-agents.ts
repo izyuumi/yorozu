@@ -8,7 +8,7 @@ export interface PersonAgentInput {
   model?: string; accountBindingId?: string;
   allowedTools: PersonAgentTool[]; directories?: PersonAgentDirectoryGrant[];
 }
-export type PersonAgentPatch = Partial<Omit<PersonAgentInput, "id">>;
+export type PersonAgentPatch = Partial<Omit<PersonAgentInput, "id">> & { clear?: Array<"model" | "accountBindingId"> };
 export interface PersonAgent extends Omit<PersonAgentInput, "id" | "directories"> {
   id: string; workspace: string; memoryDir: string;
   directories: PersonAgentDirectoryGrant[]; teamIds: string[];
@@ -80,7 +80,7 @@ function tools(value: unknown): asserts value is PersonAgentTool[] {
       value.some(tool => !PERSON_AGENT_TOOLS.includes(tool))) throw new Error("Invalid person-agent tools");
 }
 function config(value: unknown, patch = false): void {
-  object(value, patch ? AGENT_KEYS : ["id", ...AGENT_KEYS]);
+  object(value, patch ? [...AGENT_KEYS, "clear"] : ["id", ...AGENT_KEYS]);
   if (!patch || value.name !== undefined) text(value.name, 80);
   if (!patch || value.role !== undefined) text(value.role, 512);
   if ((!patch || value.pluginId !== undefined) && !["hermes", "openclaw"].includes(value.pluginId as string))
@@ -88,6 +88,9 @@ function config(value: unknown, patch = false): void {
   if (value.id !== undefined) id(value.id);
   if (value.model !== undefined) text(value.model, 128);
   if (value.accountBindingId !== undefined) text(value.accountBindingId, 256);
+  if (patch && value.clear !== undefined && (!Array.isArray(value.clear) || value.clear.length > 2
+    || new Set(value.clear).size !== value.clear.length || value.clear.some(k => !["model", "accountBindingId"].includes(k) || value[k] !== undefined)))
+    throw new Error("Invalid person-agent clear fields");
   if (!patch || value.allowedTools !== undefined) tools(value.allowedTools);
   if (value.directories !== undefined) directories(value.directories);
 }

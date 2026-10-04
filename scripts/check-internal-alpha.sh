@@ -9,7 +9,12 @@ pnpm install --frozen-lockfile
 pnpm --filter @yorozu/shared --filter @yorozu/runtime build
 cargo test --locked --manifest-path packages/host-core/Cargo.toml --test alpha
 cargo test --locked --manifest-path packages/host-core/Cargo.toml --test secretary
+cargo build --locked --manifest-path packages/host-core/Cargo.toml --bin yorozu-host-core
 export YOROZU_SECRETARY_HOST="$SOURCE/packages/host-core/target/debug/yorozu-alpha-host"
+export YOROZU_HOST_CORE="$SOURCE/packages/host-core/target/debug/yorozu-host-core"
 pnpm --filter @yorozu/runtime exec vitest run secretary- --maxWorkers=2
+pnpm --filter @yorozu/runtime exec vitest run harness agent- person-agent- curated-agent- --maxWorkers=2
+node --test packages/harness-plugins/hermes/adapter.test.mjs packages/harness-plugins/openclaw/adapter.test.mjs
+pnpm --filter @yorozu/shared exec vitest run person-agents peer-info
 env -u SDKROOT swift build --package-path apps/mac --product YorozuMac
 echo "Internal secretary checks passed for $(python3 -c 'import json; print(json.load(open("internal-source.json"))["sourceSha"])')"

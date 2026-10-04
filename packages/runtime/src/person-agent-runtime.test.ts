@@ -7,7 +7,7 @@ import { PersonAgentRuntime, type PersonAgentRuntimeFactory } from "./person-age
 import { PersonAgentStore } from "./agent-store.js";
 import { HarnessProcess } from "./harness-process.js";
 import { SecretaryHarness } from "./harness-runner.js";
-import { appendThreadEvent, readThreadEvents, setNativeTurn } from "./threads.js";
+import { appendThreadEvent, createThread, listThreads, readThreadEvents, setNativeTurn, setThreadSession } from "./threads.js";
 import { isolatedAgentLaunch } from "./agent-isolation.js";
 import type { HarnessEvent, HarnessReady } from "./harness-contract.js";
 import type { NativeTurn } from "./native.js";
@@ -95,6 +95,34 @@ test("one agent shares a daemon across chats while sessions, bindings and host l
   expect(policy).toContain("(deny default)"); expect(policy).toContain(join(f.dir, "threads")); expect(policy).toContain(f.store.paths("bob").workspace.split("/workspace")[0]);
   expect(() => new PersonAgentRuntime(f.dir, f.store, () => { throw new Error("unused"); })).toThrow("already owned");
   await expect(f.manager.conversation("alice-chat-1", "bob")).rejects.toThrow("immutable");
+});
+
+test("explicit secretary migration preserves legacy metadata and history without inheriting its folder authority", async () => {
+  const f = fixture(), legacy = join(f.dir, "legacy-project"); mkdirSync(legacy);
+  const id = "yorozu-secretary-v1";
+  createThread("Continuous secretary", f.dir, id, { agent: "codex", cwd: legacy });
+  setThreadSession(id, "legacy-native-session", f.dir);
+  appendThreadEvent({ id: "legacy-preference", threadId: id, agentId: "main", ts: 1, kind: "message",
+    data: { role: "user", text: "Keep responding in Japanese." } }, f.dir);
+  f.manager.bindSecretary("alice"); const owner = await f.manager.conversation(id);
+  expect(owner.workspace).toBe(f.store.paths("alice").workspace);
+  expect(await f.invoke(owner, "new-person-input", "hello")).toMatchObject({ completed: true });
+  expect(listThreads(f.dir).find(t => t.id === id)).toMatchObject({ agent: "codex", cwd: legacy, nativeSessionId: "legacy-native-session" });
+  expect(f.traces.find(t => t.method === "session.open")?.params.context).toContain("Keep responding in Japanese.");
+  expect((owner.process.configuration.initialize.scope as any).directories.some((g: any) => g.path === legacy)).toBe(false);
+  await expect(f.manager.conversation(id, "bob")).rejects.toThrow("immutable");
+});
+
+test("legacy running or queued work refuses secretary migration before any agent daemon is prepared", () => {
+  const f = fixture(), id = "yorozu-secretary-v1";
+  createThread("Legacy secretary", f.dir, id, { agent: "codex", cwd: f.shared });
+  setNativeTurn(id, { id: "native:old:final", userEventId: "old", state: "running" }, f.dir);
+  expect(() => f.manager.bindSecretary("alice")).toThrow("confirmed idle");
+  expect(f.factories).toHaveLength(0);
+  setNativeTurn(id, undefined, f.dir);
+  writeFileSync(join(f.dir, "native-turn-queue.json"), JSON.stringify([{ threadId: id, eventId: "old" }]));
+  expect(() => f.manager.bindSecretary("alice")).toThrow("queued work");
+  expect(f.manager.bindingForThread(id)).toBeUndefined();
 });
 
 test("confirmed idle switch creates a new binding and retains the original conversation history", async () => {

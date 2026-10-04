@@ -16,6 +16,7 @@ export interface PersonAgentInput {
   model?: string; accountBindingId?: string;
   allowedTools: string[]; directories?: DirectoryGrant[];
 }
+export type PersonAgentPatch = Partial<Omit<PersonAgentInput, "id">> & { clear?: Array<"model" | "accountBindingId"> };
 export interface AgentTeam { id: string; name: string; agentIds: string[] }
 export interface AgentRegistry { version: 1; revision: number; defaultAgentId?: string; agents: PersonAgent[]; teams: AgentTeam[] }
 export interface PersonAgentPaths { workspace: string; memoryDir: string; runtimeDir: string }
@@ -168,12 +169,18 @@ export class PersonAgentStore {
       state.agents.push(agent); state.defaultAgentId ??= id;
     });
   }
-  update(id: string, patch: Partial<Omit<PersonAgentInput, "id">>, expectedRevision: number): AgentRegistry {
-    keys(patch, ["name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories"]);
+  update(id: string, patch: PersonAgentPatch, expectedRevision: number): AgentRegistry {
+    keys(patch, ["name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories", "clear"]);
+    const { clear = [], ...selected } = patch;
+    if (!Array.isArray(clear) || clear.length > 2 || new Set(clear).size !== clear.length
+      || clear.some(k => !["model", "accountBindingId"].includes(k) || patch[k] !== undefined))
+      throw new Error("Invalid agent clear fields");
     return this.mutate(expectedRevision, state => {
       const index = state.agents.findIndex(a => a.id === id);
       if (index < 0) throw new Error("Unknown agent ID");
-      state.agents[index] = this.validateAgent({ ...state.agents[index], ...patch });
+      const candidate = { ...state.agents[index], ...selected };
+      for (const key of clear) delete candidate[key];
+      state.agents[index] = this.validateAgent(candidate);
     });
   }
   default(id: string, expectedRevision: number): AgentRegistry {
