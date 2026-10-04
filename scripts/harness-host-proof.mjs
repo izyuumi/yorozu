@@ -129,7 +129,16 @@ if (args.includes('--host')) {
       return text('専門タスクを開始しました。引き続きお話しできます。');
     }
     if (child) {
-      if (step === 1) return call('terminal', { command: args.includes('--ui-provider-only') ? '/bin/sleep 240' : '/bin/sleep 6', workdir: workspace, timeout: args.includes('--ui-provider-only') ? 250 : 25 });
+      if (step === 1) {
+        // Native UI automation may take longer than a timed child. A controlled
+        // fixture gate releases only the real terminal wait; it never writes a
+        // result artifact or synthesizes a provider/Stop terminal.
+        const controlled = args.includes('--ui-provider-only') && args.includes('--ui-control-gates');
+        const gate = join(workspace, `.ui-release-${child}`).replaceAll("'", "'\\''");
+        return call('terminal', { command: controlled ? `while [ ! -f '${gate}' ]; do /bin/sleep 1; done`
+          : args.includes('--ui-provider-only') ? '/bin/sleep 240' : '/bin/sleep 6', workdir: workspace,
+          timeout: controlled ? 900 : args.includes('--ui-provider-only') ? 250 : 25 });
+      }
       if (step === 2) return call('write_file', { path: join(workspace, `child-${child.toLowerCase()}.txt`), content: child === 'A' && record.steerA ? 'A: steered\n' : `${child}: original\n` });
       if (step === 3) return call('read_file', { path: join(workspace, `child-${child.toLowerCase()}.txt`) });
       return text(`専門タスク${child}を確認しました。`);
