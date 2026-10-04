@@ -243,6 +243,7 @@ test('native config and environment stay strictly below harness grants and inher
   assert.deepEqual(config.tools.deny, ['*']); assert.deepEqual(config.agents.entries.secretary.tools.deny, ['*']);
   assert.equal(config.cron.enabled, false); assert.equal(config.browser.enabled, false); assert.equal(config.plugins.enabled, false); assert.equal(config.agents.defaults.heartbeat.every, '0m');
   assert.deepEqual(config.agents.defaults.model.fallbacks, []); assert.equal(config.agents.entries.secretary.fastModeDefault, false);
+  assert.equal(config.models.catalogRefresh.enabled, false); assert.deepEqual(config.models.providers, {});
   assert.equal(config.gateway.auth.mode, 'token'); assert.equal(config.gateway.bind, 'loopback'); assert.equal(config.gateway.uploads.enabled, false);
   assert.equal(env.HOME, runtime.home); assert.equal(env.CODEX_HOME, join(runtime.profileDir, 'isolated-codex'));
   for (const key of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENCLAW_GATEWAY_TOKEN', 'NODE_OPTIONS', 'HTTP_PROXY', 'SSH_AUTH_SOCK', 'AWS_PROFILE']) assert.equal(env[key], undefined);

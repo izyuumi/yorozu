@@ -155,8 +155,8 @@ export function runtimeConfig(runtime, port, token) {
     tools: { deny: ['*'], codeMode: false, elevated: { enabled: false }, agentToAgent: { enabled: false }, sessions: { visibility: 'self' } },
     browser: { enabled: false }, cron: { enabled: false }, plugins: { enabled: false, slots: { memory: 'none' } },
     update: { checkOnStart: false, auto: { enabled: false } },
-    ...(runtime.provider ? { models: { mode: 'replace', providers: { 'yorozu-local-proof': { baseUrl: runtime.provider.baseUrl, apiKey: 'yorozu-loopback-proof', auth: 'api-key', api: runtime.provider.api, authHeader: false,
-      models: [{ id: runtime.provider.model, name: runtime.provider.model, reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } } } : {}),
+    models: { mode: 'replace', catalogRefresh: { enabled: false }, providers: runtime.provider ? { 'yorozu-local-proof': { baseUrl: runtime.provider.baseUrl, apiKey: 'yorozu-loopback-proof', auth: 'api-key', api: runtime.provider.api, authHeader: false,
+      models: [{ id: runtime.provider.model, name: runtime.provider.model, reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } : {} },
   };
 }
 export function runtimeEnvironment(runtime) {
