@@ -3,11 +3,13 @@
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rename, readdir, lstat, realpath, rm } from 'node:fs/promises';
+import { closeSync } from 'node:fs';
 import { resolve, join, dirname, isAbsolute, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 
 export const UPSTREAM = Object.freeze({ version: '2026.9.8', commit: 'fc23bc864e4553c2d215e479eeec47b67a0bf943', protocol: 4 });
+export const CURATED_RUNTIME = Object.freeze({ sourceCommit: '9bbdbaec153dd28fb452e6652c3dcacd829cb00f', patchSha256: '07febe324718e72b238d465bd33f5196d9c49f3aa864405d6587ba3d9b24c908', entry: 'dist/yorozu-gateway-embedding.js', transport: 'inherited-fd-v1' });
 export const CAPABILITIES = Object.freeze({ backgroundTasks: false, targetedSteer: false, taskStop: false, approvals: false, reconnect: false, attachments: false });
 const FRAME_LIMIT = 256 * 1024;
 const MAX_SESSIONS = 16;
@@ -89,14 +91,19 @@ export async function validateScope(params) {
 }
 
 /** Does not install, repair, update, read ambient auth, or adopt an existing OpenClaw profile. */
+export function validateGatewayListener(params) {
+  if (!Number.isInteger(params.gatewayPort) || params.gatewayPort < 1024 || params.gatewayPort > 65535) throw invalid('an exact host-reserved Gateway listener port is required');
+  only(params.gatewayListener, ['transport', 'fd', 'host', 'port'], 'gatewayListener');
+  if (params.gatewayListener.transport !== CURATED_RUNTIME.transport || params.gatewayListener.fd !== 3 || params.gatewayListener.host !== '127.0.0.1' || params.gatewayListener.port !== params.gatewayPort) throw invalid('the exact host-owned numeric-loopback Gateway listener must be inherited as FD3');
+}
 export async function prepareRuntime(params) {
-  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort'], 'initialize');
+  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener'], 'initialize');
   if (params.platform !== undefined) {
     only(params.platform, ['team', 'computer'], 'platform');
     if (typeof params.platform.team !== 'boolean' || params.platform.computer !== false) throw invalid('native computer access is unsupported');
   }
   if (params.protocolVersion !== 1 || params.upstreamVersion !== UPSTREAM.version) throw invalid('unsupported harness protocol or OpenClaw version');
-  if (!Number.isInteger(params.gatewayPort) || params.gatewayPort < 1024 || params.gatewayPort > 65535) throw invalid('an exact host-reserved Gateway listener port is required');
+  validateGatewayListener(params);
   const scoped = await validateScope(params);
   const source = await realpath(absolute(params.source, 'source'));
   const node = await realpath(absolute(params.node, 'node'));
@@ -104,11 +111,14 @@ export async function prepareRuntime(params) {
   if (packageInfo.name !== 'openclaw' || packageInfo.version !== UPSTREAM.version) throw invalid('OpenClaw package version does not match the pin');
   const gitOptions = { maxBuffer: 4096, env: { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
   const revision = await exec('/usr/bin/git', ['-C', source, 'rev-parse', 'HEAD'], gitOptions);
-  if (revision.stdout.trim() !== UPSTREAM.commit) throw invalid('OpenClaw source commit does not match the pin');
+  if (revision.stdout.trim() !== CURATED_RUNTIME.sourceCommit) throw invalid('OpenClaw source commit does not match the explicit curated pin; stock sources are gated');
   await exec('/usr/bin/git', ['-C', source, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
+  const patch = await exec('/usr/bin/git', ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--full-index', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { ...gitOptions, maxBuffer: 512 * 1024 });
+  if (sha(patch.stdout) !== CURATED_RUNTIME.patchSha256) throw invalid('OpenClaw curated patch digest does not match the approved base and patch');
   try {
     await regular(join(source, 'openclaw.mjs'));
     await regular(join(source, 'dist', 'entry.js'), 16 * 1024 * 1024);
+    await regular(join(source, 'dist', 'yorozu-gateway-embedding.js'), 16 * 1024 * 1024);
     await lstat(join(source, 'node_modules'));
     await regular(join(source, 'dist', 'build-info.json'));
   } catch (error) {
@@ -116,14 +126,14 @@ export async function prepareRuntime(params) {
     throw error;
   }
   const build = JSON.parse(await readFile(join(source, 'dist', 'build-info.json'), 'utf8'));
-  if (build.commit !== UPSTREAM.commit || build.version !== UPSTREAM.version) throw invalid('OpenClaw build metadata does not match the pin');
+  if (build.commit !== CURATED_RUNTIME.sourceCommit || build.version !== UPSTREAM.version) throw invalid('OpenClaw build metadata does not match the explicit curated source pin');
   const probe = await exec(node, ['--input-type=module', '-e', 'process.stdout.write(JSON.stringify({version:process.versions.node,sqlite:!!process.getBuiltinModule("node:sqlite")}))'], { env: { PATH: '/usr/bin:/bin', NODE_DISABLE_COMPILE_CACHE: '1' }, maxBuffer: 4096 });
   const nodeInfo = JSON.parse(probe.stdout);
   const [major, minor] = nodeInfo.version.split('.').map(Number);
   if (!nodeInfo.sqlite || !((major === 24 && minor >= 16) || major > 26 || (major === 26 && minor >= 1))) throw invalid('unsupported OpenClaw Node runtime; automatic recovery/install is disabled');
   await directory(scoped.profileDir);
   const marker = join(scoped.profileDir, '.yorozu-openclaw-owner.json');
-  const owner = { schema: 1, pluginId: 'openclaw', upstream: UPSTREAM.commit, agentId: scoped.agentId, scopeDigest: scoped.scopeDigest, policyDigest: scoped.policyDigest };
+  const owner = { schema: 2, pluginId: 'openclaw', upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, patchSha256: CURATED_RUNTIME.patchSha256, agentId: scoped.agentId, scopeDigest: scoped.scopeDigest, policyDigest: scoped.policyDigest };
   try {
     await regular(marker, 2048);
     if (JSON.stringify(JSON.parse(await readFile(marker, 'utf8'))) !== JSON.stringify(owner)) throw invalid('profile belongs to another agent, version, scope or sandbox');
@@ -158,6 +168,7 @@ export function runtimeConfig(runtime, port, token) {
     agents: { ownership: 'explicit', defaults: { model: { primary: model, fallbacks: [] }, skipBootstrap: true, contextInjection: 'never', startupContext: { enabled: false }, skills: [], heartbeat: { every: '0m' } },
       entries: { [runtime.agentId]: { workspace: runtime.workspace, cwd: runtime.workspace, agentDir: join(runtime.state, 'agent'), skills: [], model, fastModeDefault: false, tools: { deny: ['*'], elevated: { enabled: false } } } } },
     tools: { deny: ['*'], codeMode: false, elevated: { enabled: false }, agentToAgent: { enabled: false }, sessions: { visibility: 'self' } },
+    commands: { restart: false }, mcp: { apps: { enabled: false } },
     browser: { enabled: false }, cron: { enabled: false }, plugins: { enabled: false, slots: { memory: 'none' } },
     update: { checkOnStart: false, auto: { enabled: false } },
     models: { mode: 'replace', catalogRefresh: { enabled: false }, providers: runtime.provider ? { 'yorozu-local-proof': { baseUrl: runtime.provider.baseUrl, apiKey: 'yorozu-loopback-proof', auth: 'api-key', api: runtime.provider.api, authHeader: false,
@@ -173,6 +184,10 @@ export function runtimeEnvironment(runtime) {
     OPENCLAW_SKIP_CHANNELS: '1', OPENCLAW_SKIP_CRON: '1', OPENCLAW_SKIP_GMAIL_WATCHER: '1',
     OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: '1', OPENCLAW_SKIP_CANVAS_HOST: '1',
   };
+}
+export function nativeGatewayLaunch(runtime) {
+  return { command: runtime.node, args: [join(runtime.source, CURATED_RUNTIME.entry), '--port', String(runtime.gatewayPort)],
+    options: { cwd: runtime.workspace, env: runtimeEnvironment(runtime), stdio: ['ignore', 'pipe', 'pipe', 3] } };
 }
 export class NativeGateway {
   constructor(url, token, child, { WebSocketClass = WebSocket, timeoutMs = 10_000 } = {}) {
@@ -254,7 +269,7 @@ export class NativeGateway {
     if (this.child && this.child.exitCode === null && this.child.signalCode === null) {
       this.child.kill('SIGTERM');
       await new Promise((yes, no) => {
-        const timer = setTimeout(() => no(new Error('Gateway has not exited; profile remains exclusively owned')), 10_000);
+        const timer = setTimeout(() => no(new Error('Gateway has not exited; profile remains exclusively owned')), 30_000);
         this.child.once('exit', () => { clearTimeout(timer); yes(); });
       });
     }
@@ -266,21 +281,24 @@ export async function launchRuntime(params) {
   const lock = join(runtime.profileDir, '.adapter-owner.lock');
   try { await mkdir(lock, { mode: 0o700 }); } catch (error) { if (error.code === 'EEXIST') throw invalid('private profile already has an owner; stale ownership requires explicit recovery'); throw error; }
   let child;
+  let listenerReleased = false;
+  const releaseListener = () => { if (!listenerReleased) { listenerReleased = true; closeSync(3); } };
   try {
-    const port = runtime.gatewayPort; // Exact port was included in the host's kernel policy before launch.
+    const port = runtime.gatewayPort; // Trusted host lease and inherited descriptor own the endpoint; the child has no bind grant.
     const token = randomBytes(32).toString('hex');
     await atomic(join(runtime.profileDir, 'gateway-token.json'), { token });
     await atomic(join(runtime.profileDir, 'openclaw.json'), runtimeConfig(runtime, port, token));
-    child = spawn(runtime.node, [join(runtime.source, 'openclaw.mjs'), 'gateway', '--port', String(port), '--bind', 'loopback'], {
-      cwd: runtime.workspace, env: runtimeEnvironment(runtime), stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const launch = nativeGatewayLaunch(runtime);
+    child = spawn(launch.command, launch.args, launch.options);
     child.stdout.on('data', () => {}); // Consume logs without treating them as protocol or exposing private context.
     child.stderr.on('data', () => {});
+    await new Promise((yes, no) => { child.once('spawn', yes); child.once('error', no); });
+    releaseListener(); // The native child owns its duplicated descriptor from this point.
     let childError;
     child.on('error', error => { childError = error; });
     const gateway = new NativeGateway(`ws://127.0.0.1:${port}`, token, child);
     child.on('exit', (code, signal) => { gateway.finish(code === 78 ? 'native Gateway rejected configuration (exit 78)' : `native Gateway exited (${signal ?? code})`); void rm(lock, { recursive: true }); });
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 60_000;
     for (;;) {
       if (childError) throw childError;
       if (child.exitCode !== null || child.signalCode !== null) throw new Error('native Gateway exited before readiness');
@@ -294,6 +312,7 @@ export async function launchRuntime(params) {
     }
     return { ...runtime, gateway };
   } catch (error) {
+    try { releaseListener(); } catch { /* Failed descriptor ownership remains a startup failure. */ }
     if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
     else await rm(lock, { recursive: true });
     throw error;
@@ -312,7 +331,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
   const sessions = new Map(); const runs = new Map(); const operations = new Map();
   const pendingEvents = new Map();
   const nonce = randomUUID(); let sequence = 0; let writing = Promise.resolve(); let frames = Promise.resolve();
-  const journal = () => ({ schema: 1, upstream: UPSTREAM.commit, agentId: runtime.agentId, sessions: [...sessions.values()], runs: [...runs.values()], operations: [...operations.values()] });
+  const journal = () => ({ schema: 2, upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, agentId: runtime.agentId, sessions: [...sessions.values()], runs: [...runs.values()], operations: [...operations.values()] });
   const persist = () => {
     if (!runtime.journalPath) return Promise.resolve();
     const value = journal();
@@ -340,8 +359,8 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
     let saved;
     try { await regular(runtime.journalPath, 4 * 1024 * 1024); saved = JSON.parse(await readFile(runtime.journalPath, 'utf8')); }
     catch (error) { if (error.code === 'ENOENT') return; throw error; }
-    only(saved, ['schema', 'upstream', 'agentId', 'sessions', 'runs', 'operations'], 'adapter journal');
-    if (saved.schema !== 1 || saved.upstream !== UPSTREAM.commit || saved.agentId !== runtime.agentId || !Array.isArray(saved.sessions) || saved.sessions.length > MAX_SESSIONS || !Array.isArray(saved.runs) || saved.runs.length > MAX_RECORDS || !Array.isArray(saved.operations) || saved.operations.length > MAX_RECORDS) throw invalid('adapter journal identity or limits are invalid');
+    only(saved, ['schema', 'upstream', 'curatedSource', 'agentId', 'sessions', 'runs', 'operations'], 'adapter journal');
+    if (saved.schema !== 2 || saved.upstream !== UPSTREAM.commit || saved.curatedSource !== CURATED_RUNTIME.sourceCommit || saved.agentId !== runtime.agentId || !Array.isArray(saved.sessions) || saved.sessions.length > MAX_SESSIONS || !Array.isArray(saved.runs) || saved.runs.length > MAX_RECORDS || !Array.isArray(saved.operations) || saved.operations.length > MAX_RECORDS) throw invalid('adapter journal identity or limits are invalid');
     for (const session of saved.sessions) {
       only(session, ['conversationId', 'bindingId', 'sessionKey', 'sessionId', 'state', 'reference'], 'journal session');
       required(session.conversationId, 'conversationId'); required(session.bindingId, 'bindingId');

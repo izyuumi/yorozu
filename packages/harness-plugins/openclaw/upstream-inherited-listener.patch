@@ -1,0 +1,186 @@
+diff --git a/src/gateway/server-public.ts b/src/gateway/server-public.ts
+index 4a5ef45efa0e1ab87ae2ea6868f9f78b367c1608..a23b35fabdcc87824efcefbf4001190e84ef1fbe 100644
+--- a/src/gateway/server-public.ts
++++ b/src/gateway/server-public.ts
+@@ -56,6 +56,8 @@ export type GatewayServer = {
+ };
+ 
+ export type GatewayServerOptions = {
++  /** Yorozu curated embedding only: host-owned, already listening numeric-loopback socket. */
++  yorozuListener?: import("node:http").Server;
+   /** Retained run-loop ownership; direct servers acquire and release their own owner. */
+   gatewayStateOwner?: Pick<
+     import("../infra/gateway-lock.js").GatewayLockHandle,
+diff --git a/src/gateway/server-start.ts b/src/gateway/server-start.ts
+index 9d061f59a936fedffe15a9643a3bf65ba2a21938..bb0b709fb4407183a5f634298b3e1b0f74006890 100644
+--- a/src/gateway/server-start.ts
++++ b/src/gateway/server-start.ts
+@@ -57,6 +57,7 @@ async function startGatewayServerWithSdkHost(
+   try {
+     const transport = await createGatewayHttpTransport({
+       ...gatewayKernel.createHttpTransportOptions(),
++      ...(opts.yorozuListener ? { testListener: opts.yorozuListener } : {}),
+       updateCanary: opts.updateCanary,
+       ...(!gatewayKernel.minimalTestGateway && gatewayKernel.tailscaleMode !== "off"
+         ? {
+diff --git a/src/gateway/yorozu-embedding.ts b/src/gateway/yorozu-embedding.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e08a0d8ac445848b4b12cc88ab71ffcd180349b7
+--- /dev/null
++++ b/src/gateway/yorozu-embedding.ts
+@@ -0,0 +1,143 @@
++/** Curated Yorozu entrypoint. Native Gateway owns inference, state, ingress and close. */
++import { closeSync, fstatSync } from "node:fs";
++import { createServer, type Server } from "node:http";
++import type { Socket } from "node:net";
++import type { GatewayServer } from "./server-public.js";
++
++const FD = 3;
++const STARTUP_MS = 60_000;
++const SHUTDOWN_MS = 20_000;
++const args = process.argv.slice(2);
++const port = args.length === 2 && args[0] === "--port" ? Number(args[1]) : NaN;
++if (!Number.isInteger(port) || port < 1024 || port > 65535) {
++  process.stderr.write("Yorozu embedding requires one exact host-selected --port.\n");
++  process.exit(78);
++}
++
++let exitCode = 0;
++let stopping = false;
++let reason = "host stop";
++let startupOwner:
++  | ReturnType<
++      typeof import("../cli/gateway-cli/run-loop-startup.js").createGatewayStartupOperations
++    >
++  | undefined;
++let resolveStop!: () => void;
++const stopped = new Promise<void>((resolve) => {
++  resolveStop = resolve;
++});
++let shutdownDeadline: ReturnType<typeof setTimeout> | undefined;
++const requestStop = (nextReason: string, code = 0) => {
++  exitCode = Math.max(exitCode, code);
++  if (stopping) return;
++  stopping = true;
++  reason = nextReason;
++  startupOwner?.close();
++  resolveStop();
++  // Forced exit retains failed native lock/ownership state; it never certifies a clean join.
++  shutdownDeadline = setTimeout(() => {
++    process.stderr.write("Yorozu embedding shutdown join timed out.\n");
++    process.exit(1);
++  }, SHUTDOWN_MS);
++};
++process.on("SIGTERM", () => requestStop("SIGTERM"));
++process.on("SIGINT", () => requestStop("SIGINT"));
++process.on("SIGUSR2", () => requestStop("unsupported internal restart", 1));
++const startupDeadline = setTimeout(() => requestStop("startup timeout", 1), STARTUP_MS);
++
++let listener: Server | undefined;
++let gateway: GatewayServer | undefined;
++let descriptorAdopted = false;
++const rejectEarlyConnection = (socket: Socket) => socket.destroy();
++try {
++  if (!fstatSync(FD).isSocket()) throw new Error("FD3 is not a host-owned socket");
++  listener = createServer().on("connection", rejectEarlyConnection);
++  await new Promise<void>((resolve, reject) => {
++    listener!.once("error", reject);
++    listener!.listen({ fd: FD }, () => {
++      descriptorAdopted = true;
++      listener!.off("error", reject);
++      resolve();
++    });
++  });
++  const address = listener.address();
++  if (
++    !address ||
++    typeof address === "string" ||
++    address.address !== "127.0.0.1" ||
++    address.port !== port
++  ) {
++    throw new Error("FD3 does not own the exact numeric-loopback Gateway endpoint");
++  }
++  const { createGatewayStartupOperations } = await import("../cli/gateway-cli/run-loop-startup.js");
++  startupOwner = createGatewayStartupOperations();
++  if (stopping) startupOwner.close();
++  const { readConfigFileSnapshotWithPluginMetadata } = await import("../config/config.js");
++  const { snapshot } = await readConfigFileSnapshotWithPluginMetadata({
++    isolateEnv: true,
++    observe: false,
++  });
++  const cfg = snapshot.config;
++  if (
++    !snapshot.valid ||
++    cfg.gateway?.bind !== "loopback" ||
++    cfg.gateway.port !== port ||
++    cfg.gateway.reload?.mode !== "off" ||
++    cfg.commands?.restart !== false ||
++    cfg.gateway.tailscale?.mode !== "off" ||
++    cfg.gateway.tls?.enabled === true ||
++    cfg.gateway.portals?.ingress !== undefined ||
++    cfg.mcp?.apps?.enabled !== false
++  ) {
++    throw new Error(
++      "Yorozu embedding requires immutable loopback configuration with auxiliary ingress and restart disabled",
++    );
++  }
++  if (!stopping) {
++    const { startGatewayServer } = await import("./server.js");
++    gateway = await startGatewayServer(port, {
++      bind: "loopback",
++      host: "127.0.0.1",
++      yorozuListener: listener,
++      controlUiEnabled: false,
++      openAiChatCompletionsEnabled: false,
++      openResponsesEnabled: false,
++      startupOperation: startupOwner.run,
++    });
++    if (!stopping) {
++      listener.off("connection", rejectEarlyConnection);
++      await gateway.startupSettled;
++    }
++    startupOwner.close();
++  }
++  clearTimeout(startupDeadline);
++  await stopped;
++} catch {
++  // Native logs own detailed startup diagnostics. Do not print profile/auth/config bytes here.
++  process.stderr.write("Yorozu embedding startup or lifetime failed.\n");
++  requestStop("startup failure", 1);
++} finally {
++  clearTimeout(startupDeadline);
++  startupOwner?.close();
++  try {
++    await startupOwner?.drain();
++    if (gateway) {
++      // Native close owns its adopted HTTP server and releases the native Gateway lock only on success.
++      await gateway.close({ reason, drainTimeoutMs: 10_000 });
++    } else if (listener?.listening) {
++      // Before published Gateway adoption, the embedding startup owner retains the descriptor.
++      listener.closeIdleConnections();
++      listener.closeAllConnections();
++      await new Promise<void>((resolve, reject) =>
++        listener!.close((error) => (error ? reject(error) : resolve())),
++      );
++    } else if (!descriptorAdopted) {
++      closeSync(FD);
++    }
++  } catch {
++    exitCode = 1;
++    process.stderr.write("Yorozu embedding native cleanup failed.\n");
++  }
++  if (shutdownDeadline) clearTimeout(shutdownDeadline);
++  process.exit(exitCode);
++}
+diff --git a/tsdown.config.ts b/tsdown.config.ts
+index 3fd630b5ea3b1d29af9de7d3172749a31b69cb1b..69bc051861b1c3ddb80f831cf9580b924582fd88 100644
+--- a/tsdown.config.ts
++++ b/tsdown.config.ts
+@@ -445,6 +445,7 @@ function buildCoreDistEntries(): Record<string, string> {
+   return {
+     index: "src/index.ts",
+     entry: "src/entry.ts",
++    "yorozu-gateway-embedding": "src/gateway/yorozu-embedding.ts",
+     "infra/package-lifecycle": "src/infra/package-lifecycle.ts",
+     "commands/doctor-update-schema-guard": "src/commands/doctor-update-schema-guard.ts",
+     "crabbox-wrapper": "scripts/crabbox-wrapper.mts",

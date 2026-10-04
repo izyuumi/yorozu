@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
-import { UPSTREAM, CAPABILITIES } from './adapter.mjs';
+import { UPSTREAM, CURATED_RUNTIME, CAPABILITIES } from './adapter.mjs';
 
 const options = new Map();
 for (let index = 2; index < process.argv.length; index += 2) options.set(process.argv[index], process.argv[index + 1]);
@@ -19,10 +19,11 @@ const hostRuntime = await realpath(required('--host-runtime'));
 const output = resolve(required('--output'));
 await mkdir(output, { mode: 0o700 }); // Fresh evidence/profile only; never adopts or deletes an old fixture.
 const root = await realpath(output);
-const evidence = { schema: 1, kind: 'actual-openclaw-gateway-synthetic-inference', upstream: UPSTREAM, success: false,
+const evidence = { schema: 1, kind: 'actual-openclaw-gateway-synthetic-inference', upstream: UPSTREAM, curatedRuntime: CURATED_RUNTIME, success: false,
   liveSubscription: false, nativeToolExecution: false, capabilityParity: false, nativeUI: false, checks: {}, events: [], requests: [], output: root };
 const { PersonAgentStore } = await import(pathToFileURL(join(hostRuntime, 'agent-store.js')));
 const { isolatedAgentLaunch } = await import(pathToFileURL(join(hostRuntime, 'agent-isolation.js')));
+const { acquireHostListener, prepareHostListenerTransfer, releaseHostListener } = await import(pathToFileURL(join(hostRuntime, 'agent-listener.js')));
 const adapterFile = join(dirname(fileURLToPath(import.meta.url)), 'adapter.mjs');
 const profileDir = join(root, 'vendor-runtime'); const workspace = join(profileDir, 'scratch');
 await mkdir(workspace, { recursive: true, mode: 0o700 });
@@ -37,11 +38,12 @@ async function listen(server) {
   await new Promise((yes, no) => { server.once('error', no); server.listen(0, '127.0.0.1', yes); });
   return server.address().port;
 }
-async function vacant() { const server = tcpServer(); const port = await listen(server); await new Promise(yes => server.close(yes)); return port; }
 const pendingResponses = new Set();
+const transfers = [];
 let provider;
 let forbidden;
 let adapter;
+let probeChild;
 let heldClosed = false;
 let forbiddenConnections = 0;
 function sse(response, type, data) { response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`); }
@@ -67,18 +69,19 @@ const waitFor = async (predicate, label, milliseconds = 30_000) => {
   const deadline = Date.now() + milliseconds;
   while (!predicate()) { if (Date.now() >= deadline) throw new Error(`timed out: ${label}`); await new Promise(yes => setTimeout(yes, 50)); }
 };
-function processRun(launch, args) {
-  const child = spawn(launch.command, [...launch.args, ...args], { cwd: workspace,
-    env: { HOME: profileDir, CODEX_HOME: join(profileDir, 'isolated-codex'), TMPDIR: profileDir, PATH: '/usr/bin:/bin', NODE_DISABLE_COMPILE_CACHE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+async function processRun(launch, transfer) {
+  const child = spawn(launch.command, launch.args, { cwd: workspace,
+    env: { HOME: profileDir, CODEX_HOME: join(profileDir, 'isolated-codex'), TMPDIR: profileDir, PATH: '/usr/bin:/bin', NODE_DISABLE_COMPILE_CACHE: '1' }, stdio: ['pipe', 'pipe', 'pipe', transfer.descriptors[0].stdioFd] });
   let stdout = ''; let stderr = '';
   child.stdout.on('data', bytes => { stdout += bytes; if (stdout.length > 1024 * 1024) child.kill('SIGTERM'); });
   child.stderr.on('data', bytes => { stderr = (stderr + bytes).slice(-16 * 1024); });
   const done = new Promise((yes, no) => { child.once('error', no); child.once('exit', (code, signal) => yes({ code, signal, stdout, stderr })); });
+  try { await transfer.afterSpawn(child); } catch (error) { child.kill('SIGTERM'); throw error; }
   return { child, done };
 }
-function client(launch) {
+async function client(launch, transfer) {
   const child = spawn(launch.command, launch.args, { cwd: workspace,
-    env: { HOME: profileDir, CODEX_HOME: join(profileDir, 'isolated-codex'), TMPDIR: profileDir, PATH: '/usr/bin:/bin', NODE_DISABLE_COMPILE_CACHE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    env: { HOME: profileDir, CODEX_HOME: join(profileDir, 'isolated-codex'), TMPDIR: profileDir, PATH: '/usr/bin:/bin', NODE_DISABLE_COMPILE_CACHE: '1' }, stdio: ['pipe', 'pipe', 'pipe', transfer.descriptors[0].stdioFd] });
   let buffer = ''; let next = 0; const pending = new Map(); let stderr = ''; let exited = false;
   const rejectPending = error => { for (const entry of pending.values()) { clearTimeout(entry.timer); entry.no(error); } pending.clear(); };
   child.stdin.on('error', rejectPending);
@@ -98,9 +101,10 @@ function client(launch) {
   });
   child.once('error', error => { exited = true; rejectPending(error); });
   child.once('exit', (code, signal) => { exited = true; rejectPending(new Error(`adapter exited (${signal ?? code}): ${stderr}`)); });
+  try { await transfer.afterSpawn(child); } catch (error) { child.kill('SIGTERM'); throw error; }
   return { child, stderr: () => stderr,
-    call(method, params) { if (exited || child.stdin.destroyed || child.stdin.writableEnded) return Promise.reject(new Error('adapter transport is closed')); const id = ++next; return new Promise((yes, no) => { const timer = setTimeout(() => { pending.delete(id); no(new Error(`adapter RPC timed out: ${method}`)); }, 45_000); pending.set(id, { yes, no, method, timer }); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n', error => { if (error) rejectPending(error); }); }); },
-    async stop() { if (exited) return; try { await this.call('shutdown', {}); } finally { child.stdin.end(); } await waitFor(() => exited, 'adapter exit', 15_000); },
+    call(method, params) { if (exited || child.stdin.destroyed || child.stdin.writableEnded) return Promise.reject(new Error('adapter transport is closed')); const id = ++next; return new Promise((yes, no) => { const timer = setTimeout(() => { pending.delete(id); no(new Error(`adapter RPC timed out: ${method}`)); }, method === 'initialize' ? 80_000 : 45_000); pending.set(id, { yes, no, method, timer }); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n', error => { if (error) rejectPending(error); }); }); },
+    async stop() { if (exited) return; try { await this.call('shutdown', {}); } finally { child.stdin.end(); } await waitFor(() => exited, 'adapter exit', 35_000); },
   };
 }
 try {
@@ -116,37 +120,56 @@ try {
   });
   const providerPort = await listen(provider);
   forbidden = tcpServer(socket => { forbiddenConnections++; socket.destroy(); }); const forbiddenPort = await listen(forbidden);
-  const gatewayPort = await vacant(); const forbiddenListenPort = await vacant();
-  const runtime = { command: node, args: [adapterFile], readPaths: [dirname(adapterFile), source], runtimeDir: profileDir,
-    brokerPorts: [providerPort, gatewayPort], listenerPorts: [gatewayPort], listenerHost: '127.0.0.1' };
-  const launch = isolatedAgentLaunch(scope, runtime);
-  assert.equal(launch.command, '/usr/bin/sandbox-exec'); assert.match(launch.policy, /\(deny default\)/);
-  assert.ok(launch.policy.includes(`local tcp "127.0.0.1:${gatewayPort}"`), 'actual compiled host must support exact listener permission');
-  assert.ok(!launch.policy.includes('(allow network*)')); assert.ok(!launch.policy.includes(`127.0.0.1:${forbiddenPort}`));
-  assert.equal(createHash('sha256').update(launch.policy).digest('hex'), launch.isolation.policyDigest);
-  await writeFile(join(root, 'actual-kernel-policy.sbpl'), launch.policy, { mode: 0o600 });
+  const runtime = { command: node, args: [adapterFile], readPaths: [dirname(adapterFile), source], runtimeDir: profileDir, brokerPorts: [providerPort] };
+  const prepare = async (args, fixedPort) => {
+    const lease = await acquireHostListener(scope.agentId, fixedPort);
+    try {
+    const launch = isolatedAgentLaunch(scope, { ...runtime, args, brokerPorts: [providerPort, lease.port], inheritedListeners: [lease] });
+    const transfer = prepareHostListenerTransfer([lease], scope.agentId); transfers.push(transfer);
+    const descriptor = transfer.descriptors[0];
+    assert.equal(descriptor.fd, 3); assert.equal(descriptor.agentId, scope.agentId); assert.equal(descriptor.host, '127.0.0.1');
+    return { launch, transfer, port: lease.port };
+    } catch (error) { await releaseHostListener(lease); throw error; }
+  };
   const probe = join(workspace, 'kernel-probe.mjs');
-  await writeFile(probe, `import fs from 'node:fs';import net from 'node:net';import cp from 'node:child_process';
+  const probeOwner = await prepare([probe]);
+  const probePort = probeOwner.port;
+  const { launch: probeLaunch } = probeOwner;
+  assert.equal(probeLaunch.command, '/usr/bin/sandbox-exec');
+  assert.ok(!probeLaunch.policy.includes('(allow network-bind')); assert.ok(!probeLaunch.policy.includes('(allow network*)'));
+  await writeFile(probe, `import fs from 'node:fs';import net from 'node:net';import http from 'node:http';import cp from 'node:child_process';
     const result={};
     result.allowedConnect=await fetch('http://127.0.0.1:${providerPort}/health').then(r=>r.text())==='own-loopback-proof';
     result.deniedConnect=await fetch('http://127.0.0.1:${forbiddenPort}/',{signal:AbortSignal.timeout(3000)}).then(()=>false,e=>['EPERM','EACCES'].includes(e.cause?.code));
-    function bind(port){return new Promise(yes=>{const s=net.createServer();s.once('error',e=>yes(e.code));s.listen(port,'127.0.0.1',()=>s.close(()=>yes('allowed')));});}
-    result.allowedListen=await bind(${gatewayPort});result.deniedListen=await bind(${forbiddenListenPort});
+    result.deniedListen=await new Promise(yes=>{const s=net.createServer();s.once('error',e=>yes(['EPERM','EACCES'].includes(e.code)));s.listen(0,'0.0.0.0',()=>s.close(()=>yes(false)));});
     try{fs.readFileSync(${JSON.stringify(peerFile)});result.peerDenied=false}catch(e){result.peerDenied=['EPERM','EACCES'].includes(e.code)}
     const child=cp.spawnSync('/bin/cat',[${JSON.stringify(peerFile)}],{encoding:'utf8'});result.inheritedPeerDenied=child.status!==0&&!child.stdout;
-    console.log(JSON.stringify(result));`, { mode: 0o600 });
-  const probeLaunch = isolatedAgentLaunch(scope, { ...runtime, args: [probe] });
-  const probeResult = await processRun(probeLaunch, []).done;
+    const server=http.createServer((req,res)=>res.end('own-inherited-kernel-proof'));await new Promise((yes,no)=>{server.once('error',no);server.listen({fd:3},yes)});
+    const address=server.address();result.inheritedAddress=address.address;result.inheritedPort=address.port;console.log(JSON.stringify(result));
+    process.stdin.resume();process.stdin.once('end',()=>server.close(()=>process.exit(0)));`, { mode: 0o600 });
+  const probeProcess = await processRun(probeLaunch, probeOwner.transfer);
+  probeChild = probeProcess.child;
+  const physicalResponse = await fetch(`http://127.0.0.1:${probePort}`, { signal: AbortSignal.timeout(10_000) }).then(response => response.text());
+  assert.equal(physicalResponse, 'own-inherited-kernel-proof'); probeProcess.child.stdin.end();
+  const probeResult = await probeProcess.done;
+  probeChild = null;
   assert.equal(probeResult.code, 0, probeResult.stderr);
   const physical = JSON.parse(probeResult.stdout);
-  assert.ok(['EPERM', 'EACCES'].includes(physical.deniedListen), 'the unlisted endpoint must be denied by the kernel');
-  assert.deepEqual({ ...physical, deniedListen: true }, { allowedConnect: true, deniedConnect: true, allowedListen: 'allowed', deniedListen: true, peerDenied: true, inheritedPeerDenied: true });
+  assert.deepEqual(physical, { allowedConnect: true, deniedConnect: true, deniedListen: true, peerDenied: true, inheritedPeerDenied: true, inheritedAddress: '127.0.0.1', inheritedPort: probePort });
   assert.equal(forbiddenConnections, 0); evidence.checks.actualKernel = physical;
+  const gatewayOwner = await prepare([adapterFile]);
+  const { launch, transfer } = gatewayOwner; const gatewayPort = gatewayOwner.port;
+  assert.equal(launch.command, '/usr/bin/sandbox-exec'); assert.match(launch.policy, /\(deny default\)/);
+  assert.ok(!launch.policy.includes('(allow network-bind'), 'actual child may adopt its minted descriptor but may never bind');
+  assert.ok(!launch.policy.includes('(allow network*)')); assert.ok(!launch.policy.includes(`127.0.0.1:${forbiddenPort}`));
+  assert.equal(createHash('sha256').update(launch.policy).digest('hex'), launch.isolation.policyDigest);
+  await writeFile(join(root, 'actual-kernel-policy.sbpl'), launch.policy, { mode: 0o600 });
   await writeFile(join(profileDir, 'proof-provider.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${providerPort}/v1`, model: 'synthetic', api: 'openai-responses' }), { mode: 0o600 });
   const init = { protocolVersion: 1, upstreamVersion: UPSTREAM.version, source, node, workspace, profileDir, gatewayPort, agentId: scope.agentId,
+    gatewayListener: { transport: CURATED_RUNTIME.transport, fd: 3, host: '127.0.0.1', port: gatewayPort },
     scope: { allowedTools: scope.allowedTools, directories: scope.directories, workspace: scope.workspace, memoryDir: scope.memoryDir, deniedRoots: scope.deniedRoots },
     isolation: launch.isolation, providerConfigPath: join(profileDir, 'proof-provider.json'), platform: { team: false, computer: false } };
-  adapter = client(launch);
+  adapter = await client(launch, transfer);
   const ready = await adapter.call('initialize', init);
   assert.equal(ready.pluginId, 'openclaw'); assert.equal(ready.auth.status, 'local-proof'); assert.deepEqual(ready.capabilities, CAPABILITIES);
   evidence.checks.realGatewayReadiness = { upstreamVersion: ready.upstreamVersion, isolation: launch.isolation, capabilities: ready.capabilities };
@@ -180,7 +203,9 @@ try {
   for (const event of evidence.events) { assert.equal(event.conversationId, session.conversationId); if (event.runId) assert.ok([first.runId, second.runId, held.runId].includes(event.runId)); }
   assert.deepEqual((await adapter.call('session.snapshot', session)).tasks, []);
   await adapter.stop(); adapter = null;
-  adapter = client(launch); await adapter.call('initialize', init); await adapter.call('session.open', { ...session, sessionId: opened.sessionId });
+  const resumed = await prepare([adapterFile], gatewayPort);
+  assert.equal(resumed.launch.isolation.policyDigest, launch.isolation.policyDigest, 'same effective endpoint/scope must preserve profile policy identity');
+  adapter = await client(resumed.launch, resumed.transfer); await adapter.call('initialize', init); await adapter.call('session.open', { ...session, sessionId: opened.sessionId });
   assert.equal((await adapter.call('turn.submit', second)).status, 'accepted');
   await new Promise(yes => setTimeout(yes, 500)); assert.equal(evidence.requests.length, 3); evidence.checks.noReplayAfterCleanRestart = true;
   evidence.success = true;
@@ -189,6 +214,8 @@ try {
 } finally {
   if (adapter) { try { await adapter.stop(); } catch (error) { evidence.shutdownFailure = error.message; evidence.success = false; adapter.child.kill('SIGTERM'); process.exitCode = 1; } }
   for (const response of pendingResponses) response.destroy();
+  if (probeChild && probeChild.exitCode === null && probeChild.signalCode === null) probeChild.kill('SIGTERM');
+  for (const transfer of transfers) { try { await transfer.release(); } catch (error) { evidence.listenerReleaseFailure = error.message; evidence.success = false; process.exitCode = 1; } }
   for (const server of [provider, forbidden]) if (server) { server.closeAllConnections?.(); await new Promise(yes => server.close(yes)); }
   await writeFile(join(root, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
   console.log(JSON.stringify({ success: evidence.success, output: join(root, 'evidence.json'), checks: Object.keys(evidence.checks), failure: evidence.failure?.message }));

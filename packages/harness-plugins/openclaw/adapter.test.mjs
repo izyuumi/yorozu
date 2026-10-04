@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createAdapter, NativeGateway, CAPABILITIES, UPSTREAM, validateScope, runtimeConfig, runtimeEnvironment } from './adapter.mjs';
+import { createAdapter, NativeGateway, CAPABILITIES, UPSTREAM, CURATED_RUNTIME, validateScope, validateGatewayListener, nativeGatewayLaunch, runtimeConfig, runtimeEnvironment } from './adapter.mjs';
 
 // Contract tests deliberately fake the Gateway. They are not native execution,
 // subscription authentication or interchangeable-harness acceptance evidence.
@@ -50,9 +51,44 @@ test('manifest and initialize declare the same honest unsupported capabilities',
   const { ready } = await fixture();
   const manifest = JSON.parse(await readFile(new URL('./manifest.json', import.meta.url), 'utf8'));
   assert.equal(manifest.upstream.sourceSha, UPSTREAM.commit);
+  assert.equal(manifest.curatedRuntime.sourceSha, CURATED_RUNTIME.sourceCommit);
+  assert.equal(manifest.curatedRuntime.patchSha256, CURATED_RUNTIME.patchSha256);
+  assert.notEqual(CURATED_RUNTIME.sourceCommit, UPSTREAM.commit);
+  const patch = await readFile(new URL(`./${manifest.curatedRuntime.patch}`, import.meta.url));
+  assert.equal(createHash('sha256').update(patch).digest('hex'), CURATED_RUNTIME.patchSha256);
   assert.equal(manifest.productionReady, false);
   assert.deepEqual(ready.capabilities, CAPABILITIES);
   for (const [key, value] of Object.entries(CAPABILITIES)) assert.equal(manifest.capabilities[key], value);
+});
+test('inherited listener wire contract admits only exact host-owned FD3 metadata', () => {
+  const params = { gatewayPort: 32146, gatewayListener: { transport: CURATED_RUNTIME.transport, fd: 3, host: '127.0.0.1', port: 32146 } };
+  validateGatewayListener(params);
+  for (const extra of [{ fd: 4 }, { fd: '/tmp/socket' }, { host: 'localhost' }, { host: '0.0.0.0' }, { port: 32147 }, { transport: 'bind-listen' }, { stdioFd: 19 }]) {
+    assert.throws(() => validateGatewayListener({ ...params, gatewayListener: { ...params.gatewayListener, ...extra } }), /FD3|unsupported fields/);
+  }
+  assert.throws(() => validateGatewayListener({ ...params, gatewayPort: 0 }), /exact/);
+  assert.throws(() => validateGatewayListener({ gatewayPort: 32146 }), /object/);
+  const runtime = { node: '/curated/node', source: '/curated/openclaw', gatewayPort: 32146, workspace: '/own/scratch', profileDir: '/own/runtime', home: '/own/runtime/home', state: '/own/runtime/state', temporary: '/own/runtime/tmp' };
+  const launch = nativeGatewayLaunch(runtime);
+  assert.deepEqual(launch.args, ['/curated/openclaw/dist/yorozu-gateway-embedding.js', '--port', '32146']);
+  assert.deepEqual(launch.options.stdio, ['ignore', 'pipe', 'pipe', 3]);
+  assert.equal(launch.command, runtime.node); assert.equal(launch.options.cwd, runtime.workspace);
+  assert.equal(launch.options.env.OPENCLAW_NO_RESPAWN, '1');
+});
+test('journal from stock or another curated runtime is refused without native RPC', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'yorozu-openclaw-pin-'));
+  const journalPath = join(directory, 'journal.json');
+  try {
+    const first = await fixture({ journalPath });
+    await first.adapter.handle('shutdown', {});
+    const saved = JSON.parse(await readFile(journalPath, 'utf8'));
+    for (const replacement of [UPSTREAM.commit, 'f'.repeat(40), undefined]) {
+      await writeFile(journalPath, JSON.stringify({ ...saved, curatedSource: replacement }));
+      const gateway = new FakeGateway();
+      await assert.rejects(fixture({ journalPath, gateway }), /journal identity/);
+      assert.equal(gateway.calls.length, 0);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 test('session creation has no initial task and keeps native agent/session ownership', async () => {
   const { adapter, gateway } = await fixture();
@@ -282,4 +318,14 @@ test('Gateway wire client waits for challenge and requests only generic embeddin
   await assert.rejects(gateway.call('chat.send', {}), /timed out/);
   assert.equal(gateway.socket.requests.filter(request => request.method === 'chat.send').length, 1);
   await gateway.shutdown();
+});
+test('Gateway transport closure rejects a pending native handoff without throwing or retrying', async () => {
+  const gateway = new NativeGateway('ws://127.0.0.1:12345', 'own-token', null, { WebSocketClass: FakeSocket, timeoutMs: 1000 });
+  await gateway.connect();
+  const pending = gateway.call('chat.send', {});
+  const rejection = assert.rejects(pending, /actual transport loss/);
+  assert.doesNotThrow(() => gateway.finish('actual transport loss'));
+  await rejection;
+  assert.equal(gateway.pending.size, 0); assert.equal(gateway.closed, true);
+  assert.equal(gateway.socket.requests.filter(request => request.method === 'chat.send').length, 1);
 });
