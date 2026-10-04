@@ -4,6 +4,10 @@
   <key>CFBundleIdentifier</key><string>to.yumi.yorozu.accounts</string>
   <key>CFBundleName</key><string>Yorozu Accounts</string>
   <key>CFBundleExecutable</key><string>yorozu-accounts</string>
-  <key>CFBundlePackageType</key><string>BNDL</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>LSMinimumSystemVersion</key><string>15.0</string>
+  <key>LSBackgroundOnly</key><true/>
 </dict></plist>

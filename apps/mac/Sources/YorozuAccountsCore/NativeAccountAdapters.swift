@@ -9,11 +9,13 @@ import Security
 @MainActor public final class KeychainAccountBackend: AccountProtectedBackend {
     public static let service = "to.yumi.yorozu.accounts.snapshot.v1"
     public static let account = "Yorozu"
+    public static let accessGroup = "AN5KM8QGEF.to.yumi.yorozu.accounts"
     public init() {}
     private func query(reading: Bool) -> [CFString: Any] {
         let context = LAContext(); context.interactionNotAllowed = true
         var query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: Self.service,
-            kSecAttrAccount: Self.account, kSecUseDataProtectionKeychain: true, kSecAttrSynchronizable: false,
+            kSecAttrAccount: Self.account, kSecAttrAccessGroup: Self.accessGroup,
+            kSecUseDataProtectionKeychain: true, kSecAttrSynchronizable: false,
             kSecUseAuthenticationContext: context]
         // The SDK permits UI-Skip only for CopyMatching. Writes use the non-interactive context.
         if reading { query[kSecUseAuthenticationUI] = kSecUseAuthenticationUISkip }

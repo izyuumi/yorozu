@@ -63,8 +63,20 @@ cp "$BIN/YorozuMac" "$APP/Contents/MacOS/Yorozu"
 # The native tool host ships inside the bundle so it shares the app's signature: TCC keys
 # Accessibility and Screen Recording on that, and the helper is what needs them.
 cp "$BIN/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
-# Separate protected account helper: fixed host-only path, no generic native-tool API.
-cp "$BIN/yorozu-accounts" "$APP/Contents/Resources/yorozu-accounts"
+# Separate protected account helper. Restricted Keychain entitlements require its own
+# app-like bundle and authorizing profile; a bare executable cannot embed that profile.
+ACCOUNTS_HELPER="$APP/Contents/Resources/YorozuAccounts.app"
+if [ -n "${YOROZU_ACCOUNTS_PROFILE:-}" ] || [ -n "${YOROZU_ACCOUNTS_APP_IDENTIFIER_PREFIX:-}" ]; then
+  [ -n "${YOROZU_ACCOUNTS_PROFILE:-}" ] && [ -n "${YOROZU_ACCOUNTS_APP_IDENTIFIER_PREFIX:-}" ] || {
+    echo "account helper requires an explicit profile and App ID prefix together" >&2; exit 1;
+  }
+  python3 scripts/package-accounts-helper.py --resources "$APP/Contents/Resources" \
+    --binary "$BIN/yorozu-accounts" --info-plist apps/mac/Sources/YorozuAccounts/Info.plist \
+    --profile "$YOROZU_ACCOUNTS_PROFILE" --app-identifier-prefix "$YOROZU_ACCOUNTS_APP_IDENTIFIER_PREFIX"
+else
+  python3 scripts/package-accounts-helper.py --resources "$APP/Contents/Resources" \
+    --binary "$BIN/yorozu-accounts" --info-plist apps/mac/Sources/YorozuAccounts/Info.plist
+fi
 cp -R "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/"
 # SwiftPM keeps package resources in a companion bundle. The Bundle.module accessor that
 # `swift build` generates looks for it only at the app bundle's root, and codesign refuses a
@@ -267,6 +279,7 @@ fi
 # `|| exit 1` makes a failed codesign end the pipeline, and set -e the script.
 find "$APP/Contents" -depth \( -type f -o -type d \) -print | while IFS= read -r code; do
   case "$code" in
+    "$ACCOUNTS_HELPER"|"$ACCOUNTS_HELPER/"*) continue ;;
     "$APP/Contents/Resources/node"|"$APP/Contents/MacOS/yorozu-native"|"$APP/Contents/MacOS/Yorozu") continue ;;
   esac
   if [ -f "$code" ]; then
@@ -313,7 +326,8 @@ fi
 codesign --force --options runtime --timestamp \
   --entitlements apps/mac/Node.entitlements --sign "$IDENTITY" "$APP/Contents/Resources/node"
 codesign --force --options runtime --timestamp --identifier to.yumi.yorozu.accounts \
-  --sign "$IDENTITY" "$APP/Contents/Resources/yorozu-accounts"
+  --entitlements "$ACCOUNTS_HELPER/Contents/Resources/AccountsHelper.entitlements" \
+  --sign "$IDENTITY" "$ACCOUNTS_HELPER"
 codesign --force --options runtime --timestamp \
   --entitlements apps/mac/Yorozu.entitlements --sign "$IDENTITY" "$APP/Contents/MacOS/yorozu-native"
 codesign --force --options runtime --timestamp \
