@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { createSiwcBrokerSelector, createSiwcExecutionBroker, normalizeSiwcRequest, SIWC_ONBOARDING, SIWC_RESPONSES_URL,
   type SiwcAccessToken, type SiwcExecutionGrant, type SiwcLocalRequest, type SiwcResponseSink, type SiwcTransport } from "./siwc-inference-broker.js";
 import type { PersonAgent } from "./agent-store.js";
@@ -37,6 +38,26 @@ const customerTool = { type: "function", name: "get_customer", description: "Loo
   type: "object", properties: { customer_id: { type: "string" } }, required: ["customer_id"], additionalProperties: false } };
 
 describe("SIWC documented eager function subset", () => {
+  it("accepts actual pinned Hermes/SDK root and function/result shapes without changing native call identity", () => {
+    const capture = JSON.parse(readFileSync(new URL("./fixtures/hermes-siwc-shape.json", import.meta.url), "utf8"));
+    expect(capture).toMatchObject({ hermesVersion: "0.21.5", sourceSha: "f97608f178d1ffeca59860195ab7da295f7c8e5f", openaiSdkVersion: "2.24.0", gatewayMaxTokensDefault: null });
+    for (const name of ["normal", "function", "functionResult", "sdkTimeout"]) {
+      const wire = capture.bodies[name], normalized = normalizeSiwcRequest(wire, wire.model, ["get_customer"]);
+      expect(normalized).toMatchObject({ model: wire.model, instructions: wire.instructions, reasoning: wire.reasoning, include: wire.include, store: false, stream: true, service_tier: "default" });
+      expect(normalized.max_output_tokens).toBeUndefined(); expect(normalized.prompt_cache_retention).toBeUndefined();
+      if (wire.tools) expect(normalized.input[0]).toEqual({ type: "additional_tools", role: "developer", tools: wire.tools });
+      expect(normalized.input.slice(wire.tools ? 1 : 0)).toEqual(wire.input);
+    }
+    const result = normalizeSiwcRequest(capture.bodies.functionResult, capture.bodies.functionResult.model, ["get_customer"]);
+    expect(capture.normalizedCall).toMatchObject({ name: "get_customer", providerData: { call_id: "call_abc123", response_item_id: "fc_abc123" } });
+    expect(result.input).toContainEqual({ type: "function_call", call_id: "call_abc123", name: "get_customer", arguments: '{"customer_id":"CUST-12345"}' });
+    expect(result.input).toContainEqual({ type: "function_call_output", call_id: "call_abc123", output: '{"name":"Synthetic Customer"}' });
+    expect(capture.sdkTimeoutOption).toBe(30); expect(capture.bodies.sdkTimeout.timeout).toBeUndefined();
+    for (const name of ["configuredTokenLimit", "configuredCacheRetention"])
+      expect(() => normalizeSiwcRequest(capture.bodies[name], capture.bodies[name].model, ["get_customer"])).toThrow("unsupported");
+    expect(capture.bodies.configuredTokenLimit.max_output_tokens).toBe(2048);
+    expect(capture.bodies.configuredCacheRetention.prompt_cache_retention).toBe("24h");
+  });
   it("adds documented additional_tools while preserving exact names, schema, call ID and result history", () => {
     const input = [{ role: "user", content: "Get customer" }, { type: "function_call", name: "get_customer", call_id: "call_abc123", arguments: '{"customer_id":"CUST-12345"}' },
       { type: "function_call_output", call_id: "call_abc123", output: '{"name":"Customer"}' }];

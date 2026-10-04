@@ -1,0 +1,203 @@
+{
+  "hermesVersion": "0.21.5",
+  "sourceSha": "f97608f178d1ffeca59860195ab7da295f7c8e5f",
+  "sourceHashes": {
+    "agent/transports/codex.py": "02b5cb1ba5603bb86fee315947a364f17678333e8f24b57bf4876aa1adcc292b",
+    "agent/codex_responses_adapter.py": "8923e37047274207d8867f5ae92ad308ebaa5ee27f55fb2df5139a2ad8f3115a",
+    "run_agent.py": "244da863d3c21591a3b5326dc14c2962d4e31131dda52df628502cd9fcbfea33",
+    "tui_gateway/server.py": "164ad8a1b43671c2a47829502f9a40f4355fc8060f2f6c2506b8aec44f1c0a51",
+    "agent/chat_completion_helpers.py": "5231a0e674806db6ad7be60e2d40a19a4157f7d2baa238aaa9af66f61e0eea4c"
+  },
+  "openaiSdkVersion": "2.24.0",
+  "scope": "public request builder + native synthetic response normalization + mock SDK serialization; no agent/gateway/account/inference",
+  "gatewayMaxTokensDefault": null,
+  "normalizedCall": {
+    "id": "call_abc123",
+    "name": "get_customer",
+    "arguments": "{\"customer_id\":\"CUST-12345\"}",
+    "providerData": {
+      "call_id": "call_abc123",
+      "response_item_id": "fc_abc123"
+    }
+  },
+  "bodies": {
+    "normal": {
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "input": [
+        {
+          "role": "user",
+          "content": "Read customer CUST-12345."
+        }
+      ],
+      "instructions": "Synthetic Hermes shape capture. Act only on current input.",
+      "model": "gpt-6.1-sol",
+      "prompt_cache_key": "pck_3f1bfcfdfba3382ae46fdcca",
+      "reasoning": {
+        "effort": "medium",
+        "summary": "auto"
+      },
+      "store": false,
+      "stream": true
+    },
+    "function": {
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "input": [
+        {
+          "role": "user",
+          "content": "Read customer CUST-12345."
+        }
+      ],
+      "instructions": "Synthetic Hermes shape capture. Act only on current input.",
+      "model": "gpt-6.1-sol",
+      "parallel_tool_calls": true,
+      "prompt_cache_key": "pck_774228138e55824ad3d69838",
+      "reasoning": {
+        "effort": "medium",
+        "summary": "auto"
+      },
+      "store": false,
+      "stream": true,
+      "tool_choice": "auto",
+      "tools": [
+        {
+          "type": "function",
+          "name": "get_customer",
+          "description": "Look up a customer by ID.",
+          "strict": false,
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "customer_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "customer_id"
+            ],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    "functionResult": {
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "input": [
+        {
+          "role": "user",
+          "content": "Read customer CUST-12345."
+        },
+        {
+          "type": "function_call",
+          "call_id": "call_abc123",
+          "name": "get_customer",
+          "arguments": "{\"customer_id\":\"CUST-12345\"}"
+        },
+        {
+          "type": "function_call_output",
+          "call_id": "call_abc123",
+          "output": "{\"name\":\"Synthetic Customer\"}"
+        }
+      ],
+      "instructions": "Synthetic Hermes shape capture. Act only on current input.",
+      "model": "gpt-6.1-sol",
+      "parallel_tool_calls": true,
+      "prompt_cache_key": "pck_774228138e55824ad3d69838",
+      "reasoning": {
+        "effort": "medium",
+        "summary": "auto"
+      },
+      "store": false,
+      "stream": true,
+      "tool_choice": "auto",
+      "tools": [
+        {
+          "type": "function",
+          "name": "get_customer",
+          "description": "Look up a customer by ID.",
+          "strict": false,
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "customer_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "customer_id"
+            ],
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    "configuredTokenLimit": {
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "input": [
+        {
+          "role": "user",
+          "content": "Read customer CUST-12345."
+        }
+      ],
+      "instructions": "Synthetic Hermes shape capture. Act only on current input.",
+      "max_output_tokens": 2048,
+      "model": "gpt-6.1-sol",
+      "prompt_cache_key": "pck_3f1bfcfdfba3382ae46fdcca",
+      "reasoning": {
+        "effort": "medium",
+        "summary": "auto"
+      },
+      "store": false,
+      "stream": true
+    },
+    "configuredCacheRetention": {
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "input": [
+        {
+          "role": "user",
+          "content": "Read customer CUST-12345."
+        }
+      ],
+      "instructions": "Synthetic Hermes shape capture. Act only on current input.",
+      "model": "gpt-6.1-sol",
+      "prompt_cache_key": "pck_3f1bfcfdfba3382ae46fdcca",
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "effort": "medium",
+        "summary": "auto"
+      },
+      "store": false,
+      "stream": true
+    },
+    "sdkTimeout": {
+      "include": [
+        "reasoning.encrypted_content"
+      ],
+      "input": [
+        {
+          "role": "user",
+          "content": "Read customer CUST-12345."
+        }
+      ],
+      "instructions": "Synthetic Hermes shape capture. Act only on current input.",
+      "model": "gpt-6.1-sol",
+      "prompt_cache_key": "pck_3f1bfcfdfba3382ae46fdcca",
+      "reasoning": {
+        "effort": "medium",
+        "summary": "auto"
+      },
+      "store": false,
+      "stream": true
+    }
+  },
+  "sdkTimeoutOption": 30
+}
