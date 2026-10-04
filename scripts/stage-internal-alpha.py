@@ -52,6 +52,7 @@ OVERLAYS = [
     "docs/siwc-id-token-verifier.md",
     "docs/siwc-account-fences.md", "docs/siwc-native-protected-store.md", "docs/siwc-control-journal.md",
     "docs/native-siwc-account-coordinator.md", "docs/native-siwc-account-host.md",
+    "docs/siwc-native-helper-packaging.md", "scripts/package-accounts-helper.py", "scripts/package-accounts-helper.test.py",
     "docs/hermes-runtime-packaging.md", "scripts/package-hermes-runtime.py", "scripts/test-package-hermes-runtime.py",
     "scripts/build-mac.sh", "scripts/build-version.sh",
     "scripts/build-internal-alpha.sh", "scripts/check-internal-alpha.sh", "scripts/stage-internal-alpha.py",
