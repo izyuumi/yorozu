@@ -985,3 +985,81 @@ test.each([
     expect(starts.length).toBeGreaterThanOrEqual(3); // Main reset and two distinct specialist processes.
   } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
 }, 30000);
+
+test("owner rotation disables learned preferences while ordinary chat and fresh specialists remain available", async () => {
+  const { temp, state, rows } = fixture();
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  const open = async () => {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock")); socket.on("data", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+  };
+  const send = async (id: string, text: string) => {
+    socket!.write(`${JSON.stringify({ id, threadId: SECRETARY_THREAD_ID, ts: Date.now(), agentId: "main", kind: "message", data: { role: "user", text } })}\n`);
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find(e => e.id === `native:${id}:final`)?.data.done).toBe(true));
+    return readThreadEvents(SECRETARY_THREAD_ID, state).find(e => e.id === `native:${id}:final`)!;
+  };
+  try {
+    await open(); await send("owner-pref", "Always reply with three bullets");
+    socket!.destroy(); await sidecar!.close(); sidecar = undefined;
+    const database = readFileSync(join(state, "preferences-v1", "preferences.sqlite"));
+    rmSync(join(state, "keys.json")); // Disposable profile only: documented re-pairing trigger.
+    await open(); expect((await send("rotated-topic", "HELLO")).data.text).toBe("Hello, how can I help?");
+    const failed = await send("rotated-pref", "Always reply with two bullets");
+    expect(failed.data).toMatchObject({ failed: true }); expect(failed.data.text).toContain("unavailable");
+    await send("rotated-task", "PREFERENCE_TASK");
+    await vi.waitFor(() => expect(rows().some(row => row.method === "turn/start" && row.params.input[0].text.includes("Task: PREFERENCE_PROBE"))).toBe(true));
+    const input = rows().findLast(row => row.method === "turn/start").params.input[0].text;
+    expect(JSON.parse(input.split("\n")[1])).toMatchObject({ records: [], unavailable: true });
+    expect(readFileSync(join(state, "preferences-v1", "preferences.sqlite"))).toEqual(database);
+  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+}, 20000);
+
+test("task presentation changes reach only the named active specialist and finished tasks cannot acknowledge unusable saves", async () => {
+  const { temp, state, rows } = fixture();
+  const release = join(temp, "release"); vi.stubEnv("CODEX_FIXTURE_RELEASE", release); vi.stubEnv("CODEX_FIXTURE_RESULT", join(temp, "result"));
+  let sidecar: ReturnType<typeof serveSecretary> | undefined;
+  let socket: ReturnType<typeof createConnection> | undefined;
+  const send = async (id: string, text: string) => {
+    socket!.write(`${JSON.stringify({ id, threadId: SECRETARY_THREAD_ID, ts: Date.now(), agentId: "main", kind: "message", data: { role: "user", text } })}\n`);
+    await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find(e => e.id === `native:${id}:final`)?.data.done).toBe(true));
+    return readThreadEvents(SECRETARY_THREAD_ID, state).find(e => e.id === `native:${id}:final`)!;
+  };
+  try {
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    await vi.waitFor(() => expect(existsSync(join(state, "local.sock"))).toBe(true));
+    socket = createConnection(join(state, "local.sock")); socket.on("data", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    await send("scoped-tasks", "TASKS");
+    await vi.waitFor(() => expect(rows().filter(row => row.method === "turn/start")).toHaveLength(3));
+    expect((await send("scoped-refused-en", 'For task "First task", Actually use two bullets from now on')).data.text).toContain("no saved preference to correct");
+    expect((await send("scoped-refused-ja", 'タスク「First task」では、訂正、今後は箇条書き2つにして')).data.text).toContain("訂正する保存済み設定がありません");
+    expect(rows().filter(row => row.method === "turn/steer")).toHaveLength(0);
+    expect((await send("scoped-four", 'For task "First task", From now on reply with four bullets')).data.text).toContain("active task received");
+    const deliveries = rows().filter(row => row.method === "turn/steer"); expect(deliveries).toHaveLength(1);
+    const input = deliveries[0].params.input[0].text;
+    const record = JSON.parse(input.split("\n")[1]).records[0];
+    const first = listThreads(state).find(t => t.title === "First task")!;
+    expect(record).toMatchObject({ scope: { kind: "task", id: first.id }, value: { value: 4 }, source: { messageId: "scoped-four", taskId: first.id } });
+    expect(rows().find(row => row.method === "turn/start" && row.pid === deliveries[0].pid).params.input[0].text).toContain("CONTROLLED_ONE");
+    await send("scoped-other-topic", "HELLO");
+    expect(JSON.parse(rows().findLast(row => row.method === "turn/start").params.input[0].text.split("\n")[1]).records).toEqual([]);
+    chmodSync(join(state, "secretary-steering-v1"), 0o500);
+    try {
+      const uncertain = await send("scoped-failed-delivery", 'For task "First task", From now on reply with five bullets');
+      expect(uncertain.data.text).toContain("Saved this task"); expect(uncertain.data.text).toContain("unconfirmed");
+      expect(uncertain.data.failed).toBeUndefined();
+      expect((await send("scoped-inspect", 'For task "First task", Show my saved presentation preferences')).data.text).toContain("ReplyBulletCount(5)");
+    } finally { chmodSync(join(state, "secretary-steering-v1"), 0o700); }
+    expect(rows().filter(row => row.method === "turn/steer")).toHaveLength(1);
+    writeFileSync(release + "-one", "finish"); writeFileSync(release + "-two", "finish");
+    await vi.waitFor(() => expect(readThreadEvents(first.id, state).some(e => e.data.done)).toBe(true));
+    expect((await send("scoped-finished", 'For task "First task", From now on reply with five bullets')).data.text).toContain("No preference was saved");
+    expect((await send("scoped-finished-delete", 'For task "First task", Forget my bullet count preference')).data.text).toContain("Deleted");
+    expect((await send("scoped-finished-unset", 'For task "First task", Forget my bullet count preference')).data.text).toContain("unset");
+    expect((await send("scoped-finished-view", 'For task "First task", Show my saved presentation preferences')).data.text).not.toContain("ReplyBulletCount");
+    expect(rows().filter(row => row.method === "turn/steer")).toHaveLength(1);
+  } finally { writeFileSync(release + "-one", "cleanup"); writeFileSync(release + "-two", "cleanup"); socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+}, 20000);

@@ -1,10 +1,10 @@
 # Explicit preference journal: isolated 0.6 component
 
-Status: independently testable component, based on released source
-`9681ecfb105ae46017a1d930f72803d6d806194b`. **Not integrated, installed, or released.**
-The integration/install owner retains those responsibilities. This slice adds only
-`packages/host-core/src/preferences.rs`, its test, and this document; no coordinator,
-crate export, dependency, lockfile, legacy storage, or vault changes.
+Status: preference-specific source integration on its isolated feature branch,
+based on released source `9681ecfb105ae46017a1d930f72803d6d806194b`.
+**Not installed or released.** Installation/native QA remain separately owned.
+Existing production data formats, dependencies, lockfiles, profiles and vaults are
+unchanged. Backend validation is described below; this is not comprehensive memory.
 
 ## Ownership and persistence
 
@@ -130,19 +130,29 @@ Worker packet dispatch cannot reach these operations. Existing sandbox/account/O
 controls remain the authorization boundary for tools and access to host state.
 
 `secretary-preferences.ts` exposes `parsePreference(text)` and
-`secretaryPreferences(dir, owner).accept(source, tasks)` / `.context(taskId?)`.
+`secretaryPreferences(dir, owner).accept(source, tasks)` / `.context(taskId?)`,
+both asynchronous. `accept` returns `{kind, text} | undefined`, where kind is
+`saved`, `deleted`, `unset`, `replayed`, `refused` or `shown`; only committed
+mutation outcomes may trigger a task delivery. `context` returns the bounded
+provider string. Each instance serializes bounded Rust child requests without
+blocking the host event loop.
 Only the production host supplies the source: a persisted parentless main-thread
 user message must match its existing accepted-message identity map. The hook waits
 for synchronous admission to finish, then takes its ordinal and timestamp from the
 first physical user admission, before display-order corrections. Model/tool output,
 attachments, task instruction derivatives, quoted documents and provider summaries
 are never passed to the parser. No historical preference import is performed.
+The identity map is the existing trusted host admission log, not a separate
+cryptographic proof of human authorship after disk tampering. Original log order
+and host sandbox boundaries are explicit trust assumptions.
 
 The private store is `<stateDir>/preferences-v1`, with a stable profile signing
 public key as host identity and `local-profile-owner` as the single local user's
-identity. Paired devices share that profile owner. A foreign profile fails closed.
+identity. Paired devices share that profile owner. A foreign profile fails closed for preference writes/reads; it does not break
+ordinary chat or new tasks. Unavailable retrieval supplies an empty, marked snapshot
+and normal presentation defaults. No foreign values are used or overwritten.
 The coordinator confirms successful writes after the separate Rust process exits;
-no model decides whether persistence succeeded. A duplicate/redacted receipt
+no model decides whether persistence succeeded. A duplicate/redacted receipt replies that the request was already handled; it
 reconstructs the original revision/operation without resurrecting deleted values.
 Delayed changes retain their original admission sequence and are refused.
 
@@ -170,7 +180,11 @@ Examples accepted as complete messages:
 - Prefix `For task "Exact existing title", ` or `タスク「既存の名前」では、`
   to select exactly one existing task; unknown/ambiguous titles are not stored.
 
-A correction requires an active saved key. A fresh explicit declaration can restore
+A bare `Actually…` / `訂正…` corrects durable state only immediately after that
+key's authenticated saved preference statement. Otherwise it remains ordinary
+conversation. Use `Actually use two bullets from now on` or
+`訂正、今後は箇条書き2つにして` to explicitly select a persistent correction
+later. A correction requires an active saved key. A fresh explicit declaration can restore
 one after deletion. Other phrasing remains normal conversation: it is not silently
 persisted or represented as comprehensive natural-language memory support.
 
@@ -186,11 +200,17 @@ endpoint. This work does not merge, install or publish that build.
 
 Project scope is tested and available through Rust retrieval, but the continuing
 secretary currently has no stable project association, so ordinary-language project
-selection is unsupported. Existing named task preferences affect future retrieval;
-a running specialist is not automatically interrupted or steered when one changes.
+selection is unsupported. Explicit existing active-task preferences are delivered through the current steer
+receipt path as presentation-only updates; unrelated tasks receive nothing. A
+finished/uncertain task refuses a new value but permits inspecting and deleting
+its existing settings (prefix the Markdown query with its task title). Delivery refusal/unconfirmed status is
+reported separately from persistence. Project association remains unsupported.
 Preference-only acknowledgements use fixed EN/JA copy and factual dispatch receipts
-remain host-owned. Provider compaction is covered by discarding the main session and
-starting independent specialists; no live provider compaction RPC is claimed.
+remain host-owned. Tests deliberately discard the provider session to prove retrieval is independent
+of session continuity; the production code does not discard sessions automatically.
+Fresh snapshots, including empty/unavailable ones, instruct the model to disregard
+old values. This is model context policy, not forensic provider-memory erasure.
+No live provider compaction RPC is claimed.
 
 The original host user admission log must retain first-admission order. A future
 physical log compactor needs an immutable admission sequence before deleting that
@@ -243,3 +263,28 @@ and provider directories. All temporary profiles and copied authentication were
 deleted. This is backend acceptance; no native UI, installed profile, release or
 vault was accessed. Language and clarification settings have typed storage/parser/
 retrieval coverage; broad model question behavior is not claimed tested.
+
+Read-only Opus review prompted availability, task delivery, correction-context and
+receipt-copy regressions: rotated profile keys leave the old preference database
+byte-identical while chat/new specialists continue; only the named active task
+receives its setting; finished tasks refuse unusable saves; one-off corrections
+do not silently persist; replay after deletion reports unchanged current state.
+Arbitrary same-OS-user processes remain able to tamper with private local state if
+existing sandbox/permissions are bypassed. The preference endpoint does not solve
+that broader OS trust boundary or grant new permissions to such processes.
+
+Final live EN/JA deletion additionally kept the continuing provider session and
+asked the banana question again. Both replies reverted to ordinary prose after the
+acknowledged deletion; no session reset was used for that deletion check. This is
+observed behavior for the synthetic case, not a guarantee of erasure in the provider.
+
+Task receipt regressions additionally cover EN/JA refused corrections producing no
+steer, successful persistence followed by a real filesystem-permission delivery
+failure reporting application unconfirmed, and inspection/deletion/repeated-unset
+copy after completion. These use synthetic ordinary directories; no interposition,
+FIFO or paused Rust recovery experiment is used.
+
+The production host's steer tracking promise now settles on delivery rejection,
+while the original delivery promise still rejects to its caller. The synthetic
+permission-failure regression exposed this previously unhandled rejection; the
+coordinator retains the confirmed save and reports delivery unconfirmed.
