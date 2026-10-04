@@ -27,6 +27,46 @@ known refusal before handoff; neither means an uncertain Stop was declined.
 `initialize` accepts `{protocolVersion:1, upstreamVersion:'0.21.5', profileRoot,
 workspace, python, sourcePath, providerConfigPath?, provider?, model?}`. Paths are
 absolute. The result declares plugin/version/capabilities and explicit auth status.
+That legacy form is only for isolated synthetic fixtures. Product initialization
+also requires the trusted host's `agentId`, immutable `scope`, and sandbox
+attestation:
+
+```json
+{
+  "agentId": "agent-a",
+  "scope": {
+    "allowedTools": ["file", "delegation", "team"],
+    "directories": [{"path":"/owned/agent-a/workspace","access":"write"}, {"path":"/owned/agent-a/memory","access":"write"}],
+    "workspace": "/owned/agent-a/workspace",
+    "memoryDir": "/owned/agent-a/memory"
+  },
+  "isolation": {"backend":"macos-seatbelt-v1","agentId":"agent-a","policyDigest":"64-lowercase-hex-digits"},
+  "platform": {"team":true,"computer":false}
+}
+```
+
+The host constructs this configuration after applying its mandatory OS policy.
+Supplying the attestation alone does not establish enforcement. Unknown tool
+names, mismatched identity, unrepresented computer authority, broad filesystem
+root grants and invalid directories refuse before process launch. Directory
+paths are canonicalized; the workspace must match initialization. It must be in
+an explicit directory grant or fresh scratch inside the owned profile root;
+scratch is runtime plumbing and is never appended to effective tool grants.
+Enabled private memory needs a canonical directory and write grant. With memory
+disabled, its bounded absolute path is neither read nor granted. Initialize returns agent identity, scope
+digest and the sandbox handshake. Turns, session opens and controls cannot
+replace authority or runtime paths.
+
+Supported native names are `file`, `terminal`, `delegation`, `memory`, `web` and
+`browser`. They select their exact pinned native toolsets through
+`HERMES_TUI_TOOLSETS`, with complementary disabled sets. The bootstrap verifies
+actual registration and the gateway selection before entering the unchanged
+native gateway. An explicitly registered empty set supports chat-only agents;
+an empty list cannot fall through to native default/all tools. `team` enables
+only the first-party platform tool. Computer-use and scheduler tools remain
+disabled. Tool availability does not grant filesystem/network/exec access: the
+host sandbox controls those, including read-only versus writable directory roots.
+
 The first candidate supports only an explicitly supplied **synthetic loopback
 proof provider**. Real subscription onboarding is unsupported and blocks session
 creation before any installed auth/profile probe. There is no billed fallback.
@@ -56,7 +96,7 @@ The remaining methods are:
 | `task.steer` | Exact conversation/task/origin run/attempt/operation ID. `queued` means queued, never consumed. |
 | `task.stop` | Exact native child interrupt. `requested` waits for native terminal evidence. |
 | `run.stop` | Matching current turn or active children origin only. If other origin tasks would be interrupted, returns `unsupported`; exact child Stop remains available. |
-| `request.answer` | Current server request only. Approval choices restricted to `once` or `deny`; no session/permanent grants. Single clarification supported. Secret/sudo/vault/native desktop and batch questions explicitly refuse. |
+| `request.answer` | Current server request only. Approval choices restricted to `once` or `deny`; no session/permanent grants. Team results additionally require exact originating conversation/binding/run/attempt. Single clarification supported. Secret/sudo/vault/native desktop and batch questions explicitly refuse. |
 | `session.snapshot` | Current projection, task currency, event cursor and runtime status. Read only; no continuation. |
 | `shutdown` | Ends the gateway; remaining execution without terminal evidence stays unknown. |
 
@@ -83,6 +123,67 @@ explicit reference-only envelope and current-prompt requirement. Hidden system
 history is omitted by the native Responses transport, so it cannot carry language
 preferences. Opening a session never submits that scaffold for execution.
 
+## Persistent agents and platform handoff
+
+One native daemon and marker-owned profile belong to one persistent agent. The
+ownership marker prevents adopting another agent's profile; configuration changes
+for the same agent require host quiescence and a process restart with a new
+sandbox policy. Scope is fixed for the process. A daemon multiplexes independent
+conversation/binding/session records, including named threads managed by the host.
+Serialize initial `session.open` calls per agent; subsequent native session
+streams remain independently routed. Two live daemons must not write the same
+profile. The host actor owns that lease and each conversation's durable journal.
+
+Hermes memory, when enabled, stays inside that agent's own runtime profile. The
+host `memoryDir` remains a separate private journal. Ephemeral Hermes children
+inherit the origin's tool selection and OS authority, use fresh native sessions,
+and the upstream blocks their memory tool. They never select another persistent
+agent's profile.
+When memory is disabled, native MEMORY/USER bootstrap flags are also false;
+removing the tool alone would still inject retained profile memory. External
+memory providers are excluded, and bootstrap verifies these flags before launch.
+
+With `platform.team:true` and `allowedTools` containing `team`, the native plugin
+registers `delegate_to_agent` in the single `yorozu_platform` toolset. Its strict
+arguments are `{teammateId,context,expectedResult,scope:{allowedTools,directories,
+sharedResourceIds?}}`. Context contains only the information needed for the task.
+No command or attachment-path field exists. Requested tools and directory access
+must narrow the origin scope; the host resolves canonical resources and further
+intersects teammate authority before starting a fresh teammate conversation.
+The model's scope is a proposal, never authority. The originating secretary owns
+the final answer.
+
+The pinned plugin API registers the native tool; the pinned gateway contract
+registry declares `yorozu.team_delegate`, then `server_requests.send` waits for the
+host. The adapter emits `request.open` with `kind:'team-delegate'`, typed input,
+and originating run/attempt. Answer with the exact `conversationId`, `bindingId`,
+`runId`, `attemptId`, `requestId`, and
+`answer:{result:{status:'completed'|'failed'|'unknown'|'rejected',taskId?,text?}}`.
+Only the still-current origin accepts that result. Native cancellation makes a
+late answer stale. The wait is bounded at 120 seconds; timeout, cancellation or
+lost acknowledgement yields `unknown` to Hermes with no automatic retry. The
+native loop consumes the tool result and continues its own reply. This initial
+bridge awaits a synchronous result; background persistent-agent result delivery
+needs separate durable continuation ownership.
+
+Ephemeral children cannot open this host handoff: their dispatch-injected durable
+session identity differs from the current owning secretary. This avoids assigning
+their requests to an unrelated foreground turn. A pinned native dispatch
+ContextVar also carries the tool call ID; it must match an unclaimed native
+`tool.start` recorded for that same current run. Completed, stopped or superseded
+turns cannot lend their currency to a late request. This extra pinned internal
+bridge needs revalidation when changing upstream versions. Recursive persistent-agent
+handoff is owned by each recipient's separately scoped host runtime. Neither
+the bridge nor the adapter reads teammate private history. A handoff that excludes
+recipient memory must use a fresh task-local memory directory and profile; it
+must not reuse that teammate's ordinary private journal.
+
+Attachments remain unsupported. `turn.submit` rejects a nonempty attachment list
+before any read or prompt handoff. The native staged-attachment APIs mutate a
+session separately from prompt admission; scope validation alone cannot prove
+atomic ownership through busy races. Capability metadata stays false until that
+transport is verified.
+
 ## Isolation and recovery
 
 Runtime state is in a fresh marker-owned `profileRoot/hermes-runtime`, with fresh
@@ -102,11 +203,10 @@ Unknown outcomes never become successful/stopped simply because a process exited
 Native child timeouts also stay unknown: the upstream timeout path can defer
 cleanup while its worker future remains alive, so `timeout` is not cessation proof.
 
-The subprocess/environment boundary is **not an OS sandbox**. Before admitting
-real remote providers, production must add and verify supported policy hooks and
-native sandbox/permission isolation. Native `tool.start` events are observation,
-not authorization. This candidate does not claim arbitrary model tools are confined
-to `workspace`; real subscription/tool access remains blocked. The manifest marks
+Product agents require the host's mandatory macOS sandbox; legacy fixture mode
+makes no OS confinement claim. Native `tool.start` events are observation, not
+authorization. Host policy verification and real subscription onboarding remain
+integration gates. The manifest marks
 this candidate `productionReady:false`. Its JSON-RPC approval handshake supports
 Hermes's native heuristic approvals, not universal host tool authorization.
 
@@ -129,7 +229,10 @@ tasks. A later explicit conversation-wide Stop contract may authorize that scope
 `node --test packages/harness-plugins/hermes/adapter.test.mjs` exercises native
 framing and exact control/approval/recovery behavior using pinned upstream shapes.
 Set `YOROZU_HERMES_TEST_SOURCE` to a pristine pinned source checkout to also verify
-profile isolation and configuration. These tests do not prove a live model, OS
+profile isolation and configuration. Also set `YOROZU_HERMES_TEST_PYTHON` to its
+prepared Python interpreter to exercise actual plugin discovery, exact scoped
+schemas, empty chat scope, fail-closed registration and bounded tool dispatch.
+These tests do not prove a live model, OS
 sandbox or production packaging; parent integration acceptance must run the real
 gateway against a harmless synthetic provider and inspect the produced artifact.
 
@@ -138,3 +241,9 @@ Exact implementation references at the pin: `tui_gateway/contracts/sessions.py`,
 `contracts/events.py`, `server_requests.py`, `methods_subagents.py`,
 `session_lifecycle.py`, `session_auto_continue.py`, `session_notifications.py`,
 `tools/async_delegation.py` and `tools/delegate_tool.py`.
+Scope/tool/plugin references: `toolsets.py`, `model_tools.py`,
+`hermes_cli/plugins.py`, `hermes_cli/plugins_discovery.py`,
+`tui_gateway/contracts/registry.py`, `gateway/session_context.py` and
+`tools/delegate_tool_toolsets.py`. Package `bootstrap.py` and `platform/` with
+`adapter.mjs`, `manifest.json` and this README; no upstream source modification
+or plugin install command is used.

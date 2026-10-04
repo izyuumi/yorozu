@@ -2,10 +2,10 @@
 /** Hermes owns the agent loop. This process translates transport and receipts only. */
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile, readdir, lstat, realpath } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, lstat, realpath, copyFile } from 'node:fs/promises';
 import { resolve, join, dirname, isAbsolute, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 
 export const UPSTREAM = Object.freeze({ version: '0.21.5', commit: 'f97608f178d1ffeca59860195ab7da295f7c8e5f' });
 const FRAME_LIMIT = 256 * 1024;
@@ -13,6 +13,9 @@ const TEXT_LIMIT = 192 * 1024;
 const MAX_PENDING = 32;
 const ACTIVE = new Set(['running', 'waiting', 'stopping']);
 const exec = promisify(execFile);
+const NATIVE_TOOLS = ['file', 'terminal', 'delegation', 'memory', 'web', 'browser'];
+const HOST_TOOLS = [...NATIVE_TOOLS, 'team', 'computer'];
+const PACKAGE_ROOT = dirname(fileURLToPath(import.meta.url));
 
 export class ProtocolError extends Error {
   constructor(code, message, data) { super(message); this.code = code; this.data = data; }
@@ -23,6 +26,76 @@ function required(value, name, limit = 4096) {
   return value;
 }
 function text(value, limit = TEXT_LIMIT) { return typeof value === 'string' ? Buffer.from(value).subarray(0, limit).toString('utf8') : ''; }
+function object(value, keys, name) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key))) throw invalid(`${name} has unsupported fields`);
+  return value;
+}
+function contained(root, path) { const rel = relative(root, path); return rel === '' || (!rel.startsWith('..' + '/') && rel !== '..' && !isAbsolute(rel)); }
+function tools(value, name) {
+  if (!Array.isArray(value) || value.length > HOST_TOOLS.length || value.some(tool => !HOST_TOOLS.includes(tool)) || new Set(value).size !== value.length) throw invalid(`${name} contains an unsupported or duplicate tool`);
+  return [...value].sort();
+}
+/** Trusted host configuration; an attestation is a handshake, never sandbox proof. */
+export async function validateAgentScope(params) {
+  if (params.agentId === undefined) {
+    if (params.scope !== undefined || params.isolation !== undefined || params.platform !== undefined) throw invalid('agentId is required for product scope');
+    return null; // Legacy synthetic fixtures make no product scope claim.
+  }
+  const agentId = required(params.agentId, 'agentId', 128);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(agentId)) throw invalid('agentId must be a stable opaque identifier');
+  const isolation = object(params.isolation, ['backend', 'agentId', 'policyDigest'], 'isolation');
+  if (isolation.backend !== 'macos-seatbelt-v1' || isolation.agentId !== agentId || !/^[a-f0-9]{64}$/.test(isolation.policyDigest)) throw invalid('matching macOS host sandbox attestation is required');
+  const scope = object(params.scope, ['allowedTools', 'directories', 'workspace', 'memoryDir'], 'scope');
+  const allowedTools = tools(scope.allowedTools, 'scope.allowedTools');
+  const platform = params.platform === undefined ? { team: false, computer: false } : object(params.platform, ['team', 'computer'], 'platform');
+  if (typeof platform.team !== 'boolean' || typeof platform.computer !== 'boolean') throw invalid('platform flags must be explicit booleans');
+  if (platform.computer || allowedTools.includes('computer')) throw invalid('computer platform broker is unsupported');
+  if (platform.team !== allowedTools.includes('team')) throw invalid('team scope requires the explicit platform team bridge');
+  for (const key of ['workspace', 'memoryDir']) if (!isAbsolute(required(scope[key], `scope.${key}`))) throw invalid(`scope.${key} must be absolute`);
+  if (!Array.isArray(scope.directories) || scope.directories.length > 64) throw invalid('scope.directories must be bounded');
+  const directories = [];
+  for (const item of scope.directories) {
+    object(item, ['path', 'access'], 'directory');
+    if (!isAbsolute(required(item.path, 'directory.path')) || !['read', 'write'].includes(item.access)) throw invalid('directory needs an absolute path and read/write access');
+    const path = await realpath(item.path);
+    if (!(await lstat(path)).isDirectory()) throw invalid('scope grants must refer to directories');
+    if (path === '/') throw invalid('unrestricted filesystem roots are unsupported');
+    if (directories.some(grant => grant.path === path)) throw invalid('duplicate scope directory');
+    directories.push({ path, access: item.access });
+  }
+  const workspace = await realpath(scope.workspace);
+  if (!(await lstat(workspace)).isDirectory()) throw invalid('workspace must be a directory');
+  const memoryDir = allowedTools.includes('memory') ? await realpath(scope.memoryDir) : resolve(scope.memoryDir);
+  if (allowedTools.includes('memory') && !(await lstat(memoryDir)).isDirectory()) throw invalid('private memory must be a directory');
+  if (workspace !== await realpath(params.workspace)) throw invalid('workspace must match the immutable agent scope');
+  if (!directories.some(grant => contained(grant.path, workspace))) {
+    if (!isAbsolute(required(params.profileRoot, 'profileRoot')) || !contained(await realpath(params.profileRoot), workspace)) throw invalid('workspace is outside agent directory scope and owned runtime scratch');
+  }
+  if (allowedTools.includes('memory') && !directories.some(grant => grant.access === 'write' && contained(grant.path, memoryDir))) throw invalid('enabled private memory directory needs a write grant');
+  const normalized = { allowedTools, directories: directories.sort((a, b) => a.path.localeCompare(b.path)), workspace, memoryDir };
+  return Object.freeze({ agentId, scope: normalized, isolation: { ...isolation }, platform: { ...platform },
+    scopeDigest: createHash('sha256').update(JSON.stringify(normalized)).digest('hex') });
+}
+function teamInput(params, agent) {
+  object(params, ['session_id', 'agent_session_id', 'tool_call_id', 'teammateId', 'context', 'expectedResult', 'scope'], 'team request');
+  required(params.teammateId, 'teammateId', 128); required(params.context, 'context', 32 * 1024); required(params.expectedResult, 'expectedResult', 8192);
+  const proposed = object(params.scope, ['allowedTools', 'directories', 'sharedResourceIds'], 'delegated scope');
+  const allowedTools = tools(proposed.allowedTools, 'delegated allowedTools');
+  if (allowedTools.some(tool => !agent.scope.allowedTools.includes(tool) || tool === 'computer')) throw invalid('delegated tools exceed the origin scope');
+  if (!Array.isArray(proposed.directories) || proposed.directories.length > 64) throw invalid('delegated directories must be bounded');
+  const directories = proposed.directories.map(item => {
+    object(item, ['path', 'access'], 'delegated directory');
+    if (!isAbsolute(required(item.path, 'delegated directory.path')) || !['read', 'write'].includes(item.access)) throw invalid('invalid delegated directory');
+    const path = resolve(item.path);
+    if (!agent.scope.directories.some(grant => contained(grant.path, path) && (item.access === 'read' || grant.access === 'write'))) throw invalid('delegated directory exceeds origin scope');
+    // Host resolves resource IDs and canonical filesystem roots before execution.
+    return { path, access: item.access };
+  });
+  const ids = proposed.sharedResourceIds;
+  if (ids !== undefined && (!Array.isArray(ids) || ids.length > 32 || ids.some(id => typeof id !== 'string' || !id.trim() || Buffer.byteLength(id) > 128))) throw invalid('shared resource IDs must be bounded');
+  return { teammateId: params.teammateId, context: params.context, expectedResult: params.expectedResult,
+    scope: { allowedTools, directories, ...(ids ? { sharedResourceIds: [...ids] } : {}) } };
+}
 function wire(frame) {
   const value = JSON.stringify(frame) + '\n';
   if (Buffer.byteLength(value) > FRAME_LIMIT) throw invalid('frame exceeds 256 KiB');
@@ -52,6 +125,7 @@ export async function prepareRuntime(params) {
     required(params[key], key);
     if (!isAbsolute(params[key])) throw invalid(`${key} must be absolute`);
   }
+  const agent = await validateAgentScope(params);
   const sourcePath = await realpath(params.sourcePath);
   const metadata = await readFile(join(sourcePath, 'pyproject.toml'), 'utf8');
   if (!/^version\s*=\s*"0\.21\.5"\s*$/m.test(metadata)) throw invalid('Hermes source version does not match the pinned release');
@@ -66,12 +140,13 @@ export async function prepareRuntime(params) {
   await mkdir(hermesHome, { recursive: true, mode: 0o700 });
   if ((await lstat(hermesHome)).isSymbolicLink()) throw invalid('Hermes runtime must not be a symlink');
   const marker = join(hermesHome, '.yorozu-owner.json');
-  const ownership = { schema: 1, pluginId: 'hermes', upstreamVersion: UPSTREAM.version, upstreamCommit: UPSTREAM.commit };
+  const ownership = { schema: 1, pluginId: 'hermes', upstreamVersion: UPSTREAM.version, upstreamCommit: UPSTREAM.commit,
+    ...(agent ? { agentId: agent.agentId } : {}) };
   try {
     const markerStat = await lstat(marker);
     if (!markerStat.isFile() || markerStat.isSymbolicLink() || markerStat.size > 1024) throw invalid('runtime ownership marker is invalid');
     const previous = JSON.parse(await readFile(marker, 'utf8'));
-    if (JSON.stringify(previous) !== JSON.stringify(ownership)) throw invalid('runtime belongs to a different adapter version');
+    if (JSON.stringify(previous) !== JSON.stringify(ownership)) throw invalid('runtime belongs to a different adapter version or agent');
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
     if ((await readdir(hermesHome)).length) throw invalid('refusing to adopt an existing Hermes profile');
@@ -98,12 +173,30 @@ export async function prepareRuntime(params) {
   const config = {
     model: { provider: provider ?? 'custom:yorozu-unconfigured', default: fixture?.model ?? 'unconfigured' },
     agent: { service_tier: 'normal', disabled_toolsets: ['cronjob', 'computer_use'] }, fallback_model: [],
+    memory: { provider: 'builtin', memory_enabled: !agent || agent.scope.allowedTools.includes('memory'),
+      user_profile_enabled: !agent || agent.scope.allowedTools.includes('memory') },
     desktop: { auto_continue: { enabled: false } },
     display: { busy_input_mode: 'queue' },
     approvals: { mode: 'manual' },
     delegation: { orchestrator_enabled: true, max_spawn_depth: 3, max_concurrent_children: 2 },
     custom_providers: fixture ? [{ name: 'yorozu-local-proof', base_url: fixture.baseUrl, api_key: 'yorozu-loopback-proof', api_mode: 'codex_responses' }] : [],
   };
+  if (agent) {
+    config.agent.disabled_toolsets = [...NATIVE_TOOLS.filter(name => !agent.scope.allowedTools.includes(name)), 'cronjob', 'computer_use'];
+    config.platform_toolsets = { cli: agent.scope.allowedTools.filter(name => NATIVE_TOOLS.includes(name)) };
+    config.plugins = { enabled: ['yorozu-platform'], entries: { 'yorozu-platform': { settings: { team: agent.platform.team } } } };
+    const pluginsRoot = join(hermesHome, 'plugins'), pluginRoot = join(pluginsRoot, 'yorozu-platform');
+    for (const directory of [pluginsRoot, pluginRoot]) {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      if ((await lstat(directory)).isSymbolicLink()) throw invalid('runtime plugin directories must not be symlinks');
+    }
+    for (const file of ['__init__.py', 'plugin.yaml']) {
+      const destination = join(pluginRoot, file);
+      try { if ((await lstat(destination)).isSymbolicLink()) throw invalid('runtime platform files must not be symlinks'); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      await copyFile(join(PACKAGE_ROOT, 'platform', file), destination);
+    }
+  }
   // JSON is a YAML subset; no YAML dependency or arbitrary inherited config.
   const configPath = join(hermesHome, 'config.yaml');
   try { if ((await lstat(configPath)).isSymbolicLink()) throw invalid('runtime config must not be a symlink'); }
@@ -116,13 +209,15 @@ export async function prepareRuntime(params) {
     if ((await lstat(directory)).isSymbolicLink()) throw invalid('isolated homes must not be symlinks');
   }
   return {
-    workspace, sourcePath, python: params.python, provider, model: fixture?.model,
+    workspace, sourcePath, python: params.python, provider, model: fixture?.model, agent,
     authAvailable: Boolean(fixture),
     env: {
       PATH: `${dirname(params.python)}:/usr/bin:/bin:/usr/sbin:/sbin`,
       HOME: home, CODEX_HOME: codexHome, HERMES_HOME: hermesHome,
       TMPDIR: join(profileRoot, 'tmp'), LANG: 'en_US.UTF-8',
       PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1', PYTHONNOUSERSITE: '1',
+      ...(agent ? { HERMES_TUI_TOOLSETS: [...agent.scope.allowedTools.filter(name => NATIVE_TOOLS.includes(name)),
+        ...(agent.platform.team ? ['yorozu_platform'] : []), 'yorozu_empty'].join(',') } : {}),
       // No inherited env, .env, sidecars, auth variables or scheduler settings.
     },
   };
@@ -207,7 +302,8 @@ async function launchGateway(params) {
     } };
   }
   await mkdir(runtime.env.TMPDIR, { recursive: true, mode: 0o700 });
-  const gateway = new NativeGateway(spawn(runtime.python, ['-m', 'tui_gateway.entry'], {
+  const gateway = new NativeGateway(spawn(runtime.python, runtime.agent
+    ? [join(PACKAGE_ROOT, 'bootstrap.py')] : ['-m', 'tui_gateway.entry'], {
     cwd: runtime.sourcePath, env: runtime.env, stdio: ['pipe', 'pipe', 'pipe'],
   }));
   await gateway.ready;
@@ -251,6 +347,24 @@ export function createAdapter({ emit, launch = launchGateway }) {
     if (session.probe) {
       if (session.probe.frames.length >= 64) { runtime.gateway.respond(frame.id, null, { code: -32601, message: 'continuation identity unavailable' }); return; }
       session.probe.frames.push(frame); return;
+    }
+    if (frame.method === 'yorozu.team_delegate') {
+      if (requests.has(frame.id)) return;
+      try {
+        if (!runtime.agent?.platform.team || !session.current || frame.params.agent_session_id !== session.storedId) throw invalid('team handoff requires the scoped current secretary, not an ephemeral child');
+        const call = session.nativeToolCalls.get(required(frame.params.tool_call_id, 'native tool_call_id', 128));
+        const originKey = JSON.stringify([session.current.runId, session.current.attemptId]);
+        if (!call || call.run !== session.current || call.claimed || session.stoppedOrigins.has(originKey)) throw invalid('team handoff has no unclaimed current native tool currency');
+        const input = teamInput(frame.params, runtime.agent);
+        if (input.teammateId === runtime.agent.agentId) throw invalid('teammate handoff cannot target itself');
+        const run = session.current;
+        call.claimed = true;
+        requests.set(frame.id, { frame, session, run });
+        event(session, 'request.open', { requestId: frame.id, kind: 'team-delegate', tool: 'delegate_to_agent', input }, run);
+      } catch (error) {
+        runtime.gateway.respond(frame.id, { status: 'rejected', text: text(error.message, 2048) });
+      }
+      return;
     }
     if (!['approval', 'clarify'].includes(frame.method) || (frame.method === 'clarify' && frame.params.questions)) {
       runtime.gateway.respond(frame.id, null, { code: -32601, message: `${frame.method} is unsupported by this Yorozu adapter` });
@@ -375,17 +489,22 @@ export function createAdapter({ emit, launch = launchGateway }) {
       }
       return;
     }
-    if (session.probe && ['message.delta', 'message.interim', 'message.complete', 'tool.start', 'error'].includes(type)) {
+    if (session.probe && ['message.delta', 'message.interim', 'message.complete', 'tool.start', 'tool.complete', 'error'].includes(type)) {
       if (session.probe.frames.length >= 64) { rejectContinuation(session, 'continuation buffer exceeded its bound'); return; }
       session.probe.frames.push(frame); void identifyContinuation(session); return;
     }
     const run = session.current;
     if (!run) return;
+    if (type === 'tool.start' && payload.name === 'delegate_to_agent' && typeof payload.tool_id === 'string') {
+      if (!session.nativeToolCalls.has(payload.tool_id) && session.nativeToolCalls.size < 64) session.nativeToolCalls.set(payload.tool_id, { run, claimed: false });
+      return;
+    }
+    if (type === 'tool.complete') { session.nativeToolCalls.delete(payload.tool_id); return; }
     if (type === 'error') {
       // Build/early-cancel failures sometimes emit only a session error, without
       // message.complete. Clear active projection, but do not invent cessation.
       event(session, 'turn.terminal', { text: run.text, state: 'unknown', reason: text(payload.message, 2048) || 'native session failed before terminal evidence' }, run);
-      session.lastRun = run; session.current = null;
+      session.lastRun = run; session.current = null; session.nativeToolCalls.clear();
     } else if (type === 'message.delta') {
       if (Buffer.byteLength(run.text) + Buffer.byteLength(text(payload.text)) > TEXT_LIMIT) {
         event(session, 'capability.unavailable', { capability: 'replySize', reason: 'stream exceeded the bounded reply size' });
@@ -402,12 +521,12 @@ export function createAdapter({ emit, launch = launchGateway }) {
         ...(payload.error || payload.failure_reason ? { reason: text(payload.error || payload.failure_reason, 2048) } : {}),
         ...(state !== 'unknown' ? { cessation: 'provider-terminal' } : {}),
         ...(run.continuation ? { continuation: true, originRunId: run.runId, resultTaskIds: run.resultTaskIds } : {}) }, run);
-      session.lastRun = run; session.current = null;
+      session.lastRun = run; session.current = null; session.nativeToolCalls.clear();
     }
   }
   function onClose(reason) {
     for (const session of sessions.values()) {
-      session.probe = null;
+      session.probe = null; session.nativeToolCalls.clear();
       if (session.current) { event(session, 'turn.terminal', { text: session.current.text, state: 'unknown', reason: 'Hermes process ended before terminal evidence' }); session.lastRun = session.current; session.current = null; }
       for (const task of session.tasks.values()) if (ACTIVE.has(task.state)) { task.state = 'unknown'; task.canSteer = false; task.canStop = false; publishTask(session, task); }
       for (const [id, request] of requests) if (request.session === session) { requests.delete(id); event(session, 'request.cancel', { requestId: id }); }
@@ -449,15 +568,21 @@ export function createAdapter({ emit, launch = launchGateway }) {
     async handle(method, params = {}) {
       if (method === 'initialize') {
         if (initialized) throw invalid('adapter is already initialized');
+        const agent = await validateAgentScope(params);
         runtime = await launch(params);
+        runtime.agent = agent;
         runtime.gateway.onFrame(onFrame); runtime.gateway.onClose(onClose);
         await runtime.gateway.call('client.capabilities', { server_requests: true });
         initialized = true;
+        const delegation = !agent || agent.scope.allowedTools.includes('delegation');
         return { protocolVersion: 1, pluginId: 'hermes', upstreamVersion: UPSTREAM.version,
-          capabilities: { backgroundTasks: true, targetedSteer: true, taskStop: true, approvals: true, reconnect: true, attachments: false },
+          ...(agent ? { agentId: agent.agentId, scopeDigest: agent.scopeDigest, isolation: agent.isolation } : {}),
+          capabilities: { backgroundTasks: delegation, targetedSteer: delegation, taskStop: delegation, approvals: true, reconnect: true, attachments: false,
+            teamDelegation: Boolean(agent?.platform.team), nativeComputerUse: false, schedules: false },
           auth: { status: runtime.authAvailable ? 'local-proof' : 'unsupported', reason: runtime.authAvailable ? 'explicit loopback proof provider' : 'fresh subscription onboarding is not implemented; installed authentication is never read' } };
       }
       if (!initialized) throw new ProtocolError(-32001, 'adapter is not initialized');
+      if (['agentId', 'scope', 'isolation', 'platform', 'workspace', 'memoryDir', 'profileRoot', 'sourcePath', 'python', 'providerConfigPath'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
       if (method === 'shutdown') { await runtime.gateway.shutdown(); return { stopped: runtime.gateway.closed }; }
       if (runtime.gateway.closed && method !== 'session.snapshot') throw new ProtocolError(-32002, 'Hermes runtime is closed; uncertain actions cannot be replayed');
       if (method === 'session.open') {
@@ -489,7 +614,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
           const session = { conversationId: params.conversationId, bindingId: params.bindingId,
             storedId: required(result.stored_session_id || (resume ? params.sessionId : ''), 'stored_session_id'), liveId: required(result.session_id, 'session_id'),
             tasks: new Map(), attempts: new Set(), operations: new Map(), current: null, lastRun: null, cursor: 0,
-            delegations: new Map(), stoppedOrigins: new Set(), probe: null, unattributedTurn: null };
+            delegations: new Map(), stoppedOrigins: new Set(), nativeToolCalls: new Map(), probe: null, unattributedTurn: null };
           sessions.set(session.conversationId, session); liveSessions.set(session.liveId, session);
           const frames = opening.frames; opening = null;
           for (const frame of frames) onFrame(frame);
@@ -499,6 +624,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
       }
       if (method === 'turn.submit') {
         const session = sessionFor(params); currency(params); required(params.text, 'text', 64 * 1024);
+        if (params.attachments !== undefined && (!Array.isArray(params.attachments) || params.attachments.length)) return { status: 'unsupported', reason: 'scoped attachment staging and atomic admission are not implemented; no attachment was read or submitted' };
         const key = JSON.stringify([params.runId, params.attemptId]);
         if (session.attempts.has(key)) return { status: 'rejected', reason: 'attempt already admitted; upstream has no durable idempotency key' };
         if (session.current || session.probe || session.unattributedTurn) return { status: 'rejected', reason: 'secretary turn is active or uncertain; host must queue explicitly' };
@@ -558,7 +684,17 @@ export function createAdapter({ emit, launch = launchGateway }) {
         const request = requests.get(required(params.requestId, 'requestId'));
         if (!request) return { status: 'rejected', reason: 'request is stale or already answered' };
         let result;
-        if (request.frame.method === 'approval') {
+        if (request.frame.method === 'yorozu.team_delegate') {
+          if (params.conversationId !== request.session.conversationId || params.bindingId !== request.session.bindingId
+            || params.runId !== request.run.runId || params.attemptId !== request.run.attemptId || request.session.current !== request.run
+            || request.session.stoppedOrigins.has(JSON.stringify([request.run.runId, request.run.attemptId]))) return { status: 'rejected', reason: 'team result currency no longer owns the originating current turn' };
+          object(params.answer, ['result'], 'team answer');
+          const answer = object(params.answer.result, ['status', 'taskId', 'text'], 'team result');
+          if (!['completed', 'failed', 'unknown', 'rejected'].includes(answer.status)) throw invalid('team result needs an explicit outcome');
+          if (answer.taskId !== undefined) required(answer.taskId, 'taskId', 128);
+          if (answer.text !== undefined && (typeof answer.text !== 'string' || Buffer.byteLength(answer.text) > 32 * 1024)) throw invalid('team result text must be bounded');
+          result = { ...answer };
+        } else if (request.frame.method === 'approval') {
           if (typeof params.answer?.approved !== 'boolean') throw invalid('approval needs an explicit boolean decision');
           const choice = params.answer.approved ? 'once' : 'deny';
           if (!request.frame.params.choices?.includes(choice)) return { status: 'unsupported', reason: `upstream does not offer ${choice}; no broader grant will be used` };

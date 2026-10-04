@@ -10,7 +10,15 @@
   },
   "runtime": { "kind": "external-python", "entry": "tui_gateway.entry", "python": ">=3.11,<3.14" },
   "productionReady": false,
-  "permissionEnforcement": "native-heuristic-approvals-only; verified-host-policy-and-os-sandbox-required",
+  "permissionEnforcement": "product-scope-requires-host-macos-seatbelt; native-approvals-remain-heuristic",
+  "agentScope": {
+    "requiredForProduct": true,
+    "isolationBackend": "macos-seatbelt-v1",
+    "nativeToolsets": ["file", "terminal", "delegation", "memory", "web", "browser"],
+    "platformToolsets": ["team"],
+    "profileOwner": "persistent-agent",
+    "multipleConversations": true
+  },
   "capabilities": {
     "backgroundTasks": true,
     "targetedSteer": true,
@@ -20,7 +28,8 @@
     "attachments": false,
     "crashAutoResume": false,
     "schedules": false,
-    "nativeComputerUse": false
+    "nativeComputerUse": false,
+    "teamDelegation": true
   },
   "authentication": {
     "subscriptionAccess": "unsupported-pending-fresh-onboarding",

@@ -1,0 +1,7 @@
+name: yorozu-platform
+version: 1.0.0
+description: "Scoped Yorozu platform handoff; no provider, credentials or planner."
+kind: standalone
+requires_hermes: "==0.21.5"
+provides_tools:
+  - delegate_to_agent

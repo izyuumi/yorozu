@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { createAdapter, NativeGateway, prepareRuntime, UPSTREAM } from './adapter.mjs';
+import { createAdapter, NativeGateway, prepareRuntime, validateAgentScope, UPSTREAM } from './adapter.mjs';
+const exec = promisify(execFile);
 
 // Recorded native shapes are from pinned contracts/sessions.py,
 // contracts/events.py, server_requests.py and methods_subagents.py. This fixture
@@ -43,12 +46,12 @@ class Gateway {
   async shutdown() { this.crash(); }
 }
 const currency = { conversationId: 'secretary', bindingId: 'binding-1', runId: 'host-run-1', attemptId: 'host-attempt-1' };
-async function setup({ authAvailable = true } = {}) {
+async function setup({ authAvailable = true, initialize = { protocolVersion: 1 } } = {}) {
   const events = []; const gateway = new Gateway();
   const adapter = createAdapter({ emit: event => events.push(event), launch: async () => ({
     gateway, authAvailable, provider: 'custom:yorozu-local-proof', model: 'fixture', workspace: '/owned/workspace',
   }) });
-  const manifest = await adapter.handle('initialize', { protocolVersion: 1 });
+  const manifest = await adapter.handle('initialize', initialize);
   if (authAvailable) await adapter.handle('session.open', { ...currency, preferences: 'Reply in Japanese.', context: 'Prior visible conversation.' });
   return { adapter, gateway, events, manifest };
 }
@@ -57,6 +60,124 @@ function startChild(gateway, id, extra = {}) {
 }
 function taskEvent(events, upstreamId) { return events.find(event => event.kind === 'task.changed' && event.data.taskId.endsWith(`:${upstreamId}`)); }
 const flush = () => new Promise(resolve => setImmediate(resolve));
+async function scopeFixture(t, allowedTools = ['file', 'team']) {
+  const directory = await mkdtemp(join(tmpdir(), 'hermes-agent-scope-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const workspace = join(directory, 'workspace'), memoryDir = join(directory, 'memory');
+  await mkdir(workspace); await mkdir(memoryDir);
+  const params = { protocolVersion: 1, upstreamVersion: UPSTREAM.version, profileRoot: join(directory, 'profile'),
+    workspace, python: '/usr/bin/python3', sourcePath: process.env.YOROZU_HERMES_TEST_SOURCE,
+    agentId: 'agent-a', scope: { allowedTools, directories: [{ path: workspace, access: 'write' }, ...(allowedTools.includes('memory') ? [{ path: memoryDir, access: 'write' }] : [])], workspace, memoryDir },
+    isolation: { backend: 'macos-seatbelt-v1', agentId: 'agent-a', policyDigest: 'a'.repeat(64) },
+    platform: { team: allowedTools.includes('team'), computer: false } };
+  return { directory, workspace: await realpath(workspace), params };
+}
+
+test('product scope rejects unsupported tools, mismatched sandbox, and escaping paths before launch', async t => {
+  const { params, directory } = await scopeFixture(t);
+  let launches = 0;
+  const adapter = createAdapter({ emit() {}, launch: async () => { launches++; throw new Error('must not launch'); } });
+  const variants = [
+    { ...params, agentId: '../other' },
+    { ...params, isolation: { ...params.isolation, agentId: 'agent-b' } },
+    { ...params, isolation: { ...params.isolation, policyDigest: 'unknown' } },
+    { ...params, scope: { ...params.scope, allowedTools: ['all'] } },
+    { ...params, scope: { ...params.scope, allowedTools: ['file', 'file'] } },
+    { ...params, scope: { ...params.scope, allowedTools: ['computer'] } },
+    { ...params, platform: { team: false, computer: false } },
+    { ...params, scope: { ...params.scope, allowedTools: ['file', 'memory', 'team'], memoryDir: directory } },
+    { ...params, scope: { ...params.scope, directories: [{ path: '/', access: 'write' }] } },
+    { ...params, scope: { ...params.scope, surprise: true } },
+    { ...params, agentId: undefined },
+  ];
+  for (const variant of variants) await assert.rejects(adapter.handle('initialize', variant));
+  assert.equal(launches, 0);
+  const normalized = await validateAgentScope(params);
+  assert.equal(normalized.agentId, 'agent-a'); assert.match(normalized.scopeDigest, /^[a-f0-9]{64}$/);
+  assert.deepEqual(normalized.scope.allowedTools, ['file', 'team']);
+  const noMemory = await validateAgentScope({ ...params, scope: { ...params.scope, memoryDir: '/unreadable/nonexistent/disabled-memory' } });
+  assert.equal(noMemory.scope.memoryDir, '/unreadable/nonexistent/disabled-memory');
+  const scratch = join(directory, 'profile', 'scratch'); await mkdir(scratch, { recursive: true });
+  const chat = await validateAgentScope({ ...params, workspace: scratch, platform: { team: false, computer: false },
+    scope: { ...params.scope, workspace: scratch, allowedTools: [], directories: [] } });
+  assert.deepEqual(chat.scope.directories, []);
+});
+
+test('scoped capabilities follow allowed native tools and authority cannot change from a turn', async t => {
+  const { params } = await scopeFixture(t, []);
+  const { adapter, gateway, manifest } = await setup({ initialize: params });
+  assert.equal(manifest.agentId, 'agent-a'); assert.deepEqual(manifest.isolation, params.isolation);
+  assert.equal(manifest.capabilities.backgroundTasks, false); assert.equal(manifest.capabilities.teamDelegation, false);
+  for (const method of ['turn.submit', 'session.open', 'session.snapshot']) await assert.rejects(adapter.handle(method, { ...currency, text: 'Check', scope: params.scope }), /immutable/);
+  const receipt = await adapter.handle('turn.submit', { ...currency, text: 'Read file.', attachments: [{ path: '/private/other.txt' }] });
+  assert.equal(receipt.status, 'unsupported'); assert.equal(gateway.calls.some(call => call.method === 'prompt.submit'), false);
+});
+
+test('team handoff carries bounded narrowed scope and exact originating result currency', async t => {
+  const { params, workspace } = await scopeFixture(t);
+  const { adapter, gateway, events } = await setup({ initialize: params });
+  await adapter.handle('turn.submit', { ...currency, text: 'Ask teammate B.' });
+  const input = { agent_session_id: 'durable-1', teammateId: 'agent-b', context: 'Necessary shared context only.', expectedResult: 'Return a concise finding.',
+    scope: { allowedTools: ['file'], directories: [{ path: workspace, access: 'read' }], sharedResourceIds: ['resource-1'] } };
+  const issueTeam = (id, change = {}) => {
+    const tool_call_id = `call-${id}`;
+    gateway.event('tool.start', { tool_id: tool_call_id, name: 'delegate_to_agent', args: {} });
+    gateway.request(id, 'yorozu.team_delegate', { ...input, tool_call_id, ...change });
+  };
+  issueTeam('team-one');
+  const opened = events.at(-1);
+  assert.equal(opened.data.kind, 'team-delegate'); assert.equal(opened.runId, currency.runId);
+  assert.deepEqual(opened.data.input.scope, input.scope);
+  assert.equal((await adapter.handle('request.answer', { ...currency, attemptId: 'other', requestId: 'team-one', answer: { result: { status: 'completed', text: 'Finding.' } } })).status, 'rejected');
+  await assert.rejects(adapter.handle('request.answer', { ...currency, requestId: 'team-one', answer: { result: { status: 'completed', command: 'anything' } } }), /unsupported/);
+  assert.equal((await adapter.handle('request.answer', { ...currency, requestId: 'team-one', answer: { result: { status: 'unknown', taskId: 'host-task-1', text: 'Result uncertain; do not retry.' } } })).status, 'answered');
+  assert.deepEqual(gateway.responses.at(-1).result, { status: 'unknown', taskId: 'host-task-1', text: 'Result uncertain; do not retry.' });
+  assert.equal((await adapter.handle('request.answer', { ...currency, requestId: 'team-one', answer: { result: { status: 'completed' } } })).status, 'rejected');
+  gateway.request('duplicate-call', 'yorozu.team_delegate', { ...input, tool_call_id: 'call-team-one' });
+  assert.equal(gateway.responses.at(-1).result.status, 'rejected');
+  issueTeam('recursive-team', { scope: { ...input.scope, allowedTools: ['file', 'team'] } });
+  assert.deepEqual(events.at(-1).data.input.scope.allowedTools, ['file', 'team']);
+  await adapter.handle('request.answer', { ...currency, requestId: 'recursive-team', answer: { result: { status: 'completed', text: 'Recipient may make a further equally narrowed handoff.' } } });
+  for (const [id, change] of [
+    ['child', { agent_session_id: 'durable-child' }], ['wide-tools', { scope: { ...input.scope, allowedTools: ['terminal'] } }],
+    ['wide-path', { scope: { ...input.scope, directories: [{ path: '/private/other', access: 'read' }] } }],
+    ['self', { teammateId: 'agent-a' }], ['command', { command: 'anything' }],
+  ]) {
+    issueTeam(id, change);
+    assert.equal(gateway.responses.at(-1).result.status, 'rejected');
+    assert.equal(events.some(event => event.kind === 'request.open' && event.data.requestId === id), false);
+  }
+  issueTeam('cancel-team');
+  gateway.event('request.cancel', { id: 'cancel-team', reason: 'timeout' });
+  assert.equal((await adapter.handle('request.answer', { ...currency, requestId: 'cancel-team', answer: { result: { status: 'completed' } } })).status, 'rejected');
+  gateway.event('tool.start', { tool_id: 'late-call', name: 'delegate_to_agent', args: {} });
+  gateway.event('message.complete', { text: 'Done.', status: 'complete' });
+  await adapter.handle('turn.submit', { ...currency, runId: 'next-run', attemptId: 'next-attempt', text: 'New task.' });
+  gateway.request('stale-same-session', 'yorozu.team_delegate', { ...input, tool_call_id: 'late-call' });
+  assert.equal(gateway.responses.at(-1).result.status, 'rejected');
+  gateway.event('tool.start', { tool_id: 'finished-call', name: 'delegate_to_agent', args: {} });
+  gateway.event('tool.complete', { tool_id: 'finished-call', name: 'delegate_to_agent', result: 'Cancelled' });
+  gateway.request('finished-call-request', 'yorozu.team_delegate', { ...input, tool_call_id: 'finished-call' });
+  assert.equal(gateway.responses.at(-1).result.status, 'rejected');
+  await adapter.handle('run.stop', { ...currency, runId: 'next-run', attemptId: 'next-attempt', operationId: 'stop-next' });
+  issueTeam('after-stop');
+  assert.equal(gateway.responses.at(-1).result.status, 'rejected');
+});
+
+test('Stop fences a team answer while native interrupt acknowledgement is still pending', async t => {
+  const { params } = await scopeFixture(t);
+  const { adapter, gateway } = await setup({ initialize: params });
+  await adapter.handle('turn.submit', { ...currency, text: 'Ask B.' });
+  gateway.event('tool.start', { tool_id: 'inflight-team', name: 'delegate_to_agent', args: {} });
+  gateway.request('team-inflight', 'yorozu.team_delegate', { agent_session_id: 'durable-1', tool_call_id: 'inflight-team', teammateId: 'agent-b',
+    context: 'Shared context.', expectedResult: 'Finding.', scope: { allowedTools: [], directories: [] } });
+  let acknowledge;
+  gateway.override = method => method === 'session.interrupt' ? new Promise(resolve => { acknowledge = resolve; }) : undefined;
+  const stopping = adapter.handle('run.stop', { ...currency, operationId: 'stop-inflight-team' });
+  assert.equal((await adapter.handle('request.answer', { ...currency, requestId: 'team-inflight', answer: { result: { status: 'completed', text: 'Late result.' } } })).status, 'rejected');
+  assert.equal(gateway.responses.length, 0);
+  acknowledge({ status: 'interrupted' }); assert.equal((await stopping).status, 'requested');
+});
 
 test('native secretary remains responsive while children run; steering targets only exact task currency', async () => {
   const { adapter, gateway, events } = await setup();
@@ -393,4 +514,62 @@ test('owned real runtime config disables recovery/fallback/priority and strips a
   await rm(join(directory, 'hermes-runtime', 'config.yaml'));
   await symlink(join(directory, 'outside'), join(directory, 'hermes-runtime', 'config.yaml'));
   await assert.rejects(prepareRuntime(params), /must not be a symlink/);
+});
+
+test('native discovery exposes exact scoped subsets, empty chat scope, and bounded platform handoff', {
+  skip: !process.env.YOROZU_HERMES_TEST_SOURCE || !process.env.YOROZU_HERMES_TEST_PYTHON,
+}, async t => {
+  const { params, directory } = await scopeFixture(t);
+  params.python = process.env.YOROZU_HERMES_TEST_PYTHON;
+  const bootstrap = new URL('./bootstrap.py', import.meta.url).pathname;
+  const runtime = await prepareRuntime(params);
+  const memories = join(runtime.env.HERMES_HOME, 'memories'); await mkdir(memories);
+  await writeFile(join(memories, 'MEMORY.md'), 'Retained private marker must not enter a no-memory run.');
+  await writeFile(join(memories, 'USER.md'), 'Retained private user marker must not enter a no-memory run.');
+  const options = { cwd: runtime.sourcePath, env: runtime.env, maxBuffer: 64 * 1024 };
+  const verified = JSON.parse((await exec(params.python, [bootstrap, '--verify'], options)).stdout);
+  assert.deepEqual(verified.toolsets, ['file', 'yorozu_platform', 'yorozu_empty']);
+  assert.deepEqual(verified.tools, ['delegate_to_agent', 'patch', 'read_file', 'search_files', 'write_file']);
+  const result = JSON.parse((await exec(params.python, ['-c', `
+import runpy, sys, json
+runpy.run_path(sys.argv[1])["verify"]()
+from gateway.session_context import set_session_vars
+from tui_gateway import server_requests
+from tools.registry import registry
+from tools.approval_context import set_current_observability_context
+from agent.agent_init import _init_memory
+from hermes_cli.config import load_config_readonly
+from types import SimpleNamespace
+agent=SimpleNamespace(enabled_toolsets=["file","yorozu_platform","yorozu_empty"],disabled_toolsets=["memory"],tools=[])
+_init_memory(agent,load_config_readonly(),False,"yorozu")
+memory={"enabled":agent._memory_enabled,"user":agent._user_profile_enabled,"storeAbsent":agent._memory_store is None}
+captured=[]
+def fake_send(method, sid, params, *, timeout):
+    captured.append({"method":method,"sid":sid,"params":params,"timeout":timeout})
+    return {"status":"completed","taskId":"team-proof","text":"Shared result."}
+server_requests.send=fake_send
+set_session_vars(session_key="proof",session_id="durable-proof",ui_session_id="live-proof")
+set_current_observability_context(tool_call_id="native-call-proof",session_id="durable-proof",turn_id="native-turn-proof")
+args={"teammateId":"agent-b","context":"Shared context.","expectedResult":"Finding.","scope":{"allowedTools":[],"directories":[]}}
+completed=json.loads(registry.dispatch("delegate_to_agent", args, session_id="durable-proof"))
+server_requests.send=lambda *args,**kwargs: None
+unknown=json.loads(registry.dispatch("delegate_to_agent", args, session_id="durable-proof"))
+invalid=json.loads(registry.dispatch("delegate_to_agent", {**args,"command":"forbidden"}, session_id="durable-proof"))
+print(json.dumps({"captured":captured,"completed":completed,"unknown":unknown,"invalid":invalid,"memory":memory}))
+`, bootstrap], options)).stdout);
+  assert.equal(result.captured.length, 1); assert.equal(result.captured[0].timeout, 120);
+  assert.equal(result.captured[0].sid, 'live-proof'); assert.equal(result.captured[0].params.agent_session_id, 'durable-proof');
+  assert.equal(result.completed.status, 'completed'); assert.equal(result.unknown.status, 'unknown'); assert.equal(result.invalid.status, 'rejected');
+  assert.deepEqual(result.memory, { enabled: false, user: false, storeAbsent: true });
+  const wrongOwner = { ...params, agentId: 'agent-b', isolation: { ...params.isolation, agentId: 'agent-b' } };
+  await assert.rejects(prepareRuntime(wrongOwner), /different adapter version or agent/);
+  // Native metadata failures must stop before gateway/provider startup, never
+  // fall through to the upstream all-tools fallback.
+  await writeFile(join(directory, 'profile', 'hermes-runtime', 'plugins', 'yorozu-platform', '__init__.py'), 'def register(ctx):\n    pass\n');
+  await assert.rejects(exec(params.python, [bootstrap, '--verify'], options), /Unverified scoped native toolset/);
+  const chat = await scopeFixture(t, []);
+  chat.params.python = params.python;
+  const chatRuntime = await prepareRuntime(chat.params);
+  const empty = JSON.parse((await exec(params.python, [bootstrap, '--verify'], { cwd: chatRuntime.sourcePath, env: chatRuntime.env, maxBuffer: 64 * 1024 })).stdout);
+  assert.deepEqual(empty.toolsets, ['yorozu_empty']); assert.deepEqual(empty.tools, []);
 });
