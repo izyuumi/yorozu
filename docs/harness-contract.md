@@ -101,8 +101,11 @@ scheduler, marketplace, updater, installed-profile migration or release is added
 
 The additive person host is `person-agent-host.ts`. `serveSecretary` accepts its
 trusted `PersonAgentPlatform` explicitly; client settings cannot supply a runtime
-factory, interpreter, source path, broker, or permission roots. The default CLI
-does not activate this platform yet. `person-agents-v1` is advertised only when
+factory, interpreter, source path, broker, or permission roots. The fixed bundled
+CLI activates this platform only with the explicit internal build marker; the
+developer CLI and older bundles retain their current route. Account selection is
+still unavailable in that entry, so execution cannot silently use local credentials.
+`person-agents-v1` is advertised only when
 the production host supplies the registry/control callbacks.
 
 Person settings and chat creation use separate durable control receipts and

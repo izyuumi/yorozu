@@ -1,7 +1,8 @@
 /** Trusted app-bundle loader. No environment, profile, account, or client path discovery. */
 import { createHash } from "node:crypto";
-import { constants, promises as fs } from "node:fs";
-import { isAbsolute, join, posix, resolve } from "node:path";
+import { constants, promises as fs, openSync, fstatSync, readFileSync, closeSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { pathWithin, safeAgentPath } from "./agent-scope.js";
 import { createCuratedAgentRuntimeFactory, CuratedRuntimeUnavailable, HERMES_RUNTIME_PIN, type CuratedAgentRuntimeConfiguration } from "./curated-agent-runtime.js";
 import type { PersonAgentPlatform } from "./person-agent-host.js";
@@ -10,6 +11,10 @@ const PIN = Object.freeze({ sourceTree: "5849eacde63aaea608ca418821cc84771fce3be
   pythonVersion: "3.13.16", pythonTreeSha256: "9666d8c2f6e7adad510d58a11cf25a2e9e5f0d1aeb2cf0a7fc044ea897419599",
   pythonBinarySha256: "b898474cdfda938c1dd25af22d1b066d4808ba8b7e2d14e20033781d7787f87f" });
 const PATHS = Object.freeze({ python: "python/bin/python3.13", source: "source", adapter: "plugin/adapter.mjs" });
+const JPEG = Object.freeze({ path: "python/lib/python3.13/site-packages/PIL/.dylibs/libjpeg.62.4.0.dylib",
+  inputSha256: "cf7c4e5c2d2c007fc51afcb95b649415cfe0bc4d7137ace897a6eff6550fa967",
+  outputSha256: "56a3a10ac81f12a0e6ae7cc5a023924067f4e7c2defd8308b9ed806064ab560d",
+  removeRpath: "/Users/runner/work/Pillow/Pillow/build/deps/darwin/lib" });
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024, MAX_FILES = 32768, MAX_FILE_BYTES = 256 * 1024 * 1024, MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
 const BAD = "The packaged Hermes runtime is unavailable or its sealed inventory is invalid.";
 interface FileRow { path: string; sha256: string; mode: 420 | 493 }
@@ -78,7 +83,7 @@ function validate(value: unknown): Artifact {
       || !hash(d.inputRecordSha256) || !Number.isSafeInteger(d.verifiedRecordFiles) || d.verifiedRecordFiles < 0 || d.verifiedRecordFiles > 100000) throw new Error(BAD);
     dependencies.add(d.name);
   }
-  fields(value.derivation, ["upstreamSourceModified", "pythonSitePackagesReplaced", "editableAndStartupHooksRemoved", "consoleScriptsExcluded", "dependencyRecordsRewritten", "sourceGitMetadata"]);
+  fields(value.derivation, ["upstreamSourceModified", "pythonSitePackagesReplaced", "editableAndStartupHooksRemoved", "consoleScriptsExcluded", "dependencyRecordsRewritten", "sourceGitMetadata", "nativeLoadCommandTransformations"]);
   if (value.derivation.upstreamSourceModified !== false || ["pythonSitePackagesReplaced", "editableAndStartupHooksRemoved", "consoleScriptsExcluded", "dependencyRecordsRewritten"].some(k => value.derivation[k] !== true)
     || value.derivation.sourceGitMetadata !== "new one-commit objects/index; no remotes, hooks, alternates or original config") throw new Error(BAD);
   fields(value.runtimeRequirements, ["lazyInstalls", "ambientPython", "ambientProfiles", "subscriptionProof"]);
@@ -90,6 +95,17 @@ function validate(value: unknown): Artifact {
     || !Array.isArray(p.dependencyClosure) || !p.dependencyClosure.length || p.dependencyClosure.length > 512
     || p.dependencyClosure.some((name: unknown) => !text(name, 128) || !/^[A-Za-z0-9_.-]+$/.test(name as string)) || new Set(p.dependencyClosure).size !== p.dependencyClosure.length) throw new Error(BAD);
   const inventory = rows(value.files), entries = new Map(inventory.map(row => [row.path, row]));
+  const transformations = value.derivation.nativeLoadCommandTransformations, jpeg = entries.get(JPEG.path);
+  if (!Array.isArray(transformations) || transformations.length !== (jpeg ? 2 : 0)) throw new Error(BAD);
+  if (jpeg) {
+    const [edit, signature] = transformations;
+    fields(edit, ["path", "inputSha256", "operation", "removeRpath", "outputSha256"]);
+    if (Object.entries(JPEG).some(([k, v]) => edit[k] !== v) || edit.operation !== "install_name_tool -delete_rpath") throw new Error(BAD);
+    fields(signature, ["path", "operation", "inputSha256", "outputSha256", "identity", "distributionSigning"]);
+    if (signature.path !== JPEG.path || signature.operation !== "codesign --force --sign -" || signature.inputSha256 !== JPEG.outputSha256
+      || !hash(signature.outputSha256) || signature.identity !== "ad-hoc" || signature.distributionSigning !== false || !("sha256" in jpeg)
+      || value.hashStage === "assembled-before-signing" && signature.outputSha256 !== jpeg.sha256) throw new Error(BAD);
+  }
   for (const required of [PATHS.python, PATHS.adapter, "source/pyproject.toml", "source/uv.lock", "source/.git/HEAD", "source/.git/index", "plugin/manifest.json", "plugin/bootstrap.py", "plugin/platform/__init__.py", "plugin/platform/plugin.yaml", p.certifi])
     if (!entries.has(required) || !("sha256" in entries.get(required)!)) throw new Error(BAD);
   if (!Array.isArray(value.machODependencies) || !value.machODependencies.length || value.machODependencies.length > 512) throw new Error(BAD);
@@ -189,4 +205,25 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
         }
       };
     } };
+}
+
+/** Fixed shipping entry and signed build marker only. Developer CLI invocations and
+ * older bundles retain their existing execution route. Account onboarding is not
+ * implemented here; preparation reports unavailable instead of discovering auth.
+ */
+export function packagedPersonAgentPlatformFromEntry(entry: URL): PersonAgentPlatform | undefined {
+  const path = fileURLToPath(entry), dist = dirname(path), runtime = dirname(dist), resources = dirname(runtime);
+  if (basename(path) !== "secretary-serve.js" || basename(dist) !== "dist" || basename(runtime) !== "runtime" || basename(resources) !== "Resources") return;
+  let fd: number;
+  try { fd = openSync(join(resources, "internal-source.json"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw new CuratedRuntimeUnavailable("runtime", BAD); }
+  try {
+    const s = fstatSync(fd); if (!s.isFile() || s.nlink !== 1 || s.size > 8 * 1024 * 1024) throw new Error(BAD);
+    const marker = JSON.parse(readFileSync(fd, "utf8"));
+    if (!object(marker) || marker.personAgentPlatform === undefined) return;
+    fields(marker.personAgentPlatform, ["kind", "productionReady"]);
+    if (marker.schemaVersion !== 1 || marker.runtimeEntry !== "runtime/dist/secretary-serve.js" || marker.harnessProtocolVersion !== 1
+      || marker.personAgentPlatform.kind !== "packaged-hermes-v1" || marker.personAgentPlatform.productionReady !== false) throw new Error(BAD);
+    return packagedPersonAgentPlatform(safeAgentPath(resources, true), { selectBroker: () => undefined });
+  } catch { throw new CuratedRuntimeUnavailable("runtime", BAD); } finally { closeSync(fd); }
 }

@@ -27,6 +27,9 @@ OVERLAYS = [
     "packages/runtime/src/person-agent-runtime.ts",
     "packages/runtime/src/person-agent-host.ts", "packages/runtime/src/person-agent-controls.ts",
     "packages/runtime/src/curated-agent-runtime.ts",
+    "packages/runtime/src/packaged-agent-runtime.ts",
+    "packages/runtime/src/siwc-inference-broker.ts",
+    "packages/runtime/src/fixtures/hermes-siwc-shape.json",
     "packages/runtime/src/host-core-command.ts",
     "packages/runtime/src/rust-sync.ts", "packages/runtime/src/rust-sync-worker.ts",
     "packages/shared/src/events.ts",
@@ -36,6 +39,7 @@ OVERLAYS = [
     "scripts/harness-proof.mjs",
     "scripts/harness-host-proof.mjs", "docs/harness-host-proof.md",
     "docs/harness-proof.md", "docs/harness-contract.md",
+    "docs/siwc-inference-broker.md", "scripts/capture-hermes-siwc-shape.py",
     "scripts/build-mac.sh", "scripts/build-version.sh",
     "scripts/secretary-production.patch",
 ]
@@ -64,7 +68,7 @@ def stage(destination):
     # Keep the production manifest and lockfile together. Only these explicit new
     # files and the reviewed adapter replace runtime source; serve/storage do not.
     tests = git("ls-tree", "-r", "--name-only", source, "packages/runtime/src").decode().splitlines()
-    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness", "agent-", "person-agent-", "curated-agent-")) and name.endswith(".test.ts")]
+    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness", "agent-", "person-agent-", "curated-agent-", "packaged-agent-", "siwc-")) and name.endswith(".test.ts")]
     shared_tests = git("ls-tree", "-r", "--name-only", source, "packages/shared/src").decode().splitlines()
     tests += [name for name in shared_tests if Path(name).name.startswith(("person-agents", "peer-info")) and name.endswith(".test.ts")]
     if not tests:
@@ -83,6 +87,7 @@ def stage(destination):
         "workerBinary": "yorozu-alpha-host", "workerStore": "secretary-v1",
         "legacyStorageMigration": False, "publicUpdateFeed": False,
         "harnessProtocolVersion": 1,
+        "personAgentPlatform": {"kind": "packaged-hermes-v1", "productionReady": False},
         "harnessPlugins": {"hermes": {"version": "0.21.5", "sourceSha": "f97608f178d1ffeca59860195ab7da295f7c8e5f", "bundledRuntime": False}},
         "dependencyLockSha256": hashlib.sha256((destination / "pnpm-lock.yaml").read_bytes()).hexdigest(),
         "overlaySha256": hashes,

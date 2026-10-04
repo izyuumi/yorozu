@@ -4,14 +4,33 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import * as curated from "./curated-agent-runtime.js";
 import { PersonAgentStore } from "./agent-store.js";
 import { PersonAgentHost } from "./person-agent-host.js";
-import { packagedPersonAgentPlatform, verifyPackagedHermesArtifact } from "./packaged-agent-runtime.js";
+import { packagedPersonAgentPlatform, packagedPersonAgentPlatformFromEntry, verifyPackagedHermesArtifact } from "./packaged-agent-runtime.js";
 
 const roots: string[] = [], owners: PersonAgentHost[] = [];
 afterEach(async () => { for (const owner of owners.splice(0)) await owner.close(); vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+
+test("only the fixed packaged entry with its explicit build marker activates person screens without auth or migration", () => {
+  const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "yorozu-packaged-entry-"))); roots.push(root);
+  const resources = join(root, "Resources"); fs.mkdirSync(resources);
+  const entry = pathToFileURL(join(resources, "runtime/dist/secretary-serve.js"));
+  expect(packagedPersonAgentPlatformFromEntry(pathToFileURL(join(root, "packages/runtime/dist/secretary-serve.js")))).toBeUndefined();
+  expect(packagedPersonAgentPlatformFromEntry(entry)).toBeUndefined();
+  fs.writeFileSync(join(resources, "internal-source.json"), JSON.stringify({ schemaVersion: 1, runtimeEntry: "runtime/dist/secretary-serve.js", harnessProtocolVersion: 1 }));
+  expect(packagedPersonAgentPlatformFromEntry(entry)).toBeUndefined();
+  const marker = { schemaVersion: 1, runtimeEntry: "runtime/dist/secretary-serve.js", harnessProtocolVersion: 1,
+    personAgentPlatform: { kind: "packaged-hermes-v1", productionReady: false } };
+  fs.writeFileSync(join(resources, "internal-source.json"), JSON.stringify(marker));
+  const platform = packagedPersonAgentPlatformFromEntry(entry)!;
+  expect(platform.initialAgent?.id).toBe("yorozu"); expect(platform.secretaryAgentId).toBeUndefined();
+  marker.personAgentPlatform.productionReady = true;
+  fs.writeFileSync(join(resources, "internal-source.json"), JSON.stringify(marker));
+  expect(() => packagedPersonAgentPlatformFromEntry(entry)).toThrow(curated.CuratedRuntimeUnavailable);
+});
 function fixture() {
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "yorozu-packaged-runtime-"))); roots.push(root);
   const resources = join(root, "Resources"), runtime = join(resources, "agent-runtimes/hermes"); fs.mkdirSync(runtime, { recursive: true });
@@ -29,7 +48,7 @@ function fixture() {
       dependencyEvidence: "installed versions match uv.lock and installed RECORD bytes; original wheel archive hashes are not reverified",
       pythonEvidence: "prepared local CPython snapshot hashes; original download archive receipt is not present" },
     derivation: { upstreamSourceModified: false, pythonSitePackagesReplaced: true, editableAndStartupHooksRemoved: true, consoleScriptsExcluded: true, dependencyRecordsRewritten: true,
-      sourceGitMetadata: "new one-commit objects/index; no remotes, hooks, alternates or original config" },
+      sourceGitMetadata: "new one-commit objects/index; no remotes, hooks, alternates or original config", nativeLoadCommandTransformations: [] },
     runtimeRequirements: { lazyInstalls: "trusted adapter must disable; helper never installs", ambientPython: false, ambientProfiles: false, subscriptionProof: false },
     inertImportProbe: { version: "3.13.16", system: "Darwin", machine: "arm64", certifi: "python/lib/python3.13/site-packages/certifi/cacert.pem", dependencyClosure: ["hermes-agent"] },
     machODependencies: [{ path: "python/bin/python3.13", architectures: ["arm64"], dependencies: [{ load: "/usr/lib/libSystem.B.dylib", resolved: "system" }] }] };
@@ -81,6 +100,7 @@ test("manifest identity, fixed paths, no-fallback claims, provenance limits and 
     (m: any) => { m.runtimeRequirements.ambientProfiles = true; }, (m: any) => { m.runtimeRequirements.subscriptionProof = true; },
     (m: any) => { m.extraAuth = "sensitive-token"; }, (m: any) => { m.inventorySha256 = "0".repeat(64); },
     (m: any) => { m.derivation.upstreamSourceModified = true; }, (m: any) => { m.inertImportProbe.certifi = "/outside/cert.pem"; },
+    (m: any) => { m.derivation.nativeLoadCommandTransformations = [{ operation: "arbitrary native rewrite" }]; },
     (m: any) => { m.machODependencies[0].dependencies[0].resolved = "/usr/lib/../../private/credential"; }];
   for (const corrupt of corruptions) { Object.assign(f.manifest, structuredClone(original)); corrupt(f.manifest); f.save();
     await expect(verifyPackagedHermesArtifact(f.resources)).rejects.toMatchObject({ status: "unsupported", capability: "runtime", message: "The packaged Hermes runtime is unavailable or its sealed inventory is invalid." }); }

@@ -9,6 +9,7 @@ import { constants } from "node:os";
 import { secretaryCoordinator, type SecretaryCoordinatorHost } from "./secretary-coordinator.js";
 import { harnessConfiguration, SecretaryHarness } from "./harness-runner.js";
 import { PersonAgentHost, type PersonAgentPlatform } from "./person-agent-host.js";
+import { packagedPersonAgentPlatformFromEntry } from "./packaged-agent-runtime.js";
 
 export interface SecretaryServeOptions extends ServeOptions { personAgentPlatform?: PersonAgentPlatform }
 
@@ -116,7 +117,7 @@ if (import.meta.main && process.argv.length > 2) {
   child.once("error", () => process.exit(1));
   child.once("exit", (code, signal) => process.exit(code ?? (signal ? 128 + constants.signals[signal] : 1)));
 } else if (import.meta.main) {
-  const sidecar = serveSecretary();
+  const sidecar = serveSecretary({ personAgentPlatform: packagedPersonAgentPlatformFromEntry(new URL(import.meta.url)) });
   process.once("SIGTERM", () => {
     const deadline = setTimeout(() => process.exit(143), 15000);
     deadline.unref();
