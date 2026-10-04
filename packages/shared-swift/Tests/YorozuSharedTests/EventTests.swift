@@ -83,6 +83,7 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
     let payload: YorozuEvent.Payload =
         switch kind {
         case .unknown: .unknown(kind: "future_kind", data: .object(["value": .string("kept")]))
+        case .personAgentControl: .personAgentControl(PersonAgentControlData(expectedRevision: 2, action: .setDefault(agentId: "agent-a")))
         case .message:
             .message(
                 MessageData(

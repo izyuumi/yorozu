@@ -18,6 +18,12 @@ public final class ChatModel {
     private static let eventLogger = Logger(subsystem: "to.yumi.yorozu", category: "events")
     /// Every thread, unsent drafts included, newest first once a list has ordered them.
     public var threads: [ThreadSummary] { draftThreads + synced }
+    /// Live host-owned configuration. Cached history identifiers never enable configuration.
+    public private(set) var personAgents: PersonAgentRegistry?
+    public var supportsPersonAgents: Bool {
+        if case .compatible(_, let capabilities) = compatibility { return capabilities.contains("person-agents-v1") }
+        return false
+    }
     /// The threads the runtime has told us about.
     private var synced: [ThreadSummary] = []
     /// Threads started on this device that the runtime has not heard of yet.
@@ -1048,28 +1054,37 @@ public final class ChatModel {
         var commands: [YorozuEvent] = []
         var channelChoice: ChannelModelChoice?
         if let draft = draftThreads.first(where: { $0.id == threadId }) {
-            // A draft becomes real with its first message. The id is ours, so the message below
-            // lands in the thread this `thread_create` is about to mint on the other end.
-            // A draft for a coding agent carries who answers it and where; a Yorozu draft says
-            // nothing, as every draft did before there was anyone else to ask.
-            commands.append(event(.threadCreate(ThreadCreateData(title: nil, agent: draft.agent, cwd: draft.cwd)), in: threadId))
-            // A model chosen in a chat that had not been sent in yet is held on the draft,
-            // because there was no thread to set it on. This is that moment, and it goes
-            // before the message so the first turn already runs on it.
-            if (draft.agent ?? .yorozu) == .yorozu && (channelModelSelection || draftChannelModels[draft.id] != nil) {
-                channelChoice = ChannelModelChoice(model: draft.model)
-            } else if let model = draft.model {
-                commands.append(event(.threadSetModel(ThreadSetModelData(model: model)), in: threadId))
-            }
-            if let effort = draft.effort {
-                commands.append(event(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: threadId))
+            if let personAgentId = draft.personAgentId {
+                guard supportsPersonAgents, personAgents?.agents.contains(where: { $0.id == personAgentId }) == true else {
+                    failure = SecretaryUI.localized("Reconnect to the host to start this agent conversation.")
+                    return false
+                }
+                commands.append(event(.threadCreate(ThreadCreateData(personAgentId: personAgentId)), in: threadId))
+            } else {
+                // A draft becomes real with its first message. The id is ours, so the message below
+                // lands in the thread this `thread_create` is about to mint on the other end.
+                // A draft for a coding agent carries who answers it and where; a Yorozu draft says
+                // nothing, as every draft did before there was anyone else to ask.
+                commands.append(event(.threadCreate(ThreadCreateData(title: nil, agent: draft.agent, cwd: draft.cwd)), in: threadId))
+                // A model chosen in a chat that had not been sent in yet is held on the draft,
+                // because there was no thread to set it on. This is that moment, and it goes
+                // before the message so the first turn already runs on it.
+                if (draft.agent ?? .yorozu) == .yorozu && (channelModelSelection || draftChannelModels[draft.id] != nil) {
+                    channelChoice = ChannelModelChoice(model: draft.model)
+                } else if let model = draft.model {
+                    commands.append(event(.threadSetModel(ThreadSetModelData(model: model)), in: threadId))
+                }
+                if let effort = draft.effort {
+                    commands.append(event(.threadSetEffort(ThreadSetEffortData(effort: effort)), in: threadId))
+                }
             }
         }
         let createdAt = Int(Date().timeIntervalSince1970 * 1000)
         // Whole-harness main input is a conversation turn. Task input is an exact correction;
         // capability/state checks above prevent unsupported changes becoming new executions.
+        let personConversation = summary?.personAgentId != nil || draftThreads.first(where: { $0.id == threadId })?.personAgentId != nil
         let delivery: MessageDelivery = summary?.harnessTask != nil ? .steer
-            : summary?.harness != nil ? .queue
+            : summary?.harness != nil || personConversation ? .queue
             : threadId == SecretaryUI.threadID || threadId.hasPrefix("secretary-task-") ? .steer
             : alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior
         let event = YorozuEvent(
@@ -1968,6 +1983,49 @@ public final class ChatModel {
         return thread
     }
 
+    /// Start another conversation with a known persistent agent. Only the host chooses its roots.
+    @discardableResult
+    public func newPersonThread(agentId: String? = nil) -> ThreadSummary? {
+        guard supportsPersonAgents, canDeliver, let catalog = personAgents,
+              let selected = agentId ?? catalog.defaultAgentId,
+              let agent = catalog.agents.first(where: { $0.id == selected }) else { return nil }
+        var thread = newDraft()
+        thread.agent = ThreadAgent(rawValue: "harness")
+        thread.personAgentId = agent.id
+        thread.personAgentName = agent.name
+        thread.cwd = agent.workspace
+        thread.model = nil
+        thread.effort = nil
+        draftChannelModels[thread.id] = nil
+        if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) { draftThreads[index] = thread }
+        saveDraftsNow()
+        return thread
+    }
+
+    /// Submit an explicit settings operation with its captured revisions. A host result is truth.
+    @discardableResult
+    public func controlPersonAgents(_ data: PersonAgentControlData) -> String? {
+        guard supportsPersonAgents, canDeliver, let catalog = personAgents, data.isValid else { return nil }
+        let known = Set(catalog.agents.map(\.id))
+        switch data.action {
+        case .create: break
+        case .update(let id, _), .setDefault(let id): guard known.contains(id) else { return nil }
+        case .createTeam(let team): guard Set(team.agentIds).isSubset(of: known) else { return nil }
+        case .updateTeam(let id, let patch):
+            guard catalog.teams.contains(where: { $0.id == id }),
+                  patch.agentIds.map({ Set($0).isSubset(of: known) }) ?? true else { return nil }
+        case .remember(let preference, _):
+            guard catalog.journalRevision != nil else { return nil }
+            if case .agent(let id, _) = preference, !known.contains(id) { return nil }
+        case .shareKnowledge(let knowledge, _):
+            guard catalog.journalRevision != nil, known.contains(knowledge.fromAgentId),
+                  Set(knowledge.toAgentIds).isSubset(of: known) else { return nil }
+        }
+        let request = control(.personAgentControl(data))
+        emit(request)
+        return request.id
+    }
+
     /// Reconfigure only an unsent draft. A host change copies its composer durably before
     /// removing the old copy; no transport command is emitted until the first send.
     @discardableResult
@@ -1979,6 +2037,7 @@ public final class ChatModel {
               target === self || !target.threads.contains(where: { $0.id == threadId }) else { return false }
         if case .updateRequired = target.compatibility { return false }
         let original = draftThreads[index]
+        guard original.personAgentId == nil else { return false }
         var thread = original
         thread.agent = agent == .yorozu ? nil : agent
         thread.cwd = descriptor.needsFolder ? cwd : nil
@@ -2491,6 +2550,7 @@ public final class ChatModel {
         case .compatibility(let compatibility):
             let couldSearch = supportsHostSearch
             self.compatibility = compatibility
+            if !supportsPersonAgents { personAgents = nil }
             // Search support can be announced after the link came up and the typed query's
             // request already found the host unable to take it: send it now.
             if !couldSearch, supportsHostSearch, searchRequestID.isEmpty { requestHostSearch() }
@@ -2553,9 +2613,10 @@ public final class ChatModel {
                 updateStatus = data
                 onUpdateStatus?(data)
                 if data.phase != .installing { flush() }
-            case .updateControl:
+            case .updateControl, .personAgentControl:
                 break
             case .threadList(let data):
+                personAgents = supportsPersonAgents ? data.personAgents : nil
                 // Archived threads are kept: Settings lists them and thread search finds them.
                 synced = data.threads.map { remote in
                     guard let pending = pendingReads[remote.id] else { return remote }

@@ -1,4 +1,5 @@
 import type { PeerInfoData } from "./peer-info.js";
+import type { PersonAgentControlData, PersonAgentRegistry } from "./person-agents.js";
 
 /**
  * Wire events exchanged between Mac, phone and relay.
@@ -498,6 +499,8 @@ export const validAgentDescriptor = (value: unknown): value is AgentDescriptor =
 };
 
 export interface ThreadCreateData {
+  /** Host-derived persistent agent identity; never a caller-provided workspace grant. */
+  personAgentId?: string;
   title?: string;
   /** Which agent answers the thread, for its whole life. Absent means `yorozu`. */
   agent?: ThreadAgent;
@@ -511,6 +514,8 @@ export interface ThreadRenameData {
 }
 
 export interface ThreadSummary {
+  personAgentId?: string;
+  personAgentName?: string;
   harness?: HarnessSummary;
   harnessTask?: HarnessTaskSummary;
   /** Host-owned ID of the active or next admitted user operation in this thread. */
@@ -573,6 +578,8 @@ export interface ThreadSummary {
 }
 
 export interface ThreadListData {
+  /** Only supplied under the declared person-agents-v1 capability. */
+  personAgents?: PersonAgentRegistry;
   threads: ThreadSummary[];
   /** Bootstrap on an existing kind: old clients ignore this optional hint. */
   peerInfoSupported?: boolean;
@@ -820,6 +827,7 @@ export type EventPayload =
   | { kind: "tool_result_request"; data: ToolResultRequestData }
   | { kind: "thread_create"; data: ThreadCreateData }
   | { kind: "thread_list"; data: ThreadListData }
+  | { kind: "person_agent_control"; data: PersonAgentControlData }
   | { kind: "thread_archive"; data: ThreadArchiveData }
   | { kind: "thread_rename"; data: ThreadRenameData }
   | { kind: "thread_pin"; data: ThreadPinData }

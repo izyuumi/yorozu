@@ -3501,3 +3501,70 @@ func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData
     #expect(await transport.sent.filter { $0.threadId == task.id && $0.payload.kind == .interrupt }.count == controlCount)
     #expect(!model.outbox.contains { $0.event.threadId == task.id && $0.event.payload.kind == .message })
 }
+
+private func personAgentCatalog() -> PersonAgentRegistry {
+    let agent = PersonAgent(id: "agent-a", name: "Ada", role: "Keep notes", pluginId: .hermes,
+        workspace: "/tmp/agent-a/workspace", memoryDir: "/tmp/agent-a/memory", allowedTools: [.file, .memory])
+    return PersonAgentRegistry(revision: 2, defaultAgentId: agent.id, agents: [agent], journalRevision: 3)
+}
+
+@MainActor
+@Test func personAgentsRequireDeclaredCapabilityAndHostControlResults() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    var catalog = personAgentCatalog()
+    let request = PersonAgentControlData(expectedRevision: 2, action: .setDefault(agentId: "agent-a"))
+    await transport.yield(.event(event("unannounced-catalog", .threadList(ThreadListData(threads: [], personAgents: catalog)))))
+    #expect(await eventually { model.listed })
+    #expect(model.personAgents == nil)
+    #expect(model.controlPersonAgents(request) == nil && model.newPersonThread() == nil)
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["person-agents-v1"])))
+    await transport.yield(.event(event("announced-catalog", .threadList(ThreadListData(threads: [], personAgents: catalog)))))
+    #expect(await eventually { model.personAgents?.revision == 2 })
+    let operationID = try #require(model.controlPersonAgents(request))
+    #expect(await eventually { await transport.sent.contains { $0.id == operationID && $0.threadId.isEmpty && $0.payload == .personAgentControl(request) } })
+    #expect(model.personAgents == catalog) // Sending settings never claims the host applied them.
+    #expect(model.controlPersonAgents(PersonAgentControlData(expectedRevision: 2, action: .setDefault(agentId: "missing"))) == nil)
+    let preference = PersonAgentControlData(expectedRevision: 2,
+        action: .remember(.allAgents(text: "Use short paragraphs."), expectedJournalRevision: 3))
+    #expect(model.controlPersonAgents(preference) != nil)
+    catalog.lastControlResult = PersonAgentControlResult(operationId: operationID, status: .rejected, revision: 2, reason: "Settings changed")
+    await transport.yield(.event(event("control-result", .threadList(ThreadListData(threads: [], personAgents: catalog)))))
+    #expect(await eventually { model.personAgents?.lastControlResult?.operationId == operationID })
+    #expect(model.personAgents?.lastControlResult?.status == .rejected)
+    // Configuration frames are host controls, even if one is accidentally echoed by the host.
+    await transport.yield(.event(event("control-echo", .personAgentControl(request), thread: "conversation")))
+    await transport.yield(.event(event("after-echo", .message(MessageData(role: .agent, text: "Visible history")), thread: "conversation")))
+    #expect(await eventually { model.events["conversation"]?.contains { $0.id == "after-echo" } == true })
+    #expect(model.events["conversation"]?.contains { $0.id == "control-echo" } == false)
+    await transport.yield(.compatibility(.legacy))
+    #expect(await eventually { model.personAgents == nil })
+    #expect(model.controlPersonAgents(request) == nil)
+}
+
+@MainActor
+@Test func personAgentConversationCreationSendsIdentityAndHostDerivedWorkspaceOnly() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let catalog = personAgentCatalog()
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["person-agents-v1"])))
+    await transport.yield(.event(event("catalog", .threadList(ThreadListData(threads: [], personAgents: catalog)))))
+    #expect(await eventually { model.personAgents != nil })
+    #expect(model.newPersonThread(agentId: "missing") == nil)
+    let draft = try #require(model.newPersonThread())
+    #expect(draft.personAgentId == catalog.defaultAgentId)
+    #expect(draft.personAgentName == "Ada")
+    #expect(draft.cwd == catalog.agents[0].workspace)
+    #expect(!model.configureDraft(draft.id, agent: .yorozu, cwd: nil))
+    model.drafts[draft.id] = "Keep a harmless note"
+    model.send(in: draft)
+    let creation = try #require(model.outbox.first { $0.event.threadId == draft.id && $0.event.payload.kind == .threadCreate })
+    guard case .threadCreate(let data) = creation.event.payload else { Issue.record("Missing creation"); return }
+    #expect(data.personAgentId == "agent-a" && data.agent == nil && data.cwd == nil)
+    let submission = try #require(model.outbox.first { $0.event.threadId == draft.id && $0.event.payload.kind == .message })
+    guard case .message(let message) = submission.event.payload else { Issue.record("Missing message"); return }
+    #expect(message.delivery == .queue)
+    #expect(!model.outbox.contains { $0.event.threadId == draft.id && [.threadSetModel, .threadSetEffort].contains($0.event.payload.kind) })
+}

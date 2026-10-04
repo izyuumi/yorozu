@@ -61,6 +61,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResultRequest = "tool_result_request"
         case threadCreate = "thread_create"
         case threadList = "thread_list"
+        case personAgentControl = "person_agent_control"
         case threadArchive = "thread_archive"
         case threadRename = "thread_rename"
         case threadPin = "thread_pin"
@@ -117,6 +118,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResultRequest(ToolResultRequestData)
         case threadCreate(ThreadCreateData)
         case threadList(ThreadListData)
+        case personAgentControl(PersonAgentControlData)
         case threadArchive(ThreadArchiveData)
         case threadRename(ThreadRenameData)
         case threadPin(ThreadPinData)
@@ -173,6 +175,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .toolResultRequest: .toolResultRequest
             case .threadCreate: .threadCreate
             case .threadList: .threadList
+            case .personAgentControl: .personAgentControl
             case .threadArchive: .threadArchive
             case .threadRename: .threadRename
             case .threadPin: .threadPin
@@ -264,6 +267,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .toolResultRequest: payload = .toolResultRequest(try c.decode(ToolResultRequestData.self, forKey: .data))
             case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
             case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
+            case .personAgentControl: payload = .personAgentControl(try c.decode(PersonAgentControlData.self, forKey: .data))
             case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
             case .threadRename: payload = .threadRename(try c.decode(ThreadRenameData.self, forKey: .data))
             case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
@@ -338,6 +342,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .toolResultRequest(let d): try c.encode(d, forKey: .data)
         case .threadCreate(let d): try c.encode(d, forKey: .data)
         case .threadList(let d): try c.encode(d, forKey: .data)
+        case .personAgentControl(let d): try c.encode(d, forKey: .data)
         case .threadArchive(let d): try c.encode(d, forKey: .data)
         case .threadRename(let d): try c.encode(d, forKey: .data)
         case .threadPin(let d): try c.encode(d, forKey: .data)
@@ -1271,15 +1276,26 @@ public struct ProjectListData: Codable, Equatable, Sendable {
 }
 
 public struct ThreadCreateData: Codable, Equatable, Sendable {
+    public var personAgentId: String?
     public var title: String?
     /// Which agent answers the thread, for its whole life. Nil means `yorozu`.
     public var agent: ThreadAgent?
     /// The working directory a native agent runs in, fixed at creation. Only they have one.
     public var cwd: String?
-    public init(title: String? = nil, agent: ThreadAgent? = nil, cwd: String? = nil) {
+    public init(title: String? = nil, agent: ThreadAgent? = nil, cwd: String? = nil, personAgentId: String? = nil) {
+        self.personAgentId = personAgentId
         self.title = title
         self.agent = agent
         self.cwd = cwd
+    }
+    private enum CodingKeys: String, CodingKey { case title, agent, cwd, personAgentId }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        agent = try c.decodeIfPresent(ThreadAgent.self, forKey: .agent)
+        cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        personAgentId = try c.decodeIfPresent(String.self, forKey: .personAgentId)
+        guard personAgentId.map(PersonAgentWire.id) ?? true else { throw PersonAgentWire.invalid(decoder) }
     }
 }
 
@@ -1315,6 +1331,8 @@ public enum ThreadTurnState: String, Codable, Equatable, Sendable {
 }
 
 public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
+    public var personAgentId: String?
+    public var personAgentName: String?
     public var harness: HarnessSummary?
     public var harnessTask: HarnessTaskSummary?
     /// Host-owned ID of the active or next admitted user operation in this thread.
@@ -1385,8 +1403,12 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         queuedEventIds: [String]? = nil,
         canRewind: Bool? = nil,
         harness: HarnessSummary? = nil,
-        harnessTask: HarnessTaskSummary? = nil
+        harnessTask: HarnessTaskSummary? = nil,
+        personAgentId: String? = nil,
+        personAgentName: String? = nil
     ) {
+        self.personAgentId = personAgentId
+        self.personAgentName = personAgentName
         self.harness = harness
         self.harnessTask = harnessTask
         self.activeEventId = activeEventId
@@ -1418,6 +1440,10 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     /// after v1 shipped, and a cached list written before them must still read back.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        personAgentId = try c.decodeIfPresent(String.self, forKey: .personAgentId)
+        personAgentName = try c.decodeIfPresent(String.self, forKey: .personAgentName)
+        guard personAgentId.map(PersonAgentWire.id) ?? true,
+              personAgentName.map({ PersonAgentWire.text($0, 80) }) ?? true else { throw PersonAgentWire.invalid(decoder) }
         id = try c.decode(String.self, forKey: .id)
         title = try c.decode(String.self, forKey: .title)
         archived = try c.decode(Bool.self, forKey: .archived)
@@ -1470,6 +1496,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
 }
 
 public struct ThreadListData: Codable, Equatable, Sendable {
+    public var personAgents: PersonAgentRegistry?
     public var threads: [ThreadSummary]
     /// Bootstrap hint understood by new clients and ignored by released clients.
     public var peerInfoSupported: Bool?
@@ -1479,7 +1506,9 @@ public struct ThreadListData: Codable, Equatable, Sendable {
     /// The host's opt-in direct address, only ever inside a sealed box. See ``RelayClient``.
     public var directUrl: String?
     public init(threads: [ThreadSummary], peerInfoSupported: Bool? = nil, peerInfo: PeerInfoData? = nil,
-        peerInfoError: String? = nil, peerInfoReplyTo: String? = nil, directUrl: String? = nil) {
+        peerInfoError: String? = nil, peerInfoReplyTo: String? = nil, directUrl: String? = nil,
+        personAgents: PersonAgentRegistry? = nil) {
+        self.personAgents = personAgents
         self.threads = threads
         self.directUrl = directUrl
         self.peerInfoSupported = peerInfoSupported
@@ -1488,10 +1517,11 @@ public struct ThreadListData: Codable, Equatable, Sendable {
         self.peerInfoReplyTo = peerInfoReplyTo
     }
 
-    private enum CodingKeys: String, CodingKey { case threads, peerInfoSupported, peerInfo, peerInfoError, peerInfoReplyTo, directUrl }
+    private enum CodingKeys: String, CodingKey { case threads, peerInfoSupported, peerInfo, peerInfoError, peerInfoReplyTo, directUrl, personAgents }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         threads = try c.decode([ThreadSummary].self, forKey: .threads)
+        personAgents = try c.decodeIfPresent(PersonAgentRegistry.self, forKey: .personAgents)
         peerInfoSupported = c.contains(.peerInfoSupported) ? try c.decode(Bool.self, forKey: .peerInfoSupported) : nil
         peerInfo = c.contains(.peerInfo) ? try c.decode(PeerInfoData.self, forKey: .peerInfo) : nil
         peerInfoError = c.contains(.peerInfoError) ? try c.decode(String.self, forKey: .peerInfoError) : nil
