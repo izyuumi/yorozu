@@ -1,11 +1,11 @@
 /** Actual pinned source/interpreter reads, synthetic broker records; no inference/network/Gateway. */
-import { afterEach, expect, test, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterEach, expect, test as defineTest, vi } from "vitest";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import * as listenerApi from "./agent-listener.js";
 import { fileURLToPath } from "node:url";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { PersonAgentStore } from "./agent-store.js";
 import { createCuratedAgentRuntimeFactory, HERMES_RUNTIME_PIN, type CuratedAgentRuntimeConfiguration, type SelectedAgentBroker } from "./curated-agent-runtime.js";
 import type { PersonAgentExecution } from "./person-agent-runtime.js";
@@ -14,6 +14,10 @@ const TASK = "/Users/yumi/Documents/Codex/2026-10-04/task-5";
 const NODE = join(TASK, "tools/mise/installs/node/26.10.0/bin/node");
 const SOURCE = join(TASK, "upstream-hermes"), PYTHON = join(SOURCE, ".venv/bin/python");
 const ADAPTER = fileURLToPath(new URL("../../harness-plugins/hermes/adapter.mjs", import.meta.url));
+// These integration fixtures inspect the real pinned source/interpreters. CI
+// without the explicitly prepared public runtime reports a skip, never a proof.
+const test = defineTest.skipIf(!existsSync(NODE) || !existsSync(PYTHON) || !existsSync(SOURCE));
+vi.setConfig({ testTimeout: 30_000 });
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 function fixture(allowedTools: string[] = ["file", "delegation", "team", "memory"]) {
@@ -36,7 +40,10 @@ function fixture(allowedTools: string[] = ["file", "delegation", "team", "memory
 
 test("explicit pinned Hermes uses private bearer bootstrap and exact broker authority without ambient credentials", async () => {
   const f = fixture(); vi.stubEnv("OPENAI_API_KEY", "AMBIENT_TOKEN_MUST_NOT_APPEAR"); vi.stubEnv("CODEX_HOME", "/ambient/forbidden");
+  const originalIndex = readFileSync(join(SOURCE, ".git/index"));
   const factory = createCuratedAgentRuntimeFactory(f.store, f.config), result = await factory(f.agent, f.scope, f.execution);
+  expect(createHash("sha256").update(readFileSync(join(SOURCE, ".git/index"))).digest("hex"))
+    .toBe(createHash("sha256").update(originalIndex).digest("hex"));
   expect(result.configuration).toMatchObject({ pluginId: "hermes", command: NODE, args: [ADAPTER], upstreamVersion: "0.21.5", initialize: { python: PYTHON, sourcePath: SOURCE, model: "proof-model", provider: "custom:yorozu-local-proof" } });
   expect(result.runtime.brokerPorts).toEqual([53717]); expect(result.runtime.inheritedListeners).toBeUndefined(); expect((result.runtime as any).listenerPorts).toBeUndefined();
   expect(result.runtime.readPaths).toContain(SOURCE); expect(result.runtime.readPaths).toContain(realpathSync(PYTHON)); expect(result.runtime.readPaths).not.toContain("/bin/cat");

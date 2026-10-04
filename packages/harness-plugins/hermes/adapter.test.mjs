@@ -501,7 +501,9 @@ test('owned real runtime config disables recovery/fallback/priority and strips a
   const workspace = join(directory, 'workspace'); await mkdir(workspace);
   const params = { protocolVersion: 1, upstreamVersion: UPSTREAM.version, profileRoot: directory,
     workspace, sourcePath: process.env.YOROZU_HERMES_TEST_SOURCE, python: '/usr/bin/python3' };
+  const originalIndex = await readFile(join(params.sourcePath, '.git/index'));
   const runtime = await prepareRuntime(params);
+  assert.deepEqual(await readFile(join(params.sourcePath, '.git/index')), originalIndex);
   assert.equal(runtime.authAvailable, false);
   assert.deepEqual(Object.keys(runtime.env).sort(), ['CODEX_HOME', 'HERMES_DISABLE_LAZY_INSTALLS', 'HERMES_HOME', 'HOME', 'LANG', 'PATH', 'PYTHONDONTWRITEBYTECODE', 'PYTHONNOUSERSITE', 'PYTHONUNBUFFERED', 'TIRITH_BIN', 'TIRITH_ENABLED', 'TIRITH_FAIL_OPEN', 'TMPDIR'].sort());
   assert.equal(runtime.env.CODEX_HOME.startsWith(await realpath(directory)), true);

@@ -2,7 +2,7 @@
 /** Hermes owns the agent loop. This process translates transport and receipts only. */
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile, readdir, lstat, realpath, copyFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, readdir, lstat, realpath, copyFile, rm } from 'node:fs/promises';
 import { resolve, join, dirname, isAbsolute, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
@@ -132,10 +132,16 @@ export async function prepareRuntime(params) {
   const gitOptions = { maxBuffer: 1024, env: { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
   const revision = await exec('git', ['-C', sourcePath, 'rev-parse', 'HEAD'], gitOptions);
   if (revision.stdout.trim() !== UPSTREAM.commit) throw invalid('Hermes source commit does not match the pinned release');
-  await exec('git', ['-C', sourcePath, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
   const workspace = await realpath(params.workspace);
   await mkdir(params.profileRoot, { recursive: true, mode: 0o700 });
   const profileRoot = await realpath(params.profileRoot);
+  const verification = await mkdtemp(join(profileRoot, '.hermes-source-verification-'));
+  try {
+    const privateOptions = { ...gitOptions, env: { ...gitOptions.env, GIT_INDEX_FILE: join(verification, 'index') } };
+    const prefix = ['-C', sourcePath, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+    await exec('git', [...prefix, 'read-tree', UPSTREAM.commit], privateOptions);
+    await exec('git', [...prefix, 'diff', '--no-ext-diff', '--no-textconv', '--quiet', 'HEAD', '--'], privateOptions);
+  } finally { await rm(verification, { recursive: true, force: true }); }
   const hermesHome = join(profileRoot, 'hermes-runtime');
   await mkdir(hermesHome, { recursive: true, mode: 0o700 });
   if ((await lstat(hermesHome)).isSymbolicLink()) throw invalid('Hermes runtime must not be a symlink');

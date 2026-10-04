@@ -1,6 +1,7 @@
 /** Host-only pinned code + fresh broker bootstrap. No auth discovery, install, or fallback. */
-import { execFileSync } from "node:child_process";
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { PersonAgentStore, type PersonAgent } from "./agent-store.js";
@@ -52,16 +53,25 @@ function canonical(path: string, directory = false): string {
     return out;
   } catch { throw new CuratedRuntimeUnavailable("runtime", "A selected code path is not an intact canonical file or directory"); }
 }
-function inspect(command: string, args: string[], limit = 4096): string {
+const runInspection = promisify(execFile);
+async function inspect(command: string, args: string[], limit = 4096, privateIndex?: string): Promise<string> {
   try {
-    return execFileSync(command, args, { env: { PATH: "/usr/bin:/bin", GIT_OPTIONAL_LOCKS: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", NODE_DISABLE_COMPILE_CACHE: "1" },
-      timeout: 10_000, maxBuffer: limit, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" }).trim();
+    return (await runInspection(command, args, { env: { PATH: "/usr/bin:/bin", GIT_OPTIONAL_LOCKS: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", NODE_DISABLE_COMPILE_CACHE: "1",
+      ...(privateIndex ? { GIT_INDEX_FILE: privateIndex } : {}) },
+      timeout: 10_000, maxBuffer: limit, encoding: "utf8" })).stdout.trim();
   } catch { throw new CuratedRuntimeUnavailable("runtime", "Selected pinned code or interpreter validation failed; no repair or fallback was attempted"); }
 }
-function pinnedSource(source: string, sha: string): string[] {
-  if (inspect("/usr/bin/git", ["-C", source, "rev-parse", "HEAD"]) !== sha) throw new CuratedRuntimeUnavailable("runtime", "Selected source does not match its approved commit");
-  inspect("/usr/bin/git", ["-C", source, "diff", "--quiet", "HEAD", "--"]);
-  const metadata = canonical(inspect("/usr/bin/git", ["-C", source, "rev-parse", "--path-format=absolute", "--git-common-dir"]), true);
+async function pinnedSource(source: string, sha: string, scratch: string): Promise<string[]> {
+  if (await inspect("/usr/bin/git", ["-C", source, "rev-parse", "HEAD"]) !== sha) throw new CuratedRuntimeUnavailable("runtime", "Selected source does not match its approved commit");
+  const verification = mkdtempSync(join(scratch, ".source-verification-")), index = join(verification, "index");
+  try {
+    // Git may refresh an index even with optional locks disabled. Build a fresh
+    // private index from the pinned tree, without inherited assume-unchanged flags.
+    const prefix = ["-C", source, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
+    await inspect("/usr/bin/git", [...prefix, "read-tree", sha], 4096, index);
+    await inspect("/usr/bin/git", [...prefix, "diff", "--no-ext-diff", "--no-textconv", "--quiet", "HEAD", "--"], 4096, index);
+  } finally { rmSync(verification, { recursive: true, force: true }); }
+  const metadata = canonical(await inspect("/usr/bin/git", ["-C", source, "rev-parse", "--path-format=absolute", "--git-common-dir"]), true);
   return [source, ...(pathWithin(source, metadata) ? [] : [metadata])];
 }
 function roots(values: unknown): string[] {
@@ -142,7 +152,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
     if (usedBearers.size >= 1024 && !usedBearers.has(bearerDigest)) throw new CuratedRuntimeUnavailable("auth", "Broker execution identity budget exhausted");
     if (usedBearers.has(bearerDigest) && usedBearers.get(bearerDigest) !== bearerOwner) throw new CuratedRuntimeUnavailable("auth", "Broker bearers must be fresh and unique to an execution instance");
     const node = canonical(config.node.executable);
-    if (inspect(node, ["-p", "process.versions.node"]) !== config.node.version) throw new CuratedRuntimeUnavailable("runtime", "Selected Node version differs from the explicit Node26 pin");
+    if (await inspect(node, ["-p", "process.versions.node"]) !== config.node.version) throw new CuratedRuntimeUnavailable("runtime", "Selected Node version differs from the explicit Node26 pin");
     const sourceConfig = agent.pluginId === "hermes" ? config.hermes : config.openclaw;
     if (!sourceConfig) throw new CuratedRuntimeUnavailable("runtime", "The selected plugin has no curated runtime configuration");
     const source = canonical(sourceConfig.source, true), adapter = canonical(sourceConfig.adapter);
@@ -153,7 +163,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
       || manifest?.authentication?.ambientCredentials !== false || manifest?.authentication?.billedFallback !== false
       || agent.pluginId === "openclaw" && (manifest?.curatedRuntime?.sourceSha !== OPENCLAW_RUNTIME_PIN.sourceSha || manifest?.curatedRuntime?.patchSha256 !== OPENCLAW_RUNTIME_PIN.patchSha256))
       throw new CuratedRuntimeUnavailable("runtime", "Selected adapter manifest does not match the pinned isolated plugin");
-    const readPaths = [...pinnedSource(source, sourceConfig.sourceSha), node, canonical(dirname(adapter), true), ...roots(config.node.libraryRoots ?? [])];
+    const readPaths = [...await pinnedSource(source, sourceConfig.sourceSha, scratch), node, canonical(dirname(adapter), true), ...roots(config.node.libraryRoots ?? [])];
     let python: string | undefined;
     if (agent.pluginId === "hermes") {
       const p = config.hermes.python, target = canonical(p.canonicalExecutable), parent = canonical(dirname(p.executable), true);
@@ -168,7 +178,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
           throw new CuratedRuntimeUnavailable("runtime", "Python virtual environment may not inherit installed system packages");
         readPaths.push(venv);
       } else if (p.executable !== target) throw new CuratedRuntimeUnavailable("runtime", "Python links require an explicit owned virtual environment");
-      const actual = inspect(target, ["-I", "-S", "-c", "import sys;print('.'.join(map(str,sys.version_info[:3])))"]);
+      const actual = await inspect(target, ["-I", "-S", "-c", "import sys;print('.'.join(map(str,sys.version_info[:3])))"]);
       if (!/^3\.(11|12|13)\.\d+$/.test(p.version) || actual !== p.version) throw new CuratedRuntimeUnavailable("runtime", "Selected Python version differs from its compatible explicit pin");
       python = p.executable; readPaths.push(target, ...roots(p.libraryRoots));
       const metadata = readFileSync(join(source, "pyproject.toml"), "utf8");
