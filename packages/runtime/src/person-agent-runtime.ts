@@ -161,6 +161,10 @@ export class PersonAgentRuntime {
       throw new Error("Legacy secretary execution must be confirmed idle before migration");
     const queue = readObject(join(this.dir, "native-turn-queue.json"), MAX_MANIFEST_BYTES);
     if (queue && (!Array.isArray(queue) || queue.length)) throw new Error("Legacy queued work must settle before migration");
+    for (const path of [join(this.dir, "secretary-tasks-v1"), join(this.dir, "secretary-v1", "runs")]) {
+      if (existsSync(path) && readdirSync(safeAgentPath(path, true)).length)
+        throw new Error("Legacy worker records require explicit reconciliation before secretary migration");
+    }
     const legacyMetadataDigest = existing ? this.legacyMetadata(id) : undefined;
     this.manifest.bindings[id] = { agentId, title: existing?.title || "Yorozu", epochs: [],
       ...(legacyMetadataDigest ? { legacyMetadataDigest } : {}) };

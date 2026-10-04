@@ -27,33 +27,46 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   let harness: SecretaryHarness | undefined;
   let harnessHost: SecretaryCoordinatorHost | undefined;
   const people = options.personAgentPlatform ? new PersonAgentHost(dir, options.personAgentPlatform) : undefined;
-  const configuration = people ? undefined : harnessConfiguration(dir);
+  const configuration = people?.owns("yorozu-secretary-v1") ? undefined : harnessConfiguration(dir);
+  const legacySecretary = !configuration && !people?.owns("yorozu-secretary-v1");
   // A local variable also type-checks against the unpatched development ServeOptions.
   const decoratedOptions = { ...options, stateDir: dir,
-    secretaryUnavailable: () => unavailable,
-    secretaryCoordinator: !configuration && !people,
+    secretaryUnavailable: (id?: string) => id && people?.owns(id) ? undefined : unavailable,
+    secretaryCoordinator: legacySecretary,
     secretaryHarness: !!configuration || !!people,
+    secretaryHarnessOwns: people ? (id: string) => people.owns(id) || !!configuration && (id === "yorozu-secretary-v1" || !!harness?.owns(id)) : undefined,
     secretaryOwnsConversation: (id: string) => people?.owns(id) ?? false,
-    secretaryOwnsTask: (id: string) => people ? people.ownsTask(id) : configuration ? id !== "yorozu-secretary-v1" && (harness?.owns(id) ?? false) : coordinator?.owns(id) ?? false,
+    secretaryOwnsTask: (id: string) => people?.ownsTask(id) || (configuration ? id !== "yorozu-secretary-v1" && (harness?.owns(id) ?? false) : coordinator?.owns(id) ?? false),
     secretaryTask: (id: string) => coordinator?.task(id),
     secretaryThreadSummary: (id: string) => people?.summary(id) ?? harness?.summary(id),
     secretaryThreadWorkspace: (id: string) => people?.workspace(id),
-    secretaryTaskStop: (event: Parameters<SecretaryHarness["taskStop"]>[0]) => people?.runtime.taskStop(event) ?? harness?.taskStop(event) ?? Promise.resolve(false),
+    secretaryTaskStop: (event: Parameters<SecretaryHarness["taskStop"]>[0]) => people?.ownsTask(event.threadId)
+      ? people.runtime.taskStop(event) : harness?.taskStop(event) ?? Promise.resolve(false),
     personAgentRegistry: people ? () => people.registry() : undefined,
     personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => people.control(event) : undefined,
     personAgentCreate: people ? (event: Parameters<PersonAgentHost["create"]>[0]) => people.create(event) : undefined,
     secretaryObserve: (event: Parameters<ReturnType<typeof secretaryCoordinator>["observe"]>[0]) => coordinator?.observe(event),
     decorateNativeRunners: (runners: Record<string, NativeAgentRunner>, host: SecretaryCoordinatorHost) => {
+      if (configuration) {
+        try { harness = new SecretaryHarness(dir, configuration); }
+        catch (error) { unavailable = `Harness unavailable: ${error instanceof Error ? error.message : String(error)}`; }
+      }
       if (people) {
+        if (legacySecretary) {
+          if (!runners.codex) throw new Error("The existing secretary requires the Codex adapter");
+          coordinator = secretaryCoordinator(dir, runners.codex, reason => { unavailable = reason; });
+          coordinator.bind(host);
+        }
         harnessHost = host; decorated = true;
         return { ...runners, harness: people.runner, codex: { ...runners.codex,
           run: (turn: NativeTurn) => people.owns(turn.threadId) ? people.runner.run(turn)
-            : runners.codex?.run(turn) ?? Promise.resolve({ text: "Codex unavailable", failed: true }) } };
+            : configuration && (turn.threadId === "yorozu-secretary-v1" || harness?.owns(turn.threadId))
+              ? harness?.runner.run(turn) ?? Promise.resolve({ text: unavailable ?? "Harness unavailable", failed: true })
+            : (legacySecretary && (turn.threadId === "yorozu-secretary-v1" || coordinator?.owns(turn.threadId))
+              ? coordinator?.runner : runners.codex)?.run(turn) ?? Promise.resolve({ text: "Codex unavailable", failed: true }) } };
       }
       if (configuration) {
         harnessHost = host;
-        try { harness = new SecretaryHarness(dir, configuration); }
-        catch (error) { unavailable = `Harness unavailable: ${error instanceof Error ? error.message : String(error)}`; }
         decorated = true;
         const selected: NativeAgentRunner = harness?.runner ?? {
           descriptor: { id: "harness", label: "Yorozu", description: "Selected agent harness", needsFolder: true },
@@ -83,10 +96,12 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   if (people && harnessHost) {
     const host = harnessHost;
     people.bind({ emit: host.emit, changed: () => host.publishThreads?.() });
-  } else if (harness && harnessHost) {
+  }
+  if (harness && harnessHost) {
     const host = harnessHost;
     harness.bind({ emit: host.emit, changed: () => host.publishThreads?.() });
-  } else if (!configuration) coordinator!.reconcile();
+  }
+  if (legacySecretary) coordinator!.reconcile();
   return { ...sidecar, async close() {
     try { await people?.close(); await harness?.close(); } finally { await sidecar.close(); }
   } };

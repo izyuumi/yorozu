@@ -254,3 +254,13 @@ test("idle chat owners release their ledger leases while the ordinary daemon and
   expect(reopened!.ledger.state.bindingId).toBe(binding); expect(readThreadEvents("many-0", f.dir).some(e => e.id === "settled-0")).toBe(true);
   expect(await f.invoke(reopened!, "settled-1", "hello again")).toMatchObject({ completed: true });
 });
+
+test("legacy worker records hold secretary migration without starting or changing a binding", () => {
+  const f = fixture();
+  const task = join(f.dir, "secretary-tasks-v1", "saved-worker"); mkdirSync(task, { recursive: true });
+  writeFileSync(join(task, "task.json"), "retained worker evidence");
+  expect(() => f.manager.bindSecretary("alice")).toThrow("explicit reconciliation");
+  expect(f.manager.bindingForThread("yorozu-secretary-v1")).toBeUndefined();
+  expect(readFileSync(join(task, "task.json"), "utf8")).toBe("retained worker evidence");
+  expect(f.factories).toEqual([]); expect(f.traces).toEqual([]);
+});

@@ -115,9 +115,14 @@ settings changes.
 
 The registry default applies to new chats. Continuous secretary migration remains
 an explicit trusted host operation. It requires idle legacy work and an empty
-queue, retains the legacy backend session and workspace metadata as rollback
+queue. Existing legacy worker records hold migration until explicitly reconciled;
+absence of a running main turn alone does not prove those workers have settled.
+Migration retains the legacy backend session and workspace metadata as rollback
 evidence, and grants none of that old workspace to the new person. Existing chat
 identities are immutable; this slice does not offer live secretary reassignment.
+Adding person chats preserves the existing secretary execution route and its task
+controls. Each thread uses its own owner; person preparation failures do not block
+unrelated legacy chats.
 
 Host tests exercise immutable admission/control IDs, uncertainty after restart,
 single ownership, quiescent switch preparation and process failure. Adapter

@@ -1,0 +1,76 @@
+import { beforeEach, expect, test, vi } from "vitest";
+import { serveSecretary } from "../dist/secretary-serve.js";
+
+const f = vi.hoisted(() => ({
+  options: {} as any, registered: {} as any, mainPerson: false, selectedHarness: false,
+  ordinary: vi.fn(async () => ({ text: "ordinary" })),
+  person: vi.fn(async () => ({ text: "person" })),
+  planner: vi.fn(async () => ({ text: "legacy" })),
+  selected: vi.fn(async () => ({ text: "selected" })), selectedStop: vi.fn(async () => true), selectedBind: vi.fn(), selectedClose: vi.fn(async () => {}),
+  reconcile: vi.fn(), personBind: vi.fn(), personClose: vi.fn(async () => {}), close: vi.fn(async () => {}),
+  unavailable: undefined as undefined | ((reason: string) => void),
+}));
+vi.mock("../dist/serve.js", () => ({ secretaryRunnerDecorator: true, serve: (options: any) => {
+  f.options = options;
+  f.registered = options.decorateNativeRunners({ codex: { run: f.ordinary } }, { emit() {} });
+  return { close: f.close };
+} }));
+vi.mock("../dist/harness-runner.js", () => ({ harnessConfiguration: () => f.selectedHarness ? {} : undefined,
+  SecretaryHarness: class { runner = { run: f.selected }; owns(id: string) { return id === "selected-task"; }
+    taskStop = f.selectedStop; bind = f.selectedBind; close = f.selectedClose; summary() { return undefined; } }
+}));
+vi.mock("../dist/secretary-coordinator.js", () => ({ secretaryCoordinator: (_dir: string, _runner: any, unavailable: any) => {
+  f.unavailable = unavailable;
+  return { runner: { run: f.planner }, owns: (id: string) => id === "legacy-task", task: () => undefined,
+    bind() {}, observe() {}, reconcile: f.reconcile };
+} }));
+vi.mock("../dist/person-agent-host.js", () => ({ PersonAgentHost: class {
+  runner = { run: f.person };
+  owns(id: string) { return ["person-chat", "person-task"].includes(id) || f.mainPerson && id === "yorozu-secretary-v1"; }
+  ownsTask(id: string) { return id === "person-task"; }
+  registry() { return { version: 1, revision: 0, agents: [] }; }
+  workspace() { return undefined; } summary() { return undefined; }
+  control() {} create() {} bind = f.personBind; close = f.personClose;
+  runtime = { taskStop: async () => false };
+} }));
+beforeEach(() => { vi.clearAllMocks(); f.mainPerson = false; f.selectedHarness = false; f.unavailable = undefined; });
+
+test("person chats preserve legacy main/tasks and ordinary chats with per-thread harness routing", async () => {
+  const sidecar = serveSecretary({ stateDir: "/unused-person-serve-fixture", personAgentPlatform: { createFactory: () => { throw new Error(); } } });
+  expect(f.options.secretaryCoordinator).toBe(true);
+  expect(f.options.secretaryHarnessOwns("person-task")).toBe(true);
+  expect(f.options.secretaryHarnessOwns("legacy-task")).toBe(false);
+  expect(f.options.secretaryOwnsTask("legacy-task")).toBe(true);
+  for (const id of ["person-chat", "person-task"]) expect(await f.registered.codex.run({ threadId: id })).toEqual({ text: "person" });
+  for (const id of ["yorozu-secretary-v1", "legacy-task"]) expect(await f.registered.codex.run({ threadId: id })).toEqual({ text: "legacy" });
+  expect(await f.registered.codex.run({ threadId: "ordinary" })).toEqual({ text: "ordinary" });
+  f.unavailable!("legacy unavailable");
+  expect(f.options.secretaryUnavailable("yorozu-secretary-v1")).toBe("legacy unavailable");
+  expect(f.options.secretaryUnavailable("person-chat")).toBeUndefined();
+  expect(f.reconcile).toHaveBeenCalledOnce(); expect(f.personBind).toHaveBeenCalledOnce();
+  await sidecar.close(); expect(f.personClose).toHaveBeenCalledOnce(); expect(f.close).toHaveBeenCalledOnce();
+});
+
+test("an explicitly person-bound secretary never gets the legacy planner", async () => {
+  f.mainPerson = true;
+  const sidecar = serveSecretary({ stateDir: "/unused-person-main-fixture", personAgentPlatform: { createFactory: () => { throw new Error(); } } });
+  expect(f.options.secretaryCoordinator).toBe(false);
+  expect(await f.registered.codex.run({ threadId: "yorozu-secretary-v1" })).toEqual({ text: "person" });
+  expect(f.planner).not.toHaveBeenCalled(); expect(f.reconcile).not.toHaveBeenCalled();
+  await sidecar.close();
+});
+
+test("adding people preserves the existing selected secretary harness and its targeted task controls", async () => {
+  f.selectedHarness = true;
+  const sidecar = serveSecretary({ stateDir: "/unused-person-selected-fixture", personAgentPlatform: { createFactory: () => { throw new Error(); } } });
+  expect(f.options.secretaryCoordinator).toBe(false);
+  for (const id of ["yorozu-secretary-v1", "selected-task"]) {
+    expect(await f.registered.codex.run({ threadId: id })).toEqual({ text: "selected" });
+    expect(f.options.secretaryHarnessOwns(id)).toBe(true);
+  }
+  expect(await f.registered.codex.run({ threadId: "person-chat" })).toEqual({ text: "person" });
+  expect(await f.registered.codex.run({ threadId: "ordinary" })).toEqual({ text: "ordinary" });
+  expect(await f.options.secretaryTaskStop({ threadId: "selected-task" })).toBe(true);
+  expect(f.selectedStop).toHaveBeenCalledOnce(); expect(f.selectedBind).toHaveBeenCalledOnce();
+  expect(f.reconcile).not.toHaveBeenCalled(); await sidecar.close(); expect(f.selectedClose).toHaveBeenCalledOnce();
+});
