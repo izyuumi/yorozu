@@ -15,7 +15,7 @@ python3 scripts/stage-internal-alpha.py "$SOURCE"
   pnpm install --frozen-lockfile
   DIST="$DIST" sh scripts/build-mac.sh
 )
-cp "$SOURCE/internal-source.json" "$DIST/internal-source.json"
+cp "$DIST/Yorozu.app/Contents/Resources/internal-source.json" "$DIST/internal-source.json"
 python3 - "$DIST" <<'PY'
 import hashlib, json, plistlib, sys
 from pathlib import Path

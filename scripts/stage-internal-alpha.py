@@ -40,6 +40,7 @@ OVERLAYS = [
     "scripts/harness-host-proof.mjs", "docs/harness-host-proof.md",
     "docs/harness-proof.md", "docs/harness-contract.md",
     "docs/siwc-inference-broker.md", "scripts/capture-hermes-siwc-shape.py",
+    "docs/hermes-runtime-packaging.md", "scripts/package-hermes-runtime.py", "scripts/test-package-hermes-runtime.py",
     "scripts/build-mac.sh", "scripts/build-version.sh",
     "scripts/secretary-production.patch",
 ]

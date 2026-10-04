@@ -47,6 +47,7 @@ if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
   if [ ! -f internal-source.json ] || [ ! -f packages/runtime/dist/secretary-serve.js ]; then
     echo "secretary builds require scripts/build-internal-alpha.sh" >&2; exit 1
   fi
+  [ -n "${YOROZU_HERMES_RUNTIME_ARTIFACT:-}" ] || { echo "internal person builds require an explicit Hermes runtime artifact" >&2; exit 1; }
   cargo build --locked --release --manifest-path packages/host-core/Cargo.toml --bin yorozu-alpha-host
   cargo build --locked --release --manifest-path packages/host-core/Cargo.toml --bin yorozu-host-core
 else
@@ -186,13 +187,16 @@ fi
 # --prod above leaves the *workspace* modules directory pruned to production too, which
 # breaks the next `pnpm -r build` (no typescript). Put the dev dependencies back.
 pnpm install --frozen-lockfile
-# First-party whole-harness adapters have their own supervised runtime boundary.
-# Runtime installation/auth remains explicit; no Python/profile is copied from this Mac.
+# Internal people builds require an explicitly prepared, pinned runtime payload.
+# This path never installs dependencies, discovers an interpreter or copies profiles.
 if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
   mkdir -p "$APP/Contents/Resources/harness-plugins/hermes"
   cp packages/harness-plugins/hermes/adapter.mjs packages/harness-plugins/hermes/bootstrap.py packages/harness-plugins/hermes/manifest.json \
     packages/harness-plugins/hermes/README.md "$APP/Contents/Resources/harness-plugins/hermes/"
   cp -R packages/harness-plugins/hermes/platform "$APP/Contents/Resources/harness-plugins/hermes/"
+  python3 scripts/package-hermes-runtime.py verify --artifact "$YOROZU_HERMES_RUNTIME_ARTIFACT"
+  mkdir -p "$APP/Contents/Resources/agent-runtimes"
+  cp -R "$YOROZU_HERMES_RUNTIME_ARTIFACT" "$APP/Contents/Resources/agent-runtimes/hermes"
 fi
 # The OpenClaw channel plugin, for `openclaw plugins install --link` from inside the bundle so
 # it updates with the app. Plain JavaScript that OpenClaw loads directly; no dependencies.
@@ -280,6 +284,30 @@ find "$APP/Contents" -depth \( -type f -o -type d \) -print | while IFS= read -r
     *) codesign --force --options runtime --timestamp --sign "$IDENTITY" "$code" || exit 1 ;;
   esac
 done
+# This controlled loop owns every native mutation. Verify those signatures before
+# resealing; the helper alone cannot distinguish arbitrary native byte edits from
+# signature-only changes. The outer app signature then seals the JSON resources.
+if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
+  find "$APP/Contents/Resources/agent-runtimes/hermes" -type f -print | while IFS= read -r code; do
+    case "$(file -b "$code")" in
+      *Mach-O*) codesign --verify --strict "$code" || exit 1 ;;
+    esac
+  done
+  python3 scripts/package-hermes-runtime.py reseal-after-nested-signing \
+    --artifact "$APP/Contents/Resources/agent-runtimes/hermes"
+  "$APP/Contents/Resources/node" --input-type=module - "$APP/Contents/Resources" <<'JS'
+import {pathToFileURL} from 'node:url';
+import {resolve, join} from 'node:path';
+import {readFileSync, writeFileSync} from 'node:fs';
+const resources=resolve(process.argv[2]);
+const {verifyPackagedHermesArtifact}=await import(pathToFileURL(join(resources,'runtime/dist/packaged-agent-runtime.js')));
+const verified=await verifyPackagedHermesArtifact(resources);
+const path=join(resources,'internal-source.json'), source=JSON.parse(readFileSync(path,'utf8'));
+source.harnessPlugins.hermes={...source.harnessPlugins.hermes,bundledRuntime:true,
+  adapterSourceSha:verified.adapterSourceSha,inventorySha256:verified.inventorySha256,hashStage:verified.hashStage,productionReady:false};
+writeFileSync(path,JSON.stringify(source,null,2)+'\n');
+JS
+fi
 codesign --force --options runtime --timestamp \
   --entitlements apps/mac/Node.entitlements --sign "$IDENTITY" "$APP/Contents/Resources/node"
 codesign --force --options runtime --timestamp \
