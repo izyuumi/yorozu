@@ -17,6 +17,7 @@ The host launches this adapter inside its already-created per-agent `macos-seatb
   "agentId": "secretary",
   "workspace": "/private/secretary/workspace",
   "profileDir": "/private/secretary/runtime",
+  "gatewayPort": 32146,
   "scope": {
     "allowedTools": ["file", "terminal"],
     "directories": [{ "path": "/private/secretary", "access": "write" }],
@@ -33,7 +34,7 @@ The host launches this adapter inside its already-created per-agent `macos-seatb
 }
 ```
 
-These fields are trusted local configuration, never accepted from chat or events. The host assertion does not create an OS sandbox: the host must actually confine the process and all descendants. Unknown scope fields, mismatched agent/isolation identity, symlinks, broad roots, missing writable private directories and denied-root overlaps are rejected. The runtime directory must be separate from workspace and memory. One process exclusively owns one profile; a leftover lock is a recovery gate, not automatically discarded. Scope/version/agent ownership cannot silently change on resume.
+These fields are trusted local configuration, never accepted from chat or events. The host assertion does not create an OS sandbox: the host must actually confine the process and all descendants. Unknown scope fields, mismatched agent/isolation identity, symlinks, broad roots, unauthorized user workspaces and denied-root overlaps are rejected. The runtime directory must be separate from the agent's user workspace and memory. A zero-tool agent uses fresh scratch inside the host-granted vendor runtime, without adding user directory grants. One process exclusively owns one profile; a leftover lock is a recovery gate, not automatically discarded. Scope/version/agent ownership cannot silently change on resume. `gatewayPort` is an exact host-selected listener port that must already appear in the kernel policy; there is no ephemeral or broad-network fallback.
 
 The prototype disables **all native tools** with `deny: ["*"]` at global and agent levels. It can therefore accept a broader host tool allowlist while operating strictly below it. Host broker tools are not implemented and cannot be granted by widening OpenClaw's native policy. Channels, cron, heartbeat, browser control, memory plugins, skill loading, automatic updates, delivery, uploads, ambient environment and login-shell snapshots are disabled. No account setup, installed profile adoption, device pairing, scheduled actions or billed fallback is performed.
 

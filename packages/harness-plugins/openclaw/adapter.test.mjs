@@ -249,6 +249,19 @@ test('native config and environment stay strictly below harness grants and inher
   for (const key of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENCLAW_GATEWAY_TOKEN', 'NODE_OPTIONS', 'HTTP_PROXY', 'SSH_AUTH_SOCK', 'AWS_PROFILE']) assert.equal(env[key], undefined);
   assert.equal(env.OPENCLAW_NO_RESPAWN, '1'); assert.equal(env.OPENCLAW_SKIP_CRON, '1'); assert.equal(env.OPENCLAW_EXEC_SHELL_SNAPSHOT, '0');
 });
+test('zero-tool scope permits only private runtime scratch without minting user directory grants', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'yorozu-openclaw-empty-')));
+  try {
+    const profileDir = join(root, 'vendor-runtime'); const workspace = join(profileDir, 'scratch');
+    const hostWorkspace = join(root, 'host-private-workspace'); const memoryDir = join(root, 'host-private-memory');
+    await mkdir(workspace, { recursive: true }); await mkdir(hostWorkspace); await mkdir(memoryDir);
+    const scope = { allowedTools: [], directories: [], workspace: hostWorkspace, memoryDir, deniedRoots: [hostWorkspace, memoryDir] };
+    const params = { agentId: 'secretary', workspace, profileDir, scope, isolation: { backend: 'macos-seatbelt-v1', agentId: 'secretary', policyDigest: 'b'.repeat(64) } };
+    assert.equal((await validateScope(params)).workspace, workspace); assert.deepEqual(scope.directories, []);
+    await assert.rejects(validateScope({ ...params, workspace: hostWorkspace }), /writable scope|denied/);
+    await assert.rejects(validateScope({ ...params, workspace: root }), /workspace does not match/);
+  } finally { await rm(root, { recursive: true }); }
+});
 
 class FakeSocket extends EventTarget {
   static sockets = [];

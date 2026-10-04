@@ -5,7 +5,6 @@ import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rename, readdir, lstat, realpath, rm } from 'node:fs/promises';
 import { resolve, join, dirname, isAbsolute, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'node:net';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 
 export const UPSTREAM = Object.freeze({ version: '2026.9.8', commit: 'fc23bc864e4553c2d215e479eeec47b67a0bf943', protocol: 4 });
@@ -71,28 +70,33 @@ export async function validateScope(params) {
   const workspace = absolute(params.workspace, 'workspace');
   const profileDir = absolute(params.profileDir, 'profileDir');
   const memoryDir = absolute(scope.memoryDir, 'scope.memoryDir');
-  if (workspace !== absolute(scope.workspace, 'scope.workspace')) throw invalid('workspace does not match the harness scope');
+  const grantedWorkspace = absolute(scope.workspace, 'scope.workspace');
+  // Vendor transcript/model scratch is an implicit host runtime resource, never
+  // a user-data/tool grant. A no-tool agent may use a fresh workspace beneath it.
+  const scratchWorkspace = workspace !== profileDir && contains(profileDir, workspace);
+  if (!scratchWorkspace && workspace !== grantedWorkspace) throw invalid('workspace does not match the harness scope or private runtime scratch');
   const deniedRoots = scope.deniedRoots ?? [];
   if (!Array.isArray(deniedRoots) || deniedRoots.length > 64) throw invalid('scope.deniedRoots is invalid');
-  for (const path of [workspace, profileDir, memoryDir]) {
-    if (!directories.some(entry => entry.access === 'write' && contains(entry.path, path))) throw invalid('agent workspace, memory and runtime require explicit writable scope');
+  if (!scratchWorkspace && !directories.some(entry => entry.access === 'write' && contains(entry.path, workspace))) throw invalid('user workspace requires explicit writable scope');
+  for (const path of [workspace, profileDir]) {
     if (deniedRoots.some(root => contains(absolute(root, 'denied root'), path) || contains(path, absolute(root, 'denied root')))) throw invalid('private runtime overlaps a denied root');
   }
   // A broad profile may never contain another agent workspace/memory. Host provisioning
   // supplies distinct private paths, and the profile ownership marker binds this agent.
-  if (contains(profileDir, workspace) || contains(profileDir, memoryDir)) throw invalid('runtime must be separate from workspace and memory');
-  if (await realpath(workspace) !== workspace || await realpath(memoryDir) !== memoryDir) throw invalid('agent directories must not traverse symlinks');
+  if (contains(profileDir, grantedWorkspace) || contains(profileDir, memoryDir)) throw invalid('runtime must be separate from agent user workspace and memory');
+  if (await realpath(workspace) !== workspace) throw invalid('agent workspace must not traverse symlinks');
   return { agentId, workspace, profileDir, memoryDir, scopeDigest: sha(JSON.stringify(scope)), policyDigest: params.isolation.policyDigest };
 }
 
 /** Does not install, repair, update, read ambient auth, or adopt an existing OpenClaw profile. */
 export async function prepareRuntime(params) {
-  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform'], 'initialize');
+  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort'], 'initialize');
   if (params.platform !== undefined) {
     only(params.platform, ['team', 'computer'], 'platform');
     if (typeof params.platform.team !== 'boolean' || params.platform.computer !== false) throw invalid('native computer access is unsupported');
   }
   if (params.protocolVersion !== 1 || params.upstreamVersion !== UPSTREAM.version) throw invalid('unsupported harness protocol or OpenClaw version');
+  if (!Number.isInteger(params.gatewayPort) || params.gatewayPort < 1024 || params.gatewayPort > 65535) throw invalid('an exact host-reserved Gateway listener port is required');
   const scoped = await validateScope(params);
   const source = await realpath(absolute(params.source, 'source'));
   const node = await realpath(absolute(params.node, 'node'));
@@ -143,7 +147,7 @@ export async function prepareRuntime(params) {
     if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(endpoint.hostname) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) throw invalid('only explicit loopback proof inference is supported');
     if (!/^[a-zA-Z0-9_.:-]{1,128}$/.test(provider.model) || provider.api !== 'openai-responses') throw invalid('proof provider requires bounded model and native openai-responses API');
   }
-  return { ...scoped, source, node, home, state, temporary, provider, authAvailable: Boolean(provider), journalPath: join(scoped.profileDir, 'adapter-journal-v1.json') };
+  return { ...scoped, source, node, home, state, temporary, provider, gatewayPort: params.gatewayPort, authAvailable: Boolean(provider), journalPath: join(scoped.profileDir, 'adapter-journal-v1.json') };
 }
 
 export function runtimeConfig(runtime, port, token) {
@@ -169,14 +173,6 @@ export function runtimeEnvironment(runtime) {
     OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: '1', OPENCLAW_SKIP_CANVAS_HOST: '1',
   };
 }
-async function vacantPort() {
-  const server = createServer();
-  await new Promise((yes, no) => { server.once('error', no); server.listen(0, '127.0.0.1', yes); });
-  const port = server.address().port;
-  await new Promise((yes, no) => server.close(error => error ? no(error) : yes()));
-  return port; // A bind race fails startup; it never connects to an unverified generation.
-}
-
 export class NativeGateway {
   constructor(url, token, child, { WebSocketClass = WebSocket, timeoutMs = 10_000 } = {}) {
     this.url = url; this.token = token; this.child = child; this.WebSocketClass = WebSocketClass; this.timeoutMs = timeoutMs;
@@ -270,7 +266,7 @@ export async function launchRuntime(params) {
   try { await mkdir(lock, { mode: 0o700 }); } catch (error) { if (error.code === 'EEXIST') throw invalid('private profile already has an owner; stale ownership requires explicit recovery'); throw error; }
   let child;
   try {
-    const port = await vacantPort();
+    const port = runtime.gatewayPort; // Exact port was included in the host's kernel policy before launch.
     const token = randomBytes(32).toString('hex');
     await atomic(join(runtime.profileDir, 'gateway-token.json'), { token });
     await atomic(join(runtime.profileDir, 'openclaw.json'), runtimeConfig(runtime, port, token));
