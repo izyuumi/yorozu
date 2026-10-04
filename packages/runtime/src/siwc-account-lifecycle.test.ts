@@ -161,7 +161,7 @@ describe("host-only SIWC lifecycle", () => {
     const p1 = l1.getAccessToken("a"); await dispatched.promise; const p2 = l2.getAccessToken("a"); response.resolve(token());
     const [t1, t2] = await Promise.all([p1, p2]); expect(t1.accessToken).toBe(NEXT_ACCESS); expect(t2.accessToken).toBe(NEXT_ACCESS);
     expect(f.request).toHaveBeenCalledTimes(1); expect(f.get().accounts[0].credentials).toMatchObject({ accessToken: NEXT_ACCESS, refreshToken: NEXT_REFRESH, idToken: NEXT_ID });
-    expect(f.get().accounts[0].pending).toBeUndefined(); expect(f.services.stopAccount).toHaveBeenCalledWith("a");
+    expect(f.get().accounts[0].pending).toBeUndefined(); expect(f.services.stopAccount).toHaveBeenCalledWith("a", "refresh");
   });
   it("does not replay a consumed refresh after an unknown reply or restart", async () => {
     const f = fixture([ready("a", "oaiapp_a", "subject-a", NOW)], "a"); f.request.mockRejectedValue(new Error(`${REFRESH} provider body`));
@@ -242,7 +242,7 @@ describe("host-only SIWC lifecycle", () => {
   it("switches only validated saved accounts and does not confuse same-subject registrations", async () => {
     const f = fixture([ready("a", "oaiapp_a", "same-sub"), ready("b", "oaiapp_b", "same-sub")], "a"), l = f.lifecycle();
     await l.selectAccount("b"); await l.selectAccount("a"); expect(f.get().activeAccountBindingId).toBe("a");
-    expect(f.request).not.toHaveBeenCalled(); expect(f.services.stopAccount).toHaveBeenCalledWith("b");
+    expect(f.request).not.toHaveBeenCalled(); expect(f.services.stopAccount).toHaveBeenCalledWith("b", "select");
     await expect(l.beginSignIn({ accountBindingId: "a", callbackPort: 1455, returning: false })).rejects.toMatchObject({ code: "identity" });
   });
   it("cannot claim remote revocation of an unseen rotated session from old-token 200", async () => {
@@ -257,7 +257,7 @@ describe("host-only SIWC lifecycle", () => {
   it("closes all observed brokers even after storage becomes unavailable or one stop fails", async () => {
     const f = fixture([ready("a"), ready("b")]), l = f.lifecycle(); await l.status(); f.available(false);
     (f.services.stopAccount as any).mockImplementation((binding: string) => { if (binding === "a") throw new Error(ACCESS); });
-    expect(() => l.close()).toThrow("SIWC account unknown"); expect(f.services.stopAccount).toHaveBeenCalledWith("b");
+    expect(() => l.close()).toThrow("SIWC account unknown"); expect(f.services.stopAccount).toHaveBeenCalledWith("b", "close");
     expect((await l.status()).state).toBe("unsupported");
   });
   it("refuses corrupt/foreign protected snapshots and client binding collisions", async () => {
@@ -283,5 +283,45 @@ describe("host-only SIWC lifecycle", () => {
       { accountBindingId: "a", callbackPort: 80, returning: false }, { accountBindingId: "a", callbackPort: 1455, returning: false, clientId: "oaiapp_inject" }]) {
       await expect(clean.beginSignIn(input as any)).rejects.toMatchObject({ code: "invalid" });
     }
+  });
+  it("routine refresh privately holds admission without aborting its own broker signal", async () => {
+    const f = fixture([ready("a", "oaiapp_a", "subject-a", NOW)], "a"), l = f.lifecycle(), broker = new AbortController();
+    await l.status(); expect(l.canExecute("a")).toBe(true);
+    (f.services.stopAccount as any).mockImplementation((_binding: string, reason: string) => { if (reason !== "refresh") broker.abort(); });
+    f.request.mockImplementation(async request => { expect(broker.signal.aborted).toBe(false); expect(request.signal.aborted).toBe(false);
+      expect(l.canExecute("a")).toBe(false); return token(); });
+    expect((await l.getAccessToken("a", broker.signal)).accessToken).toBe(NEXT_ACCESS); expect(broker.signal.aborted).toBe(false);
+    expect(l.canExecute("a")).toBe(true);
+  });
+  it("unknown or narrowed refresh retires the broker and keeps admission held", async () => {
+    for (const failure of ["unknown", "narrowed"]) {
+      const f = fixture([ready("a", "oaiapp_a", "subject-a", NOW)], "a"), l = f.lifecycle(), broker = new AbortController();
+      (f.services.stopAccount as any).mockImplementation((_binding: string, reason: string) => { if (reason !== "refresh") broker.abort(); });
+      if (failure === "unknown") f.request.mockRejectedValue(new Error(REFRESH));
+      else f.request.mockResolvedValue(token({ scope: "openid offline_access resource.invoke chatgpt.tokens.use.direct" }));
+      await expect(l.getAccessToken("a", broker.signal)).rejects.toBeInstanceOf(Error);
+      expect(broker.signal.aborted).toBe(true); expect(l.canExecute("a")).toBe(false);
+      expect(f.services.stopAccount).toHaveBeenCalledWith("a", "invalid");
+    }
+  });
+  it("exact consumed-attempt cancellation aborts a late exchange without adopting or cancelling another attempt", async () => {
+    const f = fixture([ready("existing")], "existing"), l = f.lifecycle(), a = await auth(l), b = await auth(l, "b");
+    const started = deferred<void>(), late = deferred<Awaited<ReturnType<SiwcAccountTransport["request"]>>>(); let signal!: AbortSignal;
+    f.request.mockImplementationOnce(async request => { signal = request.signal; started.resolve(); return late.promise; });
+    const running = l.completeSignIn(a.attemptId, a.callback.href); await started.promise;
+    l.cancelSignIn(a.attemptId); expect(signal.aborted).toBe(true); late.resolve(token());
+    await expect(running).rejects.toMatchObject({ code: "unknown" }); expect(f.get().activeAccountBindingId).toBe("existing");
+    expect(f.verify).not.toHaveBeenCalled(); expect(l.canExecute("a")).toBe(false);
+    await l.completeSignIn(b.attemptId, b.callback.href); expect(f.get().activeAccountBindingId).toBe("b");
+    l.cancelSignIn(a.attemptId); expect(l.canExecute("b")).toBe(true);
+  });
+  it("cancelled verification stays quarantined even when a verifier ignores abort", async () => {
+    const f = fixture([ready("existing")], "existing"), l = f.lifecycle(), a = await auth(l), entered = deferred<void>();
+    const late = deferred<Awaited<ReturnType<SiwcIdTokenVerifier["verify"]>>>(); f.verify.mockImplementation(async () => { entered.resolve(); return late.promise; });
+    const running = l.completeSignIn(a.attemptId, a.callback.href); await entered.promise; l.cancelSignIn(a.attemptId);
+    await expect(running).rejects.toMatchObject({ code: "unknown" });
+    late.resolve({ status: "verified", claims: { iss: SIWC_ISSUER, aud: "oaiapp_a", sub: "subject-a", exp: NOW / 1000 + 3600, iat: NOW / 1000, nonce: a.params.get("nonce")! } });
+    await Promise.resolve(); expect(f.get().activeAccountBindingId).toBe("existing");
+    expect(f.get().accounts.find(v => v.accountBindingId === "a")?.phase).toBe("pending-verification");
   });
 });

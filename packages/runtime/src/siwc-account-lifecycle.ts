@@ -60,8 +60,9 @@ export interface SiwcAccountServices {
   store: SiwcProtectedAccountStore; transport: SiwcAccountTransport; verifier: SiwcIdTokenVerifier;
   /** Synchronously fence/abort every existing execution broker for this exact binding.
    * Required before token rotation, sign-out or replacement. Must throw if fencing fails. */
-  stopAccount(accountBindingId: string): void;
+  stopAccount(accountBindingId: string, reason?: SiwcAccountStopReason): void;
 }
+export type SiwcAccountStopReason = "refresh" | "replace" | "sign-out" | "select" | "close" | "invalid";
 export type SiwcAccountErrorCode = "unsupported" | "invalid" | "identity" | "permission" | "conflict" | "unknown" | "signed-out";
 export class SiwcAccountError extends Error {
   constructor(readonly code: SiwcAccountErrorCode) { super(`SIWC account ${code}`); this.name = "SiwcAccountError"; }
@@ -110,6 +111,17 @@ function storedAccount(v: unknown): v is SiwcStoredAccount {
   if (v.pending.kind === "sign-in" && !secret(v.pending.nonce)) return false;
   return v.phase === "pending-verification" ? !!v.pending.credentials && !!v.pending.scopes?.includes("openid") : !v.pending.credentials;
 }
+/** Shared pure schema check for host/native bridge inputs; never reads protected state. */
+export function validateSiwcProtectedSnapshot(v: unknown, host?: { hostId: string; appName: string }): v is SiwcProtectedSnapshot {
+  return fields(v, ["version", "revision", "hostId", "appName", "callbackPath", "activeAccountBindingId", "accounts"])
+    && v.version === 1 && integer(v.revision) && v.revision < Number.MAX_SAFE_INTEGER && id(v.hostId)
+    && typeof v.appName === "string" && /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(v.appName)
+    && (!host || v.hostId === host.hostId && v.appName === host.appName) && v.callbackPath === "/auth/callback"
+    && Array.isArray(v.accounts) && v.accounts.length <= 32 && v.accounts.every(storedAccount)
+    && new Set(v.accounts.map((a: SiwcStoredAccount) => a.accountBindingId)).size === v.accounts.length
+    && new Set(v.accounts.filter((a: SiwcStoredAccount) => a.registration).map((a: SiwcStoredAccount) => a.registration!.clientId)).size === v.accounts.filter((a: SiwcStoredAccount) => a.registration).length
+    && (v.activeAccountBindingId === undefined || id(v.activeAccountBindingId) && v.accounts.some((a: SiwcStoredAccount) => a.accountBindingId === v.activeAccountBindingId));
+}
 interface Attempt { id: string; binding: string; callback: string; expiresAt: number; state: string; nonce: string; verifier: string;
   expected?: { clientId: string; subject: string }; }
 export interface SiwcAccountStatus {
@@ -125,7 +137,9 @@ export class SiwcAccountLifecycle {
   private queues = new Map<string, Promise<unknown>>();
   private epochs = new Map<string, number>();
   private observed = new Set<string>();
+  private ready = new Set<string>();
   private controllers = new Set<AbortController>();
+  private inflightAttempts = new Map<string, { binding: string; controller: AbortController }>();
   private waiting = 0;
   private unknownStore = false;
   private closed = false;
@@ -147,14 +161,9 @@ export class SiwcAccountLifecycle {
   private async read(): Promise<SiwcProtectedSnapshot> {
     const s = this.requireServices();
     let v: SiwcProtectedSnapshot; try { v = await s.store.read(); } catch { fail("unknown"); }
-    if (!fields(v, ["version", "revision", "hostId", "appName", "callbackPath", "activeAccountBindingId", "accounts"])
-      || v.version !== 1 || !integer(v.revision) || v.revision >= Number.MAX_SAFE_INTEGER
-      || v.hostId !== this.host.hostId || v.appName !== this.host.appName || v.callbackPath !== "/auth/callback"
-      || !Array.isArray(v.accounts) || v.accounts.length > 32 || !v.accounts.every(storedAccount)
-      || new Set(v.accounts.map(a => a.accountBindingId)).size !== v.accounts.length
-      || new Set(v.accounts.filter(a => a.registration).map(a => a.registration!.clientId)).size !== v.accounts.filter(a => a.registration).length
-      || v.activeAccountBindingId !== undefined && (!id(v.activeAccountBindingId) || !v.accounts.some(a => a.accountBindingId === v.activeAccountBindingId))) fail("identity");
+    if (!validateSiwcProtectedSnapshot(v, this.host)) fail("identity");
     for (const a of v.accounts) this.observed.add(a.accountBindingId);
+    this.ready = new Set(v.accounts.filter(a => a.phase === "ready" && ["resource.invoke", "chatgpt.tokens.use.direct"].every(s => a.scopes.includes(s))).map(a => a.accountBindingId));
     return structuredClone(v);
   }
   private async commit(snapshot: SiwcProtectedSnapshot, record: SiwcStoredAccount, activate = false): Promise<SiwcProtectedSnapshot> {
@@ -171,6 +180,8 @@ export class SiwcAccountLifecycle {
       if (error instanceof SiwcAccountError && error.code === "conflict") throw error;
       this.unknownStore = true; fail("unknown");
     }
+    for (const a of next.accounts) this.observed.add(a.accountBindingId);
+    this.ready = new Set(next.accounts.filter(a => a.phase === "ready" && ["resource.invoke", "chatgpt.tokens.use.direct"].every(s => a.scopes.includes(s))).map(a => a.accountBindingId));
     return next;
   }
   private async serial<T>(binding: string, work: () => Promise<T>): Promise<T> {
@@ -184,15 +195,15 @@ export class SiwcAccountLifecycle {
     try { return await current; } catch (error) { if (error instanceof SiwcAccountError) throw error; return fail("unknown"); }
     finally { this.waiting--; if (this.queues.get(binding) === current) this.queues.delete(binding); }
   }
-  private fence(binding: string): void {
+  private fence(binding: string, reason: SiwcAccountStopReason): void {
     if (this.epochs.size >= 64 && !this.epochs.has(binding)) fail("invalid");
     this.fenced.add(binding);
     this.epochs.set(binding, (this.epochs.get(binding) ?? 0) + 1);
-    this.stopOnly(binding);
+    this.stopOnly(binding, reason);
   }
-  private stopOnly(binding: string): void {
+  private stopOnly(binding: string, reason: SiwcAccountStopReason): void {
     // Revocation must still reach the host when protected storage is unavailable/uncertain.
-    try { if (typeof this.services?.stopAccount !== "function") fail("unsupported"); this.services.stopAccount(binding); }
+    try { if (typeof this.services?.stopAccount !== "function") fail("unsupported"); this.services.stopAccount(binding, reason); }
     catch { fail("unknown"); }
   }
   private async bounded<T>(work: (signal: AbortSignal) => Promise<T>, external?: AbortSignal): Promise<T> {
@@ -232,7 +243,12 @@ export class SiwcAccountLifecycle {
         callbackUri: a.callback, expiresAt: a.expiresAt }); // Sensitive host-only browser instruction; NEVER status/renderer/log data.
     });
   }
-  cancelSignIn(attemptId: string): void { if (typeof attemptId !== "string") fail("invalid"); this.attempts.delete(attemptId); }
+  cancelSignIn(attemptId: string): void {
+    if (typeof attemptId !== "string" || !/^[a-f0-9]{64}$/.test(attemptId)) fail("invalid");
+    this.attempts.delete(attemptId);
+    const live = this.inflightAttempts.get(attemptId);
+    if (live) { try { this.fence(live.binding, "invalid"); } finally { live.controller.abort(); } }
+  }
   async completeSignIn(attemptId: string, callbackUrl: string): Promise<SiwcAccountStatus> {
     this.requireServices();
     const a = this.attempts.get(attemptId);
@@ -247,22 +263,24 @@ export class SiwcAccountLifecycle {
     const suppliedClient = u.searchParams.get("client_id"), issuedClient = a.expected?.clientId ?? suppliedClient;
     if (!client(issuedClient) || suppliedClient !== null && suppliedClient !== issuedClient) fail("identity");
     const code = u.searchParams.get("code"); if (!code || code.length > 4096 || /[\x00-\x20\x7f]/.test(code)) fail("invalid");
-    await this.serial(a.binding, async () => {
+    const controller = new AbortController(); this.inflightAttempts.set(attemptId, { binding: a.binding, controller });
+    try { await this.serial(a.binding, async () => {
+      if (controller.signal.aborted) fail("unknown");
       let snapshot = await this.read(); const old = snapshot.accounts.find(r => r.accountBindingId === a.binding);
       if (a.expected ? !old?.registration || old.registration.clientId !== a.expected.clientId || old.registration.subject !== a.expected.subject : !!old) fail("identity");
       if (snapshot.accounts.some(r => r.accountBindingId !== a.binding && (r.registration?.clientId === issuedClient || r.pending?.clientId === issuedClient))) fail("identity");
-      this.fence(a.binding);
+      this.fence(a.binding, "replace");
       const exchangeEpoch = this.epochs.get(a.binding);
       let record: SiwcStoredAccount = { accountBindingId: a.binding, registration: old?.registration,
         phase: "exchanging", scopes: [], pending: { kind: "sign-in", operationId: a.id, clientId: issuedClient, nonce: a.nonce } };
       snapshot = await this.commit(snapshot, record);
       const response = await this.bounded(signal => this.requireServices().transport.request({ url: SIWC_TOKEN_URL, method: "POST", signal,
-        form: { grant_type: "authorization_code", client_id: issuedClient, code, code_verifier: a.verifier, redirect_uri: a.callback, resource: SIWC_RESOURCE } }));
+        form: { grant_type: "authorization_code", client_id: issuedClient, code, code_verifier: a.verifier, redirect_uri: a.callback, resource: SIWC_RESOURCE } }), controller.signal);
       const parsed = this.parseTokens(response, undefined);
       record = { ...record, phase: "pending-verification", pending: { ...record.pending!, credentials: parsed.credentials, scopes: parsed.scopes } };
       await this.commit(snapshot, record); // Persist issued tokens BEFORE JWKS verification; never exchange this code twice.
-      await this.verifyPendingLocked(a.binding, exchangeEpoch);
-    });
+      await this.verifyPendingLocked(a.binding, exchangeEpoch, controller.signal);
+    }); } finally { this.inflightAttempts.delete(attemptId); controller.abort(); }
     return this.status();
   }
   private parseTokens(response: { status: number; body: unknown }, previous?: SiwcStoredAccount): { credentials: SiwcCredentials; scopes: string[] } {
@@ -284,11 +302,11 @@ export class SiwcAccountLifecycle {
     const epoch = this.epochs.get(accountBindingId);
     await this.serial(accountBindingId, () => this.verifyPendingLocked(accountBindingId, epoch)); return this.status();
   }
-  private async verifyPendingLocked(binding: string, epoch = this.epochs.get(binding)): Promise<void> {
+  private async verifyPendingLocked(binding: string, epoch = this.epochs.get(binding), signal?: AbortSignal): Promise<void> {
     const snapshot = await this.read(), record = snapshot.accounts.find(r => r.accountBindingId === binding), p = record?.pending;
     if (!record || record.phase !== "pending-verification" || !p?.credentials || !p.scopes) fail("unknown");
     const result = await this.bounded(signal => this.requireServices().verifier.verify({ idToken: p.credentials!.idToken, issuer: SIWC_ISSUER,
-      jwksUrl: SIWC_JWKS_URL, audience: p.clientId, ...(p.nonce === undefined ? {} : { nonce: p.nonce }), signal }));
+      jwksUrl: SIWC_JWKS_URL, audience: p.clientId, ...(p.nonce === undefined ? {} : { nonce: p.nonce }), signal }), signal);
     if (result.status === "unavailable") fail("unknown");
     const c = result.status === "verified" ? result.claims : undefined;
     const audiences = c && (typeof c.aud === "string" ? [c.aud] : c.aud);
@@ -304,9 +322,10 @@ export class SiwcAccountLifecycle {
     if (p.credentials.expiresAt <= this.now() + 1000) fail("unknown");
     if (snapshot.accounts.some(r => r.accountBindingId !== binding && r.registration?.clientId === p.clientId)) fail("identity");
     if (epoch !== this.epochs.get(binding) || this.closed) fail("signed-out");
-    if (p.kind === "sign-in" && snapshot.activeAccountBindingId && snapshot.activeAccountBindingId !== binding) this.stopOnly(snapshot.activeAccountBindingId);
+    if (p.kind === "sign-in" && snapshot.activeAccountBindingId && snapshot.activeAccountBindingId !== binding) this.stopOnly(snapshot.activeAccountBindingId, "select");
     await this.commit(snapshot, { accountBindingId: binding, registration: { clientId: p.clientId, subject: c.sub }, phase: "ready",
       scopes: p.scopes, credentials: p.credentials }, p.kind === "sign-in");
+    if (epoch !== this.epochs.get(binding) || signal?.aborted || this.closed) fail("unknown");
     this.fenced.delete(binding);
   }
   async getAccessToken(accountBindingId: string, signal?: AbortSignal): Promise<SiwcAccessToken> {
@@ -314,10 +333,11 @@ export class SiwcAccountLifecycle {
       let snapshot = await this.read(), record = snapshot.accounts.find(a => a.accountBindingId === accountBindingId);
       if (record && !["ready", "signed-out"].includes(record.phase)) fail("unknown");
       if (signal?.aborted || this.fenced.has(accountBindingId) || !record || record.phase !== "ready" || !record.registration || !record.credentials) fail("signed-out");
-      if (!["resource.invoke", "chatgpt.tokens.use.direct"].every(s => record!.scopes.includes(s))) fail("permission");
+      if (!["resource.invoke", "chatgpt.tokens.use.direct"].every(s => record!.scopes.includes(s))) { this.fence(accountBindingId, "invalid"); fail("permission"); }
       if (record.credentials.expiresAt <= this.now() + 60_000) {
+        try {
         if (!record.credentials.refreshToken || record.credentials.earliestRefreshAt !== undefined && this.now() < record.credentials.earliestRefreshAt) fail("permission");
-        this.fence(accountBindingId);
+        this.fence(accountBindingId, "refresh");
         const refreshEpoch = this.epochs.get(accountBindingId);
         const previous = record;
         record = { ...record, phase: "refreshing", pending: { kind: "refresh", operationId: randomBytes(32).toString("hex"), clientId: record.registration.clientId } };
@@ -338,6 +358,8 @@ export class SiwcAccountLifecycle {
           if (refreshEpoch === this.epochs.get(accountBindingId)) this.fenced.delete(accountBindingId);
         }
         snapshot = await this.read(); record = snapshot.accounts.find(a => a.accountBindingId === accountBindingId);
+        if (!record || previous.scopes.length !== record.scopes.length || previous.scopes.some(s => !record!.scopes.includes(s))) fail("permission");
+        } catch (error) { this.fence(accountBindingId, "invalid"); throw error; }
       }
       if (signal?.aborted || this.closed || this.fenced.has(accountBindingId) || !record?.registration || record.phase !== "ready" || !record.credentials
         || record.credentials.expiresAt <= this.now() + 1000 || !["resource.invoke", "chatgpt.tokens.use.direct"].every(s => record!.scopes.includes(s))) fail("permission");
@@ -349,14 +371,14 @@ export class SiwcAccountLifecycle {
     await this.serial(accountBindingId, async () => {
       const snapshot = await this.read(), record = snapshot.accounts.find(a => a.accountBindingId === accountBindingId);
       if (!record || record.phase !== "ready" || this.fenced.has(accountBindingId)) fail("signed-out");
-      if (snapshot.activeAccountBindingId && snapshot.activeAccountBindingId !== accountBindingId) this.stopOnly(snapshot.activeAccountBindingId);
+      if (snapshot.activeAccountBindingId && snapshot.activeAccountBindingId !== accountBindingId) this.stopOnly(snapshot.activeAccountBindingId, "select");
       await this.commit(snapshot, record, true);
     }); return this.status();
   }
   async signOut(accountBindingId: string): Promise<SiwcAccountStatus> {
     if (!id(accountBindingId)) fail("invalid");
     if (typeof this.services?.stopAccount !== "function") fail("unsupported");
-    this.fence(accountBindingId); // Immediate local stop even if another operation owns the lock.
+    this.fence(accountBindingId, "sign-out"); // Immediate local stop even if another operation owns the lock.
     for (const [key, a] of this.attempts) if (a.binding === accountBindingId) this.attempts.delete(key);
     await this.serial(accountBindingId, async () => {
       let snapshot = await this.read(); const record = snapshot.accounts.find(a => a.accountBindingId === accountBindingId);
@@ -403,8 +425,13 @@ export class SiwcAccountLifecycle {
     if (this.closed) return;
     this.attempts.clear();
     let failed = false;
-    try { for (const binding of new Set([...this.observed, ...this.queues.keys()])) { try { this.fence(binding); } catch { failed = true; } } }
+    try { for (const binding of new Set([...this.observed, ...this.queues.keys()])) { try { this.fence(binding, "close"); } catch { failed = true; } } }
     finally { this.closed = true; for (const controller of this.controllers) controller.abort(); }
     if (failed) fail("unknown");
+  }
+  /** Host broker admission only; cached state, no protected store read or initialization. */
+  canExecute(accountBindingId: string): boolean {
+    if (!id(accountBindingId) || this.closed || this.unknownStore || this.fenced.has(accountBindingId) || !this.ready.has(accountBindingId)) return false;
+    try { return this.services?.store.available() === true; } catch { return false; }
   }
 }
