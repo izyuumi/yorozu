@@ -134,6 +134,9 @@ export interface SiwcAccountStatus {
 export class SiwcAccountLifecycle {
   private attempts = new Map<string, Attempt>();
   private fenced = new Set<string>();
+  /** Only a locally started routine rotation preserves already-admitted streams.
+   * Persisted refreshing/pending records never reconstruct this authority. */
+  private refreshContinuations = new Set<string>();
   private queues = new Map<string, Promise<unknown>>();
   private epochs = new Map<string, number>();
   private observed = new Set<string>();
@@ -197,11 +200,14 @@ export class SiwcAccountLifecycle {
   }
   private fence(binding: string, reason: SiwcAccountStopReason): void {
     if (this.epochs.size >= 64 && !this.epochs.has(binding)) fail("invalid");
+    if (reason === "refresh" && !this.fenced.has(binding) && this.ready.has(binding)) this.refreshContinuations.add(binding);
+    else this.refreshContinuations.delete(binding);
     this.fenced.add(binding);
     this.epochs.set(binding, (this.epochs.get(binding) ?? 0) + 1);
     this.stopOnly(binding, reason);
   }
   private stopOnly(binding: string, reason: SiwcAccountStopReason): void {
+    if (reason !== "refresh") this.refreshContinuations.delete(binding);
     // Revocation must still reach the host when protected storage is unavailable/uncertain.
     try { if (typeof this.services?.stopAccount !== "function") fail("unsupported"); this.services.stopAccount(binding, reason); }
     catch { fail("unknown"); }
@@ -326,7 +332,10 @@ export class SiwcAccountLifecycle {
     await this.commit(snapshot, { accountBindingId: binding, registration: { clientId: p.clientId, subject: c.sub }, phase: "ready",
       scopes: p.scopes, credentials: p.credentials }, p.kind === "sign-in");
     if (epoch !== this.epochs.get(binding) || signal?.aborted || this.closed) fail("unknown");
-    this.fenced.delete(binding);
+    // Automatic rotation keeps new admission held until its scope comparison and
+    // final protected read finish in getAccessToken(). Manual recovery has no
+    // live continuation marker and can restore fresh admission here.
+    if (!this.refreshContinuations.has(binding)) this.fenced.delete(binding);
   }
   async getAccessToken(accountBindingId: string, signal?: AbortSignal): Promise<SiwcAccessToken> {
     return this.serial(accountBindingId, async () => {
@@ -355,10 +364,11 @@ export class SiwcAccountLifecycle {
           await this.verifyPendingLocked(accountBindingId, refreshEpoch);
         } else {
           await this.commit(snapshot, { accountBindingId, registration: previous.registration, phase: "ready", scopes: parsed.scopes, credentials: parsed.credentials });
-          if (refreshEpoch === this.epochs.get(accountBindingId)) this.fenced.delete(accountBindingId);
         }
         snapshot = await this.read(); record = snapshot.accounts.find(a => a.accountBindingId === accountBindingId);
         if (!record || previous.scopes.length !== record.scopes.length || previous.scopes.some(s => !record!.scopes.includes(s))) fail("permission");
+        if (refreshEpoch !== this.epochs.get(accountBindingId) || this.closed || signal?.aborted) fail("permission");
+        this.refreshContinuations.delete(accountBindingId); this.fenced.delete(accountBindingId);
         } catch (error) { this.fence(accountBindingId, "invalid"); throw error; }
       }
       if (signal?.aborted || this.closed || this.fenced.has(accountBindingId) || !record?.registration || record.phase !== "ready" || !record.credentials
@@ -426,12 +436,21 @@ export class SiwcAccountLifecycle {
     this.attempts.clear();
     let failed = false;
     try { for (const binding of new Set([...this.observed, ...this.queues.keys()])) { try { this.fence(binding, "close"); } catch { failed = true; } } }
-    finally { this.closed = true; for (const controller of this.controllers) controller.abort(); }
+    finally { this.closed = true; this.refreshContinuations.clear(); for (const controller of this.controllers) controller.abort(); }
     if (failed) fail("unknown");
   }
   /** Host broker admission only; cached state, no protected store read or initialization. */
   canExecute(accountBindingId: string): boolean {
     if (!id(accountBindingId) || this.closed || this.unknownStore || this.fenced.has(accountBindingId) || !this.ready.has(accountBindingId)) return false;
+    try { return this.services?.store.available() === true; } catch { return false; }
+  }
+  /** Currency for an already-admitted stream only. This never authorizes a new
+   * provider dispatch or reads storage; getAccessToken still requires the exact
+   * account lock and fresh validated credentials before every new dispatch. */
+  isAccountCurrent(accountBindingId: string): boolean {
+    if (!id(accountBindingId) || this.closed || this.unknownStore) return false;
+    const rotating = this.refreshContinuations.has(accountBindingId);
+    if (this.fenced.has(accountBindingId) && !rotating || !this.ready.has(accountBindingId) && !rotating) return false;
     try { return this.services?.store.available() === true; } catch { return false; }
   }
 }

@@ -293,6 +293,55 @@ describe("host-only SIWC lifecycle", () => {
     expect((await l.getAccessToken("a", broker.signal)).accessToken).toBe(NEXT_ACCESS); expect(broker.signal.aborted).toBe(false);
     expect(l.canExecute("a")).toBe(true);
   });
+  it.each([true, false])("preserves admitted currency during deferred successful rotation (new ID token=%s)", async withId => {
+    const f = fixture([ready("a", "oaiapp_a", "subject-a", NOW)], "a"), l = f.lifecycle();
+    const started = deferred<void>(), response = deferred<Awaited<ReturnType<SiwcAccountTransport["request"]>>>();
+    f.request.mockImplementation(async () => { started.resolve(); return response.promise; });
+    const rotation = l.getAccessToken("a"); await started.promise;
+    expect(f.get().accounts[0].phase).toBe("refreshing");
+    expect(l.canExecute("a")).toBe(false); expect(l.isAccountCurrent("a")).toBe(true);
+    const read = vi.spyOn(f.services.store, "read");
+    for (const binding of ["a", "missing", "../forged"]) l.isAccountCurrent(binding);
+    expect(read).not.toHaveBeenCalled(); expect(l.isAccountCurrent("missing")).toBe(false);
+    // A second request waits behind the exact account lease. It cannot consume
+    // the old refresh token or reach any provider while rotation is unresolved.
+    const next = l.getAccessToken("a"); await Promise.resolve(); expect(f.request).toHaveBeenCalledTimes(1);
+    response.resolve(token(withId ? {} : { id_token: undefined }));
+    expect((await rotation).accessToken).toBe(NEXT_ACCESS); expect((await next).accessToken).toBe(NEXT_ACCESS);
+    expect(l.canExecute("a")).toBe(true); expect(l.isAccountCurrent("a")).toBe(true);
+    expect(f.request).toHaveBeenCalledTimes(1); expect(f.verify).toHaveBeenCalledTimes(withId ? 1 : 0);
+  });
+  it("keeps new admission held and existing currency valid through deferred ID verification", async () => {
+    const f = fixture([ready("a", "oaiapp_a", "subject-a", NOW)], "a"), l = f.lifecycle();
+    const entered = deferred<void>(), verified = deferred<Awaited<ReturnType<SiwcIdTokenVerifier["verify"]>>>();
+    f.verify.mockImplementation(async () => { entered.resolve(); return verified.promise; });
+    const rotating = l.getAccessToken("a"); await entered.promise;
+    expect(f.get().accounts[0].phase).toBe("pending-verification");
+    expect(l.canExecute("a")).toBe(false); expect(l.isAccountCurrent("a")).toBe(true);
+    verified.resolve({ status: "verified", claims: { iss: SIWC_ISSUER, aud: "oaiapp_a", sub: "subject-a", exp: NOW / 1000 + 3600, iat: NOW / 1000 } });
+    await rotating; expect(l.canExecute("a")).toBe(true); expect(l.isAccountCurrent("a")).toBe(true);
+  });
+  it.each(["close", "sign-out"])("removes refresh continuation synchronously on %s", async action => {
+    const f = fixture([ready("a", "oaiapp_a", "subject-a", NOW)], "a"), l = f.lifecycle();
+    const started = deferred<void>(), response = deferred<Awaited<ReturnType<SiwcAccountTransport["request"]>>>();
+    f.request.mockImplementation(async () => { started.resolve(); return response.promise; });
+    const rotation = l.getAccessToken("a").then(() => "unexpected-success", error => error.code); await started.promise;
+    expect(l.isAccountCurrent("a")).toBe(true);
+    const outgoing = action === "sign-out" ? l.signOut("a") : undefined;
+    if (action === "close") l.close();
+    expect(l.isAccountCurrent("a")).toBe(false); expect(l.canExecute("a")).toBe(false);
+    response.resolve(token()); expect(await rotation).not.toBe("unexpected-success"); await outgoing;
+    expect(l.isAccountCurrent("a")).toBe(false); expect(l.canExecute("a")).toBe(false);
+  });
+  it("does not reconstruct admitted-stream authority from a persisted unknown rotation", async () => {
+    const f = fixture([ready("a", "oaiapp_a", "subject-a", NOW)], "a"), l = f.lifecycle();
+    f.request.mockRejectedValue(new Error("synthetic lost rotation"));
+    await expect(l.getAccessToken("a")).rejects.toMatchObject({ code: "unknown" });
+    expect(l.isAccountCurrent("a")).toBe(false); expect(l.canExecute("a")).toBe(false);
+    const restarted = f.lifecycle(); await restarted.status();
+    expect(restarted.isAccountCurrent("a")).toBe(false); expect(restarted.canExecute("a")).toBe(false);
+    expect(f.request).toHaveBeenCalledTimes(1);
+  });
   it("unknown or narrowed refresh retires the broker and keeps admission held", async () => {
     for (const failure of ["unknown", "narrowed"]) {
       const f = fixture([ready("a", "oaiapp_a", "subject-a", NOW)], "a"), l = f.lifecycle(), broker = new AbortController();
@@ -301,6 +350,7 @@ describe("host-only SIWC lifecycle", () => {
       else f.request.mockResolvedValue(token({ scope: "openid offline_access resource.invoke chatgpt.tokens.use.direct" }));
       await expect(l.getAccessToken("a", broker.signal)).rejects.toBeInstanceOf(Error);
       expect(broker.signal.aborted).toBe(true); expect(l.canExecute("a")).toBe(false);
+      expect(l.isAccountCurrent("a")).toBe(false);
       expect(f.services.stopAccount).toHaveBeenCalledWith("a", "invalid");
     }
   });

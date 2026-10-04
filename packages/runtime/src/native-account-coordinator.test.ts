@@ -19,7 +19,7 @@ function fixture() {
     cancelSignIn: vi.fn(), completeSignIn: vi.fn(async () => accountStatus()), verifyPending: vi.fn(async () => accountStatus()),
     selectAccount: vi.fn(async () => accountStatus()), signOut: vi.fn(async () => ({ ...accountStatus(), accounts: [{ accountBindingId: "account-one", phase: "signed-out" as const, planUse: false, active: false }] })),
     status: vi.fn(async () => ({ ...accountStatus(), credentials: { token: TOKEN } } as SiwcAccountStatus)), close: vi.fn(),
-    canExecute: vi.fn(() => true), getAccessToken: vi.fn(async () => { throw new Error("Synthetic fixture has no tokens"); }),
+    canExecute: vi.fn(() => true), isAccountCurrent: vi.fn(() => true), getAccessToken: vi.fn(async () => { throw new Error("Synthetic fixture has no tokens"); }),
   };
   const nativeServices = { stopAccount } as unknown as SiwcAccountServices;
   const services: NativeSiwcCoordinatorServices = {

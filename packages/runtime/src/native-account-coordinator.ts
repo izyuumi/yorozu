@@ -27,7 +27,7 @@ export interface NativeSiwcAccountResult {
   account?: NativeSiwcSafeStatus;
   operations?: Array<{ operationId: string; status: "pending" | "completed" | "rejected" | "unknown"; attemptId?: string }>;
 }
-export type NativeSiwcLifecycle = Pick<SiwcAccountLifecycle, "beginSignIn" | "cancelSignIn" | "completeSignIn" | "verifyPending" | "selectAccount" | "signOut" | "status" | "close" | "getAccessToken" | "canExecute">;
+export type NativeSiwcLifecycle = Pick<SiwcAccountLifecycle, "beginSignIn" | "cancelSignIn" | "completeSignIn" | "verifyPending" | "selectAccount" | "signOut" | "status" | "close" | "getAccessToken" | "canExecute" | "isAccountCurrent">;
 export interface NativeSiwcCoordinatorServices {
   /** Validate actual transport/native-app authority, including command-specific policy.
    * A model/chat/tool payload, claimed sender string or paired status privilege is insufficient. */
