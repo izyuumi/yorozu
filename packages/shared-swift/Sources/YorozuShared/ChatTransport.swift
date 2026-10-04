@@ -104,7 +104,7 @@ public enum TransportUpdate: Sendable {
     /// is the thing on the other end of it.
     case ownerOnline(Bool)
     case event(YorozuEvent)
-    /// Supplied only after validating the authenticated, encrypted peer exchange.
+    /// Supplied only after validating host information on the encrypted channel or owner-only local socket.
     case peerInfo(PeerInfoData)
     case compatibility(PeerCompatibility)
     case failed(String)
@@ -157,6 +157,8 @@ public actor LocalSocketTransport: ChatTransport {
         connection.cancel()
         connection = NWConnection(to: .unix(path: path), using: .tcp)
         buffer = Data()
+        // A replacement sidecar must declare its own inventory; never carry old capabilities forward.
+        updates?.yield(.compatibility(.legacy))
         updates?.yield(.state(.connecting))
         connection.stateUpdateHandler = { [weak self] state in
             Task { await self?.changed(state, generation: current) }
@@ -265,7 +267,17 @@ public actor LocalSocketTransport: ChatTransport {
             buffer = Data(buffer[buffer.index(after: newline)...])
             guard !line.isEmpty else { continue }
             do {
-                updates?.yield(.event(try JSONDecoder().decode(YorozuEvent.self, from: line)))
+                let event = try JSONDecoder().decode(YorozuEvent.self, from: line)
+                if case .threadList(let data) = event.payload {
+                    if let error = data.peerInfoError {
+                        updates?.yield(.compatibility(.updateRequired(error)))
+                    } else if let info = data.peerInfo {
+                        let compatibility = PeerInfoData.local.compatibility(with: info)
+                        updates?.yield(.compatibility(compatibility))
+                        if case .compatible = compatibility { updates?.yield(.peerInfo(info)) }
+                    }
+                }
+                updates?.yield(.event(event))
             } catch {
                 // One bad line is one bad line: the connection is still good.
                 updates?.yield(.failed(String(localized: "Could not read event: \(error.localizedDescription)")))
