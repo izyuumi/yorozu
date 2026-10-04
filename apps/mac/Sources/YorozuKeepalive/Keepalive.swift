@@ -15,7 +15,15 @@ import ServiceManagement
 /// running*, so the record has to outlive the process and be readable with `tail` over ssh
 /// without asking the log store for a process that no longer exists.
 public enum Log {
-    public static let fileURL = URL.libraryDirectory.appending(path: "Logs/Yorozu/app.log")
+    public static let fileURL: URL = {
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        if environment["YOROZU_EPHEMERAL_RUN"] == "1", let state = environment["YOROZU_STATE_DIR"], !state.isEmpty {
+            return URL(fileURLWithPath: state).appending(path: "app.log")
+        }
+        #endif
+        return URL.libraryDirectory.appending(path: "Logs/Yorozu/app.log")
+    }()
 
     /// The same shape the watchdog script writes, so one `tail` reads as one story.
     private static let stamp: DateFormatter = {

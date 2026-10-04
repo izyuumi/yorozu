@@ -336,6 +336,18 @@ private actor IdleTransport: ChatTransport {
 /// but no sequence counters, and can lose the old value when Keychain rejects the new write.
 struct MacClientKeychain: Sendable {
     let service: String
+    /// Disposable UI profiles must create no persistent system Keychain items.
+    private func testFile(_ account: String) -> URL? {
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        if environment["YOROZU_EPHEMERAL_RUN"] == "1", let state = environment["YOROZU_STATE_DIR"], !state.isEmpty,
+           let isolated = environment["YOROZU_TEST_KEYCHAIN_SERVICE"], isolated == service {
+            let name = SHA256.hash(data: Data("\(service)\u{0}\(account)".utf8)).map { String(format: "%02x", $0) }.joined()
+            return URL(fileURLWithPath: state).appending(path: "test-keychain/\(name)")
+        }
+        #endif
+        return nil
+    }
     static var defaultService: String {
         #if DEBUG
         // Disposable UI runs must not read or change the installed app's Keychain items.
@@ -351,6 +363,9 @@ struct MacClientKeychain: Sendable {
          kSecAttrAccount as String: account]
     }
     func load(_ account: String) throws -> Data? {
+        if let file = testFile(account) {
+            return FileManager.default.fileExists(atPath: file.path) ? try Data(contentsOf: file) : nil
+        }
         var query = query(account)
         query[kSecReturnData as String] = true
         var item: CFTypeRef?
@@ -362,6 +377,13 @@ struct MacClientKeychain: Sendable {
         return data
     }
     func save(_ data: Data, account: String) throws {
+        if let file = testFile(account) {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            try data.write(to: file, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            return
+        }
         let status = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecSuccess { return }
         guard status == errSecItemNotFound else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
@@ -372,6 +394,10 @@ struct MacClientKeychain: Sendable {
         guard added == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(added)) }
     }
     func clear(_ account: String) throws {
+        if let file = testFile(account) {
+            if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+            return
+        }
         let status = SecItemDelete(query(account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
