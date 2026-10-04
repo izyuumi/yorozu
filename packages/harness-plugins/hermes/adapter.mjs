@@ -129,7 +129,7 @@ export async function prepareRuntime(params) {
   const sourcePath = await realpath(params.sourcePath);
   const metadata = await readFile(join(sourcePath, 'pyproject.toml'), 'utf8');
   if (!/^version\s*=\s*"0\.21\.5"\s*$/m.test(metadata)) throw invalid('Hermes source version does not match the pinned release');
-  const gitOptions = { maxBuffer: 1024, env: { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0' } };
+  const gitOptions = { maxBuffer: 1024, env: { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
   const revision = await exec('git', ['-C', sourcePath, 'rev-parse', 'HEAD'], gitOptions);
   if (revision.stdout.trim() !== UPSTREAM.commit) throw invalid('Hermes source commit does not match the pinned release');
   await exec('git', ['-C', sourcePath, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
@@ -160,11 +160,13 @@ export async function prepareRuntime(params) {
     if (relative(profileRoot, file).startsWith('..') || isAbsolute(relative(profileRoot, file))) throw invalid('provider config must be inside the explicit profile root');
     const stat = await lstat(file);
     if (!stat.isFile() || stat.size > 4096) throw invalid('provider config must be a bounded JSON file');
-    fixture = JSON.parse(await readFile(file, 'utf8'));
-    if (Object.keys(fixture).some(key => !['baseUrl', 'model', 'apiMode'].includes(key))) throw invalid('provider config contains unsupported fields');
+    try { fixture = JSON.parse(await readFile(file, 'utf8')); }
+    catch { throw invalid('provider config is invalid JSON'); }
+    if (Object.keys(fixture).some(key => !['baseUrl', 'model', 'apiMode', 'bearer'].includes(key))) throw invalid('provider config contains unsupported fields');
     const endpoint = new URL(required(fixture.baseUrl, 'baseUrl'));
     if (endpoint.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(endpoint.hostname) || endpoint.username || endpoint.password) throw invalid('only an explicit loopback proof provider is supported');
     required(fixture.model, 'model');
+    if (fixture.bearer !== undefined && (typeof fixture.bearer !== 'string' || !/^[A-Za-z0-9._~-]{32,256}$/.test(fixture.bearer))) throw invalid('host broker bearer is invalid');
     if (fixture.apiMode !== 'codex_responses') throw invalid('proof provider must use the native Responses transport');
   }
   const provider = fixture ? 'custom:yorozu-local-proof' : null;
@@ -179,7 +181,7 @@ export async function prepareRuntime(params) {
     display: { busy_input_mode: 'queue' },
     approvals: { mode: 'manual' },
     delegation: { orchestrator_enabled: true, max_spawn_depth: 3, max_concurrent_children: 2 },
-    custom_providers: fixture ? [{ name: 'yorozu-local-proof', base_url: fixture.baseUrl, api_key: 'yorozu-loopback-proof', api_mode: 'codex_responses' }] : [],
+    custom_providers: fixture ? [{ name: 'yorozu-local-proof', base_url: fixture.baseUrl, api_key: fixture.bearer ?? 'yorozu-loopback-proof', api_mode: 'codex_responses' }] : [],
   };
   if (agent) {
     config.agent.disabled_toolsets = [...NATIVE_TOOLS.filter(name => !agent.scope.allowedTools.includes(name)), 'cronjob', 'computer_use'];

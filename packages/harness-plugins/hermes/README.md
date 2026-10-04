@@ -77,9 +77,14 @@ For the local proof, place a JSON file inside `profileRoot`:
 {"baseUrl":"http://127.0.0.1:PORT/v1","model":"proof-model","apiMode":"codex_responses"}
 ```
 
-Pass its absolute path as `providerConfigPath`. No token/key/environment fields
-are accepted. A fixed dummy key is used for the synthetic provider. The inference
-transport belongs to Hermes, including function calls and continuation.
+Pass its absolute path as `providerConfigPath`. Trusted host bootstrap may add
+`bearer`, a fresh per-execution ASCII bearer of 32–256 characters. It stays in the
+private bootstrap and native config, and is never returned in the plugin catalog.
+The curated factory requires an exact host-selected numeric-loopback broker and
+unique bearer; it does not resolve installed accounts or ambient authentication.
+Omitting `bearer` retains the fixed dummy key for existing synthetic fixtures.
+No environment or provider-account credential fields are accepted. Hermes owns
+the inference transport, including function calls and continuation.
 
 Fresh native Hermes account onboarding (for example its supported `openai-codex`
 provider) or an official app-token Responses bridge that preserves the Hermes loop

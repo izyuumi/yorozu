@@ -573,3 +573,27 @@ print(json.dumps({"captured":captured,"completed":completed,"unknown":unknown,"i
   const empty = JSON.parse((await exec(params.python, [bootstrap, '--verify'], { cwd: chatRuntime.sourcePath, env: chatRuntime.env, maxBuffer: 64 * 1024 })).stdout);
   assert.deepEqual(empty.toolsets, ['yorozu_empty']); assert.deepEqual(empty.tools, []);
 });
+
+
+test('fresh host broker bearer stays in private native config and never in returned bootstrap metadata', {
+  skip: !process.env.YOROZU_HERMES_TEST_SOURCE,
+}, async t => {
+  const { params, directory } = await scopeFixture(t, []);
+  await mkdir(params.profileRoot, { recursive: true, mode: 0o700 });
+  const providerConfigPath = join(params.profileRoot, 'proof-provider.json'), bearer = 'fresh-host-broker-'.padEnd(64, 'b');
+  await writeFile(providerConfigPath, JSON.stringify({ baseUrl: 'http://127.0.0.1:54321/v1', model: 'proof-model', apiMode: 'codex_responses', bearer }), { mode: 0o600 });
+  const runtime = await prepareRuntime({ ...params, providerConfigPath });
+  const config = JSON.parse(await readFile(join(params.profileRoot, 'hermes-runtime/config.yaml'), 'utf8'));
+  assert.equal(config.custom_providers[0].api_key, bearer);
+  assert.equal(JSON.stringify(runtime).includes(bearer), false);
+  for (const bad of ['short', bearer + '\r\nheader:bad']) {
+    await writeFile(providerConfigPath, JSON.stringify({ baseUrl: 'http://127.0.0.1:54321/v1', model: 'proof-model', apiMode: 'codex_responses', bearer: bad }));
+    await assert.rejects(prepareRuntime({ ...params, providerConfigPath }), error => error.message === 'host broker bearer is invalid' && !error.message.includes(bad));
+  }
+  await writeFile(providerConfigPath, '{"bearer":"' + bearer + '" BROKEN}');
+  await assert.rejects(prepareRuntime({ ...params, providerConfigPath }), error => error.message === 'provider config is invalid JSON' && !error.message.includes(bearer));
+  await writeFile(providerConfigPath, JSON.stringify({ baseUrl: 'http://127.0.0.1:54321/v1', model: 'proof-model', apiMode: 'codex_responses' }));
+  await prepareRuntime({ ...params, providerConfigPath });
+  const legacy = JSON.parse(await readFile(join(params.profileRoot, 'hermes-runtime/config.yaml'), 'utf8'));
+  assert.equal(legacy.custom_providers[0].api_key, 'yorozu-loopback-proof');
+});
