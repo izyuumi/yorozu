@@ -64,7 +64,7 @@ export class PersonAgentHost {
   /** A create binds only a published identity, never a caller cwd/model/account or grants. */
   async create(event: YorozuEvent): Promise<void> {
     if (event.kind !== "thread_create" || typeof event.id !== "string" || !event.id || event.id.length > 128 || /[\0\r\n]/.test(event.id)
-      || !/^[\w.-]{1,128}$/.test(event.threadId)
+      || typeof event.threadId !== "string" || !/^[\w.-]{1,128}$/.test(event.threadId)
       || Object.keys(event.data).some(k => !["personAgentId", "title"].includes(k))
       || typeof event.data.personAgentId !== "string" || event.data.title !== undefined &&
         (typeof event.data.title !== "string" || event.data.title.length > 200)) throw new Error("Invalid person-agent conversation");
