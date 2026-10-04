@@ -1,6 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { prepareHostListenerTransfer, releaseHostListener, validateHostListeners, type HostListenerLease, type HostListenerTransfer } from "./agent-listener.js";
 import { HARNESS_FRAME_BYTES, HARNESS_PENDING_REQUESTS, validHarnessEvent, type HarnessConfiguration, type HarnessEvent, type HarnessReady } from "./harness-contract.js";
+
+/** Live capabilities remain host memory; shared wire contracts contain no raw descriptor. */
+export type SupervisedHarnessConfiguration = HarnessConfiguration & { inheritedListeners?: readonly HostListenerLease[] };
 
 /** Bounded supervised process; never respawns or replays execution after failure. */
 export class HarnessProcess {
@@ -10,17 +14,45 @@ export class HarnessProcess {
   private closing = false;
   private dead = false;
   private exited?: Promise<void>;
+  private starting?: Promise<HarnessReady>;
+  private listenerTransfer?: HostListenerTransfer;
+  private sessionOpens: Promise<unknown> = Promise.resolve();
   readonly listeners = new Set<(event: HarnessEvent) => void>();
   readonly failures = new Set<(reason: string) => void>();
-  constructor(readonly configuration: HarnessConfiguration) {}
-  async start(): Promise<HarnessReady> {
+  constructor(readonly configuration: SupervisedHarnessConfiguration) {}
+  start(): Promise<HarnessReady> {
+    if (this.dead || this.closing) return Promise.reject(new Error("Harness process already started or unavailable; no implicit restart"));
+    return this.starting ??= this.startOnce().catch(error => {
+      this.fail("Harness startup unavailable; no implicit restart"); throw error;
+    });
+  }
+  get unavailable(): boolean { return this.dead || this.closing; }
+  private async startOnce(): Promise<HarnessReady> {
     if (this.child || this.dead) throw new Error("Harness process already started or unavailable");
     // Neither adapter nor upstream gets ambient provider credentials or Yorozu secrets.
     const env: NodeJS.ProcessEnv = {};
     for (const key of ["PATH", "TMPDIR", "TEMP", "TMP", "LANG", "SystemRoot", "WINDIR"]) {
       if (process.env[key] !== undefined) env[key] = process.env[key];
     }
-    const child = this.child = spawn(this.configuration.command, this.configuration.args, { stdio: "pipe", env });
+    const initialize = { ...this.configuration.initialize };
+    if (initialize.gatewayListener !== undefined) throw new Error("Gateway descriptor metadata must be synthesized by the host");
+    const leases = this.configuration.inheritedListeners ?? [];
+    if (leases.length) {
+      if (this.configuration.pluginId !== "openclaw" || leases.length !== 1 || typeof initialize.agentId !== "string")
+        throw new Error("Only a scoped OpenClaw Gateway may inherit one listener");
+      const lease = leases[0];
+      if (initialize.gatewayPort !== undefined && initialize.gatewayPort !== lease.port) throw new Error("Gateway port differs from the owned listener");
+      const transfer = this.listenerTransfer = prepareHostListenerTransfer(leases, initialize.agentId);
+      const descriptor = transfer.descriptors[0];
+      initialize.gatewayPort = descriptor.port;
+      initialize.gatewayListener = { transport: "inherited-fd-v1", fd: descriptor.fd, host: descriptor.host, port: descriptor.port };
+    }
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = this.child = spawn(this.configuration.command, this.configuration.args, {
+        stdio: ["pipe", "pipe", "pipe", ...(this.listenerTransfer?.descriptors.map(d => d.stdioFd) ?? [])], env,
+      }) as ChildProcessWithoutNullStreams;
+    } catch (error) { await this.listenerTransfer?.release(); throw error; }
     this.exited = new Promise(resolve => child.once("close", () => resolve()));
     child.stderr.resume(); // Diagnostics are not user history or model context.
     child.stdout.on("data", (chunk: Buffer) => {
@@ -49,26 +81,49 @@ export class HarnessProcess {
     child.once("error", () => this.fail("Harness process could not start"));
     child.once("close", () => this.fail("Harness process exited"));
     child.stdin.on("error", () => this.fail("Harness input became unavailable"));
-    const ready = await this.request("initialize", { ...this.configuration.initialize, protocolVersion: 1 });
+    // Attach failure/protocol listeners first, then settle the actual spawn receipt.
+    // Consumed capabilities cannot be reused by another process or restart.
+    if (this.listenerTransfer) await this.listenerTransfer.afterSpawn(child);
+    const ready = await this.request("initialize", { ...initialize, protocolVersion: 1 });
     if (!ready || ready.protocolVersion !== 1 || ready.pluginId !== this.configuration.pluginId
       || ready.upstreamVersion !== this.configuration.upstreamVersion || !ready.capabilities
       || ["backgroundTasks", "targetedSteer", "taskStop", "approvals", "reconnect", "attachments"].some(k => typeof ready.capabilities[k] !== "boolean")) {
       this.fail("Incompatible harness version or capability contract");
       throw new Error("Incompatible harness version or capability contract");
     }
+    const agentId = this.configuration.initialize.agentId, isolation = this.configuration.initialize.isolation as Record<string, unknown> | undefined;
+    if (agentId !== undefined && (ready.agentId !== agentId || !isolation || !ready.isolation
+      || ready.isolation.backend !== isolation.backend || ready.isolation.agentId !== agentId
+      || ready.isolation.policyDigest !== isolation.policyDigest)) {
+      this.fail("Harness did not confirm its scoped agent identity");
+      throw new Error("Harness did not confirm its scoped agent identity");
+    }
     return ready;
   }
   request(method: string, params: Record<string, unknown>): Promise<any> {
+    // Hermes has one native opening gate even when sessions stream separately.
+    // Serialize only opens; never serialize model turns across conversations.
+    if (method === "session.open") {
+      const opened = this.sessionOpens.then(() => this.send(method, params));
+      this.sessionOpens = opened.catch(() => {}); return opened;
+    }
+    return this.send(method, params);
+  }
+  private send(method: string, params: Record<string, unknown>): Promise<any> {
     if (this.dead || !this.child || this.closing && method !== "shutdown") return Promise.reject(new Error("Harness unavailable"));
     if (this.pending.size >= HARNESS_PENDING_REQUESTS) return Promise.reject(new Error("Harness request window is full"));
     const id = randomUUID(); const encoded = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
     if (Buffer.byteLength(encoded) > HARNESS_FRAME_BYTES) return Promise.reject(new Error("Harness request exceeded its limit"));
+    if (this.child.stdin.writableLength > 8 * 1024 * 1024) {
+      this.fail("Harness input queue exceeded its limit"); return Promise.reject(new Error("Harness unavailable"));
+    }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.fail("Harness receipt is unconfirmed"), method === "initialize" ? 120_000 : 35_000);
       this.pending.set(id, { resolve, reject, timer });
       this.child!.stdin.write(encoded);
     });
   }
+  invalidate(reason: string): void { this.fail(reason); }
   private fail(reason: string): void {
     if (this.dead) return;
     this.dead = true;
@@ -86,6 +141,16 @@ export class HarnessProcess {
     }
     this.fail("Harness closed");
     const timer = setTimeout(() => this.child?.kill("SIGKILL"), 5000);
-    try { await this.exited; } finally { clearTimeout(timer); }
+    try { await this.exited; } finally {
+      clearTimeout(timer);
+      if (this.listenerTransfer) await this.listenerTransfer.release();
+      else if (this.configuration.inheritedListeners?.length && typeof this.configuration.initialize.agentId === "string") {
+        // An idle prepared actor can be retired before start. Release only its
+        // authentic, still-held capabilities; never close another owner's socket.
+        let held: readonly HostListenerLease[] = [];
+        try { held = validateHostListeners(this.configuration.inheritedListeners, this.configuration.initialize.agentId); } catch { /* Never adopt/release unowned handles. */ }
+        await Promise.all(held.map(releaseHostListener));
+      }
+    }
   }
 }
