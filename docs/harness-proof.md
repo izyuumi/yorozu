@@ -46,7 +46,7 @@ If that approval is denied, stop the test; do not substitute another transport.
 | Approval refusal | Hermes requests approval for deleting a fixture file. The fixture answers `deny` and independently verifies that the file remains. |
 | Unsupported operation | An unknown method returns JSON-RPC `-32601`. |
 | Disabled capabilities | Actual inference schemas do not advertise scheduler or computer-use tools. |
-| Stop | A cancellable terminal action receives a requested Stop, then an upstream stopped terminal. Its later file write does not occur. |
+| Stop | A terminal action first writes its start marker, receives a requested Stop, then an upstream stopped terminal. Its later file write remains absent beyond the original deadline. |
 | Restart without action replay | A real terminal append occurs once. The fixture kills only its owned adapter process group during a later wait, starts a fresh adapter, resumes snapshot-only and verifies no new inference or duplicate append. |
 
 The synthetic provider examines only its own fixture requests. It emits regular Responses
@@ -54,6 +54,11 @@ function calls using the tool names Hermes actually advertises. Real gateway not
 task identifiers, permission requests and terminal results are recorded in `evidence.json`.
 Provider-side summaries record scenario, step, tier and receipt of relevant markers rather
 than copying complete prompts. All prompts in this fixture are invented and local.
+
+The fixture retains an input for up to five seconds when admission explicitly returns
+`status: "busy", handoff: "not-submitted"`, then retries the identical run/attempt/text.
+This handles native post-terminal cleanup without manufacturing readiness. Every receipt is
+recorded. A queued, rejected, lost or uncertain handoff is never retried.
 
 ## Limits and remaining acceptance
 

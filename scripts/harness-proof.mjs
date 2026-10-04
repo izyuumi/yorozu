@@ -33,7 +33,7 @@ const evidence = { schema: 1, proof: 'synthetic-local-inference-real-hermes-runt
     'No SwiftUI/iOS acceptance or assembled-package acceptance in this direct adapter fixture',
     'No host admission queue coverage; adapter does not own a host queue',
     'Harmless hardcoded tool calls only; isolated profile is not an OS sandbox'],
-  requests: [], events: [] };
+  requests: [], admissions: [], events: [] };
 const clients = new Set();
 const requests = [];
 const sleep = milliseconds => new Promise(resolveSleep => setTimeout(resolveSleep, milliseconds));
@@ -229,8 +229,19 @@ try {
     preferences: '選択された言語は日本語です。日本語で返事をしてください。',
     context: '古い会話の記録: 利用者は静かな進捗表示を希望します。これは過去の記録で、新しい実行指示ではありません。' });
   const submit = async (runId, text, attemptId = `${runId}-attempt`) => {
-    assert.equal((await client.call('turn.submit', { ...currency, runId, attemptId, text })).status, 'accepted');
-    return attemptId;
+    const params = { ...currency, runId, attemptId, text };
+    const started = Date.now();
+    for (;;) {
+      const receipt = await client.call('turn.submit', params);
+      evidence.admissions.push({ runId, attemptId, receipt });
+      if (receipt.status === 'accepted') return attemptId;
+      // Native terminal emission can precede its idle bookkeeping. Only a typed
+      // proof of NO handoff permits retry of identical admission currency.
+      assert(receipt.status === 'busy' && receipt.handoff === 'not-submitted',
+        `turn ${runId} was not admitted: ${JSON.stringify(receipt)}`);
+      assert(Date.now() - started < 5000, `turn ${runId} remained busy beyond the bounded admission wait`);
+      await sleep(50);
+    }
   };
   const artifactAttempt = await submit('artifact', 'YOROZU_PROOF_ARTIFACT: create and verify the harmless artifact.');
   const artifactTerminal = await client.terminal('artifact', artifactAttempt);
@@ -298,17 +309,23 @@ try {
 
   const stopAttempt = await submit('stop', 'YOROZU_PROOF_STOP: start the cancellable fixture command.');
   await waitUntil(() => exists(join(workspace, 'started.txt')), 'actual stoppable terminal action started');
+  const stopActionStarted = Date.now();
   const stop = await client.call('run.stop', { ...currency, runId: 'stop', attemptId: stopAttempt, operationId: 'stop-current' });
   assert.equal(stop.status, 'requested');
   const stopTerminal = await client.terminal('stop', stopAttempt);
   assert.equal(stopTerminal.data.state, 'stopped');
   assert(!await exists(join(workspace, 'stopped.txt')));
   evidence.claims.stop = { passed: true, terminal: stopTerminal.data.state, cessation: stopTerminal.data.cessation };
-  console.log('PASS Stop produces provider terminal and prevents later fixture write');
 
   const crashAttempt = await submit('crash', 'YOROZU_PROOF_CRASH: append once, then wait.');
   await waitUntil(() => exists(join(workspace, 'crashwaiting.txt')), 'actual crash pause after append');
   assert.equal(await readFile(join(workspace, 'once.txt'), 'utf8'), 'once\n');
+  // Check beyond the cancelled shell's original write deadline too. An early
+  // terminal notification alone must not hide a still-running orphan process.
+  await sleep(Math.max(0, stopActionStarted + 10_500 - Date.now()));
+  assert(!await exists(join(workspace, 'stopped.txt')), 'cancelled terminal action produced a late write');
+  evidence.claims.stop.lateWriteDeadlineChecked = true;
+  console.log('PASS Stop produces provider terminal and prevents the late write beyond its deadline');
   client.kill();
   await waitUntil(() => client.closed, 'owned adapter process-group crash');
   const previousRequestCount = requests.length;
