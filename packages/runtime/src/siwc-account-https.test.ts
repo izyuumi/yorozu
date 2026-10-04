@@ -1,8 +1,11 @@
 import { EventEmitter } from "node:events";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { checkServerIdentity, rootCertificates } from "node:tls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSiwcAccountHttps } from "./siwc-account-https.js";
-import { SIWC_DISCOVERY_URL, SIWC_ISSUER, SIWC_JWKS_URL, SIWC_RESOURCE, SIWC_TOKEN_URL } from "./siwc-account-lifecycle.js";
+import { SiwcAccountLifecycle, SIWC_DISCOVERY_URL, SIWC_ISSUER, SIWC_JWKS_URL, SIWC_RESOURCE, SIWC_TOKEN_URL,
+  type SiwcProtectedSnapshot } from "./siwc-account-lifecycle.js";
+import { createSiwcIdTokenVerifier } from "./siwc-id-token-verifier.js";
 
 const network = vi.hoisted(() => ({ agents: [] as any[], calls: [] as any[] }));
 vi.mock("node:https", async () => {
@@ -125,5 +128,41 @@ describe("fixed OAuth/discovery/JWKS HTTPS with inert network", () => {
     expect(network.calls).toHaveLength(9); expect(network.agents.every(agent => agent.destroy.mock.calls.length === 1)).toBe(true);
     const aborted = new AbortController(); aborted.abort();
     await expect(client.request(request({ signal: aborted.signal }))).rejects.toThrow("unknown"); expect(network.calls).toHaveLength(9);
+  });
+
+  it("composes lifecycle, exact OAuth/JWKS transport and real synthetic RSA verification before account adoption", async () => {
+    const client = createSiwcAccountHttps(), stop = vi.fn(), now = Date.now();
+    let snapshot: SiwcProtectedSnapshot = { version: 1, revision: 0, hostId: "synthetic-host", appName: "Yorozu",
+      callbackPath: "/auth/callback", accounts: [] };
+    const lifecycle = new SiwcAccountLifecycle({ hostId: snapshot.hostId, appName: snapshot.appName }, {
+      store: { protection: "os-protected", available: () => true, read: async () => structuredClone(snapshot),
+        withAccountLock: async (_binding, work) => work(), replace: async (expected, next) => {
+          if (expected !== snapshot.revision) return "conflict";
+          snapshot = structuredClone(next); return "committed";
+        } }, transport: client, verifier: createSiwcIdTokenVerifier(client.fetchJwks, () => now), stopAccount: stop }, () => now);
+    const attempt = await lifecycle.beginSignIn({ accountBindingId: "synthetic-account", callbackPort: 54000, returning: false });
+    const parameters = new URL(attempt.authorizationUrl).searchParams;
+    const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const header = Buffer.from(JSON.stringify({ alg: "RS256", kid: "synthetic-key", typ: "JWT" })).toString("base64url");
+    const payload = Buffer.from(JSON.stringify({ iss: SIWC_ISSUER, aud: "oaiapp_fixture", sub: "synthetic-subject",
+      iat: Math.floor(now / 1000), exp: Math.floor(now / 1000) + 3600, nonce: parameters.get("nonce") })).toString("base64url");
+    const signed = `${header}.${payload}`, idToken = `${signed}.${sign("RSA-SHA256", Buffer.from(signed), privateKey).toString("base64url")}`;
+    const callback = `${attempt.callbackUri}?${new URLSearchParams({ state: parameters.get("state")!, code: "synthetic-code", client_id: "oaiapp_fixture" })}`;
+    const adoption = lifecycle.completeSignIn(attempt.attemptId, callback);
+    await vi.waitFor(() => expect(network.calls).toHaveLength(1));
+    expect(snapshot.accounts[0].phase).toBe("exchanging");
+    expect(new URLSearchParams(network.calls[0].request.end.mock.calls[0][0]).get("client_id")).toBe("oaiapp_fixture");
+    network.calls[0].reply(response({ access_token: SECRET, refresh_token: "synthetic.refresh.token.never-logged", id_token: idToken,
+      token_type: "Bearer", expires_in: 3600, scope: "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct" }));
+    await vi.waitFor(() => expect(network.calls).toHaveLength(2));
+    expect(snapshot.accounts[0].phase).toBe("pending-verification"); expect(snapshot.activeAccountBindingId).toBeUndefined();
+    expect(network.calls[1].options.path).toBe("/.well-known/jwks.json");
+    network.calls[1].reply(response({ keys: [{ ...publicKey.export({ format: "jwk" }), kid: "synthetic-key", alg: "RS256", use: "sig" }] }));
+    expect(await adoption).toMatchObject({ activeAccountBindingId: "synthetic-account", accounts: [{ phase: "ready", planUse: true }] });
+    const access = await lifecycle.getAccessToken("synthetic-account");
+    expect(access).toMatchObject({ accountBindingId: "synthetic-account", clientId: "oaiapp_fixture", subject: "synthetic-subject", accessToken: SECRET });
+    expect(access).not.toHaveProperty("refreshToken"); expect(access).not.toHaveProperty("idToken");
+    expect(network.calls).toHaveLength(2); expect(network.agents.every(agent => agent.destroy.mock.calls.length === 1)).toBe(true);
+    expect(JSON.stringify(await lifecycle.status())).not.toContain(SECRET); lifecycle.close();
   });
 });
