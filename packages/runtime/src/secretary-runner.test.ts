@@ -394,7 +394,7 @@ test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never 
     socket?.destroy();
     await sidecar?.close();
     vi.unstubAllEnvs();
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   }
 }, 15000);
 
