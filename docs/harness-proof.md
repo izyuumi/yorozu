@@ -47,6 +47,7 @@ If that approval is denied, stop the test; do not substitute another transport.
 | Unsupported operation | An unknown method returns JSON-RPC `-32601`. |
 | Disabled capabilities | Actual inference schemas do not advertise scheduler or computer-use tools. |
 | Stop | A terminal action first writes its start marker, receives a requested Stop, then an upstream stopped terminal. Its later file write remains absent beyond the original deadline. |
+| Active-topic refusal | An unrelated fresh topic during the actual running command is rejected, never retried and remains absent from native inference and its later history. |
 | Restart without action replay | A real terminal append occurs once. The fixture kills only its owned adapter process group during a later wait, starts a fresh adapter, resumes snapshot-only and verifies no new inference or duplicate append. |
 
 The synthetic provider examines only its own fixture requests. It emits regular Responses

@@ -77,7 +77,7 @@ function responseFor(body) {
   const serialized = JSON.stringify({ input, instructions: body.instructions });
   const record = { scenario, step, at: Date.now(), serviceTier: body.service_tier ?? null,
     steerA: serialized.includes('YOROZU_STEER_A_ONLY'), oldContext: serialized.includes('古い会話の記録'),
-    japanesePreference: serialized.includes('日本語') };
+    japanesePreference: serialized.includes('日本語'), refusedTopic: serialized.includes('YOROZU_PROOF_REFUSED_TOPIC') };
   requests.push(record); evidence.requests.push(record);
   const advertised = (body.tools || []).map(tool => tool.name || '');
   assert(!advertised.some(name => /(?:^|[_.])(?:cronjob|computer_use)$/.test(name)), 'disabled schedule/computer tool was advertised');
@@ -310,6 +310,12 @@ try {
   const stopAttempt = await submit('stop', 'YOROZU_PROOF_STOP: start the cancellable fixture command.');
   await waitUntil(() => exists(join(workspace, 'started.txt')), 'actual stoppable terminal action started');
   const stopActionStarted = Date.now();
+  const refusedParams = { ...currency, runId: 'refused-topic', attemptId: 'refused-topic-attempt', text: 'YOROZU_PROOF_REFUSED_TOPIC: an unrelated fresh topic.' };
+  const refusedReceipt = await client.call('turn.submit', refusedParams);
+  evidence.admissions.push({ runId: refusedParams.runId, attemptId: refusedParams.attemptId, receipt: refusedReceipt });
+  assert.equal(refusedReceipt.status, 'rejected');
+  assert(!requests.some(record => record.refusedTopic), 'refused input reached inference or steered the running turn');
+  evidence.claims.activeTopicRefusal = { passed: true, receipt: refusedReceipt, proof: 'fresh topic refused during real running command; refused input is never retried' };
   const stop = await client.call('run.stop', { ...currency, runId: 'stop', attemptId: stopAttempt, operationId: 'stop-current' });
   assert.equal(stop.status, 'requested');
   const stopTerminal = await client.terminal('stop', stopAttempt);
@@ -320,6 +326,7 @@ try {
   const crashAttempt = await submit('crash', 'YOROZU_PROOF_CRASH: append once, then wait.');
   await waitUntil(() => exists(join(workspace, 'crashwaiting.txt')), 'actual crash pause after append');
   assert.equal(await readFile(join(workspace, 'once.txt'), 'utf8'), 'once\n');
+  assert(!requests.some(record => record.refusedTopic), 'refused topic later entered native inference history');
   // Check beyond the cancelled shell's original write deadline too. An early
   // terminal notification alone must not hide a still-running orphan process.
   await sleep(Math.max(0, stopActionStarted + 10_500 - Date.now()));
