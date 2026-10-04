@@ -3,6 +3,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import type { EffectiveAgentScope } from "./agent-scope.js";
 import { pathWithin, safeAgentPath } from "./agent-scope.js";
+import { validateHostListeners, type HostListenerLease } from "./agent-listener.js";
 
 export interface AgentIsolationRuntime {
   command: string;
@@ -20,6 +21,8 @@ export interface AgentIsolationRuntime {
   listenerPorts?: number[];
   /** Mandatory trusted native Gateway configuration pin when listeners are requested. */
   listenerHost?: "127.0.0.1";
+  /** Live host-minted sockets, compiled before their one-shot FD handoff. Never persisted. */
+  inheritedListeners?: readonly HostListenerLease[];
 }
 export interface AgentIsolatedLaunch {
   command: string;
@@ -70,6 +73,7 @@ export function isolatedAgentLaunch(scope: EffectiveAgentScope, runtime: AgentIs
   // A native host pin alone cannot enforce child-process authority, so fail closed.
   if (listenerPorts.length)
     throw new Error("This host cannot enforce loopback listener peers; the harness was not launched");
+  const inheritedListeners = validateHostListeners(runtime.inheritedListeners ?? [], scope.agentId);
   const ancestors = new Set<string>(["/", "/private", "/private/tmp", "/private/var", "/Library"]);
   for (const path of [runtimeDir, ...readPaths, ...directories.map(grant => grant.path)]) {
     for (let parent = dirname(path);; parent = dirname(parent)) {
@@ -89,6 +93,10 @@ export function isolatedAgentLaunch(scope: EffectiveAgentScope, runtime: AgentIs
     // Apple's compiler accepts only localhost/* host aliases, not numeric IP strings.
     // Tested localhost authority includes this Mac's own non-loopback addresses.
     lines.push(`(allow network-outbound (remote tcp "localhost:${port}"))`);
+  // A trusted host already bound these sockets to numeric loopback. There is no
+  // network-bind grant: descriptor adoption cannot manufacture another listener.
+  for (const listener of inheritedListeners)
+    lines.push(`(allow network-inbound (local tcp "localhost:${listener.port}"))`);
   if (denied.length) lines.push(`(deny file-read-data file-write* ${denied.map(path => `(subpath ${quoted(path)})`).join(" ")})`);
   const policy = lines.join("\n") + "\n";
   return { command: "/usr/bin/sandbox-exec", args: ["-p", policy, command, ...runtime.args], policy,
