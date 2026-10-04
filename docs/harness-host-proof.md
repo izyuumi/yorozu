@@ -83,7 +83,7 @@ provider recognizes these scripted, harmless prompts:
 
 The scripted task-A correction is
 `YOROZU_HOST_STEER_A_ONLY: write A: steered instead of A: original.` Child tools
-wait 90 seconds in UI-provider mode to allow native control inspection. Signal
+wait four minutes in UI-provider mode to allow native control inspection. Signal
 the provider to finish and retain evidence; terminal stdin EOF also stops it,
 while noninteractive stdin EOF does not. Native UI observation
 and acceptance belong to the UI owner, not this provider fixture.

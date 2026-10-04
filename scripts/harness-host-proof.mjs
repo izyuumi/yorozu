@@ -106,7 +106,7 @@ if (args.includes('--host')) {
     if (scenario === 'artifact' && step === 1) {
       const history = (await readFile(join(state, 'threads', `${main}.jsonl`), 'utf8')).split('\n').filter(Boolean).map(JSON.parse);
       const admitted = args.includes('--ui-provider-only')
-        ? history.findLast(e => e.kind === 'message' && e.data.role === 'user' && e.data.delivery === 'queue' && serialized.includes(e.data.text))
+        ? history.findLast(e => e.kind === 'message' && e.data.role === 'user' && e.data.delivery === 'queue' && users.some(text => text.includes(e.data.text)))
         : history.find(e => e.id === 'artifact-input' && e.kind === 'message' && e.data.role === 'user' && e.data.delivery === 'queue');
       assert(admitted, 'Main input was not persisted before model handoff');
       evidence.claims.acceptedBeforeHandoff = { passed: true, eventId: admitted.id };
@@ -129,7 +129,7 @@ if (args.includes('--host')) {
       return text('専門タスクを開始しました。引き続きお話しできます。');
     }
     if (child) {
-      if (step === 1) return call('terminal', { command: args.includes('--ui-provider-only') ? '/bin/sleep 90' : '/bin/sleep 6', workdir: workspace, timeout: args.includes('--ui-provider-only') ? 100 : 25 });
+      if (step === 1) return call('terminal', { command: args.includes('--ui-provider-only') ? '/bin/sleep 240' : '/bin/sleep 6', workdir: workspace, timeout: args.includes('--ui-provider-only') ? 250 : 25 });
       if (step === 2) return call('write_file', { path: join(workspace, `child-${child.toLowerCase()}.txt`), content: child === 'A' && record.steerA ? 'A: steered\n' : `${child}: original\n` });
       if (step === 3) return call('read_file', { path: join(workspace, `child-${child.toLowerCase()}.txt`) });
       return text(`専門タスク${child}を確認しました。`);
