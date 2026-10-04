@@ -66,6 +66,12 @@ Physically move the artifact, then run `verify` again. This catches original-che
 
 `stage-internal-alpha.py` includes this helper, the two runtime pin/layout files and all runtime plugin files in the reviewed overlay. `build-mac.sh` requires the explicit build input `YOROZU_HERMES_RUNTIME_ARTIFACT`, verifies it and copies it to `Contents/Resources/agent-runtimes/hermes`. This is a build-time input; the product accepts no client or environment runtime paths. The bundled entry derives Resources from its fixed location and requires the internal build marker. It exposes the person registry without starting a harness or migrating the continuous secretary. Account onboarding is still unavailable in that entry, so preparing a person cannot discover or reuse ambient credentials. The iOS app remains the existing client and does not embed Python.
 
+The existing internal GitHub release lane has no curated artifact provider yet.
+It cannot satisfy this explicit input from the current task-local preparation;
+distribution is blocked until an approved artifact/provenance source and original
+archive checks are wired. The packaging boundary suite requires Python 3.11 or
+later; artifact assembly itself remains pinned to the prepared Python 3.13.16.
+
 Copy/assemble the runtime before the existing nested native-code signing loop. Sign its native interpreter and libraries with the release's existing identity and appropriate entitlements; validate that the signed interpreter still starts. Before signing the outer app, run:
 
 ```sh

@@ -42,6 +42,7 @@ OVERLAYS = [
     "docs/siwc-inference-broker.md", "scripts/capture-hermes-siwc-shape.py",
     "docs/hermes-runtime-packaging.md", "scripts/package-hermes-runtime.py", "scripts/test-package-hermes-runtime.py",
     "scripts/build-mac.sh", "scripts/build-version.sh",
+    "scripts/build-internal-alpha.sh", "scripts/check-internal-alpha.sh", "scripts/stage-internal-alpha.py",
     "scripts/secretary-production.patch",
 ]
 

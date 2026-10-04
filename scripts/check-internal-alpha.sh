@@ -13,7 +13,8 @@ cargo build --locked --manifest-path packages/host-core/Cargo.toml --bin yorozu-
 export YOROZU_SECRETARY_HOST="$SOURCE/packages/host-core/target/debug/yorozu-alpha-host"
 export YOROZU_HOST_CORE="$SOURCE/packages/host-core/target/debug/yorozu-host-core"
 pnpm --filter @yorozu/runtime exec vitest run secretary- --maxWorkers=2
-pnpm --filter @yorozu/runtime exec vitest run harness agent- person-agent- curated-agent- --maxWorkers=2
+pnpm --filter @yorozu/runtime exec vitest run harness agent- person-agent- curated-agent- packaged-agent- siwc- --maxWorkers=2
+python3 scripts/test-package-hermes-runtime.py
 node --test packages/harness-plugins/hermes/adapter.test.mjs packages/harness-plugins/openclaw/adapter.test.mjs
 pnpm --filter @yorozu/shared exec vitest run person-agents peer-info
 env -u SDKROOT swift build --package-path apps/mac --product YorozuMac
