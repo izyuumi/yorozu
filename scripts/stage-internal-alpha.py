@@ -18,6 +18,14 @@ OVERLAYS = [
     "packages/runtime/src/secretary-serve.ts",
     "packages/runtime/src/secretary-steering.ts",
     "packages/runtime/src/secretary-coordinator.ts",
+    "packages/runtime/src/harness-contract.ts",
+    "packages/runtime/src/harness-process.ts",
+    "packages/runtime/src/harness-ledger.ts",
+    "packages/runtime/src/harness-runner.ts",
+    "packages/shared/src/events.ts",
+    "packages/harness-plugins",
+    "scripts/harness-proof.mjs",
+    "docs/harness-proof.md", "docs/harness-contract.md",
     "scripts/build-mac.sh", "scripts/build-version.sh",
     "scripts/secretary-production.patch",
 ]
@@ -46,7 +54,7 @@ def stage(destination):
     # Keep the production manifest and lockfile together. Only these explicit new
     # files and the reviewed adapter replace runtime source; serve/storage do not.
     tests = git("ls-tree", "-r", "--name-only", source, "packages/runtime/src").decode().splitlines()
-    tests = [name for name in tests if Path(name).name.startswith("secretary-") and name.endswith(".test.ts")]
+    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness")) and name.endswith(".test.ts")]
     if not tests:
         raise SystemExit("Secretary regression tests are missing")
     with tarfile.open(fileobj=io.BytesIO(git("archive", source, *tests))) as archive:
@@ -62,6 +70,8 @@ def stage(destination):
         "runtimeEntry": "runtime/dist/secretary-serve.js",
         "workerBinary": "yorozu-alpha-host", "workerStore": "secretary-v1",
         "legacyStorageMigration": False, "publicUpdateFeed": False,
+        "harnessProtocolVersion": 1,
+        "harnessPlugins": {"hermes": {"version": "0.21.5", "sourceSha": "f97608f178d1ffeca59860195ab7da295f7c8e5f", "bundledRuntime": False}},
         "dependencyLockSha256": hashlib.sha256((destination / "pnpm-lock.yaml").read_bytes()).hexdigest(),
         "overlaySha256": hashes,
     }

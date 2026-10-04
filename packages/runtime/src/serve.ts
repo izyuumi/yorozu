@@ -2105,7 +2105,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
               await Promise.all([...steering.values()].filter((entry) => entry.threadId === threadId).map((entry) => entry.promise));
             });
             workerResult = { attempt, outcome: done.completed === true ? "completed" : "stopped",
-              evidence: done.completed === true ? "provider-terminal" : done.cessation ?? "unconfirmed", text: done.text, failed: done.failed };
+              evidence: done.completed === true ? "provider-terminal" : done.cessation === "control-receipt" || done.cessation === "not-submitted" ? "returned" : done.cessation ?? "unconfirmed", text: done.text, failed: done.failed };
             if (workerUnconfirmed || !attemptCurrent(attempt, done.completed === true ? "terminal" : "effect")) return;
             flushActivity();
             if (done.sessionId && done.sessionId !== packet.sessionId) saveNativeSession(done.sessionId, done.completed === true ? "terminal" : "effect");

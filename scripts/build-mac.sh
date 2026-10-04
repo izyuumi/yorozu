@@ -184,6 +184,13 @@ fi
 # --prod above leaves the *workspace* modules directory pruned to production too, which
 # breaks the next `pnpm -r build` (no typescript). Put the dev dependencies back.
 pnpm install --frozen-lockfile
+# First-party whole-harness adapters have their own supervised runtime boundary.
+# Runtime installation/auth remains explicit; no Python/profile is copied from this Mac.
+if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
+  mkdir -p "$APP/Contents/Resources/harness-plugins/hermes"
+  cp packages/harness-plugins/hermes/adapter.mjs packages/harness-plugins/hermes/manifest.json \
+    packages/harness-plugins/hermes/README.md "$APP/Contents/Resources/harness-plugins/hermes/"
+fi
 # The OpenClaw channel plugin, for `openclaw plugins install --link` from inside the bundle so
 # it updates with the app. Plain JavaScript that OpenClaw loads directly; no dependencies.
 mkdir -p "$APP/Contents/Resources/openclaw-channel"

@@ -2,11 +2,12 @@
 import * as runtime from "./serve.js";
 import type { ServeOptions, Sidecar } from "./serve.js";
 import { stateDir } from "./memory.js";
-import type { NativeAgentRunner } from "./native.js";
+import type { NativeAgentRunner, NativeTurn } from "./native.js";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { constants } from "node:os";
 import { secretaryCoordinator, type SecretaryCoordinatorHost } from "./secretary-coordinator.js";
+import { harnessConfiguration, SecretaryHarness } from "./harness-runner.js";
 
 function requireProductionRuntime(): void {
   if (!("secretaryRunnerDecorator" in runtime) || runtime.secretaryRunnerDecorator !== true) {
@@ -20,14 +21,32 @@ export function serveSecretary(options: ServeOptions = {}): Sidecar {
   let decorated = false;
   let unavailable: string | undefined;
   let coordinator: ReturnType<typeof secretaryCoordinator>;
+  let harness: SecretaryHarness | undefined;
+  let harnessHost: SecretaryCoordinatorHost | undefined;
+  const configuration = harnessConfiguration(dir);
   // A local variable also type-checks against the unpatched development ServeOptions.
   const decoratedOptions = { ...options, stateDir: dir,
     secretaryUnavailable: () => unavailable,
-    secretaryCoordinator: true,
-    secretaryOwnsTask: (id: string) => coordinator?.owns(id) ?? false,
+    secretaryCoordinator: !configuration,
+    secretaryHarness: !!configuration,
+    secretaryOwnsTask: (id: string) => configuration ? id !== "yorozu-secretary-v1" && (harness?.owns(id) ?? false) : coordinator?.owns(id) ?? false,
     secretaryTask: (id: string) => coordinator?.task(id),
+    secretaryThreadSummary: (id: string) => harness?.summary(id),
+    secretaryTaskStop: (event: Parameters<SecretaryHarness["taskStop"]>[0]) => harness?.taskStop(event) ?? Promise.resolve(false),
     secretaryObserve: (event: Parameters<ReturnType<typeof secretaryCoordinator>["observe"]>[0]) => coordinator?.observe(event),
     decorateNativeRunners: (runners: Record<string, NativeAgentRunner>, host: SecretaryCoordinatorHost) => {
+      if (configuration) {
+        harnessHost = host;
+        try { harness = new SecretaryHarness(dir, configuration); }
+        catch (error) { unavailable = `Harness unavailable: ${error instanceof Error ? error.message : String(error)}`; }
+        decorated = true;
+        const selected: NativeAgentRunner = harness?.runner ?? { run: async () => ({ text: unavailable ?? "Harness unavailable", failed: true }) };
+        // Old main history keeps its immutable agent/session metadata. Only its execution
+        // route changes; ordinary Codex conversations keep their existing runner.
+        return { ...runners, harness: selected, codex: { ...runners.codex, run: (turn: NativeTurn) =>
+          turn.threadId === "yorozu-secretary-v1" || harness?.owns(turn.threadId)
+            ? selected.run(turn) : runners.codex?.run(turn) ?? Promise.resolve({ text: "Codex unavailable", failed: true }) } };
+      }
       if (!runners.codex) throw new Error("The secretary requires the Codex adapter");
       coordinator = secretaryCoordinator(dir, runners.codex, (reason) => {
         unavailable = reason;
@@ -43,8 +62,13 @@ export function serveSecretary(options: ServeOptions = {}): Sidecar {
     void sidecar.close().catch(() => {});
     throw new Error("The production runtime is missing its secretary decorator patch");
   }
-  coordinator!.reconcile();
-  return sidecar;
+  if (harness && harnessHost) {
+    const host = harnessHost;
+    harness.bind({ emit: host.emit, changed: () => host.publishThreads?.() });
+  } else if (!configuration) coordinator!.reconcile();
+  return { ...sidecar, async close() {
+    try { await harness?.close(); } finally { await sidecar.close(); }
+  } };
 }
 
 if (import.meta.main && process.argv.length > 2) {

@@ -110,7 +110,9 @@ export interface NativeTurnResult {
   /** The agent reported a successful turn, even if Stop was requested meanwhile. */
   completed?: true;
   /** Explicit terminal turn or this invocation's observed child exit; close/settlement alone is insufficient. */
-  cessation?: "provider-terminal" | "process-exited";
+  cessation?: "provider-terminal" | "process-exited" | "control-receipt" | "not-submitted";
+  /** Completes a host control command, never proof that its child execution settled. */
+  controlReceipt?: { status: "queued" | "requested" | "rejected" | "unsupported" | "unknown"; operationId: string };
   /** The session to resume next time. Kept even for an aborted turn: the session survives it. */
   sessionId?: string;
 }

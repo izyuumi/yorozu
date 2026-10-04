@@ -33,6 +33,8 @@ export interface SecretaryCoordinatorHost {
   stop(task: SecretaryTask, id: string): void;
   state(threadId: string): string;
   emit(event: YorozuEvent): void;
+  /** Optional generic projection notification, called only after host initialization. */
+  publishThreads?(): void;
 }
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
 
