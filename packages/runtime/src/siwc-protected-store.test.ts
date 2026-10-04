@@ -1,11 +1,14 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { SiwcNativeProtectedStore, SIWC_HELPER_IDENTIFIER, SIWC_HELPER_TEAM, SIWC_HELPER_LINE_BYTES,
+import { SiwcNativeProtectedStore, SIWC_HELPER_IDENTIFIER, SIWC_HELPER_TEAM, SIWC_HELPER_LINE_BYTES, SIWC_HELPER_RELATIVE_EXECUTABLE,
   type SiwcHelperInspector, type SiwcHelperChild } from "./siwc-protected-store.js";
 import { SiwcAccountLifecycle, type SiwcProtectedSnapshot } from "./siwc-account-lifecycle.js";
 
-const RESOURCES = "/signed/Yorozu.app/Contents/Resources", EXE = RESOURCES + "/yorozu-accounts";
+const RESOURCES = "/signed/Yorozu.app/Contents/Resources", HELPER_APP = RESOURCES + "/YorozuAccounts.app",
+  EXE = RESOURCES + "/" + SIWC_HELPER_RELATIVE_EXECUTABLE;
+const CHECKED_PATHS = ["/signed/Yorozu.app", "/signed/Yorozu.app/Contents", RESOURCES, HELPER_APP,
+  HELPER_APP + "/Contents", HELPER_APP + "/Contents/MacOS", EXE];
 const TOKEN = "synthetic_private_access_1234567890", ID_TOKEN = "synthetic_private_id_token_1234567890";
 function empty(): SiwcProtectedSnapshot { return { version: 1, revision: 0, hostId: "synthetic-stable-host", appName: "Yorozu", callbackPath: "/auth/callback", accounts: [] }; }
 interface Frame { version: number; rid: string; command: string; payload?: any; }
@@ -37,7 +40,7 @@ function fixture(timeout = 30_000) {
   const inspector: SiwcHelperInspector = {
     path: vi.fn(async target => ({ realPath: target, kind: target === EXE ? "file" : "directory", mode: target === EXE ? 0o755 : 0o755 })),
     codesign: vi.fn(async args => {
-      const exe = args.at(-1) === EXE, identifier = exe ? SIWC_HELPER_IDENTIFIER : "to.yumi.yorozu";
+      const helper = [HELPER_APP, EXE].includes(args.at(-1)!), identifier = helper ? SIWC_HELPER_IDENTIFIER : "to.yumi.yorozu";
       return args.includes("--display") ? { stdout: `designated => identifier "${identifier}" and anchor apple generic and certificate leaf[subject.OU] = "${SIWC_HELPER_TEAM}"\n`,
         stderr: `Identifier=${identifier}\nTeamIdentifier=${SIWC_HELPER_TEAM}\n` } : { stdout: "", stderr: "" };
     }),
@@ -65,9 +68,12 @@ describe("fixed native protected store bridge (fake child and inspectors only)",
   });
   it("verifies exact signed paths/publisher/designated identity then initializes only on explicit activation", async () => {
     const f = fixture(); const snapshot = await f.store.activate(); expect(snapshot).toEqual(empty());
-    expect(f.inspector.path).toHaveBeenCalledTimes(4); expect(f.inspector.codesign).toHaveBeenCalledTimes(4);
+    expect((f.inspector.path as any).mock.calls.map(([target]: [string]) => target)).toEqual(CHECKED_PATHS);
+    expect(f.inspector.codesign).toHaveBeenCalledTimes(6);
     expect((f.inspector.codesign as any).mock.calls[0][0]).toEqual(["--verify", "--strict", '-R=identifier "to.yumi.yorozu" and anchor apple generic and certificate leaf[subject.OU] = "AN5KM8QGEF"', "/signed/Yorozu.app"]);
     expect((f.inspector.codesign as any).mock.calls[2][0]).toContain('-R=identifier "to.yumi.yorozu.accounts" and anchor apple generic and certificate leaf[subject.OU] = "AN5KM8QGEF"');
+    expect((f.inspector.codesign as any).mock.calls[2][0].at(-1)).toBe(HELPER_APP);
+    expect((f.inspector.codesign as any).mock.calls[4][0].at(-1)).toBe(EXE);
     expect(f.launch).toHaveBeenCalledWith(EXE, [], { stdio: ["pipe", "pipe", "ignore"], env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C" }, cwd: RESOURCES, shell: false });
     expect(commands(f)).toEqual(["available", "initialize"]); expect(f.child.frames[1].payload).toEqual({ appName: "Yorozu" });
     expect(f.store.available()).toBe(true); expect(f.store.status().productionReady).toBe(false); snapshot.hostId = "mutated";
@@ -83,17 +89,34 @@ describe("fixed native protected store bridge (fake child and inspectors only)",
       else (f.inspector.codesign as any).mockImplementation(async (args: string[]) => {
         if (failure === "verify-error") throw new Error(TOKEN);
         return { stdout: failure === "missing-designated" ? "" : `designated => anchor apple generic and certificate leaf[subject.OU] = "${SIWC_HELPER_TEAM}"`,
-          stderr: `Identifier=${failure === "wrong-id" ? "foreign" : args.at(-1) === EXE ? SIWC_HELPER_IDENTIFIER : "to.yumi.yorozu"}\nTeamIdentifier=${failure === "ad-hoc" ? "not set" : failure === "wrong-team" ? "OTHERTEAM01" : SIWC_HELPER_TEAM}\n` };
+          stderr: `Identifier=${failure === "wrong-id" ? "foreign" : [HELPER_APP, EXE].includes(args.at(-1)!) ? SIWC_HELPER_IDENTIFIER : "to.yumi.yorozu"}\nTeamIdentifier=${failure === "ad-hoc" ? "not set" : failure === "wrong-team" ? "OTHERTEAM01" : SIWC_HELPER_TEAM}\n` };
       });
       await expect(f.store.activate()).rejects.toThrow("SIWC account unsupported"); expect(f.launch).not.toHaveBeenCalled(); expect(f.child.frames).toEqual([]);
       expect(f.store.available()).toBe(false); expect(f.fence).toHaveBeenCalledTimes(1); expect(JSON.stringify(f.store.status())).not.toContain(TOKEN);
     });
   it("rejects arbitrary executable/client config and unsupported platforms without real inspection", async () => {
     const f = fixture(); for (const config of [{ signedResourcesPath: RESOURCES, executable: "/other/yorozu-accounts", fenceAccounts: f.fence },
+      { signedResourcesPath: RESOURCES, executable: RESOURCES + "/yorozu-accounts", fenceAccounts: f.fence },
+      { signedResourcesPath: RESOURCES, executable: RESOURCES + "/YorozuAccounts.app/Contents/Resources/yorozu-accounts", fenceAccounts: f.fence },
       { signedResourcesPath: RESOURCES + "/..", executable: EXE, fenceAccounts: f.fence }, { signedResourcesPath: RESOURCES, executable: EXE, fenceAccounts: f.fence, tokenFile: "/private" }])
       expect(() => new SiwcNativeProtectedStore(config as any)).toThrow("SIWC account invalid");
     const linux = new SiwcNativeProtectedStore({ signedResourcesPath: RESOURCES, executable: EXE, fenceAccounts: f.fence }, { platform: "linux", inspector: f.inspector, spawnHelper: f.launch });
     await expect(linux.activate()).rejects.toMatchObject({ code: "unsupported" }); expect(f.launch).not.toHaveBeenCalled(); expect(f.inspector.path).not.toHaveBeenCalled();
+  });
+  it.each(CHECKED_PATHS)("rejects a symlink at each fixed outer/helper component: %s", async target => {
+    const f = fixture(), original = f.inspector.path;
+    f.inspector.path = vi.fn(async path => path === target ? { realPath: path, kind: "symlink", mode: 0o755 } : original(path));
+    await expect(f.store.activate()).rejects.toMatchObject({ code: "unsupported" });
+    expect(f.launch).not.toHaveBeenCalled(); expect(f.inspector.codesign).not.toHaveBeenCalled(); expect(f.child.frames).toEqual([]);
+  });
+  it.each(["/signed/Yorozu.app", HELPER_APP, EXE])("requires independent strict signing identity on %s", async target => {
+    const f = fixture(), original = f.inspector.codesign;
+    f.inspector.codesign = vi.fn(async (args, signal) => {
+      if (args.at(-1) === target && args.includes("--verify")) throw new Error("synthetic trust refusal");
+      return original(args, signal);
+    });
+    await expect(f.store.activate()).rejects.toMatchObject({ code: "unsupported" });
+    expect(f.launch).not.toHaveBeenCalled(); expect(f.child.frames).toEqual([]);
   });
   it("shares concurrent activation, retains native host identity and never accepts external host injection", async () => {
     const f = fixture(); await Promise.all([f.store.activate(), f.store.activate()]); expect(f.launch).toHaveBeenCalledTimes(1);

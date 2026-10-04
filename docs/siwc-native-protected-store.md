@@ -1,8 +1,8 @@
 # Native protected account bridge
 
 `packages/runtime/src/siwc-protected-store.ts` implements the host-side account
-store and private JSON-lines RPC boundary for the separate `yorozu-accounts`
-executable. It implements `SiwcProtectedAccountStore` with
+store and private JSON-lines RPC boundary for the separate `YorozuAccounts.app`
+helper bundle and its `yorozu-accounts` executable. It implements `SiwcProtectedAccountStore` with
 `protection: "os-protected"`; the executable owns actual Keychain persistence and
 native locks. The bridge does not implement Keychain persistence in JavaScript.
 
@@ -20,7 +20,7 @@ events, transcript entries, logs or errors.
 ```ts
 const store = new SiwcNativeProtectedStore({
   signedResourcesPath: trustedAppResources,
-  executable: trustedAppResources + "/yorozu-accounts",
+  executable: trustedAppResources + "/YorozuAccounts.app/Contents/MacOS/yorozu-accounts",
   appIdentifier: "to.yumi.yorozu", // Optional trusted packaging identity.
   fenceAccounts: () => retireAccountExecutionOwners(),
 });
@@ -40,18 +40,32 @@ store.close();
 Paths come from fixed trusted app packaging configuration. There is no discovery
 through environment variables, registry records, renderer input or alternate
 helper locations. The only accepted location is
-`<app>.app/Contents/Resources/yorozu-accounts`. There is no MacOS-directory
-fallback. `activate()` rejects unsupported platforms.
+`<app>.app/Contents/Resources/YorozuAccounts.app/Contents/MacOS/yorozu-accounts`.
+The exported `SIWC_HELPER_RELATIVE_EXECUTABLE` contains the fixed suffix beneath
+Resources. The former standalone Resources executable is rejected; there is no
+alternate location or fallback. `activate()` rejects unsupported platforms.
 
-The default inspector verifies canonical, nonsymlink app/Contents/Resources/helper
-paths, expected file types and absence of group/world write permission. It runs
+The default inspector verifies each canonical, nonsymlink component: outer app,
+outer Contents, Resources, helper app, helper Contents, helper MacOS and
+executable. It checks expected file types and absence of group/world write permission. It runs
 fixed `/usr/bin/codesign --verify --strict` checks with an explicit identifier and
 Apple signing anchor requirement, then checks displayed TeamIdentifier,
-identifier and designated signing requirement. Both outer app and helper must
-belong to the shipping publisher `AN5KM8QGEF`; the helper identifier is fixed to
-`to.yumi.yorozu.accounts`. The default outer app identifier is `to.yumi.yorozu`.
+identifier and designated signing requirement. Outer app, helper bundle and
+helper executable are verified independently and must belong to the shipping
+publisher `AN5KM8QGEF`. The helper bundle and executable identifiers are both
+fixed to `to.yumi.yorozu.accounts`. The default outer app identifier is `to.yumi.yorozu`.
 Ad-hoc and foreign signatures are unsupported. There is no hash-based fallback
 that enables authentication for an ad-hoc package.
+
+The app-bundle location permits a helper-owned provisioning profile and
+restricted entitlements. It does not establish that such a profile is installed
+or authorized. The exact helper Data Protection Keychain access group is
+`AN5KM8QGEF.to.yumi.yorozu.accounts`; valid provisioning and signed entitlements
+authorizing that group remain a physical release gate. Candidate packaging with
+no explicitly supplied authorized profile has no restricted entitlement grant
+and must remain unavailable for protected account use. Publisher signature checks
+alone do not prove that gate. The provisioning relationship is described in
+[Apple TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles).
 
 Inspector subprocesses have sanitized environment, a five-second timeout and a
 32 KiB output limit. Overall activation is bounded to thirty seconds. Helper
@@ -102,13 +116,15 @@ the retained ID-token hint against its own protected snapshot.
 
 ## Validation and remaining limits
 
-The bridge's 38 tests use fake child streams, fake inspectors and synthetic
+The bridge's 48 tests use fake child streams, fake inspectors and synthetic
 snapshots. They cover signing/path refusal, inert status, activation sharing,
 lease isolation, CAS, lost acknowledgements, malformed and fragmented replies,
-timeouts, cancellation, secret-free status and the initialization race. The
-lifecycle's 46 tests and the runtime TypeScript check also pass.
+timeouts, cancellation, secret-free status and the initialization race. Bundle
+checks cover symlinks at all seven fixed components and independent signing
+refusal at all three signed targets. The lifecycle's 52 tests and the runtime
+TypeScript check also pass.
 
-No real signing inspection, helper launch, Keychain read/write, native flock,
+No real signing inspection, provisioning-profile or entitlement read, helper launch, Keychain read/write, native flock,
 browser opening, callback socket, OAuth grant or credential access was performed
 for this slice. Its status deliberately retains `productionReady: false`.
 Successful fake protocol tests establish host-side behavior, not live Keychain,

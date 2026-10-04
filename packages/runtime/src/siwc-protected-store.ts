@@ -11,6 +11,7 @@ import { SiwcAccountError, SIWC_AUTHORIZATION_URL, SIWC_RESOURCE, validateSiwcPr
 
 export const SIWC_HELPER_TEAM = "AN5KM8QGEF" as const; // Shipping signer in scripts/build-mac.sh.
 export const SIWC_HELPER_IDENTIFIER = "to.yumi.yorozu.accounts" as const;
+export const SIWC_HELPER_RELATIVE_EXECUTABLE = "YorozuAccounts.app/Contents/MacOS/yorozu-accounts" as const;
 export const SIWC_HELPER_SNAPSHOT_BYTES = 1024 * 1024;
 export const SIWC_HELPER_LINE_BYTES = SIWC_HELPER_SNAPSHOT_BYTES + 16 * 1024;
 const MAX_PENDING = 32;
@@ -55,28 +56,30 @@ const nativeInspector: SiwcHelperInspector = {
       (error, stdout, stderr) => error ? reject(new SiwcAccountError("unsupported")) : resolve({ stdout, stderr })));
   },
 };
-function trustedPaths(config: SiwcNativeStoreConfiguration): { app: string; resources: string; executable: string; identifier: string; timeout: number } {
+function trustedPaths(config: SiwcNativeStoreConfiguration): { app: string; resources: string; helperApp: string; executable: string; identifier: string; timeout: number } {
   if (!fields(config, ["signedResourcesPath", "executable", "appIdentifier", "fenceAccounts", "requestTimeoutMs"])
     || typeof config.fenceAccounts !== "function") fail("invalid");
   for (const value of [config.signedResourcesPath, config.executable]) {
     if (typeof value !== "string" || value.length > 4096 || !path.isAbsolute(value) || path.normalize(value) !== value || /[\x00-\x1f\x7f]/.test(value)) fail("invalid");
   }
   const resources = config.signedResourcesPath, contents = path.dirname(resources), app = path.dirname(contents);
+  const helperApp = path.join(resources, "YorozuAccounts.app");
   if (path.basename(resources) !== "Resources" || path.basename(contents) !== "Contents" || !path.basename(app).endsWith(".app")
-    || config.executable !== path.join(resources, "yorozu-accounts")) fail("invalid");
+    || config.executable !== path.join(resources, SIWC_HELPER_RELATIVE_EXECUTABLE)) fail("invalid");
   const identifier = config.appIdentifier ?? "to.yumi.yorozu";
   if (!/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){1,12}$/.test(identifier) || identifier.length > 128) fail("invalid");
   const timeout = config.requestTimeoutMs ?? 30_000;
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 30_000) fail("invalid");
-  return { app, resources, executable: config.executable, identifier, timeout };
+  return { app, resources, helperApp, executable: config.executable, identifier, timeout };
 }
 async function trustedHelper(config: ReturnType<typeof trustedPaths>, inspector: SiwcHelperInspector, signal: AbortSignal): Promise<void> {
-  for (const target of [config.app, path.dirname(config.resources), config.resources, config.executable]) {
+  for (const target of [config.app, path.dirname(config.resources), config.resources, config.helperApp,
+    path.join(config.helperApp, "Contents"), path.join(config.helperApp, "Contents", "MacOS"), config.executable]) {
     const info = await inspector.path(target);
     if (signal.aborted || info.realPath !== target || info.kind !== (target === config.executable ? "file" : "directory")
       || !Number.isSafeInteger(info.mode) || (info.mode & 0o022) !== 0 || target === config.executable && !(info.mode & 0o100)) fail("unsupported");
   }
-  for (const [target, identifier] of [[config.app, config.identifier], [config.executable, SIWC_HELPER_IDENTIFIER]]) {
+  for (const [target, identifier] of [[config.app, config.identifier], [config.helperApp, SIWC_HELPER_IDENTIFIER], [config.executable, SIWC_HELPER_IDENTIFIER]]) {
     if (signal.aborted) fail("unsupported");
     const requirement = `identifier "${identifier}" and anchor apple generic and certificate leaf[subject.OU] = "${SIWC_HELPER_TEAM}"`;
     await inspector.codesign(["--verify", "--strict", "-R=" + requirement, target], signal);
