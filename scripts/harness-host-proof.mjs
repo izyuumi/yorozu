@@ -18,8 +18,10 @@ const output = option('output');
 const hostCore = option('host-core') ?? process.env.YOROZU_HOST_CORE;
 const delayIndex = args.indexOf('--ui-child-seconds');
 const uiChildSeconds = delayIndex < 0 ? 240 : Number(args[delayIndex + 1]);
-assert(Number.isInteger(uiChildSeconds) && uiChildSeconds >= 10 && uiChildSeconds <= 900,
-  '--ui-child-seconds must be an integer from 10 to 900');
+// Pinned Hermes promotes timeout >600s into a background terminal process.
+// Keep this fixture below that boundary so a task cannot finish ahead of its wait.
+assert(Number.isInteger(uiChildSeconds) && uiChildSeconds >= 10 && uiChildSeconds <= 590,
+  '--ui-child-seconds must be an integer from 10 to 590');
 assert(candidate && source && python && output, 'Pass --candidate ASSEMBLED_ROOT --source PINNED_HERMES --python TASK_PYTHON --output NEW_DIRECTORY');
 const main = 'yorozu-secretary-v1';
 const state = join(output, 'state');
