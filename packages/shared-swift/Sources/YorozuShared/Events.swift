@@ -62,6 +62,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadCreate = "thread_create"
         case threadList = "thread_list"
         case personAgentControl = "person_agent_control"
+        case siwcAccountControl = "siwc_account_control"
+        case siwcAccountStatus = "siwc_account_status"
         case threadArchive = "thread_archive"
         case threadRename = "thread_rename"
         case threadPin = "thread_pin"
@@ -119,6 +121,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadCreate(ThreadCreateData)
         case threadList(ThreadListData)
         case personAgentControl(PersonAgentControlData)
+        case siwcAccountControl(SiwcAccountControlData)
+        case siwcAccountStatus(SiwcAccountStatusData)
         case threadArchive(ThreadArchiveData)
         case threadRename(ThreadRenameData)
         case threadPin(ThreadPinData)
@@ -176,6 +180,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadCreate: .threadCreate
             case .threadList: .threadList
             case .personAgentControl: .personAgentControl
+            case .siwcAccountControl: .siwcAccountControl
+            case .siwcAccountStatus: .siwcAccountStatus
             case .threadArchive: .threadArchive
             case .threadRename: .threadRename
             case .threadPin: .threadPin
@@ -268,6 +274,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
             case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
             case .personAgentControl: payload = .personAgentControl(try c.decode(PersonAgentControlData.self, forKey: .data))
+            case .siwcAccountControl: payload = .siwcAccountControl(try c.decode(SiwcAccountControlData.self, forKey: .data))
+            case .siwcAccountStatus: payload = .siwcAccountStatus(try c.decode(SiwcAccountStatusData.self, forKey: .data))
             case .threadArchive: payload = .threadArchive(try c.decode(ThreadArchiveData.self, forKey: .data))
             case .threadRename: payload = .threadRename(try c.decode(ThreadRenameData.self, forKey: .data))
             case .threadPin: payload = .threadPin(try c.decode(ThreadPinData.self, forKey: .data))
@@ -301,6 +309,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .updateControl: payload = .updateControl(try c.decode(UpdateControlData.self, forKey: .data))
             }
         } catch {
+            // Account schema violations must never survive as retained raw data.
+            // This includes a malformed account projection nested in thread_list.
+            if kind == .siwcAccountControl || kind == .siwcAccountStatus { throw error }
+            if kind == .threadList, case .object(let data) = rawData, data["siwcAccounts"] != nil { throw error }
             payload = .unknown(kind: rawKind, data: rawData)
         }
     }
@@ -343,6 +355,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadCreate(let d): try c.encode(d, forKey: .data)
         case .threadList(let d): try c.encode(d, forKey: .data)
         case .personAgentControl(let d): try c.encode(d, forKey: .data)
+        case .siwcAccountControl(let d): try c.encode(d, forKey: .data)
+        case .siwcAccountStatus(let d): try c.encode(d, forKey: .data)
         case .threadArchive(let d): try c.encode(d, forKey: .data)
         case .threadRename(let d): try c.encode(d, forKey: .data)
         case .threadPin(let d): try c.encode(d, forKey: .data)
@@ -1496,6 +1510,7 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
 }
 
 public struct ThreadListData: Codable, Equatable, Sendable {
+    public var siwcAccounts: SiwcAccountStatusData?
     public var personAgents: PersonAgentRegistry?
     public var threads: [ThreadSummary]
     /// Bootstrap hint understood by new clients and ignored by released clients.
@@ -1507,7 +1522,8 @@ public struct ThreadListData: Codable, Equatable, Sendable {
     public var directUrl: String?
     public init(threads: [ThreadSummary], peerInfoSupported: Bool? = nil, peerInfo: PeerInfoData? = nil,
         peerInfoError: String? = nil, peerInfoReplyTo: String? = nil, directUrl: String? = nil,
-        personAgents: PersonAgentRegistry? = nil) {
+        personAgents: PersonAgentRegistry? = nil, siwcAccounts: SiwcAccountStatusData? = nil) {
+        self.siwcAccounts = siwcAccounts
         self.personAgents = personAgents
         self.threads = threads
         self.directUrl = directUrl
@@ -1517,11 +1533,12 @@ public struct ThreadListData: Codable, Equatable, Sendable {
         self.peerInfoReplyTo = peerInfoReplyTo
     }
 
-    private enum CodingKeys: String, CodingKey { case threads, peerInfoSupported, peerInfo, peerInfoError, peerInfoReplyTo, directUrl, personAgents }
+    private enum CodingKeys: String, CodingKey { case threads, peerInfoSupported, peerInfo, peerInfoError, peerInfoReplyTo, directUrl, personAgents, siwcAccounts }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         threads = try c.decode([ThreadSummary].self, forKey: .threads)
         personAgents = try c.decodeIfPresent(PersonAgentRegistry.self, forKey: .personAgents)
+        siwcAccounts = c.contains(.siwcAccounts) ? try c.decode(SiwcAccountStatusData.self, forKey: .siwcAccounts) : nil
         peerInfoSupported = c.contains(.peerInfoSupported) ? try c.decode(Bool.self, forKey: .peerInfoSupported) : nil
         peerInfo = c.contains(.peerInfo) ? try c.decode(PeerInfoData.self, forKey: .peerInfo) : nil
         peerInfoError = c.contains(.peerInfoError) ? try c.decode(String.self, forKey: .peerInfoError) : nil

@@ -30,8 +30,20 @@ struct PersonAgentEditorView: View {
                     Text("Hermes").tag(PersonAgentPlugin.hermes)
                     Text("OpenClaw").tag(PersonAgentPlugin.openclaw)
                 }
-                TextField("Model (optional)", text: $draft.model)
-                TextField("Saved connection (optional)", text: $draft.connection)
+                TextField("Model", text: $draft.model)
+                Picker("ChatGPT account", selection: $draft.connection) {
+                    Text("Select an account").tag("")
+                    ForEach(Array((model.siwcAccounts?.accounts ?? []).enumerated()), id: \.element.id) { index, account in
+                        Text("Account \(index + 1)").tag(account.id)
+                            .disabled(account.phase != .ready || !account.planUse)
+                    }
+                    if !draft.connection.isEmpty, model.siwcAccounts?.accounts.contains(where: { $0.id == draft.connection }) != true {
+                        Text("Saved account (unavailable)").tag(draft.connection)
+                    }
+                }
+                .accessibilityIdentifier("person-agent-account")
+                Text("Choose an account and enter a model before starting a chat. Manage saved accounts in ChatGPT accounts.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section {
                 ForEach(PersonAgentTool.allCases, id: \.self) { tool in
@@ -86,6 +98,7 @@ struct PersonAgentEditorView: View {
         .onChange(of: model.personAgents?.lastControlResult) { _, _ in
             if submission.result(in: model.personAgents)?.status == .applied { dismiss() }
         }
+        .onAppear { model.requestSiwcAccountStatus() }
     }
     private func save() {
         guard let request = draft.request else { return }

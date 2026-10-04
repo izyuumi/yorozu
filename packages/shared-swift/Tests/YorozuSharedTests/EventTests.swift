@@ -84,6 +84,8 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
         switch kind {
         case .unknown: .unknown(kind: "future_kind", data: .object(["value": .string("kept")]))
         case .personAgentControl: .personAgentControl(PersonAgentControlData(expectedRevision: 2, action: .setDefault(agentId: "agent-a")))
+        case .siwcAccountControl: .siwcAccountControl(SiwcAccountControlData(method: .status))
+        case .siwcAccountStatus: .siwcAccountStatus(SiwcAccountStatusData(nativeIntegration: .wiredUnverified, available: false, state: .unsupported))
         case .message:
             .message(
                 MessageData(

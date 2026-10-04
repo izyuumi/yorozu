@@ -24,6 +24,23 @@ public final class ChatModel {
         if case .compatible(_, let capabilities) = compatibility { return capabilities.contains("person-agents-v1") }
         return false
     }
+    public private(set) var siwcAccounts: SiwcAccountStatusData?
+    public private(set) var siwcAccountOperationId: String?
+    public private(set) var pendingSiwcSignInAttemptId: String?
+    private var pendingSiwcSignInOperationId: String?
+    private var siwcAccountControls: [String: SiwcAccountControlData] = [:]
+    private var siwcAccountResults: [String: SiwcAccountControlResult] = [:]
+    private var retiredSiwcSignInAttempts: Set<String> = []
+    public var supportsSiwcAccounts: Bool {
+        if case .compatible(_, let capabilities) = compatibility { return capabilities.contains("siwc-accounts-v1") }
+        return false
+    }
+    public var siwcAccountResult: SiwcAccountControlResult? {
+        siwcAccountOperationId.flatMap { siwcAccountResults[$0] }
+    }
+    public var siwcAccountWaiting: Bool {
+        siwcAccountOperationId != nil && siwcAccountResult == nil
+    }
     /// The threads the runtime has told us about.
     private var synced: [ThreadSummary] = []
     /// Threads started on this device that the runtime has not heard of yet.
@@ -2065,6 +2082,87 @@ public final class ChatModel {
         return request.id
     }
 
+    /// Settings actions are transient: never history/outbox, and never automatically replayed.
+    /// The host independently checks the authenticated transport's local/remote authority.
+    @discardableResult
+    public func controlSiwcAccounts(_ data: SiwcAccountControlData, localSignIn: Bool = false) -> String? {
+        guard supportsSiwcAccounts, canDeliver, data.isValid else { return nil }
+        switch data.method {
+        case .signIn:
+            #if os(macOS)
+            guard localSignIn, siwcAccounts?.nativeIntegration == .wiredUnverified,
+                  pendingSiwcSignInAttemptId == nil else { return nil }
+            if data.returning == true, siwcAccounts?.accounts.contains(where: { $0.id == data.bindingId }) != true { return nil }
+            #else
+            return nil
+            #endif
+        case .cancel:
+            guard data.attemptId == pendingSiwcSignInAttemptId else { return nil }
+        case .verifyPending, .select, .signOut:
+            guard let account = siwcAccounts?.accounts.first(where: { $0.id == data.bindingId }) else { return nil }
+            if data.method == .select, account.phase != .ready || !account.planUse { return nil }
+        case .status: break
+        }
+        guard data.method == .status || data.method == .cancel || !siwcAccountWaiting else { return nil }
+        let request = control(.siwcAccountControl(data))
+        // Bound transient correlation data. In-flight operations and the active sign-in survive.
+        if siwcAccountControls.count >= 64 {
+            let removable = siwcAccountControls.keys.filter { $0 != siwcAccountOperationId && $0 != pendingSiwcSignInOperationId }.sorted()
+            for id in removable.prefix(32) { siwcAccountControls[id] = nil; siwcAccountResults[id] = nil }
+        }
+        siwcAccountControls[request.id] = data
+        if data.method != .status { siwcAccountOperationId = request.id }
+        let previous = emitter
+        emitter = Task { [weak self, transport] in
+            await previous?.value
+            guard !Task.isCancelled, self?.stopped == false else { return }
+            do { try await transport.send(request) }
+            catch {
+                self?.siwcAccountResults[request.id] = SiwcAccountControlResult(operationId: request.id, status: .unknown, reason: .unknown)
+            }
+        }
+        return request.id
+    }
+
+    public func requestSiwcAccountStatus() {
+        _ = controlSiwcAccounts(SiwcAccountControlData(method: .status))
+    }
+
+    private func reconcileSiwcAccounts(_ data: SiwcAccountStatusData) {
+        guard supportsSiwcAccounts, data.isValid else { return }
+        let staleProjection: Bool
+        if let prior = siwcAccounts?.revision, let next = data.revision { staleProjection = next < prior }
+        else { staleProjection = false }
+        if let result = data.lastControlResult {
+            let previousResult = siwcAccountResults[result.operationId]
+            if let operation = siwcAccountControls[result.operationId] {
+                if previousResult?.status != .completed && previousResult?.status != .rejected {
+                    siwcAccountResults[result.operationId] = result
+                }
+                if result.status == .completed || result.status == .rejected {
+                    if pendingSiwcSignInOperationId == result.operationId || operation.method == .cancel
+                        && result.status == .completed && operation.attemptId == pendingSiwcSignInAttemptId {
+                        if let attempt = pendingSiwcSignInAttemptId { retiredSiwcSignInAttempts.insert(attempt) }
+                        pendingSiwcSignInAttemptId = nil; pendingSiwcSignInOperationId = nil
+                    }
+                }
+            }
+            if result.status == .pending, let attempt = result.attemptId, !retiredSiwcSignInAttempts.contains(attempt),
+               previousResult?.status != .completed && previousResult?.status != .rejected,
+               !staleProjection {
+                pendingSiwcSignInAttemptId = attempt; pendingSiwcSignInOperationId = result.operationId
+            } else if result.operationId == pendingSiwcSignInOperationId && (result.status == .completed || result.status == .rejected) {
+                if let attempt = pendingSiwcSignInAttemptId { retiredSiwcSignInAttempts.insert(attempt) }
+                pendingSiwcSignInAttemptId = nil; pendingSiwcSignInOperationId = nil
+            }
+            if retiredSiwcSignInAttempts.count > 64 {
+                retiredSiwcSignInAttempts = Set(retiredSiwcSignInAttempts.sorted().suffix(64))
+            }
+        }
+        if staleProjection { return }
+        siwcAccounts = data
+    }
+
     /// Reconfigure only an unsent draft. A host change copies its composer durably before
     /// removing the old copy; no transport command is emitted until the first send.
     @discardableResult
@@ -2590,12 +2688,20 @@ public final class ChatModel {
             let couldSearch = supportsHostSearch
             self.compatibility = compatibility
             if !supportsPersonAgents { personAgents = nil }
+            if !supportsSiwcAccounts {
+                siwcAccounts = nil; pendingSiwcSignInAttemptId = nil; pendingSiwcSignInOperationId = nil
+                siwcAccountOperationId = nil; siwcAccountControls = [:]; siwcAccountResults = [:]
+                retiredSiwcSignInAttempts = []
+            }
             // Search support can be announced after the link came up and the typed query's
             // request already found the host unable to take it: send it now.
             if !couldSearch, supportsHostSearch, searchRequestID.isEmpty { requestHostSearch() }
         case .state(let state):
             self.state = state
             if state != .paired {
+                if siwcAccountWaiting, let id = siwcAccountOperationId {
+                    siwcAccountResults[id] = SiwcAccountControlResult(operationId: id, status: .unknown, reason: .unknown)
+                }
                 channelModelsDisconnected()
                 inFlightUpload.removeAll()
                 downloadInFlight.removeAll()
@@ -2654,8 +2760,11 @@ public final class ChatModel {
                 if data.phase != .installing { flush() }
             case .updateControl, .personAgentControl:
                 break
+            case .siwcAccountControl: break
+            case .siwcAccountStatus(let data): reconcileSiwcAccounts(data)
             case .threadList(let data):
                 personAgents = supportsPersonAgents ? data.personAgents : nil
+                if let accounts = data.siwcAccounts { reconcileSiwcAccounts(accounts) }
                 // Archived threads are kept: Settings lists them and thread search finds them.
                 synced = data.threads.map { remote in
                     guard let pending = pendingReads[remote.id] else { return remote }
@@ -2829,6 +2938,8 @@ public final class ChatModel {
     // Internal so reducer tests can feed one synchronous burst, without AsyncStream actor
     // hops stretching the fixture over multiple real display frames under parallel load.
     func applyEvent(_ event: YorozuEvent) {
+        if case .siwcAccountStatus(let data) = event.payload { reconcileSiwcAccounts(data); return }
+        if case .siwcAccountControl = event.payload { return }
         let key = "\(event.threadId)\u{0}\(event.id)"
         if let pending = pendingStreamEvents[key], staleReplyUpdate(event, replacing: pending) { return }
         if case .message(let data) = event.payload, data.role == .agent, data.done != true {
@@ -3248,6 +3359,11 @@ public final class ChatModel {
     }
 
     private func upsert(_ incoming: YorozuEvent, persist: Bool = true) {
+        switch incoming.payload {
+        case .siwcAccountControl, .siwcAccountStatus: return
+        case .threadList(let data) where data.siwcAccounts != nil: return
+        default: break
+        }
         reconcileHarnessControlReceipt(incoming)
         var event = incoming
         if case .threadRewound(let data) = event.payload {

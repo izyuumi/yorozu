@@ -1,5 +1,6 @@
 import type { PeerInfoData } from "./peer-info.js";
 import type { PersonAgentControlData, PersonAgentRegistry } from "./person-agents.js";
+import type { SiwcAccountControlData, SiwcAccountStatusData } from "./siwc-accounts.js";
 
 /**
  * Wire events exchanged between Mac, phone and relay.
@@ -578,6 +579,8 @@ export interface ThreadSummary {
 }
 
 export interface ThreadListData {
+  /** Safe account projection, only under siwc-accounts-v1. Never auth material. */
+  siwcAccounts?: SiwcAccountStatusData;
   /** Only supplied under the declared person-agents-v1 capability. */
   personAgents?: PersonAgentRegistry;
   threads: ThreadSummary[];
@@ -828,6 +831,8 @@ export type EventPayload =
   | { kind: "thread_create"; data: ThreadCreateData }
   | { kind: "thread_list"; data: ThreadListData }
   | { kind: "person_agent_control"; data: PersonAgentControlData }
+  | { kind: "siwc_account_control"; data: SiwcAccountControlData }
+  | { kind: "siwc_account_status"; data: SiwcAccountStatusData }
   | { kind: "thread_archive"; data: ThreadArchiveData }
   | { kind: "thread_rename"; data: ThreadRenameData }
   | { kind: "thread_pin"; data: ThreadPinData }
