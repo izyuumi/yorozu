@@ -16,6 +16,10 @@ const source = option('source');
 const python = option('python');
 const output = option('output');
 const hostCore = option('host-core') ?? process.env.YOROZU_HOST_CORE;
+const delayIndex = args.indexOf('--ui-child-seconds');
+const uiChildSeconds = delayIndex < 0 ? 240 : Number(args[delayIndex + 1]);
+assert(Number.isInteger(uiChildSeconds) && uiChildSeconds >= 10 && uiChildSeconds <= 900,
+  '--ui-child-seconds must be an integer from 10 to 900');
 assert(candidate && source && python && output, 'Pass --candidate ASSEMBLED_ROOT --source PINNED_HERMES --python TASK_PYTHON --output NEW_DIRECTORY');
 const main = 'yorozu-secretary-v1';
 const state = join(output, 'state');
@@ -130,14 +134,11 @@ if (args.includes('--host')) {
     }
     if (child) {
       if (step === 1) {
-        // Native UI automation may take longer than a timed child. A controlled
-        // fixture gate releases only the real terminal wait; it never writes a
-        // result artifact or synthesizes a provider/Stop terminal.
-        const controlled = args.includes('--ui-provider-only') && args.includes('--ui-control-gates');
-        const gate = join(workspace, `.ui-release-${child}`).replaceAll("'", "'\\''");
-        return call('terminal', { command: controlled ? `while [ ! -f '${gate}' ]; do /bin/sleep 1; done`
-          : args.includes('--ui-provider-only') ? '/bin/sleep 240' : '/bin/sleep 6', workdir: workspace,
-          timeout: controlled ? 900 : args.includes('--ui-provider-only') ? 250 : 25 });
+        // Give native interaction a bounded window without shell control-flow
+        // approval or a fixture-authored result. Real Hermes still owns the
+        // wait, its interruption, the next tool boundary and the artifact.
+        return call('terminal', { command: args.includes('--ui-provider-only') ? `/bin/sleep ${uiChildSeconds}` : '/bin/sleep 6',
+          workdir: workspace, timeout: args.includes('--ui-provider-only') ? uiChildSeconds + 10 : 25 });
       }
       if (step === 2) return call('write_file', { path: join(workspace, `child-${child.toLowerCase()}.txt`), content: child === 'A' && record.steerA ? 'A: steered\n' : `${child}: original\n` });
       if (step === 3) return call('read_file', { path: join(workspace, `child-${child.toLowerCase()}.txt`) });
