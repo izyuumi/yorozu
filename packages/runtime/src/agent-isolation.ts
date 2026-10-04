@@ -11,8 +11,15 @@ export interface AgentIsolationRuntime {
   readPaths: string[];
   /** Fresh vendor runtime scratch. Host ledgers and account tokens stay outside it. */
   runtimeDir: string;
-  /** A host-owned authenticated inference/tool broker. Never an arbitrary model URL. */
+  /** Exact TCP ports on this Mac (Seatbelt localhost includes its non-loopback addresses).
+   * Host-owned authenticated brokers must bind numeric loopback, use per-agent ports,
+   * and keep ambient tokens outside the child. Never model-defined URLs or ports.
+   */
   brokerPorts: number[];
+  /** Reserved host-selected Gateway listeners. Rejected until peer confinement is proven. */
+  listenerPorts?: number[];
+  /** Mandatory trusted native Gateway configuration pin when listeners are requested. */
+  listenerHost?: "127.0.0.1";
 }
 export interface AgentIsolatedLaunch {
   command: string;
@@ -22,6 +29,12 @@ export interface AgentIsolatedLaunch {
 }
 
 const quoted = (value: string): string => JSON.stringify(value);
+function validatedPorts(value: number[] | undefined, label: string): number[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 4 || value.some(port => !Number.isInteger(port) || port < 1024 || port > 65535))
+    throw new Error(`Invalid host ${label} port`);
+  return [...new Set(value)].sort((a, b) => a - b);
+}
 function filter(path: string): string {
   return `(${statSync(path).isDirectory() ? "subpath" : "literal"} ${quoted(path)})`;
 }
@@ -48,8 +61,15 @@ export function isolatedAgentLaunch(scope: EffectiveAgentScope, runtime: AgentIs
     throw new Error("Runtime or directory grant overlaps excluded private state");
   if (denied.some(root => overlaps(root, runtimeDir)))
     throw new Error("Vendor scratch enters an excluded private root");
-  if (runtime.brokerPorts.length > 4 || runtime.brokerPorts.some(port => !Number.isInteger(port) || port < 1024 || port > 65535))
-    throw new Error("Invalid host broker port");
+  const brokerPorts = validatedPorts(runtime.brokerPorts, "broker");
+  const listenerPorts = validatedPorts(runtime.listenerPorts, "listener");
+  if (listenerPorts.length && runtime.listenerHost !== "127.0.0.1")
+    throw new Error("Listener requires a trusted native Gateway pinned to numeric loopback");
+  // The selected kernel accepts wildcard bind and non-loopback inbound peers for
+  // a localhost listener filter. A remote peer deny also denies pre-peer listen.
+  // A native host pin alone cannot enforce child-process authority, so fail closed.
+  if (listenerPorts.length)
+    throw new Error("This host cannot enforce loopback listener peers; the harness was not launched");
   const ancestors = new Set<string>(["/", "/private", "/private/tmp", "/private/var", "/Library"]);
   for (const path of [runtimeDir, ...readPaths, ...directories.map(grant => grant.path)]) {
     for (let parent = dirname(path);; parent = dirname(parent)) {
@@ -65,8 +85,10 @@ export function isolatedAgentLaunch(scope: EffectiveAgentScope, runtime: AgentIs
     `(allow file-read* ${[...readPaths, runtimeDir, ...directories.map(grant => grant.path)].map(filter).join(" ")})`,
     `(allow file-write* ${[runtimeDir, ...directories.filter(grant => grant.access === "write").map(grant => grant.path)].map(filter).join(" ")})`,
   ];
-  for (const port of [...new Set(runtime.brokerPorts)])
-    lines.push(`(allow network-outbound (remote tcp "127.0.0.1:${port}"))`);
+  for (const port of brokerPorts)
+    // Apple's compiler accepts only localhost/* host aliases, not numeric IP strings.
+    // Tested localhost authority includes this Mac's own non-loopback addresses.
+    lines.push(`(allow network-outbound (remote tcp "localhost:${port}"))`);
   if (denied.length) lines.push(`(deny file-read-data file-write* ${denied.map(path => `(subpath ${quoted(path)})`).join(" ")})`);
   const policy = lines.join("\n") + "\n";
   return { command: "/usr/bin/sandbox-exec", args: ["-p", policy, command, ...runtime.args], policy,
