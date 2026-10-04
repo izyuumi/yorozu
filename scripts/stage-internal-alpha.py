@@ -29,6 +29,7 @@ OVERLAYS = [
     "packages/runtime/src/curated-agent-runtime.ts",
     "packages/runtime/src/packaged-agent-runtime.ts",
     "packages/runtime/src/siwc-inference-broker.ts",
+    "packages/runtime/src/siwc-https-transport.ts",
     "packages/runtime/src/fixtures/hermes-siwc-shape.json",
     "packages/runtime/src/host-core-command.ts",
     "packages/runtime/src/rust-sync.ts", "packages/runtime/src/rust-sync-worker.ts",
