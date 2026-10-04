@@ -3389,3 +3389,55 @@ func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData
     #expect(await eventually { model.channelModelSelection })
     #expect(model.pluginNotice == nil)
 }
+
+
+@MainActor
+@Test func harnessMainQueuesConversationAndDisablesSendNowWhileChildrenRun() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let summary = ThreadSummary(id: SecretaryUI.threadID, title: "Yorozu", archived: false, lastActivity: 10,
+        activeEventId: "foreground", turnState: .running, queuedTurnCount: 1, queuedEventIds: ["queued"],
+        harness: HarnessSummary(pluginId: "hermes", backgroundTasks: true, targetedSteer: true, taskStop: true))
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1", "steer-v1"])))
+    await transport.yield(.event(event("harness-list", .threadList(ThreadListData(threads: [summary])))))
+    #expect(await eventually { model.threads.first?.harness?.pluginId == "hermes" })
+    model.drafts[summary.id] = "A different topic"
+    model.send(in: summary, alternateDelivery: true)
+    let submission = try #require(model.outbox.last { $0.event.threadId == summary.id && $0.event.payload.kind == .message })
+    guard case .message(let message) = submission.event.payload else { Issue.record("Missing message"); return }
+    #expect(message.delivery == .queue)
+    #expect(!model.canSendNow(event("queued", .message(MessageData(role: .user, text: "queued")), thread: summary.id)))
+}
+
+@MainActor
+@Test func harnessTaskControlsUseCapabilitiesAndPreserveUnsupportedDrafts() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    var summary = ThreadSummary(id: "portable-task", title: "Research", archived: false, lastActivity: 10,
+        activeEventId: "task-attempt", turnState: .running,
+        harnessTask: HarnessTaskSummary(taskId: "child-42", parentThreadId: SecretaryUI.threadID,
+            state: .running, canSteer: false, canStop: false))
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1", "steer-v1"])))
+    await transport.yield(.event(event("task-list", .threadList(ThreadListData(threads: [summary])))))
+    #expect(await eventually { model.generating.contains(summary.id) })
+    model.drafts[summary.id] = "Change this child only"
+    model.send(in: summary)
+    #expect(model.drafts[summary.id] == "Change this child only")
+    #expect(!model.outbox.contains { $0.event.threadId == summary.id && $0.event.payload.kind == .message })
+    #expect(model.failure != nil)
+    #expect(!model.canStop(in: summary.id))
+    summary.harnessTask?.canSteer = true
+    summary.harnessTask?.canStop = true
+    await transport.yield(.event(event("task-capabilities", .threadList(ThreadListData(threads: [summary])))))
+    #expect(await eventually { model.canStop(in: summary.id) })
+    model.send(in: summary, alternateDelivery: true)
+    let correction = try #require(model.outbox.last { $0.event.threadId == summary.id && $0.event.payload.kind == .message })
+    guard case .message(let message) = correction.event.payload else { Issue.record("Missing correction"); return }
+    #expect(message.delivery == .steer)
+    #expect(model.drafts[summary.id] == "")
+    summary.harnessTask?.state = .unknown
+    await transport.yield(.event(event("task-unknown", .threadList(ThreadListData(threads: [summary])))))
+    #expect(await eventually { !model.canStop(in: summary.id) })
+}

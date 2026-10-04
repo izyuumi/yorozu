@@ -627,7 +627,57 @@ public struct TurnChangesData: Codable, Equatable, Sendable {
     }
 }
 
+/// Effective capabilities of the selected whole harness; independent of agent naming.
+public struct HarnessSummary: Codable, Equatable, Sendable {
+    public var pluginId: String
+    public var backgroundTasks: Bool
+    public var targetedSteer: Bool
+    public var taskStop: Bool
+    public init(pluginId: String, backgroundTasks: Bool, targetedSteer: Bool, taskStop: Bool) {
+        self.pluginId = pluginId
+        self.backgroundTasks = backgroundTasks
+        self.targetedSteer = targetedSteer
+        self.taskStop = taskStop
+    }
+}
+
+/// Host-projected task state. A receipt does not change the actual child execution state.
+public struct HarnessTaskSummary: Codable, Equatable, Sendable {
+    public enum State: String, Codable, Sendable {
+        case running, waiting, stopping, completed, failed, stopped, unknown
+    }
+    public var taskId: String
+    public var parentThreadId: String
+    public var state: State
+    public var canSteer: Bool
+    public var canStop: Bool
+    /// Present on a message that opens this task's common conversation view.
+    public var threadId: String?
+    public init(taskId: String, parentThreadId: String, state: State, canSteer: Bool, canStop: Bool,
+                threadId: String? = nil) {
+        self.taskId = taskId
+        self.parentThreadId = parentThreadId
+        self.state = state
+        self.canSteer = canSteer
+        self.canStop = canStop
+        self.threadId = threadId
+    }
+}
+
+/// Delivery status only. Neither queued nor requested claims the task applied a change.
+public struct HarnessControlReceipt: Codable, Equatable, Sendable {
+    public enum Status: String, Codable, Sendable { case queued, requested, rejected, unsupported, unknown }
+    public var status: Status
+    public var operationId: String
+    public init(status: Status, operationId: String) {
+        self.status = status
+        self.operationId = operationId
+    }
+}
+
 public struct MessageData: Codable, Equatable, Sendable {
+    public var harnessTask: HarnessTaskSummary?
+    public var controlReceipt: HarnessControlReceipt?
     public var delivery: MessageDelivery?
     public var channelModel: ChannelModelChoice?
     public enum Role: String, Codable, Sendable { case user, agent }
@@ -664,8 +714,12 @@ public struct MessageData: Codable, Equatable, Sendable {
         runId: String? = nil,
         completionId: String? = nil,
         delivery: MessageDelivery? = nil,
-        channelModel: ChannelModelChoice? = nil
+        channelModel: ChannelModelChoice? = nil,
+        harnessTask: HarnessTaskSummary? = nil,
+        controlReceipt: HarnessControlReceipt? = nil
     ) {
+        self.harnessTask = harnessTask
+        self.controlReceipt = controlReceipt
         self.delivery = delivery
         self.channelModel = channelModel
         self.role = role
@@ -680,10 +734,12 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, harnessTask, controlReceipt }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        harnessTask = try c.decodeIfPresent(HarnessTaskSummary.self, forKey: .harnessTask)
+        controlReceipt = try c.decodeIfPresent(HarnessControlReceipt.self, forKey: .controlReceipt)
         delivery = try c.decodeIfPresent(MessageDelivery.self, forKey: .delivery)
         channelModel = try c.decodeIfPresent(ChannelModelChoice.self, forKey: .channelModel)
         role = try c.decode(Role.self, forKey: .role)
@@ -715,6 +771,8 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(admissionDeadline, forKey: .admissionDeadline)
         try c.encodeIfPresent(runId, forKey: .runId)
         try c.encodeIfPresent(completionId, forKey: .completionId)
+        try c.encodeIfPresent(harnessTask, forKey: .harnessTask)
+        try c.encodeIfPresent(controlReceipt, forKey: .controlReceipt)
     }
 }
 
@@ -1257,6 +1315,8 @@ public enum ThreadTurnState: String, Codable, Equatable, Sendable {
 }
 
 public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
+    public var harness: HarnessSummary?
+    public var harnessTask: HarnessTaskSummary?
     /// Host-owned ID of the active or next admitted user operation in this thread.
     public var activeEventId: String?
     public var turnState: ThreadTurnState?
@@ -1323,8 +1383,12 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         turnState: ThreadTurnState? = nil,
         queuedTurnCount: Int? = nil,
         queuedEventIds: [String]? = nil,
-        canRewind: Bool? = nil
+        canRewind: Bool? = nil,
+        harness: HarnessSummary? = nil,
+        harnessTask: HarnessTaskSummary? = nil
     ) {
+        self.harness = harness
+        self.harnessTask = harnessTask
         self.activeEventId = activeEventId
         self.turnState = turnState
         self.queuedTurnCount = queuedTurnCount
@@ -1370,6 +1434,8 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         canResume = try c.decodeIfPresent(Bool.self, forKey: .canResume)
         interruptedTurnId = try c.decodeIfPresent(String.self, forKey: .interruptedTurnId)
         recoveryState = try c.decodeIfPresent(String.self, forKey: .recoveryState)
+        harness = try c.decodeIfPresent(HarnessSummary.self, forKey: .harness)
+        harnessTask = try c.decodeIfPresent(HarnessTaskSummary.self, forKey: .harnessTask)
         activeEventId = try c.decodeIfPresent(String.self, forKey: .activeEventId)
         turnState = try c.decodeIfPresent(ThreadTurnState.self, forKey: .turnState)
         queuedTurnCount = try c.decodeIfPresent(Int.self, forKey: .queuedTurnCount)

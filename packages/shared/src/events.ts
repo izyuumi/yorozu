@@ -92,7 +92,32 @@ export interface AttachmentDownloadChunkData {
   data: string; sha256: string; reason?: string;
 }
 
+/** Effective capabilities of the selected whole harness for this conversation. */
+export interface HarnessSummary {
+  pluginId: string;
+  backgroundTasks: boolean;
+  targetedSteer: boolean;
+  taskStop: boolean;
+}
+
+/** Host-projected identity and actual execution state of one visible harness task. */
+export interface HarnessTaskSummary {
+  taskId: string;
+  parentThreadId: string;
+  state: "running" | "waiting" | "stopping" | "completed" | "failed" | "stopped" | "unknown";
+  canSteer: boolean;
+  canStop: boolean;
+}
+
+/** Admission/delivery receipt only; queued or requested never means applied. */
+export interface HarnessControlReceipt {
+  status: "queued" | "requested" | "rejected" | "unsupported" | "unknown";
+  operationId: string;
+}
+
 export interface MessageData {
+  harnessTask?: HarnessTaskSummary & { threadId: string };
+  controlReceipt?: HarnessControlReceipt;
   /** Explicit user reply target, or triggering user message for a negotiated channel answer. */
   replyTo?: string;
   /** Requested delivery on submission; effective delivery in the host echo. */
@@ -486,6 +511,8 @@ export interface ThreadRenameData {
 }
 
 export interface ThreadSummary {
+  harness?: HarnessSummary;
+  harnessTask?: HarnessTaskSummary;
   /** Host-owned ID of the active or next admitted user operation in this thread. */
   activeEventId?: string;
   /** Present when the peer negotiated `turn-state-v1`; host-owned lifecycle for this thread. */

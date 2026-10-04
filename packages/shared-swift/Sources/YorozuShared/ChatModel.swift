@@ -1006,7 +1006,7 @@ public final class ChatModel {
         }
         // Files on their own are a message: only an empty composer is nothing to send.
         guard !text.isEmpty || !attachments.isEmpty else { return }
-        guard queueMessage(text, in: thread.id, attachments: attachments, fromComposer: true, alternateDelivery: alternateDelivery) else { return }
+        guard queueMessage(text, in: thread.id, attachments: attachments, fromComposer: true, alternateDelivery: alternateDelivery, summary: thread) else { return }
         drafts[thread.id] = ""
         self.attachments[thread.id] = nil
         preparedSend[thread.id] = nil
@@ -1028,8 +1028,15 @@ public final class ChatModel {
 
     @discardableResult
     private func queueMessage(_ text: String, in threadId: String, attachments: [MessageAttachment],
-                              fromComposer: Bool = false, alternateDelivery: Bool = false) -> Bool {
+                              fromComposer: Bool = false, alternateDelivery: Bool = false, summary: ThreadSummary? = nil) -> Bool {
         guard !stopped else { return false }
+        let summary = synced.first { $0.id == threadId } ?? summary
+        if let task = summary?.harnessTask {
+            guard task.canSteer, task.state == .running || task.state == .waiting, canDeliver else {
+                failure = SecretaryUI.localized("This task cannot receive a change right now.")
+                return false
+            }
+        }
         guard !attachments.contains(where: \.isDeferred) else {
             failure = String(localized: "Wait for attachment download before sending.")
             return false
@@ -1059,9 +1066,11 @@ public final class ChatModel {
             }
         }
         let createdAt = Int(Date().timeIntervalSince1970 * 1000)
-        // The secretary routes follow-ups to the appropriate task. Keep the saved delivery
-        // preference and alternate-send behavior for ordinary conversations.
-        let delivery: MessageDelivery = threadId == SecretaryUI.threadID || threadId.hasPrefix("secretary-task-") ? .steer
+        // Whole-harness main input is a conversation turn. Task input is an exact correction;
+        // capability/state checks above prevent unsupported changes becoming new executions.
+        let delivery: MessageDelivery = summary?.harnessTask != nil ? .steer
+            : summary?.harness != nil ? .queue
+            : threadId == SecretaryUI.threadID || threadId.hasPrefix("secretary-task-") ? .steer
             : alternateDelivery ? (followUpBehavior == .queue ? .steer : .queue) : followUpBehavior
         let event = YorozuEvent(
             id: UUID().uuidString,
@@ -1736,7 +1745,10 @@ public final class ChatModel {
     }
 
     public func canStop(in threadId: String) -> Bool {
-        let state = synced.first { $0.id == threadId }?.turnState
+        let summary = synced.first { $0.id == threadId }
+        if let task = summary?.harnessTask,
+           !task.canStop || (task.state != .running && task.state != .waiting) { return false }
+        let state = summary?.turnState
         return generating.contains(threadId) && activeEventId(in: threadId) != nil && !stopPending(in: threadId) &&
             (!hostOwnsTurnState || state == .starting || state == .running)
     }
@@ -1751,7 +1763,8 @@ public final class ChatModel {
     }
 
     public func canSendNow(_ event: YorozuEvent) -> Bool {
-        guard event.clientTs == nil else { return false }
+        let summary = synced.first { $0.id == event.threadId }
+        guard summary?.harness == nil, summary?.harnessTask == nil, event.clientTs == nil else { return false }
         guard case .compatible(_, let capabilities) = compatibility, capabilities.contains("steer-v1"),
               canDeliver, !sendingHeld(in: event.threadId), !stopPending(in: event.threadId),
               synced.first(where: { $0.id == event.threadId })?.turnState == .running,

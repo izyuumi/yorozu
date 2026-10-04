@@ -160,9 +160,12 @@ public struct ChatView: View {
     private var events: [YorozuEvent] { model.timeline(thread.id).events }
 
     private var rows: [ChatRow] { model.rows(in: thread.id) }
-    private var quiet: Bool { secretaryPresentation && !technicalDetails }
+    private var quiet: Bool { (secretaryPresentation || thread.harnessTask != nil) && !technicalDetails }
     private var showingActiveWork: Bool {
-        generating && !(quiet && thread.turnState == .stoppedUnconfirmed)
+        (generating || model.threads.contains {
+            guard let task = $0.harnessTask else { return false }
+            return task.parentThreadId == thread.id && [.running, .waiting, .stopping].contains(task.state)
+        }) && !(quiet && thread.turnState == .stoppedUnconfirmed)
     }
 
     /// Pending decisions take precedence over progress, on both timeline implementations.
@@ -978,6 +981,18 @@ public struct ChatView: View {
                 .onAppear { model.requestAttachmentDownloads(event) }
                 .onDisappear { model.stopAttachmentDownloads(event) }
                 .notificationHighlight(highlightedNotificationRow == event.id)
+                if let taskThreadId = data.harnessTask?.threadId,
+                   model.threads.contains(where: { $0.id == taskThreadId }) {
+                    NavigationLink {
+                        HarnessTaskConversation(model: model, threadId: taskThreadId, parentThreadId: thread.id)
+                    } label: {
+                        Label(locale.secretaryText("Open task", "タスクを開く"), systemImage: "arrow.up.right")
+                    }
+                    .font(.scaled(.subheadline))
+                    .padding(.horizontal)
+                    .padding(.bottom)
+                    .accessibilityIdentifier("harness-task-open")
+                }
             }
         case .changes(let event):
             if case .turnChanges(let data) = event.payload {
@@ -2431,3 +2446,21 @@ func streamingMessageId(in events: [YorozuEvent]) -> String? {
         }
     }
 #endif
+
+/// The existing conversation view follows live task summaries on both native platforms.
+private struct HarnessTaskConversation: View {
+    let model: ChatModel
+    let threadId: String
+    let parentThreadId: String
+
+    var body: some View {
+        Group {
+            if let thread = model.threads.first(where: { $0.id == threadId }) {
+                ChatView(model: model, thread: thread)
+                    .environment(\.secretaryPresentation, false)
+            }
+        }
+        .onAppear { model.openThread = threadId }
+        .onDisappear { if model.openThread == threadId { model.openThread = parentThreadId } }
+    }
+}

@@ -752,3 +752,20 @@ func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
             == "LM Studio"
     )
 }
+
+
+@Test func harnessMetadataDecodesWireFieldsWithoutBreakingOldHistory() throws {
+    let decoder = JSONDecoder()
+    let legacy = Data(#"{"id":"old","title":"Saved","archived":false,"lastActivity":1}"#.utf8)
+    #expect(try decoder.decode(ThreadSummary.self, from: legacy).harness == nil)
+    let task = Data(#"{"id":"task","title":"Research","archived":false,"lastActivity":2,"harnessTask":{"taskId":"child-42","parentThreadId":"yorozu-secretary-v1","state":"running","canSteer":true,"canStop":false}}"#.utf8)
+    let summary = try decoder.decode(ThreadSummary.self, from: task)
+    #expect(summary.harnessTask?.taskId == "child-42")
+    #expect(summary.harnessTask?.canStop == false)
+    let message = Data(#"{"role":"agent","text":"Change queued","done":true,"controlReceipt":{"status":"queued","operationId":"operation-3"},"harnessTask":{"taskId":"child-42","parentThreadId":"yorozu-secretary-v1","threadId":"task","state":"running","canSteer":true,"canStop":false}}"#.utf8)
+    let decoded = try decoder.decode(MessageData.self, from: message)
+    #expect(decoded.controlReceipt?.status == .queued)
+    #expect(decoded.harnessTask?.state == .running)
+    #expect(decoded.harnessTask?.threadId == "task")
+    #expect(try decoder.decode(MessageData.self, from: JSONEncoder().encode(decoded)) == decoded)
+}
