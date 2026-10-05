@@ -97,10 +97,12 @@ export class SecretaryQueueLedger {
   private path(threadId: string, eventId: string): string {
     return join(this.root, `queue-${createHash("sha256").update(JSON.stringify([threadId, eventId])).digest("hex")}.json`);
   }
-  private read(threadId: string, eventId: string): "queued" | "dispatching" | "not-submitted" | "ceased" | undefined {
+  private read(threadId: string, eventId: string, locked = false): "queued" | "dispatching" | "not-submitted" | "ceased" | undefined {
     try {
       if (!lstatSync(this.root).isDirectory() || lstatSync(this.root).isSymbolicLink()) return;
-      const path = this.path(threadId, eventId), stat = lstatSync(path);
+      const path = this.path(threadId, eventId);
+      if (!locked && existsSync(`${path}.lock`)) return;
+      const stat = lstatSync(path);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) return;
       const value = JSON.parse(readFileSync(path, "utf8"));
       if (value.version === 1 && value.threadId === threadId && value.eventId === eventId &&
@@ -118,19 +120,33 @@ export class SecretaryQueueLedger {
     }
   }
   admit(threadId: string, eventId: string): void { this.persist(threadId, eventId, "queued", true); }
+  private transition<T>(threadId: string, eventId: string, operation: () => T): T {
+    // Exclusive transition ownership prevents a second host from settling queued
+    // custody concurrently with dispatch. A crash-left lock is never stolen.
+    const lock = `${this.path(threadId, eventId)}.lock`, fd = openSync(lock, "wx", 0o600);
+    try { return operation(); } finally { closeSync(fd); unlinkSync(lock); }
+  }
   dispatch(threadId: string, eventId: string): void {
-    if (this.read(threadId, eventId) !== "queued") throw new Error("Queue dispatch custody is unconfirmed");
-    this.persist(threadId, eventId, "dispatching");
+    this.transition(threadId, eventId, () => {
+      if (this.read(threadId, eventId, true) !== "queued") throw new Error("Queue dispatch custody is unconfirmed");
+      this.persist(threadId, eventId, "dispatching");
+    });
   }
   settled(threadId: string, eventId: string, notSubmitted: boolean): void {
-    if (this.read(threadId, eventId) !== "dispatching") throw new Error("Queue completion custody is unconfirmed");
-    this.persist(threadId, eventId, notSubmitted ? "not-submitted" : "ceased");
+    this.transition(threadId, eventId, () => {
+      if (this.read(threadId, eventId, true) !== "dispatching") throw new Error("Queue completion custody is unconfirmed");
+      this.persist(threadId, eventId, notSubmitted ? "not-submitted" : "ceased");
+    });
   }
   reconcile(threadId: string, eventId: string): "not-submitted" | "ceased" | undefined {
     const phase = this.read(threadId, eventId);
     if (phase === "not-submitted" || phase === "ceased") return phase;
     if (phase !== "queued") return;
-    try { this.persist(threadId, eventId, "not-submitted"); return "not-submitted"; }
-    catch { return; } // A failed reconciliation write retains the visible hold.
+    try {
+      return this.transition(threadId, eventId, () => {
+        if (this.read(threadId, eventId, true) !== "queued") return;
+        this.persist(threadId, eventId, "not-submitted"); return "not-submitted" as const;
+      });
+    } catch { return; } // Failed/busy/crash-left transition retains the visible hold.
   }
 }
