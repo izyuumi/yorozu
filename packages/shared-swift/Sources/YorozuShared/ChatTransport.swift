@@ -208,10 +208,12 @@ public actor LocalSocketTransport: ChatTransport {
             updates?.yield(.ownerOnline(true))
             updates?.yield(.state(.paired))
         case .waiting(let error):
-            // Usually the sidecar still starting up. Network framework keeps retrying, so this
-            // is something to say in the UI rather than a reason to give up.
+            // A missing Unix pathname does not produce a network-path change when a sidecar
+            // later binds it. Do not rely on Network.framework to leave .waiting by itself.
+            // Use the same bounded, cancellable one-second redial as EOF/failed connections.
             updates?.yield(.ownerOnline(false))
             updates?.yield(.failed(String(localized: "Runtime not reachable: \(error.localizedDescription)")))
+            redial()
         case .failed(let error):
             updates?.yield(.failed(error.localizedDescription))
             redial()

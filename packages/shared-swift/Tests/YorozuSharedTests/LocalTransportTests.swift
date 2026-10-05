@@ -211,3 +211,92 @@ private final class RestartSocketServer {
     server.stop()
     #expect(await waitFor { !model.ownerOnline && model.compatibility == .legacy })
 }
+
+@MainActor
+@Test func localRuntimeColdOfflineStartReconnectsWhenSocketAppears() async throws {
+    let path = "/tmp/yorozu-\(UUID().uuidString).sock"
+    let server = RestartSocketServer()
+    let model = ChatModel(transport: LocalSocketTransport(path: path))
+    defer { model.close(); server.stop(); try? FileManager.default.removeItem(atPath: path) }
+    func waitFor(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<400 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+    // No listener or socket exists at cold launch. Wait for Network.framework's waiting
+    // state before making the pathname available; no UI/foreground/reconnect nudge is used.
+    model.start()
+    try #require(await waitFor { model.failure?.contains("Runtime not reachable") == true })
+    #expect(!model.canDeliver)
+    try server.start(path: path)
+    try #require(await waitFor { server.ready }, "Synthetic listener: \(server.failure ?? "not ready")")
+    try #require(await waitFor { server.hasConnection && model.canDeliver }, "Cold offline socket did not automatically reconnect")
+    model.send("synthetic cold-start wire proof", in: "reconnect-fixture")
+    try #require(await waitFor { server.received.contains { event in
+        guard case .message(let message) = event.payload else { return false }
+        return message.text == "synthetic cold-start wire proof"
+    } }, "Paired state alone is insufficient: actual client bytes must arrive")
+    let reply = YorozuEvent(id: "cold-reply", threadId: "reconnect-fixture", ts: 1, agentId: "fixture",
+        payload: .message(MessageData(role: .agent, text: "synthetic reply", done: true)))
+    try server.send(reply)
+    #expect(await waitFor { model.events[reply.threadId]?.contains { $0.id == reply.id } == true })
+}
+
+@MainActor
+@Test func localRuntimeReconnectsAfterRetryAlreadyFoundSocketMissing() async throws {
+    let path = "/tmp/yorozu-\(UUID().uuidString).sock"
+    let server = RestartSocketServer()
+    let model = ChatModel(transport: LocalSocketTransport(path: path))
+    defer { model.close(); server.stop(); try? FileManager.default.removeItem(atPath: path) }
+    func waitFor(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<400 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+    try server.start(path: path)
+    try #require(await waitFor { server.ready })
+    model.start()
+    try #require(await waitFor { server.hasConnection && model.canDeliver })
+    server.stop()
+    try? FileManager.default.removeItem(atPath: path)
+    // Unlike the original fast-restart regression, remain offline until an actual retry
+    // dial has failed to find the socket. This is the long-outage/cold-start waiting path.
+    try #require(await waitFor { !model.canDeliver && model.failure?.contains("Runtime not reachable") == true })
+    try server.start(path: path)
+    try #require(await waitFor { server.ready })
+    try #require(await waitFor { server.hasConnection && model.canDeliver }, "Missing-socket retry remained stalled")
+    model.send("synthetic sustained-outage wire proof", in: "reconnect-fixture")
+    #expect(await waitFor { server.received.contains { event in
+        guard case .message(let message) = event.payload else { return false }
+        return message.text == "synthetic sustained-outage wire proof"
+    } })
+}
+
+@MainActor
+@Test func closingLocalTransportCancelsMissingSocketRetry() async throws {
+    let path = "/tmp/yorozu-\(UUID().uuidString).sock"
+    let server = RestartSocketServer()
+    let transport = LocalSocketTransport(path: path)
+    let model = ChatModel(transport: transport)
+    defer { model.close(); server.stop(); try? FileManager.default.removeItem(atPath: path) }
+    func waitFor(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<300 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+    model.start()
+    try #require(await waitFor { model.failure?.contains("Runtime not reachable") == true })
+    await transport.close()
+    try server.start(path: path)
+    try #require(await waitFor { server.ready })
+    // The one-second retry must not resurrect a transport its owner explicitly closed.
+    try await Task.sleep(for: .milliseconds(1400))
+    #expect(!server.hasConnection && server.received.isEmpty)
+    #expect(!model.canDeliver)
+}
