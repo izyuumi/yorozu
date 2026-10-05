@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import tarfile
 import tempfile
+import subprocess
 import unittest
 
 spec = importlib.util.spec_from_file_location("intake", Path(__file__).with_name("intake-hermes-runtime.py"))
@@ -82,6 +83,28 @@ class IntakeTests(unittest.TestCase):
         receipt = json.loads((root.parent / "intake-receipt.json").read_text())
         self.assertFalse(receipt["gatewayExecuted"])
         self.assertTrue(receipt["pluginBytesMatchReviewedSource"])
+
+    def test_packed_detached_git_inventory_reconstructs_empty_refs(self):
+        repo = self.root / "fixture-repo"
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        def git(*args):
+            return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "fixture")
+        commit = git("rev-parse", "HEAD")
+        git("checkout", "--detach", "-q", commit)
+        git("pack-refs", "--all")
+        git("repack", "-ad")
+        for path in (repo / ".git").rglob("*"):
+            if path.is_file():
+                self.members["source/.git/" + str(path.relative_to(repo / ".git"))] = path.read_bytes()
+        archive, pin = self.prepare()
+        root = self.extract(archive, pin)
+        self.assertTrue((root / "source/.git/refs").is_dir())
+        self.assertEqual(subprocess.check_output(["git", "-C", str(root / "source"),
+                                                "rev-parse", "HEAD"], text=True).strip(), commit)
+        for name, content in self.members.items():
+            self.assertEqual((root / name).read_bytes(), content)
 
     def test_archive_tampering_is_rejected_before_extraction(self):
         archive, pin = self.prepare()

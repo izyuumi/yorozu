@@ -154,6 +154,16 @@ def extract(archive, pin, destination, source):
     require(not any(n.startswith("hermes/plugin/") for n in links), "Plugin symlinks are forbidden")
     for relative in PLUGIN_FILES:
         require((root / "plugin" / relative).read_bytes() == (plugin / relative).read_bytes(), "Artifact adapter differs from reviewed source: " + relative)
+    # File-only inventories omit this empty Git structural directory. Recreate
+    # only after validation, never through an archive-supplied symlink.
+    git_dir = root / "source/.git"
+    if git_dir.exists() or git_dir.is_symlink():
+        require(not (root / "source").is_symlink() and not git_dir.is_symlink()
+                and git_dir.is_dir(), "Git structural parent must be a real directory")
+        refs = git_dir / "refs"
+        require(not refs.is_symlink(), "Git refs structural directory must not be a symlink")
+        refs.mkdir(mode=0o755, exist_ok=True)
+        require(refs.is_dir(), "Git refs must be a directory")
     receipt = {"schemaVersion": 1, "archiveSha256": pin["archiveSha256"], "archiveBytes": pin["archiveBytes"],
                "manifestSha256": pin["manifestSha256"], "inventorySha256": pin["inventorySha256"],
                "archiveProvenanceSha256": pin["archiveProvenanceSha256"], "pluginBytesMatchReviewedSource": True,
