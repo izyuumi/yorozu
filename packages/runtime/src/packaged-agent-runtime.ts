@@ -205,7 +205,7 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
     createFactory: store => {
       services.bindStore?.(store);
       const factory = createCuratedAgentRuntimeFactory(store, { node: { executable: join(resourcesRoot, "node"), version: "26.10.0" },
-        hermes: { ...HERMES_RUNTIME_PIN, source: join(root, PATHS.source), adapter: join(root, PATHS.adapter),
+        hermes: { ...HERMES_RUNTIME_PIN, source: join(root, PATHS.source), sourceIntegrity: "sealed-inventory-v1", adapter: join(root, PATHS.adapter),
           python: { executable: join(root, PATHS.python), canonicalExecutable: join(root, PATHS.python), version: PIN.pythonVersion, libraryRoots: [join(root, "python", "lib"), join(root, "python", "share")] } }, selectBroker: selected });
       return async (agent, scope, execution) => {
         if (agent.pluginId !== "hermes") throw new CuratedRuntimeUnavailable("runtime", "The selected plugin has no packaged runtime.");

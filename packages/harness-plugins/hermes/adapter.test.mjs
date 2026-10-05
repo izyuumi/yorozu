@@ -108,7 +108,10 @@ test('scoped capabilities follow allowed native tools and authority cannot chang
   const { adapter, gateway, manifest } = await setup({ initialize: params });
   assert.equal(manifest.agentId, 'agent-a'); assert.deepEqual(manifest.isolation, params.isolation);
   assert.equal(manifest.capabilities.backgroundTasks, true); assert.equal(manifest.capabilities.teamDelegation, false);
-  for (const method of ['turn.submit', 'session.open', 'session.snapshot']) await assert.rejects(adapter.handle(method, { ...currency, text: 'Check', scope: params.scope }), /immutable/);
+  for (const method of ['turn.submit', 'session.open', 'session.snapshot']) {
+    await assert.rejects(adapter.handle(method, { ...currency, text: 'Check', scope: params.scope }), /immutable/);
+    await assert.rejects(adapter.handle(method, { ...currency, sourceIntegrity: 'sealed-inventory-v1' }), /immutable/);
+  }
   const receipt = await adapter.handle('turn.submit', { ...currency, text: 'Read file.', attachments: [{ path: '/private/other.txt' }] });
   assert.equal(receipt.status, 'unsupported'); assert.equal(gateway.calls.some(call => call.method === 'prompt.submit'), false);
 });
@@ -829,4 +832,46 @@ test('retirement write failure never drops unacknowledged in-memory custody or r
   gateway.request('after-failure', 'yorozu.message_read', { agent_session_id: 'durable-1', tool_call_id: 'after-failure' });
   assert.deepEqual(gateway.responses.at(-1).result.messages, [deliveredMessage]);
   await rm(messageJournalPath, { recursive: true }); await writeFile(messageJournalPath, saved);
+});
+
+test('sealed source cannot accept a caller digest, symlinked source/.git, or a fabricated pinned revision', async t => {
+  const { verifySealedHermesSource, SEALED_HERMES_SOURCE_SHA256 } = await import('./adapter.mjs');
+  const f = await scopeFixture(t), source = join(f.directory, 'source');
+  await mkdir(source); await mkdir(join(source, '.git'));
+  await writeFile(join(source, '.git/HEAD'), UPSTREAM.commit + '\n');
+  await writeFile(join(source, 'pyproject.toml'), 'version = "0.21.5"\n');
+  assert.match(SEALED_HERMES_SOURCE_SHA256, /^[a-f0-9]{64}$/);
+  await assert.rejects(verifySealedHermesSource(source), /integrity/);
+  await assert.rejects(prepareRuntime({ ...f.params, sourcePath: source, sourceIntegrity: { kind: 'sealed-inventory-v1', sourceSha: UPSTREAM.commit, inventorySha256: SEALED_HERMES_SOURCE_SHA256 } }), /integrity/);
+  await assert.rejects(prepareRuntime({ ...f.params, sourcePath: source, sourceIntegrity: 'skip' }), /integrity/);
+  await assert.rejects(prepareRuntime({ ...f.params, sourcePath: source, sourceIntegrity: { kind: 'sealed-inventory-v1', sourceSha: UPSTREAM.commit, inventorySha256: '0'.repeat(64) } }), /integrity/);
+  const alias = join(f.directory, 'alias'); await symlink(source, alias);
+  await assert.rejects(verifySealedHermesSource(alias), /integrity/);
+  await rm(join(source, '.git'), { recursive: true }); await symlink(f.workspace, join(source, '.git'));
+  await assert.rejects(verifySealedHermesSource(source), /integrity/);
+});
+
+test('assembled sealed source is rehashed in the child; edits, extra files and metadata tampering fail', {
+  skip: !process.env.YOROZU_HERMES_SEALED_TEST_SOURCE,
+}, async t => {
+  const { verifySealedHermesSource } = await import('./adapter.mjs');
+  const { cp, chmod, link } = await import('node:fs/promises');
+  const f = await scopeFixture(t), source = join(f.directory, 'source');
+  await cp(process.env.YOROZU_HERMES_SEALED_TEST_SOURCE, source, { recursive: true });
+  await verifySealedHermesSource(source);
+  for (const name of ['pyproject.toml', '.git/HEAD', '.git/index']) {
+    const path = join(source, name), original = await readFile(path);
+    await writeFile(path, Buffer.concat([original, Buffer.from('tamper')]));
+    await assert.rejects(verifySealedHermesSource(source), /integrity/);
+    await writeFile(path, original);
+  }
+  const extra = join(source, 'unsealed.py'); await writeFile(extra, 'malicious = True');
+  await assert.rejects(verifySealedHermesSource(source), /integrity/); await rm(extra);
+  const project = join(source, 'pyproject.toml'); await chmod(project, 0o666);
+  await assert.rejects(verifySealedHermesSource(source), /integrity/); await chmod(project, 0o644);
+  await link(project, join(f.directory, 'hardlink'));
+  await assert.rejects(verifySealedHermesSource(source), /integrity/); await rm(join(f.directory, 'hardlink'));
+  const original = await readFile(project); await rm(project); await symlink(join(f.directory, 'borrowed'), project); await writeFile(join(f.directory, 'borrowed'), original);
+  await assert.rejects(verifySealedHermesSource(source), /integrity/); await rm(project); await writeFile(project, original);
+  await verifySealedHermesSource(source);
 });

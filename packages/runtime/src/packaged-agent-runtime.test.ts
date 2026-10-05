@@ -84,7 +84,7 @@ test("factory delegates only fixed packaged paths after validation and ignores e
   const make = vi.spyOn(curated, "createCuratedAgentRuntimeFactory").mockReturnValue(run);
   const platform = packagedPersonAgentPlatform(f.resources, { selectBroker }), factory = platform.createFactory(store);
   expect(make).toHaveBeenCalledExactlyOnceWith(store, { node: { executable: join(f.resources, "node"), version: "26.10.0" },
-    hermes: { version: "0.21.5", sourceSha: "f97608f178d1ffeca59860195ab7da295f7c8e5f", source: join(f.runtime, "source"), adapter: join(f.runtime, "plugin/adapter.mjs"),
+    hermes: { version: "0.21.5", sourceSha: "f97608f178d1ffeca59860195ab7da295f7c8e5f", source: join(f.runtime, "source"), sourceIntegrity: "sealed-inventory-v1", adapter: join(f.runtime, "plugin/adapter.mjs"),
       python: { executable: join(f.runtime, "python/bin/python3.13"), canonicalExecutable: join(f.runtime, "python/bin/python3.13"), version: "3.13.16", libraryRoots: [join(f.runtime, "python/lib"), join(f.runtime, "python/share")] } }, selectBroker });
   const args = [{ pluginId: "hermes" }, {}, {}] as any;
   await expect(factory(...args)).rejects.toMatchObject({ capability: "auth" }); expect(run).toHaveBeenCalledTimes(1);

@@ -1,13 +1,54 @@
 /** Host-only pinned code + fresh broker bootstrap. No auth discovery, install, or fallback. */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { promises as sealedFs, constants as sealedConstants, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, isAbsolute } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { PersonAgentStore, type PersonAgent } from "./agent-store.js";
 import { pathWithin, safeAgentPath, validAgentId, type EffectiveAgentScope } from "./agent-scope.js";
 import { acquireHostListener, releaseHostListener, type HostListenerLease } from "./agent-listener.js";
 import type { PersonAgentExecution, PersonAgentRuntimeFactory } from "./person-agent-runtime.js";
+
+/** Independent content pin for the reviewed f97608f source export, including its
+ * sealed .git metadata. Not a manifest-supplied digest or an integrity bypass.
+ * Rows use package-hermes-runtime.py fields, sorted by full UTF-8 path
+ * (not Python Path component ordering), with mode/path/sha256 key order.
+ * Source is immutable code under the host-selected signed bundle, never writable
+ * agent state. Both host and child rehash it; no Git/toolchain is invoked here.
+ */
+export const SEALED_HERMES_SOURCE_SHA256 = "bfee32553ccf2291cbd300b1fceed350487578f414a548b3bb7c5138cd4d0145";
+export async function verifySealedHermesSource(source: string): Promise<void> {
+  const bad = () => new Error("Sealed Hermes source integrity check failed");
+  if (!isAbsolute(source) || resolve(source) !== source || await sealedFs.realpath(source) !== source) throw bad();
+  const rows: { mode: number; path: string; sha256: string }[] = [];
+  let bytes = 0, visited = 0;
+  async function walk(directory: string): Promise<void> {
+    const stat = await sealedFs.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.mode & 0o022) throw bad();
+    for (const name of await sealedFs.readdir(directory)) {
+      if (++visited > 65536) throw bad();
+      const path = join(directory, name), s = await sealedFs.lstat(path);
+      if (s.isDirectory()) { await walk(path); continue; }
+      // This sealed export contains no links, including anywhere in .git.
+      if (!s.isFile() || s.isSymbolicLink() || s.nlink !== 1 || s.mode & 0o022 || s.size > 256 * 1024 * 1024 || (bytes += s.size) > 2 * 1024 * 1024 * 1024) throw bad();
+      const file = await sealedFs.open(path, sealedConstants.O_RDONLY | sealedConstants.O_NOFOLLOW | sealedConstants.O_NONBLOCK);
+      try {
+        const opened = await file.stat();
+        if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== s.dev || opened.ino !== s.ino || opened.size !== s.size || opened.mode !== s.mode) throw bad();
+        const digest = createHash("sha256"); let read = 0;
+        for await (const chunk of file.createReadStream({ autoClose: false })) {
+          if ((read += chunk.length) > s.size) throw bad();
+          digest.update(chunk);
+        }
+        if (read !== s.size) throw bad();
+        rows.push({ mode: s.mode & 0o111 ? 493 : 420, path: "source/" + path.slice(source.length + 1), sha256: digest.digest("hex") });
+      } finally { await file.close(); }
+    }
+  }
+  await walk(source);
+  rows.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
+  if (createHash("sha256").update(JSON.stringify(rows)).digest("hex") !== SEALED_HERMES_SOURCE_SHA256) throw bad();
+}
 
 export const HERMES_RUNTIME_PIN = Object.freeze({ version: "0.21.5", sourceSha: "f97608f178d1ffeca59860195ab7da295f7c8e5f" });
 export const OPENCLAW_RUNTIME_PIN = Object.freeze({ version: "2026.9.8", sourceSha: "9bbdbaec153dd28fb452e6652c3dcacd829cb00f",
@@ -17,7 +58,8 @@ export interface CuratedPythonRuntime {
   /** May be the final interpreter link in the explicitly selected virtual environment. */
   executable: string; canonicalExecutable: string; version: string; libraryRoots: string[]; venvRoot?: string;
 }
-export interface CuratedHermesRuntime { version: "0.21.5"; sourceSha: typeof HERMES_RUNTIME_PIN.sourceSha; source: string; adapter: string; python: CuratedPythonRuntime }
+/** sealed-inventory-v1 selects another mandatory verifier, never skips integrity. */
+export interface CuratedHermesRuntime { version: "0.21.5"; sourceSha: typeof HERMES_RUNTIME_PIN.sourceSha; source: string; adapter: string; sourceIntegrity?: "sealed-inventory-v1"; python: CuratedPythonRuntime }
 export interface CuratedOpenClawRuntime {
   version: "2026.9.8"; sourceSha: typeof OPENCLAW_RUNTIME_PIN.sourceSha; source: string; adapter: string;
 }
@@ -62,6 +104,7 @@ async function inspect(command: string, args: string[], limit = 4096, privateInd
   } catch { throw new CuratedRuntimeUnavailable("runtime", "Selected pinned code or interpreter validation failed; no repair or fallback was attempted"); }
 }
 async function pinnedSource(source: string, sha: string, scratch: string): Promise<string[]> {
+  try { safeAgentPath(join(source, ".git"), true); } catch { throw new CuratedRuntimeUnavailable("runtime", "Selected Git metadata must not be a symlink"); }
   if (await inspect("/usr/bin/git", ["-C", source, "rev-parse", "HEAD"]) !== sha) throw new CuratedRuntimeUnavailable("runtime", "Selected source does not match its approved commit");
   const verification = mkdtempSync(join(scratch, ".source-verification-")), index = join(verification, "index");
   try {
@@ -106,12 +149,13 @@ function privateJson(path: string, data: unknown): void {
 export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, supplied: CuratedAgentRuntimeConfiguration): PersonAgentRuntimeFactory {
   fields(supplied, ["node", "hermes", "openclaw", "selectBroker", "terminalBinaries"]);
   fields(supplied.node, ["executable", "version", "libraryRoots"]);
-  fields(supplied.hermes, ["version", "sourceSha", "source", "adapter", "python"]);
+  fields(supplied.hermes, ["version", "sourceSha", "source", "adapter", "python", "sourceIntegrity"]);
   fields(supplied.hermes.python, ["executable", "canonicalExecutable", "version", "libraryRoots", "venvRoot"]);
   if (supplied.openclaw) fields(supplied.openclaw, ["version", "sourceSha", "source", "adapter"]);
   if (supplied.node.version !== "26.10.0" || supplied.hermes.version !== HERMES_RUNTIME_PIN.version || supplied.hermes.sourceSha !== HERMES_RUNTIME_PIN.sourceSha
     || supplied.openclaw && (supplied.openclaw.version !== OPENCLAW_RUNTIME_PIN.version || supplied.openclaw.sourceSha !== OPENCLAW_RUNTIME_PIN.sourceSha)
     || typeof supplied.selectBroker !== "function") throw new CuratedRuntimeUnavailable("runtime", "Unsupported curated runtime pin or broker selector");
+  if (supplied.hermes.sourceIntegrity !== undefined && supplied.hermes.sourceIntegrity !== "sealed-inventory-v1") throw new CuratedRuntimeUnavailable("runtime", "Unsupported source integrity contract");
   const selector = supplied.selectBroker;
   // Freeze configuration values independently of the caller. Do not retain bearer records.
   const config = structuredClone({ node: supplied.node, hermes: supplied.hermes, openclaw: supplied.openclaw, terminalBinaries: supplied.terminalBinaries ?? [] });
@@ -164,7 +208,9 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
       || manifest?.authentication?.ambientCredentials !== false || manifest?.authentication?.billedFallback !== false
       || agent.pluginId === "openclaw" && (manifest?.curatedRuntime?.sourceSha !== OPENCLAW_RUNTIME_PIN.sourceSha || manifest?.curatedRuntime?.patchSha256 !== OPENCLAW_RUNTIME_PIN.patchSha256))
       throw new CuratedRuntimeUnavailable("runtime", "Selected adapter manifest does not match the pinned isolated plugin");
-    const readPaths = [...await pinnedSource(source, sourceConfig.sourceSha, scratch), node, canonical(dirname(adapter), true), ...roots(config.node.libraryRoots ?? [])];
+    const sealed = agent.pluginId === "hermes" && config.hermes.sourceIntegrity === "sealed-inventory-v1";
+    if (sealed) { try { await verifySealedHermesSource(source); } catch { throw new CuratedRuntimeUnavailable("runtime", "Sealed Hermes source integrity check failed"); } }
+    const readPaths = [...(sealed ? [source] : await pinnedSource(source, sourceConfig.sourceSha, scratch)), node, canonical(dirname(adapter), true), ...roots(config.node.libraryRoots ?? [])];
     let python: string | undefined;
     if (agent.pluginId === "hermes") {
       const p = config.hermes.python, target = canonical(p.canonicalExecutable), parent = canonical(dirname(p.executable), true);
@@ -179,7 +225,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
           throw new CuratedRuntimeUnavailable("runtime", "Python virtual environment may not inherit installed system packages");
         readPaths.push(venv);
       } else if (p.executable !== target) throw new CuratedRuntimeUnavailable("runtime", "Python links require an explicit owned virtual environment");
-      const actual = await inspect(target, ["-I", "-S", "-c", "import sys;print('.'.join(map(str,sys.version_info[:3])))"]);
+      const actual = await inspect(target, ["-I", "-B", "-S", "-c", "import sys;print('.'.join(map(str,sys.version_info[:3])))"]);
       if (!/^3\.(11|12|13)\.\d+$/.test(p.version) || actual !== p.version) throw new CuratedRuntimeUnavailable("runtime", "Selected Python version differs from its compatible explicit pin");
       python = p.executable; readPaths.push(target, ...roots(p.libraryRoots));
       const metadata = readFileSync(join(source, "pyproject.toml"), "utf8");
@@ -216,7 +262,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
       privateJson(providerConfigPath, { baseUrl: `http://127.0.0.1:${broker.port}/v1`, model: broker.model, bearer: broker.bearer,
         ...(agent.pluginId === "hermes" ? { apiMode: "codex_responses" } : { api: "openai-responses" }) });
       return { configuration: { pluginId: agent.pluginId, command: node, args: [adapter], upstreamVersion: sourceConfig.version,
-        initialize: { upstreamVersion: sourceConfig.version, providerConfigPath, ...(agent.pluginId === "hermes" ? { python, sourcePath: source, provider: "custom:yorozu-local-proof", model: broker.model }
+        initialize: { upstreamVersion: sourceConfig.version, providerConfigPath, ...(agent.pluginId === "hermes" ? { python, sourcePath: source, ...(sealed ? { sourceIntegrity: { kind: "sealed-inventory-v1", sourceSha: HERMES_RUNTIME_PIN.sourceSha, inventorySha256: SEALED_HERMES_SOURCE_SHA256 } } : {}), provider: "custom:yorozu-local-proof", model: broker.model }
           : { source, node, gatewayPort: listener!.port }) } },
       runtime: { command: node, args: [adapter], runtimeDir: scratch, readPaths: curated, brokerPorts: [broker.port], ...(listener ? { inheritedListeners: [listener] } : {}) } };
     } catch (error) { if (listener) await releaseHostListener(listener); throw error; }

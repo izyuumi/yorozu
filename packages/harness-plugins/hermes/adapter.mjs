@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { promises as sealedFs, constants as sealedConstants } from "node:fs";
 /** Hermes owns the agent loop. This process translates transport and receipts only. */
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -20,6 +21,47 @@ function boundedProjection(emit, frame, limit = 256 * 1024) {
     if (fits(terminal)) emit(terminal);
   }
   return false;
+}
+
+/** Independent content pin for the reviewed f97608f source export, including its
+ * sealed .git metadata. Not a manifest-supplied digest or an integrity bypass.
+ * Rows use package-hermes-runtime.py fields, sorted by full UTF-8 path
+ * (not Python Path component ordering), with mode/path/sha256 key order.
+ * Source is immutable code under the host-selected signed bundle, never writable
+ * agent state. Both host and child rehash it; no Git/toolchain is invoked here.
+ */
+export const SEALED_HERMES_SOURCE_SHA256 = "bfee32553ccf2291cbd300b1fceed350487578f414a548b3bb7c5138cd4d0145";
+export async function verifySealedHermesSource(source) {
+  const bad = () => new Error("Sealed Hermes source integrity check failed");
+  if (!isAbsolute(source) || resolve(source) !== source || await sealedFs.realpath(source) !== source) throw bad();
+  const rows = [];
+  let bytes = 0, visited = 0;
+  async function walk(directory) {
+    const stat = await sealedFs.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.mode & 0o022) throw bad();
+    for (const name of await sealedFs.readdir(directory)) {
+      if (++visited > 65536) throw bad();
+      const path = join(directory, name), s = await sealedFs.lstat(path);
+      if (s.isDirectory()) { await walk(path); continue; }
+      // This sealed export contains no links, including anywhere in .git.
+      if (!s.isFile() || s.isSymbolicLink() || s.nlink !== 1 || s.mode & 0o022 || s.size > 256 * 1024 * 1024 || (bytes += s.size) > 2 * 1024 * 1024 * 1024) throw bad();
+      const file = await sealedFs.open(path, sealedConstants.O_RDONLY | sealedConstants.O_NOFOLLOW | sealedConstants.O_NONBLOCK);
+      try {
+        const opened = await file.stat();
+        if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== s.dev || opened.ino !== s.ino || opened.size !== s.size || opened.mode !== s.mode) throw bad();
+        const digest = createHash("sha256"); let read = 0;
+        for await (const chunk of file.createReadStream({ autoClose: false })) {
+          if ((read += chunk.length) > s.size) throw bad();
+          digest.update(chunk);
+        }
+        if (read !== s.size) throw bad();
+        rows.push({ mode: s.mode & 0o111 ? 493 : 420, path: "source/" + path.slice(source.length + 1), sha256: digest.digest("hex") });
+      } finally { await file.close(); }
+    }
+  }
+  await walk(source);
+  rows.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
+  if (createHash("sha256").update(JSON.stringify(rows)).digest("hex") !== SEALED_HERMES_SOURCE_SHA256) throw bad();
 }
 
 export const UPSTREAM = Object.freeze({ version: '0.21.5', commit: 'f97608f178d1ffeca59860195ab7da295f7c8e5f' });
@@ -164,22 +206,37 @@ export async function prepareRuntime(params) {
   }
   const agent = await validateAgentScope(params);
   if (!agent) throw invalid('agentId and product scope are required before preparing a real runtime');
+  const sealed = params.sourceIntegrity !== undefined;
+  if (sealed) {
+    // The root arrives on the existing private host-to-child initialize pipe.
+    // It is not self-authenticating: bind it independently to this reviewed code
+    // pin and rehash source bytes before Python can load any Hermes module.
+    const seal = object(params.sourceIntegrity, ['kind', 'sourceSha', 'inventorySha256'], 'source integrity');
+    if (seal.kind !== 'sealed-inventory-v1' || seal.sourceSha !== UPSTREAM.commit || seal.inventorySha256 !== SEALED_HERMES_SOURCE_SHA256)
+      throw invalid('unsupported source integrity contract');
+    await verifySealedHermesSource(params.sourcePath);
+  }
   const sourcePath = await realpath(params.sourcePath);
+  if (sourcePath !== params.sourcePath || (await lstat(join(sourcePath, '.git'))).isSymbolicLink()) throw invalid('source and Git metadata must not be symlinks');
   const metadata = await readFile(join(sourcePath, 'pyproject.toml'), 'utf8');
   if (!/^version\s*=\s*"0\.21\.5"\s*$/m.test(metadata)) throw invalid('Hermes source version does not match the pinned release');
-  const gitOptions = { maxBuffer: 1024, env: { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
-  const revision = await exec('git', ['-C', sourcePath, 'rev-parse', 'HEAD'], gitOptions);
-  if (revision.stdout.trim() !== UPSTREAM.commit) throw invalid('Hermes source commit does not match the pinned release');
   const workspace = await realpath(params.workspace);
   await mkdir(params.profileRoot, { recursive: true, mode: 0o700 });
   const profileRoot = await realpath(params.profileRoot);
-  const verification = await mkdtemp(join(profileRoot, '.hermes-source-verification-'));
-  try {
-    const privateOptions = { ...gitOptions, env: { ...gitOptions.env, GIT_INDEX_FILE: join(verification, 'index') } };
-    const prefix = ['-C', sourcePath, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
-    await exec('git', [...prefix, 'read-tree', UPSTREAM.commit], privateOptions);
-    await exec('git', [...prefix, 'diff', '--no-ext-diff', '--no-textconv', '--quiet', 'HEAD', '--'], privateOptions);
-  } finally { await rm(verification, { recursive: true, force: true }); }
+  if (!sealed) {
+    // Developer checkout contract remains Git-based. The shipping host always
+    // selects sealed-inventory-v1, whose independently pinned hash is checked above.
+    const gitOptions = { maxBuffer: 1024, env: { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
+    const revision = await exec('git', ['-C', sourcePath, 'rev-parse', 'HEAD'], gitOptions);
+    if (revision.stdout.trim() !== UPSTREAM.commit) throw invalid('Hermes source commit does not match the pinned release');
+    const verification = await mkdtemp(join(profileRoot, '.hermes-source-verification-'));
+    try {
+      const privateOptions = { ...gitOptions, env: { ...gitOptions.env, GIT_INDEX_FILE: join(verification, 'index') } };
+      const prefix = ['-C', sourcePath, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+      await exec('git', [...prefix, 'read-tree', UPSTREAM.commit], privateOptions);
+      await exec('git', [...prefix, 'diff', '--no-ext-diff', '--no-textconv', '--quiet', 'HEAD', '--'], privateOptions);
+    } finally { await rm(verification, { recursive: true, force: true }); }
+  }
   const hermesHome = join(profileRoot, 'hermes-runtime');
   await mkdir(hermesHome, { recursive: true, mode: 0o700 });
   if ((await lstat(hermesHome)).isSymbolicLink()) throw invalid('Hermes runtime must not be a symlink');
@@ -834,7 +891,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
         finally { initializing = false; }
       }
       if (!initialized) throw new ProtocolError(-32001, 'adapter is not initialized');
-      if (['agentId', 'scope', 'isolation', 'platform', 'workspace', 'memoryDir', 'profileRoot', 'sourcePath', 'python', 'providerConfigPath', 'lifecycle', 'connection'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
+      if (['agentId', 'scope', 'isolation', 'platform', 'workspace', 'memoryDir', 'profileRoot', 'sourcePath', 'sourceIntegrity', 'python', 'providerConfigPath', 'lifecycle', 'connection'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
       if (method === 'detach') return { status: 'unsupported', reason: 'this managed adapter owns its native process; connected lifecycle is unavailable' };
       if (method === 'shutdown') { await messageWriting; await runtime.gateway.shutdown(); return { stopped: runtime.gateway.closed }; }
       if (runtime.gateway.closed && method !== 'session.snapshot') throw new ProtocolError(-32002, 'Hermes runtime is closed; uncertain actions cannot be replayed');

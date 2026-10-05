@@ -1,6 +1,6 @@
 /** Actual pinned source/interpreter reads, synthetic broker records; no inference/network/Gateway. */
 import { afterEach, expect, test as defineTest, vi } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import * as listenerApi from "./agent-listener.js";
@@ -141,4 +141,36 @@ test("broker-selector failures cannot expose a secret or select a fallback provi
   const f = fixture(); f.config.selectBroker = () => { throw new Error(f.selected.bearer); };
   const error = await createCuratedAgentRuntimeFactory(f.store, f.config)(f.agent, f.scope, f.execution).catch(e => e);
   expect(error).toMatchObject({ status: "unsupported", capability: "auth" }); expect(error.message).not.toContain(f.selected.bearer);
+});
+
+defineTest("host sealed source rejects fabricated commit metadata and source/.git symlinks without invoking Git", async () => {
+  const { verifySealedHermesSource } = await import("./curated-agent-runtime.js");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "sealed-host-negative-"))); roots.push(root);
+  const source = join(root, "source"); mkdirSync(join(source, ".git"), { recursive: true });
+  writeFileSync(join(source, ".git/HEAD"), HERMES_RUNTIME_PIN.sourceSha + "\n");
+  writeFileSync(join(source, "pyproject.toml"), 'version = "0.21.5"\n');
+  await expect(verifySealedHermesSource(source)).rejects.toThrow("integrity");
+  symlinkSync(source, join(root, "alias"));
+  await expect(verifySealedHermesSource(join(root, "alias"))).rejects.toThrow("integrity");
+  rmSync(join(source, ".git"), { recursive: true }); symlinkSync(root, join(source, ".git"));
+  await expect(verifySealedHermesSource(source)).rejects.toThrow("integrity");
+});
+
+defineTest.skipIf(!process.env.YOROZU_HERMES_SEALED_TEST_SOURCE)("host independently verifies the assembled sealed export and binds the same root as the child", async () => {
+  const { verifySealedHermesSource, SEALED_HERMES_SOURCE_SHA256 } = await import("./curated-agent-runtime.js");
+  const adapter = readFileSync(ADAPTER, "utf8");
+  expect(adapter).toContain(`export const SEALED_HERMES_SOURCE_SHA256 = "${SEALED_HERMES_SOURCE_SHA256}"`);
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "sealed-host-tamper-"))); roots.push(root);
+  const source = join(root, "source"); cpSync(process.env.YOROZU_HERMES_SEALED_TEST_SOURCE!, source, { recursive: true });
+  await verifySealedHermesSource(source);
+  for (const name of ["pyproject.toml", ".git/HEAD", ".git/index"]) {
+    const path = join(source, name), original = readFileSync(path);
+    writeFileSync(path, Buffer.concat([original, Buffer.from("tamper")]));
+    await expect(verifySealedHermesSource(source)).rejects.toThrow("integrity"); writeFileSync(path, original);
+  }
+  writeFileSync(join(source, "unsealed.py"), "malicious=True");
+  await expect(verifySealedHermesSource(source)).rejects.toThrow("integrity"); rmSync(join(source, "unsealed.py"));
+  chmodSync(join(source, "pyproject.toml"), 0o666);
+  await expect(verifySealedHermesSource(source)).rejects.toThrow("integrity"); chmodSync(join(source, "pyproject.toml"), 0o644);
+  await verifySealedHermesSource(source);
 });
