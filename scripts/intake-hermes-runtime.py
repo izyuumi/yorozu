@@ -67,6 +67,10 @@ def extract(archive, pin, destination, source):
     require(sha(archive) == pin["archiveSha256"], "Runtime archive hash differs from pin")
     destination = Path(destination).absolute()
     require(not destination.exists() and not destination.is_symlink(), "Use a fresh task-owned extraction destination")
+    # Resolve trusted filesystem aliases (macOS /tmp, /var) and '..' before
+    # comparing against resolved archive links. Reject a symlink destination
+    # itself above, including dangling links; never resolve it into acceptance.
+    destination = destination.resolve()
     destination.mkdir(mode=0o700, parents=True)
     root = destination / "hermes"
     seen, files, directories, links = set(), {}, set(), {}

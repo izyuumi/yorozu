@@ -122,16 +122,45 @@ class IntakeTests(unittest.TestCase):
         for name, target, member, reason in cases:
             with self.subTest(path=name):
                 original = dict(self.members)
-                self.members.update({"target/keep": b"unchanged", member: b"fixture"})
-                archive, pin = self.prepare(links={name: target})
-                with self.assertRaisesRegex(ValueError, reason):
-                    self.extract(archive, pin)
-                output = self.root / f"out-{self.counter}"
-                self.assertFalse((output / "intake-receipt.json").exists())
-                self.assertEqual((output / "hermes/target/keep").read_bytes(), b"unchanged")
-                self.assertFalse((output / "hermes/target/refs").exists())
-                self.assertFalse((output / "hermes/target/.git/refs").exists())
-                self.members = original
+                try:
+                    self.members.update({"target/keep": b"unchanged", member: b"fixture"})
+                    archive, pin = self.prepare(links={name: target})
+                    with self.assertRaisesRegex(ValueError, reason):
+                        self.extract(archive, pin)
+                    output = self.root / f"out-{self.counter}"
+                    self.assertFalse((output / "intake-receipt.json").exists())
+                    self.assertEqual((output / "hermes/target/keep").read_bytes(), b"unchanged")
+                    self.assertFalse((output / "hermes/target/refs").exists())
+                    self.assertFalse((output / "hermes/target/.git/refs").exists())
+                finally:
+                    self.members = original
+
+    def test_contained_links_accept_canonical_aliased_and_dotdot_destinations(self):
+        self.members["target/keep"] = b"unchanged"
+        alias = self.root / "alias"
+        alias.symlink_to(self.root.resolve(), target_is_directory=True)
+        (self.root / "child").mkdir()
+        for parent in (self.root.resolve(), alias, self.root / "child/.."):
+            with self.subTest(parent=str(parent)):
+                archive, pin = self.prepare(links={"contained": "target/keep"})
+                destination = parent / f"valid-{self.counter}"
+                root = intake.extract(archive, pin, destination, self.source)
+                self.assertEqual(root, destination.resolve() / "hermes")
+                self.assertEqual((root / "contained").read_bytes(), b"unchanged")
+
+    def test_symlink_destination_itself_is_never_accepted(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                archive, pin = self.prepare()
+                target = self.root / f"target-{self.counter}"
+                if existing:
+                    target.mkdir()
+                destination = self.root / f"linked-{self.counter}"
+                destination.symlink_to(target, target_is_directory=True)
+                with self.assertRaisesRegex(ValueError, "fresh task-owned"):
+                    intake.extract(archive, pin, destination, self.source)
+                self.assertEqual(target.exists(), existing)
+                self.assertFalse((target / "hermes").exists())
 
     def test_archive_tampering_is_rejected_before_extraction(self):
         archive, pin = self.prepare()
