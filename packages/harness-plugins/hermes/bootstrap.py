@@ -20,14 +20,11 @@ def verify():
             raise RuntimeError("Unverified scoped native toolset; refusing fallback.")
         if resolve_toolset("yorozu_empty"):
             raise RuntimeError("Chat-only native toolset is not empty.")
-        if "yorozu_platform" in requested and resolve_toolset("yorozu_platform") != ["delegate_to_agent"]:
-            raise RuntimeError("Platform handoff registration is unavailable.")
+        if "yorozu_platform" in requested and set(resolve_toolset("yorozu_platform")) != {"send_agent_message", "read_agent_messages"}:
+            raise RuntimeError("Platform messaging registration is unavailable.")
         from model_tools import get_tool_definitions
-        from tools.memory_tool import get_builtin_memory_config, get_builtin_memory_store_flags
-        from agent.memory_provider import is_core_memory_provider
-        memory = get_builtin_memory_config()
-        if not is_core_memory_provider(memory.get("provider")) or get_builtin_memory_store_flags() != ("memory" in requested, "memory" in requested):
-            raise RuntimeError("Native implicit memory exceeds agent scope.")
+        # The profile is already an isolated host resource. Native memory and
+        # delegation settings are owned by Hermes, not Yorozu feature flags.
         from tui_gateway.server import _load_enabled_toolsets
         selected = _load_enabled_toolsets("yorozu")
         if selected is None or set(selected) != set(requested):
@@ -37,8 +34,8 @@ def verify():
         expected = {name for toolset in requested for name in resolve_toolset(toolset)}
         if not names.issubset(expected):
             raise RuntimeError("Native model catalog exceeds agent tool scope.")
-        if "yorozu_platform" in requested and "delegate_to_agent" not in names:
-            raise RuntimeError("Scoped platform tool is not exposed.")
+        if "yorozu_platform" in requested and not {"send_agent_message", "read_agent_messages"}.issubset(names):
+            raise RuntimeError("Scoped platform messaging is not exposed.")
     return {"toolsets": selected, "tools": sorted(names)}
 
 

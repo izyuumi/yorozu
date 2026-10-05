@@ -13,7 +13,12 @@
     "patchSha256": "07febe324718e72b238d465bd33f5196d9c49f3aa864405d6587ba3d9b24c908",
     "patch": "upstream-inherited-listener.patch"
   },
-  "runtime": { "kind": "external-node", "entry": "dist/yorozu-gateway-embedding.js", "node": ">=24.16.0 <25 || >=26.1.0", "listener": "trusted-host-numeric-loopback-inherited-fd3; child-bind-denied" },
+  "runtime": {
+    "kind": "external-node",
+    "entry": "dist/yorozu-gateway-embedding.js",
+    "node": ">=24.16.0 <25 || >=26.1.0",
+    "listener": "trusted-host-numeric-loopback-inherited-fd3; child-bind-denied"
+  },
   "productionReady": false,
   "permissionEnforcement": "native-tools-disabled; verified-per-agent-host-policy-and-macos-sandbox-required",
   "capabilities": {
@@ -33,5 +38,18 @@
     "ambientCredentials": false,
     "billedFallback": false,
     "localProofProvider": "explicit-loopback-native-openai-responses"
+  },
+  "extensions": {
+    "version": 1,
+    "connectedLifecycle": true,
+    "conversationActions": false,
+    "autonomousEvents": false,
+    "agentMessaging": false
+  },
+  "connectedRuntime": {
+    "transport": "explicit-loopback-gateway-websocket",
+    "profileOwner": "external",
+    "disconnect": "socket-only",
+    "subscriptionAccess": "harness-owned-unverified"
   }
 }

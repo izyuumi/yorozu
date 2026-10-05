@@ -7,7 +7,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { createAdapter, NativeGateway, prepareRuntime, validateAgentScope, UPSTREAM } from './adapter.mjs';
+import { createAdapter, NativeGateway, prepareRuntime, validateAgentScope, UPSTREAM, mergeNativeConfiguration } from './adapter.mjs';
 const exec = promisify(execFile);
 
 // Recorded native shapes are from pinned contracts/sessions.py,
@@ -46,10 +46,10 @@ class Gateway {
   async shutdown() { this.crash(); }
 }
 const currency = { conversationId: 'secretary', bindingId: 'binding-1', runId: 'host-run-1', attemptId: 'host-attempt-1' };
-async function setup({ authAvailable = true, initialize = { protocolVersion: 1 } } = {}) {
+async function setup({ authAvailable = true, initialize = { protocolVersion: 1 }, messageJournalPath } = {}) {
   const events = []; const gateway = new Gateway();
   const adapter = createAdapter({ emit: event => events.push(event), launch: async () => ({
-    gateway, authAvailable, provider: 'custom:yorozu-local-proof', model: 'fixture', workspace: '/owned/workspace',
+    gateway, authAvailable, ...(messageJournalPath ? { messageJournalPath } : {}), provider: 'custom:yorozu-local-proof', model: 'fixture', workspace: '/owned/workspace',
   }) });
   const manifest = await adapter.handle('initialize', initialize);
   if (authAvailable) await adapter.handle('session.open', { ...currency, preferences: 'Reply in Japanese.', context: 'Prior visible conversation.' });
@@ -69,7 +69,7 @@ async function scopeFixture(t, allowedTools = ['file', 'team']) {
     workspace, python: '/usr/bin/python3', sourcePath: process.env.YOROZU_HERMES_TEST_SOURCE,
     agentId: 'agent-a', scope: { allowedTools, directories: [{ path: workspace, access: 'write' }, ...(allowedTools.includes('memory') ? [{ path: memoryDir, access: 'write' }] : [])], workspace, memoryDir },
     isolation: { backend: 'macos-seatbelt-v1', agentId: 'agent-a', policyDigest: 'a'.repeat(64) },
-    platform: { team: allowedTools.includes('team'), computer: false } };
+    platform: { team: allowedTools.includes('team'), computer: false, peers: allowedTools.includes('team') ? [{ agentId: 'agent-b', name: 'B', pluginId: 'openclaw' }] : [] } };
   return { directory, workspace: await realpath(workspace), params };
 }
 
@@ -84,7 +84,7 @@ test('product scope rejects unsupported tools, mismatched sandbox, and escaping 
     { ...params, scope: { ...params.scope, allowedTools: ['all'] } },
     { ...params, scope: { ...params.scope, allowedTools: ['file', 'file'] } },
     { ...params, scope: { ...params.scope, allowedTools: ['computer'] } },
-    { ...params, platform: { team: false, computer: false } },
+    { ...params, platform: { team: false, computer: false, peers: [{ agentId: 'agent-b', name: 'B', pluginId: 'openclaw' }] } },
     { ...params, scope: { ...params.scope, allowedTools: ['file', 'memory', 'team'], memoryDir: directory } },
     { ...params, scope: { ...params.scope, directories: [{ path: '/', access: 'write' }] } },
     { ...params, scope: { ...params.scope, surprise: true } },
@@ -107,85 +107,29 @@ test('scoped capabilities follow allowed native tools and authority cannot chang
   const { params } = await scopeFixture(t, []);
   const { adapter, gateway, manifest } = await setup({ initialize: params });
   assert.equal(manifest.agentId, 'agent-a'); assert.deepEqual(manifest.isolation, params.isolation);
-  assert.equal(manifest.capabilities.backgroundTasks, false); assert.equal(manifest.capabilities.teamDelegation, false);
+  assert.equal(manifest.capabilities.backgroundTasks, true); assert.equal(manifest.capabilities.teamDelegation, false);
   for (const method of ['turn.submit', 'session.open', 'session.snapshot']) await assert.rejects(adapter.handle(method, { ...currency, text: 'Check', scope: params.scope }), /immutable/);
   const receipt = await adapter.handle('turn.submit', { ...currency, text: 'Read file.', attachments: [{ path: '/private/other.txt' }] });
   assert.equal(receipt.status, 'unsupported'); assert.equal(gateway.calls.some(call => call.method === 'prompt.submit'), false);
 });
 
-test('team handoff carries bounded narrowed scope and exact originating result currency', async t => {
-  const { params, workspace } = await scopeFixture(t);
-  const { adapter, gateway, events } = await setup({ initialize: params });
-  await adapter.handle('turn.submit', { ...currency, text: 'Ask teammate B.' });
-  const input = { agent_session_id: 'durable-1', teammateId: 'agent-b', context: 'Necessary shared context only.', expectedResult: 'Return a concise finding.',
-    scope: { allowedTools: ['file'], directories: [{ path: workspace, access: 'read' }], sharedResourceIds: ['resource-1'] } };
-  const issueTeam = (id, change = {}) => {
-    const tool_call_id = `call-${id}`;
-    gateway.event('tool.start', { tool_id: tool_call_id, name: 'delegate_to_agent', args: {} });
-    gateway.request(id, 'yorozu.team_delegate', { ...input, tool_call_id, ...change });
-  };
-  issueTeam('team-one');
-  const opened = events.at(-1);
-  assert.equal(opened.data.kind, 'team-delegate'); assert.equal(opened.runId, currency.runId);
-  assert.deepEqual(opened.data.input.scope, input.scope);
-  assert.equal((await adapter.handle('request.answer', { ...currency, attemptId: 'other', requestId: 'team-one', answer: { result: { status: 'completed', text: 'Finding.' } } })).status, 'rejected');
-  await assert.rejects(adapter.handle('request.answer', { ...currency, requestId: 'team-one', answer: { result: { status: 'completed', command: 'anything' } } }), /unsupported/);
-  assert.equal((await adapter.handle('request.answer', { ...currency, requestId: 'team-one', answer: { result: { status: 'unknown', taskId: 'host-task-1', text: 'Result uncertain; do not retry.' } } })).status, 'answered');
-  assert.deepEqual(gateway.responses.at(-1).result, { status: 'unknown', taskId: 'host-task-1', text: 'Result uncertain; do not retry.' });
-  assert.equal((await adapter.handle('request.answer', { ...currency, requestId: 'team-one', answer: { result: { status: 'completed' } } })).status, 'rejected');
-  gateway.request('duplicate-call', 'yorozu.team_delegate', { ...input, tool_call_id: 'call-team-one' });
-  assert.equal(gateway.responses.at(-1).result.status, 'rejected');
-  issueTeam('recursive-team', { scope: { ...input.scope, allowedTools: ['file', 'team'] } });
-  assert.deepEqual(events.at(-1).data.input.scope.allowedTools, ['file', 'team']);
-  await adapter.handle('request.answer', { ...currency, requestId: 'recursive-team', answer: { result: { status: 'completed', text: 'Recipient may make a further equally narrowed handoff.' } } });
-  for (const [id, change] of [
-    ['child', { agent_session_id: 'durable-child' }], ['wide-tools', { scope: { ...input.scope, allowedTools: ['terminal'] } }],
-    ['wide-path', { scope: { ...input.scope, directories: [{ path: '/private/other', access: 'read' }] } }],
-    ['self', { teammateId: 'agent-a' }], ['command', { command: 'anything' }],
-  ]) {
-    issueTeam(id, change);
-    assert.equal(gateway.responses.at(-1).result.status, 'rejected');
-    assert.equal(events.some(event => event.kind === 'request.open' && event.data.requestId === id), false);
-  }
-  issueTeam('cancel-team');
-  gateway.event('request.cancel', { id: 'cancel-team', reason: 'timeout' });
-  assert.equal((await adapter.handle('request.answer', { ...currency, requestId: 'cancel-team', answer: { result: { status: 'completed' } } })).status, 'rejected');
-  gateway.event('tool.start', { tool_id: 'late-call', name: 'delegate_to_agent', args: {} });
-  gateway.event('message.complete', { text: 'Done.', status: 'complete' });
-  await adapter.handle('turn.submit', { ...currency, runId: 'next-run', attemptId: 'next-attempt', text: 'New task.' });
-  gateway.request('stale-same-session', 'yorozu.team_delegate', { ...input, tool_call_id: 'late-call' });
-  assert.equal(gateway.responses.at(-1).result.status, 'rejected');
-  gateway.event('tool.start', { tool_id: 'finished-call', name: 'delegate_to_agent', args: {} });
-  gateway.event('tool.complete', { tool_id: 'finished-call', name: 'delegate_to_agent', result: 'Cancelled' });
-  gateway.request('finished-call-request', 'yorozu.team_delegate', { ...input, tool_call_id: 'finished-call' });
-  assert.equal(gateway.responses.at(-1).result.status, 'rejected');
-  await adapter.handle('run.stop', { ...currency, runId: 'next-run', attemptId: 'next-attempt', operationId: 'stop-next' });
-  issueTeam('after-stop');
-  assert.equal(gateway.responses.at(-1).result.status, 'rejected');
-});
-
-test('Stop fences a team answer while native interrupt acknowledgement is still pending', async t => {
+test('legacy teammate execution requests are unavailable without creating or controlling another agent', async t => {
   const { params } = await scopeFixture(t);
-  const { adapter, gateway } = await setup({ initialize: params });
-  await adapter.handle('turn.submit', { ...currency, text: 'Ask B.' });
-  gateway.event('tool.start', { tool_id: 'inflight-team', name: 'delegate_to_agent', args: {} });
-  gateway.request('team-inflight', 'yorozu.team_delegate', { agent_session_id: 'durable-1', tool_call_id: 'inflight-team', teammateId: 'agent-b',
-    context: 'Shared context.', expectedResult: 'Finding.', scope: { allowedTools: [], directories: [] } });
-  let acknowledge;
-  gateway.override = method => method === 'session.interrupt' ? new Promise(resolve => { acknowledge = resolve; }) : undefined;
-  const stopping = adapter.handle('run.stop', { ...currency, operationId: 'stop-inflight-team' });
-  assert.equal((await adapter.handle('request.answer', { ...currency, requestId: 'team-inflight', answer: { result: { status: 'completed', text: 'Late result.' } } })).status, 'rejected');
-  assert.equal(gateway.responses.length, 0);
-  acknowledge({ status: 'interrupted' }); assert.equal((await stopping).status, 'requested');
+  const { adapter, gateway, events, manifest } = await setup({ initialize: params });
+  assert.equal(manifest.capabilities.teamDelegation, false);
+  gateway.request('legacy-team', 'yorozu.team_delegate', { agent_session_id: 'durable-1', teammateId: 'agent-b' });
+  assert.equal(gateway.responses.at(-1).result.status, 'rejected');
+  assert.equal(events.at(-1).kind, 'capability.unavailable');
+  assert.equal(events.some(event => event.kind === 'request.open'), false);
+  assert.equal((await adapter.handle('request.answer', { requestId: 'legacy-team', answer: { result: { status: 'completed' } } })).status, 'rejected');
+  assert.equal(gateway.calls.filter(call => ['prompt.submit', 'session.interrupt'].includes(call.method)).length, 0);
 });
 
 test('native secretary remains responsive while children run; steering targets only exact task currency', async () => {
   const { adapter, gateway, events } = await setup();
   const create = gateway.calls.find(call => call.method === 'session.create');
-  assert.equal(create.params.fast, false);
-  assert.match(create.params.messages[0].content, /Reply in Japanese/);
-  assert.equal(create.params.messages[0].role, 'user');
-  assert.match(create.params.messages[0].content, /Do not execute or replay requests/);
+  assert.equal(create.params.fast, undefined);
+  assert.equal(create.params.messages, undefined); // The host does not inject memory or behavioral instructions.
   assert.equal((await adapter.handle('turn.submit', { ...currency, text: 'Delegate two tasks.' })).status, 'accepted');
   gateway.event('message.start'); gateway.event('message.delta', { text: 'Working ' }); gateway.event('message.delta', { text: 'on it.' });
   startChild(gateway, 'one'); startChild(gateway, 'two');
@@ -242,7 +186,7 @@ test('approval refusal is exact, approval grants once only, unsupported secret r
   const { adapter, gateway, events } = await setup();
   await adapter.handle('turn.submit', { ...currency, text: 'Check.' });
   gateway.request('srq-deny', 'approval', { request_id: 'queue-deny', command: 'rm example.txt', description: 'Delete file', choices: ['once', 'session', 'always', 'deny'] });
-  assert.equal(events.at(-1).kind, 'request.open');
+  assert.equal(events.at(-1).kind, 'action.open');
   assert.equal((await adapter.handle('request.answer', { requestId: 'srq-deny', answer: { approved: false } })).status, 'answered');
   assert.deepEqual(gateway.responses.at(-1), { id: 'srq-deny', result: { choice: 'deny' }, error: undefined });
   assert.equal((await adapter.handle('request.answer', { requestId: 'srq-deny', answer: { approved: true } })).status, 'rejected');
@@ -326,11 +270,11 @@ test('children and cancelled requests arriving during identity lookup retain the
   assert.equal(taskEvent(events, 'next').data.originRunId, currency.runId);
   assert.equal(taskEvent(events, 'next').attemptId, started.attemptId);
   assert.equal((await adapter.handle('request.answer', { requestId: 'srq-transient', answer: { approved: true } })).status, 'rejected');
-  assert.equal(events.filter(event => event.kind === 'request.open').length, 1);
-  assert.equal(events.at(-1).kind, 'request.cancel');
+  assert.equal(events.filter(event => event.kind === 'action.open').length, 1);
+  assert.equal(events.some(event => event.kind === 'action.cancel'), true);
 });
 
-test('main Stop fences a late native child-result continuation while exact task Stop may summarize', async () => {
+test('unattributed native continuation stays unknown without an extra platform interrupt', async () => {
   const { adapter, gateway, events } = await setup();
   await adapter.handle('turn.submit', { ...currency, text: 'Delegate.' }); startChild(gateway, 'one');
   await adapter.handle('run.stop', { ...currency, operationId: 'stop-all' });
@@ -340,7 +284,7 @@ test('main Stop fences a late native child-result continuation while exact task 
   await flush();
   assert.equal(events.filter(event => event.kind === 'turn.started').length, 0);
   assert.equal(events.at(-1).kind, 'capability.unavailable');
-  assert.equal(gateway.calls.filter(call => call.method === 'session.interrupt').length, 2);
+  assert.equal(gateway.calls.filter(call => call.method === 'session.interrupt').length, 1);
 });
 
 test('native build-cancel error clears current projection without fabricating terminal cessation', async () => {
@@ -385,7 +329,7 @@ test('crash stays unknown, pending approvals cancel and an admitted attempt is n
   const snapshot = await adapter.handle('session.snapshot', { conversationId: currency.conversationId });
   assert.equal(snapshot.runtime, 'closed'); assert.equal(snapshot.tasks[0].state, 'unknown'); assert.equal(snapshot.tasks[0].canSteer, false);
   assert.equal(events.find(event => event.kind === 'turn.terminal').data.state, 'unknown');
-  assert.equal(events.some(event => event.kind === 'request.cancel' && event.data.requestId === 'srq-pending'), true);
+  assert.equal(events.some(event => event.kind === 'action.cancel' && event.data.requestId === 'srq-pending'), true);
   await assert.rejects(adapter.handle('turn.submit', { ...currency, text: 'Do work.' }), /cannot be replayed/);
   assert.equal(gateway.calls.filter(call => call.method === 'prompt.submit').length, 1);
 });
@@ -402,7 +346,9 @@ test('safe resume is lazy and inspection only; duplicate event cursors do not du
   assert.equal(events.filter(event => event.kind === 'assistant.update').length, 1);
   assert.deepEqual((await adapter.handle('session.snapshot', currency)).cursor, { epoch: 'fixture-epoch', sequence: 12 });
   gateway.override = method => method === 'session.resume' ? { session_id: 'unsafe', stored_session_id: 'unsafe', running: true, info: {} } : undefined;
-  await assert.rejects(adapter.handle('session.open', { conversationId: 'unsafe', bindingId: 'binding-3', sessionId: 'unsafe' }), /refusing admission/);
+  await adapter.handle('session.open', { conversationId: 'unsafe', bindingId: 'binding-3', sessionId: 'unsafe' });
+  assert.equal((await adapter.handle('session.snapshot', { conversationId: 'unsafe' })).unattributedTurn.state, 'unknown');
+  assert.equal(gateway.calls.filter(call => call.method === 'session.interrupt').length, 0);
 });
 
 test('uncertain admission rejects retries and does not convert queued or redirected replies into accepted', async () => {
@@ -493,7 +439,7 @@ test('native stdio client parses shipped readiness, request and event frames and
 
 // Integration setup is opt-in because a source checkout/dependencies are external
 // to this small adapter. Parent acceptance exercises the real pinned Hermes loop.
-test('owned real runtime config disables recovery/fallback/priority and strips ambient authentication', {
+test('owned runtime applies resource bindings without choosing harness approval or autonomy', {
   skip: !process.env.YOROZU_HERMES_TEST_SOURCE,
 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'hermes-isolation-'));
@@ -508,10 +454,14 @@ test('owned real runtime config disables recovery/fallback/priority and strips a
   assert.deepEqual(Object.keys(runtime.env).sort(), ['CODEX_HOME', 'HERMES_DISABLE_LAZY_INSTALLS', 'HERMES_HOME', 'HOME', 'LANG', 'PATH', 'PYTHONDONTWRITEBYTECODE', 'PYTHONNOUSERSITE', 'PYTHONUNBUFFERED', 'TIRITH_BIN', 'TIRITH_ENABLED', 'TIRITH_FAIL_OPEN', 'TMPDIR'].sort());
   assert.equal(runtime.env.CODEX_HOME.startsWith(await realpath(directory)), true);
   const config = JSON.parse(await readFile(join(directory, 'hermes-runtime', 'config.yaml'), 'utf8'));
-  assert.equal(config.desktop.auto_continue.enabled, false);
-  assert.equal(config.agent.service_tier, 'normal'); assert.deepEqual(config.fallback_model, []);
+  assert.equal(config.desktop, undefined);
+  assert.equal(config.agent.service_tier, undefined); assert.deepEqual(config.fallback_model, []);
   assert.deepEqual(config.agent.disabled_toolsets, ['cronjob', 'computer_use']);
-  assert.equal(config.approvals.mode, 'manual'); assert.equal(config.delegation.orchestrator_enabled, true);
+  assert.equal(config.approvals, undefined); assert.equal(config.delegation, undefined);
+  await writeFile(join(directory, 'hermes-runtime', 'config.yaml'), JSON.stringify({ ...config, approvals: { mode: 'smart' }, desktop: { auto_continue: { enabled: true } }, delegation: { max_spawn_depth: 7 } }));
+  await prepareRuntime(params);
+  const retained = JSON.parse(await readFile(join(directory, 'hermes-runtime', 'config.yaml'), 'utf8'));
+  assert.equal(retained.approvals.mode, 'smart'); assert.equal(retained.desktop.auto_continue.enabled, true); assert.equal(retained.delegation.max_spawn_depth, 7);
   assert.equal(config.display.busy_input_mode, 'queue');
   assert.equal(config.security.allow_lazy_installs, false);
   assert.equal(config.security.tirith_enabled, true); assert.equal(config.security.tirith_fail_open, false);
@@ -545,7 +495,7 @@ print(json.dumps({"lazyInstall": False, "command": verdict["action"]}))
   assert.deepEqual(JSON.parse(result.stdout), { lazyInstall: false, command: 'block' });
 });
 
-test('native discovery exposes exact scoped subsets, empty chat scope, and bounded platform handoff', {
+test('native discovery exposes exact scoped subsets, empty chat scope, and messaging tools', {
   skip: !process.env.YOROZU_HERMES_TEST_SOURCE || !process.env.YOROZU_HERMES_TEST_PYTHON,
 }, async t => {
   const { params, directory } = await scopeFixture(t);
@@ -557,8 +507,9 @@ test('native discovery exposes exact scoped subsets, empty chat scope, and bound
   await writeFile(join(memories, 'USER.md'), 'Retained private user marker must not enter a no-memory run.');
   const options = { cwd: runtime.sourcePath, env: runtime.env, maxBuffer: 64 * 1024 };
   const verified = JSON.parse((await exec(params.python, [bootstrap, '--verify'], options)).stdout);
-  assert.deepEqual(verified.toolsets, ['file', 'yorozu_platform', 'yorozu_empty']);
-  assert.deepEqual(verified.tools, ['delegate_to_agent', 'patch', 'read_file', 'search_files', 'write_file']);
+  assert.deepEqual(verified.toolsets, ['delegation', 'file', 'memory', 'yorozu_platform', 'yorozu_empty']);
+  for (const tool of ['read_agent_messages', 'send_agent_message', 'read_file', 'write_file']) assert.equal(verified.tools.includes(tool), true);
+  assert.equal(verified.tools.includes('delegate_to_agent'), false);
   const result = JSON.parse((await exec(params.python, ['-c', `
 import runpy, sys, json
 runpy.run_path(sys.argv[1])["verify"]()
@@ -569,27 +520,27 @@ from tools.approval_context import set_current_observability_context
 from agent.agent_init import _init_memory
 from hermes_cli.config import load_config_readonly
 from types import SimpleNamespace
-agent=SimpleNamespace(enabled_toolsets=["file","yorozu_platform","yorozu_empty"],disabled_toolsets=["memory"],tools=[])
+agent=SimpleNamespace(enabled_toolsets=["memory","delegation","file","yorozu_platform","yorozu_empty"],disabled_toolsets=[],tools=[])
 _init_memory(agent,load_config_readonly(),False,"yorozu")
 memory={"enabled":agent._memory_enabled,"user":agent._user_profile_enabled,"storeAbsent":agent._memory_store is None}
 captured=[]
 def fake_send(method, sid, params, *, timeout):
     captured.append({"method":method,"sid":sid,"params":params,"timeout":timeout})
-    return {"status":"completed","taskId":"team-proof","text":"Shared result."}
+    return {"status":"accepted","messageId":params["messageId"],"exchangeId":"exchange-proof"}
 server_requests.send=fake_send
 set_session_vars(session_key="proof",session_id="durable-proof",ui_session_id="live-proof")
 set_current_observability_context(tool_call_id="native-call-proof",session_id="durable-proof",turn_id="native-turn-proof")
-args={"teammateId":"agent-b","context":"Shared context.","expectedResult":"Finding.","scope":{"allowedTools":[],"directories":[]}}
-completed=json.loads(registry.dispatch("delegate_to_agent", args, session_id="durable-proof"))
+args={"toAgentId":"agent-b","text":"Shared context."}
+completed=json.loads(registry.dispatch("send_agent_message", args, session_id="durable-proof"))
 server_requests.send=lambda *args,**kwargs: None
-unknown=json.loads(registry.dispatch("delegate_to_agent", args, session_id="durable-proof"))
-invalid=json.loads(registry.dispatch("delegate_to_agent", {**args,"command":"forbidden"}, session_id="durable-proof"))
+unknown=json.loads(registry.dispatch("send_agent_message", args, session_id="durable-proof"))
+invalid=json.loads(registry.dispatch("send_agent_message", {**args,"command":"forbidden"}, session_id="durable-proof"))
 print(json.dumps({"captured":captured,"completed":completed,"unknown":unknown,"invalid":invalid,"memory":memory}))
 `, bootstrap], options)).stdout);
-  assert.equal(result.captured.length, 1); assert.equal(result.captured[0].timeout, 120);
+  assert.equal(result.captured.length, 1); assert.equal(result.captured[0].timeout, 30);
   assert.equal(result.captured[0].sid, 'live-proof'); assert.equal(result.captured[0].params.agent_session_id, 'durable-proof');
-  assert.equal(result.completed.status, 'completed'); assert.equal(result.unknown.status, 'unknown'); assert.equal(result.invalid.status, 'rejected');
-  assert.deepEqual(result.memory, { enabled: false, user: false, storeAbsent: true });
+  assert.equal(result.completed.status, 'accepted'); assert.equal(result.unknown.status, 'unknown'); assert.equal(result.invalid.status, 'rejected');
+  assert.deepEqual(result.memory, { enabled: true, user: true, storeAbsent: false });
   const wrongOwner = { ...params, agentId: 'agent-b', isolation: { ...params.isolation, agentId: 'agent-b' } };
   await assert.rejects(prepareRuntime(wrongOwner), /different adapter version or agent/);
   // Native metadata failures must stop before gateway/provider startup, never
@@ -600,7 +551,8 @@ print(json.dumps({"captured":captured,"completed":completed,"unknown":unknown,"i
   chat.params.python = params.python;
   const chatRuntime = await prepareRuntime(chat.params);
   const empty = JSON.parse((await exec(params.python, [bootstrap, '--verify'], { cwd: chatRuntime.sourcePath, env: chatRuntime.env, maxBuffer: 64 * 1024 })).stdout);
-  assert.deepEqual(empty.toolsets, ['yorozu_empty']); assert.deepEqual(empty.tools, []);
+  assert.deepEqual(empty.toolsets, ['delegation', 'memory', 'yorozu_empty']);
+  for (const tool of ['read_file', 'write_file', 'terminal']) assert.equal(empty.tools.includes(tool), false);
 });
 
 
@@ -625,4 +577,115 @@ test('fresh host broker bearer stays in private native config and never in retur
   await prepareRuntime({ ...params, providerConfigPath });
   const legacy = JSON.parse(await readFile(join(params.profileRoot, 'hermes-runtime/config.yaml'), 'utf8'));
   assert.equal(legacy.custom_providers[0].api_key, 'yorozu-loopback-proof');
+});
+
+test('native approvals retain all offered choices outside a user turn and reject forged actions', async () => {
+  const { adapter, gateway, events } = await setup();
+  gateway.request('native-action', 'approval', { tool_name: 'terminal', choices: ['once', 'session', 'always', 'deny'], command: 'native command' });
+  const action = events.at(-1);
+  assert.equal(action.kind, 'action.open'); assert.equal(action.runId, undefined);
+  assert.equal(action.data.sessionId, 'durable-1');
+  assert.deepEqual(action.data.choices.map(choice => choice.id), ['once', 'session', 'always', 'deny']);
+  const answer = { version: 1, requestId: 'native-action', sessionId: 'durable-1', choiceId: 'session' };
+  assert.equal((await adapter.handle('action.answer', { ...answer, sessionId: 'foreign' })).status, 'rejected');
+  assert.equal((await adapter.handle('action.answer', { ...answer, choiceId: 'invented' })).status, 'rejected');
+  assert.equal(gateway.responses.length, 0);
+  assert.equal((await adapter.handle('action.answer', answer)).status, 'answered');
+  assert.deepEqual(gateway.responses.at(-1).result, { choice: 'session' });
+  assert.equal((await adapter.handle('action.answer', answer)).status, 'rejected');
+  gateway.request('question', 'clarify', { question: 'Which result?', choices: ['One', 'Two'] });
+  await adapter.handle('action.answer', { version: 1, requestId: 'question', sessionId: 'durable-1', choiceId: 'choice:1' });
+  assert.deepEqual(gateway.responses.at(-1).result, { answer: 'Two' });
+});
+
+test('Hermes refuses unsafe connected lifecycle before launch or native observation', async () => {
+  let launched = false;
+  const adapter = createAdapter({ emit() {}, launch: async () => { launched = true; } });
+  await assert.rejects(adapter.handle('initialize', { lifecycle: { version: 1, mode: 'connected', connectionId: 'chosen' }, connection: {} }), /last-peer detach/);
+  assert.equal(launched, false);
+});
+
+const deliveredMessage = {
+  version: 1, messageId: 'peer-message-1', exchangeId: 'exchange-1', deliveryId: 'delivery-1', attemptId: 'delivery-attempt-1',
+  sessionId: 'durable-1', fromAgentId: 'agent-b', toAgentId: 'agent-a', text: 'A selected finding from B.', createdAt: 1791192360000,
+  origin: { version: 1, agentId: 'agent-b', pluginId: 'openclaw', conversationId: 'public-conversation-b', sessionId: 'opaque-public-session', bindingEpoch: 'binding-b' },
+};
+
+test('native peer inbox is durable, deduplicated and never submits a fake user turn', async t => {
+  const { params, directory } = await scopeFixture(t);
+  const messageJournalPath = join(directory, 'messages.json');
+  const { adapter, gateway, manifest } = await setup({ initialize: params, messageJournalPath });
+  assert.equal(manifest.extensions.agentMessaging, true);
+  assert.equal((await adapter.handle('message.deliver', deliveredMessage)).status, 'accepted');
+  assert.equal((await adapter.handle('message.deliver', { ...deliveredMessage, attemptId: 'new-transport-attempt' })).status, 'accepted');
+  assert.equal((await adapter.handle('message.deliver', { ...deliveredMessage, text: 'Forged replacement.' })).status, 'rejected');
+  assert.equal((await adapter.handle('message.deliver', { ...deliveredMessage, toAgentId: 'foreign' })).status, 'rejected');
+  await assert.rejects(adapter.handle('message.deliver', { ...deliveredMessage, origin: { ...deliveredMessage.origin, agentId: 'forged' } }), /sender/);
+  assert.equal(gateway.calls.filter(call => call.method === 'prompt.submit').length, 0);
+  assert.equal(JSON.parse(await readFile(messageJournalPath, 'utf8')).messages.length, 1);
+  await adapter.handle('shutdown');
+  const restored = await setup({ initialize: params, messageJournalPath });
+  restored.gateway.event('tool.start', { tool_id: 'read-native-call', name: 'read_agent_messages' });
+  restored.gateway.request('read-inbox', 'yorozu.message_read', { agent_session_id: 'durable-1', tool_call_id: 'read-native-call' });
+  assert.deepEqual(restored.gateway.responses.at(-1).result.messages, [deliveredMessage]);
+  assert.equal(restored.events.some(event => ['assistant.update', 'turn.started'].includes(event.kind)), false);
+  assert.equal((await restored.adapter.handle('message.deliver', { ...deliveredMessage, attemptId: 'after-restart' })).status, 'accepted');
+  assert.equal(JSON.parse(await readFile(messageJournalPath, 'utf8')).messages.length, 1);
+});
+
+test('native send verifies the real tool and session, settles only a transport receipt, and does not cancel peer work', async t => {
+  const { params, directory } = await scopeFixture(t);
+  const { adapter, gateway, events } = await setup({ initialize: params, messageJournalPath: join(directory, 'messages.json') });
+  const input = { agent_session_id: 'durable-1', tool_call_id: 'send-native-call', messageId: 'outbound-1', toAgentId: 'agent-b', text: 'Necessary selected context.' };
+  gateway.request('forged', 'yorozu.message_send', input);
+  assert.equal(events.some(event => event.kind === 'agent.message'), false);
+  gateway.event('tool.start', { tool_id: input.tool_call_id, name: 'send_agent_message' });
+  gateway.request('native-send', 'yorozu.message_send', input);
+  const sent = events.at(-1);
+  assert.equal(sent.kind, 'agent.message'); assert.equal(sent.runId, undefined);
+  assert.equal(sent.data.sessionId, 'durable-1'); assert.equal(sent.data.fromAgentId, undefined); assert.equal(sent.data.origin, undefined);
+  assert.equal((await adapter.handle('message.receipt', { version: 1, messageId: input.messageId, exchangeId: 'host-exchange-1', status: 'accepted' })).status, 'answered');
+  assert.deepEqual(gateway.responses.at(-1).result, { status: 'accepted', messageId: 'outbound-1', exchangeId: 'host-exchange-1' });
+  assert.equal(gateway.calls.filter(call => ['prompt.submit', 'session.interrupt'].includes(call.method)).length, 0);
+  gateway.event('tool.start', { tool_id: 'next-native-call', name: 'send_agent_message' });
+  gateway.request('second-send', 'yorozu.message_send', { ...input, messageId: 'outbound-2', tool_call_id: 'next-native-call' });
+  gateway.event('request.cancel', { id: 'second-send' });
+  assert.equal(events.at(-1).kind, 'agent.message.status'); assert.equal(events.at(-1).data.execution, 'unknown');
+  assert.equal(gateway.calls.filter(call => call.method.includes('interrupt')).length, 0);
+});
+
+test('resource rebinding preserves harness approval, autonomy, memory and plugin choices', () => {
+  const previous = { approvals: { mode: 'smart' }, desktop: { auto_continue: { enabled: true } }, memory: { provider: 'builtin', memory_enabled: false },
+    delegation: { max_spawn_depth: 9 }, agent: { service_tier: 'fast', disabled_toolsets: ['file', 'memory'] },
+    plugins: { enabled: ['native-learning'], entries: { 'native-learning': { settings: { learn: true } } } } };
+  const host = { agent: { disabled_toolsets: ['terminal', 'web', 'cronjob', 'computer_use'] },
+    plugins: { enabled: ['yorozu-platform'], entries: { 'yorozu-platform': { settings: { team: true } } } } };
+  const config = mergeNativeConfiguration(previous, host, {});
+  assert.deepEqual(config.approvals, previous.approvals); assert.deepEqual(config.desktop, previous.desktop); assert.deepEqual(config.memory, previous.memory);
+  assert.deepEqual(config.delegation, previous.delegation); assert.equal(config.agent.service_tier, 'fast');
+  assert.deepEqual(config.agent.disabled_toolsets, ['memory', 'terminal', 'web', 'cronjob', 'computer_use']);
+  assert.deepEqual(config.plugins.enabled, ['native-learning', 'yorozu-platform']);
+  assert.deepEqual(config.plugins.entries['native-learning'], previous.plugins.entries['native-learning']);
+  assert.deepEqual(previous.agent.disabled_toolsets, ['file', 'memory']); // Does not mutate the stored input.
+});
+
+test('peer inbox pages stay bounded and message content identity is canonical across transport attempts', async t => {
+  const { params, directory } = await scopeFixture(t);
+  const { adapter, gateway } = await setup({ initialize: params, messageJournalPath: join(directory, 'messages.json') });
+  for (let index = 0; index < 5; index++) {
+    const result = await adapter.handle('message.deliver', { ...deliveredMessage, messageId: `page-${index}`, deliveryId: `page-delivery-${index}`, text: 'x'.repeat(32 * 1024) });
+    assert.equal(result.status, 'accepted');
+  }
+  const reorderedOrigin = Object.fromEntries(Object.entries(deliveredMessage.origin).reverse());
+  assert.equal((await adapter.handle('message.deliver', { ...deliveredMessage, origin: reorderedOrigin })).status, 'accepted');
+  assert.equal((await adapter.handle('message.deliver', { ...deliveredMessage, origin: deliveredMessage.origin, attemptId: 'transport-other' })).status, 'accepted');
+  gateway.event('tool.start', { tool_id: 'read-page-1', name: 'read_agent_messages' });
+  gateway.request('page-one', 'yorozu.message_read', { agent_session_id: 'durable-1', tool_call_id: 'read-page-1' });
+  const first = gateway.responses.at(-1).result;
+  assert.equal(first.messages.length, 4); assert.equal(first.nextAfterMessageId, 'page-3');
+  assert.ok(Buffer.byteLength(JSON.stringify(first)) < 256 * 1024);
+  gateway.event('tool.start', { tool_id: 'read-page-2', name: 'read_agent_messages' });
+  gateway.request('page-two', 'yorozu.message_read', { agent_session_id: 'durable-1', tool_call_id: 'read-page-2', afterMessageId: first.nextAfterMessageId });
+  assert.deepEqual(gateway.responses.at(-1).result.messages.map(message => message.messageId), ['page-4', deliveredMessage.messageId]);
+  assert.equal(gateway.calls.filter(call => call.method === 'prompt.submit').length, 0);
 });
