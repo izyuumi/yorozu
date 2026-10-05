@@ -32,7 +32,7 @@ struct QueuedMessageEditorView: View {
                 }
             }
             Section {
-                Text("Your message stays saved while waiting for your Mac. After 30 minutes, confirm Still send before delivery.")
+                Text("Your message stays saved and editable until its first delivery attempt to your Mac.")
                     .font(.footnote).foregroundStyle(.secondary)
                 if saveFailed {
                     Text("The edit could not be saved. Your queued message is unchanged.")
