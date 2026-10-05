@@ -156,7 +156,8 @@ test("retained harness queue publishes a durable visible hold and never submits 
   const notices = readThreadEvents("person", f.dir).filter(e => e.id === "harness-queue-held:retained-request");
   expect(notices).toHaveLength(1); expect(notices[0].data.text).toContain("not automatically resent");
   expect(f.turns).toEqual([]);
-  expect(JSON.parse(readFileSync(join(f.dir, "native-turn-queue.json"), "utf8"))).toEqual([{ threadId: "person", eventId: "retained-request" }]);
+  expect(JSON.parse(readFileSync(join(f.dir, "native-turn-queue.json"), "utf8"))).toEqual([{ threadId: "person", eventId: "retained-request" }]);  f.send("message", { role: "user", text: "must not bypass the retained hold" }, "after-legacy-hold");
+  await new Promise(resolve => setTimeout(resolve, 100)); expect(f.turns).toEqual([]);
 });
 
 test("a persisted uncertain stop transfers its hold without poisoning unrelated admission", async () => {
