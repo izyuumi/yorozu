@@ -200,7 +200,7 @@ export function createSiwcExecutionBroker(supplied: SiwcExecutionGrant, transpor
   let grant = grantCopy(supplied);
   if (typeof transport !== "function") fail("unsupported");
   const localBearer = randomBytes(32).toString("hex"), controllers = new Set<AbortController>();
-  let endpoint: number | undefined, released = false, requests = 0, active = 0, bytes = 0;
+  let endpoint: number | undefined, released = false, requests = 0, active = 0, bytes = 0, leaseWaiters = 0;
   const current = (): boolean => { try { return !released && now() < grant.budget.expiresAt && grant.isCurrent() === true; } catch { return false; } };
   const charge = (n: number): void => { if ((bytes += n) > grant.budget.maxTotalBytes) fail("budget", 429); };
   let renewing: Promise<void> | undefined;
@@ -239,7 +239,10 @@ export function createSiwcExecutionBroker(supplied: SiwcExecutionGrant, transpor
         || request.method !== "POST" || request.path !== "/v1/responses") fail("unsupported", 404);
       const credential = request.authorization?.startsWith("Bearer ") ? request.authorization.slice(7) : "";
       if (!/^[a-f0-9]{64}$/.test(credential) || !timingSafeEqual(Buffer.from(credential), Buffer.from(localBearer))) fail("unauthorized", 401);
-      await prepareLease();
+      // Renewal waiters consume the same admission bound as body readers.
+      if (active + leaseWaiters >= grant.budget.maxConcurrent) fail("budget", 429);
+      leaseWaiters++;
+      try { await prepareLease(); } finally { leaseWaiters--; }
       if (!current()) fail("binding", 403);
       timer = setTimeout(canceled, Math.max(0, Math.min(grant.budget.requestTimeoutMs, grant.budget.expiresAt - now()))); timer.unref();
       if (request.contentType?.split(";")[0].trim().toLowerCase() !== "application/json" || request.contentEncoding && request.contentEncoding !== "identity") fail("unsupported", 415);

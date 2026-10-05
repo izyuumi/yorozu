@@ -36,6 +36,9 @@ test("durable admission intent fences restart after failed stop persistence with
     expect(new SecretaryAdmissionFence(dir).blocked).toBe(true);
     // No final-history lookup, deletion, dismissal or replay is attempted.
     expect(readdirSync(fence.root)).toHaveLength(1);
+    // Fencing new execution must not prevent recording further stop controls.
+    fence.begin("stop-other", "journal"); fence.confirmed("stop-other");
+    expect(fence.blocked).toBe(true);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -443,3 +443,16 @@ test("grant renewal notices are visible without submitting or changing the nativ
   expect(visible.some(text => text.includes("inference grant was renewed"))).toBe(true);
   expect(visible.some(text => text.includes("inference grant is unavailable"))).toBe(true);
 });
+
+test("shutdown grace remains bounded when the wall clock stops advancing", async () => {
+  const f = fixture("silent-stop"), a = await f.manager.conversation("clock-stop", "alice");
+  const run = f.invoke(a, "clock-stop-request", "hello");
+  await vi.waitFor(() => expect(f.traces.some(t => t.method === "turn.submit")).toBe(true));
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+  const start = performance.now();
+  try {
+    await f.manager.close(); await run;
+    expect(performance.now() - start).toBeLessThan(2500);
+    expect(f.manager.held("alice")).toBeDefined();
+  } finally { clock.mockRestore(); }
+});

@@ -70,8 +70,8 @@ export class SecretaryAdmissionFence {
   get blocked(): boolean { return this.failed || this.inherited; }
   fail(): void { this.failed = true; }
   private path(id: string): string { return join(this.root, createHash("sha256").update(id).digest("hex") + ".intent"); }
-  begin(id: string): void {
-    if (this.blocked) throw new Error("Secretary admission is held by unconfirmed durable intent");
+  begin(id: string, kind: "execution" | "journal" = "execution"): void {
+    if (this.blocked && kind === "execution") throw new Error("Secretary admission is held by unconfirmed durable intent");
     let fd: number | undefined;
     try {
       fd = openSync(this.path(id), "wx", 0o600);

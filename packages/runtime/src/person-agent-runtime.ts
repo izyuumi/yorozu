@@ -500,11 +500,11 @@ export class PersonAgentRuntime {
       // A stop receipt is not cessation. Let real terminal events settle the ledgers
       // within a bounded grace period; silence never clears an unknown outcome.
       const stopping = Promise.allSettled(managed.map(o => o.harness.stop(`manager-close-${randomUUID()}`)));
-      const until = Date.now() + 1000;
+      const until = performance.now() + 1000;
       let deadline: ReturnType<typeof setTimeout> | undefined;
       try { await Promise.race([stopping, new Promise(resolve => { deadline = setTimeout(resolve, 1000); })]); }
       finally { clearTimeout(deadline); }
-      while (Date.now() < until && managed.some(o => !o.harness.idleConfirmed && !o.harness.hasUnconfirmedExecution))
+      while (performance.now() < until && managed.some(o => !o.harness.idleConfirmed && !o.harness.hasUnconfirmedExecution))
         await new Promise(resolve => setTimeout(resolve, 20));
       for (const actor of new Set([...this.actors.values(), ...[...this.owners.values()].map(o => o.actor)])) await this.closeActor(actor);
       for (const owner of [...this.owners.values()]) await owner.harness.close();

@@ -287,3 +287,19 @@ describe("quiescent host grant lifecycle", () => {
     expect(t).toHaveBeenCalledOnce();
   });
 });
+
+
+it("bounds callers waiting for a coalesced grant preparation before reading their bodies", async () => {
+  const initial = grant(); initial.budget.maxRequests = 1; initial.budget.maxConcurrent = 1;
+  let finish!: (value: SiwcExecutionGrant) => void;
+  const prepare = vi.fn(() => new Promise<SiwcExecutionGrant>(resolve => { finish = resolve; })), t = transport();
+  const broker = createSiwcExecutionBroker(initial, t, () => NOW, { prepare, changed() {} }), selected = broker.selected("127.0.0.1", 54321);
+  await broker.dispatch(request(selected.bearer), sink());
+  const pendingOut = sink(), pending = broker.dispatch(request(selected.bearer), pendingOut);
+  await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  let read = false;
+  const refused = sink(); await broker.dispatch(request(selected.bearer, body(), { body: (async function* () { read = true; yield Buffer.from("{}"); })() }), refused);
+  expect(refused.statuses).toEqual([429]); expect(read).toBe(false);
+  finish(grant({ budget: { ...initial.budget } })); await pending;
+  expect(pendingOut.statuses).toEqual([200]); expect(t).toHaveBeenCalledTimes(2);
+});

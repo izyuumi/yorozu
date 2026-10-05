@@ -165,3 +165,21 @@ test("a persisted uncertain stop transfers its hold without poisoning unrelated 
   await new Promise(resolve => setTimeout(resolve, 100)); expect(f.turns).toHaveLength(1);
   expect(f.events.some(e => e.kind === "thread_list" && e.data.threads.some((t: any) => t.id === "person" && t.turnState === "stopped-unconfirmed"))).toBe(true);
 });
+
+test("Stop still reaches an active runner when stop-journal persistence fails", async () => {
+  const f = await fixture("secretary"), stopped = vi.fn();
+  f.runner.run.mockImplementation(async turn => {
+    f.turns.push(turn);
+    return await new Promise<any>(resolve => turn.signal.addEventListener("abort", () => {
+      stopped(); resolve({ text: "Synthetic positive cessation", cessation: "provider-terminal" });
+    }, { once: true }));
+  });
+  f.send("message", { role: "user", text: "active" }, "active-with-stop");
+  await vi.waitFor(() => expect(f.turns).toHaveLength(1));
+  mkdirSync(join(f.dir, "stopped-turns.jsonl"));
+  f.send("interrupt", { targetEventId: "active-with-stop" }, "stop-with-storage-failure");
+  await vi.waitFor(() => expect(stopped).toHaveBeenCalledOnce());
+  const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
+  expect(new SecretaryAdmissionFence(f.dir).blocked).toBe(true);
+  rmSync(join(f.dir, "stopped-turns.jsonl"), { recursive: true });
+});
