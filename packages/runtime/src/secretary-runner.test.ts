@@ -828,7 +828,9 @@ test("specialist approval remains required under legacy YOLO and Stop leaves oth
     socket.write(`${JSON.stringify({ id: "legacy-yolo", threadId: SECRETARY_THREAD_ID, ts: Date.now(), agentId: "main",
       kind: "approval_settings", data: { yolo: true, hours: 1 } })}\n`);
     send("approval-tasks", "TASKS");
-    await vi.waitFor(() => expect(events.some((event) => event.kind === "approval_card")).toBe(true));
+    // Planning and two specialists each cross Rust/Node process + durable fsync boundaries.
+    // Keep the exact approval assertion, but budget for parallel cold fixture startup.
+    await vi.waitFor(() => expect(events.some((event) => event.kind === "approval_card")).toBe(true), { timeout: 5000 });
     const card = events.find((event) => event.kind === "approval_card");
     expect(card.threadId).not.toBe(SECRETARY_THREAD_ID);
     expect(card.data.actionClass).toBe("commandExecution");
@@ -881,7 +883,7 @@ test("a damaged task record is held while the secretary still answers new conver
     expect(readThreadEvents(SECRETARY_THREAD_ID, state).some((event) => event.data.text?.includes("task record needs repair"))).toBe(true);
     socket.write(`${JSON.stringify({ id: "fresh-after-corruption", threadId: SECRETARY_THREAD_ID, ts: Date.now(), agentId: "main",
       kind: "message", data: { role: "user", text: "TASKS", delivery: "steer" } })}\n`);
-    await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(4));
+    await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(4), { timeout: 5000 });
     expect(listThreads(state).filter((thread) => thread.id.startsWith("secretary-task-")).length).toBe(2);
   } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }, 10000);
