@@ -27,16 +27,23 @@ async function fixture(ownership: "harness" | "secretary" = "harness", retainedQ
     const answer = await turn.approve!("fixture", { command: "synthetic only" }, turn.signal);
     return { text: String(answer), sessionId: "stable-native-session", cessation: "provider-terminal" as const };
   }) };
-  const sidecar = serve({ stateDir: dir, relayUrl: "ws://127.0.0.1:9", log() {}, nativeRunners: { codex: runner },
+  const options: Parameters<typeof serve>[0] = { stateDir: dir, relayUrl: "ws://127.0.0.1:9", log() {}, nativeRunners: { codex: runner },
     secretaryHarness: true, secretaryHarnessOwns: id => ownership === "harness" && id === "person",
     secretaryOwnsConversation: id => ownership === "secretary" && id === "person", secretaryThreadWorkspace: id => id === "person" ? workspace : undefined,
-    decorateNativeRunners: (runners, selected) => { host = selected; return runners; } });
-  const socket = createConnection(join(dir, "local.sock"));
+    decorateNativeRunners: (runners, selected) => { host = selected; return runners; } };
+  let sidecar = serve(options);
+  let socket = createConnection(join(dir, "local.sock"));
   createInterface({ input: socket }).on("line", line => events.push(JSON.parse(line))).on("error", () => {});
   await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
   cleanups.push(async () => { socket.destroy(); await sidecar.close(); rmSync(root, { recursive: true, force: true }); });
   const send = (kind: string, data: any, id: string) => socket.write(JSON.stringify({ id, threadId: "person", agentId: "main", ts: Date.now(), kind, data }) + "\n");
-  return { root, dir, workspace, turns, events, host, send, runner };
+  const restart = async () => {
+    socket.destroy(); await sidecar.close(); events.length = 0;
+    sidecar = serve(options); socket = createConnection(join(dir, "local.sock"));
+    createInterface({ input: socket }).on("line", line => events.push(JSON.parse(line))).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
+  };
+  return { root, dir, workspace, turns, events, host, send, runner, restart };
 }
 
 test.each(["harness", "secretary"] as const)("assembled %s-only ownership exempts both new and pending approvals from global YOLO and resumes one session", async ownership => {
@@ -182,4 +189,60 @@ test("Stop still reaches an active runner when stop-journal persistence fails", 
   const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
   expect(new SecretaryAdmissionFence(f.dir).blocked).toBe(true);
   rmSync(join(f.dir, "stopped-turns.jsonl"), { recursive: true });
+});
+
+test("a real harness attachment refusal settles admission and permits a new turn after restart", async () => {
+  const f = await fixture("harness");
+  const { SecretaryHarness } = await import("../dist/harness-runner.js");
+  const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
+  const harness = new SecretaryHarness(f.dir, { pluginId: "hermes", upstreamVersion: "fixture", command: process.execPath, args: [], initialize: {} },
+    { conversationId: "person", workspace: f.workspace });
+  try {
+    f.runner.run.mockImplementation(turn => harness.runner.run(turn) as any);
+    f.send("message", { role: "user", text: "attachment", attachments: [{ name: "a.txt", mime: "text/plain", data: "YQ==" }] }, "refused-attachment");
+    await vi.waitFor(() => expect(f.events.find(e => e.id === "native:refused-attachment:final")?.data.text).toContain("No input was submitted"));
+    expect(Object.keys(harness.ledger.state.runs)).toEqual([]);
+    expect(new SecretaryAdmissionFence(f.dir).blocked).toBe(false);
+    await f.restart();
+    f.runner.run.mockImplementation(async turn => { f.turns.push(turn); return { text: "new turn", cessation: "provider-terminal" } as any; });
+    f.send("message", { role: "user", text: "hello" }, "after-refusal");
+    await vi.waitFor(() => expect(f.events.find(e => e.id === "native:after-refusal:final")?.data.text).toBe("new turn"));
+    expect(new SecretaryAdmissionFence(f.dir).blocked).toBe(false);
+  } finally { await harness.close(); }
+});
+
+test.each(["exception", "failed-without-evidence"])("%s before any callback preserves uncertainty across restart", async mode => {
+  const f = await fixture("harness");
+  f.runner.run.mockImplementation(async turn => {
+    f.turns.push(turn);
+    if (mode === "exception") throw new Error("Synthetic handoff lost before any callback");
+    return { text: "Synthetic failed return without cessation", failed: true } as any;
+  });
+  f.send("message", { role: "user", text: "unknown" }, "unknown-no-callback");
+  await vi.waitFor(() => expect(f.events.find(e => e.id === "native:unknown-no-callback:final")?.data.text).toContain("Queued work is held"));
+  expect(readFileSync(join(f.dir, "stopped-turns.jsonl"), "utf8")).toContain('"status":"unconfirmed"');
+  await f.restart();
+  f.send("message", { role: "user", text: "must wait" }, "after-unknown");
+  await new Promise(resolve => setTimeout(resolve, 100));
+  expect(f.turns).toHaveLength(1);
+  expect(f.events.some(e => e.kind === "thread_list" && e.data.threads.some((t: any) => t.id === "person" && t.turnState === "stopped-unconfirmed"))).toBe(true);
+});
+
+test("restart settles a second queued request only from positive never-dispatched custody", async () => {
+  const f = await fixture("harness");
+  f.runner.run.mockImplementation(turn => { f.turns.push(turn); return new Promise(resolve => {
+    turn.signal.addEventListener("abort", () => resolve({ text: "Stopped fixture", cessation: "process-exited" } as any), { once: true });
+  }); });
+  f.send("message", { role: "user", text: "first" }, "queued-first");
+  await vi.waitFor(() => expect(f.turns).toHaveLength(1));
+  f.send("message", { role: "user", text: "second" }, "queued-second");
+  await vi.waitFor(() => expect(JSON.parse(readFileSync(join(f.dir, "native-turn-queue.json"), "utf8"))).toContainEqual({ threadId: "person", eventId: "queued-second" }));
+  await f.restart();
+  await vi.waitFor(() => expect(readThreadEvents("person", f.dir).find(e => e.id === "native:queued-second:final")?.data.text).toContain("not submitted"));
+  expect(f.turns).toHaveLength(1); // no replay of either request
+  expect(JSON.parse(readFileSync(join(f.dir, "native-turn-queue.json"), "utf8"))).toEqual([]);
+  await vi.waitFor(() => expect(f.events.some(e => e.kind === "thread_list" && e.data.threads.some((t: any) => t.id === "person" && t.turnState === "idle"))).toBe(true));
+  f.runner.run.mockImplementation(async turn => { f.turns.push(turn); return { text: "fresh", cessation: "provider-terminal" } as any; });
+  f.send("message", { role: "user", text: "new request" }, "after-queue-settlement");
+  await vi.waitFor(() => expect(f.events.find(e => e.id === "native:after-queue-settlement:final")?.data.text).toBe("fresh"));
 });

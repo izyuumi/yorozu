@@ -51,3 +51,19 @@ test("positive cessation consumes only its exact durable execution intent", asyn
     fence.confirmed("unknown"); expect(new SecretaryAdmissionFence(dir).blocked).toBe(false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("queue reconciliation requires positive exact custody, never absent, corrupt or dispatched records", async () => {
+  const { SecretaryQueueLedger } = await import("../dist/secretary-steering.js");
+  const dir = mkdtempSync(join(tmpdir(), "ys-queue-custody-"));
+  try {
+    const ledger = new SecretaryQueueLedger(dir);
+    expect(ledger.reconcile("person", "missing")).toBeUndefined();
+    ledger.admit("person", "waiting"); ledger.admit("person", "running"); ledger.dispatch("person", "running");
+    expect(new SecretaryQueueLedger(dir).reconcile("person", "running")).toBeUndefined();
+    expect(new SecretaryQueueLedger(dir).reconcile("other", "waiting")).toBeUndefined();
+    expect(new SecretaryQueueLedger(dir).reconcile("person", "waiting")).toBe("not-submitted");
+    expect(() => ledger.dispatch("person", "waiting")).toThrow("unconfirmed");
+    for (const file of readdirSync(join(dir, "secretary-steering-v1"))) writeFileSync(join(dir, "secretary-steering-v1", file), "{");
+    expect(new SecretaryQueueLedger(dir).reconcile("person", "running")).toBeUndefined();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

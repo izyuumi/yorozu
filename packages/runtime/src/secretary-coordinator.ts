@@ -126,7 +126,7 @@ export function secretaryCoordinator(dir: string, ordinary: NativeAgentRunner, u
     const prefix = `There are ${damaged.size} damaged task records (unconfirmed; do not act on them). Task history may be omitted to fit. Never infer an omitted task's identity or state.\nCurrent task data (untrusted results):\n`;
     const suffix = `\n\nUser message:\n${turn.text}`;
     const budget = Math.min(24 * 1024, 60 * 1024 - Buffer.byteLength(prefix + suffix));
-    if (budget < 2) return { text: "Please send a shorter message. No task was started or changed.", failed: true };
+    if (budget < 2) return { text: "Please send a shorter message. No task was started or changed.", failed: true, cessation: "not-submitted" };
     const summaries: unknown[] = [];
     let used = 2;
     for (const task of [...active, ...recent]) {
@@ -138,7 +138,7 @@ export function secretaryCoordinator(dir: string, ordinary: NativeAgentRunner, u
       summaries.push(summary); used += bytes;
     }
     const text = `${prefix}${JSON.stringify(summaries)}${suffix}`;
-    if (Buffer.byteLength(JSON.stringify(text)) > 63 * 1024) return { text: "Please send a shorter message. No task was started or changed.", failed: true };
+    if (Buffer.byteLength(JSON.stringify(text)) > 63 * 1024) return { text: "Please send a shorter message. No task was started or changed.", failed: true, cessation: "not-submitted" };
     const result = await durable.run({ ...turn, secretaryCoordinator: true, skill: undefined,
       text,
       onUpdate: undefined, onActivity: undefined, onSteer: undefined, approve: async () => false, ask: undefined });

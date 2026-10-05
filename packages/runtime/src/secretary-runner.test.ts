@@ -802,6 +802,14 @@ test("long Japanese task history leaves room for conversation and an oversized m
     await vi.waitFor(() => expect(final("too-long")?.data.text).toContain("shorter message"));
     send("too-escaped", '"'.repeat(40000));
     await vi.waitFor(() => expect(final("too-escaped")?.data.text).toContain("shorter message"));
+    const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
+    expect(new SecretaryAdmissionFence(state).blocked).toBe(false);
+    socket.destroy(); await sidecar.close();
+    sidecar = serveSecretary({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
+    socket = createConnection(join(state, "local.sock"));
+    createInterface({ input: socket }).on("line", () => {}).on("error", () => {});
+    await new Promise<void>((resolve, reject) => { socket!.once("connect", resolve); socket!.once("error", reject); });
+    expect(new SecretaryAdmissionFence(state).blocked).toBe(false);
     send("after-long", "HELLO");
     await vi.waitFor(() => expect(final("after-long")?.data.text).toBe("Hello, how can I help?"));
     expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(2);

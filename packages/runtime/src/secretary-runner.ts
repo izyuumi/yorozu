@@ -46,7 +46,7 @@ export function secretaryRunner(dir: string, ordinaryCodex: NativeAgentRunner,
     const reason = `Secretary unavailable: ${error instanceof Error ? error.message : String(error)}`.replace(/[\r\n]+/g, " ");
     onUnavailable(reason);
     return { ...ordinaryCodex, run: (turn) => turn.threadId === SECRETARY_THREAD_ID
-      ? Promise.resolve({ text: reason, failed: true }) : ordinaryCodex.run(turn) };
+      ? Promise.resolve({ text: reason, failed: true, cessation: "not-submitted" as const }) : ordinaryCodex.run(turn) };
   }
   const { root, workspace } = prepared;
   return { ...ordinaryCodex, async run(turn) {
@@ -213,7 +213,7 @@ export function runSecretary(root: string, workspace: string, runId: string, tur
           if (packet.result?.submitted === false) pending.finish(false);
           else if (packet.result?.error || packet.result?.replayed === true) pending.finish();
         } else if (packet.result?.error) {
-          finish({ text: `The secretary could not accept this task (${String(packet.result.error)}).`, sessionId, failed: true });
+          finish({ text: `The secretary could not accept this task (${String(packet.result.error)}).`, sessionId, failed: true, unconfirmed: true });
         }
       } catch { stop(); uncertain(); }
     });

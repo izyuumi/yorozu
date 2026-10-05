@@ -87,3 +87,50 @@ export class SecretaryAdmissionFence {
     } catch (error) { this.fail(); throw error; }
   }
 }
+
+/** Positive host-queue custody, not an inference from missing provider history.
+ * A durable dispatching transition is mandatory BEFORE entering any runner.
+ * Old/missing/corrupt receipts never establish non-submission. */
+export class SecretaryQueueLedger {
+  private readonly root: string;
+  constructor(dir: string) { this.root = join(dir, "secretary-steering-v1"); }
+  private path(threadId: string, eventId: string): string {
+    return join(this.root, `queue-${createHash("sha256").update(JSON.stringify([threadId, eventId])).digest("hex")}.json`);
+  }
+  private read(threadId: string, eventId: string): "queued" | "dispatching" | "not-submitted" | "ceased" | undefined {
+    try {
+      if (!lstatSync(this.root).isDirectory() || lstatSync(this.root).isSymbolicLink()) return;
+      const path = this.path(threadId, eventId), stat = lstatSync(path);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4096) return;
+      const value = JSON.parse(readFileSync(path, "utf8"));
+      if (value.version === 1 && value.threadId === threadId && value.eventId === eventId &&
+          ["queued", "dispatching", "not-submitted", "ceased"].includes(value.phase)) return value.phase;
+    } catch { /* Unknown remains held, never permission to infer absence. */ }
+  }
+  private persist(threadId: string, eventId: string, phase: "queued" | "dispatching" | "not-submitted" | "ceased", first = false): void {
+    mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    if (!lstatSync(this.root).isDirectory() || lstatSync(this.root).isSymbolicLink()) throw new Error("Invalid queue custody directory");
+    const path = this.path(threadId, eventId), temporary = first ? path : `${path}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, JSON.stringify({ version: 1, threadId, eventId, phase }), { mode: 0o600, flag: "wx", flush: true });
+    if (!first) renameSync(temporary, path);
+    for (const directory of [this.root, join(this.root, "..")]) {
+      const fd = openSync(directory, "r"); try { fsyncSync(fd); } finally { closeSync(fd); }
+    }
+  }
+  admit(threadId: string, eventId: string): void { this.persist(threadId, eventId, "queued", true); }
+  dispatch(threadId: string, eventId: string): void {
+    if (this.read(threadId, eventId) !== "queued") throw new Error("Queue dispatch custody is unconfirmed");
+    this.persist(threadId, eventId, "dispatching");
+  }
+  settled(threadId: string, eventId: string, notSubmitted: boolean): void {
+    if (this.read(threadId, eventId) !== "dispatching") throw new Error("Queue completion custody is unconfirmed");
+    this.persist(threadId, eventId, notSubmitted ? "not-submitted" : "ceased");
+  }
+  reconcile(threadId: string, eventId: string): "not-submitted" | "ceased" | undefined {
+    const phase = this.read(threadId, eventId);
+    if (phase === "not-submitted" || phase === "ceased") return phase;
+    if (phase !== "queued") return;
+    this.persist(threadId, eventId, "not-submitted");
+    return "not-submitted";
+  }
+}

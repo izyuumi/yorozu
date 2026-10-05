@@ -143,15 +143,15 @@ export class SecretaryHarness {
     })().catch(async error => { this.starting = undefined; if (this.ownsProcess) await this.process.close(); throw error; });
   }
   private async run(turn: NativeTurn): Promise<NativeTurnResult> {
-    if (!this.owns(turn.threadId)) return { text: "This conversation does not belong to the selected harness.", failed: true };
-    if (turn.cwd !== this.workspace) return { text: "The harness workspace changed; no execution was started.", failed: true };
-    if (turn.attachments?.length) return { text: "This harness adapter does not support attachments yet. No input was submitted.", failed: true };
+    if (!this.owns(turn.threadId)) return { text: "This conversation does not belong to the selected harness.", failed: true, cessation: "not-submitted" };
+    if (turn.cwd !== this.workspace) return { text: "The harness workspace changed; no execution was started.", failed: true, cessation: "not-submitted" };
+    if (turn.attachments?.length) return { text: "This harness adapter does not support attachments yet. No input was submitted.", failed: true, cessation: "not-submitted" };
     try { this.options.beforeAdmission?.(); }
     catch (error) { return { text: `Agent admission held: ${error instanceof Error ? error.message : String(error)}`, unconfirmed: true }; }
     const marker = listThreads(this.dir).find(t => t.id === turn.threadId)?.nativeTurn;
     const eventId = marker?.userEventId;
     if (!eventId || !readThreadEvents(turn.threadId, this.dir).some(e => e.id === eventId && e.kind === "message" && e.data.role === "user"))
-      return { text: "The harness requires a persisted accepted user event.", failed: true };
+      return { text: "The harness requires a persisted accepted user event.", failed: true, cessation: "not-submitted" };
     const task = this.taskForThread(turn.threadId);
     if (task) {
       const receipt = await this.control("task.steer", task, eventId, turn.text);
