@@ -18,6 +18,32 @@ GROUP = "954b8070-0ad9-4112-a061-2001bdc150b7"
 APP = "6811274963"
 
 
+# These are the branches for which ci.yml runs the assembled internal lane.
+INTERNAL_BRANCHES = {"harness-plugins", "integration-0.6-worker", "v0.6.0-alpha"}
+
+
+def check_source(gh, source, branch, run_id=None):
+    """Read-only gate shared by pre-signing checks and beta publication."""
+    require(gh.repo == REPOSITORY, "Wrong internal source repository")
+    require(re.fullmatch(r"[0-9a-f]{40}", source or ""), "Exact internal source SHA is required")
+    require(branch in INTERNAL_BRANCHES, "Source branch must run the isolated internal CI lane")
+    if run_id is not None:
+        require(re.fullmatch(r"[1-9]\d*", str(run_id)), "Exact CI run identity is required")
+    ref = gh.api("git/ref/heads/" + branch)
+    require(ref.get("object", {}).get("type") == "commit" and ref["object"].get("sha") == source,
+            "Internal source branch moved after review")
+    ci = release.check_ci(gh, source, branch, run_id)
+    result = gh.api(f"actions/runs/{ci}/jobs?filter=latest&per_page=100")
+    jobs = result.get("jobs", [])
+    require(result.get("total_count") == len(jobs), "Incomplete internal CI job evidence")
+    for name in ("internal-secretary", "release-checks", "ios"):
+        matching = [job for job in jobs if job.get("name") == name]
+        require(len(matching) == 1 and matching[0].get("status") == "completed"
+                and matching[0].get("conclusion") == "success",
+                "Internal CI job must complete successfully: " + name)
+    return ci
+
+
 def publish(gh, root, expected_source, expected_run, availability, now=None):
     require(gh.repo == REPOSITORY, "Beta target must be the existing Yorozu repository")
     require(os.environ.get("GITHUB_RUN_ATTEMPT", "1") == "1", "Use a fresh release run, not a partial rerun")
@@ -54,7 +80,7 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
                 and release.sha256(path) == row.get("sha256"), "Mac artifact differs from signed-release provenance")
         paths[name] = path
     require(re.fullmatch(r"[1-9]\d*", str(data.get("ci_run_id", ""))), "Exact CI run identity is required")
-    ci = release.check_ci(gh, expected_source, branch, str(data.get("ci_run_id", "")))
+    ci = check_source(gh, expected_source, branch, str(data.get("ci_run_id", "")))
     intake = data.get("runtime_intake", {})
     require(all(re.fullmatch(r"[0-9a-f]{64}", str(intake.get(k, ""))) for k in
                 ("receiptSha256", "archiveSha256", "unsignedInventorySha256", "signedInventorySha256", "archiveProvenanceSha256")), "Runtime intake binding is missing")
@@ -101,6 +127,7 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
         require(gh.tag_sha(tag) == expected_source, "Published beta source differs")
         remote = gh.release(tag)
         require(remote is not None and remote["isPrerelease"] and not remote["isDraft"], "Beta is not published")
+        require({a["name"] for a in remote["assets"]} == expected_names, "Unexpected published beta asset set")
         with tempfile.TemporaryDirectory(prefix="yorozu-beta-verify-") as verify_dir:
             for asset in assets:
                 actual = gh.download(tag, asset.name, verify_dir)
@@ -111,12 +138,21 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dist", type=Path, required=True)
+    parser.add_argument("--check-source", action="store_true", help="Read-only branch and CI gate; no release or Apple writes")
+    parser.add_argument("--branch")
+    parser.add_argument("--ci-run-id")
+    parser.add_argument("--dist", type=Path)
     parser.add_argument("--source", required=True)
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--availability", type=Path, required=True)
+    parser.add_argument("--run-id")
+    parser.add_argument("--availability", type=Path)
     args = parser.parse_args()
-    print(json.dumps(publish(release.GitHub(REPOSITORY), args.dist, args.source, args.run_id, args.availability)))
+    if args.check_source:
+        require(args.branch and not any((args.dist, args.run_id, args.availability)), "Read-only source check requires only source, branch and optional CI run")
+        print(check_source(release.GitHub(REPOSITORY), args.source, args.branch, args.ci_run_id))
+    else:
+        require(args.dist and args.run_id and args.availability and not args.branch and not args.ci_run_id,
+                "Publication requires dist, source, run-id and availability")
+        print(json.dumps(publish(release.GitHub(REPOSITORY), args.dist, args.source, args.run_id, args.availability)))
 
 
 if __name__ == "__main__":

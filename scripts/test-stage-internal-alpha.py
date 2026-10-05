@@ -28,11 +28,15 @@ class StageTests(unittest.TestCase):
         self.put("packages/runtime/src/threads.ts", "threads\n")
         for directory in ("apps/mac", "packages/shared-swift", "packages/harness-plugins"):
             self.put(directory + "/removed.txt", "must not return\n")
+        self.put("packages/runtime/src/secretary-old.test.ts", "deleted test\n")
+        self.put("packages/shared/src/siwc-old.test.ts", "deleted shared test\n")
         self.commit("baseline")
         self.baseline = self.git("rev-parse", "HEAD").strip()
         for directory in ("apps/mac", "packages/shared-swift", "packages/harness-plugins"):
             (self.repo / directory / "removed.txt").unlink()
             self.put(directory + "/current.txt", "reviewed\n")
+        (self.repo / "packages/runtime/src/secretary-old.test.ts").unlink()
+        (self.repo / "packages/shared/src/siwc-old.test.ts").unlink()
         self.put("packages/runtime/src/harness-fixture.test.ts", "inert test fixture\n")
         self.put("scripts/secretary-production.patch", "--- a/packages/runtime/src/serve.ts\n+++ b/packages/runtime/src/serve.ts\n@@ -1 +1 @@\n-baseline\n+patched\n")
         self.commit("reviewed overlay")
@@ -70,6 +74,54 @@ class StageTests(unittest.TestCase):
         self.assertEqual(manifest["productionBaselineSha"], self.baseline)
         self.assertFalse(manifest["legacyStorageMigration"])
         self.assertFalse(any(name.endswith("removed.txt") for name in manifest["overlaySha256"]))
+
+    def test_deleted_baseline_tests_do_not_run(self):
+        out = self.root / "staged"
+        stage.stage(out)
+        self.assertFalse((out / "packages/runtime/src/secretary-old.test.ts").exists())
+        self.assertFalse((out / "packages/shared/src/siwc-old.test.ts").exists())
+        self.assertTrue((out / "packages/runtime/src/harness-fixture.test.ts").exists())
+
+    def test_export_ignore_overlay_or_test_is_refused(self):
+        for index, name in enumerate(("apps/mac/current.txt", "packages/runtime/src/harness-fixture.test.ts")):
+            self.put(".gitattributes", name + " export-ignore\n")
+            self.commit("ignored archive path")
+            with self.assertRaisesRegex(SystemExit, "Git blob missing"):
+                stage.stage(self.root / f"ignored-{index}")
+
+    def test_export_subst_cannot_change_reviewed_bytes(self):
+        self.put("apps/mac/current.txt", "$Format:%H$\n")
+        self.put(".gitattributes", "apps/mac/current.txt export-subst\n")
+        self.commit("archive substitution")
+        with self.assertRaisesRegex(SystemExit, "differ from Git blob"):
+            stage.stage(self.root / "staged")
+
+    def test_symlink_target_and_executable_mode_are_recorded_and_preserved(self):
+        (self.repo / "apps/mac/link").symlink_to("current.txt")
+        (self.repo / "apps/mac/current.txt").chmod(0o755)
+        self.commit("reviewed symlink")
+        out = self.root / "staged"
+        stage.stage(out)
+        manifest = json.loads((out / "internal-source.json").read_text())
+        self.assertEqual(manifest["overlaySymlinks"], {"apps/mac/link": "current.txt"})
+        self.assertEqual(str((out / "apps/mac/link").readlink()), "current.txt")
+        self.assertTrue((out / "apps/mac/current.txt").stat().st_mode & 0o111)
+
+    def test_checkout_eol_and_clean_filters_cannot_mask_staged_byte_changes(self):
+        self.put(".gitattributes", "apps/mac/current.txt text eol=crlf filter=fixture\n")
+        self.git("config", "filter.fixture.clean", "cat")
+        self.git("config", "filter.fixture.smudge", "cat")
+        self.commit("checkout attributes")
+        out = self.root / "staged"
+        with self.assertRaisesRegex(SystemExit, "differ from Git blob"):
+            stage.stage(out)
+        # A malicious clean filter must not normalize a substitution back to the blob.
+        self.put("apps/mac/current.txt", "$Format:%H$\n")
+        self.put(".gitattributes", "apps/mac/current.txt export-subst filter=fixture\n")
+        self.commit("substitution with clean filter")
+        self.git("config", "filter.fixture.clean", "printf '%s\\n' '$Format:%%H$'")
+        with self.assertRaisesRegex(SystemExit, "differ from Git blob"):
+            stage.stage(self.root / "substituted")
 
     def test_dirty_source_is_rejected(self):
         self.put("unreviewed", "not committed")

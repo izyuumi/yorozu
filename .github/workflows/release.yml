@@ -71,7 +71,7 @@ jobs:
           if os.environ["INTERNAL_ONLY"] == "true":
               branch = os.environ["SOURCE_BRANCH"]
               assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch) and ".." not in branch, "invalid internal source branch"
-              assert branch != "main" and not branch.startswith("release/"), "internal source must be isolated"
+              assert branch in {"harness-plugins", "integration-0.6-worker", "v0.6.0-alpha"}, "internal source must run the isolated CI lane"
               assert os.environ["REQUESTED_VERSION"] == "0.6.0", "internal version must be explicit 0.6.0"
               assert re.fullmatch(r"[0-9a-f]{40}", os.environ["REVIEWED_SOURCE_SHA"]), "provide the reviewed source SHA"
           else:
@@ -273,8 +273,10 @@ jobs:
           set -eu
           test "$GITHUB_RUN_ATTEMPT" = 1 || { echo 'Dispatch a fresh internal release; partial reruns cannot reuse a build identity' >&2; exit 1; }
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA" --jq .commit.verification.verified)" = true
-          CI_RUN_ID=$(python3 scripts/release.py check-ci --source "$SOURCE_SHA" --branch "$SOURCE_BRANCH")
+          # GitHub signature validity only, not an owner-key allowlist. Owner review
+          # is the explicit reviewed_source_sha attestation checked in source.
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA" --jq '.commit.verification | .verified and (.reason == "valid")')" = true
+          CI_RUN_ID=$(python3 scripts/publish-internal-beta.py --check-source --source "$SOURCE_SHA" --branch "$SOURCE_BRANCH")
           printf 'CI_RUN_ID=%s\n' "$CI_RUN_ID" >> "$GITHUB_ENV"
           BUILD=$((10000 + GITHUB_RUN_NUMBER))
           export BUILD

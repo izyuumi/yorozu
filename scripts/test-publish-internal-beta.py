@@ -23,6 +23,23 @@ SHA = fixtures.SHA
 NOW = datetime(2026, 10, 6, tzinfo=timezone.utc)
 
 
+class InternalGitHub(fixtures.FakeGitHub):
+    def __init__(self):
+        super().__init__()
+        self.head = SHA
+        self.jobs = [{"name": name, "status": "completed", "conclusion": "success"}
+                     for name in ("internal-secretary", "release-checks", "ios")]
+
+    def api(self, path, *args, **kwargs):
+        if path.startswith("git/ref/heads/"):
+            self.events.append(("api", path))
+            return {"object": {"type": "commit", "sha": self.head}}
+        if path.endswith("/jobs?filter=latest&per_page=100"):
+            self.events.append(("api", path))
+            return {"total_count": len(self.jobs), "jobs": self.jobs}
+        return super().api(path, *args, **kwargs)
+
+
 class BetaTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="yorozu-beta-test-")
@@ -38,7 +55,7 @@ class BetaTests(unittest.TestCase):
                      "artifacts": [{"path": n, "sha256": beta.release.sha256(self.root / n), "size": (self.root / n).stat().st_size}
                                    for n in ("mac/Yorozu.dmg", "Yorozu.app.zip")]}
         self.data["runtime_intake"] = {k: "a" * 64 for k in ("receiptSha256", "archiveSha256", "unsignedInventorySha256", "signedInventorySha256", "archiveProvenanceSha256")}
-        self.gh = fixtures.FakeGitHub()
+        self.gh = InternalGitHub()
         self.gh.repo = beta.REPOSITORY
         self.gh.runs["7"].update(head_branch="harness-plugins", head_repository={"full_name": beta.REPOSITORY})
         self.tag = "v0.6.0-beta.10267"
@@ -106,6 +123,65 @@ class BetaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.publish()
         self.assertFalse(any(event[:2] == ("release", "delete") for event in self.gh.events))
+
+    def test_readonly_source_gate_and_branch_policy(self):
+        self.assertEqual(beta.check_source(self.gh, SHA, "harness-plugins", "7"), "7")
+        self.assertTrue(all(event[0] == "api" for event in self.gh.events))
+        for branch in ("main", "release/0.6", "unwired-internal", "harness-plugins/../main"):
+            with self.assertRaisesRegex(ValueError, "isolated internal CI"):
+                beta.check_source(self.gh, SHA, branch, "7")
+        self.gh.head = "b" * 40
+        with self.assertRaisesRegex(ValueError, "moved after review"):
+            self.publish()
+        self.assertFalse(self.gh.releases)
+
+    def test_skipped_or_missing_internal_jobs_refuse_publication(self):
+        for job in self.gh.jobs:
+            job["conclusion"] = "skipped"
+            with self.assertRaisesRegex(ValueError, "CI job"):
+                self.publish()
+            job["conclusion"] = "success"
+        self.gh.jobs.pop(0)
+        with self.assertRaisesRegex(ValueError, "CI job"):
+            self.publish()
+        self.assertFalse(self.gh.releases)
+
+    def test_missing_ci_pin_or_newer_run_refuses_publication(self):
+        self.data.pop("ci_run_id")
+        with self.assertRaisesRegex(ValueError, "CI run identity"):
+            self.publish()
+        self.data["ci_run_id"] = "7"
+        self.gh.runs["8"] = {**self.gh.runs["7"], "id": 8}
+        with self.assertRaisesRegex(ValueError, "newer CI run"):
+            self.publish()
+        self.assertFalse(self.gh.releases)
+
+    def test_extra_draft_ipa_is_never_published(self):
+        self.gh.add_release(self.tag, {"x.ipa": b"not public"}, draft=True, prerelease=True,
+                            name="Yorozu 0.6.0 Beta (Mac 10267)")
+        with self.assertRaisesRegex(ValueError, "Unexpected existing beta assets"):
+            self.publish()
+        self.assertTrue(self.gh.releases[self.tag]["isDraft"])
+        self.assertFalse(any(event[:2] == ("release", "edit") for event in self.gh.events))
+
+    def test_corrupt_upload_stays_draft(self):
+        upload = self.gh.upload
+        def corrupt(tag, path):
+            upload(tag, path)
+            self.gh.releases[tag]["files"][path.name] = b"corrupt"
+        with patch.object(self.gh, "upload", side_effect=corrupt):
+            with self.assertRaisesRegex(ValueError, "before publication"):
+                self.publish()
+        self.assertTrue(self.gh.releases[self.tag]["isDraft"])
+
+    def test_post_publish_asset_set_is_rechecked(self):
+        publish = self.gh.publish
+        def extra(tag, prerelease, latest=False):
+            publish(tag, prerelease, latest=latest)
+            self.gh.releases[tag]["files"]["extra"] = b"unexpected"
+        with patch.object(self.gh, "publish", side_effect=extra):
+            with self.assertRaisesRegex(ValueError, "Unexpected published beta asset set"):
+                self.publish()
 
     def test_non_successful_ci_cannot_publish(self):
         self.gh.runs["7"]["conclusion"] = "failure"

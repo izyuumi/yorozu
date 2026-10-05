@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import os
 import shutil
 from pathlib import Path
 import subprocess
@@ -72,6 +73,47 @@ def git(*args):
     return subprocess.check_output(["git", "-C", str(ROOT), *args])
 
 
+def extract_verified(destination, revision, paths):
+    """Archive attributes must never substitute or omit reviewed Git blobs."""
+    entries = {}
+    for row in git("ls-tree", "-r", "-z", revision, "--", *paths).split(b"\0"):
+        if not row:
+            continue
+        metadata, name = row.split(b"\t", 1)
+        mode, kind, oid = metadata.decode().split()
+        if kind != "blob" or mode not in ("100644", "100755", "120000"):
+            raise SystemExit("Unsupported staged Git entry: " + os.fsdecode(name))
+        entries[os.fsdecode(name)] = (mode, oid)
+    with tarfile.open(fileobj=io.BytesIO(git("archive", revision, *paths))) as archive:
+        archive.extractall(destination, filter="data")
+    for name, (mode, oid) in entries.items():
+        path = destination / name
+        if mode == "120000":
+            if not path.is_symlink():
+                raise SystemExit("Staged Git blob missing or wrong type: " + name)
+            contents = os.fsencode(path.readlink())
+        else:
+            if path.is_symlink() or not path.is_file():
+                raise SystemExit("Staged Git blob missing or wrong type: " + name)
+            if bool(path.stat().st_mode & 0o111) != (mode == "100755"):
+                raise SystemExit("Staged Git executable mode differs: " + name)
+            contents = path.read_bytes()
+        actual = subprocess.check_output(
+            ["git", "-C", str(ROOT), "hash-object", "--no-filters", "--stdin"], input=contents).decode().strip()
+        if actual != oid:
+            raise SystemExit("Staged bytes differ from Git blob: " + name)
+
+
+def selected_test(name):
+    path = Path(name)
+    prefixes = {
+        "packages/runtime/src": ("secretary-", "harness", "agent-", "person-agent-", "curated-agent-", "packaged-agent-", "siwc-", "native-account-"),
+        "packages/shared/src": ("person-agents", "peer-info", "siwc-"),
+    }
+    return any(name.startswith(root + "/") and path.name.startswith(starts)
+               and name.endswith(".test.ts") for root, starts in prefixes.items())
+
+
 def stage(destination):
     if git("status", "--porcelain").strip():
         raise SystemExit("Commit the candidate first; internal builds require a clean source tree")
@@ -91,8 +133,7 @@ def stage(destination):
                     target.unlink()
                 elif target.exists():
                     shutil.rmtree(target)
-        with tarfile.open(fileobj=io.BytesIO(git("archive", revision, *paths))) as archive:
-            archive.extractall(destination, filter="data")
+        extract_verified(destination, revision, paths)
     # This small, version-pinned hook decorates the production runtime's existing
     # tracked runners. Its recovery and readiness paths stay in the baseline.
     patch = destination / "scripts/secretary-production.patch"
@@ -100,19 +141,25 @@ def stage(destination):
     subprocess.run(["git", "apply", str(patch)], cwd=destination, check=True)
     # Keep the production manifest and lockfile together. Only these explicit new
     # files and the reviewed adapter replace runtime source; serve/storage do not.
-    tests = git("ls-tree", "-r", "--name-only", source, "packages/runtime/src").decode().splitlines()
-    tests = [name for name in tests if Path(name).name.startswith(("secretary-", "harness", "agent-", "person-agent-", "curated-agent-", "packaged-agent-", "siwc-", "native-account-")) and name.endswith(".test.ts")]
-    shared_tests = git("ls-tree", "-r", "--name-only", source, "packages/shared/src").decode().splitlines()
-    tests += [name for name in shared_tests if Path(name).name.startswith(("person-agents", "peer-info", "siwc-")) and name.endswith(".test.ts")]
+    # Remove the entire selected baseline test set, including source deletions.
+    for directory in ("packages/runtime/src", "packages/shared/src"):
+        for path in (destination / directory).rglob("*.test.ts"):
+            if selected_test(str(path.relative_to(destination))):
+                path.unlink()
+    tests = [os.fsdecode(name) for name in git("ls-tree", "-r", "-z", "--name-only", source,
+             "packages/runtime/src", "packages/shared/src").split(b"\0")
+             if name and selected_test(os.fsdecode(name))]
     if not tests:
         raise SystemExit("Secretary regression tests are missing")
-    with tarfile.open(fileobj=io.BytesIO(git("archive", source, *tests))) as archive:
-        archive.extractall(destination, filter="data")
+    extract_verified(destination, source, tests)
     hashes = {}
+    symlinks = {}
     for name in OVERLAYS + tests + ["packages/runtime/src/serve.ts", "packages/runtime/src/threads.ts"]:
         path = destination / name
-        for file in ([path] if path.is_file() else sorted(path.rglob("*"))):
-            if file.is_file() and not file.is_symlink():
+        for file in ([path] if path.is_file() or path.is_symlink() else sorted(path.rglob("*"))):
+            if file.is_symlink():
+                symlinks[str(file.relative_to(destination))] = str(file.readlink())
+            elif file.is_file():
                 hashes[str(file.relative_to(destination))] = hashlib.sha256(file.read_bytes()).hexdigest()
     manifest = {
         "schemaVersion": 1, "sourceSha": source, "productionBaselineSha": BASELINE,
@@ -123,7 +170,7 @@ def stage(destination):
         "personAgentPlatform": {"kind": "packaged-hermes-v1", "productionReady": False},
         "harnessPlugins": {"hermes": {"version": "0.21.5", "sourceSha": "f97608f178d1ffeca59860195ab7da295f7c8e5f", "bundledRuntime": False}},
         "dependencyLockSha256": hashlib.sha256((destination / "pnpm-lock.yaml").read_bytes()).hexdigest(),
-        "overlaySha256": hashes,
+        "overlaySha256": hashes, "overlaySymlinks": symlinks,
     }
     (destination / "internal-source.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(destination)

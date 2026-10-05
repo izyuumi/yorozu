@@ -37,20 +37,41 @@ class InternalReleasePolicyTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         for job, next_job, signing_step in (
             ("candidate", "internal", "Signing identity and notary credentials"),
-            ("internal", None, "Prepare existing signing credentials"),
+            ("internal", "internal-beta", "Prepare existing signing credentials"),
+            ("internal-beta", None, "Reverify the existing internal TestFlight group without writes"),
         ):
             text = workflow.split("\n  " + job + ":\n", 1)[1]
             if next_job:
                 text = text.split("\n  " + next_job + ":\n", 1)[0]
             self.assertLess(text.index('test "$GITHUB_RUN_ATTEMPT" = 1'), text.index(signing_step))
 
+    def test_internal_source_gate_is_readonly_and_runs_before_signing(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        internal = workflow.split("\n  internal:\n", 1)[1].split("\n  internal-beta:\n", 1)[0]
+        self.assertIn("contents: read", internal)
+        self.assertLess(internal.index("publish-internal-beta.py --check-source"),
+                        internal.index("Prepare existing signing credentials"))
+        beta_source = (ROOT / "scripts/publish-internal-beta.py").read_text()
+        branches = re.search(r"INTERNAL_BRANCHES = (.+)", beta_source).group(1)
+        import ast
+        for branch in ast.literal_eval(branches):
+            self.assertTrue(internal_lane(ref="refs/heads/" + branch))
+            self.assertIn('"' + branch + '"', workflow)
+
+    def test_internal_shell_scripts_are_linted(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        line = next(line for line in workflow.splitlines() if line.strip().startswith("shellcheck scripts/"))
+        for script in ("check-internal-alpha.sh", "build-internal-alpha.sh"):
+            self.assertIn("scripts/" + script, line)
+
     def test_staged_internal_lane_executes_outbox_and_packaging_regressions(self):
         script = (ROOT / "scripts/check-internal-alpha.sh").read_text()
         self.assertIn('python3 scripts/stage-internal-alpha.py "$SOURCE"', script)
         self.assertIn('cd "$SOURCE"', script)
-        self.assertIn("swift test --package-path packages/shared-swift", script)
-        self.assertIn("OutboxTests", script)
-        self.assertIn("HarnessPlatformTests", script)
+        self.assertIn("python3 scripts/check-internal-swift.py", script)
+        swift = (ROOT / "scripts/check-internal-swift.py").read_text()
+        self.assertIn("OutboxTests", swift)
+        self.assertIn("HarnessPlatformTests", swift)
         self.assertIn("python3 scripts/package-accounts-helper.test.py", script)
         self.assertNotIn("--disable-sandbox", script)
         self.assertNotIn("ui-tests.yml", script)

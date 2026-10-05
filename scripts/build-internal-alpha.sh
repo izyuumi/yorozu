@@ -8,7 +8,8 @@ DIST=${DIST:-dist/internal/mac}
 mkdir -p "$DIST"
 DIST=$(cd "$DIST" && pwd)
 export YOROZU_REVIEWED_REPO="$PWD"
-export YOROZU_REVIEWED_SHA="$(git rev-parse HEAD)"
+YOROZU_REVIEWED_SHA=$(git rev-parse HEAD)
+export YOROZU_REVIEWED_SHA
 SOURCE=$(mktemp -d "${TMPDIR:-/tmp}/yorozu-internal-build.XXXXXX")
 python3 scripts/stage-internal-alpha.py "$SOURCE"
 (
