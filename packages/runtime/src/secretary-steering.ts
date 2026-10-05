@@ -130,7 +130,7 @@ export class SecretaryQueueLedger {
     const phase = this.read(threadId, eventId);
     if (phase === "not-submitted" || phase === "ceased") return phase;
     if (phase !== "queued") return;
-    this.persist(threadId, eventId, "not-submitted");
-    return "not-submitted";
+    try { this.persist(threadId, eventId, "not-submitted"); return "not-submitted"; }
+    catch { return; } // A failed reconciliation write retains the visible hold.
   }
 }

@@ -246,3 +246,23 @@ test("restart settles a second queued request only from positive never-dispatche
   f.send("message", { role: "user", text: "new request" }, "after-queue-settlement");
   await vi.waitFor(() => expect(f.events.find(e => e.id === "native:after-queue-settlement:final")?.data.text).toBe("fresh"));
 });
+
+test("a harness live-steer handoff consumes queued custody before calling the provider", async () => {
+  const f = await fixture("harness");
+  const { SecretaryQueueLedger } = await import("../dist/secretary-steering.js");
+  let observed = false;
+  f.runner.run.mockImplementation(turn => {
+    f.turns.push(turn);
+    turn.onSteer?.(async (_text, _files, eventId) => {
+      expect(new SecretaryQueueLedger(f.dir).reconcile("person", eventId!)).toBeUndefined();
+      observed = true;
+      return false;
+    });
+    return new Promise(resolve => { turn.signal.addEventListener("abort", () => resolve({ text: "stopped", cessation: "process-exited" } as any), { once: true }); });
+  });
+  f.send("message", { role: "user", text: "running" }, "steer-origin");
+  await vi.waitFor(() => expect(f.turns).toHaveLength(1));
+  f.send("message", { role: "user", text: "change", delivery: "steer" }, "steer-queued");
+  await vi.waitFor(() => expect(observed).toBe(true));
+  expect(f.turns).toHaveLength(1);
+});
