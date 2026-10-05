@@ -29,9 +29,10 @@ class IntakeTests(unittest.TestCase):
         self.source = self.root / "source"
         self.plugin = self.source / "packages/harness-plugins/hermes"
         self.plugin.mkdir(parents=True)
+        (self.source / "docs").mkdir()
         self.upstream = {"fixture": "reviewed input"}
         (self.plugin / "runtime-input-pin.json").write_bytes(encoded(self.upstream))
-        (self.plugin / "runtime-archive-provenance.json").write_text('{"fixture":"no real archive attestation"}')
+        (self.source / "docs/hermes-public-archive-provenance.json").write_text('{"fixture":"no real archive attestation"}')
         self.members = {}
         for name in intake.PLUGIN_FILES:
             data = ("fixture:" + name).encode()
@@ -66,7 +67,7 @@ class IntakeTests(unittest.TestCase):
                "archiveSha256": intake.sha(archive), "archiveBytes": archive.stat().st_size,
                "manifestSha256": digest(data), "inventorySha256": inventory,
                "inputPinSha256": intake.sha(self.plugin / "runtime-input-pin.json"),
-               "archiveProvenanceSha256": intake.sha(self.plugin / "runtime-archive-provenance.json"),
+               "archiveProvenanceSha256": intake.sha(self.source / "docs/hermes-public-archive-provenance.json"),
                "originalArchivesVerified": True}
         pin.update(tag="runtime-input-0.6.0-" + pin["archiveSha256"][:16], asset="yorozu-hermes-runtime-" + pin["archiveSha256"][:16] + ".tar.gz")
         return archive, pin
@@ -137,7 +138,7 @@ class IntakeTests(unittest.TestCase):
             intake.load_pin(path, self.source)
         pin["originalArchivesVerified"] = True
         path.write_text(json.dumps(pin))
-        (self.plugin / "runtime-archive-provenance.json").write_text("changed")
+        (self.source / "docs/hermes-public-archive-provenance.json").write_text("changed")
         with self.assertRaisesRegex(ValueError, "provenance changed"):
             intake.load_pin(path, self.source)
 

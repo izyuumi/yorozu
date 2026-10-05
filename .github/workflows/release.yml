@@ -388,13 +388,14 @@ jobs:
           json.dump({
               **json.loads((root / "source.json").read_text()),
               "ci_run_id": os.environ["CI_RUN_ID"], "ios": ios,
+              "runtime_intake": json.loads((root / "mac/provenance.json").read_text())["runtimeIntake"],
               "ipa_origin": "signed export of the same archive supplied to Xcode internal-only upload",
               "artifacts": [{"path": str(p.relative_to(root)), "sha256": hashlib.file_digest(p.open("rb"), "sha256").hexdigest(),
                              "size": p.stat().st_size} for p in paths],
           }, (root / "provenance.json").open("w"), indent=2)
           PY
-      - name: Retain internal packages and evidence
-        if: always()
+      - name: Retain verified internal Mac packages and evidence
+        if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: internal-0.6.0-${{ github.run_number }}
@@ -404,9 +405,17 @@ jobs:
             dist/internal/Yorozu.app.zip
             dist/internal/mac/*.dmg
             dist/internal/mac/*provenance*.json
-            dist/internal/ios/ipa/*.ipa
-            dist/internal/ios/*.plist
             dist/internal/*.json
+      - name: Retain diagnostic metadata only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: internal-diagnostics-${{ github.run_number }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            dist/internal/*.json
+            dist/internal/mac/*provenance*.json
       - name: Forget internal signing credentials
         if: always()
         run: |

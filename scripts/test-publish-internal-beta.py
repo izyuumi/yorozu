@@ -37,6 +37,7 @@ class BetaTests(unittest.TestCase):
                      "version": "0.6.0", "internal_only": True, "mac_build": "10267", "ios": dict(self.ios),
                      "artifacts": [{"path": n, "sha256": beta.release.sha256(self.root / n), "size": (self.root / n).stat().st_size}
                                    for n in ("mac/Yorozu.dmg", "Yorozu.app.zip")]}
+        self.data["runtime_intake"] = {k: "a" * 64 for k in ("receiptSha256", "archiveSha256", "unsignedInventorySha256", "signedInventorySha256", "archiveProvenanceSha256")}
         self.gh = fixtures.FakeGitHub()
         self.gh.repo = beta.REPOSITORY
         self.gh.runs["7"].update(head_branch="harness-plugins", head_repository={"full_name": beta.REPOSITORY})

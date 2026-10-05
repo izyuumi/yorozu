@@ -60,6 +60,9 @@ OVERLAYS = [
     "docs/hermes-runtime-packaging.md", "scripts/package-hermes-runtime.py", "scripts/test-package-hermes-runtime.py",
     "scripts/build-mac.sh", "scripts/build-version.sh",
     "scripts/build-internal-alpha.sh", "scripts/check-internal-alpha.sh", "scripts/stage-internal-alpha.py",
+    "scripts/hermes-release-provenance.py", "scripts/test-hermes-release-provenance.py",
+    "scripts/hermes-public-archive-provenance.py", "scripts/test-hermes-public-archive-provenance.py",
+    "scripts/hermes-python-archive-provenance.py", "docs/hermes-public-archive-provenance.json",
     "scripts/secretary-production.patch",
 ]
 

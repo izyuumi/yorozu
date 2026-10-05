@@ -7,7 +7,9 @@ cd "$(dirname "$0")/.."
 DIST=${DIST:-dist/internal/mac}
 mkdir -p "$DIST"
 DIST=$(cd "$DIST" && pwd)
-SOURCE=$(mktemp -d "$DIST/source.XXXXXX")
+export YOROZU_REVIEWED_REPO="$PWD"
+export YOROZU_REVIEWED_SHA="$(git rev-parse HEAD)"
+SOURCE=$(mktemp -d "${TMPDIR:-/tmp}/yorozu-internal-build.XXXXXX")
 python3 scripts/stage-internal-alpha.py "$SOURCE"
 (
   cd "$SOURCE"
@@ -17,7 +19,7 @@ python3 scripts/stage-internal-alpha.py "$SOURCE"
 )
 cp "$DIST/Yorozu.app/Contents/Resources/internal-source.json" "$DIST/internal-source.json"
 python3 - "$DIST" <<'PY'
-import hashlib, json, plistlib, sys
+import hashlib, json, os, plistlib, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 app = root / 'Yorozu.app'
@@ -25,6 +27,18 @@ info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
 assert info['YorozuSecretaryEnabled'] and 'SUFeedURL' not in info
 manifest = json.loads((root / 'internal-source.json').read_text())
 manifest.update(version=info['CFBundleShortVersionString'], build=info['CFBundleVersion'])
+intake = Path(os.environ['YOROZU_HERMES_RUNTIME_ARTIFACT']).parent / 'intake-receipt.json'
+receipt = json.loads(intake.read_text())
+unsigned = json.loads((root / 'hermes-unsigned-manifest.json').read_text())
+bundled = json.loads((app / 'Contents/Resources/agent-runtimes/hermes/runtime-artifact.json').read_text())
+assert receipt['inventorySha256'] == unsigned['inventorySha256']
+assert receipt['manifestSha256'] == hashlib.sha256((root / 'hermes-unsigned-manifest.json').read_bytes()).hexdigest()
+assert manifest['harnessPlugins']['hermes']['bundledRuntime'] is True
+assert manifest['harnessPlugins']['hermes']['inventorySha256'] == bundled['inventorySha256']
+manifest['runtimeIntake'] = {'receiptSha256': hashlib.sha256(intake.read_bytes()).hexdigest(),
+    'archiveSha256': receipt['archiveSha256'], 'unsignedInventorySha256': unsigned['inventorySha256'],
+    'signedInventorySha256': bundled['inventorySha256'], 'archiveProvenanceSha256': receipt['archiveProvenanceSha256']}
+
 runtime = app / 'Contents/Resources/runtime'
 manifest['runtimeDependencies'] = {
     name: json.loads((runtime / 'node_modules' / name / 'package.json').read_text())['version']

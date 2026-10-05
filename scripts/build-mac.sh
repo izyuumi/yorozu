@@ -209,6 +209,9 @@ if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
   cp packages/harness-plugins/hermes/adapter.mjs packages/harness-plugins/hermes/bootstrap.py packages/harness-plugins/hermes/manifest.json \
     packages/harness-plugins/hermes/README.md "$APP/Contents/Resources/harness-plugins/hermes/"
   cp -R packages/harness-plugins/hermes/platform "$APP/Contents/Resources/harness-plugins/hermes/"
+  python3 scripts/hermes-release-provenance.py --artifact "$YOROZU_HERMES_RUNTIME_ARTIFACT" \
+    --reviewed-repo "$YOROZU_REVIEWED_REPO" --reviewed-revision "$YOROZU_REVIEWED_SHA"
+  cp "$YOROZU_HERMES_RUNTIME_ARTIFACT/runtime-artifact.json" "$DIST/hermes-unsigned-manifest.json"
   python3 scripts/package-hermes-runtime.py verify --artifact "$YOROZU_HERMES_RUNTIME_ARTIFACT"
   mkdir -p "$APP/Contents/Resources/agent-runtimes"
   cp -R "$YOROZU_HERMES_RUNTIME_ARTIFACT" "$APP/Contents/Resources/agent-runtimes/hermes"
@@ -311,6 +314,9 @@ if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
   done
   python3 scripts/package-hermes-runtime.py reseal-after-nested-signing \
     --artifact "$APP/Contents/Resources/agent-runtimes/hermes"
+  python3 scripts/hermes-release-provenance.py --artifact "$APP/Contents/Resources/agent-runtimes/hermes" \
+    --reviewed-repo "$YOROZU_REVIEWED_REPO" --reviewed-revision "$YOROZU_REVIEWED_SHA" \
+    --unsigned-manifest "$DIST/hermes-unsigned-manifest.json"
   "$APP/Contents/Resources/node" --input-type=module - "$APP/Contents/Resources" <<'JS'
 import {pathToFileURL} from 'node:url';
 import {resolve, join} from 'node:path';

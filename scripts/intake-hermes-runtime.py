@@ -49,7 +49,7 @@ def load_pin(path, source):
     require(pin.get("originalArchivesVerified") is True, "Original archive verification is not attested")
     plugin = source / "packages/harness-plugins/hermes"
     require(sha(plugin / "runtime-input-pin.json") == pin["inputPinSha256"], "Reviewed input pin changed")
-    require(sha(plugin / "runtime-archive-provenance.json") == pin["archiveProvenanceSha256"], "Reviewed archive provenance changed")
+    require(sha(source / "docs/hermes-public-archive-provenance.json") == pin["archiveProvenanceSha256"], "Reviewed archive provenance changed")
     return pin
 
 
@@ -150,6 +150,8 @@ def extract(archive, pin, destination, source):
         require(resolved == root or root in resolved.parents, "Resolved runtime link escapes artifact")
     plugin = source / "packages/harness-plugins/hermes"
     require(manifest["upstream"] == json.loads((plugin / "runtime-input-pin.json").read_text()), "Artifact upstream differs from committed input pin")
+    require({r["path"] for r in rows if r["path"].startswith("plugin/")} == {"plugin/" + n for n in PLUGIN_FILES}, "Unexpected plugin payload")
+    require(not any(n.startswith("hermes/plugin/") for n in links), "Plugin symlinks are forbidden")
     for relative in PLUGIN_FILES:
         require((root / "plugin" / relative).read_bytes() == (plugin / relative).read_bytes(), "Artifact adapter differs from reviewed source: " + relative)
     receipt = {"schemaVersion": 1, "archiveSha256": pin["archiveSha256"], "archiveBytes": pin["archiveBytes"],

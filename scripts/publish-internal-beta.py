@@ -53,13 +53,17 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
         require(type(row.get("size")) is int and row["size"] > 0 and path.stat().st_size == row["size"]
                 and release.sha256(path) == row.get("sha256"), "Mac artifact differs from signed-release provenance")
         paths[name] = path
+    require(re.fullmatch(r"[1-9]\d*", str(data.get("ci_run_id", ""))), "Exact CI run identity is required")
     ci = release.check_ci(gh, expected_source, branch, str(data.get("ci_run_id", "")))
+    intake = data.get("runtime_intake", {})
+    require(all(re.fullmatch(r"[0-9a-f]{64}", str(intake.get(k, ""))) for k in
+                ("receiptSha256", "archiveSha256", "unsignedInventorySha256", "signedInventorySha256", "archiveProvenanceSha256")), "Runtime intake binding is missing")
     tag = "v0.6.0-beta." + build
     # Public metadata deliberately excludes Apple recipient/account IDs and the IPA.
     metadata = {"schemaVersion": 1, "channel": "beta", "tag": tag, "version": "0.6.0", "macBuild": build,
                 "sourceSha": expected_source, "ciRunId": ci, "releaseRunId": str(expected_run),
                 "internalTestFlightVerified": True, "iosBuild": ios["build"],
-                "sparkleFeedChanged": False, "installationPerformed": False,
+                "sparkleFeedChanged": False, "installationPerformed": False, "runtimeIntake": intake,
                 "artifacts": [{"name": path.name, "sha256": release.sha256(path), "size": path.stat().st_size}
                               for _, path in sorted(paths.items())]}
     notes = ("Non-stable Yorozu 0.6 evaluation build. Mac download only; iOS is available through the existing internal TestFlight group.\n\n"
@@ -72,8 +76,29 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
         manifest = Path(directory) / "beta.json"
         manifest.write_text(json.dumps(metadata, indent=2) + "\n")
         assets = [paths["mac/Yorozu.dmg"], paths["Yorozu.app.zip"], manifest]
-        release.immutable_assets(gh, tag, expected_source, assets,
-                                 prerelease=True, notes=notes, title=f"Yorozu 0.6.0 Beta (Mac {build})")
+        title = f"Yorozu 0.6.0 Beta (Mac {build})"
+        remote = gh.release(tag)
+        if remote is None:
+            gh.create(tag, expected_source, True, notes, title)
+            remote = gh.release(tag)
+        require(remote is not None and remote["isPrerelease"] and remote["name"] == title, "Wrong existing beta identity")
+        ref = gh.tag_sha(tag)
+        require(ref == expected_source or (ref is None and remote["isDraft"] and remote.get("targetCommitish") == expected_source), "Wrong existing beta source")
+        expected_names = {p.name for p in assets}
+        existing_names = {a["name"] for a in remote["assets"]}
+        require(existing_names <= expected_names, "Unexpected existing beta assets")
+        for asset in assets:
+            if asset.name not in existing_names:
+                require(remote["isDraft"], "Published beta is incomplete")
+                gh.upload(tag, asset)
+        remote = gh.release(tag)
+        require({a["name"] for a in remote["assets"]} == expected_names, "Unexpected beta asset set")
+        with tempfile.TemporaryDirectory(prefix="yorozu-beta-prepublish-") as verify_dir:
+            for asset in assets:
+                require(release.sha256(gh.download(tag, asset.name, verify_dir)) == release.sha256(asset), "Uploaded beta bytes differ before publication")
+        if remote["isDraft"]:
+            gh.publish(tag, True, latest=False)
+        require(gh.tag_sha(tag) == expected_source, "Published beta source differs")
         remote = gh.release(tag)
         require(remote is not None and remote["isPrerelease"] and not remote["isDraft"], "Beta is not published")
         with tempfile.TemporaryDirectory(prefix="yorozu-beta-verify-") as verify_dir:
