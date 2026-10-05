@@ -541,7 +541,8 @@ print(json.dumps({"captured":captured,"completed":completed,"unknown":unknown,"i
   assert.equal(result.captured[0].sid, 'live-proof'); assert.equal(result.captured[0].params.agent_session_id, 'durable-proof');
   assert.equal(result.completed.status, 'accepted'); assert.equal(result.unknown.status, 'unknown'); assert.equal(result.invalid.status, 'rejected');
   assert.deepEqual(result.memory, { enabled: true, user: true, storeAbsent: false });
-  const wrongOwner = { ...params, agentId: 'agent-b', isolation: { ...params.isolation, agentId: 'agent-b' } };
+  const wrongOwner = { ...params, agentId: 'agent-b', isolation: { ...params.isolation, agentId: 'agent-b' },
+    platform: { ...params.platform, peers: [] } }; // Valid scope: reach the existing profile-owner guard.
   await assert.rejects(prepareRuntime(wrongOwner), /different adapter version or agent/);
   // Native metadata failures must stop before gateway/provider startup, never
   // fall through to the upstream all-tools fallback.
