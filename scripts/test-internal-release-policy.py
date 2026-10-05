@@ -58,6 +58,21 @@ class InternalReleasePolicyTests(unittest.TestCase):
             self.assertTrue(internal_lane(ref="refs/heads/" + branch))
             self.assertIn('"' + branch + '"', workflow)
 
+    def test_internal_artifacts_never_upload_ipa_or_failed_build_binaries(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        internal = workflow.split("\n  internal:\n", 1)[1].split("\n  internal-beta:\n", 1)[0]
+        uploads = [step for step in internal.split("      - name: ") if "actions/upload-artifact@" in step]
+        self.assertEqual(len(uploads), 2)
+        for step in uploads:
+            paths = step.split("          path: |\n", 1)[1]
+            self.assertNotIn(".ipa", paths)
+            self.assertNotIn("ios/", paths)
+            if re.search(r"\.(zip|dmg)", paths):
+                self.assertIn("if: success()", step)
+                self.assertNotIn("if: always()", step)
+        self.assertLess(internal.index("Record internal artifact provenance"),
+                        internal.index("Retain verified internal Mac packages"))
+
     def test_internal_shell_scripts_are_linted(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         line = next(line for line in workflow.splitlines() if line.strip().startswith("shellcheck scripts/"))

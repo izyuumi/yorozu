@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -123,6 +124,15 @@ class BetaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.publish()
         self.assertFalse(any(event[:2] == ("release", "delete") for event in self.gh.events))
+
+    def test_check_source_cli_never_enters_publication(self):
+        with patch.object(sys, "argv", ["publish-internal-beta.py", "--check-source", "--source", SHA,
+                                       "--branch", "harness-plugins", "--ci-run-id", "7"]), \
+             patch.object(beta.release, "GitHub", return_value=self.gh), \
+             patch.object(beta, "publish") as publish:
+            beta.main()
+            publish.assert_not_called()
+        self.assertTrue(all(event[0] == "api" for event in self.gh.events))
 
     def test_readonly_source_gate_and_branch_policy(self):
         self.assertEqual(beta.check_source(self.gh, SHA, "harness-plugins", "7"), "7")
