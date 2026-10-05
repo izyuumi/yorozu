@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import subprocess
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("intake", Path(__file__).with_name("intake-hermes-runtime.py"))
 intake = importlib.util.module_from_spec(spec)
@@ -161,6 +162,41 @@ class IntakeTests(unittest.TestCase):
                     intake.extract(archive, pin, destination, self.source)
                 self.assertEqual(target.exists(), existing)
                 self.assertFalse((target / "hermes").exists())
+
+    def test_leaf_swap_during_parent_resolution_fails_without_escape(self):
+        # Simulate a writer to the task parent winning after the freshness
+        # check. The former whole-destination resolve followed the swapped link.
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                archive, pin = self.prepare()
+                parent = self.root.resolve()
+                destination = parent / f"swapped-{self.counter}"
+                outside = parent / f"outside-{self.counter}"
+                if existing:
+                    outside.mkdir()
+                    (outside / "sentinel").write_bytes(b"preserved")
+                original_resolve = Path.resolve
+                swapped = False
+
+                def swap_then_resolve(path, *args, **kwargs):
+                    nonlocal swapped
+                    if not swapped and path in (parent, destination):
+                        self.assertFalse(destination.exists())
+                        destination.symlink_to(outside, target_is_directory=True)
+                        swapped = True
+                    return original_resolve(path, *args, **kwargs)
+
+                with mock.patch.object(Path, "resolve", swap_then_resolve):
+                    with self.assertRaises(FileExistsError):
+                        intake.extract(archive, pin, destination, self.source)
+                self.assertTrue(swapped)
+                self.assertTrue(destination.is_symlink())
+                self.assertEqual(outside.exists(), existing)
+                if existing:
+                    self.assertEqual(list(outside.iterdir()), [outside / "sentinel"])
+                    self.assertEqual((outside / "sentinel").read_bytes(), b"preserved")
+                self.assertFalse((outside / "hermes").exists())
+                self.assertFalse((outside / "intake-receipt.json").exists())
 
     def test_archive_tampering_is_rejected_before_extraction(self):
         archive, pin = self.prepare()

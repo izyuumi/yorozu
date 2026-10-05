@@ -67,11 +67,12 @@ def extract(archive, pin, destination, source):
     require(sha(archive) == pin["archiveSha256"], "Runtime archive hash differs from pin")
     destination = Path(destination).absolute()
     require(not destination.exists() and not destination.is_symlink(), "Use a fresh task-owned extraction destination")
-    # Resolve trusted filesystem aliases (macOS /tmp, /var) and '..' before
-    # comparing against resolved archive links. Reject a symlink destination
-    # itself above, including dangling links; never resolve it into acceptance.
-    destination = destination.resolve()
-    destination.mkdir(mode=0o700, parents=True)
+    # Canonicalize only the trusted parent, never the fresh leaf: a leaf
+    # swapped to a symlink after the check must fail atomic mkdir, not redirect
+    # extraction. Parent aliases (/tmp, /var) and '..' remain supported.
+    destination = destination.parent.resolve() / destination.name
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    destination.mkdir(mode=0o700)
     root = destination / "hermes"
     seen, files, directories, links = set(), {}, set(), {}
     total = 0
