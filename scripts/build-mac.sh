@@ -67,9 +67,10 @@ cp "$BIN/yorozu-native" "$APP/Contents/MacOS/yorozu-native"
 # app-like bundle and authorizing profile; a bare executable cannot embed that profile.
 ACCOUNTS_HELPER="$APP/Contents/Resources/YorozuAccounts.app"
 if [ -n "${YOROZU_ACCOUNTS_PROFILE:-}" ] || [ -n "${YOROZU_ACCOUNTS_APP_IDENTIFIER_PREFIX:-}" ]; then
-  [ -n "${YOROZU_ACCOUNTS_PROFILE:-}" ] && [ -n "${YOROZU_ACCOUNTS_APP_IDENTIFIER_PREFIX:-}" ] || {
-    echo "account helper requires an explicit profile and App ID prefix together" >&2; exit 1;
-  }
+  if [ -z "${YOROZU_ACCOUNTS_PROFILE:-}" ] || [ -z "${YOROZU_ACCOUNTS_APP_IDENTIFIER_PREFIX:-}" ]; then
+    echo "account helper requires an explicit profile and App ID prefix together" >&2
+    exit 1
+  fi
   python3 scripts/package-accounts-helper.py --resources "$APP/Contents/Resources" \
     --binary "$BIN/yorozu-accounts" --info-plist apps/mac/Sources/YorozuAccounts/Info.plist \
     --profile "$YOROZU_ACCOUNTS_PROFILE" --app-identifier-prefix "$YOROZU_ACCOUNTS_APP_IDENTIFIER_PREFIX"

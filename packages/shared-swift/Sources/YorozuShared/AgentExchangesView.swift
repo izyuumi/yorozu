@@ -69,8 +69,8 @@ struct AgentExchangeDetailView: View {
     }
     private func name(_ id: String) -> String { model.personAgents?.agents.first { $0.id == id }?.name ?? id }
     private func status(for message: AgentExchangeData) -> AgentExchangeStatusData? {
-        events.reversed().compactMap {
-            guard case .agentExchangeStatus(let status) = $0.payload,
+        events.reversed().compactMap { event -> AgentExchangeStatusData? in
+            guard case .agentExchangeStatus(let status) = event.payload,
                   status.exchangeId == message.exchangeId, status.messageId == message.messageId,
                   status.deliveryId == message.deliveryId else { return nil }
             return status

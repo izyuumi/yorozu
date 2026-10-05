@@ -2164,8 +2164,8 @@ public final class ChatModel {
     }
 
     public func harnessActionStatus(for action: HarnessActionData) -> HarnessActionStatusData? {
-        timeline(action.origin.conversationId).events.reversed().compactMap {
-            guard case .harnessActionStatus(let status) = $0.payload,
+        timeline(action.origin.conversationId).events.reversed().compactMap { event -> HarnessActionStatusData? in
+            guard case .harnessActionStatus(let status) = event.payload,
                   status.origin == action.origin, status.requestId == action.requestId else { return nil }
             return status
         }.first
