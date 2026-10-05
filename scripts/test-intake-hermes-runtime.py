@@ -46,9 +46,10 @@ class IntakeTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def prepare(self, extra=None, mutate=None):
+    def prepare(self, extra=None, mutate=None, links=None):
         self.counter += 1
         rows = [{"path": name, "sha256": digest(data), "mode": 0o644} for name, data in sorted(self.members.items())]
+        rows.extend({"path": name, "link": target} for name, target in sorted((links or {}).items()))
         inventory = digest(encoded(rows))
         manifest = {"schemaVersion": 1, "kind": "yorozu-hermes-runtime", "hashStage": "assembled-before-signing",
                     "upstream": self.upstream, "files": rows, "inventorySha256": inventory}
@@ -61,6 +62,10 @@ class IntakeTests(unittest.TestCase):
                 info = tarfile.TarInfo("hermes/" + name)
                 info.mode, info.size = 0o644, len(value)
                 tar.addfile(info, io.BytesIO(value))
+            for name, target in (links or {}).items():
+                info = tarfile.TarInfo("hermes/" + name)
+                info.type, info.mode, info.linkname = tarfile.SYMTYPE, 0o777, target
+                tar.addfile(info)
             if extra:
                 info, value = extra
                 tar.addfile(info, io.BytesIO(value) if value is not None else None)
@@ -105,6 +110,28 @@ class IntakeTests(unittest.TestCase):
                                                 "rev-parse", "HEAD"], text=True).strip(), commit)
         for name, content in self.members.items():
             self.assertEqual((root / name).read_bytes(), content)
+
+    def test_git_structural_symlinks_are_rejected_after_inventory_validation(self):
+        # Each link is contained, resolves, and is declared in the pinned inventory.
+        # Rejection must come from the structural guard, not a hash mismatch.
+        cases = [
+            ("source/.git/refs", "../../target", "source/.git/HEAD", "Git refs structural"),
+            ("source/.git", "../target", "source/README", "Git structural parent"),
+            ("source", "target", "target/.git/HEAD", "Git structural parent"),
+        ]
+        for name, target, member, reason in cases:
+            with self.subTest(path=name):
+                original = dict(self.members)
+                self.members.update({"target/keep": b"unchanged", member: b"fixture"})
+                archive, pin = self.prepare(links={name: target})
+                with self.assertRaisesRegex(ValueError, reason):
+                    self.extract(archive, pin)
+                output = self.root / f"out-{self.counter}"
+                self.assertFalse((output / "intake-receipt.json").exists())
+                self.assertEqual((output / "hermes/target/keep").read_bytes(), b"unchanged")
+                self.assertFalse((output / "hermes/target/refs").exists())
+                self.assertFalse((output / "hermes/target/.git/refs").exists())
+                self.members = original
 
     def test_archive_tampering_is_rejected_before_extraction(self):
         archive, pin = self.prepare()
