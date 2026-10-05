@@ -108,3 +108,7 @@ keeps the existing bounded TypeScript/adapter/packaging tests and Mac compilatio
 success; old receipts are removed first. CI uploads JSON receipts under always(),
 not binaries or secrets. Missing/partial receipts never mean the whole lane passed.
 Final hosted CI and native acceptance are independent requirements.
+
+### Native outage recovery regressions
+
+The internal Swift gate additionally selects exactly the three new LocalTransportTests functions `localRuntimeColdOfflineStartReconnectsWhenSocketAppears`, `localRuntimeReconnectsAfterRetryAlreadyFoundSocketMissing`, and `closingLocalTransportCancelsMissingSocketRetry`. These use isolated synthetic Unix sockets and require actual received client bytes (plus a model reply for cold startup), not socket-existence or paired-state assertions alone. The mixed-file aggregate is not enabled.

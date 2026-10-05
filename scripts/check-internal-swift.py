@@ -38,6 +38,11 @@ GROUPS = {
         "harnessActionResponseEchoesExactOriginAndDoesNotBecomeUserText",
         "agentExchangePayloadStaysInSeparateInspectionStream",
     )),
+    "LocalTransportTests": ("packages/shared-swift", MODULE, 3, (
+        "localRuntimeColdOfflineStartReconnectsWhenSocketAppears",
+        "localRuntimeReconnectsAfterRetryAlreadyFoundSocketMissing",
+        "closingLocalTransportCancelsMissingSocketRetry",
+    )),
     "AccountsCoreTests": ("apps/mac", "YorozuAccountsCoreTests", 10, None),
 }
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
