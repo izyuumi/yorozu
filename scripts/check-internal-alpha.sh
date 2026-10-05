@@ -2,6 +2,10 @@
 # Only independent secretary fixtures; never the paused recovery/FIFO suites.
 set -eu
 cd "$(dirname "$0")/.."
+# Darwin Unix-domain sockets have a short path limit; hosted runner TMPDIR
+# plus fixture names exceeds it. Keep all fixtures task-isolated under /tmp.
+TMPDIR=$(mktemp -d /tmp/yri.XXXXXX)
+export TMPDIR
 SOURCE=$(mktemp -d "${TMPDIR:-/tmp}/yorozu-internal-check.XXXXXX")
 python3 scripts/stage-internal-alpha.py "$SOURCE"
 cd "$SOURCE"
