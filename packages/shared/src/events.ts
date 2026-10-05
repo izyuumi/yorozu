@@ -206,6 +206,7 @@ export function parseHarnessActionAnswer(value: unknown): HarnessActionAnswerDat
   return value as unknown as HarnessActionAnswerData;
 }
 export function harnessActionAcceptsAnswer(action: HarnessActionData, answer: HarnessActionAnswerData): boolean {
+  try { parseHarnessAction(action); parseHarnessActionAnswer(answer); } catch { return false; }
   return action.state === "pending" && action.requestId === answer.requestId && sameHarnessOrigin(action.origin, answer.origin)
     && (answer.uiTargetId !== undefined ? action.ui?.targetId === answer.uiTargetId
       : (answer.choiceId === undefined || action.choices.some(c => c.id === answer.choiceId))

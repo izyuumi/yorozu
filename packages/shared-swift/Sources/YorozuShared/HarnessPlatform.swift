@@ -155,7 +155,7 @@ public struct HarnessActionData: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable { case approval, question; case signIn = "sign-in"; case openUI = "open-ui" }
     public enum State: String, Codable, Sendable { case pending, cancelled, resolved }
     public func accepts(_ answer: HarnessActionAnswerData) -> Bool {
-        answer.isValid && state == .pending && requestId == answer.requestId && origin == answer.origin
+        isValid && answer.isValid && state == .pending && requestId == answer.requestId && origin == answer.origin
             && (answer.uiTargetId != nil ? ui?.targetId == answer.uiTargetId
                 : (answer.choiceId == nil || choices.contains { $0.id == answer.choiceId })
                     && (answer.text == nil || allowText == true))

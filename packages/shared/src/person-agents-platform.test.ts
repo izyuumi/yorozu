@@ -39,6 +39,8 @@ test("native answers bind full origin and one explicitly offered choice or opaqu
   const pending = parseHarnessAction(action);
   const answer = parseHarnessActionAnswer({ version: 1, requestId: "native-action", origin, choiceId: "yes" });
   expect(harnessActionAcceptsAnswer(pending, answer)).toBe(true);
+  expect(harnessActionAcceptsAnswer(pending, { version: 1, requestId: "native-action", origin })).toBe(false);
+  expect(harnessActionAcceptsAnswer(pending, { ...answer, uiTargetId: "ui-1" })).toBe(false);
   for (const wrong of [
     { ...answer, origin: { ...origin, bindingEpoch: "retired-epoch" } },
     { ...answer, origin: { ...origin, sessionId: "another-session" } },
