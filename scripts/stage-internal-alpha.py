@@ -59,6 +59,7 @@ OVERLAYS = [
     "docs/siwc-native-helper-packaging.md", "scripts/package-accounts-helper.py", "scripts/package-accounts-helper.test.py",
     "docs/hermes-runtime-packaging.md", "scripts/package-hermes-runtime.py", "scripts/test-package-hermes-runtime.py",
     "scripts/build-mac.sh", "scripts/build-version.sh",
+    "scripts/check-internal-swift.py", "scripts/test-check-internal-swift.py",
     "scripts/build-internal-alpha.sh", "scripts/check-internal-alpha.sh", "scripts/stage-internal-alpha.py",
     "scripts/hermes-release-provenance.py", "scripts/test-hermes-release-provenance.py",
     "scripts/hermes-public-archive-provenance.py", "scripts/test-hermes-public-archive-provenance.py",

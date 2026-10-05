@@ -22,6 +22,7 @@ node --test packages/harness-plugins/hermes/adapter.test.mjs packages/harness-pl
 pnpm --filter @yorozu/shared exec vitest run person-agents peer-info siwc-
 # These are isolated persistence/wire fixtures, not the legacy recovery/UI harness.
 # Keep internal release admission dependent on executed outbox regression tests.
-env -u SDKROOT swift test --package-path packages/shared-swift --filter 'OutboxTests|HarnessPlatformTests|PersonAgentsTests|PersonAgentEditingTests'
+python3 scripts/test-check-internal-swift.py
+env -u SDKROOT python3 scripts/check-internal-swift.py --receipt "$SOURCE/internal-swift.json"
 env -u SDKROOT swift build --package-path apps/mac --product YorozuMac
 echo "Internal secretary checks passed for $(python3 -c 'import json; print(json.load(open("internal-source.json"))["sourceSha"])')"
