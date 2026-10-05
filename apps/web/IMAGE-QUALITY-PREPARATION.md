@@ -1,74 +1,63 @@
-# Image and native demo preparation
+# Native website media
 
-This is a **local preparation, not a publishable image fix yet**. The public site's
-Mac capture is 820 × 540. It renders at 1198 CSS pixels at the maximum desktop
-size, requiring 2396 source pixels on a 2× screen. No matching larger original
-PNG or native Mac recording was found in the retained sources. Do not upscale
-the existing WebP or replace it with a different screenshot under the same caption.
+The public Mac hero previously supplied820×540 pixels at1198CSS pixels wide,
+which was insufficient for a2× display (2396pixels needed). The replacement is
+an actual2400×971 native window capture, with its natural aspect preserved.
+Its narrower height is intentional and approved. No original image is upscaled.
 
-The iPhone approval image is 804 × 1748, displayed at 292 CSS pixels wide inside
-its border. It supplies enough pixels at 2×. The cleared icon is 512 × 512 and
-needs no replacement. At 3× the phone would benefit from its genuine 1206-pixel
-original, if the original matching demo capture can be obtained.
+## Mac poster
 
-## Required original capture
+Source: public app source55cb5221, existing synthetic previewThreads/previewChat
+fixtures, supported textScale2, task-owned unique disposable demo bundle and
+idle client transport. No installed app, provider, host cache, private chats or
+other desktop windows are used. On the actual1× display, AppKit constrained
+window height; the successful original2400×971 capture is used unchanged.
+Later capture geometry attempts did not produce verifiable windows and were
+stopped. They contribute no pixels to the published assets. Temporary app-source
+shims were restored; app sources and release metadata have no task diff.
 
-Use `docs/website-screenshots.md` and the actual native app showcase, with the
-same fictional Saturday outing. Keep the application, state directory and bundle
-identifier isolated from the installed app. Retain a native PNG and a short
-window-only native recording, both at least 2400 pixels wide with the existing
-820:540 aspect ratio. A 1230 × 810 point native window captured at 2× gives
-2460 × 1620 pixels. Record genuine interaction rather than animating a still.
+`prepare-mac-screenshot.py` rejects inputs below2400pixels and produces lossless
+WebP640/820/1280/1920/2400 from the native PNG, preserving aspect and removing
+metadata. Responsive srcset/sizes selects enough pixels at desktop2× and mobile.
+The2400pixel asset is67,850bytes. Current phone approval still and cleared icon
+already supply enough pixels at2× and remain unchanged.
 
-Keep capture provenance: exact source commit, native bundle, window size,
-backing scale, original file hashes and scene. Never include personal chats,
-desktop windows or notifications. Do not alter permissions or authentication.
-Use the released foreground lease and restore the user's Teams/Icon Composer
-state after any native capture. No native capture was performed by this task.
+## iPhone recording
 
-## Prepared converters
+Original: retained native Simulator recording from JapaneseStreamingTests,
+synthetic offline JapaneseReplyFixture during0.5 rendering validation. Both
+fixture and native renderer were included in released0.5 source ddf8d6a4. The
+attachment manifest does not record the exact capture commit; no claim of a
+recorded production connection or backend execution is made. Selected continuous
+seconds6–12 contain only the native sample reply growing to its formatted table.
+The launch/home screen is excluded. No privacy redaction or fabricated UI is
+needed. Timing is preserved; audio and metadata are removed.
 
-```sh
-python3 apps/web/scripts/prepare-mac-screenshot.py ORIGINAL.png --output LOCAL_ASSETS
-python3 apps/web/scripts/prepare-mac-demo.py ORIGINAL.mov --output LOCAL_ASSETS
-```
+`prepare-iphone-demo.py` rejects undersized/nonportrait sources and prepares
+VP9 WebM plus fast-start H.264 MP4 at804×1748/24fps. Both are six seconds.
+WebM is233,468bytes; MP4 is111,535bytes. The1206×2622 WebP poster (quality90,145,802bytes) is a
+frame at source second9 inside the selected segment. Original SHA256, output
+hashes/dimensions/bytes, public fixture paths and boundaries are retained in
+`media-provenance.json`. Repository provenance is not part of the public bundle.
 
-The still converter generates lossless WebP at 640, 820, 1280, 1920 and 2400
-pixels, with the 820-pixel fallback named `mac-demo-light.webp`. Every derivative
-comes from the same genuine PNG. It rejects a source smaller than 2400 pixels;
-none of its operations upscale an image.
+## Visitor behavior
 
-The video converter trims an existing segment to at most eight seconds, removes
-audio and metadata, and prepares a VP9 WebM plus H.264 MP4 fallback at 24fps.
-It probes dimensions, codec, duration and byte count, and records source/output
-hashes. It rejects an undersized source. Candidate byte size and visual detail
-must be measured on the genuine recording before claiming a load-time benefit.
+The Mac still renders first. Watch iPhone demo opens an accessible native browser
+dialog labeled as an iPhone sample, with Close/Escape and native video controls.
+No video or video poster has a source until the visitor opens it. VP9 is preferred,
+MP4 is the playback/error fallback, and the genuine poster stays available if
+both fail. Closing pauses and unloads video. Same-origin external JavaScript
+keeps the existing CSP. Page wording, palette, icon, routes, legal/pairing pages,
+download/feed logic, hosting configuration and app releases are preserved.
 
-## Proposed public integration after capture
+## Validation
 
-Apply the prepared `ready-after-native-capture.patch` only after all five still
-files exist. Its `srcset` and `sizes` match the current fluid container, preserving
-the page's layout, intrinsic aspect ratio, palette, wording and alt text.
-
-Offer the WebM through user-initiated native video controls with `playsinline`
-and `preload="none"`, a sharp still poster, and MP4/static fallback. Keep the
-responsive still visible initially; no autoplay or initial video download.
-Any needed JavaScript must remain a same-origin external file under the current
-CSP. Do not turn the icon or other static assets into video.
-
-Before publication: inspect the actual native content; build and run the website
-tests; verify source selection at desktop/mobile and 1×/2×/3×; measure bytes,
-duration and codec; verify WebM and MP4 playback/fallback and no initial video
-requests. Preserve routes, feeds, legal/pairing pages, hosting and app releases.
-Submit the authorized website-only deployment through the existing official
-workflow's normal approval review once the candidate passes. Do not route around
-an approval rejection.
-
-## Completed checks and remaining limit
-
-The served asset hashes and real 2× browser measurements are recorded under
-`task-10/image-quality-evidence` and `image-quality-retina-diagnosis`. Converter
-syntax and lossless downsampling were checked. The undersized native PNG and
-portrait recording are correctly rejected before creating output directories.
-The fully encoded Mac assets, improved poster, candidate playback and final
-visual-quality checks remain blocked on genuine original capture files.
+Build and15existing tests passed. Actual isolated headless Chrome at1440/730/390
+CSS pixels and2× confirms no overflow/broken images, evergreen copy, navigation,
+focus visibility, and sufficient genuine source pixels for the Mac hero. Media
+codec/duration/bytes are measured with ffprobe. Native browser playback, fallback,
+initial request cost and dialog keyboard behavior passed in6actual headless Chrome cases under the unchanged production CSP, including Close/Escape,3×mobile, MP4-only browser simulation,404fall back and playback-policy refusal. Safari was not run.
+No shared browser profile, foreground app input or display/security settings are
+changed by website QA. The only publication lane is the authorized existing
+website workflow on the isolated branch; do not merge or push main because that
+could trigger an app release. No alternative publisher after an approval denial.

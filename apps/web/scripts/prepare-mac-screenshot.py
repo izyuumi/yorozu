@@ -26,8 +26,8 @@ width = int(re.search(r"pixelWidth: (\d+)", info).group(1))
 height = int(re.search(r"pixelHeight: (\d+)", info).group(1))
 if width < 2400:
     parser.error(f"Native source is only {width} pixels wide; need at least 2400. No assets written.")
-if abs(width / height - 820 / 540) > 0.002:
-    parser.error("Capture the existing demo with its 820:540 aspect ratio. No cropping or stretched screenshots.")
+# Preserve the genuine capture's natural aspect; never crop or stretch it to
+# the previous screenshot's proportions.
 encoder = shutil.which("cwebp")
 if encoder is None:
     parser.error("cwebp is required; no assets written.")
@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix="native-webp-", dir=output) as temporary
     for asset in assets:
         shutil.move(str(stage / asset["file"]), output / asset["file"])
 
-manifest = {"source": str(source), "source_width": width, "source_height": height,
+manifest = {"source_name": source.name, "source_width": width, "source_height": height,
             "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
             "encoding": "Lossless WebP from original PNG; downsampling only; metadata removed",
             "assets": assets, "publication": "Not performed",

@@ -17,6 +17,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/secretary.css">
   <script is:inline src="/copy.js" defer></script>
+  <script is:inline src="/demo.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -54,8 +55,10 @@
 </div>
 
 <figure class="app-window y17">
-<img src="/assets/mac-demo-light.webp" alt="Yorozu on a Mac with a conversation about planning a Saturday outing, a searchable thread and a list of other conversations" width="820" height="540">
-<figcaption>Yorozu on your Mac. Your iPhone stays in the conversation.</figcaption>
+<img src="/assets/mac-demo-light.webp" srcset="/assets/mac-demo-light-640.webp 640w, /assets/mac-demo-light.webp 820w, /assets/mac-demo-light-1280.webp 1280w, /assets/mac-demo-light-1920.webp 1920w, /assets/mac-demo-light-2400.webp 2400w" sizes="(min-width: 1296px) 1198px, calc(100vw - clamp(2.5rem, 7vw, 6rem) - 2px)" alt="Native Yorozu Mac app with a sample conversation, thread search and a list of conversations" width="2400" height="971">
+<figcaption>Yorozu on your Mac. Your iPhone stays in the conversation.
+<button type="button" data-demo-play class="y91" aria-controls="iphone-demo" aria-haspopup="dialog" hidden>Watch iPhone demo</button>
+</figcaption>
 </figure>
 </div>
 </section>
@@ -195,6 +198,19 @@
 </section>
 
 </main>
+
+<dialog id="iphone-demo" class="demo-dialog y0" data-native-demo aria-labelledby="demo-title" aria-describedby="demo-description">
+<div class="demo-heading">
+<h2 id="demo-title">Yorozu on iPhone</h2>
+<form method="dialog"><button type="submit" class="y91">Close</button></form>
+</div>
+<p id="demo-description">A sample reply in the native iPhone app.</p>
+<video data-demo-player data-webm="/assets/iphone-demo.webm" data-mp4="/assets/iphone-demo.mp4" data-poster="/assets/iphone-demo-poster.webp" controls playsinline preload="none" width="804" height="1748" aria-label="Sample Japanese reply growing into a formatted response and table">
+Your browser cannot play this demo.
+</video>
+<img data-demo-poster hidden width="1206" height="2622" alt="Native iPhone sample reply in Japanese with a heading, list and table">
+<p data-demo-status role="status" aria-live="polite"></p>
+</dialog>
 
 <footer class="y1">
 <div class="y102">

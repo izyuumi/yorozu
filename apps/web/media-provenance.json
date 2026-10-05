@@ -1,0 +1,116 @@
+{
+  "mac": {
+    "appSource": "55cb52211b9edb6bfc5b76392411d87c65c48dba",
+    "binarySHA256": "890342eeaf3dc9e678e40ce7703aba9e94a6a7151af3502623fe5ef715e1d78c",
+    "capture": "2400x971points on1x display; actual native vector UI, supported textScale2; window-only capture of isolated bundle/idle transport/synthetic previewThreads and previewChat",
+    "sourceSHA256": "4265fa995de78e7233b00d07f0ccb754a30e27653e9299242577ce7ddee18478",
+    "sourceDimensions": [
+      2400,
+      971
+    ],
+    "derivatives": [
+      {
+        "file": "mac-demo-light-640.webp",
+        "width": 640,
+        "bytes": 27070,
+        "sha256": "026df4bf1fa494ca33caf1e20a691fecc6091dfe8f5b735ac465e5205416f122"
+      },
+      {
+        "file": "mac-demo-light.webp",
+        "width": 820,
+        "bytes": 40534,
+        "sha256": "6b413cff64bed2dad6822130c5436ca815ebadec6541969781b6f2e32bd6165d"
+      },
+      {
+        "file": "mac-demo-light-1280.webp",
+        "width": 1280,
+        "bytes": 77240,
+        "sha256": "c5eae062aa51b5155f43a4a063e7c79a6d1d03b976b7ef84629334faee11837d"
+      },
+      {
+        "file": "mac-demo-light-1920.webp",
+        "width": 1920,
+        "bytes": 133938,
+        "sha256": "fcc5158dd3a5048d8f394dcf9ff7214a8b90353413926fd8c772f977d9d3cc8c"
+      },
+      {
+        "file": "mac-demo-light-2400.webp",
+        "width": 2400,
+        "bytes": 67850,
+        "sha256": "bfb8b858a77cc935ea63aa471c65eea48c23192d6a2bb43ea4b5628340bb54f7"
+      }
+    ],
+    "transformation": "Lossless WebP, downsampling only, metadata removed; natural aspect preserved"
+  },
+  "iphone": {
+    "capture": "Native iPhone17Pro Simulator iOS27 recording from JapaneseStreamingTests/testGrowingJapaneseReplyBecomesSelectableWithoutLosingItsBlocks; synthetic offline JapaneseReplyFixture, captured during0.5 rendering validation and included in the released0.5 source (DEBUG-only synthetic fixture, not part of a production app binary). Exact capture commit not in attachment manifest.",
+    "fixturePath": "apps/ios/Sources/YorozuIOS/JapaneseReplyFixture.swift",
+    "releaseContainsFixture": "ddf8d6a4d11c68a36da782a8c4f3d1a66dfb7a7d",
+    "sourceSHA256": "bbec5617bd529c7d19a231f25d890de32284aafd1dc9dc19b65a9e6e01caf064",
+    "sourceDimensions": [
+      1206,
+      2622
+    ],
+    "segmentSeconds": [
+      6,
+      12
+    ],
+    "outputs": [
+      {
+        "file": "iphone-demo.webm",
+        "bytes": 233468,
+        "sha256": "46185d051d583d08c53d071514d82de227cadf4256e784d67935d7b4608e255d",
+        "probe": {
+          "programs": [],
+          "stream_groups": [],
+          "streams": [
+            {
+              "codec_name": "vp9",
+              "width": 804,
+              "height": 1748,
+              "avg_frame_rate": "24/1"
+            }
+          ],
+          "format": {
+            "duration": "6.000000",
+            "size": "233468"
+          }
+        }
+      },
+      {
+        "file": "iphone-demo.mp4",
+        "bytes": 111535,
+        "sha256": "fb66c4550516be5bbed6f0b9d7b099782073aa38347685fd2c45f94f59e721c4",
+        "probe": {
+          "programs": [],
+          "stream_groups": [],
+          "streams": [
+            {
+              "codec_name": "h264",
+              "width": 804,
+              "height": 1748,
+              "avg_frame_rate": "24/1"
+            }
+          ],
+          "format": {
+            "duration": "6.000000",
+            "size": "111535"
+          }
+        }
+      }
+    ],
+    "poster": {
+      "sourceTimeSeconds": 9,
+      "file": "iphone-demo-poster.webp",
+      "width": 1206,
+      "height": 2622,
+      "bytes": 145802,
+      "sha256": "e54737ad68b34b1fbe0094f380abff64b21ab2cb15d9518e880c74e5f4a22da2",
+      "encoding": "WebP quality90 from native frame; source1206x2622 preserved, metadata removed"
+    },
+    "transformation": "Original continuous six seconds; no speed changes, composite screens, fake actions or UI redraw;24fps downsample804x1748; audio and metadata removed",
+    "inspection": "Selected segment contains only native synthetic Japanese prose/list/table; launch screen and home screen excluded; beginning and completion inspected",
+    "representation": "Sample app UI, not backend execution proof"
+  },
+  "boundaries": "No installed app/private chats, release feeds, routes, existing icon identity, auth or security settings changed"
+}
