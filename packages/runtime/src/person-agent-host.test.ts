@@ -59,7 +59,8 @@ function fixture(mode: "complete" | "hold" | "unknown" = "complete", configurePl
   };
   const control = (id: string, data: Record<string, any>) => host.control(event("person_agent_control", id, "yorozu-secretary-v1", data));
   const controlData = (action: string, data: Record<string, any> = {}) => ({ version: 1, expectedRevision: host.registry().revision, action, ...data });
-  return { dir, resource, host, platform, builds, traces, held, publish, create, run, control, controlData };
+  const canonical = host.registry().agents.find(a => a.id === "alice")?.conversationId;
+  return { dir, resource, host, platform, builds, traces, held, publish, create, run, control, controlData, canonical: canonical! };
 }
 
 test("registry/default/Remember controls use typed durable readback and never enter existing conversation history", async () => {
@@ -69,7 +70,7 @@ test("registry/default/Remember controls use typed durable readback and never en
   await f.control("select-default", f.controlData("default", { agentId: "alice" }));
   expect(f.host.registry()).toMatchObject({ defaultAgentId: "alice", revision: 2, lastControlResult: { operationId: "select-default", status: "applied", revision: 2 } });
   await f.control("remember-all", f.controlData("remember", { expectedJournalRevision: 0, preference: { allAgents: true, text: "Remember without granting files or tools" } }));
-  expect(f.host.registry()).toMatchObject({ revision: 2, journalRevision: 1, lastControlResult: { status: "applied" } });
+  expect(f.host.registry()).toMatchObject({ revision: 2, journalRevision: 0, lastControlResult: { status: "rejected" } });
   expect(f.host.registry().agents[0].allowedTools).toEqual(["file"]);
   expect(readThreadEvents("legacy", f.dir)).toEqual(before); expect(listThreads(f.dir)).toEqual(rows); expect(f.traces).toEqual([]);
 });
@@ -82,26 +83,30 @@ test("malformed settings are durably refused with the same operation receipt on 
   expect(readFileSync(join(f.host.controls.root, "operations.json"), "utf8")).toContain('"operationId":"malformed"');
 });
 
-test("chat creation binds identity durably and remains independent of broker/auth availability", async () => {
+test("published canonical conversation is durable and available without broker or auth", async () => {
   const noAuth = vi.fn(() => { throw new Error("No official subscription broker is selected"); });
   const f = fixture("complete", p => { p.createFactory = () => noAuth; });
-  await f.create("new-chat", "create-once");
-  expect(f.host.owns("new-chat")).toBe(true); expect(f.host.workspace("new-chat")).toBe(f.host.registry().agents[0].workspace);
+  expect(f.host.owns(f.canonical)).toBe(true);
+  expect(f.host.workspace(f.canonical)).toBe(f.host.registry().agents[0].workspace);
   expect(noAuth).not.toHaveBeenCalled();
-  expect(listThreads(f.dir).find(t => t.id === "new-chat")).toMatchObject({ agent: "harness", creation: { eventId: "create-once" } });
-  const result = await f.run("new-chat", "unavailable-input");
-  expect(result).toMatchObject({ failed: true, cessation: "not-submitted" }); expect(noAuth).toHaveBeenCalledTimes(1);
-  await f.create("new-chat", "create-once"); expect(noAuth).toHaveBeenCalledTimes(1);
+  await expect(f.create("new-topic")).rejects.toThrow("one ongoing conversation");
+  expect(listThreads(f.dir).map(t => t.id)).toEqual([f.canonical]);
+  expect(await f.run(f.canonical, "unavailable-input")).toMatchObject({ failed: true, cessation: "not-submitted" });
+  expect(noAuth).toHaveBeenCalledTimes(1);
 });
 
-test("creation replay preserves immutable person/thread currency and never creates a second thread", async () => {
-  const f = fixture(); await f.create("chat-a", "same-id", "alice", "Named chat"); await f.create("chat-a", "same-id", "alice", "Named chat");
+test("legacy creation receipt replay preserves its immutable identity and old history is read-only", async () => {
+  const f = fixture();
+  const { harnessDigest } = await import("./harness-ledger.js");
+  createThread("Named chat", f.dir, "legacy-person-chat", { agent: "harness", cwd: f.host.registry().agents[0].workspace,
+    creation: { eventId: "same-id", identity: harnessDigest(["legacy-person-chat", "alice", "Named chat"]) } });
+  f.host.runtime.bindConversation("legacy-person-chat", "alice", "Named chat");
+  await f.create("legacy-person-chat", "same-id", "alice", "Named chat");
   await expect(f.create("chat-b", "same-id", "alice", "Named chat")).rejects.toThrow();
-  await expect(f.create("chat-a", "new-id", "alice", "Named chat")).rejects.toThrow();
-  await expect(f.create("chat-a", "same-id", "alice", "Changed title")).rejects.toThrow();
-  await f.control("create-bob", f.controlData("create", { agent: { id: "bob", name: "Bob", role: "Helper", pluginId: "hermes", allowedTools: [] } }));
-  await expect(f.create("chat-a", "same-id", "bob", "Named chat")).rejects.toThrow();
-  expect(listThreads(f.dir).map(t => t.id)).toEqual(["chat-a"]); expect(f.host.summary("chat-a")).toMatchObject({ personAgentId: "alice", personAgentName: "Alice", bypass: false });
+  await expect(f.create("legacy-person-chat", "new-id", "alice", "Named chat")).rejects.toThrow();
+  await expect(f.create("legacy-person-chat", "same-id", "alice", "Changed title")).rejects.toThrow();
+  expect(await f.run("legacy-person-chat", "old-topic-input")).toMatchObject({ failed: true, cessation: "not-submitted", text: expect.stringContaining("History") });
+  expect(listThreads(f.dir).map(t => t.id).sort()).toEqual([f.canonical, "legacy-person-chat"].sort());
   expect(f.builds).toEqual([]); expect(f.traces).toEqual([]);
 });
 
@@ -116,20 +121,20 @@ test("caller cwd/account/provider/model/tool grants and malformed identities can
   for (const id of [123, ["array-chat"], { toString: () => "object-chat" }])
     await expect(f.host.create(event("thread_create", "forged-thread", id as any, { personAgentId: "alice" }))).rejects.toThrow();
   await expect(f.create("unknown-chat", "unknown-create", "unknown")).rejects.toThrow();
-  expect(listThreads(f.dir)).toEqual([]); expect(f.builds).toEqual([]);
+  expect(listThreads(f.dir).map(t => t.id)).toEqual([f.canonical]); expect(f.builds).toEqual([]);
 });
 
 test("published binding supplies workspace/provider/model/session identity; message and creation replay submit once", async () => {
-  const f = fixture(); await f.create("chat", "creation");
-  const result = await f.run("chat", "request", "Bound request", { model: "caller-fast", effort: "high", bypass: true, sessionId: "borrowed-native-session", accountBindingId: "caller-account" });
+  const f = fixture();
+  const result = await f.run(f.canonical, "request", "Bound request", { model: "caller-fast", effort: "high", bypass: true, sessionId: "borrowed-native-session", accountBindingId: "caller-account" });
   expect(result).toMatchObject({ text: "Synthetic reply", cessation: "provider-terminal" });
   expect(f.builds).toHaveLength(1); expect(f.builds[0].agent).toMatchObject({ id: "alice", model: "host-standard", accountBindingId: "owned-account" });
   const process = f.traces.find(t => t.method === "start")!.process;
-  expect(process.configuration.initialize).toMatchObject({ agentId: "alice", workspace: f.host.workspace("chat"), model: "host-standard", provider: "owned-provider" });
+  expect(process.configuration.initialize).toMatchObject({ agentId: "alice", workspace: f.host.workspace(f.canonical), model: "host-standard", provider: "owned-provider" });
   expect(f.traces.find(t => t.method === "session.open")!.params).not.toHaveProperty("sessionId", "borrowed-native-session");
-  await f.create("chat", "creation"); await f.run("chat", "request", "Bound request", { bypass: true, cwd: f.dir });
+   await f.run(f.canonical, "request", "Bound request", { bypass: true, cwd: f.dir });
   expect(f.builds).toHaveLength(1); expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(1);
-  expect(f.host.summary("chat")).toMatchObject({ personAgentId: "alice", bypass: false, canResume: false, canRewind: false });
+  expect(f.host.summary(f.canonical)).toMatchObject({ personAgentId: "alice", bypass: false, canResume: false, canRewind: false });
 });
 
 test("default selection does not adopt existing legacy main history or native session", async () => {
@@ -145,7 +150,7 @@ test("default selection does not adopt existing legacy main history or native se
 });
 
 test("busy execution holds host settings, then CAS/readback applies only a new explicit operation", async () => {
-  const f = fixture("hold"); await f.create("active"); const running = f.run("active", "active-input");
+  const f = fixture("hold");  const running = f.run(f.canonical, "active-input");
   await vi.waitFor(() => expect(f.held).toHaveLength(1));
   const patch = f.controlData("update", { agentId: "alice", patch: { pluginId: "openclaw", allowedTools: [] } });
   await f.control("busy-update", patch); expect(f.host.registry().lastControlResult?.status).toBe("rejected");
@@ -155,11 +160,11 @@ test("busy execution holds host settings, then CAS/readback applies only a new e
   await f.control("busy-update", patch); expect(f.host.registry().agents[0].pluginId).toBe("hermes");
   await f.control("idle-update", patch); expect(f.host.registry()).toMatchObject({ revision: 2, lastControlResult: { operationId: "idle-update", status: "applied", revision: 2 } });
   await f.control("stale-update", patch); expect(f.host.registry().lastControlResult).toMatchObject({ status: "rejected", reason: "Agent revision conflict" });
-  expect(readThreadEvents("active", f.dir).filter(e => e.kind === "person_agent_control")).toEqual([]);
+  expect(readThreadEvents(f.canonical, f.dir).filter(e => e.kind === "person_agent_control")).toEqual([]);
 });
 
 test("unknown execution cannot be escaped by default, preferences or plugin switch", async () => {
-  const f = fixture("unknown"); await f.create("uncertain"); expect(await f.run("uncertain", "unknown-input")).toMatchObject({ unconfirmed: true });
+  const f = fixture("unknown");  expect(await f.run(f.canonical, "unknown-input")).toMatchObject({ unconfirmed: true });
   for (const [id, request] of [["default", f.controlData("default", { agentId: "alice" })],
     ["update", f.controlData("update", { agentId: "alice", patch: { pluginId: "openclaw" } })],
     ["remember", f.controlData("remember", { expectedJournalRevision: 0, preference: { allAgents: true, text: "Unknown memory" } })]] as const) {
@@ -182,7 +187,7 @@ test("in-flight runtime preparation fences controls before the first owner is pu
   let release!: () => void, started!: () => void;
   const active = new Promise<void>(resolve => { started = resolve; }), wait = new Promise<void>(resolve => { release = resolve; });
   const f = fixture("complete", p => { const make = p.createFactory; p.createFactory = store => { const factory = make(store); return async (...args) => { started(); await wait; return factory(...args); }; }; });
-  await f.create("preparing"); const running = f.run("preparing", "prepare-input"); await active;
+   const running = f.run(f.canonical, "prepare-input"); await active;
   try {
     await f.control("prepare-default", f.controlData("default", { agentId: "alice" }));
     expect(f.host.registry().lastControlResult?.status).toBe("rejected"); expect(f.host.registry().revision).toBe(1);
@@ -201,7 +206,7 @@ test("failed competing host ownership cannot provision or mutate the initial reg
 test("busy Alice execution fences unrelated Bob configuration, team/default, and shared journal mutations", async () => {
   const f = fixture("hold");
   await f.control("create-bob", f.controlData("create", { agent: { id: "bob", name: "Bob", role: "Helper", pluginId: "hermes", allowedTools: [] } }));
-  await f.create("alice-chat"); const running = f.run("alice-chat", "alice-running"); await vi.waitFor(() => expect(f.held).toHaveLength(1));
+   const running = f.run(f.canonical, "alice-running"); await vi.waitFor(() => expect(f.held).toHaveLength(1));
   const attempts = [f.controlData("update", { agentId: "bob", patch: { pluginId: "openclaw" } }),
     f.controlData("default", { agentId: "bob" }),
     f.controlData("create-team", { team: { id: "helpers", name: "Helpers", agentIds: ["alice", "bob"] } }),
@@ -212,12 +217,14 @@ test("busy Alice execution fences unrelated Bob configuration, team/default, and
   f.held.shift()!(); await running;
 });
 
-test("restart preserves the immutable chat binding and exact creation receipt without starting an adapter", async () => {
-  const f = fixture(); await f.create("persisted-chat", "persisted-create"); await f.host.close();
+test("restart preserves the canonical conversation without starting an adapter", async () => {
+  const f = fixture(); await f.host.close();
   const restarted = new PersonAgentHost(f.dir, f.platform);
   cleanup.unshift(() => restarted.close());
-  expect(restarted.owns("persisted-chat")).toBe(true); expect(restarted.summary("persisted-chat")).toMatchObject({ personAgentId: "alice" });
-  await restarted.create(event("thread_create", "persisted-create", "persisted-chat", { personAgentId: "alice" }));
-  await expect(restarted.create(event("thread_create", "persisted-create", "other-chat", { personAgentId: "alice" }))).rejects.toThrow();
-  expect(f.builds).toEqual([]); expect(f.traces).toEqual([]); expect(listThreads(f.dir).map(t => t.id)).toEqual(["persisted-chat"]);
+  expect(restarted.registry().agents[0].conversationId).toBe(f.canonical);
+  expect(restarted.owns(f.canonical)).toBe(true);
+  expect(restarted.summary(f.canonical)).toMatchObject({ personAgentId: "alice" });
+  await expect(restarted.create(event("thread_create", "new-topic", "other-chat", { personAgentId: "alice" }))).rejects.toThrow("one ongoing conversation");
+  expect(f.builds).toEqual([]); expect(f.traces).toEqual([]);
+  expect(listThreads(f.dir).map(t => t.id)).toEqual([f.canonical]);
 });

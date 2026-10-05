@@ -873,7 +873,7 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
-@Test func aQueuedMessageSurvivesTheAppBeingClosed() async throws {
+@Test func aQueuedMessageSurvivesLongOfflineRetentionAndRelaunch() async throws {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
@@ -882,6 +882,15 @@ private func reconnect(_ transport: QueueTransport) async {
     first.start()
     first.send("held", in: "home")
     let id = try #require(first.outbox.first?.id)
+    await first.shutdown()
+    // Age the actual queued record, including its wire deadline, through a seven-day outage.
+    var pending = cache.outbox()
+    let oldTimestamp = Int(Date().addingTimeInterval(-7 * 24 * 60 * 60).timeIntervalSince1970 * 1_000)
+    pending[0].event.ts = oldTimestamp
+    guard case .message(var aged) = pending[0].event.payload else { Issue.record("Expected message"); return }
+    aged.admissionDeadline = oldTimestamp + 30 * 60_000
+    pending[0].event.payload = .message(aged)
+    try cache.savePending(pending)
 
     // A second launch, reading the same cache: the message is still waiting, still queued.
     let transport = QueueTransport()
@@ -894,6 +903,11 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(await settle { second.outbox.isEmpty })
     // Reconnect may resend before its receipt arrives; runtime dedupes the stable event ID.
     #expect(await Set(transport.messages.map(\.id)) == [id])
+    let sent = try #require(await transport.messages.first)
+    guard case .message(let data) = sent.payload else { Issue.record("Expected message"); return }
+    #expect(data.text == "held")
+    #expect(sent.ts > oldTimestamp)
+    #expect(data.admissionDeadline == sent.ts + 30 * 60_000)
     // And the flushed queue is written back, so a third launch does not send it again.
     #expect(cache.outbox().isEmpty)
 }

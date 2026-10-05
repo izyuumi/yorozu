@@ -1,6 +1,6 @@
 /** Trusted app-bundle loader. No environment, profile, account, or client path discovery. */
 import { createHash } from "node:crypto";
-import { constants, promises as fs, openSync, fstatSync, readFileSync, closeSync } from "node:fs";
+import { constants, promises as fs, openSync, fstatSync, readFileSync, closeSync, existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathWithin, safeAgentPath } from "./agent-scope.js";
@@ -196,6 +196,11 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
     throw new CuratedRuntimeUnavailable("runtime", "Explicit trusted packaged resources and broker selector are required.");
   const selected = services.selectBroker, root = join(resourcesRoot, "agent-runtimes", "hermes");
   return { initialAgent: { id: "yorozu", name: "Yorozu", role: "Secretary", pluginId: "hermes", allowedTools: ["file", "memory", "delegation"], directories: [] },
+    catalog: () => ({ ...(existsSync(root) ? { defaultHarnessId: "hermes" as const } : {}), harnesses: [
+      { id: "hermes", label: "Hermes", available: existsSync(root), modes: ["managed"], capabilities: [],
+        ...(!existsSync(root) ? { unavailableReason: "The packaged Hermes runtime is unavailable." } : {}) },
+      { id: "openclaw", label: "OpenClaw", available: false, modes: [], capabilities: [], unavailableReason: "No verified packaged runtime or selected host connection is available." },
+    ], connections: [] }),
     protectedRoots: services.protectedRoots,
     createFactory: store => {
       services.bindStore?.(store);

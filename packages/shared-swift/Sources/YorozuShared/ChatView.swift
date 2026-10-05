@@ -25,7 +25,8 @@ extension ModelOption {
 public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
-    private let readOnly: Bool
+    private let requestedReadOnly: Bool
+    private var readOnly: Bool { requestedReadOnly || model.isReadOnlyPersonHistory(thread) }
     private let hosts: MultiHostModel?
     private let hostID: HostID?
     private let onDraftMove: ((HostThreadID) -> Void)?
@@ -138,7 +139,7 @@ public struct ChatView: View {
     ) {
         self.model = model
         self.thread = thread
-        self.readOnly = readOnly
+        self.requestedReadOnly = readOnly
         self.resumeRequest = resumeRequest
         self.notificationClass = notificationClass
         self.notificationEventRef = notificationEventRef

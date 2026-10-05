@@ -17,5 +17,8 @@ export const LOGGED: ReadonlySet<EventKind> = new Set<EventKind>([
   "question_answer",
   "question_status",
   "progress_card",
+  "harness_action",
+  "harness_action_status",
+  "agent_exchange",
+  "agent_exchange_status",
 ]);
-

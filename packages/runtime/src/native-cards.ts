@@ -108,8 +108,8 @@ export class NativeCards {
   }
 
   /** Late YOLO uses the same registered, scoped admission as a device answer. */
-  approveAll(): void {
-    for (const [actionId, pending] of [...this.waiting]) if (pending.kind === "approval_answer") {
+  approveAll(eligible: (threadId: string) => boolean = () => true): void {
+    for (const [actionId, pending] of [...this.waiting]) if (pending.kind === "approval_answer" && eligible(pending.threadId)) {
       this.admitApproval({ id: randomUUID(), threadId: pending.threadId, ts: Date.now(), agentId: "main",
         kind: "approval_answer", data: { actionId, answer: "yes" } });
     }

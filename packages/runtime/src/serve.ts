@@ -2706,7 +2706,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
     armYoloExpiry();
     // A turn started before YOLO should not keep waiting on cards YOLO would never have raised.
     if (on) {
-      nativeCards.approveAll();
+      nativeCards.approveAll(id => listThreads(dir).find(thread => thread.id === id)?.agent !== "harness");
       for (const [actionId, card] of [...pending]) {
         if (card.floored) continue;
         emit({ id: randomUUID(), threadId: card.threadId, ts: Date.now(), agentId: MAIN_AGENT,

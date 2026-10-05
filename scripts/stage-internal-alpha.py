@@ -11,6 +11,9 @@ import tarfile
 BASELINE = "5be369c8d50833a626c8c0ca3e8fc262c150e8de"
 ROOT = Path(__file__).resolve().parent.parent
 OVERLAYS = [
+    "packages/runtime/src/history-kinds.ts",
+    "packages/runtime/src/harness-platform-store.ts",
+    "packages/runtime/src/connected-agent-platform.ts",
     "apps/mac", "packages/shared-swift", "packages/host-core",
     "packages/runtime/src/native.ts", "packages/runtime/src/codex-native.ts",
     "packages/runtime/src/secretary-runner.ts",

@@ -117,6 +117,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
   const config = structuredClone({ node: supplied.node, hermes: supplied.hermes, openclaw: supplied.openclaw, terminalBinaries: supplied.terminalBinaries ?? [] });
   const usedBearers = new Map<string, string>();
   return async (agent, scope, execution) => {
+    if (agent.runtime?.mode === "connected") throw new CuratedRuntimeUnavailable("runtime", "Connected agents require a separately selected host connection; managed launch was not attempted");
     const registry = store.list(), registered = registry.agents.find(a => a.id === agent.id);
     if (!registered || JSON.stringify(registered) !== JSON.stringify(agent) || scope.agentId !== agent.id || scope.chain.at(-1) !== agent.id || scope.revision !== registry.revision)
       throw new CuratedRuntimeUnavailable("scope", "Persistent agent identity or scope is stale");

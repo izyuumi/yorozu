@@ -1,18 +1,19 @@
-/** Persistent people own ordinary sessions; restricted handoffs own fresh execution instances. */
+/** Persistent agents keep their native sessions; the host only supervises and transports. */
 import { randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ThreadSummary, YorozuEvent } from "@yorozu/shared";
+import type { HarnessOrigin, ThreadSummary, YorozuEvent } from "@yorozu/shared";
+import { HarnessPlatformStore } from "./harness-platform-store.js";
 import type { NativeTurnResult } from "./native.js";
 import { PersonAgentStore, type PersonAgent, type PersonAgentPatch, type AgentRegistry } from "./agent-store.js";
-import { normalizeDirectoryGrants, pathWithin, safeAgentPath, validAgentId, validateKnowledgeIds, validateTools, type EffectiveAgentScope, type ScopeSelection } from "./agent-scope.js";
+import { pathWithin, safeAgentPath, validAgentId, type EffectiveAgentScope } from "./agent-scope.js";
 import { releaseHostListener, validateHostListeners } from "./agent-listener.js";
 import { isolatedAgentLaunch, type AgentIsolationRuntime } from "./agent-isolation.js";
 import { HarnessProcess, type SupervisedHarnessConfiguration } from "./harness-process.js";
 import { harnessDigest } from "./harness-ledger.js";
 import type { HarnessConfiguration } from "./harness-contract.js";
-import { SecretaryHarness, type HarnessServices, type HarnessHandoffIdentity, type HarnessHandoffInput, type HarnessHandoffResult } from "./harness-runner.js";
-import { appendThreadEvent, listThreads, readThreadEvents, setNativeTurn } from "./threads.js";
+import { SecretaryHarness, type HarnessServices, type HarnessHandoffResult } from "./harness-runner.js";
+import { appendThreadEvent, createThread, listThreads } from "./threads.js";
 import { retainSharedSyncHost } from "./rust-sync.js";
 
 export interface PersonAgentExecution {
@@ -25,11 +26,12 @@ export type PersonAgentRuntimeFactory = (agent: PersonAgent, scope: EffectiveAge
   Promise<{ configuration: HarnessConfiguration; runtime: AgentIsolationRuntime; release?(): void | Promise<void> }> | { configuration: HarnessConfiguration; runtime: AgentIsolationRuntime; release?(): void | Promise<void> };
 interface Binding { agentId: string; title: string; epochs: string[]; legacyMetadataDigest?: string }
 interface Instance { agentId: string; chain: string[]; conversationId: string; epoch: string; state: "preparing" | "running" | "completed" | "failed" | "unknown"; result?: HarnessHandoffResult }
-interface Manifest { version: 1; bindings: Record<string, Binding>; taskOwners: Record<string, string>; holds: Record<string, string>; instances: Record<string, Instance> }
-interface Actor { agent: PersonAgent; scope: EffectiveAgentScope; signature: string; execution: PersonAgentExecution; configuration: SupervisedHarnessConfiguration; process: HarnessProcess; owners: Set<string>; release?(): void | Promise<void> }
+interface Manifest { version: 1; bindings: Record<string, Binding>; taskOwners: Record<string, string>; holds: Record<string, string>; instances: Record<string, Instance>;
+  canonical?: Record<string, string>; profiles?: Record<string, Record<string, string>> }
+interface Actor { agent: PersonAgent; scope: EffectiveAgentScope; signature: string; execution: PersonAgentExecution; configuration: SupervisedHarnessConfiguration; process: HarnessProcess; owners: Set<string>; activate?(): void; release?(): void | Promise<void> }
 interface Owner { harness: SecretaryHarness; actor: Actor; epoch: string; transient: boolean }
 const owned = new Set<string>();
-const MAX_OWNERS = 4, MAX_HANDOFFS = 2, MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+const MAX_OWNERS = 4, MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const empty = (): Manifest => ({ version: 1, bindings: {}, taskOwners: {}, holds: {}, instances: {} });
 const record = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
 const threadId = (v: unknown): v is string => typeof v === "string" && /^[\w.-]{1,128}$/.test(v);
@@ -71,7 +73,7 @@ function unsettled(path: string): boolean {
     || Object.values(s.autonomous).some((v: any) => ["running", "unknown"].includes(v.state)) || Object.keys(s.pendingResults).length > 0;
 }
 function validateManifest(s: any): Manifest {
-  if (!record(s) || Object.keys(s).some(k => !["version", "bindings", "taskOwners", "holds", "instances"].includes(k)) || s.version !== 1
+  if (!record(s) || Object.keys(s).some(k => !["version", "bindings", "taskOwners", "holds", "instances", "canonical", "profiles"].includes(k)) || s.version !== 1
     || !record(s.bindings) || !record(s.taskOwners) || !record(s.holds) || !record(s.instances)
     || Object.keys(s.bindings).length > 512 || Object.keys(s.taskOwners).length > 2048 || Object.keys(s.instances).length > 512) throw new Error("Damaged agent runtime journal");
   for (const [id, b] of Object.entries(s.bindings) as [string, Binding][]) if (!threadId(id) || !record(b) || !validAgentId(b.agentId)
@@ -85,6 +87,14 @@ function validateManifest(s: any): Manifest {
     || !["preparing", "running", "completed", "failed", "unknown"].includes(v.state)
     || v.result !== undefined && (!record(v.result) || !["completed", "failed", "unknown", "rejected"].includes(v.result.status)
       || v.result.text !== undefined && (typeof v.result.text !== "string" || v.result.text.length > 32_768))) throw new Error("Damaged handoff ownership");
+  if (s.canonical !== undefined && (!record(s.canonical) || Object.entries(s.canonical).some(([id, conversation]) => !validAgentId(id)
+    || !threadId(conversation) || s.bindings[conversation]?.agentId !== id))) throw new Error("Damaged canonical conversation ownership");
+  if (s.profiles !== undefined && (!record(s.profiles) || Object.entries(s.profiles).some(([id, profiles]) => !validAgentId(id)
+    || !record(profiles) || Object.entries(profiles).some(([key, epoch]) => !hash(key) || !hash(epoch))))) throw new Error("Damaged native profile ownership");
+  for (const key of ["bindings", "taskOwners", "holds", "instances"]) s[key] = Object.assign(Object.create(null), s[key]);
+  s.canonical = Object.assign(Object.create(null), s.canonical ?? {});
+  s.profiles = Object.assign(Object.create(null), s.profiles ?? {});
+  for (const id of Object.keys(s.profiles)) s.profiles[id] = Object.assign(Object.create(null), s.profiles[id]);
   return s as unknown as Manifest;
 }
 
@@ -96,20 +106,21 @@ export class PersonAgentRuntime {
   private readonly file: string;
   private readonly release: () => void;
   private readonly manifest: Manifest;
+  readonly platformStore: HarnessPlatformStore;
   private services?: HarnessServices;
   private actors = new Map<string, Actor>();
   private owners = new Map<string, Owner>();
   private operations: Promise<unknown> = Promise.resolve();
   private pendingOperations = 0;
-  private activeHandoffs = new Set<string>();
-  private handoffPromises = new Map<string, Promise<HarnessHandoffResult>>();
   private closing = false;
+  private delivering = new Set<string>();
   constructor(readonly dir: string, readonly store: PersonAgentStore, readonly factory: PersonAgentRuntimeFactory) {
     this.root = safeAgentPath(join(dir, "person-agent-runtime-v1")); mkdirSync(this.root, { recursive: true, mode: 0o700 });
     if (owned.has(this.root)) throw new Error("Person agent runtime already owned");
     this.release = retainSharedSyncHost(join(this.root, "lease")); owned.add(this.root); this.file = join(this.root, "manifest.json");
     try {
       this.manifest = validateManifest(readObject(this.file, MAX_MANIFEST_BYTES) ?? empty());
+      this.platformStore = new HarnessPlatformStore(dir);
       for (const v of Object.values(this.manifest.instances)) if (["preparing", "running", "unknown"].includes(v.state)) {
         v.state = "unknown"; this.hold(v.chain, "Prior delegated execution is unconfirmed; no automatic replay");
       }
@@ -118,14 +129,18 @@ export class PersonAgentRuntime {
       this.save();
     } catch (e) { owned.delete(this.root); this.release(); throw e; }
   }
-  bind(services: HarnessServices): void { this.services = services; for (const [id, o] of this.owners) this.bindOwner(id, o); }
+  bind(services: HarnessServices): void {
+    this.services = services; this.platformStore.bind(services.emit, services.changed);
+    for (const [id, o] of this.owners) this.bindOwner(id, o);
+    for (const agent of this.store.list().agents) void this.deliverPending(agent.id);
+  }
   private save(): void { writeObject(this.file, this.manifest); }
   private hold(ids: string[], reason: string): void { for (const id of ids) this.manifest.holds[id] = reason.slice(0, 2000); }
   held(agentId: string): string | undefined { this.refresh(); return this.manifest.holds[agentId]; }
   /** Configuration cannot change an execution chain while its outcome is unsettled. */
   assertControlsIdle(): void {
     this.refresh();
-    if (this.closing || this.pendingOperations || Object.keys(this.manifest.holds).length || this.activeHandoffs.size
+    if (this.closing || this.pendingOperations || this.platformStore.hasUnconfirmedActions() || Object.keys(this.manifest.holds).length
       || [...this.owners.values()].some(owner => !owner.harness.idleConfirmed))
       throw new Error("Agent settings require confirmed idle execution");
   }
@@ -147,6 +162,18 @@ export class PersonAgentRuntime {
     if (previous) return;
     if (Object.keys(this.manifest.bindings).length >= 512) throw new Error("Conversation binding budget exceeded");
     this.manifest.bindings[id] = { agentId, title, epochs: [] }; this.save();
+  }
+  /** One continuing conversation per person. Older topic bindings remain readable history. */
+  canonicalConversation(agentId: string): string {
+    const agent = this.agent(agentId), canonical = this.manifest.canonical ??= {};
+    if (canonical[agentId]) return canonical[agentId];
+    const transient = new Set(Object.values(this.manifest.instances).map(i => i.conversationId));
+    const existing = Object.entries(this.manifest.bindings).filter(([id, b]) => b.agentId === agentId && !transient.has(id));
+    const id = existing.find(([id]) => id === "yorozu-secretary-v1")?.[0] ?? existing[0]?.[0]
+      ?? `agent-conversation-${harnessDigest(agentId).slice(0, 48)}`;
+    this.bindConversation(id, agentId, agent.name);
+    createThread(agent.name, this.dir, id, { agent: "harness", cwd: agent.workspace });
+    canonical[agentId] = id; this.save(); return id;
   }
   /** Trusted opt-in only. History/backend sessions remain intact and grant no file access. */
   bindSecretary(agentId: string): void {
@@ -177,7 +204,25 @@ export class PersonAgentRuntime {
   }
   private ledgerDir(id: string, epoch: string): string { return join(this.root, "ledgers", harnessDigest(id), epoch); }
   private ledgerFile(id: string, epoch: string): string { return join(this.ledgerDir(id, epoch), "harness-v1", "binding.json"); }
-  private signature(agent: PersonAgent, scope: EffectiveAgentScope): string { return harnessDigest({ agent, scope }); }
+  private signature(agent: PersonAgent, scope: EffectiveAgentScope): string {
+    return harnessDigest({ agent, allowedTools: scope.allowedTools, directories: scope.directories });
+  }
+  /** Permission/settings epochs do not fork the harness's learned native state. */
+  private profileEpoch(agent: PersonAgent): string {
+    const key = harnessDigest([agent.pluginId, agent.runtime?.mode ?? "managed", agent.runtime?.mode === "connected" ? agent.runtime.connectionId : null]);
+    const profiles = (this.manifest.profiles ??= Object.create(null))[agent.id] ??= Object.create(null);
+    if (profiles[key]) return profiles[key];
+    // Adopt only this host's already owned profile and matching plugin ledger.
+    for (const [id, b] of Object.entries(this.manifest.bindings).reverse()) if (b.agentId === agent.id) {
+      for (const epoch of [...b.epochs].reverse()) {
+        const ledger = readObject(this.ledgerFile(id, epoch), 16 * 1024 * 1024);
+        const marker = readObject(join(this.root, "scratch", agent.id, epoch, "owner.json"), 4096);
+        if (ledger?.pluginId === agent.pluginId && marker?.agentId === agent.id && marker.kind === "ordinary" && marker.id === epoch
+          && (agent.runtime?.mode ?? "managed") === "managed") { profiles[key] = epoch; this.save(); return epoch; }
+      }
+    }
+    profiles[key] = harnessDigest(["native-profile-v1", agent.id, key]); this.save(); return profiles[key];
+  }
   private serialized<T>(fn: () => Promise<T>): Promise<T> {
     this.pendingOperations++;
     const p = this.operations.then(fn).finally(() => { this.pendingOperations--; });
@@ -193,17 +238,18 @@ export class PersonAgentRuntime {
   private admission(actor: Actor): void {
     this.refresh();
     if (this.closing || actor.process.unavailable) throw new Error("Owned process unavailable; no implicit restart");
+    if (this.platformStore.hasUnconfirmedActions(actor.agent.id, false)) throw new Error("A harness answer outcome is unconfirmed; new work is held");
     if (actor.scope.chain.some(id => this.manifest.holds[id])) throw new Error("Agent execution remains held until its unknown outcome is resolved");
     const current = this.store.resolveScope(actor.agent.id);
-    if (current.revision !== actor.scope.revision || harnessDigest(this.agent(actor.agent.id)) !== harnessDigest(actor.agent))
+    if (this.signature(this.agent(actor.agent.id), current) !== actor.signature)
       throw new Error("Agent settings changed; a confirmed idle switch is required");
   }
   private agent(id: string): PersonAgent {
     const agent = this.store.list().agents.find(a => a.id === id); if (!agent) throw new Error("Unknown persistent agent"); return agent;
   }
   private idle(agentId: string): boolean {
-    return !this.manifest.holds[agentId] && ![...this.owners.values()].some(o => o.actor.scope.chain.includes(agentId) && !o.harness.idleConfirmed)
-      && ![...this.activeHandoffs].some(id => this.manifest.instances[id].chain.includes(agentId));
+    return !this.manifest.holds[agentId] && !this.platformStore.hasUnconfirmedActions(agentId)
+      && ![...this.owners.values()].some(o => o.actor.scope.chain.includes(agentId) && !o.harness.idleConfirmed);
   }
   private bindOwner(id: string, owner: Owner): void {
     owner.harness.bind({ emit: event => {
@@ -214,11 +260,64 @@ export class PersonAgentRuntime {
       }
       if (this.services) this.services.emit(event); else appendThreadEvent(event, this.dir);
     }, changed: () => { this.refresh(); this.services?.changed(); },
-    preferences: () => {
-      const knowledge = this.store.knowledgeFor(owner.actor.agent.id, owner.actor.scope).filter(e => !owner.transient || e.kind === "shared-knowledge");
-      return { revision: String(this.store.journal().revision), text: JSON.stringify({ role: owner.actor.agent.role, reference: knowledge.map(e => ({ kind: e.kind, text: e.text })) }) };
-    }, handoff: (identity, input, signal) => this.handoff(owner, identity, input, signal) });
+      action: (action, respond, current) => this.platformStore.openAction(action, async answer => {
+        if (answer.uiTargetId !== undefined) {
+          if (!current()) return { status: "rejected", reason: "The original harness request is no longer current." };
+          return await this.services?.openUI?.(action.origin, answer.uiTargetId)
+            ? { status: "requested", reason: "The harness interface was opened. Complete this request there." }
+            : { status: "rejected", reason: "This harness interface target is unavailable on the host." };
+        }
+        return respond(answer);
+      }, current),
+      cancelAction: (origin, requestId) => this.platformStore.cancelAction(origin, requestId),
+      agentMessage: (origin, input) => this.acceptPeerMessage(owner, origin, input),
+      agentMessageStatus: (origin, messageId) => this.platformStore.senderReceiptUnknown(origin, messageId) });
   }
+  private async acceptPeerMessage(owner: Owner, origin: HarnessOrigin, input: { messageId: string; toAgentId: string; text: string; exchangeId?: string }): Promise<{ status: "accepted" | "rejected" | "unknown"; exchangeId?: string; reason?: string }> {
+    try {
+      this.admission(owner.actor);
+      const sender = this.agent(origin.agentId), recipient = this.agent(input.toAgentId);
+      if (sender.id !== owner.actor.agent.id || origin.conversationId !== owner.harness.conversationId || sender.id === recipient.id
+        || !sender.teamIds.some(team => recipient.teamIds.includes(team)))
+        return { status: "rejected", reason: "The recipient is not an explicitly configured teammate." };
+      const message = this.platformStore.acceptMessage(origin, input.messageId, recipient.id, input.text, input.exchangeId);
+      void this.deliverPending(recipient.id);
+      return { status: "accepted", exchangeId: message.exchangeId };
+    } catch (error) { return { status: this.platformStore.unconfirmed ? "unknown" : "rejected", reason: error instanceof Error ? error.message.slice(0, 512) : "Agent message was not admitted." }; }
+  }
+  private async deliverPending(agentId: string): Promise<void> {
+    if (this.delivering.has(agentId) || this.closing) return;
+    this.delivering.add(agentId);
+    try {
+      if (!this.platformStore.pendingFor(agentId).length) return;
+      const recipient = await this.conversation(this.canonicalConversation(agentId), agentId);
+      // Session/bootstrap failures precede the message attempt, so retained data can wait.
+      if (!await recipient.prepareMessageDelivery()) {
+        for (const message of this.platformStore.pendingFor(agentId)) {
+          const attempt = this.platformStore.beginDelivery(message.messageId);
+          this.platformStore.settleDelivery(message.messageId, attempt, "rejected", "The selected harness has no native peer inbox.", true);
+        }
+        return;
+      }
+      const seen = new Set<string>();
+      while (!this.closing) {
+        const message = this.platformStore.pendingFor(agentId).find(message => !seen.has(message.messageId));
+        if (!message) break;
+        seen.add(message.messageId);
+        if (this.closing) return;
+        const attempt = this.platformStore.beginDelivery(message.messageId);
+        try {
+          const receipt = await recipient.deliverMessage(message, attempt);
+          if (receipt.status === "accepted") this.platformStore.settleDelivery(message.messageId, attempt, "delivered");
+          else if (["busy", "rejected", "unsupported"].includes(receipt.status) && receipt.handoff === "not-submitted")
+            this.platformStore.settleDelivery(message.messageId, attempt, receipt.status === "busy" ? "accepted" : "rejected", receipt.reason, true);
+          else this.platformStore.settleDelivery(message.messageId, attempt, "unknown", receipt.reason);
+        } catch { this.platformStore.settleDelivery(message.messageId, attempt, "unknown", "The native inbox admission receipt was lost; no automatic resend."); }
+      }
+    } catch { /* No message attempt: keep durable accepted data for an available recipient. */ }
+    finally { this.delivering.delete(agentId); }
+  }
+  answerAction(event: YorozuEvent): Promise<void> { return this.platformStore.answer(event); }
   private async room(): Promise<void> {
     if (this.owners.size < MAX_OWNERS) return;
     const retired = [...this.owners].find(([, o]) => !o.transient && o.harness.idleConfirmed);
@@ -235,6 +334,19 @@ export class PersonAgentRuntime {
       if (existsSync(join(scratchRoot, "profile"))) throw new Error("Refusing to adopt an unowned vendor profile");
       writeObject(markerPath, expected);
     }
+    // Bootstrap/account validation uses separate configuration scratch. Only after
+    // successful preparation and quiescent retirement may it touch native state.
+    const nativeEpoch = kind === "ordinary" ? this.profileEpoch(agent) : id;
+    const nativeScratch = safeAgentPath(join(this.root, "scratch", agent.id, nativeEpoch));
+    mkdirSync(nativeScratch, { recursive: true, mode: 0o700 });
+    const nativeMarker = join(nativeScratch, "owner.json"), nativeOwner = { version: 1, agentId: agent.id, kind, id: nativeEpoch };
+    const previousNativeOwner = readObject(nativeMarker, 4096);
+    if (previousNativeOwner && JSON.stringify(previousNativeOwner) !== JSON.stringify(nativeOwner)) throw new Error("Native profile has another owner");
+    if (!previousNativeOwner) {
+      if (existsSync(join(nativeScratch, "profile"))) throw new Error("Refusing to adopt an unowned native profile");
+      writeObject(nativeMarker, nativeOwner);
+    }
+    const nativeProfile = safeAgentPath(join(nativeScratch, "profile")); mkdirSync(nativeProfile, { recursive: true, mode: 0o700 });
     const execution: PersonAgentExecution = { kind, id, scratchRoot, workspace: kind === "ordinary" ? agent.workspace : join(scratchRoot, "profile", "scratch"),
       memoryDir: kind === "ordinary" ? agent.memoryDir : join(scratchRoot, "profile", "memory") };
     for (const path of [execution.workspace, execution.memoryDir]) { safeAgentPath(path); mkdirSync(path, { recursive: true, mode: 0o700 }); }
@@ -257,21 +369,33 @@ export class PersonAgentRuntime {
       const siblingScratch = this.store.list().agents.filter(a => a.id !== agent.id).map(a => join(scratchBase, a.id));
       for (const name of readdirSync(join(scratchBase, agent.id))) {
         const sibling = safeAgentPath(join(scratchBase, agent.id, name), true);
-        if (sibling !== scratchRoot) siblingScratch.push(sibling);
+        if (sibling !== scratchRoot && sibling !== nativeScratch) siblingScratch.push(sibling);
       }
       const deniedRoots = [...new Set([...scope.deniedRoots, ...siblingScratch, join(this.root, "ledgers"), this.file, join(this.root, "lease"),
-        join(this.dir, "threads"), join(this.dir, "threads.json"), join(this.dir, "person-agent-controls-v1")])];
-      const osScope = { ...scope, deniedRoots };
+        join(this.dir, "threads"), join(this.dir, "threads.json"), join(this.dir, "person-agent-controls-v1"), this.platformStore.root])];
+      const osScope = { ...scope, deniedRoots, directories: [...scope.directories, { path: nativeProfile, access: "write" as const }] };
       const launch = isolatedAgentLaunch(osScope, built.runtime);
+      let activate: (() => void) | undefined;
+      if (typeof initialize.providerConfigPath === "string") {
+        const provider = readObject(initialize.providerConfigPath, 4096);
+        if (!provider) throw new Error("Prepared provider bootstrap is missing");
+        const selectedPath = join(nativeProfile, "proof-provider.json");
+        initialize.providerConfigPath = selectedPath;
+        activate = () => writeObject(selectedPath, provider);
+      }
       const scoped = { allowedTools: tools, directories: scope.directories.map(g => ({ ...g })),
         workspace: agent.pluginId === "openclaw" ? agent.workspace : execution.workspace,
         memoryDir: agent.pluginId === "openclaw" ? agent.memoryDir : execution.memoryDir,
         ...(agent.pluginId === "openclaw" ? { deniedRoots } : {}) };
-      const configuration: SupervisedHarnessConfiguration = { ...built.configuration, command: launch.command, args: launch.args, inheritedListeners: built.runtime.inheritedListeners,
+      const configuration: SupervisedHarnessConfiguration = { ...built.configuration, command: launch.command, args: launch.args, runtime: agent.runtime,
+        inheritedListeners: built.runtime.inheritedListeners,
         initialize: { ...initialize, agentId: agent.id, workspace: execution.workspace, model: agent.model,
-          scope: scoped, isolation: launch.isolation, platform: { team: tools.includes("team"), computer: false },
-          ...(agent.pluginId === "hermes" ? { profileRoot: join(scratchRoot, "profile") } : { profileDir: join(scratchRoot, "profile") }) } };
-      return { agent, scope, signature: this.signature(agent, scope), execution, configuration, process: new HarnessProcess(configuration), owners: new Set(), release: built.release };
+          scope: scoped, isolation: launch.isolation, platform: { team: agent.teamIds.length > 0, computer: false,
+            peers: this.store.list().agents.filter(peer => peer.id !== agent.id && peer.teamIds.some(team => agent.teamIds.includes(team)))
+              .map(peer => ({ agentId: peer.id, name: peer.name, pluginId: peer.pluginId })) },
+          ...(agent.runtime ? { lifecycle: agent.runtime } : {}),
+          ...(agent.pluginId === "hermes" ? { profileRoot: nativeProfile } : { profileDir: nativeProfile }) } };
+      return { agent, scope, signature: this.signature(agent, scope), execution, configuration, process: new HarnessProcess(configuration), owners: new Set(), activate, release: built.release };
     } catch (error) {
       let held = [] as ReturnType<typeof validateHostListeners>;
       try { held = validateHostListeners(built?.runtime?.inheritedListeners ?? [], agent.id); } catch { /* Unowned handles stay with their original host. */ }
@@ -286,28 +410,34 @@ export class PersonAgentRuntime {
       if (!selected || previous && previous.agentId !== selected || this.manifest.taskOwners[id]) throw new Error("Conversation agent identity is immutable");
       if (previous?.legacyMetadataDigest && previous.legacyMetadataDigest !== this.legacyMetadata(id))
         throw new Error("Legacy backend metadata changed; the agent binding requires inspection");
-      const agent = this.agent(selected), scope = this.store.resolveScope(selected), signature = this.signature(agent, scope);
+      const agent = this.agent(selected), scope = this.store.resolveScope(selected), signature = this.signature(agent, scope), epoch = this.profileEpoch(agent);
       this.refresh(); if (this.manifest.holds[selected]) throw new Error(this.manifest.holds[selected]);
       const existing = this.owners.get(id);
       if (existing && existing.actor.signature === signature) { this.admission(existing.actor); return existing.harness; }
       let actor = this.actors.get(selected);
       if (actor && actor.signature !== signature) {
         if (!this.idle(selected)) throw new Error("Agent settings switch requires all owned execution to be confirmed idle");
-        // Validate the candidate before disturbing the selected idle owner.
         const candidate = await this.prepare(agent, scope, "ordinary", signature);
         for (const ownerId of [...actor.owners]) { await this.owners.get(ownerId)?.harness.close(); this.owners.delete(ownerId); actor.owners.delete(ownerId); }
-        await this.closeActor(actor); this.actors.set(selected, candidate); actor = candidate;
+        await this.closeActor(actor); this.actors.delete(selected);
+        try { candidate.activate?.(); } catch (error) { await this.closeActor(candidate); this.hold([selected], "Native profile activation is unconfirmed; inspect before switching again"); this.save(); throw error; }
+        actor = candidate; this.actors.set(selected, actor);
       }
       if (actor?.process.unavailable) throw new Error("Agent daemon exited; no implicit respawn");
-      if (!actor) { actor = await this.prepare(agent, scope, "ordinary", signature); this.actors.set(selected, actor); }
+      if (!actor) {
+        actor = await this.prepare(agent, scope, "ordinary", signature);
+        try { actor.activate?.(); } catch (error) { await this.closeActor(actor); this.hold([selected], "Native profile activation is unconfirmed; inspect before switching again"); this.save(); throw error; }
+        this.actors.set(selected, actor);
+      }
       await this.room();
       const binding = previous ?? { agentId: selected, title, epochs: [] };
-      if (Object.keys(this.manifest.bindings).length >= 512 && !previous || binding.epochs.length >= 64 && !binding.epochs.includes(signature)) throw new Error("Conversation binding budget exceeded");
-      this.manifest.bindings[id] = binding; if (!binding.epochs.includes(signature)) binding.epochs.push(signature); this.save();
+      if (Object.keys(this.manifest.bindings).length >= 512 && !previous || binding.epochs.length >= 64 && !binding.epochs.includes(epoch)) throw new Error("Conversation binding budget exceeded");
+      this.manifest.bindings[id] = binding; if (!binding.epochs.includes(epoch)) binding.epochs.push(epoch); this.save();
       const harness = new SecretaryHarness(this.dir, actor.configuration, { conversationId: id, workspace: agent.workspace,
-        title: binding.title, ledgerDir: this.ledgerDir(id, signature), sharedProcess: actor.process,
+        title: binding.title, ledgerDir: this.ledgerDir(id, epoch), sharedProcess: actor.process,
         ...(binding.legacyMetadataDigest ? { preserveLegacyMetadata: true as const } : {}), beforeAdmission: () => this.admission(actor!) });
-      const owner = { harness, actor, epoch: signature, transient: false }; this.owners.set(id, owner); actor.owners.add(id); this.bindOwner(id, owner);
+      const owner = { harness, actor, epoch, transient: false }; this.owners.set(id, owner); actor.owners.add(id); this.bindOwner(id, owner);
+      queueMicrotask(() => { void this.deliverPending(selected); });
       return harness;
     });
   }
@@ -320,6 +450,8 @@ export class PersonAgentRuntime {
     const harness = await this.conversation(conversation); return harness.owns(id) ? harness : undefined;
   }
   summary(id: string): Partial<ThreadSummary> | undefined {
+    const exchange = this.platformStore.exchangeSummary(id);
+    if (exchange) return { personAgentExchange: exchange, canRewind: false, canResume: false };
     const conversation = this.manifest.taskOwners[id] ?? id; return this.owners.get(conversation)?.harness.summary(id);
   }
   async taskStop(event: YorozuEvent): Promise<boolean> { return await (await this.owner(event.threadId))?.taskStop(event) ?? false; }
@@ -337,100 +469,10 @@ export class PersonAgentRuntime {
       return updated;
     });
   }
-  private handoff(owner: Owner, identity: HarnessHandoffIdentity, input: HarnessHandoffInput, signal: AbortSignal): Promise<HarnessHandoffResult> {
-    if (!owner.harness.canHandoff(identity) || signal.aborted) return Promise.resolve({ status: "rejected", text: "The originating request is no longer active." });
-    const key = harnessDigest(identity), old = this.manifest.instances[key];
-    if (this.handoffPromises.has(key)) return this.handoffPromises.get(key)!;
-    if (old) return Promise.resolve(old.result ?? { status: "unknown", taskId: old.conversationId, text: "Prior handoff outcome is unconfirmed; it will not be replayed." });
-    const result = this.executeHandoff(owner, key, input, signal).catch(() => {
-      const instance = this.manifest.instances[key];
-      if (!instance) return { status: "rejected" as const, text: "Scoped handoff was refused before execution admission." };
-      if (instance.state === "preparing") {
-        // No turn or provider request was handed off in this process. A crash in
-        // the same durable state still remains unknown during startup recovery.
-        instance.state = "failed"; instance.result = { status: "rejected", taskId: instance.conversationId, text: "Scoped handoff was refused before execution admission." };
-      } else {
-        instance.state = "unknown"; instance.result = { status: "unknown", taskId: instance.conversationId, text: "Delegated outcome is unconfirmed; no automatic replay." };
-        this.hold(instance.chain, instance.result.text!);
-      }
-      this.save(); return instance.result;
-    });
-    this.handoffPromises.set(key, result); void result.finally(() => this.handoffPromises.delete(key)); return result;
-  }
-  private async executeHandoff(origin: Owner, key: string, input: HarnessHandoffInput, parentSignal: AbortSignal): Promise<HarnessHandoffResult> {
-    this.admission(origin.actor);
-    if (!record(input) || Object.keys(input).some(k => !["teammateId", "context", "expectedResult", "scope"].includes(k)) || !validAgentId(input.teammateId)
-      || typeof input.context !== "string" || input.context.length > 32_768 || typeof input.expectedResult !== "string" || input.expectedResult.length > 8192
-      || !record(input.scope) || Object.keys(input.scope).some(k => !["allowedTools", "directories", "knowledgeIds", "sharedResourceIds"].includes(k))) throw new Error("Invalid handoff data");
-    if (this.activeHandoffs.size >= MAX_HANDOFFS || Object.keys(this.manifest.instances).length >= 512) throw new Error("Bounded handoff budget exceeded");
-    if (input.scope.knowledgeIds !== undefined && input.scope.sharedResourceIds !== undefined) throw new Error("Ambiguous knowledge selection");
-    const selected: ScopeSelection = { allowedTools: validateTools(input.scope.allowedTools), directories: normalizeDirectoryGrants(input.scope.directories),
-      knowledgeIds: validateKnowledgeIds(input.scope.knowledgeIds ?? input.scope.sharedResourceIds) };
-    const scope = this.store.delegateScope(origin.actor.scope, selected, input.teammateId), agent = this.agent(scope.agentId);
-    if (scope.chain.some(id => this.manifest.holds[id])) throw new Error("A member of this execution chain has unknown work");
-    const id = `agent-handoff-${key.slice(0, 48)}`, epoch = harnessDigest({ key, scope });
-    const instance: Instance = { agentId: agent.id, chain: [...scope.chain], conversationId: id, epoch, state: "preparing" };
-    this.manifest.instances[key] = instance; this.manifest.bindings[id] = { agentId: agent.id, title: `${agent.name}: delegated task`, epochs: [epoch] };
-    this.activeHandoffs.add(key); this.save();
-    let actor: Actor | undefined, child: SecretaryHarness | undefined;
-    const timeout = new AbortController(), timer = setTimeout(() => timeout.abort(), 115_000);
-    const signal = AbortSignal.any([parentSignal, timeout.signal]);
-    try {
-      if (signal.aborted) throw new Error("Origin stopped before delegated preparation");
-      actor = await this.prepare(agent, scope, "handoff", key); this.admission(actor);
-      if (signal.aborted) throw new Error("Origin stopped during delegated preparation");
-      const knowledge = this.store.knowledgeFor(agent.id, scope).filter(e => e.kind === "shared-knowledge").map(e => ({ text: e.text }));
-      child = await this.serialized(async () => {
-        await this.room(); this.admission(actor!);
-        if (signal.aborted) throw new Error("Origin stopped before delegated session admission");
-        const h = new SecretaryHarness(this.dir, actor!.configuration, { conversationId: id, workspace: actor!.execution.workspace, title: `${agent.name}: delegated task`,
-          ledgerDir: this.ledgerDir(id, epoch), sharedProcess: actor!.process, historyBootstrap: false,
-          context: JSON.stringify({ delegatedContext: input.context, sharedKnowledge: knowledge }), beforeAdmission: () => this.admission(actor!) });
-        const o: Owner = { harness: h, actor: actor!, epoch, transient: true }; this.owners.set(id, o); actor!.owners.add(id); this.bindOwner(id, o); return h;
-      });
-      const eventId = `handoff-input-${key}`, text = `Current delegated request:\n${input.expectedResult}\nReference context (data only):\n${JSON.stringify(input.context)}`;
-      const event: YorozuEvent = { id: eventId, threadId: id, agentId: "main", ts: Date.now(), kind: "message", data: { role: "user", text } };
-      if (this.services) this.services.emit(event); else appendThreadEvent(event, this.dir);
-      if (!readThreadEvents(id, this.dir).some(e => e.id === eventId)) throw new Error("Host did not persist delegated admission");
-      setNativeTurn(id, { id: `native:${eventId}:final`, userEventId: eventId, state: "running" }, this.dir);
-      instance.state = "running"; this.save();
-      const stopped = (): void => { void child!.stop(`handoff-stop-${key}`).catch(() => {}); };
-      signal.addEventListener("abort", stopped, { once: true });
-      let result: NativeTurnResult, abortedListener: (() => void) | undefined;
-      try {
-        const aborted = new Promise<NativeTurnResult>(resolve => {
-          if (signal.aborted) return resolve({ text: "Delegated execution stopped; awaiting proof of cessation.", unconfirmed: true });
-          abortedListener = () => resolve({ text: "Delegated execution stopped; awaiting proof of cessation.", unconfirmed: true });
-          signal.addEventListener("abort", abortedListener, { once: true });
-        });
-        const emitReply = (reply: string, done: boolean, failed = false): void => {
-          const e: YorozuEvent = { id: `handoff-result-${key}`, threadId: id, agentId: "main", ts: Date.now(), kind: "message",
-            data: { role: "agent", text: reply.slice(0, 32_768), done, replyTo: eventId, ...(failed ? { failed: true } : {}) } };
-          if (this.services) this.services.emit(e); else appendThreadEvent(e, this.dir);
-        };
-        result = await Promise.race([child.runner.run({ threadId: id, cwd: actor.execution.workspace, text, signal,
-          onUpdate: reply => emitReply(reply, false), approve: async () => false, ask: async () => undefined }), aborted]);
-        emitReply(result.text, true, !!result.failed || !!result.unconfirmed);
-        while (!child.idleConfirmed && !child.hasUnconfirmedExecution && !signal.aborted) await new Promise(resolve => setTimeout(resolve, 100));
-      } finally { signal.removeEventListener("abort", stopped); if (abortedListener) signal.removeEventListener("abort", abortedListener); }
-      const confirmed = !result.unconfirmed && result.cessation === "provider-terminal" && child.idleConfirmed;
-      if (!confirmed) throw new Error("Delegated execution or background result is unconfirmed");
-      const followups = readThreadEvents(id, this.dir).filter(e => e.id.startsWith("harness-result-") && e.kind === "message" && e.data.done);
-      const latest = followups.at(-1); const finalText = latest?.kind === "message" ? latest.data.text : result.text;
-      instance.state = result.failed ? "failed" : "completed"; instance.result = { status: instance.state, taskId: id, text: finalText.slice(0, 32_768) };
-      this.save(); return instance.result;
-    } finally {
-      clearTimeout(timer);
-      // This closes only the fresh execution instance, never the teammate's ordinary daemon.
-      if (actor) await this.closeActor(actor);
-      if (child) { await child.close(); this.owners.delete(id); }
-      this.activeHandoffs.delete(key); this.refresh(); this.services?.changed();
-    }
-  }
   async close(): Promise<void> {
     if (this.closing) return; this.closing = true;
     try {
-      await Promise.allSettled([...this.owners.values()].map(o => o.harness.stop(`manager-close-${randomUUID()}`)));
+      await Promise.allSettled([...this.owners.values()].filter(o => o.actor.agent.runtime?.mode !== "connected").map(o => o.harness.stop(`manager-close-${randomUUID()}`)));
       for (const actor of new Set([...this.actors.values(), ...[...this.owners.values()].map(o => o.actor)])) await this.closeActor(actor);
       for (const owner of [...this.owners.values()]) await owner.harness.close();
       this.refresh(); this.save(); this.owners.clear(); this.actors.clear();
@@ -451,7 +493,7 @@ export class PersonAgentRuntime {
       for (const actor of affected) {
         for (const ownerId of [...actor.owners]) {
           const owner = this.owners.get(ownerId); if (owner?.actor !== actor) { actor.owners.delete(ownerId); continue; }
-          try { await owner.harness.stop(`account-retire-${randomUUID()}`); } finally {
+          try { if (actor.agent.runtime?.mode !== "connected") await owner.harness.stop(`account-retire-${randomUUID()}`); } finally {
             try { await owner.harness.close(); } finally { this.owners.delete(ownerId); actor.owners.delete(ownerId); }
           }
         }

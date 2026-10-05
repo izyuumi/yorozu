@@ -186,9 +186,9 @@ export class PersonAgentControls {
     let input: PersonAgentControlData;
     try {
       input = parsePersonAgentControl(value);
+      if (input.action === "remember" || input.action === "share-knowledge")
+        throw new Error("Memory is managed by the selected harness. Shared memory is deferred; existing journals remain preserved.");
       if (input.expectedRevision !== before.registry) throw new Error("Agent revision conflict");
-      if ((input.action === "remember" || input.action === "share-knowledge") && input.expectedJournalRevision !== before.journal)
-        throw new Error("Knowledge revision conflict");
       if (this.services.assertIdle() !== undefined) throw new Error("The idle gate did not settle synchronously");
     } catch (error) {
       const reason = error instanceof Error ? error.message.replace(/[\0\r\n]/g, " ").trim().slice(0, 512) : "Settings control was rejected before mutation.";
@@ -206,12 +206,9 @@ export class PersonAgentControls {
         case "default": this.store.default(input.agentId, input.expectedRevision); break;
         case "create-team": this.store.createTeam(input.team, input.expectedRevision); break;
         case "update-team": this.store.updateTeam(input.teamId, input.patch, input.expectedRevision); break;
-        case "remember": this.store.remember(input.preference, input.expectedJournalRevision); break;
-        case "share-knowledge": this.store.shareKnowledge(input.knowledge, input.expectedJournalRevision); break;
       }
       const current = { registry: this.store.list().revision, journal: this.store.journal().revision };
-      const knowledge = input.action === "remember" || input.action === "share-knowledge";
-      if (current.registry !== before.registry + (knowledge ? 0 : 1) || current.journal !== before.journal + (knowledge ? 1 : 0))
+      if (current.registry !== before.registry + 1 || current.journal !== before.journal)
         throw new Error("Settings mutation readback is unconfirmed");
       entry.state = "applied"; entry.result = { operationId: id, status: "applied", revision: current.registry };
     } catch { failed = true; }

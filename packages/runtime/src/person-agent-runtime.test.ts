@@ -34,35 +34,28 @@ function fixture(mode = "complete") {
       ...(!unscoped ? { runId: current.runId, attemptId: current.attemptId } : {}) };
     for (const fn of p.listeners) fn(e);
   };
+  const inboxReleases: Array<() => void> = [];
   const currents = new WeakMap<HarnessProcess, Record<string, any>>();
   vi.spyOn(HarnessProcess.prototype, "start").mockImplementation(function (this: HarnessProcess) {
     traces.push({ process: this, method: "fixture.start", params: {} });
-    return Promise.resolve({ protocolVersion: 1, pluginId: this.configuration.pluginId, upstreamVersion: this.configuration.upstreamVersion, capabilities: caps } as HarnessReady);
+    return Promise.resolve({ protocolVersion: 1, pluginId: this.configuration.pluginId, upstreamVersion: this.configuration.upstreamVersion, capabilities: caps, extensions: { version: 1, connectedLifecycle: true, conversationActions: true, agentMessaging: !(mode == "no-inbox" && this.configuration.initialize.agentId === "bob"), autonomousEvents: false } } as HarnessReady);
   });
   vi.spyOn(HarnessProcess.prototype, "request").mockImplementation(function (this: HarnessProcess, method, params) {
     traces.push({ process: this, method, params });
     if (method === "session.open") return Promise.resolve({ sessionId: `native-${params.conversationId}` });
     if (method === "turn.submit") {
       const p = params as Record<string, any>; currents.set(this, p);
-      const transient = String(p.conversationId).startsWith("agent-handoff-");
-      if (mode === "recursive" && (p.text === "delegate to Bob" || transient && this.configuration.initialize.agentId === "bob")) {
-        const teammateId = this.configuration.initialize.agentId === "alice" ? "bob" : "carol";
-        queueMicrotask(() => emit(this, p, "request.open", { requestId: `team-${p.runId}`, kind: "team-delegate", input: { teammateId,
-          context: "EXPLICIT_HANDOFF_CONTEXT", expectedResult: "Produce the selected shared result", scope: { allowedTools: ["file", "delegation", "team", "memory"], directories: [{ path: shared, access: "write" }], sharedResourceIds: [knowledgeId] } } }));
-      } else if (mode === "hold" || mode === "unknown" || mode === "cancel-handoff") {
+      if (mode === "hold" || mode === "unknown") {
         if (mode === "unknown") queueMicrotask(() => emit(this, p, "turn.terminal", { state: "unknown", text: "lost provider", cessation: "provider-terminal" }));
-        if (mode === "cancel-handoff" && p.text === "delegate to Bob") queueMicrotask(() => emit(this, p, "request.open", { requestId: `team-${p.runId}`, kind: "team-delegate", input: {
-          teammateId: "bob", context: "EXPLICIT_HANDOFF_CONTEXT", expectedResult: "Produce selected result", scope: { allowedTools: ["file"], directories: [{ path: shared, access: "read" }] } } }));
       } else queueMicrotask(() => emit(this, p, "turn.terminal", { state: "completed", text: `completed by ${this.configuration.initialize.agentId}`, cessation: "provider-terminal" }));
       return Promise.resolve({ status: "accepted" });
     }
-    if (method === "request.answer") {
-      const current = currents.get(this)!;
-      if ((params.answer as any)?.result) queueMicrotask(() => emit(this, current, "turn.terminal", { state: "completed", text: (params.answer as any).result.text, cessation: "provider-terminal" }));
-      return Promise.resolve({ status: "answered" });
-    }
+    if (method === "request.answer") return Promise.resolve({ status: "answered" });
+    if (method === "action.answer") return mode === "answer-unknown" ? Promise.reject(new Error("lost native answer receipt")) : Promise.resolve({ status: "applied" });
+    if (method === "message.deliver") return mode === "inbox-hold" ? new Promise(resolve => { inboxReleases.push(() => resolve({ status: "accepted" })); }) : Promise.resolve({ status: "accepted" });
+    if (method === "message.receipt") return Promise.resolve({ status: "accepted" });
     if (method === "run.stop") {
-      if (mode !== "cancel-handoff") queueMicrotask(() => emit(this, params, "turn.terminal", { state: "stopped", text: "stopped", cessation: "provider-terminal" }));
+      queueMicrotask(() => emit(this, params, "turn.terminal", { state: "stopped", text: "stopped", cessation: "provider-terminal" }));
       return Promise.resolve({ status: "requested" });
     }
     return Promise.resolve({ status: "unsupported" });
@@ -79,7 +72,7 @@ function fixture(mode = "complete") {
     setNativeTurn(h.conversationId, { id: `native:${id}:final`, userEventId: id, state: "running" }, dir);
     return h.runner.run({ threadId: h.conversationId, cwd: h.workspace, text, signal: new AbortController().signal, ...extra });
   };
-  return { dir, shared, store, manager, traces, factories, invoke, emit };
+  return { dir, shared, store, manager, traces, factories, invoke, emit, inboxReleases };
 }
 
 test("one agent shares a daemon across chats while sessions, bindings and host ledgers stay separate", async () => {
@@ -180,28 +173,42 @@ test("active execution holds configuration changes, while other owned chats keep
   await Promise.all([first, second]); expect(a.idleConfirmed && b.idleConfirmed).toBe(true);
 });
 
-test("A → B → C handoffs use separate restricted instances and never bootstrap B/C private history or memory", async () => {
-  const f = fixture("recursive"), ordinaryB = await f.manager.conversation("bob-private-chat", "bob");
-  await f.invoke(ordinaryB, "bob-private-input", "BOB_PRIVATE_HISTORY");
+test("native peer transport uses the recipient's persistent cross-plugin session without fresh execution or shared memory", async () => {
+  const f = fixture();
+  await f.manager.configure("bob", { pluginId: "openclaw" }, f.store.list().revision);
+  await f.manager.configure("alice", { allowedTools: ["file"] }, f.store.list().revision);
+  const b = await f.manager.conversation(f.manager.canonicalConversation("bob"), "bob");
+  await f.invoke(b, "bob-private-input", "BOB_PRIVATE_HISTORY");
   writeFileSync(join(f.store.paths("bob").memoryDir, "MEMORY.md"), "BOB_PRIVATE_MEMORY");
-  const a = await f.manager.conversation("alice-main", "alice");
-  expect(await f.invoke(a, "alice-delegate", "delegate to Bob")).toMatchObject({ completed: true, text: "completed by carol" });
-  const delegated = f.factories.filter(f => f.execution.kind === "handoff"); expect(delegated).toHaveLength(2);
-  expect(delegated.map(f => f.scope.chain)).toEqual([["alice", "bob"], ["alice", "bob", "carol"]]);
-  for (const exec of delegated) {
-    expect(exec.execution.workspace).toContain(exec.execution.scratchRoot); expect(exec.execution.memoryDir).toContain(exec.execution.scratchRoot);
-    expect(exec.scope.directories).toEqual([{ path: f.shared, access: "read" }]);
-  }
-  const transientOpens = f.traces.filter(t => t.method === "session.open" && String(t.params.conversationId).startsWith("agent-handoff-"));
-  expect(transientOpens).toHaveLength(2);
-  for (const t of transientOpens) {
-    expect(t.process).not.toBe(ordinaryB.process); expect((t.process.configuration.initialize.scope as any).allowedTools).not.toContain("memory");
-    expect(t.params.context).toContain("SELECTED_SHARED_KNOWLEDGE"); expect(t.params.context).toContain("EXPLICIT_HANDOFF_CONTEXT");
-    expect(JSON.stringify(t.params)).not.toMatch(/BOB_PRIVATE_(HISTORY|MEMORY|PREFERENCE)/);
-    expect(t.process.configuration.args[1]).toContain(f.store.paths("bob").workspace.split("/workspace")[0]);
-  }
-  for (const t of f.traces.filter(t => t.method === "request.answer" && t.params.answer.result))
-    expect(t.params).toMatchObject({ conversationId: expect.any(String), bindingId: expect.any(String), runId: expect.any(String), attemptId: expect.any(String), requestId: expect.any(String) });
+  const a = await f.manager.conversation(f.manager.canonicalConversation("alice"), "alice");
+  await f.invoke(a, "alice-ready", "hello");
+  const turns = f.traces.filter(t => t.method === "turn.submit").length;
+  f.emit(a.process, { conversationId: a.conversationId }, "agent.message", { version: 1, sessionId: `native-${a.conversationId}`, messageId: "native-peer-1", toAgentId: "bob", text: "EXPLICIT_PEER_DATA" }, true);
+  await vi.waitFor(() => expect(f.traces.filter(t => t.method === "message.deliver")).toHaveLength(1));
+  const delivered = f.traces.find(t => t.method === "message.deliver")!;
+  expect(delivered.process).toBe(b.process);
+  expect(delivered.params).toMatchObject({ fromAgentId: "alice", toAgentId: "bob", text: "EXPLICIT_PEER_DATA", sessionId: `native-${b.conversationId}` });
+  expect(JSON.stringify(delivered.params)).not.toMatch(/BOB_PRIVATE_(HISTORY|MEMORY|PREFERENCE)|SELECTED_SHARED_KNOWLEDGE/);
+  expect(f.factories).toHaveLength(2); expect(f.factories.every(x => x.execution.kind === "ordinary")).toBe(true);
+  expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(turns);
+  expect(f.traces.find(t => t.method === "message.receipt")?.params).toMatchObject({ messageId: "native-peer-1", status: "accepted" });
+  const inspection = listThreads(f.dir).find(t => t.id.startsWith("agent-exchange-"))!;
+  expect(f.manager.summary(inspection.id)).toMatchObject({ personAgentExchange: { fromAgentId: "alice", toAgentId: "bob" } });
+  await vi.waitFor(() => expect(readThreadEvents(inspection.id, f.dir).filter(e => e.kind === "agent_exchange_status").at(-1)?.data).toMatchObject({ delivery: "delivered", execution: "unknown" }));
+  expect(f.traces.filter(t => t.method === "session.open").every(t => !JSON.stringify(t.params).includes("BOB_PRIVATE_PREFERENCE"))).toBe(true);
+});
+
+test("peer messages arriving during an inbox acknowledgement drain once without model turns", async () => {
+  const f = fixture("inbox-hold"), a = await f.manager.conversation(f.manager.canonicalConversation("alice"), "alice");
+  await f.invoke(a, "ready", "hello");
+  const send = (messageId: string) => f.emit(a.process, { conversationId: a.conversationId }, "agent.message", { version: 1, sessionId: `native-${a.conversationId}`, messageId, toAgentId: "bob", text: messageId }, true);
+  send("first"); await vi.waitFor(() => expect(f.inboxReleases).toHaveLength(1));
+  send("second"); await vi.waitFor(() => expect(f.traces.filter(t => t.method === "message.receipt")).toHaveLength(2));
+  f.inboxReleases.shift()!(); await vi.waitFor(() => expect(f.inboxReleases).toHaveLength(1));
+  f.inboxReleases.shift()!();
+  await vi.waitFor(() => expect(f.traces.filter(t => t.method === "message.deliver")).toHaveLength(2));
+  expect(f.traces.filter(t => t.method === "message.deliver").map(t => t.params.text)).toEqual(["first", "second"]);
+  expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(1);
 });
 
 test("post-foreground unscoped worker approval and cancel are refused without killing an unrelated conversation", async () => {
@@ -222,17 +229,63 @@ test("scope enforcement has no portable or permissive fallback", () => {
 });
 
 
-test("root Stop fences a late team result and a delegated timeout holds the full identity chain", async () => {
-  const f = fixture("cancel-handoff"), a = await f.manager.conversation("stop-chain", "alice");
-  const controller = new AbortController(), pending = f.invoke(a, "stop-origin", "delegate to Bob", { signal: controller.signal });
-  await vi.waitFor(() => expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(2));
-  controller.abort();
-  const rootTurn = f.traces.find(t => t.method === "turn.submit")!;
-  f.emit(a.process, rootTurn.params, "turn.terminal", { state: "stopped", text: "stopped", cessation: "provider-terminal" }); await pending;
-  await vi.waitFor(() => expect(f.manager.held("bob")).toContain("unconfirmed"));
-  expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(2);
-  expect(f.traces.filter(t => t.method === "request.answer" && t.params.answer?.result)).toHaveLength(0);
-  await expect(f.manager.configure("bob", { pluginId: "openclaw" }, f.store.list().revision)).rejects.toThrow("unknown");
+test("stopping a foreground turn does not stop the separate persistent peer recipient", async () => {
+  const f = fixture("hold"), a = await f.manager.conversation(f.manager.canonicalConversation("alice"), "alice"), b = await f.manager.conversation(f.manager.canonicalConversation("bob"), "bob");
+  const controller = new AbortController(), pending = f.invoke(a, "stop-origin", "wait", { signal: controller.signal });
+  await vi.waitFor(() => expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(1));
+  f.emit(a.process, { conversationId: a.conversationId }, "agent.message", { version: 1, sessionId: `native-${a.conversationId}`, messageId: "independent", toAgentId: "bob", text: "Retained peer data" }, true);
+  await vi.waitFor(() => expect(f.traces.filter(t => t.method === "message.deliver")).toHaveLength(1));
+  controller.abort(); await pending;
+  expect(f.traces.filter(t => t.method === "run.stop").every(t => t.process === a.process)).toBe(true);
+  expect(b.process.unavailable).toBe(false); expect(f.manager.held("bob")).toBeUndefined();
+  expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(1);
+});
+
+ test("session-scoped native actions remain actionable after foreground completion and reject stale ownership", async () => {
+  const f = fixture(), a = await f.manager.conversation(f.manager.canonicalConversation("alice"), "alice");
+  await f.invoke(a, "ready-action", "hello");
+  const native = { version: 1, requestId: "native-approval", sessionId: `native-${a.conversationId}`, kind: "approval", title: "Native choice", choices: [{ id: "once", label: "Allow once" }, { id: "deny", label: "Deny" }] };
+  f.emit(a.process, { conversationId: a.conversationId }, "action.open", native, true);
+  const action = readThreadEvents(a.conversationId, f.dir).find(e => e.kind === "harness_action")!.data as any;
+  expect(action.origin.sessionId).not.toBe(native.sessionId);
+  expect(() => f.manager.assertControlsIdle()).toThrow("idle");
+  const response = (id: string, data: any) => ({ kind: "harness_action_answer", id, threadId: a.conversationId, agentId: "client", ts: Date.now(), data }) as any;
+  await f.manager.answerAction(response("foreign-choice", { version: 1, requestId: native.requestId, origin: action.origin, choiceId: "always" }));
+  expect(f.traces.filter(t => t.method === "action.answer")).toHaveLength(0);
+  await f.manager.answerAction(response("once", { version: 1, requestId: native.requestId, origin: Object.fromEntries(Object.entries(action.origin).reverse()), choiceId: "once" }));
+  await f.manager.answerAction(response("once", { version: 1, requestId: native.requestId, origin: action.origin, choiceId: "once" }));
+  expect(f.traces.filter(t => t.method === "action.answer").map(t => t.params)).toEqual([{ version: 1, requestId: native.requestId, sessionId: native.sessionId, choiceId: "once" }]);
+  expect(() => f.manager.assertControlsIdle()).not.toThrow();
+  await f.manager.configure("alice", { model: "new-model" }, f.store.list().revision);
+  await f.manager.answerAction(response("stale", { version: 1, requestId: native.requestId, origin: action.origin, choiceId: "once" }));
+  expect(f.traces.filter(t => t.method === "action.answer")).toHaveLength(1);
+});
+
+test("an unknown native answer fences agent settings and never grants another native answer", async () => {
+  const f = fixture("answer-unknown"), a = await f.manager.conversation(f.manager.canonicalConversation("alice"), "alice");
+  await f.invoke(a, "answer-ready", "hello");
+  f.emit(a.process, { conversationId: a.conversationId }, "action.open", { version: 1, requestId: "lost-answer", sessionId: `native-${a.conversationId}`, kind: "approval", title: "Native request", choices: [{ id: "once", label: "Once" }] }, true);
+  const action = readThreadEvents(a.conversationId, f.dir).find(e => e.kind === "harness_action")!.data as any;
+  const answer = (id: string) => ({ kind: "harness_action_answer", id, threadId: a.conversationId, agentId: "client", ts: 1, data: { version: 1, requestId: action.requestId, origin: action.origin, choiceId: "once" } }) as any;
+  await f.manager.answerAction(answer("lost-operation"));
+  await expect(f.manager.configure("alice", { model: "escape" }, f.store.list().revision)).rejects.toThrow("idle");
+  await f.manager.answerAction(answer("another-operation"));
+  expect(f.traces.filter(t => t.method === "action.answer")).toHaveLength(1);
+});
+
+test("settings and unrelated registry revisions preserve the native profile and session binding", async () => {
+  const f = fixture(), a = await f.manager.conversation(f.manager.canonicalConversation("alice"), "alice");
+  await f.invoke(a, "learn", "hello");
+  const profile = a.process.configuration.initialize.profileRoot as string, binding = a.ledger.state.bindingId;
+  writeFileSync(join(profile, "learned.txt"), "NATIVE_LEARNED_STATE");
+  await f.manager.configure("bob", { name: "Renamed Bob" }, f.store.list().revision);
+  expect(await f.manager.conversation(a.conversationId)).toBe(a);
+  await f.manager.configure("alice", { model: "new-model" }, f.store.list().revision);
+  const next = await f.manager.conversation(a.conversationId);
+  expect(next.process.configuration.initialize.profileRoot).toBe(profile);
+  expect(next.ledger.state.bindingId).toBe(binding); expect(readFileSync(join(profile, "learned.txt"), "utf8")).toBe("NATIVE_LEARNED_STATE");
+  await f.invoke(next, "after-settings", "hello again");
+  expect(f.traces.filter(t => t.method === "session.open").at(-1)?.params.sessionId).toBe(`native-${a.conversationId}`);
 });
 
 test("a curated runtime cannot expose host ledgers or another agent's private state as code", async () => {
@@ -285,4 +338,19 @@ test("legacy worker records hold secretary migration without starting or changin
   expect(f.manager.bindingForThread("yorozu-secretary-v1")).toBeUndefined();
   expect(readFileSync(join(task, "task.json"), "utf8")).toBe("retained worker evidence");
   expect(f.factories).toEqual([]); expect(f.traces).toEqual([]);
+});
+
+test("unsupported recipient inbox is refused without authoring a substitute user turn", async () => {
+  const f = fixture("no-inbox"), a = await f.manager.conversation(f.manager.canonicalConversation("alice"), "alice");
+  await f.invoke(a, "sender-ready", "hello");
+  f.emit(a.process, { conversationId: a.conversationId }, "agent.message", { version: 1, sessionId: `native-${a.conversationId}`, messageId: "unsupported-inbox", toAgentId: "bob", text: "Peer data" }, true);
+  await vi.waitFor(() => {
+    const inspection = listThreads(f.dir).find(t => t.id.startsWith("agent-exchange-"));
+    expect(inspection).toBeDefined();
+    expect(readThreadEvents(inspection!.id, f.dir).filter(e => e.kind === "agent_exchange_status").at(-1)?.data)
+      .toMatchObject({ delivery: "rejected", execution: "not-started", handoff: "not-submitted" });
+  });
+  expect(f.traces.filter(t => t.method === "message.deliver")).toHaveLength(0);
+  expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(1);
+  expect(f.manager.platformStore.pendingFor("bob")).toEqual([]);
 });

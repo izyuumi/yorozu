@@ -5,15 +5,18 @@ import { agentScopeAllowsPath, intersectAgentScopes, normalizeDirectoryGrants, p
   type DirectoryGrant, type EffectiveAgentScope, type ScopeSelection } from "./agent-scope.js";
 
 export type PersonAgentPlugin = "hermes" | "openclaw";
+export type PersonAgentRuntimeSelection = { version: 1; mode: "managed" } | { version: 1; mode: "connected"; connectionId: string };
 export interface PersonAgent {
   id: string; name: string; role: string; pluginId: PersonAgentPlugin;
   model?: string; accountBindingId?: string;
+  runtime?: PersonAgentRuntimeSelection;
   workspace: string; memoryDir: string;
   allowedTools: string[]; directories: DirectoryGrant[]; teamIds: string[];
 }
 export interface PersonAgentInput {
   id?: string; name: string; role: string; pluginId: PersonAgentPlugin;
   model?: string; accountBindingId?: string;
+  runtime?: PersonAgentRuntimeSelection;
   allowedTools: string[]; directories?: DirectoryGrant[];
 }
 export type PersonAgentPatch = Partial<Omit<PersonAgentInput, "id">> & { clear?: Array<"model" | "accountBindingId"> };
@@ -114,11 +117,18 @@ export class PersonAgentStore {
     return paths;
   }
   private validateAgent(value: unknown): PersonAgent {
-    keys(value, ["id", "name", "role", "pluginId", "model", "accountBindingId", "workspace", "memoryDir", "allowedTools", "directories", "teamIds"]);
+    keys(value, ["id", "name", "role", "pluginId", "model", "accountBindingId", "runtime", "workspace", "memoryDir", "allowedTools", "directories", "teamIds"]);
     if (!validAgentId(value.id) || !["hermes", "openclaw"].includes(value.pluginId)) throw new Error("Invalid person agent identity");
     const paths = this.derived(value.id);
     if (value.workspace !== paths.workspace || value.memoryDir !== paths.memoryDir) throw new Error("Agent private roots are host-derived");
     const directories = normalizeDirectoryGrants(value.directories);
+    let runtime: PersonAgentRuntimeSelection | undefined;
+    if (value.runtime !== undefined) {
+      keys(value.runtime, value.runtime.mode === "connected" ? ["version", "mode", "connectionId"] : ["version", "mode"]);
+      if (value.runtime.version !== 1 || !["managed", "connected"].includes(value.runtime.mode)) throw new Error("Invalid agent lifecycle selection");
+      runtime = value.runtime.mode === "connected" ? { version: 1, mode: "connected", connectionId: text(value.runtime.connectionId, "connection identity", 128) }
+        : { version: 1, mode: "managed" };
+    }
     const own = [{ path: paths.workspace, access: "write" as const }, { path: paths.memoryDir, access: "write" as const }];
     const permitted = [...own, ...this.resourceRoots];
     if (directories.some(g => !permitted.some(p => pathWithin(p.path, g.path) && (p.access === "write" || g.access === "read"))))
@@ -126,6 +136,7 @@ export class PersonAgentStore {
     return { id: value.id, name: text(value.name, "agent name", 80), role: text(value.role, "agent role", 512), pluginId: value.pluginId,
       ...(value.model !== undefined ? { model: text(value.model, "model", 128) } : {}),
       ...(value.accountBindingId !== undefined ? { accountBindingId: text(value.accountBindingId, "account binding", 256) } : {}),
+      ...(runtime ? { runtime } : {}),
       workspace: paths.workspace, memoryDir: paths.memoryDir,
       allowedTools: validateTools(value.allowedTools), directories, teamIds: ids(value.teamIds, MAX_TEAMS) };
   }
@@ -161,7 +172,7 @@ export class PersonAgentStore {
     return this.derived(id);
   }
   create(input: PersonAgentInput, expectedRevision: number): AgentRegistry {
-    keys(input, ["id", "name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories"]);
+    keys(input, ["id", "name", "role", "pluginId", "model", "accountBindingId", "runtime", "allowedTools", "directories"]);
     return this.mutate(expectedRevision, state => {
       if (state.agents.length >= MAX_AGENTS) throw new Error("Agent count budget exceeded");
       const id = input.id ?? `agent-${randomUUID()}`;
@@ -173,7 +184,7 @@ export class PersonAgentStore {
     });
   }
   update(id: string, patch: PersonAgentPatch, expectedRevision: number): AgentRegistry {
-    keys(patch, ["name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories", "clear"]);
+    keys(patch, ["name", "role", "pluginId", "model", "accountBindingId", "runtime", "allowedTools", "directories", "clear"]);
     const { clear = [], ...selected } = patch;
     if (!Array.isArray(clear) || clear.length > 2 || new Set(clear).size !== clear.length
       || clear.some(k => !["model", "accountBindingId"].includes(k) || patch[k] !== undefined))

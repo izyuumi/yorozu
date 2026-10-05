@@ -13,6 +13,8 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public var tries: Int
     /// Set before the first socket attempt. Until a host receipt arrives, delivery is uncertain.
     public var attemptedAt: Date?
+    /// New messages wait indefinitely offline. Freeze wire identity before their first attempt.
+    public var waitsForFirstDelivery: Bool?
     /// Persisted retry deadline; a relaunch must not turn a half-open send into a retry storm.
     public var nextAttemptAt: Date?
     /// Optional for caches written before automatic retry; counts sends even without errors.
@@ -44,10 +46,11 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
                 lastStatusQueryId: String? = nil,
                 legacyHoldUntil: Date? = nil, uploadOffsets: [Int]? = nil,
                 uploadDescriptors: [AttachmentDescriptor]? = nil,
-                harnessControlReceipt: HarnessControlReceipt? = nil) {
+                harnessControlReceipt: HarnessControlReceipt? = nil, waitsForFirstDelivery: Bool? = nil) {
         self.event = event
         self.tries = tries
         self.attemptedAt = attemptedAt
+        self.waitsForFirstDelivery = waitsForFirstDelivery
         self.nextAttemptAt = nextAttemptAt
         self.deliveryAttempts = deliveryAttempts
         self.reconfirmedAt = reconfirmedAt
@@ -106,6 +109,7 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
         if case .approvalAnswer = event.payload { return false }
         if case .harnessActionAnswer = event.payload { return false }
         if legacyHoldUntil != nil || admissionStatus == .expired || admissionStatus == .withdrawn { return true }
+        if waitsForFirstDelivery == true && attemptedAt == nil { return false }
         if let admissionDeadline { return now >= admissionDeadline }
         return now.timeIntervalSince(reconfirmedAt ?? queuedAt) > Outbox.life
     }
@@ -156,9 +160,9 @@ public enum Outbox {
     public static func retryDelay(after attempts: Int) -> TimeInterval {
         min(60, pow(2, Double(min(max(attempts - 1, 0), 6))) * Double.random(in: 0.8...1.2))
     }
-    /// Legacy operations without host deadlines retain their old retry window. New messages
-    /// carry a 30-minute admission deadline and require fresh intent after it. Content remains
-    /// in the encrypted outbox indefinitely until accepted or explicitly cancelled.
+    /// Legacy operations retain their old retry window. New messages wait indefinitely until
+    /// first transmission; then a frozen 30-minute wire deadline protects uncertain delivery.
+    /// Content remains encrypted until accepted or explicitly cancelled.
     public static let life: TimeInterval = 48 * 60 * 60
 
     /// Housekeeping over a queue, applied whenever it is read or written. Pure, so the clock

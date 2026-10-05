@@ -54,6 +54,7 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
     personAgentRegistry: people ? () => people.registry() : undefined,
     personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => people.control(event) : undefined,
     personAgentCreate: people ? (event: Parameters<PersonAgentHost["create"]>[0]) => people.create(event) : undefined,
+    harnessAction: people ? (event: Parameters<PersonAgentHost["action"]>[0]) => people.action(event) : undefined,
     siwcAccountStatus: accounts ? () => accounts.status() : undefined,
     siwcAccountControl: accounts ? (event: Parameters<NonNullable<typeof accounts>["control"]>[0], sender: NativeAccountSender) => accounts.control(event, sender) : undefined,
     secretaryObserve: (event: Parameters<ReturnType<typeof secretaryCoordinator>["observe"]>[0]) => coordinator?.observe(event),

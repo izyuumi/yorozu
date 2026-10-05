@@ -138,3 +138,45 @@ Shared Swift checks protect task schemas, queue semantics and unsupported contro
 overlays, patched execution route and adapter provenance. Validate that assembled
 source and its compiled entry; raw checkout builds alone are insufficient.
 The installed application and its profiles are not replaced by these checks.
+
+## Harness-owned agent platform
+
+Each agent now publishes one durable ongoing conversation. Previous topic bindings,
+native session metadata and transcripts remain readable; they cannot admit new user
+turns. The host no longer injects its preference/knowledge journal or answers harness
+approvals through global YOLO. Native profile/session identity survives ordinary
+name, role, model, account and shared-folder changes after confirmed idle execution.
+Changing harness or selected connected service selects a separate owned profile.
+
+Typed `action.open`/`action.cancel` requests carry native session provenance and become
+conversation cards, including requests outside the foreground user turn. Host answer
+intent is durable before a single native handoff; missing receipts remain unknown.
+Explicit native choices belong to the harness. Sign-in/UI targets use host-selected
+opaque references, never client-supplied URLs or credentials. Unsupported native
+sign-in and action mappings stay unavailable.
+
+Managed runtimes are host-owned. Connected OpenClaw services use explicit trusted
+selection through `withConnectedAgentPlatform`; detaching stops only the bridge.
+The bundled default has no selected connected service and keeps OpenClaw disabled.
+Connected Hermes is disabled at the pinned release. Existing external services keep
+their native resource policy; managed folder grants cannot be applied to them.
+
+Peer data goes to the recipient's existing native inbox and has its own inspectable
+exchange thread. The platform never creates a temporary teammate or substitutes a
+user prompt. Inbox admission and model execution are distinct; unknown handoffs are
+never replayed. Recipients without a verified inbox receive a visible not-submitted
+rejection. Shared memory remains deferred; old host journals are preserved.
+
+New offline user messages remain in the encrypted outbox indefinitely until first
+delivery, with Waiting for Mac, edit and cancel controls. If the original wire
+deadline elapsed while never transmitted, the host-compatible timestamp/deadline
+is refreshed once and persisted before the first attempt. The operation ID and
+edited content remain stable. After any attempt, the 30-minute wire deadline stays
+immutable; uncertain/expired delivery requires visible reconciliation and fresh
+confirmation. Old caches retain their existing explicit confirmation semantics.
+No content is silently discarded at 30 minutes. Peer journal budgets reject new
+admissions when full while preserving existing records; there is no timed purge.
+
+Synthetic host/adapter checks do not establish a live cross-harness exchange.
+OpenClaw remote fetch/build, candidate app builds/reopen and external Claude review
+remain held under their earlier denials. Installed Mac 10266 is outside this change.

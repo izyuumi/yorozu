@@ -8,6 +8,7 @@ import { harnessDigest } from "./harness-ledger.js";
 import type { HarnessServices } from "./harness-runner.js";
 import type { NativeAgentRunner } from "./native.js";
 import { createThread, listThreads } from "./threads.js";
+import { join } from "node:path";
 
 export interface PersonAgentPlatform {
   createFactory(store: PersonAgentStore): PersonAgentRuntimeFactory;
@@ -19,6 +20,9 @@ export interface PersonAgentPlatform {
   initialAgent?: PersonAgentInput;
   /** Explicit execution overlay; legacy backend metadata/history are retained for rollback. */
   secretaryAgentId?: string;
+  /** Trusted discovery descriptors only; endpoints and credentials remain host-private. */
+  catalog?(): Pick<PersonAgentRegistry, "harnesses" | "defaultHarnessId" | "connections">;
+  openHarnessUI?(agentId: string, targetId: string): Promise<boolean>;
 }
 
 export class PersonAgentHost {
@@ -26,8 +30,9 @@ export class PersonAgentHost {
   readonly runtime: PersonAgentRuntime;
   readonly controls: PersonAgentControls;
   readonly runner: NativeAgentRunner;
-  constructor(readonly dir: string, platform: PersonAgentPlatform) {
-    this.store = new PersonAgentStore(dir, { resourceRoots: platform.resourceRoots, protectedRoots: platform.protectedRoots });
+  constructor(readonly dir: string, private readonly platform: PersonAgentPlatform) {
+    this.store = new PersonAgentStore(dir, { resourceRoots: platform.resourceRoots,
+      protectedRoots: [...(platform.protectedRoots ?? []), join(dir, "harness-platform-v1")] });
     this.runtime = new PersonAgentRuntime(dir, this.store, platform.createFactory(this.store));
     let controls: PersonAgentControls | undefined;
     try {
@@ -39,6 +44,9 @@ export class PersonAgentHost {
       run: async turn => {
         let owner;
         try {
+          const binding = this.runtime.bindingForThread(turn.threadId);
+          if (binding && !this.runtime.isTaskThread(turn.threadId) && turn.threadId !== this.runtime.canonicalConversation(binding.agentId))
+            return { text: "This previous conversation is retained in History. Continue in the agent's ongoing conversation.", failed: true, cessation: "not-submitted" };
           owner = await this.runtime.owner(turn.threadId);
         } catch {
           return { text: "This agent is unavailable. Its prior work will not be restarted automatically.", failed: true, cessation: "not-submitted" };
@@ -48,13 +56,18 @@ export class PersonAgentHost {
         catch { return { text: "The agent outcome is unconfirmed. This input will not be sent again automatically.", unconfirmed: true }; }
       } };
   }
-  bind(services: HarnessServices): void { this.runtime.bind(services); }
-  registry(): PersonAgentRegistry { return this.controls.registry(); }
+  bind(services: HarnessServices): void { this.runtime.bind({ ...services,
+    ...(this.platform.openHarnessUI ? { openUI: (origin, targetId) => this.platform.openHarnessUI!(origin.agentId, targetId) } : {}) }); }
+  registry(): PersonAgentRegistry {
+    const registry = this.controls.registry();
+    return { ...registry, ...this.platform.catalog?.(), agents: registry.agents.map(agent => ({ ...agent,
+      conversationId: this.runtime.canonicalConversation(agent.id) })) };
+  }
   owns(id: string): boolean { return !!this.runtime.bindingForThread(id); }
   ownsTask(id: string): boolean { return this.runtime.isTaskThread(id); }
   workspace(id: string): string | undefined { return this.runtime.bindingForThread(id)?.workspace; }
   summary(id: string): Partial<ThreadSummary> | undefined {
-    const person = this.runtime.bindingForThread(id); if (!person) return;
+    const person = this.runtime.bindingForThread(id); if (!person) return this.runtime.summary(id);
     return { ...this.runtime.summary(id), personAgentId: person.agentId, personAgentName: person.name,
       agent: "harness", bypass: false, canRewind: false, canResume: false };
   }
@@ -63,6 +76,7 @@ export class PersonAgentHost {
     if (event.kind !== "person_agent_control") throw new Error("Invalid person-agent settings event");
     await this.controls.control(event.id, event.data);
   }
+  action(event: YorozuEvent): Promise<void> { return this.runtime.answerAction(event); }
   /** A create binds only a published identity, never a caller cwd/model/account or grants. */
   async create(event: YorozuEvent): Promise<void> {
     if (event.kind !== "thread_create" || typeof event.id !== "string" || !event.id || event.id.length > 128 || /[\0\r\n]/.test(event.id)
@@ -78,6 +92,8 @@ export class PersonAgentHost {
     if (accepted && (accepted.id !== event.threadId || accepted.creation?.identity !== creation.identity))
       throw new Error("Conflicting conversation creation identity");
     const existing = threads.find(t => t.id === event.threadId);
+    if (!existing && event.threadId !== this.runtime.canonicalConversation(agent.id))
+      throw new Error("Each agent has one ongoing conversation; new topic chats are not created");
     if (existing && (existing.creation?.eventId !== creation.eventId || existing.creation.identity !== creation.identity
       || existing.cwd !== agent.workspace || existing.agent !== "harness")) throw new Error("Conflicting person-agent conversation");
     const bound = this.runtime.bindingForThread(event.threadId);

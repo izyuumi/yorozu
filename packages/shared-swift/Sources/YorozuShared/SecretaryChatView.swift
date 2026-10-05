@@ -121,7 +121,14 @@ public struct SecretaryChatView: View {
         self.onHistory = onHistory
     }
 
-    private var thread: ThreadSummary? { model.threads.first { $0.id == SecretaryUI.threadID } }
+    private var defaultAgent: PersonAgent? {
+        guard let registry = model.personAgents, let id = registry.defaultAgentId else { return nil }
+        return registry.agents.first { $0.id == id && $0.conversationId != nil }
+    }
+    private var thread: ThreadSummary? {
+        if let agent = defaultAgent { return model.personConversation(agentId: agent.id) }
+        return model.threads.first { $0.id == SecretaryUI.threadID }
+    }
     private var connected: Bool { model.link.state == .connected }
     private var connectionLabel: String {
         connected ? locale.secretaryText("Connected", "接続済み")
@@ -138,7 +145,12 @@ public struct SecretaryChatView: View {
 
     public var body: some View {
         Group {
-            if let thread {
+            if let agent = defaultAgent {
+                PersonAgentConversationView(model: model, agentId: agent.id)
+                    .environment(\.secretaryPresentation, true)
+                    .modifier(SecretaryColumn())
+                    .id(agent.id)
+            } else if let thread {
                 ChatView(model: model, thread: thread)
                     .environment(\.secretaryPresentation, true)
                     .modifier(SecretaryColumn())
@@ -153,7 +165,7 @@ public struct SecretaryChatView: View {
             }
         }
         .background(YorozuPalette.canvas)
-        .navigationTitle(SecretaryUI.localized("Yorozu"))
+        .navigationTitle(defaultAgent?.name ?? SecretaryUI.localized("Yorozu"))
         .toolbar {
             ToolbarItem(placement: historyPlacement) {
                 Button(locale.secretaryText("History", "履歴"), systemImage: "clock.arrow.circlepath", action: onHistory)

@@ -1065,6 +1065,10 @@ public final class ChatModel {
                               fromComposer: Bool = false, alternateDelivery: Bool = false, summary: ThreadSummary? = nil) -> Bool {
         guard !stopped else { return false }
         let summary = synced.first { $0.id == threadId } ?? summary
+        if let summary, isReadOnlyPersonHistory(summary) {
+            failure = SecretaryUI.localized("This previous conversation is retained in History. Continue in the agent’s ongoing conversation.")
+            return false
+        }
         if let task = summary?.harnessTask {
             guard task.canSteer, task.state == .running || task.state == .waiting, canDeliver else {
                 failure = SecretaryUI.localized("This task cannot receive a change right now.")
@@ -1127,7 +1131,9 @@ public final class ChatModel {
         )
         // Persist creation and its first message in one encrypted write. A failed write leaves
         // the composer and draft thread intact, with no phantom bubble or unsaved outbox item.
-        let pending = Outbox.pruned(outbox + (commands + [event]).map { OutboxItem(event: $0) })
+        let pending = Outbox.pruned(outbox + (commands + [event]).map {
+            OutboxItem(event: $0, waitsForFirstDelivery: $0.payload.kind == .message ? true : nil)
+        })
         if fromComposer {
             preparedSend[threadId] = event.id
             do {
@@ -1382,7 +1388,7 @@ public final class ChatModel {
             var blockedThreads: Set<String> = []
             while let self, !Task.isCancelled, self.canDeliver {
                 let now = Date()
-                guard let item = self.pendingHeads(at: now, blocking: blockedThreads).first(where: {
+                guard var item = self.pendingHeads(at: now, blocking: blockedThreads).first(where: {
                     !sent.contains($0.id) && $0.event.payload.kind != .interrupt &&
                         $0.event.payload.kind != .approvalAnswer && $0.event.payload.kind != .questionAnswer &&
                         $0.event.payload.kind != .harnessActionAnswer && ($0.nextAttemptAt ?? .distantPast) <= now
@@ -1395,11 +1401,22 @@ public final class ChatModel {
                     blockedThreads.insert(item.event.threadId)
                     continue
                 }
+                if item.waitsForFirstDelivery == true && item.attemptedAt == nil {
+                    if case .message(var message) = item.event.payload,
+                       let deadline = message.admissionDeadline, deadline <= Int(now.timeIntervalSince1970 * 1_000) {
+                        item.event.ts = Int(now.timeIntervalSince1970 * 1_000)
+                        message.admissionDeadline = item.event.ts + 30 * 60_000
+                        item.event.payload = .message(message)
+                    }
+                    item.waitsForFirstDelivery = false
+                    self.outbox[index] = item
+                }
                 self.outbox[index].attemptedAt = self.outbox[index].attemptedAt ?? now
                 let attempts = (item.deliveryAttempts ?? 0) + 1
                 self.outbox[index].deliveryAttempts = attempts
                 self.outbox[index].nextAttemptAt = now.addingTimeInterval(Outbox.retryDelay(after: attempts))
                 guard self.saveOutbox() else { break }
+                self.upsert(item.event)
                 do {
                     if case .message(let message) = item.event.payload, !message.attachments.isEmpty {
                         if self.supportsAttachmentChunks {
@@ -1765,7 +1782,8 @@ public final class ChatModel {
                 return item.lastStatusQueryAt == nil ? now :
                     item.lastStatusQueryAt! < hold ? hold : max(now, item.lastStatusQueryAt!.addingTimeInterval(15))
             }
-            guard let deadline = item.admissionDeadline, item.replacementId == nil else { return nil }
+            guard !(item.waitsForFirstDelivery == true && item.attemptedAt == nil),
+                  let deadline = item.admissionDeadline, item.replacementId == nil else { return nil }
             if deadline > now { return deadline }
             guard canDeliver, item.status(at: now) == .checking else { return nil }
             return max(deadline, (item.lastStatusQueryAt ?? .distantPast).addingTimeInterval(15))
@@ -2111,6 +2129,13 @@ public final class ChatModel {
         return ThreadSummary(id: id, title: agent.name, archived: false, lastActivity: 0,
             agent: ThreadAgent(rawValue: "harness"), cwd: agent.workspace,
             personAgentId: agent.id, personAgentName: agent.name)
+    }
+    public func isReadOnlyPersonHistory(_ summary: ThreadSummary) -> Bool {
+        if summary.personAgentExchange != nil { return true }
+        if summary.harnessTask != nil { return false }
+        guard let agentId = summary.personAgentId,
+              let canonical = personAgents?.agents.first(where: { $0.id == agentId })?.conversationId else { return false }
+        return summary.id != canonical
     }
 
     private func reconcileHarnessActionStatus(_ event: YorozuEvent) {

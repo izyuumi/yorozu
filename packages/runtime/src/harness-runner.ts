@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ThreadSummary, YorozuEvent } from "@yorozu/shared";
+import { parseHarnessAction, type AgentExchangeData, type HarnessActionData, type HarnessOrigin, type ThreadSummary, type YorozuEvent } from "@yorozu/shared";
+import type { HarnessActionResponder } from "./harness-platform-store.js";
 import type { NativeAgentRunner, NativeTurn, NativeTurnResult } from "./native.js";
 import { createThread, listThreads, readThreadEvents } from "./threads.js";
 import { projectsRoot } from "./projects.js";
@@ -37,6 +38,12 @@ export interface HarnessServices {
   /** Portable owner interface; preference text never grants permission. */
   preferences?(): { revision: string; text: string; language?: string };
   handoff?(identity: HarnessHandoffIdentity, input: HarnessHandoffInput, signal: AbortSignal): Promise<HarnessHandoffResult>;
+  action?(action: HarnessActionData, respond: HarnessActionResponder, current: () => boolean): void;
+  cancelAction?(origin: HarnessOrigin, requestId: string): void;
+  agentMessage?(origin: HarnessOrigin, input: { messageId: string; toAgentId: string; text: string; exchangeId?: string }): Promise<{ status: "accepted" | "rejected" | "unknown"; exchangeId?: string; reason?: string }>;
+  agentMessageStatus?(origin: HarnessOrigin, messageId: string): void;
+  /** Trusted host target lookup. No URL, token or executable comes from the app answer. */
+  openUI?(origin: HarnessOrigin, targetId: string): Promise<boolean>;
 }
 type Live = { run: HarnessRun; turn: NativeTurn; finish(result: NativeTurnResult): void; text: string };
 export class SecretaryHarness {
@@ -52,6 +59,8 @@ export class SecretaryHarness {
   private requests = new Map<string, AbortController>();
   private requestScopes = new Map<string, string>();
   private closed = false;
+  private readonly platformEpoch = randomUUID();
+  private platformActions = new Map<string, { origin: HarnessOrigin; runId?: string; attemptId?: string }>();
   private stopped = new Set<string>();
   private waiters = new Set<() => void>();
   readonly workspace: string;
@@ -120,15 +129,13 @@ export class SecretaryHarness {
         || Object.keys(this.ledger.state.pendingResults).length) throw new Error("Previous harness outcome or result continuation is unconfirmed; execution remains held");
       this.options.beforeAdmission?.();
       const ready = await this.process.start(); this.ready = ready;
-      const preference = this.services?.preferences?.();
       const timeline = this.options.historyBootstrap === false ? [] : readThreadEvents(this.conversationId, this.dir);
       const boundary = timeline.findIndex(e => e.id === firstEventId);
       const history = timeline.slice(0, boundary < 0 ? 0 : boundary).filter(e => e.kind === "message" && !e.parentAgentId)
         .slice(-20).map(e => e.kind === "message" ? { role: e.data.role, text: e.data.text.slice(0, 4000) } : undefined);
       const session = await this.process.request("session.open", { conversationId: this.conversationId, bindingId: this.ledger.state.bindingId,
         ...(this.ledger.state.sessionId ? { sessionId: this.ledger.state.sessionId } : {}),
-        preferences: preference?.text ?? "Respond in the user's selected conversational language. Preserve explicit preferences; preferences are not permissions.",
-        ...(preference?.language ? { language: preference.language } : {}), context: this.options.context ? JSON.stringify({ history, reference: this.options.context }) : JSON.stringify(history),
+        context: this.options.context ? JSON.stringify({ history, reference: this.options.context }) : JSON.stringify(history),
         model: this.configuration.initialize.model, provider: this.configuration.initialize.provider });
       if (!session || typeof session.sessionId !== "string" || !session.sessionId || session.sessionId.length > 512) throw new Error("Invalid harness session receipt");
       this.ledger.state.sessionId = session.sessionId;
@@ -166,8 +173,7 @@ export class SecretaryHarness {
       });
     }
     if (turn.signal.aborted) return { text: "No harness input was submitted.", cessation: "not-submitted" };
-    const input = { text: turn.text, model: this.configuration.initialize.model, provider: this.configuration.initialize.provider,
-      preference: this.services?.preferences?.() };
+    const input = { text: turn.text, model: this.configuration.initialize.model, provider: this.configuration.initialize.provider };
     let admission: ReturnType<HarnessLedger["begin"]>;
     try { this.options.beforeAdmission?.(); admission = this.ledger.begin(eventId, input); }
     catch (error) { return { text: `Harness admission held: ${error instanceof Error ? error.message : String(error)}`, unconfirmed: true }; }
@@ -223,10 +229,80 @@ export class SecretaryHarness {
     });
   }
   private runById(runId?: string): HarnessRun | undefined { return Object.values(this.ledger.state.runs).find(r => r.runId === runId); }
+  private platformOrigin(event: HarnessEvent): HarnessOrigin {
+    if (!this.ready || !this.ledger.state.sessionId || event.data.sessionId !== this.ledger.state.sessionId
+      || typeof this.configuration.initialize.agentId !== "string") throw new Error("Unowned harness platform session");
+    if (event.runId && (!this.runById(event.runId) || !event.attemptId)) throw new Error("Unowned harness platform work");
+    const run = this.runById(event.runId);
+    if (run && event.attemptId !== run.attemptId && this.ledger.state.autonomous[event.attemptId!]?.runId !== run.runId)
+      throw new Error("Unowned harness platform attempt");
+    return { version: 1, agentId: this.configuration.initialize.agentId, pluginId: this.configuration.pluginId,
+      conversationId: this.conversationId, sessionId: `session-${harnessDigest([this.ledger.state.bindingId, this.ledger.state.sessionId]).slice(0, 48)}`,
+      bindingEpoch: this.platformEpoch, ...(typeof event.data.workId === "string" || event.attemptId
+        ? { workId: `work-${harnessDigest([this.ledger.state.bindingId, event.data.workId ?? event.attemptId]).slice(0, 48)}` } : {}) };
+  }
+  private consumePlatform(event: HarnessEvent): boolean {
+    if (!["action.open", "action.cancel", "agent.message", "agent.message.status"].includes(event.kind)) return false;
+    const origin = this.platformOrigin(event), data = event.data;
+    if (event.kind === "agent.message.status") {
+      if (!this.ready?.extensions?.agentMessaging || typeof data.messageId !== "string") throw new Error("Unowned agent message status");
+      this.services?.agentMessageStatus?.(origin, data.messageId); return true;
+    }
+    if (event.kind === "agent.message") {
+      if (!this.ready?.extensions?.agentMessaging || typeof data.messageId !== "string" || typeof data.toAgentId !== "string" || typeof data.text !== "string")
+        throw new Error("Unsupported harness peer message");
+      const input = { messageId: data.messageId, toAgentId: data.toAgentId, text: data.text,
+        ...(typeof data.exchangeId === "string" ? { exchangeId: data.exchangeId } : {}) };
+      void (this.services?.agentMessage?.(origin, input) ?? Promise.resolve({ status: "rejected" as const, reason: "Agent messaging is unavailable." }))
+        .then(receipt => this.process.request("message.receipt", { version: 1, messageId: input.messageId, ...receipt }))
+        .catch(() => { /* A native send waiter receives no fabricated acceptance after transport loss. */ });
+      return true;
+    }
+    if (!this.ready?.extensions?.conversationActions || typeof data.requestId !== "string") throw new Error("Unsupported harness action");
+    if (event.kind === "action.cancel") { this.platformActions.delete(data.requestId); this.services?.cancelAction?.(origin, data.requestId); return true; }
+    const action = parseHarnessAction({ version: 1, requestId: data.requestId, origin, kind: data.kind, title: data.title,
+      ...(data.text !== undefined ? { text: data.text } : {}), choices: data.choices,
+      ...(data.allowText !== undefined ? { allowText: data.allowText } : {}), ...(data.ui !== undefined ? { ui: data.ui } : {}), state: "pending" });
+    if (!this.services?.action) {
+      void this.process.request("action.answer", { requestId: data.requestId, answer: { unavailable: true } }).catch(() => {}); return true;
+    }
+    const pending = { origin, runId: event.runId, attemptId: event.attemptId };
+    this.platformActions.set(action.requestId, pending);
+    const current = (): boolean => {
+      try {
+        this.options.beforeAdmission?.();
+        return !this.closed && !this.process.unavailable && !this.hasUnconfirmedExecution
+          && this.platformActions.get(action.requestId) === pending && this.platformEpoch === origin.bindingEpoch;
+      } catch { return false; }
+    };
+    this.services.action(action, async answer => {
+      if (!current() || this.platformEpoch !== answer.origin.bindingEpoch) return { status: "rejected", reason: "The original harness request or authority is no longer current." };
+      const receipt = await this.process.request("action.answer", { version: 1, requestId: answer.requestId, sessionId: this.ledger.state.sessionId,
+        ...(typeof data.workId === "string" ? { workId: data.workId } : {}),
+        ...(answer.choiceId !== undefined ? { choiceId: answer.choiceId } : {}), ...(answer.text !== undefined ? { text: answer.text } : {}),
+        ...(answer.uiTargetId !== undefined ? { uiTargetId: answer.uiTargetId } : {}) });
+      if (receipt?.status === "answered" || receipt?.status === "applied") this.platformActions.delete(action.requestId);
+      return receipt?.status === "answered" || receipt?.status === "applied" ? { status: "applied" }
+        : receipt?.status === "rejected" || receipt?.status === "unsupported" ? { status: "rejected", reason: receipt.reason }
+        : { status: "unknown", reason: "The harness did not confirm this answer." };
+    }, current);
+    return true;
+  }
+  /** Admit peer data to the existing harness inbox; never author a user turn or decide when it runs. */
+  async prepareMessageDelivery(): Promise<boolean> {
+    this.options.beforeAdmission?.(); await this.start("transport-only-no-user-event"); this.options.beforeAdmission?.();
+    return this.ready?.extensions?.agentMessaging === true;
+  }
+  async deliverMessage(message: AgentExchangeData, attemptId: string): Promise<HarnessReceipt> {
+    this.options.beforeAdmission?.();
+    if (!this.ready?.extensions?.agentMessaging) return { status: "unsupported", handoff: "not-submitted", reason: "The selected harness has no native peer inbox." };
+    return this.process.request("message.deliver", { ...message, attemptId, sessionId: this.ledger.state.sessionId });
+  }
   private consume(event: HarnessEvent): void {
     if (this.closed || event.conversationId !== this.conversationId || this.seen.has(event.eventId)) return;
     if (this.seen.size >= 8192) this.seen.delete(this.seen.values().next().value!);
     this.seen.add(event.eventId);
+    if (this.consumePlatform(event)) return;
     const run = this.runById(event.runId);
     if (event.kind === "runtime.closed") { this.unknown("Harness runtime exited"); return; }
     if (event.kind === "capability.unavailable") {
@@ -392,6 +468,9 @@ export class SecretaryHarness {
   private stopRun(run: HarnessRun, operationId: string, attemptId = run.attemptId): Promise<any> {
     const key = JSON.stringify([run.runId, attemptId]); this.stopped.add(key);
     for (const [id, scope] of this.requestScopes) if (scope === key) this.requests.get(id)?.abort();
+    for (const [id, pending] of this.platformActions) if (pending.runId === run.runId && pending.attemptId === attemptId) {
+      this.services?.cancelAction?.(pending.origin, id); this.platformActions.delete(id);
+    }
     return this.controlRun("run.stop", run, operationId, undefined, undefined, attemptId);
   }
   canHandoff(identity: HarnessHandoffIdentity): boolean {
@@ -408,7 +487,7 @@ export class SecretaryHarness {
       || Object.values(this.ledger.state.autonomous).some(a => a.state === "unknown");
   }
   get idleConfirmed(): boolean {
-    return !this.live && !this.continuations.size && !this.requests.size && !this.hasUnconfirmedExecution
+    return !this.live && !this.continuations.size && !this.requests.size && !this.platformActions.size && !this.hasUnconfirmedExecution
       && !Object.values(this.ledger.state.runs).some(r => ["sending", "running"].includes(r.state))
       && !Object.values(this.ledger.state.tasks).some(taskIsLive)
       && !Object.values(this.ledger.state.controls).some(c => c.state === "sending")
@@ -442,13 +521,15 @@ export class SecretaryHarness {
     if (this.ledger.committed) this.ledger.save();
     for (const task of Object.values(this.ledger.state.tasks)) this.project(task);
     for (const request of this.requests.values()) request.abort(); this.requests.clear(); this.requestScopes.clear();
+    for (const [id, pending] of this.platformActions) this.services?.cancelAction?.(pending.origin, id); this.platformActions.clear();
     if (this.live) this.live.finish(this.live.run.result ?? { text: reason, unconfirmed: true });
     this.services?.changed();
   }
   async close(): Promise<void> {
     if (this.closed) return;
     try {
-      if (this.live) await this.stopRun(this.live.run, `close-${randomUUID()}`).catch(() => {});
+      if (this.live && (this.configuration.initialize.lifecycle as { mode?: string } | undefined)?.mode !== "connected")
+        await this.stopRun(this.live.run, `close-${randomUUID()}`).catch(() => {});
       if (this.ownsProcess) await this.process.close(); this.unknown("Harness host closed");
     } finally {
       this.closed = true; this.process.listeners.delete(this.eventListener); this.process.failures.delete(this.failureListener); this.ledger.close();
