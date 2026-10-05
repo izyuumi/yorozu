@@ -244,7 +244,7 @@ test("secretary preserves legacy data, durable replay, session continuity and na
     expect(ordinary.run).toHaveBeenCalledTimes(1);
     expect(listThreads(state).find((thread) => thread.id === "legacy-thread")).toEqual(legacyRecord);
     expect(readFileSync(join(state, "threads", "legacy-thread.jsonl"))).toEqual(legacyBytes);
-  } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+  } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }, 30000);
 
 test("streamed bursts retain the exact final reply with fewer durable updates", async () => {
@@ -262,7 +262,7 @@ test("streamed bursts retain the exact final reply with fewer durable updates", 
     expect(events.filter((event) => event.kind === "update").length).toBeGreaterThan(0);
     expect(events.filter((event) => event.kind === "update").length).toBeLessThan(400);
     expect(events.find((event) => event.kind === "completed")?.text).toBe("x".repeat(400));
-  } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+  } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }, 30000);
 
 
@@ -299,7 +299,7 @@ test("production decoration retains default readiness and process journaling", a
       await sidecar.close();
     }
     vi.unstubAllEnvs();
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 10000);
 
@@ -315,7 +315,7 @@ test("settings subcommands retain the baseline CLI without starting the secretar
     expect(result.stdout).toBe("\n");
     expect(existsSync(join(temp, "state", "secretary-v1"))).toBe(false);
     expect(existsSync(join(temp, "state", "local.sock"))).toBe(false);
-  } finally { rmSync(temp, { recursive: true, force: true }); }
+  } finally { rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 
 test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never becomes another execution", async (mode) => {
@@ -388,7 +388,7 @@ test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never 
     socket?.destroy();
     await sidecar?.close();
     vi.unstubAllEnvs();
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 15000);
 
@@ -413,7 +413,7 @@ test("restart declines an accepted steer that crashed before the delivery journa
     expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
     expect(rows().find((row) => row.method === "turn/start").params.input[0].text).toBe("DONE");
   } finally {
-    socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
+    socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 10000);
 
@@ -441,7 +441,7 @@ test("a closed worker input records an uncertain steer and keeps the Rust owner 
     expect(host.exitCode).toBe(null);
   } finally {
     writeFileSync(exit, "finish fixture"); host.stdin.end(); await closed;
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 10000);
 
@@ -528,7 +528,7 @@ test.each(["FAIL", "STOP_UNCONFIRMED", "FAIL_TERMINAL", "INTERRUPTED_TERMINAL", 
     socket?.destroy();
     await sidecar?.close();
     vi.unstubAllEnvs();
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 15000);
 
@@ -576,7 +576,7 @@ test.each(["unmarked workspace", "missing host", "bad host", "conflicting thread
     socket?.destroy();
     await sidecar?.close();
     vi.unstubAllEnvs();
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 10000);
 
@@ -611,7 +611,7 @@ test.each(["initialize", "session", "missing-codex"])("%s failure before submiss
     socket?.destroy();
     await sidecar?.close();
     vi.unstubAllEnvs();
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 10000);
 
@@ -636,7 +636,7 @@ test.each(["stop-300", "stop-3000", "session-ack"])("%s retains honest cessation
       expect(result.failed === true).toBe(fault === "session-ack");
     }
     expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(0);
-  } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+  } finally { vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }, 15000);
 
 test.each(["missing-host", "raced-run", "locked-host", "before-submit-stop"])("%s requires host closure and race-safe admission evidence", async (fault) => {
@@ -677,7 +677,7 @@ test.each(["missing-host", "raced-run", "locked-host", "before-submit-stop"])("%
     }
   } finally {
     if (holder) { const closed = new Promise<void>((resolve) => holder!.once("close", () => resolve())); holder.stdin!.end(); await closed; }
-    vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
+    vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 10000);
 
@@ -805,7 +805,7 @@ test("long Japanese task history leaves room for conversation and an oversized m
     send("after-long", "HELLO");
     await vi.waitFor(() => expect(final("after-long")?.data.text).toBe("Hello, how can I help?"));
     expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(2);
-  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }, 10000);
 
 test("specialist approval remains required under legacy YOLO and Stop leaves other work and main chat usable", async () => {
@@ -851,7 +851,7 @@ test("specialist approval remains required under legacy YOLO and Stop leaves oth
     await vi.waitFor(() => expect(readThreadEvents(SECRETARY_THREAD_ID, state).find((event) => event.id === "native:after-stop:final")?.data.text).toBe("Hello, how can I help?"));
   } finally {
     writeFileSync(release + "-two", "cleanup"); socket?.destroy(); await sidecar?.close();
-    vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true });
+    vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 20000);
 
@@ -883,7 +883,7 @@ test("a damaged task record is held while the secretary still answers new conver
       kind: "message", data: { role: "user", text: "TASKS", delivery: "steer" } })}\n`);
     await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(4));
     expect(listThreads(state).filter((thread) => thread.id.startsWith("secretary-task-")).length).toBe(2);
-  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }, 10000);
 
 test("a lost tool-free planning turn does not hold later conversation or execution after restart", async () => {
@@ -911,7 +911,7 @@ test("a lost tool-free planning turn does not hold later conversation or executi
     await vi.waitFor(() => expect(final("after-plan-restart")?.data.text).toBe("Hello, how can I help?"));
     expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(3);
     expect(listThreads(state).filter((thread) => thread.id.startsWith("secretary-task-"))).toHaveLength(0);
-  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }, 10000);
 
 test("refused specialist setup reports not-started and preserves the conflicting user file", async () => {
@@ -932,5 +932,5 @@ test("refused specialist setup reports not-started and preserves the conflicting
       .toMatchObject({ failed: true, done: true, text: expect.stringContaining("task was not started") }));
     expect(rows().filter((row) => row.method === "turn/start")).toHaveLength(1);
     expect(readFileSync(conflict, "utf8")).toBe("preserve this existing file");
-  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true }); }
+  } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }, 10000);
