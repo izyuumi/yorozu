@@ -56,3 +56,57 @@ test("listener handoff attaches the actual spawn before initialize and serialize
   expect(actual.gatewayPort).toBe(52435); expect(JSON.stringify(actual)).not.toMatch(/stdioFd|leaseId|inheritedListeners/);
   await p.close(); expect(release).toHaveBeenCalled();
 });
+
+test("connected cleanup detaches only the bridge and cannot issue an external harness shutdown", async () => {
+  const { spawn } = await import("node:child_process");
+  const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const directory = await mkdtemp(join(tmpdir(), "yorozu-connected-lifecycle-"));
+  // Deliberately independent fake native owner; no real harness, sockets or credentials.
+  const external = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+  const externalExit = new Promise<void>(resolve => external.once("close", () => resolve()));
+  const receiptPath = join(directory, "bridge-methods.json");
+  const runtime = { version: 1 as const, mode: "connected" as const, connectionId: "connection-a" };
+  const p = new HarnessProcess({ pluginId: "openclaw", upstreamVersion: "fixture", command: process.execPath,
+    runtime, initialize: { agentId: "agent-a" }, args: ["--input-type=module", "-e", `
+      import{createInterface}from'node:readline';import{writeFileSync}from'node:fs';const methods=[];
+      const reply=(id,result)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,result})+'\\n');
+      createInterface({input:process.stdin}).on('line',line=>{const f=JSON.parse(line);methods.push(f.method);
+        if(f.method==='initialize')reply(f.id,{protocolVersion:1,pluginId:'openclaw',upstreamVersion:'fixture',agentId:'agent-a',
+          capabilities:${JSON.stringify(capabilities)},extensions:{version:1,connectedLifecycle:true,conversationActions:false,autonomousEvents:false,agentMessaging:false},lifecycle:f.params.lifecycle});
+        else if(f.method==='shutdown'){process.kill(${external.pid});reply(f.id,{});process.exit(0)}
+        else if(f.method==='detach'){writeFileSync(${JSON.stringify(receiptPath)},JSON.stringify(methods));reply(f.id,{});process.exit(0)}});`] });
+  processes.push(p);
+  try {
+    await p.start();
+    await expect(p.request("shutdown", {})).rejects.toThrow("externally managed");
+    // Mutating the next configuration cannot change this bridge's established ownership.
+    p.configuration.runtime = { version: 1, mode: "managed" };
+    await p.close();
+    expect(JSON.parse(await readFile(receiptPath, "utf8"))).toEqual(["initialize", "detach"]);
+    expect(() => process.kill(external.pid!, 0)).not.toThrow();
+  } finally {
+    external.kill(); await externalExit; await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("connected initialization refuses an unconfirmed ownership handshake", async () => {
+  const p = peer(false); p.configuration.runtime = { version: 1, mode: "connected", connectionId: "connection-a" };
+  // Build a fresh process so ownership is captured before any initialization.
+  const connected = new HarnessProcess({ ...p.configuration }); processes.push(connected);
+  await expect(connected.start()).rejects.toThrow("capability contract");
+  await expect(connected.request("session.open", { conversationId: "one" })).rejects.toThrow("unavailable");
+});
+
+test("unnegotiated extension events cannot reach host projection listeners", async () => {
+  const p = new HarnessProcess({ pluginId: "hermes", upstreamVersion: "fixture", command: process.execPath, initialize: {},
+    args: ["--input-type=module", "-e", `import{createInterface}from'node:readline';const send=f=>process.stdout.write(JSON.stringify(f)+'\\n');
+      createInterface({input:process.stdin}).on('line',line=>{const f=JSON.parse(line);
+        if(f.method==='initialize')send({jsonrpc:'2.0',id:f.id,result:{protocolVersion:1,pluginId:'hermes',upstreamVersion:'fixture',capabilities:${JSON.stringify(capabilities)}}});
+        else if(f.method==='emit')send({jsonrpc:'2.0',method:'harness.event',params:{protocolVersion:1,eventId:'event-1',conversationId:'one',kind:'agent.message',data:{version:1,messageId:'message-1',sessionId:'native-session',toAgentId:'agent-b',text:'Check this'}}});
+        else if(f.method==='shutdown'){send({jsonrpc:'2.0',id:f.id,result:{}});process.exit(0)}});`] });
+  processes.push(p); const listener = vi.fn(); p.listeners.add(listener);
+  await p.start(); await expect(p.request("emit", {})).rejects.toThrow("protocol became unavailable");
+  expect(listener).not.toHaveBeenCalled();
+});

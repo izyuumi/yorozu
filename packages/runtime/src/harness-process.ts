@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { prepareHostListenerTransfer, releaseHostListener, validateHostListeners, type HostListenerLease, type HostListenerTransfer } from "./agent-listener.js";
-import { HARNESS_FRAME_BYTES, HARNESS_PENDING_REQUESTS, validHarnessEvent, type HarnessConfiguration, type HarnessEvent, type HarnessReady } from "./harness-contract.js";
+import { HARNESS_FRAME_BYTES, HARNESS_PENDING_REQUESTS, validHarnessEvent, validHarnessExtensions, validHarnessLifecycle, type HarnessConfiguration, type HarnessEvent, type HarnessReady, type HarnessLifecycle } from "./harness-contract.js";
 
 /** Live capabilities remain host memory; shared wire contracts contain no raw descriptor. */
 export type SupervisedHarnessConfiguration = HarnessConfiguration & { inheritedListeners?: readonly HostListenerLease[] };
@@ -17,9 +17,14 @@ export class HarnessProcess {
   private starting?: Promise<HarnessReady>;
   private listenerTransfer?: HostListenerTransfer;
   private sessionOpens: Promise<unknown> = Promise.resolve();
+  private ready?: HarnessReady;
+  private readonly lifecycle?: HarnessLifecycle;
   readonly listeners = new Set<(event: HarnessEvent) => void>();
   readonly failures = new Set<(reason: string) => void>();
-  constructor(readonly configuration: SupervisedHarnessConfiguration) {}
+  constructor(readonly configuration: SupervisedHarnessConfiguration) {
+    // Keep ownership stable for this bridge even if a caller updates its next configuration.
+    this.lifecycle = configuration.runtime ? { ...configuration.runtime } : undefined;
+  }
   start(): Promise<HarnessReady> {
     if (this.dead || this.closing) return Promise.reject(new Error("Harness process already started or unavailable; no implicit restart"));
     return this.starting ??= this.startOnce().catch(error => {
@@ -35,8 +40,18 @@ export class HarnessProcess {
       if (process.env[key] !== undefined) env[key] = process.env[key];
     }
     const initialize = { ...this.configuration.initialize };
+    const lifecycle = this.lifecycle;
+    if (lifecycle !== undefined && !validHarnessLifecycle(lifecycle)) throw new Error("Invalid trusted harness lifecycle");
+    if (initialize.lifecycle !== undefined) {
+      const declared = initialize.lifecycle;
+      if (!lifecycle || !validHarnessLifecycle(declared) || declared.mode !== lifecycle.mode
+        || declared.mode === "connected" && lifecycle.mode === "connected" && declared.connectionId !== lifecycle.connectionId)
+        throw new Error("Harness lifecycle must match trusted host configuration");
+    }
+    if (lifecycle) initialize.lifecycle = lifecycle;
     if (initialize.gatewayListener !== undefined) throw new Error("Gateway descriptor metadata must be synthesized by the host");
     const leases = this.configuration.inheritedListeners ?? [];
+    if (lifecycle?.mode === "connected" && leases.length) throw new Error("Connected harness cannot inherit managed runtime listeners");
     if (leases.length) {
       if (this.configuration.pluginId !== "openclaw" || leases.length !== 1 || typeof initialize.agentId !== "string")
         throw new Error("Only a scoped OpenClaw Gateway may inherit one listener");
@@ -66,6 +81,10 @@ export class HarnessProcess {
           const frame = JSON.parse(line.toString("utf8"));
           if (frame.jsonrpc !== "2.0") throw new Error("Invalid protocol");
           if (frame.method === "harness.event" && validHarnessEvent(frame.params)) {
+            const kind = frame.params.kind as HarnessEvent["kind"];
+            if ((kind === "action.open" || kind === "action.cancel") && !this.ready?.extensions?.conversationActions
+              || (kind === "agent.message" || kind === "agent.message.status") && !this.ready?.extensions?.agentMessaging)
+              throw new Error("Unnegotiated harness extension event");
             for (const listener of this.listeners) listener(frame.params);
           } else if (typeof frame.id === "string" && ("result" in frame || "error" in frame)) {
             const pending = this.pending.get(frame.id);
@@ -87,20 +106,28 @@ export class HarnessProcess {
     const ready = await this.request("initialize", { ...initialize, protocolVersion: 1 });
     if (!ready || ready.protocolVersion !== 1 || ready.pluginId !== this.configuration.pluginId
       || ready.upstreamVersion !== this.configuration.upstreamVersion || !ready.capabilities
-      || ["backgroundTasks", "targetedSteer", "taskStop", "approvals", "reconnect", "attachments"].some(k => typeof ready.capabilities[k] !== "boolean")) {
+      || ["backgroundTasks", "targetedSteer", "taskStop", "approvals", "reconnect", "attachments"].some(k => typeof ready.capabilities[k] !== "boolean")
+      || ready.extensions !== undefined && !validHarnessExtensions(ready.extensions)
+      || ready.lifecycle !== undefined && !validHarnessLifecycle(ready.lifecycle)
+      || lifecycle?.mode === "connected" && (!ready.extensions?.connectedLifecycle || ready.lifecycle?.mode !== "connected"
+        || ready.lifecycle.connectionId !== lifecycle.connectionId)
+      || lifecycle?.mode !== "connected" && ready.lifecycle?.mode === "connected") {
       this.fail("Incompatible harness version or capability contract");
       throw new Error("Incompatible harness version or capability contract");
     }
     const agentId = this.configuration.initialize.agentId, isolation = this.configuration.initialize.isolation as Record<string, unknown> | undefined;
-    if (agentId !== undefined && (ready.agentId !== agentId || !isolation || !ready.isolation
+    if (agentId !== undefined && (ready.agentId !== agentId || lifecycle?.mode !== "connected" && (!isolation || !ready.isolation
       || ready.isolation.backend !== isolation.backend || ready.isolation.agentId !== agentId
-      || ready.isolation.policyDigest !== isolation.policyDigest)) {
+      || ready.isolation.policyDigest !== isolation.policyDigest))) {
       this.fail("Harness did not confirm its scoped agent identity");
       throw new Error("Harness did not confirm its scoped agent identity");
     }
+    this.ready = ready;
     return ready;
   }
   request(method: string, params: Record<string, unknown>): Promise<any> {
+    if (this.lifecycle?.mode === "connected" && method === "shutdown")
+      return Promise.reject(new Error("Connected harness is externally managed; detach only"));
     // Hermes has one native opening gate even when sessions stream separately.
     // Serialize only opens; never serialize model turns across conversations.
     if (method === "session.open") {
@@ -110,7 +137,7 @@ export class HarnessProcess {
     return this.send(method, params);
   }
   private send(method: string, params: Record<string, unknown>): Promise<any> {
-    if (this.dead || !this.child || this.closing && method !== "shutdown") return Promise.reject(new Error("Harness unavailable"));
+    if (this.dead || !this.child || this.closing && method !== "shutdown" && method !== "detach") return Promise.reject(new Error("Harness unavailable"));
     if (this.pending.size >= HARNESS_PENDING_REQUESTS) return Promise.reject(new Error("Harness request window is full"));
     const id = randomUUID(); const encoded = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
     if (Buffer.byteLength(encoded) > HARNESS_FRAME_BYTES) return Promise.reject(new Error("Harness request exceeded its limit"));
@@ -136,7 +163,9 @@ export class HarnessProcess {
     if (this.closing) return this.exited;
     this.closing = true;
     if (!this.dead) {
-      await this.request("shutdown", {}).catch(() => {});
+      // This process is our bridge. The harness behind a connection belongs to its
+      // external owner; detach must only release the bridge's transport/session watch.
+      await this.request(this.lifecycle?.mode === "connected" ? "detach" : "shutdown", {}).catch(() => {});
       this.child?.stdin.end();
     }
     this.fail("Harness closed");

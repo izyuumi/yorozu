@@ -1,5 +1,5 @@
 import type { PeerInfoData } from "./peer-info.js";
-import type { PersonAgentControlData, PersonAgentRegistry } from "./person-agents.js";
+import { projectPersonAgentRegistry, validPersonAgentId, type PersonAgentControlData, type PersonAgentRegistry, type PersonAgentPlugin } from "./person-agents.js";
 import type { SiwcAccountControlData, SiwcAccountStatusData } from "./siwc-accounts.js";
 
 /**
@@ -115,6 +115,129 @@ export interface HarnessTaskSummary {
 export interface HarnessControlReceipt {
   status: "queued" | "requested" | "rejected" | "unsupported" | "unknown";
   operationId: string;
+}
+
+/** Authenticated host projection; structure alone is not proof of provenance. */
+export interface HarnessOrigin {
+  version: 1; agentId: string; pluginId: PersonAgentPlugin; conversationId: string;
+  /** Host-mapped aliases, not raw vendor references. Epoch changes when ownership changes. */
+  sessionId: string; workId?: string; bindingEpoch: string;
+}
+export interface HarnessActionChoice { id: string; label: string }
+/** The host resolves this opaque target only against the originating harness. */
+export interface HarnessUITarget { targetId: string; label: string }
+export interface HarnessActionData {
+  version: 1; requestId: string; origin: HarnessOrigin;
+  kind: "approval" | "question" | "sign-in" | "open-ui";
+  title: string; text?: string; choices: HarnessActionChoice[]; allowText?: boolean;
+  ui?: HarnessUITarget; state: "pending" | "cancelled" | "resolved";
+}
+/** Answer to one native request, never a persistent Yorozu approval rule. */
+export interface HarnessActionAnswerData {
+  version: 1; requestId: string; origin: HarnessOrigin; choiceId?: string; text?: string; uiTargetId?: string;
+}
+export interface HarnessActionStatusData {
+  version: 1; operationId: string; requestId: string; origin: HarnessOrigin;
+  status: "requested" | "applied" | "rejected" | "no-longer-needed" | "unknown"; reason?: string;
+}
+/** Retained in an exchange inspection stream, outside the ongoing user conversation. */
+export interface AgentExchangeData {
+  version: 1; exchangeId: string; messageId: string; deliveryId: string; origin: HarnessOrigin;
+  fromAgentId: string; toAgentId: string; text: string; createdAt: number;
+}
+export interface AgentExchangeStatusData {
+  version: 1; exchangeId: string; messageId: string; deliveryId: string; attemptId?: string;
+  delivery: "accepted" | "delivered" | "rejected" | "unknown";
+  execution: "not-started" | "running" | "completed" | "failed" | "unknown";
+  handoff?: "not-submitted"; reason?: string;
+}
+
+function platformObject(value: unknown, keys: string[]): asserts value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(k => !keys.includes(k)))
+    throw new Error("Invalid harness platform fields");
+}
+function platformText(value: unknown, max = 128, multiline = false): asserts value is string {
+  if (typeof value !== "string" || !value.trim() || value.length > max || (multiline ? /\0/ : /[\0\r\n]/).test(value))
+    throw new Error("Invalid harness platform text");
+}
+function platformVersion(value: unknown): void {
+  if (value !== 1) throw new Error("Unsupported harness platform version");
+}
+export function parseHarnessOrigin(value: unknown): HarnessOrigin {
+  platformObject(value, ["version", "agentId", "pluginId", "conversationId", "sessionId", "workId", "bindingEpoch"]);
+  platformVersion(value.version);
+  if (!validPersonAgentId(value.agentId) || !["hermes", "openclaw"].includes(value.pluginId as string)) throw new Error("Invalid harness origin");
+  platformText(value.conversationId); platformText(value.sessionId); platformText(value.bindingEpoch);
+  if (value.workId !== undefined) platformText(value.workId);
+  return value as unknown as HarnessOrigin;
+}
+/** Compare a response to a pending host-verified request, including autonomous work scope. */
+export function sameHarnessOrigin(left: HarnessOrigin, right: HarnessOrigin): boolean {
+  return left.version === right.version && left.agentId === right.agentId && left.pluginId === right.pluginId
+    && left.conversationId === right.conversationId && left.sessionId === right.sessionId && left.workId === right.workId
+    && left.bindingEpoch === right.bindingEpoch;
+}
+export function parseHarnessAction(value: unknown): HarnessActionData {
+  platformObject(value, ["version", "requestId", "origin", "kind", "title", "text", "choices", "allowText", "ui", "state"]);
+  platformVersion(value.version); platformText(value.requestId); parseHarnessOrigin(value.origin); platformText(value.title, 512);
+  if (!["approval", "question", "sign-in", "open-ui"].includes(value.kind as string)
+    || !["pending", "cancelled", "resolved"].includes(value.state as string)
+    || value.allowText !== undefined && typeof value.allowText !== "boolean"
+    || !Array.isArray(value.choices) || value.choices.length > 32) throw new Error("Invalid harness action");
+  const choices = new Set<string>();
+  for (const choice of value.choices) {
+    platformObject(choice, ["id", "label"]); platformText(choice.id); platformText(choice.label, 256);
+    if (choices.has(choice.id)) throw new Error("Duplicate harness action choice"); choices.add(choice.id);
+  }
+  if (value.text !== undefined) platformText(value.text, 8192, true);
+  if (value.ui !== undefined) {
+    platformObject(value.ui, ["targetId", "label"]); platformText(value.ui.targetId); platformText(value.ui.label, 256);
+  }
+  return value as unknown as HarnessActionData;
+}
+export function parseHarnessActionAnswer(value: unknown): HarnessActionAnswerData {
+  platformObject(value, ["version", "requestId", "origin", "choiceId", "text", "uiTargetId"]);
+  platformVersion(value.version); platformText(value.requestId); parseHarnessOrigin(value.origin);
+  if (value.choiceId !== undefined) platformText(value.choiceId);
+  if (value.text !== undefined) platformText(value.text, 8192, true);
+  if (value.uiTargetId !== undefined) platformText(value.uiTargetId);
+  if (value.uiTargetId !== undefined ? value.choiceId !== undefined || value.text !== undefined : value.choiceId === undefined && value.text === undefined)
+    throw new Error("Invalid harness action answer selection");
+  return value as unknown as HarnessActionAnswerData;
+}
+export function harnessActionAcceptsAnswer(action: HarnessActionData, answer: HarnessActionAnswerData): boolean {
+  return action.state === "pending" && action.requestId === answer.requestId && sameHarnessOrigin(action.origin, answer.origin)
+    && (answer.uiTargetId !== undefined ? action.ui?.targetId === answer.uiTargetId
+      : (answer.choiceId === undefined || action.choices.some(c => c.id === answer.choiceId))
+        && (answer.text === undefined || action.allowText === true));
+}
+export function parseHarnessActionStatus(value: unknown): HarnessActionStatusData {
+  platformObject(value, ["version", "operationId", "requestId", "origin", "status", "reason"]);
+  platformVersion(value.version); platformText(value.operationId); platformText(value.requestId); parseHarnessOrigin(value.origin);
+  if (!["requested", "applied", "rejected", "no-longer-needed", "unknown"].includes(value.status as string)) throw new Error("Invalid harness action status");
+  if (value.reason !== undefined) platformText(value.reason, 512);
+  return value as unknown as HarnessActionStatusData;
+}
+export function parseAgentExchange(value: unknown): AgentExchangeData {
+  platformObject(value, ["version", "exchangeId", "messageId", "deliveryId", "origin", "fromAgentId", "toAgentId", "text", "createdAt"]);
+  platformVersion(value.version); platformText(value.exchangeId); platformText(value.messageId); platformText(value.deliveryId);
+  const origin = parseHarnessOrigin(value.origin);
+  if (!validPersonAgentId(value.fromAgentId) || !validPersonAgentId(value.toAgentId) || origin.agentId !== value.fromAgentId
+    || !Number.isSafeInteger(value.createdAt) || (value.createdAt as number) < 0) throw new Error("Invalid agent exchange origin");
+  platformText(value.text, 65536, true);
+  return value as unknown as AgentExchangeData;
+}
+export function parseAgentExchangeStatus(value: unknown): AgentExchangeStatusData {
+  platformObject(value, ["version", "exchangeId", "messageId", "deliveryId", "attemptId", "delivery", "execution", "handoff", "reason"]);
+  platformVersion(value.version); platformText(value.exchangeId); platformText(value.messageId); platformText(value.deliveryId);
+  if (value.attemptId !== undefined) platformText(value.attemptId);
+  if (!["accepted", "delivered", "rejected", "unknown"].includes(value.delivery as string)
+    || !["not-started", "running", "completed", "failed", "unknown"].includes(value.execution as string)
+    || value.delivery === "rejected" && value.execution !== "not-started"
+    || value.handoff !== undefined && value.handoff !== "not-submitted"
+    || value.handoff === "not-submitted" && (value.delivery === "delivered" || value.execution !== "not-started")) throw new Error("Invalid agent exchange receipt");
+  if (value.reason !== undefined) platformText(value.reason, 512);
+  return value as unknown as AgentExchangeStatusData;
 }
 
 export interface MessageData {
@@ -517,6 +640,7 @@ export interface ThreadRenameData {
 export interface ThreadSummary {
   personAgentId?: string;
   personAgentName?: string;
+  personAgentExchange?: { version: 1; exchangeId: string; fromAgentId: string; toAgentId: string };
   harness?: HarnessSummary;
   harnessTask?: HarnessTaskSummary;
   /** Host-owned ID of the active or next admitted user operation in this thread. */
@@ -808,6 +932,11 @@ export interface AgentStatusData {
 
 /** Kind tag paired with its payload. Discriminates on `kind`. */
 export type EventPayload =
+  | { kind: "harness_action"; data: HarnessActionData }
+  | { kind: "harness_action_answer"; data: HarnessActionAnswerData }
+  | { kind: "harness_action_status"; data: HarnessActionStatusData }
+  | { kind: "agent_exchange"; data: AgentExchangeData }
+  | { kind: "agent_exchange_status"; data: AgentExchangeStatusData }
   | { kind: "message"; data: MessageData }
   | { kind: "turn_changes"; data: TurnChangesData }
   | { kind: "admission_query"; data: AdmissionQueryData }
@@ -884,6 +1013,45 @@ export interface UpdateControlData {
 export type EventKind = EventPayload["kind"];
 
 export type YorozuEvent = EventBase & EventPayload;
+
+/** Preserve old clients' strict decoders; exchange inspection streams require negotiation. */
+export function projectPlatformThread(thread: ThreadSummary, capabilities: readonly string[]): ThreadSummary | undefined {
+  if (capabilities.includes("agent-exchanges-v1")) return thread;
+  if (thread.personAgentExchange || thread.id.startsWith("agent-exchange-")) return undefined;
+  const { personAgentExchange: _exchange, ...legacy } = thread;
+  return legacy;
+}
+
+/** Host-to-device projection only. Never use this to admit a client command or move a sync cursor. */
+export function projectPlatformEvent(event: YorozuEvent, capabilities: readonly string[]): YorozuEvent | undefined {
+  if ((event.kind === "harness_action" || event.kind === "harness_action_answer" || event.kind === "harness_action_status")
+    && !capabilities.includes("harness-actions-v1")) return undefined;
+  if ((event.kind === "agent_exchange" || event.kind === "agent_exchange_status" || event.threadId.startsWith("agent-exchange-"))
+    && !capabilities.includes("agent-exchanges-v1")) return undefined;
+  if (event.kind === "person_agent_control" && !capabilities.includes("person-agents-v1")) return undefined;
+  if (event.kind === "thread_list") {
+    const { personAgents, ...data } = event.data;
+    const projected = personAgents && projectPersonAgentRegistry(personAgents, capabilities);
+    return { ...event, data: { ...data, threads: data.threads.flatMap(thread => {
+      const projection = projectPlatformThread(thread, capabilities); return projection ? [projection] : [];
+    }), ...(projected ? { personAgents: projected } : {}) } };
+  }
+  if (event.kind === "sync_delta") {
+    const project = (events: YorozuEvent[]) => events.flatMap(item => {
+      const projection = projectPlatformEvent(item, capabilities); return projection ? [projection] : [];
+    });
+    return { ...event, data: { ...event.data, events: project(event.data.events),
+      ...(event.data.current ? { current: project(event.data.current) } : {}) } };
+  }
+  if (event.kind === "thread_search_result") {
+    return { ...event, data: { ...event.data, matches: event.data.matches.flatMap(match => {
+      if (!capabilities.includes("agent-exchanges-v1") && match.threadId.startsWith("agent-exchange-")) return [];
+      const thread = match.thread && projectPlatformThread(match.thread, capabilities);
+      return match.thread && !thread ? [] : [{ ...match, ...(thread ? { thread } : {}) }];
+    }) } };
+  }
+  return event;
+}
 
 /** Payload carried by a pairing QR code. */
 export interface QrPayload {

@@ -2,15 +2,28 @@
 export const PERSON_AGENT_TOOLS = ["file", "terminal", "delegation", "memory", "web", "browser", "team", "computer"] as const;
 export type PersonAgentTool = typeof PERSON_AGENT_TOOLS[number];
 export type PersonAgentPlugin = "hermes" | "openclaw";
+/** A host-owned connection reference, never an endpoint, command or credential. */
+export type PersonAgentRuntime = { version: 1; mode: "managed" } | { version: 1; mode: "connected"; connectionId: string };
+export interface PersonAgentHarnessDescriptor {
+  id: PersonAgentPlugin; label: string; available: boolean;
+  modes: Array<"managed" | "connected">; capabilities: string[]; unavailableReason?: string;
+}
+export interface PersonAgentConnectionDescriptor {
+  id: string; pluginId: PersonAgentPlugin; label: string; available: boolean; unavailableReason?: string;
+}
 export interface PersonAgentDirectoryGrant { path: string; access: "read" | "write" }
 export interface PersonAgentInput {
   id?: string; name: string; role: string; pluginId: PersonAgentPlugin;
   model?: string; accountBindingId?: string;
+  /** Missing on legacy agents means managed. */
+  runtime?: PersonAgentRuntime;
   allowedTools: PersonAgentTool[]; directories?: PersonAgentDirectoryGrant[];
 }
 export type PersonAgentPatch = Partial<Omit<PersonAgentInput, "id">> & { clear?: Array<"model" | "accountBindingId"> };
 export interface PersonAgent extends Omit<PersonAgentInput, "id" | "directories"> {
   id: string; workspace: string; memoryDir: string;
+  /** Host-selected ongoing conversation. Prior conversations remain readable history. */
+  conversationId?: string;
   directories: PersonAgentDirectoryGrant[]; teamIds: string[];
 }
 export interface PersonAgentTeam { id: string; name: string; agentIds: string[] }
@@ -25,6 +38,15 @@ export interface PersonAgentControlResult {
 export interface PersonAgentRegistry {
   version: 1; revision: number; defaultAgentId?: string; agents: PersonAgent[]; teams: PersonAgentTeam[];
   journalRevision?: number; lastControlResult?: PersonAgentControlResult;
+  harnesses?: PersonAgentHarnessDescriptor[]; defaultHarnessId?: PersonAgentPlugin;
+  connections?: PersonAgentConnectionDescriptor[];
+}
+/** Device projection only. It never changes the retained host registry or its revision. */
+export function projectPersonAgentRegistry(registry: PersonAgentRegistry, capabilities: readonly string[]): PersonAgentRegistry | undefined {
+  if (!capabilities.includes("person-agents-v1")) return undefined;
+  if (capabilities.includes("person-agent-runtime-v1")) return registry;
+  const { harnesses: _harnesses, defaultHarnessId: _default, connections: _connections, ...legacy } = registry;
+  return { ...legacy, agents: registry.agents.map(({ runtime: _runtime, conversationId: _conversation, ...agent }) => agent) };
 }
 type ControlBase = { version: 1; expectedRevision: number };
 /** The containing event ID is the operation ID. These controls never belong to chat history. */
@@ -38,7 +60,7 @@ export type PersonAgentControlData = ControlBase & (
   | { action: "share-knowledge"; expectedJournalRevision: number; knowledge: PersonAgentSharedKnowledge }
 );
 
-const AGENT_KEYS = ["name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories"];
+const AGENT_KEYS = ["name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories", "runtime"];
 function object(value: unknown, allowed: string[]): asserts value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(k => !allowed.includes(k)))
     throw new Error("Invalid person-agent fields");
@@ -79,6 +101,14 @@ function tools(value: unknown): asserts value is PersonAgentTool[] {
   if (!Array.isArray(value) || value.length > PERSON_AGENT_TOOLS.length || new Set(value).size !== value.length ||
       value.some(tool => !PERSON_AGENT_TOOLS.includes(tool))) throw new Error("Invalid person-agent tools");
 }
+export function parsePersonAgentRuntime(value: unknown): PersonAgentRuntime {
+  object(value, ["version", "mode", "connectionId"]);
+  if (value.version !== 1) throw new Error("Unsupported person-agent runtime version");
+  if (value.mode === "managed") object(value, ["version", "mode"]);
+  else if (value.mode === "connected") id(value.connectionId);
+  else throw new Error("Invalid person-agent runtime mode");
+  return value as PersonAgentRuntime;
+}
 function config(value: unknown, patch = false): void {
   object(value, patch ? [...AGENT_KEYS, "clear"] : ["id", ...AGENT_KEYS]);
   if (!patch || value.name !== undefined) text(value.name, 80);
@@ -88,6 +118,7 @@ function config(value: unknown, patch = false): void {
   if (value.id !== undefined) id(value.id);
   if (value.model !== undefined) text(value.model, 128);
   if (value.accountBindingId !== undefined) text(value.accountBindingId, 256);
+  if (value.runtime !== undefined) parsePersonAgentRuntime(value.runtime);
   if (patch && value.clear !== undefined && (!Array.isArray(value.clear) || value.clear.length > 2
     || new Set(value.clear).size !== value.clear.length || value.clear.some(k => !["model", "accountBindingId"].includes(k) || value[k] !== undefined)))
     throw new Error("Invalid person-agent clear fields");
@@ -135,7 +166,7 @@ export function parsePersonAgentControl(value: unknown): PersonAgentControlData 
 }
 
 export function parsePersonAgentRegistry(value: unknown): PersonAgentRegistry {
-  object(value, ["version", "revision", "defaultAgentId", "agents", "teams", "journalRevision", "lastControlResult"]);
+  object(value, ["version", "revision", "defaultAgentId", "agents", "teams", "journalRevision", "lastControlResult", "harnesses", "defaultHarnessId", "connections"]);
   if (value.version !== 1) throw new Error("Unsupported person-agent registry version");
   revision(value.revision);
   if (value.journalRevision !== undefined) revision(value.journalRevision);
@@ -143,11 +174,41 @@ export function parsePersonAgentRegistry(value: unknown): PersonAgentRegistry {
     throw new Error("Invalid person-agent registry budget");
   const known = new Set<string>(), memberships = new Map<string, string[]>();
   for (const agent of value.agents) {
-    object(agent, ["id", ...AGENT_KEYS, "workspace", "memoryDir", "teamIds"]);
-    const { workspace, memoryDir, teamIds, ...input } = agent;
+    object(agent, ["id", ...AGENT_KEYS, "workspace", "memoryDir", "teamIds", "conversationId"]);
+    const { workspace, memoryDir, teamIds, conversationId, ...input } = agent;
     config(input); id(agent.id); path(workspace); path(memoryDir); directories(agent.directories); ids(teamIds, 32);
+    if (conversationId !== undefined) text(conversationId, 128);
     if (known.has(agent.id)) throw new Error("Duplicate person-agent identifier");
     known.add(agent.id); memberships.set(agent.id, teamIds);
+  }
+  if (value.harnesses !== undefined) {
+    if (!Array.isArray(value.harnesses) || value.harnesses.length > 32) throw new Error("Invalid harness catalog");
+    const seen = new Set<string>();
+    for (const item of value.harnesses) {
+      object(item, ["id", "label", "available", "modes", "capabilities", "unavailableReason"]);
+      if (!["hermes", "openclaw"].includes(item.id as string) || seen.has(item.id as string)
+        || typeof item.available !== "boolean" || !Array.isArray(item.modes) || item.modes.length > 2
+        || new Set(item.modes).size !== item.modes.length || item.modes.some(v => !["managed", "connected"].includes(v))
+        || !Array.isArray(item.capabilities) || item.capabilities.length > 32 || new Set(item.capabilities).size !== item.capabilities.length
+        || item.capabilities.some(v => typeof v !== "string" || !/^[a-z][a-z0-9-]{0,47}$/.test(v)))
+        throw new Error("Invalid harness descriptor");
+      text(item.label, 80); if (item.unavailableReason !== undefined) text(item.unavailableReason, 512);
+      seen.add(item.id as string);
+    }
+    if (value.defaultHarnessId !== undefined && !value.harnesses.some(v => v.id === value.defaultHarnessId && v.available && v.modes.includes("managed")))
+      throw new Error("Invalid default harness");
+  } else if (value.defaultHarnessId !== undefined) throw new Error("Default harness requires catalog");
+  if (value.connections !== undefined) {
+    if (!Array.isArray(value.connections) || value.connections.length > 64) throw new Error("Invalid connection catalog");
+    const seen = new Set<string>();
+    for (const item of value.connections) {
+      object(item, ["id", "pluginId", "label", "available", "unavailableReason"]);
+      id(item.id); text(item.label, 80);
+      if (!["hermes", "openclaw"].includes(item.pluginId as string) || typeof item.available !== "boolean" || seen.has(item.id))
+        throw new Error("Invalid connection descriptor");
+      if (item.unavailableReason !== undefined) text(item.unavailableReason, 512);
+      seen.add(item.id);
+    }
   }
   const teams = new Map<string, string[]>();
   for (const entry of value.teams) {
