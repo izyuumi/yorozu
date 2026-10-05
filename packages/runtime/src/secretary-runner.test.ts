@@ -73,7 +73,11 @@ lines.on('line', line => {
     if (mode.includes('Task: CONTROLLED_')) {
       const first = mode.includes('Task: CONTROLLED_ONE');
       const suffix = first ? 'one' : 'two';
-      if (first && process.env.CODEX_FIXTURE_TASK_APPROVAL) send({ id: 'task-approval', method: 'item/commandExecution/requestApproval', params: { threadId: session, turnId: 'fixture-turn', command: 'controlled approval' } });
+      if (first && process.env.CODEX_FIXTURE_TASK_APPROVAL) {
+        const approval = () => send({ id: 'task-approval', method: 'item/commandExecution/requestApproval', params: { threadId: session, turnId: 'fixture-turn', command: 'controlled approval' } });
+        const delay = Number(process.env.CODEX_FIXTURE_APPROVAL_DELAY_MS || 0);
+        if (delay > 0) setTimeout(approval, delay); else approval();
+      }
       send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } });
       const timer = setInterval(() => {
         if (!fs.existsSync(process.env.CODEX_FIXTURE_RELEASE + '-' + suffix)) return;
@@ -816,12 +820,13 @@ test("long Japanese task history leaves room for conversation and an oversized m
   } finally { socket?.destroy(); await sidecar?.close(); vi.unstubAllEnvs(); rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }, 10000);
 
-test("specialist approval remains required under legacy YOLO and Stop leaves other work and main chat usable", async () => {
+test.each([0, 1250])("specialist approval remains required under legacy YOLO and Stop leaves other work and main chat usable (approval delay %dms)", async delay => {
   const { temp, state, rows } = fixture();
   const release = join(temp, "release-task");
   vi.stubEnv("CODEX_FIXTURE_RELEASE", release);
   vi.stubEnv("CODEX_FIXTURE_RESULT", join(temp, "result"));
   vi.stubEnv("CODEX_FIXTURE_TASK_APPROVAL", "1");
+  vi.stubEnv("CODEX_FIXTURE_APPROVAL_DELAY_MS", String(delay));
   let sidecar: ReturnType<typeof serveSecretary> | undefined;
   let socket: ReturnType<typeof createConnection> | undefined;
   const events: any[] = [];

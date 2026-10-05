@@ -141,3 +141,33 @@ test("main bootstrap excludes queued new inputs and preserves an existing thread
   expect(listThreads(f.dir).find(t => t.id === SECRETARY_THREAD_ID)).toMatchObject({ agent: main.agent, nativeSessionId: "legacy-codex-session" });
   expect(listThreads(f.dir).find(t => t.id === "legacy-coding")).toMatchObject({ agent: "codex" });
 });
+
+test.each(["platform", "unscoped", "scoped"])("%s refusal uses an exact session-bound envelope accepted by the real adapter", async kind => {
+  const f = fixture("busy"); await f.invoke("fallback-origin", "hello");
+  const { createAdapter } = await import(new URL("../../harness-plugins/hermes/adapter.mjs", import.meta.url).href);
+  const responses: any[] = []; let frame!: (value: any) => void;
+  const gateway = { closed: false, onFrame(fn: any) { frame = fn; }, onClose() {},
+    async call(method: string) {
+      if (method === "client.capabilities") return { server_requests: ["approval", "clarify"] };
+      if (method === "session.create") return { session_id: "live-fixture", stored_session_id: "private-upstream-session", info: {}, messages: [], message_count: 0 };
+      if (method === "session.activate") return { session_id: "live-fixture", running: false, inflight: null };
+      if (method === "session.history") return { messages: [], count: 0 };
+      throw new Error(`Unexpected inert gateway method ${method}`);
+    }, respond(id: string, result: any) { responses.push({ id, result }); } };
+  const harness = f.harness as any;
+  harness.ready.extensions = { version: 1, conversationActions: true };
+  harness.configuration.initialize.agentId = "alice";
+  const adapter = createAdapter({ emit(event: any) { if (kind === "platform") harness.consume(event); }, launch: async () => ({ gateway, authAvailable: true, provider: "fixture", model: "fixture", workspace: f.harness.workspace }) });
+  await adapter.handle("initialize", { protocolVersion: 1 });
+  await adapter.handle("session.open", { conversationId: f.harness.conversationId, bindingId: f.harness.ledger.state.bindingId });
+  const request = vi.spyOn(f.harness.process, "request").mockImplementation((method, params) => adapter.handle(method, params));
+  try {
+    frame({ jsonrpc: "2.0", id: "refuse-native", method: "approval", params: { session_id: "live-fixture", tool_name: "synthetic", choices: ["once", "deny"] } });
+    const run = f.harness.ledger.state.runs["fallback-origin"];
+    const event = { protocolVersion: 1, eventId: "unavailable-host", conversationId: f.harness.conversationId, kind: "request.open", data: { requestId: "refuse-native", kind: "approval", tool: "synthetic", input: {} } };
+    if (kind === "unscoped") harness.consume(event);
+    if (kind === "scoped") await harness.answerRequest({ ...event, runId: run.runId, attemptId: run.attemptId }, run);
+    await vi.waitFor(() => expect(responses).toEqual([{ id: "refuse-native", result: { choice: "deny" } }]));
+    expect(request).toHaveBeenCalledWith("request.answer", { requestId: "refuse-native", sessionId: "private-upstream-session", answer: { approved: false } });
+  } finally { request.mockRestore(); }
+});

@@ -264,7 +264,8 @@ export class SecretaryHarness {
       ...(data.text !== undefined ? { text: data.text } : {}), choices: data.choices,
       ...(data.allowText !== undefined ? { allowText: data.allowText } : {}), ...(data.ui !== undefined ? { ui: data.ui } : {}), state: "pending" });
     if (!this.services?.action) {
-      void this.process.request("action.answer", { requestId: data.requestId, answer: { unavailable: true } }).catch(() => {}); return true;
+      void this.process.request("request.answer", { requestId: data.requestId, sessionId: this.ledger.state.sessionId,
+        answer: action.kind === "question" ? { text: "" } : { approved: false } }).catch(() => {}); return true;
     }
     const pending = { origin, runId: event.runId, attemptId: event.attemptId };
     this.platformActions.set(action.requestId, pending);
@@ -323,7 +324,7 @@ export class SecretaryHarness {
       const id = event.data.requestId;
       if (typeof id === "string" && id.length > 0 && id.length <= 512) {
         const answer = event.data.kind === "question" ? { text: "" } : { approved: false };
-        void this.process.request("request.answer", { requestId: id, answer }).catch(() => {});
+        void this.process.request("request.answer", { requestId: id, sessionId: this.ledger.state.sessionId, answer }).catch(() => {});
       }
       return;
     }
@@ -439,7 +440,7 @@ export class SecretaryHarness {
       }
     }
     if (!signal.aborted && !this.stopped.has(requestKey) && this.requests.get(d.requestId) === abort)
-      await this.process.request("request.answer", { ...(d.kind === "team-delegate" ? identity : { requestId: d.requestId }), answer });
+      await this.process.request("request.answer", { ...(d.kind === "team-delegate" ? identity : { requestId: d.requestId, sessionId: this.ledger.state.sessionId }), answer });
     this.requests.delete(d.requestId); this.requestScopes.delete(d.requestId);
     this.services?.changed();
   }

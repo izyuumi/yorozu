@@ -12,7 +12,7 @@ import type { NativeTurn } from "./native.js";
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0)) await close(); vi.unstubAllEnvs(); });
 
-async function fixture(ownership: "harness" | "secretary" = "harness", retainedQueue = false) {
+async function fixture(ownership: "harness" | "secretary" = "harness", retainedQueue = false, models?: () => Promise<any[]>, log: (line: string) => void = () => {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "yorozu-production-review-"))), dir = join(root, "state"), workspace = join(root, "workspace");
   mkdirSync(workspace); vi.stubEnv("HOME", root); vi.stubEnv("YOROZU_STATE_DIR", dir); vi.stubEnv("YOROZU_PROJECTS_DIR", join(root, "projects"));
   vi.stubEnv("PATH", "");
@@ -22,12 +22,12 @@ async function fixture(ownership: "harness" | "secretary" = "harness", retainedQ
     appendThreadEvent({ id: "retained-request", threadId: "person", agentId: "main", ts: Date.now(), kind: "message", data: { role: "user", text: "retained" } }, dir);
     writeFileSync(join(dir, "native-turn-queue.json"), JSON.stringify([{ threadId: "person", eventId: "retained-request" }]));
   }
-  const runner = { run: vi.fn(async (turn: NativeTurn) => {
+  const runner = { ...(models ? { models } : {}), run: vi.fn(async (turn: NativeTurn) => {
     turns.push(turn);
     const answer = await turn.approve!("fixture", { command: "synthetic only" }, turn.signal);
     return { text: String(answer), sessionId: "stable-native-session", cessation: "provider-terminal" as const };
   }) };
-  const options: Parameters<typeof serve>[0] = { stateDir: dir, relayUrl: "ws://127.0.0.1:9", log() {}, nativeRunners: { codex: runner },
+  const options: Parameters<typeof serve>[0] = { stateDir: dir, relayUrl: "ws://127.0.0.1:9", log, nativeRunners: { codex: runner },
     secretaryHarness: true, secretaryHarnessOwns: id => ownership === "harness" && id === "person",
     secretaryOwnsConversation: id => ownership === "secretary" && id === "person", secretaryThreadWorkspace: id => id === "person" ? workspace : undefined,
     decorateNativeRunners: (runners, selected) => { host = selected; return runners; } };
@@ -35,15 +35,17 @@ async function fixture(ownership: "harness" | "secretary" = "harness", retainedQ
   let socket = createConnection(join(dir, "local.sock"));
   createInterface({ input: socket }).on("line", line => events.push(JSON.parse(line))).on("error", () => {});
   await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
-  cleanups.push(async () => { socket.destroy(); await sidecar.close(); rmSync(root, { recursive: true, force: true }); });
+  let closed = false;
+  const close = async () => { if (closed) return; closed = true; socket.destroy(); await sidecar.close(); };
+  cleanups.push(async () => { await close(); rmSync(root, { recursive: true, force: true }); });
   const send = (kind: string, data: any, id: string) => socket.write(JSON.stringify({ id, threadId: "person", agentId: "main", ts: Date.now(), kind, data }) + "\n");
   const restart = async () => {
-    socket.destroy(); await sidecar.close(); events.length = 0;
-    sidecar = serve(options); socket = createConnection(join(dir, "local.sock"));
+    await close(); events.length = 0;
+    sidecar = serve(options); closed = false; socket = createConnection(join(dir, "local.sock"));
     createInterface({ input: socket }).on("line", line => events.push(JSON.parse(line))).on("error", () => {});
     await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
   };
-  return { root, dir, workspace, turns, events, host, send, runner, restart };
+  return { root, dir, workspace, turns, events, host, send, runner, restart, close };
 }
 
 test.each(["harness", "secretary"] as const)("assembled %s-only ownership exempts both new and pending approvals from global YOLO and resumes one session", async ownership => {
@@ -266,4 +268,58 @@ test("a harness live-steer handoff consumes queued custody before calling the pr
   f.send("message", { role: "user", text: "change", delivery: "steer" }, "steer-queued");
   await vi.waitFor(() => expect(observed).toBe(true));
   expect(f.turns).toHaveLength(1);
+});
+
+test("sidecar close waits for an already-owned metadata writer before reporting shutdown complete", async () => {
+  let release!: () => void;
+  const models = vi.fn(() => new Promise<any[]>(resolve => { release = () => resolve([]); }));
+  const f = await fixture("harness", false, models);
+  await vi.waitFor(() => expect(models).toHaveBeenCalledOnce());
+  let finished = false;
+  const closing = f.close().then(() => { finished = true; });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(finished).toBe(false);
+  } finally { release(); await closing; }
+  expect(finished).toBe(true);
+});
+
+test("sidecar close reports bounded uncertainty rather than success for a stalled metadata owner", async () => {
+  let release!: () => void;
+  const f = await fixture("harness", false, () => new Promise<any[]>(resolve => { release = () => resolve([]); }));
+  const start = performance.now();
+  try {
+    await expect(f.close()).rejects.toThrow("shutdown is unconfirmed");
+    expect(performance.now() - start).toBeLessThan(3500);
+  } finally { release(); await new Promise<void>(resolve => setImmediate(resolve)); }
+});
+
+test("Stop escalates on live ownership and replies unknown despite journal and diagnostic failure", async () => {
+  const f = await fixture("secretary", false, undefined, line => { if (line.includes("secretary-storage-unconfirmed")) throw new Error("Synthetic logger unavailable"); });
+  let aborted = 0, terminated = 0;
+  f.runner.run.mockImplementation(turn => { f.turns.push(turn); return new Promise(resolve => {
+    turn.signal.addEventListener("abort", () => { aborted++; });
+    turn.onTerminate?.(() => { terminated++; resolve({ text: "Synthetic termination", cessation: "process-exited" } as any); });
+  }); });
+  f.send("message", { role: "user", text: "run" }, "escalation-target");
+  await vi.waitFor(() => expect(f.turns).toHaveLength(1));
+  mkdirSync(join(f.dir, "stopped-turns.jsonl"));
+  try {
+    f.send("interrupt", { targetEventId: "escalation-target" }, "escalation-stop");
+    await vi.waitFor(() => expect(aborted).toBe(1));
+    await vi.waitFor(() => expect(f.events.some(e => e.kind === "stop_status" && e.data.requestId === "escalation-stop" && e.data.status === "unknown")).toBe(true));
+    await vi.waitFor(() => expect(terminated).toBe(1), { timeout: 5000 });
+    const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
+    expect(new SecretaryAdmissionFence(f.dir).blocked).toBe(true);
+  } finally { rmSync(join(f.dir, "stopped-turns.jsonl"), { recursive: true }); }
+}, 10000);
+
+test("stop-journal failure cannot rethrow a sequence-reservation broadcast failure", () => {
+  const source = readFileSync(new URL("../dist/serve.js", import.meta.url), "utf8");
+  const start = source.indexOf("const rememberStop ="), end = source.indexOf("const computerName =", start);
+  const invoke = new Function("stoppedTurns", "secretaryOwned", "secretaryAdmission", "randomUUID", "appendFileSync", "stopFile", "state", "broadcast", "control", source.slice(start, end) + '\nreturn rememberStop({threadId:"person",targetEventId:"target",requestIds:["stop"],status:"requested"});');
+  const held = new Map(), fence = { blocked: false, begin() {}, confirmed: vi.fn(), fail: vi.fn() };
+  const result = invoke(held, () => true, fence, () => "intent", () => { throw new Error("disk unavailable"); }, "synthetic", () => {}, () => { throw new Error("send sequence reservation failed"); }, (v: any) => v);
+  expect(result).toBe(false); expect(fence.fail).toHaveBeenCalledOnce(); expect(fence.confirmed).not.toHaveBeenCalled();
+  expect(held.get("target")).toMatchObject({ status: "unconfirmed", requestIds: ["stop"] });
 });
