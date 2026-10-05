@@ -61,6 +61,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResultRequest = "tool_result_request"
         case threadCreate = "thread_create"
         case threadList = "thread_list"
+        case harnessAction = "harness_action"
+        case harnessActionAnswer = "harness_action_answer"
+        case harnessActionStatus = "harness_action_status"
+        case agentExchange = "agent_exchange"
+        case agentExchangeStatus = "agent_exchange_status"
         case personAgentControl = "person_agent_control"
         case siwcAccountControl = "siwc_account_control"
         case siwcAccountStatus = "siwc_account_status"
@@ -120,6 +125,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case toolResultRequest(ToolResultRequestData)
         case threadCreate(ThreadCreateData)
         case threadList(ThreadListData)
+        case harnessAction(HarnessActionData)
+        case harnessActionAnswer(HarnessActionAnswerData)
+        case harnessActionStatus(HarnessActionStatusData)
+        case agentExchange(AgentExchangeData)
+        case agentExchangeStatus(AgentExchangeStatusData)
         case personAgentControl(PersonAgentControlData)
         case siwcAccountControl(SiwcAccountControlData)
         case siwcAccountStatus(SiwcAccountStatusData)
@@ -179,6 +189,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .toolResultRequest: .toolResultRequest
             case .threadCreate: .threadCreate
             case .threadList: .threadList
+            case .harnessAction: .harnessAction
+            case .harnessActionAnswer: .harnessActionAnswer
+            case .harnessActionStatus: .harnessActionStatus
+            case .agentExchange: .agentExchange
+            case .agentExchangeStatus: .agentExchangeStatus
             case .personAgentControl: .personAgentControl
             case .siwcAccountControl: .siwcAccountControl
             case .siwcAccountStatus: .siwcAccountStatus
@@ -273,6 +288,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .toolResultRequest: payload = .toolResultRequest(try c.decode(ToolResultRequestData.self, forKey: .data))
             case .threadCreate: payload = .threadCreate(try c.decode(ThreadCreateData.self, forKey: .data))
             case .threadList: payload = .threadList(try c.decode(ThreadListData.self, forKey: .data))
+            case .harnessAction: payload = .harnessAction(try c.decode(HarnessActionData.self, forKey: .data))
+            case .harnessActionAnswer: payload = .harnessActionAnswer(try c.decode(HarnessActionAnswerData.self, forKey: .data))
+            case .harnessActionStatus: payload = .harnessActionStatus(try c.decode(HarnessActionStatusData.self, forKey: .data))
+            case .agentExchange: payload = .agentExchange(try c.decode(AgentExchangeData.self, forKey: .data))
+            case .agentExchangeStatus: payload = .agentExchangeStatus(try c.decode(AgentExchangeStatusData.self, forKey: .data))
             case .personAgentControl: payload = .personAgentControl(try c.decode(PersonAgentControlData.self, forKey: .data))
             case .siwcAccountControl: payload = .siwcAccountControl(try c.decode(SiwcAccountControlData.self, forKey: .data))
             case .siwcAccountStatus: payload = .siwcAccountStatus(try c.decode(SiwcAccountStatusData.self, forKey: .data))
@@ -311,8 +331,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         } catch {
             // Account schema violations must never survive as retained raw data.
             // This includes a malformed account projection nested in thread_list.
+            if [.harnessAction, .harnessActionAnswer, .harnessActionStatus, .agentExchange, .agentExchangeStatus].contains(kind) { throw error }
             if kind == .siwcAccountControl || kind == .siwcAccountStatus { throw error }
             if kind == .threadList, case .object(let data) = rawData, data["siwcAccounts"] != nil { throw error }
+            if kind == .threadList, case .object(let data) = rawData, data["personAgents"] != nil { throw error }
             payload = .unknown(kind: rawKind, data: rawData)
         }
     }
@@ -354,6 +376,11 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .toolResultRequest(let d): try c.encode(d, forKey: .data)
         case .threadCreate(let d): try c.encode(d, forKey: .data)
         case .threadList(let d): try c.encode(d, forKey: .data)
+        case .harnessAction(let d): try c.encode(d, forKey: .data)
+        case .harnessActionAnswer(let d): try c.encode(d, forKey: .data)
+        case .harnessActionStatus(let d): try c.encode(d, forKey: .data)
+        case .agentExchange(let d): try c.encode(d, forKey: .data)
+        case .agentExchangeStatus(let d): try c.encode(d, forKey: .data)
         case .personAgentControl(let d): try c.encode(d, forKey: .data)
         case .siwcAccountControl(let d): try c.encode(d, forKey: .data)
         case .siwcAccountStatus(let d): try c.encode(d, forKey: .data)
@@ -1347,6 +1374,7 @@ public enum ThreadTurnState: String, Codable, Equatable, Sendable {
 public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
     public var personAgentId: String?
     public var personAgentName: String?
+    public var personAgentExchange: PersonAgentExchangeSummary?
     public var harness: HarnessSummary?
     public var harnessTask: HarnessTaskSummary?
     /// Host-owned ID of the active or next admitted user operation in this thread.
@@ -1419,10 +1447,12 @@ public struct ThreadSummary: Codable, Equatable, Sendable, Identifiable {
         harness: HarnessSummary? = nil,
         harnessTask: HarnessTaskSummary? = nil,
         personAgentId: String? = nil,
-        personAgentName: String? = nil
+        personAgentName: String? = nil,
+        personAgentExchange: PersonAgentExchangeSummary? = nil
     ) {
         self.personAgentId = personAgentId
         self.personAgentName = personAgentName
+        self.personAgentExchange = personAgentExchange
         self.harness = harness
         self.harnessTask = harnessTask
         self.activeEventId = activeEventId

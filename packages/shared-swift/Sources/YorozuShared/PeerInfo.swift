@@ -10,7 +10,7 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
     public var computerName: String?
 
     public init(appVersion: String, protocolMin: Int = 1, protocolMax: Int = 1,
-        capabilities: [String] = ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "turn-state-v1", "steer-v1", "model-select-v1", "thread-rewind-v1", "offline-approval-v1", "thread-search-v1", "attachment-chunks-v1", "update-drain-v1", "open-agents-v1", "person-agents-v1", "siwc-accounts-v1"],
+        capabilities: [String] = ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "turn-state-v1", "steer-v1", "model-select-v1", "thread-rewind-v1", "offline-approval-v1", "thread-search-v1", "attachment-chunks-v1", "update-drain-v1", "open-agents-v1", "person-agents-v1", "person-agent-runtime-v1", "harness-actions-v1", "agent-exchanges-v1", "siwc-accounts-v1"],
         requiredCapabilities: [String] = ["channel-sequence"], computerName: String? = nil) {
         self.appVersion = appVersion
         self.protocolMin = protocolMin
@@ -24,7 +24,7 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
         let version = Bundle.main.object(forInfoDictionaryKey: "YorozuVersionLabel") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         return PeerInfoData(appVersion: boundedText(version, maxBytes: 64) ? version : "unknown",
-            capabilities: ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "turn-state-v1", "steer-v1", "model-select-v1", "thread-rewind-v1", "offline-approval-v1", "thread-search-v1", "attachment-chunks-v1", "update-drain-v1", "open-agents-v1", "person-agents-v1", "siwc-accounts-v1"],
+            capabilities: ["peer-info", "host-name", "channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "turn-state-v1", "steer-v1", "model-select-v1", "thread-rewind-v1", "offline-approval-v1", "thread-search-v1", "attachment-chunks-v1", "update-drain-v1", "open-agents-v1", "person-agents-v1", "person-agent-runtime-v1", "harness-actions-v1", "agent-exchanges-v1", "siwc-accounts-v1"],
             requiredCapabilities: ["channel-sequence", "admission-status-v1", "admission-expiry-v1", "exact-stop-v1", "offline-approval-v1"])
     }
 

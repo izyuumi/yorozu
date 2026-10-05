@@ -75,27 +75,29 @@ public struct PersonAgentInput: Codable, Equatable, Sendable {
     public var pluginId: PersonAgentPlugin
     public var model: String?
     public var accountBindingId: String?
+    public var runtime: PersonAgentRuntime?
     public var allowedTools: [PersonAgentTool]
     public var directories: [PersonAgentDirectoryGrant]?
     public init(id: String? = nil, name: String, role: String, pluginId: PersonAgentPlugin,
-        model: String? = nil, accountBindingId: String? = nil, allowedTools: [PersonAgentTool],
+        model: String? = nil, accountBindingId: String? = nil, runtime: PersonAgentRuntime? = nil, allowedTools: [PersonAgentTool],
         directories: [PersonAgentDirectoryGrant]? = nil) {
         self.id = id; self.name = name; self.role = role; self.pluginId = pluginId
-        self.model = model; self.accountBindingId = accountBindingId; self.allowedTools = allowedTools; self.directories = directories
+        self.model = model; self.accountBindingId = accountBindingId; self.runtime = runtime; self.allowedTools = allowedTools; self.directories = directories
     }
     public var isValid: Bool {
         (id.map(PersonAgentWire.id) ?? true) && PersonAgentWire.text(name, 80) && PersonAgentWire.text(role, 512)
             && (model.map { PersonAgentWire.text($0, 128) } ?? true)
-            && (accountBindingId.map { PersonAgentWire.text($0, 256) } ?? true)
+            && (accountBindingId.map { PersonAgentWire.text($0, 256) } ?? true) && (runtime?.isValid ?? true)
             && PersonAgentWire.tools(allowedTools) && (directories.map(PersonAgentWire.directories) ?? true)
     }
-    private enum CodingKeys: String, CodingKey { case id, name, role, pluginId, model, accountBindingId, allowedTools, directories }
+    private enum CodingKeys: String, CodingKey { case id, name, role, pluginId, model, accountBindingId, runtime, allowedTools, directories }
     public init(from decoder: Decoder) throws {
-        try PersonAgentWire.keys(decoder, ["id", "name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories"])
+        try PersonAgentWire.keys(decoder, ["id", "name", "role", "pluginId", "model", "accountBindingId", "runtime", "allowedTools", "directories"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id); name = try c.decode(String.self, forKey: .name)
         role = try c.decode(String.self, forKey: .role); pluginId = try c.decode(PersonAgentPlugin.self, forKey: .pluginId)
         model = try c.decodeIfPresent(String.self, forKey: .model); accountBindingId = try c.decodeIfPresent(String.self, forKey: .accountBindingId)
+        runtime = try c.decodeIfPresent(PersonAgentRuntime.self, forKey: .runtime)
         allowedTools = try c.decode([PersonAgentTool].self, forKey: .allowedTools)
         directories = try c.decodeIfPresent([PersonAgentDirectoryGrant].self, forKey: .directories)
         guard isValid else { throw PersonAgentWire.invalid(decoder) }
@@ -109,32 +111,34 @@ public struct PersonAgentPatch: Codable, Equatable, Sendable {
     public var pluginId: PersonAgentPlugin?
     public var model: String?
     public var accountBindingId: String?
+    public var runtime: PersonAgentRuntime?
     public var allowedTools: [PersonAgentTool]?
     public var directories: [PersonAgentDirectoryGrant]?
     public var clear: [Clear]?
     public init(name: String? = nil, role: String? = nil, pluginId: PersonAgentPlugin? = nil,
-        model: String? = nil, accountBindingId: String? = nil, allowedTools: [PersonAgentTool]? = nil,
+        model: String? = nil, accountBindingId: String? = nil, runtime: PersonAgentRuntime? = nil, allowedTools: [PersonAgentTool]? = nil,
         directories: [PersonAgentDirectoryGrant]? = nil, clear: [Clear]? = nil) {
         self.name = name; self.role = role; self.pluginId = pluginId; self.model = model
-        self.accountBindingId = accountBindingId; self.allowedTools = allowedTools; self.directories = directories
+        self.accountBindingId = accountBindingId; self.runtime = runtime; self.allowedTools = allowedTools; self.directories = directories
         self.clear = clear
     }
     public var isValid: Bool {
         (name.map { PersonAgentWire.text($0, 80) } ?? true) && (role.map { PersonAgentWire.text($0, 512) } ?? true)
             && (model.map { PersonAgentWire.text($0, 128) } ?? true)
-            && (accountBindingId.map { PersonAgentWire.text($0, 256) } ?? true)
+            && (accountBindingId.map { PersonAgentWire.text($0, 256) } ?? true) && (runtime?.isValid ?? true)
             && (allowedTools.map(PersonAgentWire.tools) ?? true) && (directories.map(PersonAgentWire.directories) ?? true)
             && (clear.map { $0.count <= 2 && Set($0).count == $0.count } ?? true)
             && !(clear?.contains(.model) == true && model != nil)
             && !(clear?.contains(.accountBindingId) == true && accountBindingId != nil)
     }
-    private enum CodingKeys: String, CodingKey { case name, role, pluginId, model, accountBindingId, allowedTools, directories, clear }
+    private enum CodingKeys: String, CodingKey { case name, role, pluginId, model, accountBindingId, runtime, allowedTools, directories, clear }
     public init(from decoder: Decoder) throws {
-        try PersonAgentWire.keys(decoder, ["name", "role", "pluginId", "model", "accountBindingId", "allowedTools", "directories", "clear"])
+        try PersonAgentWire.keys(decoder, ["name", "role", "pluginId", "model", "accountBindingId", "runtime", "allowedTools", "directories", "clear"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decodeIfPresent(String.self, forKey: .name); role = try c.decodeIfPresent(String.self, forKey: .role)
         pluginId = try c.decodeIfPresent(PersonAgentPlugin.self, forKey: .pluginId)
         model = try c.decodeIfPresent(String.self, forKey: .model); accountBindingId = try c.decodeIfPresent(String.self, forKey: .accountBindingId)
+        runtime = try c.decodeIfPresent(PersonAgentRuntime.self, forKey: .runtime)
         allowedTools = try c.decodeIfPresent([PersonAgentTool].self, forKey: .allowedTools)
         directories = try c.decodeIfPresent([PersonAgentDirectoryGrant].self, forKey: .directories)
         clear = try c.decodeIfPresent([Clear].self, forKey: .clear)
@@ -149,35 +153,39 @@ public struct PersonAgent: Codable, Equatable, Sendable, Identifiable {
     public var pluginId: PersonAgentPlugin
     public var model: String?
     public var accountBindingId: String?
+    public var runtime: PersonAgentRuntime?
+    public var conversationId: String?
     public var workspace: String
     public var memoryDir: String
     public var allowedTools: [PersonAgentTool]
     public var directories: [PersonAgentDirectoryGrant]
     public var teamIds: [String]
     public init(id: String, name: String, role: String, pluginId: PersonAgentPlugin, model: String? = nil,
-        accountBindingId: String? = nil, workspace: String, memoryDir: String,
-        allowedTools: [PersonAgentTool], directories: [PersonAgentDirectoryGrant] = [], teamIds: [String] = []) {
+        accountBindingId: String? = nil, runtime: PersonAgentRuntime? = nil, workspace: String, memoryDir: String,
+        allowedTools: [PersonAgentTool], directories: [PersonAgentDirectoryGrant] = [], teamIds: [String] = [], conversationId: String? = nil) {
         self.id = id; self.name = name; self.role = role; self.pluginId = pluginId; self.model = model
-        self.accountBindingId = accountBindingId; self.workspace = workspace; self.memoryDir = memoryDir
-        self.allowedTools = allowedTools; self.directories = directories; self.teamIds = teamIds
+        self.accountBindingId = accountBindingId; self.runtime = runtime; self.workspace = workspace; self.memoryDir = memoryDir
+        self.allowedTools = allowedTools; self.directories = directories; self.teamIds = teamIds; self.conversationId = conversationId
     }
     public var isValid: Bool {
         PersonAgentInput(id: id, name: name, role: role, pluginId: pluginId, model: model,
-            accountBindingId: accountBindingId, allowedTools: allowedTools, directories: directories).isValid
-            && PersonAgentWire.path(workspace) && PersonAgentWire.path(memoryDir) && PersonAgentWire.ids(teamIds, 32)
+            accountBindingId: accountBindingId, runtime: runtime, allowedTools: allowedTools, directories: directories).isValid
+            && (conversationId.map { PersonAgentWire.text($0, 128) } ?? true) && PersonAgentWire.path(workspace) && PersonAgentWire.path(memoryDir) && PersonAgentWire.ids(teamIds, 32)
     }
     private enum CodingKeys: String, CodingKey {
-        case id, name, role, pluginId, model, accountBindingId, workspace, memoryDir, allowedTools, directories, teamIds
+        case id, name, role, pluginId, model, accountBindingId, runtime, workspace, memoryDir, allowedTools, directories, teamIds, conversationId
     }
     public init(from decoder: Decoder) throws {
-        try PersonAgentWire.keys(decoder, ["id", "name", "role", "pluginId", "model", "accountBindingId", "workspace", "memoryDir", "allowedTools", "directories", "teamIds"])
+        try PersonAgentWire.keys(decoder, ["id", "name", "role", "pluginId", "model", "accountBindingId", "runtime", "workspace", "memoryDir", "allowedTools", "directories", "teamIds", "conversationId"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id); name = try c.decode(String.self, forKey: .name); role = try c.decode(String.self, forKey: .role)
         pluginId = try c.decode(PersonAgentPlugin.self, forKey: .pluginId)
         model = try c.decodeIfPresent(String.self, forKey: .model); accountBindingId = try c.decodeIfPresent(String.self, forKey: .accountBindingId)
+        runtime = try c.decodeIfPresent(PersonAgentRuntime.self, forKey: .runtime)
         workspace = try c.decode(String.self, forKey: .workspace); memoryDir = try c.decode(String.self, forKey: .memoryDir)
         allowedTools = try c.decode([PersonAgentTool].self, forKey: .allowedTools)
         directories = try c.decode([PersonAgentDirectoryGrant].self, forKey: .directories); teamIds = try c.decode([String].self, forKey: .teamIds)
+        conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
         guard isValid else { throw PersonAgentWire.invalid(decoder) }
     }
 }
@@ -306,16 +314,26 @@ public struct PersonAgentRegistry: Codable, Equatable, Sendable {
     public var teams: [PersonAgentTeam]
     public var journalRevision: Int?
     public var lastControlResult: PersonAgentControlResult?
+    public var harnesses: [PersonAgentHarnessDescriptor]?
+    public var defaultHarnessId: PersonAgentPlugin?
+    public var connections: [PersonAgentConnectionDescriptor]?
     public init(revision: Int, defaultAgentId: String? = nil, agents: [PersonAgent], teams: [PersonAgentTeam] = [],
-        journalRevision: Int? = nil, lastControlResult: PersonAgentControlResult? = nil) {
+        journalRevision: Int? = nil, lastControlResult: PersonAgentControlResult? = nil, harnesses: [PersonAgentHarnessDescriptor]? = nil,
+        defaultHarnessId: PersonAgentPlugin? = nil, connections: [PersonAgentConnectionDescriptor]? = nil) {
         self.revision = revision; self.defaultAgentId = defaultAgentId; self.agents = agents; self.teams = teams
         self.journalRevision = journalRevision; self.lastControlResult = lastControlResult
+        self.harnesses = harnesses; self.defaultHarnessId = defaultHarnessId; self.connections = connections
     }
     public var isValid: Bool {
         guard version == 1, PersonAgentWire.revision(revision), agents.count <= 64, teams.count <= 32,
               agents.allSatisfy(\.isValid), teams.allSatisfy(\.isValid),
               Set(agents.map(\.id)).count == agents.count, Set(teams.map(\.id)).count == teams.count,
               journalRevision.map(PersonAgentWire.revision) ?? true, lastControlResult?.isValid ?? true else { return false }
+        if let harnesses {
+            guard harnesses.count <= 32, harnesses.allSatisfy(\.isValid), Set(harnesses.map(\.id)).count == harnesses.count else { return false }
+            if let defaultHarnessId, !harnesses.contains(where: { $0.id == defaultHarnessId && $0.available && $0.modes.contains(.managed) }) { return false }
+        } else if defaultHarnessId != nil { return false }
+        if let connections, connections.count > 64 || !connections.allSatisfy(\.isValid) || Set(connections.map(\.id)).count != connections.count { return false }
         let known = Set(agents.map(\.id))
         guard agents.isEmpty ? defaultAgentId == nil : defaultAgentId.map(known.contains) == true,
               teams.allSatisfy({ Set($0.agentIds).isSubset(of: known) }) else { return false }
@@ -326,15 +344,18 @@ public struct PersonAgentRegistry: Codable, Equatable, Sendable {
         encoder.outputFormatting = [.withoutEscapingSlashes]
         return (try? encoder.encode(self).count).map { $0 <= 2 * 1024 * 1024 } ?? false
     }
-    private enum CodingKeys: String, CodingKey { case version, revision, defaultAgentId, agents, teams, journalRevision, lastControlResult }
+    private enum CodingKeys: String, CodingKey { case version, revision, defaultAgentId, agents, teams, journalRevision, lastControlResult, harnesses, defaultHarnessId, connections }
     public init(from decoder: Decoder) throws {
-        try PersonAgentWire.keys(decoder, ["version", "revision", "defaultAgentId", "agents", "teams", "journalRevision", "lastControlResult"])
+        try PersonAgentWire.keys(decoder, ["version", "revision", "defaultAgentId", "agents", "teams", "journalRevision", "lastControlResult", "harnesses", "defaultHarnessId", "connections"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decode(Int.self, forKey: .version); revision = try c.decode(Int.self, forKey: .revision)
         defaultAgentId = try c.decodeIfPresent(String.self, forKey: .defaultAgentId)
         agents = try c.decode([PersonAgent].self, forKey: .agents); teams = try c.decode([PersonAgentTeam].self, forKey: .teams)
         journalRevision = try c.decodeIfPresent(Int.self, forKey: .journalRevision)
         lastControlResult = try c.decodeIfPresent(PersonAgentControlResult.self, forKey: .lastControlResult)
+        harnesses = try c.decodeIfPresent([PersonAgentHarnessDescriptor].self, forKey: .harnesses)
+        defaultHarnessId = try c.decodeIfPresent(PersonAgentPlugin.self, forKey: .defaultHarnessId)
+        connections = try c.decodeIfPresent([PersonAgentConnectionDescriptor].self, forKey: .connections)
         guard isValid else { throw PersonAgentWire.invalid(decoder) }
     }
 }

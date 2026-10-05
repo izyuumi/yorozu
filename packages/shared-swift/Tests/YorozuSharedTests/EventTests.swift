@@ -80,9 +80,16 @@ private func roundTrip(_ event: YorozuEvent) throws -> YorozuEvent {
 
 @Test(arguments: YorozuEvent.Kind.allCases)
 func everyKindRoundTrips(kind: YorozuEvent.Kind) throws {
+    let origin = HarnessOrigin(agentId: "agent-a", pluginId: .hermes, conversationId: "conversation-a",
+                               sessionId: "session-alias", bindingEpoch: "epoch-1")
     let payload: YorozuEvent.Payload =
         switch kind {
         case .unknown: .unknown(kind: "future_kind", data: .object(["value": .string("kept")]))
+        case .harnessAction: .harnessAction(HarnessActionData(requestId: "native-action", origin: origin, kind: .approval, title: "Continue?", choices: [.init(id: "yes", label: "Continue")]))
+        case .harnessActionAnswer: .harnessActionAnswer(HarnessActionAnswerData(requestId: "native-action", origin: origin, choiceId: "yes"))
+        case .harnessActionStatus: .harnessActionStatus(HarnessActionStatusData(operationId: "answer-1", requestId: "native-action", origin: origin, status: .requested))
+        case .agentExchange: .agentExchange(AgentExchangeData(exchangeId: "exchange-1", messageId: "message-1", deliveryId: "delivery-1", origin: origin, fromAgentId: "agent-a", toAgentId: "agent-b", text: "Please check this.", createdAt: 1))
+        case .agentExchangeStatus: .agentExchangeStatus(AgentExchangeStatusData(exchangeId: "exchange-1", messageId: "message-1", deliveryId: "delivery-1", delivery: .accepted, execution: .notStarted))
         case .personAgentControl: .personAgentControl(PersonAgentControlData(expectedRevision: 2, action: .setDefault(agentId: "agent-a")))
         case .siwcAccountControl: .siwcAccountControl(SiwcAccountControlData(method: .status))
         case .siwcAccountStatus: .siwcAccountStatus(SiwcAccountStatusData(nativeIntegration: .wiredUnverified, available: false, state: .unsupported))
