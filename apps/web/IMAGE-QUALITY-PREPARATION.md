@@ -1,9 +1,9 @@
 # Native website media
 
-The public Mac hero previously supplied820×540 pixels at1198CSS pixels wide,
+The earlier public Mac hero supplied820×540 pixels at1198CSS pixels wide,
 which was insufficient for a2× display (2396pixels needed). The replacement is
 an actual2400×971 native window capture, with its natural aspect preserved.
-Its narrower height is intentional and approved. No original image is upscaled.
+The Mac is now a supporting overview below the phone-first hero. No original image is upscaled.
 
 ## Mac poster
 
@@ -42,7 +42,7 @@ hashes/dimensions/bytes, public fixture paths and boundaries are retained in
 
 ## Visitor behavior
 
-The Mac still renders first. Watch iPhone demo opens an accessible native browser
+The genuine iPhone screenshot renders first. Watch iPhone demo opens an accessible native browser
 dialog labeled as an iPhone sample, with Close/Escape and native video controls.
 No video or video poster has a source until the visitor opens it. VP9 is preferred,
 MP4 is the playback/error fallback, and the genuine poster stays available if
@@ -54,10 +54,37 @@ download/feed logic, hosting configuration and app releases are preserved.
 
 Build and15existing tests passed. Actual isolated headless Chrome at1440/730/390
 CSS pixels and2× confirms no overflow/broken images, evergreen copy, navigation,
-focus visibility, and sufficient genuine source pixels for the Mac hero. Media
+focus visibility, and sufficient genuine source pixels for the earlier Mac hero. Media
 codec/duration/bytes are measured with ffprobe. Native browser playback, fallback,
 initial request cost and dialog keyboard behavior passed in6actual headless Chrome cases under the unchanged production CSP, including Close/Escape,3×mobile, MP4-only browser simulation,404fall back and playback-policy refusal. Safari was not run.
 No shared browser profile, foreground app input or display/security settings are
 changed by website QA. The only publication lane is the authorized existing
 website workflow on the isolated branch; do not merge or push main because that
 could trigger an app release. No alternative publisher after an approval denial.
+
+
+## Phone-first correction
+
+The hero now shows the original native1206×2622 XCTest PNG attachment `Japanese reply
+ after completion` from iPhone17Pro Simulator at normal3× device scale. This is
+`app.screenshot()`, not a video frame, redraw or enlargement. It is an offline
+sample conversation; the attachment manifest does not record the exact capture
+commit. The native renderer and DEBUG fixture are in the released0.5 source.
+
+`prepare-iphone-screenshot.py` checks native dimensions,8-bit RGB/RGBA and colour
+metadata, encodes without resizing, and requires identical decoded RGBA before
+writing. This source has an explicit sRGB tag and no ICC profile. Its103KB WebP
+preserves every native pixel. The hero wording describes agents and tools on the
+Mac reached remotely from an iPhone; it makes no screen-mirroring claim.
+
+The supporting Mac capture remains a2400×971 wide native window from the existing
+1× display with supported textScale2. It is not a new larger/Retina-display
+capture. At the smaller supporting size it is a decorative overview; adjacent
+text explains the host role. All opaque pixels and alpha values in the native
+2400WebP equal the original; one partial-alpha edge pixel's RGB differs.
+
+Actual Chrome checks cover phone-first layout, no overflow, first-viewport native
+phone visibility and source pixel supply at2× and3×. A compact header install
+button remains visible on mobile, and the phone is smaller on short laptop
+screens. WebM, MP4, poster, scripts, icons, legal/pairing pages and download/feed
+routes are preserved from the prior public source11ce6e63. Safari is not tested.
