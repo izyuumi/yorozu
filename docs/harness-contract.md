@@ -34,14 +34,15 @@ rejection or be sent again under the same accepted operation.
 
 - `initialize`: protocol/version/readiness and effective capability negotiation.
 - `session.open`: stable conversation plus binding epoch, optional private durable
-  session reference, bounded reference-only history and explicit preferences.
+  session reference and bounded reference-only history. Harness memory stays native.
 - `turn.submit`: immutable run/attempt plus current user input. An accepted receipt
   is not terminal execution proof.
 - `task.steer`, `task.stop`, `run.stop`: exact current owner currency and immutable
   operation ID. Queued guidance and requested cancellation remain distinct from
   consumed guidance and terminal execution.
-- `request.answer`: current request-only decisions. Denial or one-shot approval;
-  no persistent upstream allowlist, secret collection or authorization widening.
+- `request.answer`: legacy request-only decisions. Product `action.answer` forwards
+  an exact current native choice; approval policy remains harness-owned. The host
+  never collects secrets or applies a global approval setting.
 - `session.snapshot`, `shutdown`: owned runtime inspection and closure.
 
 `harness.event` carries protocol version, event ID, conversation, owned run and
@@ -93,8 +94,8 @@ bridge. An inference bridge may authenticate/translate model requests only;
 secretary continuation must remain inside Hermes. The Codex app-server transport
 that takes over the loop cannot satisfy this whole-Hermes acceptance gate.
 
-Portable preferences are passed through the host-owner interface. This candidate
-does not duplicate or install the separately owned preference journal. No new
+The host preserves its legacy preference journal without injecting it into person
+sessions. Shared memory is deferred. No new
 scheduler, marketplace, updater, installed-profile migration or release is added.
 
 ## Local candidate validation
@@ -108,15 +109,15 @@ still unavailable in that entry, so execution cannot silently use local credenti
 `person-agents-v1` is advertised only when
 the production host supplies the registry/control callbacks.
 
-Person settings and chat creation use separate durable control receipts and
-immutable creation identities. They do not enter the conversation transcript.
-Creating a chat binds its published person without resolving authentication or
-starting a harness. Model/account removal uses the explicit `clear` array;
+Person settings use separate durable control receipts. Legacy chat creation
+receipts remain immutable and replayable. Registry publication creates each agent's
+canonical conversation without resolving authentication or starting a harness;
+new topic chats are refused. Settings do not enter the conversation transcript. Model/account removal uses the explicit `clear` array;
 omission preserves a value and JSON null is rejected. Registry revisions protect
 against stale edits, and preparation, running work, and unknown outcomes hold
 settings changes.
 
-The registry default applies to new chats. Continuous secretary migration remains
+The registry default selects the ongoing conversation shown on the main screen. Continuous secretary migration remains
 an explicit trusted host operation. It requires idle legacy work and an empty
 queue. Existing legacy worker records hold migration until explicitly reconciled;
 absence of a running main turn alone does not prove those workers have settled.
