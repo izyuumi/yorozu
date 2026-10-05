@@ -82,6 +82,7 @@ class InternalReleasePolicyTests(unittest.TestCase):
     def test_safe_source_scoped_gates_and_receipts_remain_wired(self):
         script = (ROOT / "scripts/check-internal-alpha.sh").read_text()
         self.assertIn("mktemp -d /tmp/yri.XXXXXX", script)
+        self.assertLess(script.index('rm -f "$RECEIPTS/internal-host.json"'), script.index("python3 scripts/stage-internal-alpha.py"))
         for gate in ("host", "swift"):
             self.assertIn(f"python3 scripts/check-internal-{gate}.py --receipt", script)
             self.assertIn(f"internal-{gate}.json", script)

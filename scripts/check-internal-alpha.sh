@@ -7,14 +7,14 @@ cd "$(dirname "$0")/.."
 TMPDIR=$(mktemp -d /tmp/yri.XXXXXX)
 export TMPDIR
 SOURCE=$(mktemp -d "${TMPDIR:-/tmp}/yorozu-internal-check.XXXXXX")
-python3 scripts/stage-internal-alpha.py "$SOURCE"
-cd "$SOURCE"
-pnpm install --frozen-lockfile
-pnpm --filter @yorozu/shared --filter @yorozu/runtime build
 # Receipts are emitted only after every explicitly selected test passes.
 RECEIPTS=${YOROZU_INTERNAL_RECEIPTS:-$SOURCE}
 mkdir -p "$RECEIPTS"
 rm -f "$RECEIPTS/internal-host.json" "$RECEIPTS/internal-swift.json"
+python3 scripts/stage-internal-alpha.py "$SOURCE"
+cd "$SOURCE"
+pnpm install --frozen-lockfile
+pnpm --filter @yorozu/shared --filter @yorozu/runtime build
 python3 scripts/test-check-internal-host.py
 python3 scripts/check-internal-host.py --receipt "$RECEIPTS/internal-host.json"
 cargo build --locked --manifest-path packages/host-core/Cargo.toml --bin yorozu-host-core
