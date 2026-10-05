@@ -1160,3 +1160,117 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(await transport.sent.allSatisfy { $0.payload.kind != .questionAnswer })
     await model.shutdown()
 }
+
+private func offlinePersonCatalog() -> PersonAgentRegistry {
+    let agent = PersonAgent(id: "offline-agent", name: "Synthetic Secretary", role: "Notes", pluginId: .hermes,
+        workspace: "/tmp/offline-agent/workspace", memoryDir: "/tmp/offline-agent/memory", allowedTools: [.file],
+        conversationId: "offline-conversation")
+    return PersonAgentRegistry(revision: 1, defaultAgentId: agent.id, agents: [agent])
+}
+
+@MainActor
+@Test func personConversationSurvivesDisconnectWithOfflineEditCancelAndNoStaleAuthority() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    await reconnect(transport)
+    let catalog = offlinePersonCatalog()
+    let history = ThreadSummary(id: "earlier-topic", title: "Earlier", archived: true, lastActivity: 1,
+        personAgentId: "offline-agent")
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["person-agents-v1", "harness-actions-v1"])))
+    await transport.yield(.event(YorozuEvent(id: "catalog", threadId: "", ts: 1, agentId: "host",
+        payload: .threadList(ThreadListData(threads: [history], personAgents: catalog)))))
+    #expect(await settle { model.personAgents == catalog && model.canDeliver })
+    let conversation = try #require(model.personConversation())
+    let origin = HarnessOrigin(agentId: "offline-agent", pluginId: .hermes,
+        conversationId: conversation.id, sessionId: "synthetic-session", bindingEpoch: "epoch-1")
+    let action = HarnessActionData(requestId: "synthetic-action", origin: origin, kind: .approval,
+        title: "Synthetic approval", choices: [.init(id: "once", label: "Allow once")])
+    await transport.yield(.event(YorozuEvent(id: "action", threadId: conversation.id, ts: 2, agentId: "host",
+        payload: .harnessAction(action))))
+    #expect(await settle { model.canAnswerHarnessAction(action) })
+    // Exact LocalSocketTransport redial sequence: presence lost, closed, legacy, connecting.
+    await transport.yield(.ownerOnline(false))
+    await transport.yield(.state(.closed))
+    await transport.yield(.compatibility(.legacy))
+    await transport.yield(.state(.connecting))
+    #expect(await settle { model.state == .connecting && !model.supportsPersonAgents })
+    #expect(model.personAgents == catalog && model.personConversation() == conversation)
+    #expect(!model.canAnswerHarnessAction(action))
+    #expect(model.threads.contains(history) && model.isReadOnlyPersonHistory(history))
+    #expect(!model.isReadOnlyPersonHistory(conversation))
+    model.drafts[conversation.id] = "offline original"
+    model.send(in: conversation)
+    let queued = try #require(model.outbox.last)
+    #expect(queued.event.threadId == conversation.id && queued.event.payload.kind == .message)
+    #expect(queued.attemptedAt == nil && model.outboxStatus(of: queued.id) == .queued)
+    #expect(model.beginQueuedMessageEdit(queued.id)?.text == "offline original")
+    #expect(model.editQueuedMessage(queued.id, text: "offline edited"))
+    model.withdraw(queued.id)
+    #expect(model.outboxStatus(of: queued.id) == .withdrawn)
+    #expect(model.drafts[conversation.id] == "offline edited")
+    #expect(await transport.messages.isEmpty)
+    #expect(model.outbox.allSatisfy { $0.event.payload.kind == .message })
+    let request = PersonAgentControlData(expectedRevision: 1, action: .setDefault(agentId: "offline-agent"))
+    #expect(model.controlPersonAgents(request) == nil)
+    // Negotiated capability alone must not re-authorize the retained cached catalog.
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["person-agents-v1", "harness-actions-v1"])))
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver && model.supportsPersonAgents })
+    #expect(model.controlPersonAgents(request) == nil)
+    #expect(await transport.sent.allSatisfy { $0.payload.kind != .personAgentControl })
+    #expect(!model.canAnswerHarnessAction(action))
+    await transport.yield(.event(YorozuEvent(id: "fresh-catalog", threadId: "", ts: 2, agentId: "host",
+        payload: .threadList(ThreadListData(threads: [history], personAgents: catalog)))))
+    // Observe a marker after the fresh catalog, rather than relying on equal cached values.
+    await transport.yield(.event(YorozuEvent(id: "fresh-marker", threadId: conversation.id, ts: 3, agentId: "host",
+        payload: .message(MessageData(role: .agent, text: "fresh", done: true)))))
+    #expect(await settle { model.events[conversation.id]?.contains { $0.id == "fresh-marker" } == true })
+    #expect(model.controlPersonAgents(request) != nil)
+    #expect(model.canAnswerHarnessAction(action))
+    await model.shutdown()
+}
+
+@MainActor
+@Test func cachedPersonConversationSurvivesOfflineColdLaunchTransportReset() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let catalog = offlinePersonCatalog()
+    cache.save(personAgents: catalog)
+    let history = ThreadSummary(id: "cached-topic", title: "Cached history", archived: true, lastActivity: 1,
+        personAgentId: "offline-agent")
+    cache.save(threads: [history])
+    let transport = QueueTransport()
+    // LocalSocketTransport emits this even if the socket has never been reachable this launch.
+    await transport.yield(.compatibility(.legacy))
+    await transport.yield(.state(.connecting))
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    #expect(await settle { model.state == .connecting })
+    #expect(model.personAgents == catalog && !model.canDeliver && !model.supportsPersonAgents)
+    let conversation = try #require(model.personConversation())
+    #expect(conversation.id == "offline-conversation" && conversation.personAgentId == "offline-agent")
+    #expect(model.threads.contains(history) && model.isReadOnlyPersonHistory(history))
+    model.drafts[conversation.id] = "cold launch message"
+    model.send(in: conversation)
+    let queued = try #require(model.outbox.last)
+    #expect(queued.attemptedAt == nil && queued.waitsForFirstDelivery == true)
+    #expect(model.canEditQueuedMessage(queued.id))
+    #expect(model.beginQueuedMessageEdit(queued.id)?.text == "cold launch message")
+    #expect(model.editQueuedMessage(queued.id, text: "edited after cold launch"))
+    #expect(model.controlPersonAgents(PersonAgentControlData(expectedRevision: 1,
+        action: .setDefault(agentId: "offline-agent"))) == nil)
+    #expect(await transport.messages.isEmpty)
+    await model.shutdown()
+    let relaunched = ChatModel(transport: QueueTransport(), cache: cache)
+    #expect(relaunched.personConversation()?.id == conversation.id)
+    #expect(relaunched.outbox.first?.id == queued.id && relaunched.canEditQueuedMessage(queued.id))
+    relaunched.withdraw(queued.id)
+    #expect(relaunched.outboxStatus(of: queued.id) == .withdrawn)
+    #expect(relaunched.drafts[conversation.id] == "edited after cold launch")
+    await relaunched.shutdown()
+}

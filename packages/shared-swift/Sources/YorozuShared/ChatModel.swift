@@ -21,6 +21,8 @@ public final class ChatModel {
     /// Host presentation descriptors, cached for offline navigation. Cached descriptors never
     /// authorize settings or harness actions; live negotiated capabilities are required.
     public private(set) var personAgents: PersonAgentRegistry?
+    /// Presentation survives transport resets; live settings/action authority does not.
+    private var personAgentsCurrent = false
     public var supportsPersonAgents: Bool {
         if case .compatible(_, let capabilities) = compatibility { return capabilities.contains("person-agents-v1") }
         return false
@@ -2194,7 +2196,7 @@ public final class ChatModel {
     }
 
     public func canAnswerHarnessAction(_ action: HarnessActionData) -> Bool {
-        guard canDeliver, supportsPersonAgents, supportsHarnessActions, action.state == .pending, action.isValid,
+        guard canDeliver, supportsPersonAgents, personAgentsCurrent, supportsHarnessActions, action.state == .pending, action.isValid,
               let agent = personAgents?.agents.first(where: { $0.id == action.origin.agentId }),
               agent.pluginId == action.origin.pluginId, agent.conversationId == action.origin.conversationId,
               harnessActions(in: action.origin.conversationId).contains(where: {
@@ -2256,7 +2258,7 @@ public final class ChatModel {
     /// Submit an explicit settings operation with its captured revisions. A host result is truth.
     @discardableResult
     public func controlPersonAgents(_ data: PersonAgentControlData) -> String? {
-        guard supportsPersonAgents, canDeliver, let catalog = personAgents, data.isValid else { return nil }
+        guard supportsPersonAgents, personAgentsCurrent, canDeliver, let catalog = personAgents, data.isValid else { return nil }
         let known = Set(catalog.agents.map(\.id))
         switch data.action {
         case .create: break
@@ -2879,7 +2881,9 @@ public final class ChatModel {
         case .compatibility(let compatibility):
             let couldSearch = supportsHostSearch
             self.compatibility = compatibility
-            if !supportsPersonAgents { personAgents = nil }
+            // LocalSocketTransport emits .legacy before every dial, including offline startup.
+            // That revokes negotiated authority, not the authenticated cached presentation.
+            personAgentsCurrent = false
             if !supportsSiwcAccounts {
                 siwcAccounts = nil; pendingSiwcSignInAttemptId = nil; pendingSiwcSignInOperationId = nil
                 siwcAccountOperationId = nil; siwcAccountControls = [:]; siwcAccountResults = [:]
@@ -2891,6 +2895,7 @@ public final class ChatModel {
         case .state(let state):
             self.state = state
             if state != .paired {
+                personAgentsCurrent = false
                 if siwcAccountWaiting, let id = siwcAccountOperationId {
                     siwcAccountResults[id] = SiwcAccountControlResult(operationId: id, status: .unknown, reason: .unknown)
                 }
@@ -2925,7 +2930,10 @@ public final class ChatModel {
                 requestHostSearch()
             }
         case .ownerOnline(let online):
-            if !online { channelModelsDisconnected() }
+            if !online {
+                personAgentsCurrent = false
+                channelModelsDisconnected()
+            }
             let wasOnline = ownerOnline
             ownerOnline = online
             if !online && updateStatus.phase != .none && updateStatus.phase != .installing {
@@ -2938,7 +2946,11 @@ public final class ChatModel {
                 resumeResultRequests()
                 if state == .paired {
                     updateControl(.status)
-                    if !wasOnline { requestHostSearch() }
+                    if !wasOnline {
+                        // Presence loss also revoked catalog authority. Refresh it before settings/actions resume.
+                        if personAgents != nil { emit(.threadList(ThreadListData(threads: [])), in: "") }
+                        requestHostSearch()
+                    }
                 }
             }
             // The Mac waking up is the other half of "there is somewhere to send to".
@@ -2956,6 +2968,7 @@ public final class ChatModel {
             case .siwcAccountStatus(let data): reconcileSiwcAccounts(data)
             case .threadList(let data):
                 personAgents = supportsPersonAgents ? data.personAgents : nil
+                personAgentsCurrent = supportsPersonAgents && personAgents != nil
                 if let personAgents { cache?.save(personAgents: personAgents) }
                 if let accounts = data.siwcAccounts { reconcileSiwcAccounts(accounts) }
                 // Archived threads are kept: Settings lists them and thread search finds them.

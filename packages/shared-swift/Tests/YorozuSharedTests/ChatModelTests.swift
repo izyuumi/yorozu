@@ -3543,7 +3543,8 @@ private func personAgentCatalog() -> PersonAgentRegistry {
     #expect(await eventually { model.events["conversation"]?.contains { $0.id == "after-echo" } == true })
     #expect(model.events["conversation"]?.contains { $0.id == "control-echo" } == false)
     await transport.yield(.compatibility(.legacy))
-    #expect(await eventually { model.personAgents == nil })
+    #expect(await eventually { !model.supportsPersonAgents })
+    #expect(model.personAgents == catalog) // Compatibility reset revokes authority, not offline presentation.
     #expect(model.controlPersonAgents(request) == nil)
 }
 
