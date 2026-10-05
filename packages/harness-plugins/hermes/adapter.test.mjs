@@ -442,16 +442,15 @@ test('native stdio client parses shipped readiness, request and event frames and
 test('owned runtime applies resource bindings without choosing harness approval or autonomy', {
   skip: !process.env.YOROZU_HERMES_TEST_SOURCE,
 }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'hermes-isolation-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const workspace = join(directory, 'workspace'); await mkdir(workspace);
-  const params = { protocolVersion: 1, upstreamVersion: UPSTREAM.version, profileRoot: directory,
-    workspace, sourcePath: process.env.YOROZU_HERMES_TEST_SOURCE, python: '/usr/bin/python3' };
+  // Production preparation now requires a host-owned scoped person. Exercise
+  // that contract rather than the retired unscoped initialization fixture.
+  const { params, directory: root } = await scopeFixture(t, ['file', 'terminal', 'web', 'browser']);
+  const directory = join(root, 'profile');
   const originalIndex = await readFile(join(params.sourcePath, '.git/index'));
   const runtime = await prepareRuntime(params);
   assert.deepEqual(await readFile(join(params.sourcePath, '.git/index')), originalIndex);
   assert.equal(runtime.authAvailable, false);
-  assert.deepEqual(Object.keys(runtime.env).sort(), ['CODEX_HOME', 'HERMES_DISABLE_LAZY_INSTALLS', 'HERMES_HOME', 'HOME', 'LANG', 'PATH', 'PYTHONDONTWRITEBYTECODE', 'PYTHONNOUSERSITE', 'PYTHONUNBUFFERED', 'TIRITH_BIN', 'TIRITH_ENABLED', 'TIRITH_FAIL_OPEN', 'TMPDIR'].sort());
+  assert.deepEqual(Object.keys(runtime.env).sort(), ['CODEX_HOME', 'HERMES_DISABLE_LAZY_INSTALLS', 'HERMES_HOME', 'HERMES_TUI_TOOLSETS', 'HOME', 'LANG', 'PATH', 'PYTHONDONTWRITEBYTECODE', 'PYTHONNOUSERSITE', 'PYTHONUNBUFFERED', 'TIRITH_BIN', 'TIRITH_ENABLED', 'TIRITH_FAIL_OPEN', 'TMPDIR'].sort());
   assert.equal(runtime.env.CODEX_HOME.startsWith(await realpath(directory)), true);
   const config = JSON.parse(await readFile(join(directory, 'hermes-runtime', 'config.yaml'), 'utf8'));
   assert.equal(config.desktop, undefined);
