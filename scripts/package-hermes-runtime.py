@@ -118,6 +118,7 @@ def dependency_inventory(source, venv):
     locked = {(normalized_name(item["name"]), item["version"]) for item in lock["package"]}
     distributions = []
     seen = set()
+    claimed = set()
     for metadata_dir in sorted(site.glob("*.dist-info")):
         metadata = email.message_from_bytes((metadata_dir / "METADATA").read_bytes())
         name, version = normalized_name(metadata["Name"]), metadata["Version"]
@@ -131,6 +132,9 @@ def dependency_inventory(source, venv):
                 path = (site / relative).resolve(strict=True)
                 if not within(venv, path) or not path.is_file():
                     fail("Installed dependency RECORD escapes the prepared environment")
+                claimed.add(path)
+                if not hash_value and path != record.resolve() and not site_excluded(relative):
+                    fail("Dependency RECORD contains an unhashed payload")
                 if hash_value:
                     algorithm, value = hash_value.split("=", 1)
                     if algorithm not in {"sha256", "sha384", "sha512"}:
@@ -146,7 +150,34 @@ def dependency_inventory(source, venv):
     allowed_hooks = {"__editable__.hermes_agent-0.21.5.pth", "_virtualenv.pth"}
     if {path.name for path in site.glob("*.pth")} - allowed_hooks:
         fail("Prepared environment contains an unreviewed Python startup hook")
+    validate_site_ownership(site, claimed)
     return site, distributions
+
+
+def validate_site_ownership(site, claimed=None):
+    """Reject import hooks even if owned, and every unowned retained payload."""
+    prepared_input = claimed is not None
+    if claimed is None:
+        claimed = set()
+        for record in site.glob("*.dist-info/RECORD"):
+            with record.open(newline="") as stream:
+                for relative, _, _ in csv.reader(stream):
+                    path = (site / relative).resolve(strict=True)
+                    if not within(site.resolve(), path):
+                        fail("Artifact RECORD escapes site-packages")
+                    claimed.add(path)
+    for path in site.rglob("*"):
+        relative = path.relative_to(site).as_posix()
+        if any(part.split(".")[0] in {"sitecustomize", "usercustomize"} for part in Path(relative).parts):
+            fail("Forbidden Python startup customization hook")
+        if path.is_dir() and not path.is_symlink():
+            continue
+        if site_excluded(relative) and path.name != "RECORD":
+            if not prepared_input:
+                fail("Artifact retains stripped startup/generated payload: " + relative)
+            continue
+        if path.is_symlink() or path.resolve() not in claimed:
+            fail("Unowned site-packages payload: " + relative)
 
 
 def copy_rows(source, destination, rows):

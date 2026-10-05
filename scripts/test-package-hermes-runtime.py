@@ -60,6 +60,25 @@ class PackagingBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "startup hook"):
             packager.dependency_inventory(source, venv)
 
+    def test_unowned_modules_are_rejected(self):
+        source, venv, site = self.dependencies()
+        (site / "unowned.py").write_text("inert = True\n")
+        with self.assertRaisesRegex(ValueError, "Unowned"):
+            packager.dependency_inventory(source, venv)
+
+    def test_customization_hooks_are_rejected_even_when_record_owned(self):
+        for name in ("sitecustomize.py", "usercustomize.py", "sitecustomize/__init__.py"):
+            with self.subTest(name=name):
+                source, venv, site = self.root / "unused", self.root / "unused", self.root / "hook-site"
+                path = site / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("inert = True\n")
+                with self.assertRaisesRegex(ValueError, "customization hook"):
+                    packager.validate_site_ownership(site, {path.resolve()})
+                path.unlink()
+                if path.parent != site:
+                    path.parent.rmdir()
+
     def test_record_cannot_read_an_outside_file(self):
         source, venv, site = self.dependencies()
         outside = self.root / "outside-fixture"
