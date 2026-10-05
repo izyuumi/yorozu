@@ -85,12 +85,13 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(model.drafts["home"] == "next thought")
     #expect(await settle { model.outbox.isEmpty })
     let sent = try #require(await transport.messages.first)
-    #expect(sent.id == original.id && sent.ts == original.ts)
+    #expect(sent.id == original.id && sent.ts >= original.ts)
     guard case .message(let before) = original.payload, case .message(let after) = sent.payload else {
         Issue.record("Expected message payloads"); return
     }
     #expect(after.text == "after" && after.attachments == [attachment])
-    #expect(after.admissionDeadline == before.admissionDeadline)
+    #expect(after.admissionDeadline == sent.ts + 30 * 60_000)
+    #expect(after.admissionDeadline! >= before.admissionDeadline!)
 }
 
 @MainActor
@@ -984,4 +985,178 @@ private func reconnect(_ transport: QueueTransport) async {
     #expect(capped.count == 60)
     #expect(capped.first?.id == "m0")
     #expect(capped.last?.id == "m59")
+}
+
+@MainActor
+@Test func reviewOfflineDraftRetainsSetupAndFreshDeadline() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let first = ChatModel(transport: QueueTransport(), cache: cache)
+    let draft = first.newDraft(agent: .codex, cwd: "/tmp/review-workspace")
+    first.setModel(draft, "review-model")
+    first.send("offline draft", in: draft.id)
+    let kinds = first.outbox.map(\.event.payload.kind)
+    #expect(kinds == [.threadCreate, .threadSetModel, .message])
+    #expect(first.outbox.allSatisfy { $0.waitsForFirstDelivery == true })
+    var pending = cache.outbox()
+    for i in pending.indices {
+        pending[i].event.ts = Int(Date().addingTimeInterval(-49 * 3600).timeIntervalSince1970 * 1000)
+    }
+    try cache.savePending(pending)
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    #expect(model.outbox.allSatisfy { $0.status == .queued })
+    await reconnect(transport)
+    #expect(await settle { model.outbox.isEmpty })
+    let sent = await transport.sent.filter { $0.threadId == draft.id }
+    #expect(sent.map(\.payload.kind) == kinds)
+    guard case .threadCreate(let create) = sent.first?.payload else { Issue.record("missing setup"); return }
+    #expect(create.cwd == "/tmp/review-workspace")
+}
+
+@MainActor
+@Test func reviewStillSendWaitsOfflineIndefinitely() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let old = YorozuEvent(id: "expired", threadId: "home", ts: 1, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "again", admissionDeadline: 2)))
+    try cache.savePending([OutboxItem(event: old)])
+    let model = ChatModel(transport: QueueTransport(), cache: cache)
+    model.stillSend(old.id)
+    let renewed = try #require(model.outbox.last)
+    #expect(renewed.id != old.id)
+    #expect(renewed.waitsForFirstDelivery == true)
+    #expect(!renewed.isExpired(at: Date().addingTimeInterval(7 * 86400)))
+}
+
+@MainActor
+@Test func reviewFirstAttemptRefreshesUnexpiredDeadlineOnlyOnce() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().addingTimeInterval(-29 * 60).timeIntervalSince1970 * 1000)
+    let event = YorozuEvent(id: "fresh-once", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "pending", admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: event, waitsForFirstDelivery: true)])
+    let transport = QueueTransport()
+    await transport.swallow(true)
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    await reconnect(transport)
+    #expect(await settle { model.outbox.first?.attemptedAt != nil })
+    let attempted = try #require(model.outbox.first)
+    guard case .message(let message) = attempted.event.payload else { return }
+    #expect(attempted.event.ts > ts)
+    #expect(message.admissionDeadline == attempted.event.ts + 30 * 60_000)
+    #expect(await settle(attempts: 500) { (model.outbox.first?.deliveryAttempts ?? 0) >= 2 })
+    #expect(model.outbox.first?.event == attempted.event)
+    await model.shutdown()
+}
+
+@MainActor
+@Test func reviewFailedAttemptPersistenceLeavesMessageEditable() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    model.send("not attempted", in: "home")
+    let original = try #require(model.outbox.first)
+    try FileManager.default.removeItem(at: directory.appending(path: "outbox.bin"))
+    try FileManager.default.createDirectory(at: directory.appending(path: "outbox.bin"), withIntermediateDirectories: true)
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
+    model.flush()
+    #expect(model.outbox.first == original)
+    #expect(model.canEditQueuedMessage(original.id))
+    #expect(await transport.messages.isEmpty)
+    await model.shutdown()
+}
+
+@MainActor
+@Test func reviewMalformedStrictSyncEventAdvancesWithoutRetainingBody() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let raw = #"{"id":"page","threadId":"","ts":1,"agentId":"host","kind":"sync_delta","data":{"events":[{"id":"valid1","threadId":"home","ts":1,"agentId":"host","kind":"message","data":{"role":"assistant","text":"first"}},{"id":"bad","threadId":"home","ts":2,"syncCursor":"cursor-2","agentId":"host","kind":"harness_action","data":{"secret":"SENSITIVE-REVIEW-MARKER"}},{"id":"valid3","threadId":"home","ts":3,"syncCursor":"cursor-3","agentId":"host","kind":"message","data":{"role":"assistant","text":"last"}}],"more":true}}"#
+    let page = try JSONDecoder().decode(YorozuEvent.self, from: Data(raw.utf8))
+    guard case .syncDelta(let delta) = page.payload else { Issue.record("lost sync page"); return }
+    #expect(delta.events.count == 3)
+    #expect(delta.events[1].syncCursor == "cursor-2")
+    #expect(!String(decoding: try JSONEncoder().encode(page), as: UTF8.self).contains("SENSITIVE-REVIEW-MARKER"))
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
+    await transport.yield(.event(page))
+    #expect(await settle { model.events["home"]?.contains(where: { $0.id == "valid3" }) == true })
+    #expect(model.events["home"]?.contains(where: { $0.id == "valid1" }) == true)
+    var advanced = false
+    for _ in 0..<100 {
+        advanced = await transport.sent.contains { event in
+            guard case .syncRequest(let request) = event.payload else { return false }
+            return request.lastSeen["home"] == "cursor-3"
+        }
+        if advanced { break }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(advanced)
+    await model.shutdown()
+    #expect(!String(decoding: try JSONEncoder().encode(cache.events(threadId: "home")), as: UTF8.self).contains("SENSITIVE-REVIEW-MARKER"))
+}
+
+@MainActor
+@Test func reviewMissingCatalogKeepsPersonHistoryReadOnly() {
+    let model = ChatModel(transport: QueueTransport())
+    let history = ThreadSummary(id: "old-topic", title: "Old", archived: false, lastActivity: 0, personAgentId: "ada")
+    #expect(model.isReadOnlyPersonHistory(history))
+    let legacy = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 0)
+    #expect(!model.isReadOnlyPersonHistory(legacy))
+}
+
+@MainActor
+@Test func reviewFailedQuestionPersistenceCannotSendLater() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    try FileManager.default.createDirectory(at: directory.appending(path: "outbox.bin"), withIntermediateDirectories: true)
+    #expect(!model.answerQuestion("question", in: "home", "failed answer"))
+    #expect(model.outbox.isEmpty)
+    try FileManager.default.removeItem(at: directory.appending(path: "outbox.bin"))
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
+    #expect(await transport.sent.allSatisfy { $0.payload.kind != .questionAnswer })
+    #expect(model.answerQuestion("question", in: "home", "explicit answer"))
+    #expect(await settle { model.outbox.isEmpty })
+    let answers = await transport.sent.filter { $0.payload.kind == .questionAnswer }
+    #expect(answers.count == 1)
+    await model.shutdown()
+}
+
+@MainActor
+@Test func reviewPriorityAttemptPersistenceIsAtomic() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache)
+    model.start()
+    #expect(model.answerQuestion("question", in: "home", "held answer"))
+    let original = try #require(model.outbox.first)
+    try FileManager.default.removeItem(at: directory.appending(path: "outbox.bin"))
+    try FileManager.default.createDirectory(at: directory.appending(path: "outbox.bin"), withIntermediateDirectories: true)
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
+    model.flush()
+    #expect(model.outbox.first == original)
+    #expect(await transport.sent.allSatisfy { $0.payload.kind != .questionAnswer })
+    await model.shutdown()
 }

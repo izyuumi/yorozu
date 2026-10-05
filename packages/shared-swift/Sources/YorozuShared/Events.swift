@@ -329,12 +329,13 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .updateControl: payload = .updateControl(try c.decode(UpdateControlData.self, forKey: .data))
             }
         } catch {
+            // A malformed page/list is never an opaque history event. Valid sync envelopes
+            // recover individual rejected events below; invalid envelopes fail closed.
+            if kind == .syncDelta || kind == .threadList { throw error }
             // Account schema violations must never survive as retained raw data.
             // This includes a malformed account projection nested in thread_list.
             if [.harnessAction, .harnessActionAnswer, .harnessActionStatus, .agentExchange, .agentExchangeStatus].contains(kind) { throw error }
             if kind == .siwcAccountControl || kind == .siwcAccountStatus { throw error }
-            if kind == .threadList, case .object(let data) = rawData, data["siwcAccounts"] != nil { throw error }
-            if kind == .threadList, case .object(let data) = rawData, data["personAgents"] != nil { throw error }
             payload = .unknown(kind: rawKind, data: rawData)
         }
     }
@@ -1739,6 +1740,24 @@ public struct SyncRequestData: Codable, Equatable, Sendable {
     }
 }
 
+/// Sync must consume a rejected strict event without retaining its untrusted body.
+/// The envelope alone is sufficient to advance the history cursor.
+private struct SyncEvent: Decodable {
+    let event: YorozuEvent
+    init(from decoder: Decoder) throws {
+        do { event = try YorozuEvent(from: decoder) }
+        catch {
+            let c = try decoder.container(keyedBy: YorozuEvent.CodingKeys.self)
+            var rejected = YorozuEvent(id: try c.decode(String.self, forKey: .id),
+                threadId: try c.decode(String.self, forKey: .threadId),
+                ts: try c.decode(Int.self, forKey: .ts), agentId: "",
+                payload: .unknown(kind: "rejected_sync_event", data: .null))
+            rejected.syncCursor = try c.decodeIfPresent(String.self, forKey: .syncCursor)
+            event = rejected
+        }
+    }
+}
+
 public struct SyncDeltaData: Codable, Equatable, Sendable {
     public var events: [YorozuEvent]
     public var current: [YorozuEvent]?
@@ -1746,6 +1765,15 @@ public struct SyncDeltaData: Codable, Equatable, Sendable {
     /// Threads with a turn still running on the Mac when this page was made.
     public var workingThreadIds: [String]?
     public var more: Bool?
+    private enum CodingKeys: String, CodingKey { case events, current, threadId, workingThreadIds, more }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        events = try c.decode([SyncEvent].self, forKey: .events).map(\.event)
+        current = try c.decodeIfPresent([SyncEvent].self, forKey: .current)?.map(\.event)
+        threadId = try c.decodeIfPresent(String.self, forKey: .threadId)
+        workingThreadIds = try c.decodeIfPresent([String].self, forKey: .workingThreadIds)
+        more = try c.decodeIfPresent(Bool.self, forKey: .more)
+    }
     public init(events: [YorozuEvent], current: [YorozuEvent]? = nil, threadId: String? = nil, workingThreadIds: [String]? = nil, more: Bool? = nil) {
         self.events = events
         self.current = current

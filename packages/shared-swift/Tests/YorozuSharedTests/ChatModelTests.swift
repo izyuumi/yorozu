@@ -1435,6 +1435,7 @@ private func summary(
     model.send("second", in: "home")
     #expect(model.generating.contains("home"))
     #expect(model.messageActions(for: firstFinal).retry?.text == "first")
+    #expect(await eventually { model.outbox.last?.attemptedAt != nil })
     let secondPrompt = try #require(model.events["home"]?.last)
     var secondFinal = event("r2", .message(MessageData(role: .agent, text: "again", done: true)))
     secondFinal.ts = secondPrompt.ts + 1
@@ -3528,7 +3529,10 @@ private func personAgentCatalog() -> PersonAgentRegistry {
     #expect(model.controlPersonAgents(PersonAgentControlData(expectedRevision: 2, action: .setDefault(agentId: "missing"))) == nil)
     let preference = PersonAgentControlData(expectedRevision: 2,
         action: .remember(.allAgents(text: "Use short paragraphs."), expectedJournalRevision: 3))
-    #expect(model.controlPersonAgents(preference) != nil)
+    #expect(model.controlPersonAgents(preference) == nil)
+    let sharing = try JSONDecoder().decode(PersonAgentControlData.self, from: Data(#"{"version":1,"expectedRevision":2,"action":"share-knowledge","expectedJournalRevision":3,"knowledge":{"fromAgentId":"agent-a","toAgentIds":["agent-a"],"text":"Do not inject this."}}"#.utf8))
+    #expect(model.controlPersonAgents(sharing) == nil)
+    #expect(await transport.sent.filter { $0.payload.kind == .personAgentControl }.count == 1)
     catalog.lastControlResult = PersonAgentControlResult(operationId: operationID, status: .rejected, revision: 2, reason: "Settings changed")
     await transport.yield(.event(event("control-result", .threadList(ThreadListData(threads: [], personAgents: catalog)))))
     #expect(await eventually { model.personAgents?.lastControlResult?.operationId == operationID })

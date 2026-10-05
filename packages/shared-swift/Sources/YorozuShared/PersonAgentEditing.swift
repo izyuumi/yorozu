@@ -22,7 +22,7 @@ struct PersonAgentEditorDraft: Equatable {
         runtimeMode = agent?.runtime?.mode ?? .managed
         runtimeConnectionId = agent?.runtime?.connectionId ?? ""
         model = agent?.model ?? ""; connection = agent?.accountBindingId ?? ""
-        tools = Set(agent?.allowedTools ?? [.file, .memory, .delegation])
+        tools = Set(agent?.allowedTools ?? [.file])
         directories = agent?.directories ?? []
     }
 
@@ -54,8 +54,8 @@ struct PersonAgentEditorDraft: Equatable {
             if original.model != nil && model.isEmpty { clear.append(.model) }
             if original.accountBindingId != nil && connection.isEmpty { clear.append(.accountBindingId) }
             action = .update(agentId: original.id, patch: PersonAgentPatch(name: trimmed(name), role: trimmed(role),
-                pluginId: plugin, model: model.isEmpty ? nil : model,
-                accountBindingId: connection.isEmpty ? nil : connection, runtime: runtime, allowedTools: tools, directories: directories,
+                pluginId: bindingChanged ? plugin : nil, model: model.isEmpty ? nil : model,
+                accountBindingId: connection.isEmpty ? nil : connection, runtime: bindingChanged ? runtime : nil, allowedTools: tools, directories: directories,
                 clear: clear.isEmpty ? nil : clear))
         } else {
             action = .create(PersonAgentInput(name: trimmed(name), role: trimmed(role), pluginId: plugin,

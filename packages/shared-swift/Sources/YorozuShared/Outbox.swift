@@ -13,7 +13,7 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public var tries: Int
     /// Set before the first socket attempt. Until a host receipt arrives, delivery is uncertain.
     public var attemptedAt: Date?
-    /// New messages wait indefinitely offline. Freeze wire identity before their first attempt.
+    /// New messages and their draft setup wait indefinitely offline. Freeze wire identity before their first attempt.
     public var waitsForFirstDelivery: Bool?
     /// Persisted retry deadline; a relaunch must not turn a half-open send into a retry storm.
     public var nextAttemptAt: Date?
@@ -169,7 +169,7 @@ public enum Outbox {
     /// is an argument rather than something a test has to move.
     public static func pruned(_ items: [OutboxItem], now: Date = Date()) -> [OutboxItem] {
         let aged = items.map { item -> OutboxItem in
-            if item.admissionDeadline != nil { return item }
+            if item.admissionDeadline != nil || (item.waitsForFirstDelivery == true && item.attemptedAt == nil) { return item }
             guard now.timeIntervalSince(item.reconfirmedAt ?? item.queuedAt) > life else { return item }
             var item = item
             item.tries = max(item.tries, maxTries)

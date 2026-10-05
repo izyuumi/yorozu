@@ -1132,7 +1132,7 @@ public final class ChatModel {
         // Persist creation and its first message in one encrypted write. A failed write leaves
         // the composer and draft thread intact, with no phantom bubble or unsaved outbox item.
         let pending = Outbox.pruned(outbox + (commands + [event]).map {
-            OutboxItem(event: $0, waitsForFirstDelivery: $0.payload.kind == .message ? true : nil)
+            OutboxItem(event: $0, waitsForFirstDelivery: true)
         })
         if fromComposer {
             preparedSend[threadId] = event.id
@@ -1328,11 +1328,12 @@ public final class ChatModel {
                 pending[predecessor].nextAttemptAt = nil
                 pending[predecessor].deliveryAttempts = nil
                 pending[predecessor].reconfirmedAt = Date()
+                pending[predecessor].waitsForFirstDelivery = true
             default: break
             }
         }
         pending[index].replacementId = renewed.id
-        pending.append(OutboxItem(event: renewed))
+        pending.append(OutboxItem(event: renewed, waitsForFirstDelivery: true))
         do { try cache?.savePending(pending) }
         catch {
             failure = String(localized: "Could not save pending messages: \(error.localizedDescription)")
@@ -1367,8 +1368,7 @@ public final class ChatModel {
     @discardableResult
     private func deliver(_ event: YorozuEvent, queue: Bool) -> Bool {
         guard !stopped else { return false }
-        outbox = Outbox.pruned(outbox + [OutboxItem(event: event)])
-        guard saveOutbox() else { return false }
+        guard commitOutbox(Outbox.pruned(outbox + [OutboxItem(event: event)])) else { return false }
         if !queue { flush() }
         return true
     }
@@ -1402,21 +1402,22 @@ public final class ChatModel {
                     continue
                 }
                 if item.waitsForFirstDelivery == true && item.attemptedAt == nil {
-                    if case .message(var message) = item.event.payload,
-                       let deadline = message.admissionDeadline, deadline <= Int(now.timeIntervalSince1970 * 1_000) {
+                    if case .message(var message) = item.event.payload {
                         item.event.ts = Int(now.timeIntervalSince1970 * 1_000)
                         message.admissionDeadline = item.event.ts + 30 * 60_000
                         item.event.payload = .message(message)
                     }
                     item.waitsForFirstDelivery = false
-                    self.outbox[index] = item
                 }
-                self.outbox[index].attemptedAt = self.outbox[index].attemptedAt ?? now
+                var pending = self.outbox
+                pending[index] = item
+                pending[index].attemptedAt = item.attemptedAt ?? now
                 let attempts = (item.deliveryAttempts ?? 0) + 1
-                self.outbox[index].deliveryAttempts = attempts
-                self.outbox[index].nextAttemptAt = now.addingTimeInterval(Outbox.retryDelay(after: attempts))
-                guard self.saveOutbox() else { break }
-                self.upsert(item.event)
+                pending[index].deliveryAttempts = attempts
+                pending[index].nextAttemptAt = now.addingTimeInterval(Outbox.retryDelay(after: attempts))
+                guard self.commitOutbox(pending) else { break }
+                // Only message bubbles need the refreshed wire timestamp. Controls are not history.
+                if item.event.payload.kind == .message { self.upsert(item.event) }
                 do {
                     if case .message(let message) = item.event.payload, !message.attachments.isEmpty {
                         if self.supportsAttachmentChunks {
@@ -1460,11 +1461,12 @@ public final class ChatModel {
                 $0.event.payload.kind == .questionAnswer || $0.event.payload.kind == .harnessActionAnswer) &&
                 ($0.nextAttemptAt ?? .distantPast) <= now
         }), let index = outbox.firstIndex(where: { $0.id == item.id }) else { return }
-        outbox[index].attemptedAt = outbox[index].attemptedAt ?? now
+        var pending = outbox
+        pending[index].attemptedAt = item.attemptedAt ?? now
         let attempts = (item.deliveryAttempts ?? 0) + 1
-        outbox[index].deliveryAttempts = attempts
-        outbox[index].nextAttemptAt = now.addingTimeInterval(Outbox.retryDelay(after: attempts))
-        guard saveOutbox() else { return }
+        pending[index].deliveryAttempts = attempts
+        pending[index].nextAttemptAt = now.addingTimeInterval(Outbox.retryDelay(after: attempts))
+        guard commitOutbox(pending) else { return }
         priorityTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -1760,6 +1762,13 @@ public final class ChatModel {
             outbox.filter { $0.event.payload.kind != .interrupt && $0.event.payload.kind != .approvalAnswer &&
                 $0.event.payload.kind != .questionAnswer && $0.event.payload.kind != .harnessActionAnswer }
         return prioritized.filter { item in
+            if item.isExpired(at: now) {
+                switch item.event.payload {
+                case .threadCreate, .threadSetModel, .threadSetEffort:
+                    threads.insert(item.event.threadId)
+                default: break
+                }
+            }
             guard !item.isExpired(at: now), item.admissionStatus != .rejected,
                   item.admissionStatus != .withdrawn, item.replacementId == nil,
                   !item.harnessStopDelivered else { return false }
@@ -1797,6 +1806,19 @@ public final class ChatModel {
             self.outbox = Outbox.pruned(self.outbox)
             self.flush()
             if !self.canDeliver { self.armOutboxRetry() }
+        }
+    }
+
+    /// Publish attempt/queue state only after its durable write succeeds.
+    private func commitOutbox(_ pending: [OutboxItem]) -> Bool {
+        guard !stopped else { return false }
+        do {
+            try cache?.savePending(pending)
+            outbox = pending
+            return true
+        } catch {
+            failure = String(localized: "Could not save pending messages: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -2133,8 +2155,8 @@ public final class ChatModel {
     public func isReadOnlyPersonHistory(_ summary: ThreadSummary) -> Bool {
         if summary.personAgentExchange != nil { return true }
         if summary.harnessTask != nil { return false }
-        guard let agentId = summary.personAgentId,
-              let canonical = personAgents?.agents.first(where: { $0.id == agentId })?.conversationId else { return false }
+        guard let agentId = summary.personAgentId else { return false }
+        guard let canonical = personAgents?.agents.first(where: { $0.id == agentId })?.conversationId else { return true }
         return summary.id != canonical
     }
 
@@ -2243,12 +2265,9 @@ public final class ChatModel {
         case .updateTeam(let id, let patch):
             guard catalog.teams.contains(where: { $0.id == id }),
                   patch.agentIds.map({ Set($0).isSubset(of: known) }) ?? true else { return nil }
-        case .remember(let preference, _):
-            guard catalog.journalRevision != nil else { return nil }
-            if case .agent(let id, _) = preference, !known.contains(id) { return nil }
-        case .shareKnowledge(let knowledge, _):
-            guard catalog.journalRevision != nil, known.contains(knowledge.fromAgentId),
-                  Set(knowledge.toAgentIds).isSubset(of: known) else { return nil }
+        case .remember, .shareKnowledge:
+            // Legacy wire decoding remains supported; host-mediated memory is not a client feature.
+            return nil
         }
         let request = control(.personAgentControl(data))
         emit(request)

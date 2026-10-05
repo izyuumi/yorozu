@@ -22,6 +22,7 @@ private func editorCatalog() -> PersonAgentRegistry {
     #expect(id == "ada" && patch.name == "Ada Notes")
     #expect(patch.clear == [.model, .accountBindingId])
     #expect(patch.model == nil && patch.accountBindingId == nil)
+    #expect(patch.pluginId == nil && patch.runtime == nil)
     let data = try JSONEncoder().encode(request)
     let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     let payload = try #require(object["patch"] as? [String: Any])
@@ -116,4 +117,9 @@ private func editorCatalog() -> PersonAgentRegistry {
         personAgentId: "ada", personAgentExchange: .init(exchangeId: "exchange", fromAgentId: "ada", toAgentId: "bea"))
     #expect(personAgentHistory([archived, exchange], agentId: "ada").map(\.id) == [archived.id])
     #expect(personAgentChats([archived, exchange], agentId: "ada").isEmpty)
+}
+
+@Test func reviewNewAgentHasNoHiddenMemoryOrDelegationGrants() {
+    let editor = PersonAgentEditorDraft(catalog: editorCatalog())
+    #expect(editor.tools == [.file])
 }

@@ -49,7 +49,7 @@ public struct AccountSettingsView: View {
                 Section("Saved accounts") {
                     ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
                         AccountSettingsRow(model: model, account: account, ordinal: index + 1,
-                            canAct: canAct, canSignIn: signInAvailable)
+                            canAct: canAct, canSignIn: signInAvailable, localSignIn: localSignIn)
                     }
                 }
             }
@@ -78,6 +78,7 @@ private struct AccountSettingsRow: View {
     let ordinal: Int
     let canAct: Bool
     let canSignIn: Bool
+    let localSignIn: Bool
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
@@ -98,7 +99,7 @@ private struct AccountSettingsRow: View {
             if account.phase == .signedOut {
                 Button("Sign in again") {
                     _ = model.controlSiwcAccounts(SiwcAccountControlData(method: .signIn,
-                        bindingId: account.id, returning: true), localSignIn: true)
+                        bindingId: account.id, returning: true), localSignIn: localSignIn)
                 }.disabled(!canSignIn)
                 if account.remoteRevocation == .unconfirmed {
                     Text("Signed out on your Mac. Remote revocation is unconfirmed.").font(.footnote).foregroundStyle(.secondary)

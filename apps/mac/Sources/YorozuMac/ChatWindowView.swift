@@ -537,7 +537,6 @@ struct SettingsView: View {
         .onAppear { if let pane = route.selection { selection = pane; route.selection = nil } }
         // Asked for while already open: the window is only brought forward, so it will not appear again.
         .onChange(of: route.selection) { _, pane in if let pane { selection = pane; route.selection = nil } }
-        .onChange(of: route.selection) { _, pane in if let pane { selection = pane } }
         .onChange(of: session.role) { _, _ in selection = "general" }
         .onChange(of: backgroundOnlyHost) { _, active in if !active { selection = "general" } }
         .onChange(of: selection, initial: true) { _, pane in
