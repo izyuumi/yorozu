@@ -156,7 +156,8 @@ test("a persisted uncertain stop transfers its hold without poisoning unrelated 
   const f = await fixture("secretary");
   f.runner.run.mockImplementation(async turn => { f.turns.push(turn); return { text: "Synthetic lost receipt", unconfirmed: true } as any; });
   f.send("message", { role: "user", text: "uncertain" }, "persisted-unknown");
-  await vi.waitFor(() => expect(f.events.some(e => e.kind === "stop_status" && e.data.status === "unconfirmed")).toBe(true));
+  // No interrupt request was sent, so no correlated stop_status receipt exists.
+  await vi.waitFor(() => expect(f.events.some(e => e.id === "native:persisted-unknown:final" && e.data.text.includes("Queued work is held"))).toBe(true));
   expect(readFileSync(join(f.dir, "stopped-turns.jsonl"), "utf8")).toContain('"targetEventId":"persisted-unknown"');
   const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
   expect(new SecretaryAdmissionFence(f.dir).blocked).toBe(false);
