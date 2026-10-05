@@ -65,7 +65,12 @@ export class SecretaryAdmissionFence {
     mkdirSync(this.root, { recursive: true, mode: 0o700 });
     if (!lstatSync(this.root).isDirectory() || lstatSync(this.root).isSymbolicLink()) throw new Error("Invalid secretary admission directory");
     const parent = openSync(dir, "r"); try { fsyncSync(parent); } finally { closeSync(parent); }
-    this.inherited = readdirSync(this.root).length !== 0;
+    this.inherited = readdirSync(this.root).some(name => {
+      // Queue custody has its own per-request state machine, not execution intent.
+      if (name !== "queue") return true;
+      const queue = lstatSync(join(this.root, name));
+      return !queue.isDirectory() || queue.isSymbolicLink();
+    });
   }
   get blocked(): boolean { return this.failed || this.inherited; }
   fail(): void { this.failed = true; }
@@ -93,7 +98,11 @@ export class SecretaryAdmissionFence {
  * Old/missing/corrupt receipts never establish non-submission. */
 export class SecretaryQueueLedger {
   private readonly root: string;
-  constructor(dir: string) { this.root = join(dir, "secretary-steering-v1"); }
+  constructor(dir: string) {
+    // Reuse the already sandbox-denied admission namespace; agents must not be
+    // able to forge positive queue custody through a broad workspace grant.
+    this.root = join(new SecretaryAdmissionFence(dir).root, "queue");
+  }
   private path(threadId: string, eventId: string): string {
     return join(this.root, `queue-${createHash("sha256").update(JSON.stringify([threadId, eventId])).digest("hex")}.json`);
   }

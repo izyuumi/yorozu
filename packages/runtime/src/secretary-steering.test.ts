@@ -64,12 +64,12 @@ test("queue reconciliation requires positive exact custody, never absent, corrup
     expect(new SecretaryQueueLedger(dir).reconcile("person", "waiting")).toBe("not-submitted");
     expect(() => ledger.dispatch("person", "waiting")).toThrow("unconfirmed");
     ledger.admit("person", "contended");
-    const root = join(dir, "secretary-steering-v1");
+    const root = join(dir, "secretary-admission-v1", "queue");
     const receipt = readdirSync(root).find(file => JSON.parse(readFileSync(join(root, file), "utf8")).eventId === "contended")!;
     writeFileSync(join(root, receipt + ".lock"), "other host transition");
     expect(new SecretaryQueueLedger(dir).reconcile("person", "contended")).toBeUndefined();
     expect(() => ledger.dispatch("person", "contended")).toThrow();
-    for (const file of readdirSync(join(dir, "secretary-steering-v1"))) writeFileSync(join(dir, "secretary-steering-v1", file), "{");
+    for (const file of readdirSync(join(dir, "secretary-admission-v1", "queue"))) writeFileSync(join(dir, "secretary-steering-v1", file), "{");
     expect(new SecretaryQueueLedger(dir).reconcile("person", "running")).toBeUndefined();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
