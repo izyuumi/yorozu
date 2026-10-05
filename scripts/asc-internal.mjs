@@ -15,7 +15,10 @@ const requireValue = (condition, message) => { if (!condition) throw new Error(m
 const validId = (id) => typeof id === "string" && /^[A-Za-z0-9-]+$/.test(id);
 
 // Kept at the request boundary so pagination and future callers cannot widen this lane.
-export function internalRequest(request = asc) {
+export function internalRequest(request = asc, mode = "verify") {
+  requireValue(["preflight", "resolve", "verify", "distribute"].includes(mode), "Invalid internal TestFlight request mode");
+  // Read-only is enforced here, not merely by today's caller control flow.
+  const allowAssignment = mode === "distribute";
   return async (method, path, body) => {
     const url = new URL(path, origin);
     const read = url.pathname === `/v1/apps/${appId}` || url.pathname === `/v1/apps/${appId}/betaGroups`
@@ -25,7 +28,7 @@ export function internalRequest(request = asc) {
       && Array.isArray(body?.data) && body.data.length === 1
       && body.data[0].type === "builds" && validId(body.data[0].id);
     requireValue(url.origin === origin && !url.username && !url.password && !url.hash
-      && (method === "GET" && read && body === undefined || method === "POST" && assign),
+      && (method === "GET" && read && body === undefined || method === "POST" && allowAssignment && assign),
     "Request is outside the internal TestFlight lane");
     return request(method, `${url.pathname}${url.search}`, body);
   };
@@ -49,7 +52,7 @@ async function pages(request, path) {
 }
 
 export async function preflightInternal({ request = asc } = {}) {
-  request = internalRequest(request);
+  request = internalRequest(request, "preflight");
   const app = await request("GET", query(`/v1/apps/${appId}`, { "fields[apps]": "bundleId" }));
   requireValue(app.data?.id === appId && app.data.attributes?.bundleId === "to.yumi.yorozu.ios", "Wrong internal TestFlight app");
   const groups = await pages(request, query(`/v1/apps/${appId}/betaGroups`, {
@@ -104,7 +107,7 @@ function clock(options) {
 
 export async function resolveInternal(version, build, options = {}) {
   validateVersion(version, build);
-  const request = internalRequest(options.request);
+  const request = internalRequest(options.request, "resolve");
   await preflightInternal({ request });
   const { now, pause } = clock(options);
   const path = query("/v1/builds", {
@@ -139,7 +142,8 @@ async function assigned(request, buildId) {
 }
 
 export async function makeInternalAvailable(ios, { assign = false, ...options } = {}) {
-  const request = internalRequest(options.request);
+  requireValue(typeof assign === "boolean", "Internal assignment mode must be boolean");
+  const request = internalRequest(options.request, assign ? "distribute" : "verify");
   const { now, pause } = clock(options);
   await preflightInternal({ request });
   await verifyBuild(ios, request, now);

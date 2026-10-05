@@ -142,3 +142,60 @@ test("manifest cannot redirect a valid internal build to another group or versio
     assert.equal(mock.writes.length, 0);
   }
 });
+
+
+test("read-only request modes reject assignment at the boundary before invoking transport", async () => {
+  const path = `/v1/betaGroups/${groupId}/relationships/builds`;
+  const body = { data: [{ type: "builds", id: "internal-build" }] };
+  for (const mode of [undefined, "preflight", "resolve", "verify"]) {
+    const calls = [];
+    const request = internalRequest(async (...args) => { calls.push(args); return {}; }, mode);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      await assert.rejects(request(method, path, body), /outside the internal/);
+    }
+    assert.equal(calls.length, 0, `${mode ?? "default"} must reject before transport`);
+    await request("GET", path);
+    assert.deepEqual(calls, [["GET", path, undefined]]);
+  }
+  assert.throws(() => internalRequest(() => assert.fail("no transport"), "unknown"), /Invalid internal/);
+});
+
+test("only distribution boundary permits fixed-group assignment POST", async () => {
+  const path = `/v1/betaGroups/${groupId}/relationships/builds`;
+  const body = { data: [{ type: "builds", id: "internal-build" }] };
+  const calls = [];
+  const request = internalRequest(async (...args) => { calls.push(args); return {}; }, "distribute");
+  for (const [method, target, data] of [
+    ["POST", "/v1/betaGroups/other/relationships/builds", body],
+    ["POST", "/v1/betaAppReviewSubmissions", body],
+    ["POST", path + "?extra=1", body],
+    ["POST", "https://example.invalid" + path, body],
+    ["POST", path, { data: [] }],
+    ["POST", path, { data: [body.data[0], body.data[0]] }],
+    ["POST", path, { data: [{ type: "betaTesters", id: "internal-build" }] }],
+    ["POST", path, { data: [{ type: "builds", id: "../other" }] }],
+    ["PATCH", path, body],
+    ["DELETE", path, body],
+  ]) await assert.rejects(request(method, target, data), /outside the internal/);
+  assert.equal(calls.length, 0);
+  await request("POST", path, body);
+  assert.deepEqual(calls, [["POST", path, body]]);
+  // Wrapping a writable transport for a read-only phase must narrow it again.
+  const preflight = internalRequest(request, "preflight");
+  await assert.rejects(preflight("POST", path, body), /outside the internal/);
+  assert.equal(calls.length, 1);
+});
+
+test("preflight, resolve and verify remain read-only after distribution has assigned access", async () => {
+  const mock = server();
+  const options = { request: mock.request, ...timing() };
+  await makeInternalAvailable(manifest, { ...options, assign: true });
+  assert.equal(mock.writes.length, 1);
+  await preflightInternal(options);
+  const ios = await resolveInternal("0.6.0", "1", options);
+  const result = await makeInternalAvailable(ios, { ...options, assign: false });
+  assert.equal(result.available, true);
+  assert.equal(mock.writes.length, 1, "Read-only phases cannot add another assignment");
+  await assert.rejects(makeInternalAvailable(ios, { ...options, assign: "distribute" }), /must be boolean/);
+  assert.equal(mock.writes.length, 1);
+});
