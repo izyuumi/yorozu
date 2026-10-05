@@ -28,7 +28,7 @@ function fixture() {
     yield Buffer.from('event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed","service_tier":"default","output":[]}}\n\n');
   })() }));
   const broker = createSiwcPersonBroker({ getAccounts: () => accounts,
-    assertScope: (agent, scope) => { store.knowledgeFor(agent.id, scope); if (JSON.stringify(agent) !== JSON.stringify(store.list().agents.find(a => a.id === agent.id))) throw new Error("Changed agent"); },
+    assertScope: (agent, scope) => { store.assertActorScope(scope); if (JSON.stringify(agent) !== JSON.stringify(store.list().agents.find(a => a.id === agent.id))) throw new Error("Changed agent"); },
     isExecutionCurrent: () => current, transport,
     openEndpoint: async handler => { handlers.push(handler); return { host: "127.0.0.1", port: 54321, close: closed }; } });
   const agent = (id = "alice") => store.list().agents.find(a => a.id === id)!;
@@ -114,4 +114,16 @@ test("helper loss fences every observed broker without registry readback", async
   expect(f.broker.stopAll()).toEqual(["synthetic-account"]);
   expect((await f.dispatch(0, a!.bearer)).status).not.toBe(200); expect((await f.dispatch(1, b!.bearer)).status).not.toBe(200);
   expect(f.transport).not.toHaveBeenCalled(); await f.broker.close();
+});
+
+
+test("an existing broker endpoint survives unrelated registry/default edits", async () => {
+  const f = fixture(), scope = f.store.resolveScope("alice");
+  const selected = await f.broker.selectBroker(f.agent(), f.execution(), scope);
+  f.store.update("bob", { name: "Bob renamed" }, f.store.list().revision);
+  f.store.default("carol", f.store.list().revision);
+  expect((await f.dispatch(0, selected!.bearer, "read_file")).status).toBe(200);
+  f.store.update("alice", { allowedTools: ["file"] }, f.store.list().revision);
+  expect((await f.dispatch(0, selected!.bearer, "read_file")).status).toBe(403);
+  await f.broker.close();
 });

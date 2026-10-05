@@ -223,3 +223,15 @@ test("delegation depth is bounded without acquiring teammate private paths", () 
   expect(agentScopeAllowsPath(scope, f.store.paths("alice").memoryDir, "read")).toBe(false);
   expect(agentScopeAllowsPath(scope, f.store.paths("bob").memoryDir, "read")).toBe(false);
 });
+
+
+test("actor scopes survive unrelated edits but not chain binding changes or forgery", () => {
+  const f = fixture(); f.create("alice"); f.create("bob");
+  const scope = f.store.resolveScope("alice");
+  f.store.update("bob", { name: "Bob renamed" }, f.store.list().revision);
+  f.create("carol"); f.store.default("carol", f.store.list().revision);
+  expect(() => f.store.assertActorScope(scope)).not.toThrow();
+  expect(() => f.store.assertActorScope({ ...scope })).toThrow("Forged");
+  f.store.update("alice", { allowedTools: ["file"] }, f.store.list().revision);
+  expect(() => f.store.assertActorScope(scope)).toThrow("changed");
+});

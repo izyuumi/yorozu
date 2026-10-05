@@ -100,3 +100,40 @@ test("reply exchanges are bound to the same two configured identities", () => {
   expect(f.store.acceptMessage(bob, "reply", "alice", "Reply", message.exchangeId).exchangeId).toBe(message.exchangeId);
   expect(() => f.store.acceptMessage({ ...origin, agentId: "carol" }, "foreign", "alice", "Spoofed reply", message.exchangeId)).toThrow("Unknown peer");
 });
+
+
+test("message idempotency survives sender epoch/session/work rotation without redelivery", () => {
+  const f = fixture(), message = f.store.acceptMessage(origin, "stable-native-id", "bob", "same payload");
+  const attempt = f.store.beginDelivery(message.messageId);
+  f.store.settleDelivery(message.messageId, attempt, "delivered");
+  const recovered = new HarnessPlatformStore(f.dir);
+  expect(recovered.acceptMessage({ ...origin, bindingEpoch: "new-epoch", sessionId: "new-session", workId: "new-work" },
+    "stable-native-id", "bob", "same payload")).toEqual(message);
+  expect(recovered.pendingFor("bob")).toEqual([]);
+});
+
+test("UI navigation neither answers nor fences a subsequent explicit choice, including restart", async () => {
+  const f = fixture(), respond = vi.fn(async (answer: any) => ({ status: answer.uiTargetId ? "requested" as const : "applied" as const }));
+  const withUI = { ...action, ui: { targetId: "native-ui", label: "Open harness UI" } };
+  f.store.openAction(withUI, respond, () => true);
+  await f.store.answer(response("open-ui", { choiceId: undefined, uiTargetId: "native-ui" }));
+  expect(f.store.hasUnconfirmedActions("alice")).toBe(false);
+  expect(new HarnessPlatformStore(f.dir).hasUnconfirmedActions("alice")).toBe(false);
+  await f.store.answer(response("explicit-choice"));
+  expect(respond).toHaveBeenCalledTimes(2);
+  expect(respond.mock.calls.filter(([a]) => a.choiceId)).toHaveLength(1);
+  f.store.cancelAction(origin, action.requestId);
+  expect(f.store.hasUnconfirmedActions("alice")).toBe(false);
+});
+
+test("crash during a pending UI opener cannot manufacture an unknown native answer", async () => {
+  const f = fixture(); let release!: (result: { status: "requested" }) => void;
+  const respond = vi.fn(() => new Promise<{ status: "requested" }>(resolve => { release = resolve; }));
+  f.store.openAction({ ...action, ui: { targetId: "native-ui", label: "Open" } }, respond, () => true);
+  const opening = f.store.answer(response("pending-ui", { choiceId: undefined, uiTargetId: "native-ui" }));
+  expect(respond).toHaveBeenCalledOnce();
+  const recovered = new HarnessPlatformStore(f.dir);
+  expect(recovered.hasUnconfirmedActions("alice")).toBe(false);
+  release({ status: "requested" }); await opening;
+  expect(f.store.hasUnconfirmedActions("alice")).toBe(false);
+});

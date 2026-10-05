@@ -83,7 +83,7 @@ export function isolatedAgentLaunch(scope: EffectiveAgentScope, runtime: AgentIs
   }
   // Ancestor directory enumeration is necessary for dyld startup; it grants no descendant data.
   const lines = ["(version 1)", "(deny default)",
-    "(allow process-exec process-fork signal sysctl-read)", "(allow file-read-metadata)",
+    "(allow process-exec process-fork sysctl-read)", "(allow signal (target self))", "(allow file-read-metadata)",
     '(allow file-read* (subpath "/System") (subpath "/usr/lib") (subpath "/usr/bin") (subpath "/usr/share") (subpath "/bin") (subpath "/sbin") (subpath "/Library/Apple/System") (subpath "/private/var/db/dyld") (subpath "/private/var/db/uuidtext") (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random") (literal "/dev/zero"))',
     `(allow file-read* ${[...ancestors].sort().map(path => `(literal ${quoted(path)})`).join(" ")})`,
     `(allow file-read* ${[...readPaths, runtimeDir, ...directories.map(grant => grant.path)].map(filter).join(" ")})`,

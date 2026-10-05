@@ -31,7 +31,7 @@ interface Manifest { version: 1; bindings: Record<string, Binding>; taskOwners: 
 interface Actor { agent: PersonAgent; scope: EffectiveAgentScope; signature: string; execution: PersonAgentExecution; configuration: SupervisedHarnessConfiguration; process: HarnessProcess; owners: Set<string>; activate?(): void; release?(): void | Promise<void> }
 interface Owner { harness: SecretaryHarness; actor: Actor; epoch: string; transient: boolean }
 const owned = new Set<string>();
-const MAX_OWNERS = 4, MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+const MAX_OWNERS = 64, MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const empty = (): Manifest => ({ version: 1, bindings: {}, taskOwners: {}, holds: {}, instances: {} });
 const record = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
 const threadId = (v: unknown): v is string => typeof v === "string" && /^[\w.-]{1,128}$/.test(v);
@@ -114,7 +114,9 @@ export class PersonAgentRuntime {
   private pendingOperations = 0;
   private closing = false;
   private delivering = new Set<string>();
-  constructor(readonly dir: string, readonly store: PersonAgentStore, readonly factory: PersonAgentRuntimeFactory) {
+  private inboxRetries = new Map<string, ReturnType<typeof setTimeout>>();
+  constructor(readonly dir: string, readonly store: PersonAgentStore, readonly factory: PersonAgentRuntimeFactory,
+    private readonly supportsPeerInbox?: (agent: PersonAgent) => boolean) {
     this.root = safeAgentPath(join(dir, "person-agent-runtime-v1")); mkdirSync(this.root, { recursive: true, mode: 0o700 });
     if (owned.has(this.root)) throw new Error("Person agent runtime already owned");
     this.release = retainSharedSyncHost(join(this.root, "lease")); owned.add(this.root); this.file = join(this.root, "manifest.json");
@@ -290,6 +292,13 @@ export class PersonAgentRuntime {
     this.delivering.add(agentId);
     try {
       if (!this.platformStore.pendingFor(agentId).length) return;
+      if (this.supportsPeerInbox && !this.supportsPeerInbox(this.agent(agentId))) {
+        for (const message of this.platformStore.pendingFor(agentId)) {
+          const attempt = this.platformStore.beginDelivery(message.messageId);
+          this.platformStore.settleDelivery(message.messageId, attempt, "rejected", "The selected harness has no declared native peer inbox.", true);
+        }
+        return;
+      }
       const recipient = await this.conversation(this.canonicalConversation(agentId), agentId);
       // Session/bootstrap failures precede the message attempt, so retained data can wait.
       if (!await recipient.prepareMessageDelivery()) {
@@ -309,8 +318,13 @@ export class PersonAgentRuntime {
         try {
           const receipt = await recipient.deliverMessage(message, attempt);
           if (receipt.status === "accepted") this.platformStore.settleDelivery(message.messageId, attempt, "delivered");
-          else if (["busy", "rejected", "unsupported"].includes(receipt.status) && receipt.handoff === "not-submitted")
+          else if (["busy", "rejected", "unsupported"].includes(receipt.status) && receipt.handoff === "not-submitted") {
             this.platformStore.settleDelivery(message.messageId, attempt, receipt.status === "busy" ? "accepted" : "rejected", receipt.reason, true);
+            if (receipt.status === "busy" && !this.closing && !this.inboxRetries.has(agentId)) {
+              const timer = setTimeout(() => { this.inboxRetries.delete(agentId); void this.deliverPending(agentId); }, 1000);
+              timer.unref(); this.inboxRetries.set(agentId, timer);
+            }
+          }
           else this.platformStore.settleDelivery(message.messageId, attempt, "unknown", receipt.reason);
         } catch { this.platformStore.settleDelivery(message.messageId, attempt, "unknown", "The native inbox admission receipt was lost; no automatic resend."); }
       }
@@ -320,9 +334,9 @@ export class PersonAgentRuntime {
   answerAction(event: YorozuEvent): Promise<void> { return this.platformStore.answer(event); }
   private async room(): Promise<void> {
     if (this.owners.size < MAX_OWNERS) return;
-    const retired = [...this.owners].find(([, o]) => !o.transient && o.harness.idleConfirmed);
-    if (!retired) throw new Error("Active conversation owner budget exceeded; no execution was admitted");
-    await retired[1].harness.close(); this.owners.delete(retired[0]); retired[1].actor.owners.delete(retired[0]);
+    // Never detach a live actor's platform listener merely to reclaim an owner.
+    // At the bounded limit refuse new admission; existing daemons remain observed.
+    throw new Error("Conversation owner budget exceeded; no execution was admitted");
   }
   private async prepare(agent: PersonAgent, scope: EffectiveAgentScope, kind: "ordinary" | "handoff", id: string): Promise<Actor> {
     const scratchRoot = safeAgentPath(join(this.root, "scratch", agent.id, id)); mkdirSync(scratchRoot, { recursive: true, mode: 0o700 });
@@ -471,6 +485,7 @@ export class PersonAgentRuntime {
   }
   async close(): Promise<void> {
     if (this.closing) return; this.closing = true;
+    for (const timer of this.inboxRetries.values()) clearTimeout(timer); this.inboxRetries.clear();
     try {
       await Promise.allSettled([...this.owners.values()].filter(o => o.actor.agent.runtime?.mode !== "connected").map(o => o.harness.stop(`manager-close-${randomUUID()}`)));
       for (const actor of new Set([...this.actors.values(), ...[...this.owners.values()].map(o => o.actor)])) await this.closeActor(actor);

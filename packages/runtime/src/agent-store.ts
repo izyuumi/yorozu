@@ -56,6 +56,7 @@ export class PersonAgentStore {
   private readonly resourceRoots: DirectoryGrant[];
   private readonly protectedRoots: string[];
   private readonly scopes = new WeakSet<object>();
+  private readonly scopeBindings = new WeakMap<object, string>();
   constructor(stateDir: string, options: PersonAgentStoreOptions = {}) {
     safeAgentPath(stateDir);
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -230,7 +231,16 @@ export class PersonAgentStore {
       join(this.root, "registry.json"), join(this.root, "journal.json"), join(this.root, ".writer-lock"), this.derived(agent.id).runtimeDir])].sort();
     const scope: EffectiveAgentScope = { version: 1, agentId: agent.id, revision: state.revision, chain, ...selected, deniedRoots };
     Object.freeze(scope.allowedTools); for (const grant of scope.directories) Object.freeze(grant); Object.freeze(scope.directories); Object.freeze(scope.knowledgeIds); Object.freeze(scope.chain); Object.freeze(scope.deniedRoots); Object.freeze(scope);
-    this.scopes.add(scope); return scope;
+    this.scopes.add(scope);
+    this.scopeBindings.set(scope, JSON.stringify(chain.map(id => state.agents.find(a => a.id === id))));
+    return scope;
+  }
+  /** Actor grants stay fixed across unrelated registry revisions. All chain bindings
+   * must still match; this is not permission to reuse a stale delegation scope. */
+  assertActorScope(scope: EffectiveAgentScope): void {
+    const state = this.readRegistry();
+    if (!this.scopes.has(scope) || this.scopeBindings.get(scope) !== JSON.stringify(scope.chain.map(id => state.agents.find(a => a.id === id))))
+      throw new Error("Forged or changed actor scope");
   }
   resolveScope(id: string, requestScope?: ScopeSelection): EffectiveAgentScope {
     const state = this.readRegistry(), agent = state.agents.find(a => a.id === id);

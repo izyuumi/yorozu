@@ -224,3 +224,12 @@ test.skipIf(process.platform !== "darwin" || process.env.YOROZU_TEST_AGENT_SANDB
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ own: "Alice fixture", denied: [true, true, true, true], childDenied: true });
   });
+
+
+test("policy never grants ambient signals to the host or other same-user agents", () => {
+  const { scope, runtime } = fixture();
+  const policy = isolatedAgentLaunch(scope, runtime, "darwin").policy;
+  expect(policy).toContain("(allow signal (target self))");
+  expect(policy).not.toContain("process-fork signal");
+  expect(policy).not.toContain("(allow signal)");
+});

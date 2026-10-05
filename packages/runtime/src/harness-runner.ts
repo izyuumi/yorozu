@@ -140,7 +140,7 @@ export class SecretaryHarness {
       if (!session || typeof session.sessionId !== "string" || !session.sessionId || session.sessionId.length > 512) throw new Error("Invalid harness session receipt");
       this.ledger.state.sessionId = session.sessionId;
       this.ledger.commitBinding(); this.ledger.save(); this.services?.changed();
-    })().catch(async error => { if (this.ownsProcess) await this.process.close(); throw error; });
+    })().catch(async error => { this.starting = undefined; if (this.ownsProcess) await this.process.close(); throw error; });
   }
   private async run(turn: NativeTurn): Promise<NativeTurnResult> {
     if (!this.owns(turn.threadId)) return { text: "This conversation does not belong to the selected harness.", failed: true };

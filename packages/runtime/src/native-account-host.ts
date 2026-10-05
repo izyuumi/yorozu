@@ -1,5 +1,6 @@
 /** Native composition root. Saved credentials remain confined to the trusted host;
  * renderer settings publish only the closed shared status schema. */
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseSiwcAccountControl, parseSiwcAccountStatus, type SiwcAccountStatusData, type SiwcAccountControlResult, type YorozuEvent } from "@yorozu/shared";
@@ -40,7 +41,20 @@ function safeReceipt(value: { operationId: string; status: SiwcAccountControlRes
     ...(value.status === "pending" && value.attemptId ? { attemptId: value.attemptId } : {}),
     ...(value.reason ? { reason: (reasons.includes(value.reason) ? value.reason : "unknown") as SiwcAccountControlResult["reason"] } : {}) };
 }
+/** Packaging metadata is a necessary gate, never proof of native account readiness. */
+function provisionedHelper(resources: string): boolean {
+  try {
+    const fd = openSync(join(resources, "YorozuAccounts.app", "Contents", "Resources", "accounts-helper.json"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.nlink !== 1 || stat.size > 64 * 1024) return false;
+      const value = JSON.parse(readFileSync(fd, "utf8"));
+      return value.schemaVersion === 1 && value.kind === "yorozu-accounts-helper" && value.provisioning === "static-input-checks";
+    } finally { closeSync(fd); }
+  } catch { return false; }
+}
 export function createNativeAccountHost(resources: string, dir: string, dependencies: NativeAccountHostDependencies = {}) {
+  const provisioned = provisionedHelper(resources);
   let people: PersonAgentHost | undefined, store: PersonAgentStore | undefined, closed = false;
   let changed = (): void => {};
   let cached: SiwcAccountStatusData = { version: 1, productionReady: false, nativeIntegration: "wired-unverified",
@@ -54,7 +68,8 @@ export function createNativeAccountHost(resources: string, dir: string, dependen
   const stopAccount: SiwcAccountServices["stopAccount"] = (binding, reason) => {
     // Rotation holds admission temporarily. Retiring here would abort the very
     // request obtaining the rotated credential and make every refresh unknown.
-    if (reason === "refresh") return;
+    // Active-account selection is a UI default, not revocation of explicit bindings.
+    if (reason === "refresh" || reason === "select") return;
     broker.stopAccount(binding);
     if (people) {
       const retirement = people.runtime.retireAccount(binding); retirements.add(retirement);
@@ -85,7 +100,7 @@ export function createNativeAccountHost(resources: string, dir: string, dependen
     } }, callbackEndpoint: dependencies.callbackEndpoint ?? createNumericSiwcCallbackEndpointFactory(), onChange: () => { void refresh(); } });
   const assertScope: SiwcPersonBrokerServices["assertScope"] = (agent, scope) => {
     if (closed || !store) throw new Error("Person account owner unavailable");
-    store.knowledgeFor(agent.id, scope);
+    store.assertActorScope(scope);
     if (harnessDigest(store.list().agents.find(a => a.id === agent.id)) !== harnessDigest(agent)) throw new Error("Person account binding changed");
   };
   const broker = createSiwcPersonBroker({ getAccounts: () => coordinator.getLifecycle(), assertScope,
@@ -118,7 +133,7 @@ export function createNativeAccountHost(resources: string, dir: string, dependen
       try { if (!await coordinator.activateSavedAccounts(controller.signal)) return; await refresh(); return await broker.selectBroker(agent, execution, scope); }
       finally { clearTimeout(timer); }
     }, releaseBroker: (agent, execution) => broker.release(agent, execution) });
-  return Object.freeze({ platform,
+  return Object.freeze({ platform, provisioned,
     bindPeople(selected: PersonAgentHost): void { if (people || selected.store !== store) throw new Error("Person account owner changed"); people = selected; },
     bindChanged(callback: () => void): void { changed = callback; },
     status(): SiwcAccountStatusData { return structuredClone(cached); },
@@ -128,6 +143,8 @@ export function createNativeAccountHost(resources: string, dir: string, dependen
       const command = { operationId: event.id, ...data, ...(data.method === "sign-in" ? {
         bindingId: data.bindingId ?? `siwc-${harnessDigest(["siwc-account-binding-v1", event.id])}`, returning: data.returning ?? false } : {}) } as NativeSiwcAccountCommand;
       if (!authorized(sender, command)) throw new Error("Native account sender unavailable");
+      if (command.method === "sign-in" && !provisioned) return parseSiwcAccountStatus({ ...cached, available: false, state: "unsupported",
+        lastControlResult: { operationId: event.id, status: "rejected", reason: "unsupported" } });
       if (command.method === "status") { await refresh(); return structuredClone(cached); }
       const dispatch = async (): Promise<SiwcAccountControlResult> => {
         const result = await coordinator.execute(sender, command);

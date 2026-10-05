@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { serveSecretary } from "../dist/secretary-serve.js";
 
 const f = vi.hoisted(() => ({
-  options: {} as any, registered: {} as any, mainPerson: false, selectedHarness: false,
+  options: {} as any, registered: {} as any, mainPerson: false, selectedHarness: false, packaged: false,
   ordinary: vi.fn(async () => ({ text: "ordinary" })),
   person: vi.fn(async () => ({ text: "person" })),
   planner: vi.fn(async () => ({ text: "legacy" })),
@@ -10,6 +10,7 @@ const f = vi.hoisted(() => ({
   reconcile: vi.fn(), personBind: vi.fn(), personClose: vi.fn(async () => {}), close: vi.fn(async () => {}),
   unavailable: undefined as undefined | ((reason: string) => void),
 }));
+vi.mock("../dist/packaged-agent-runtime.js", () => ({ packagedResourcesFromEntry: () => f.packaged ? "/synthetic-packaged-resources" : undefined }));
 vi.mock("../dist/serve.js", () => ({ secretaryRunnerDecorator: true, serve: (options: any) => {
   f.options = options;
   f.registered = options.decorateNativeRunners({ codex: { run: f.ordinary } }, { emit() {} });
@@ -33,7 +34,7 @@ vi.mock("../dist/person-agent-host.js", () => ({ PersonAgentHost: class {
   control() {} create() {} bind = f.personBind; close = f.personClose;
   runtime = { taskStop: async () => false };
 } }));
-beforeEach(() => { vi.clearAllMocks(); f.mainPerson = false; f.selectedHarness = false; f.unavailable = undefined; });
+beforeEach(() => { vi.clearAllMocks(); f.mainPerson = false; f.selectedHarness = false; f.packaged = false; f.unavailable = undefined; });
 
 test("person chats preserve legacy main/tasks and ordinary chats with per-thread harness routing", async () => {
   const sidecar = serveSecretary({ stateDir: "/unused-person-serve-fixture", personAgentPlatform: { createFactory: () => { throw new Error(); } } });
@@ -73,4 +74,21 @@ test("adding people preserves the existing selected secretary harness and its ta
   expect(await f.options.secretaryTaskStop({ threadId: "selected-task" })).toBe(true);
   expect(f.selectedStop).toHaveBeenCalledOnce(); expect(f.selectedBind).toHaveBeenCalledOnce();
   expect(f.reconcile).not.toHaveBeenCalled(); await sidecar.close(); expect(f.selectedClose).toHaveBeenCalledOnce();
+});
+
+
+test("packaged entry ignores ambient unconfined harness selection", async () => {
+  f.packaged = true; f.selectedHarness = true;
+  const sidecar = serveSecretary({ stateDir: "/unused-packaged-fixture" });
+  expect(f.options.secretaryHarness).toBe(false);
+  expect(f.selected).not.toHaveBeenCalled();
+  await sidecar.close();
+});
+
+test("unprovisioned native account host does not advertise or expose sign-in controls", async () => {
+  const accounts = { provisioned: false, platform: {}, bindPeople() {}, bindChanged() {}, close: async () => {}, status: vi.fn(), control: vi.fn() };
+  const sidecar = serveSecretary({ stateDir: "/unused-unprovisioned-fixture", nativeAccountHost: accounts as any });
+  expect(f.options.siwcAccountStatus).toBeUndefined(); expect(f.options.siwcAccountControl).toBeUndefined();
+  expect(accounts.control).not.toHaveBeenCalled();
+  await sidecar.close();
 });

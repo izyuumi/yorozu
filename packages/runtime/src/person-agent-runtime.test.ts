@@ -52,7 +52,7 @@ function fixture(mode = "complete") {
     }
     if (method === "request.answer") return Promise.resolve({ status: "answered" });
     if (method === "action.answer") return mode === "answer-unknown" ? Promise.reject(new Error("lost native answer receipt")) : Promise.resolve({ status: "applied" });
-    if (method === "message.deliver") return mode === "inbox-hold" ? new Promise(resolve => { inboxReleases.push(() => resolve({ status: "accepted" })); }) : Promise.resolve({ status: "accepted" });
+    if (method === "message.deliver") return mode === "inbox-busy" && traces.filter(t => t.method === "message.deliver").length === 1 ? Promise.resolve({ status: "busy", handoff: "not-submitted" }) : mode === "inbox-hold" ? new Promise(resolve => { inboxReleases.push(() => resolve({ status: "accepted" })); }) : Promise.resolve({ status: "accepted" });
     if (method === "message.receipt") return Promise.resolve({ status: "accepted" });
     if (method === "run.stop") {
       queueMicrotask(() => emit(this, params, "turn.terminal", { state: "stopped", text: "stopped", cessation: "provider-terminal" }));
@@ -65,7 +65,7 @@ function fixture(mode = "complete") {
     return { configuration: { pluginId: agent.pluginId, upstreamVersion: "fixture-1", command: process.execPath, args: [], initialize: {} },
       runtime: { command: process.execPath, args: [], runtimeDir: execution.scratchRoot, readPaths: [], brokerPorts: [] }, release };
   };
-  const manager = new PersonAgentRuntime(dir, store, factory); manager.bind({ emit: e => appendThreadEvent(e, dir), changed() {} });
+  const manager = new PersonAgentRuntime(dir, store, factory, agent => !(mode === "no-inbox" && agent.id === "bob")); manager.bind({ emit: e => appendThreadEvent(e, dir), changed() {} });
   cleanup.push(async () => { await manager.close(); rmSync(dir, { recursive: true, force: true }); });
   const invoke = (h: SecretaryHarness, id: string, text: string, extra: Partial<NativeTurn> = {}) => {
     appendThreadEvent({ id, threadId: h.conversationId, agentId: "main", ts: Date.now(), kind: "message", data: { role: "user", text } }, dir);
@@ -320,12 +320,12 @@ test("host-selected shared resources cannot expose another vendor profile or a t
 });
 
 
-test("idle chat owners release their ledger leases while the ordinary daemon and binding remain reusable", async () => {
+test("idle chat owners retain listeners and ledger leases while the daemon and binding remain reusable", async () => {
   const f = fixture(), first = await f.manager.conversation("many-0", "alice"); await f.invoke(first, "settled-0", "hello");
   const process = first.process, binding = first.ledger.state.bindingId;
   for (let n = 1; n <= 4; n++) await f.manager.conversation(`many-${n}`, "alice");
   expect(f.factories).toHaveLength(1); expect(process.unavailable).toBe(false);
-  const reopened = await f.manager.owner("many-0"); expect(reopened).not.toBe(first); expect(reopened!.process).toBe(process);
+  const reopened = await f.manager.owner("many-0"); expect(reopened).toBe(first); expect(reopened!.process).toBe(process);
   expect(reopened!.ledger.state.bindingId).toBe(binding); expect(readThreadEvents("many-0", f.dir).some(e => e.id === "settled-0")).toBe(true);
   expect(await f.invoke(reopened!, "settled-1", "hello again")).toMatchObject({ completed: true });
 });
@@ -351,6 +351,48 @@ test("unsupported recipient inbox is refused without authoring a substitute user
       .toMatchObject({ delivery: "rejected", execution: "not-started", handoff: "not-submitted" });
   });
   expect(f.traces.filter(t => t.method === "message.deliver")).toHaveLength(0);
+  expect(f.factories.map(f => f.agent.id)).toEqual(["alice"]);
+  expect(f.traces.filter(t => t.method === "fixture.start")).toHaveLength(1);
+  expect(f.traces.filter(t => t.method === "session.open")).toHaveLength(1);
   expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(1);
   expect(f.manager.platformStore.pendingFor("bob")).toEqual([]);
+});
+
+
+test("a positively not-submitted busy inbox retries without another trigger", async () => {
+  const f = fixture("inbox-busy"), a = await f.manager.conversation(f.manager.canonicalConversation("alice"), "alice");
+  await f.invoke(a, "sender-ready", "hello");
+  f.emit(a.process, { conversationId: a.conversationId }, "agent.message", { version: 1, sessionId: `native-${a.conversationId}`, messageId: "busy-once", toAgentId: "bob", text: "Peer data" }, true);
+  await vi.waitFor(() => expect(f.traces.filter(t => t.method === "message.deliver")).toHaveLength(2), { timeout: 4000 });
+  await vi.waitFor(() => expect(f.manager.platformStore.pendingFor("bob")).toEqual([]));
+  expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(1);
+});
+
+test("failed pre-turn session opening is not memoized on a shared owner", async () => {
+  const f = fixture(), a = await f.manager.conversation("retry-start", "alice");
+  const request = vi.mocked(a.process.request).getMockImplementation()!.bind(a.process); let first = true;
+  vi.spyOn(a.process, "request").mockImplementation((method, params) => {
+    if (method === "session.open" && first) { first = false; return Promise.reject(new Error("synthetic session refusal")); }
+    return request(method, params);
+  });
+  expect(await f.invoke(a, "start-refused", "hello")).toMatchObject({ failed: true });
+  expect(await f.invoke(a, "start-retry", "hello again")).toMatchObject({ completed: true });
+  expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(1);
+});
+
+
+test("five idle agents retain background action listeners without retiring a daemon", async () => {
+  const f = fixture();
+  for (const id of ["dave", "eve"]) f.store.create({ id, name: id, role: "Fixture", pluginId: "hermes", allowedTools: ["file"], directories: [] }, f.store.list().revision);
+  const owners: SecretaryHarness[] = [];
+  for (const id of ["alice", "bob", "carol", "dave", "eve"]) {
+    const owner = await f.manager.conversation(f.manager.canonicalConversation(id), id); owners.push(owner);
+    await f.invoke(owner, `hello-${id}`, "hello");
+  }
+  const alice = owners[0];
+  f.emit(alice.process, { conversationId: alice.conversationId }, "action.open", { version: 1, sessionId: `native-${alice.conversationId}`,
+    requestId: "outside-turn", kind: "approval", title: "Background", choices: [{ id: "yes", label: "Yes" }] }, true);
+  expect(readThreadEvents(alice.conversationId, f.dir).some(e => e.kind === "harness_action")).toBe(true);
+  expect(alice.process.unavailable).toBe(false);
+  expect(await f.manager.owner(alice.conversationId)).toBe(alice);
 });

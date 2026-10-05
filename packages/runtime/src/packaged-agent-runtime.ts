@@ -197,7 +197,7 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
   const selected = services.selectBroker, root = join(resourcesRoot, "agent-runtimes", "hermes");
   return { initialAgent: { id: "yorozu", name: "Yorozu", role: "Secretary", pluginId: "hermes", allowedTools: ["file", "memory", "delegation"], directories: [] },
     catalog: () => ({ ...(existsSync(root) ? { defaultHarnessId: "hermes" as const } : {}), harnesses: [
-      { id: "hermes", label: "Hermes", available: existsSync(root), modes: ["managed"], capabilities: [],
+      { id: "hermes", label: "Hermes", available: existsSync(root), modes: ["managed"], capabilities: ["agent-messaging-v1"],
         ...(!existsSync(root) ? { unavailableReason: "The packaged Hermes runtime is unavailable." } : {}) },
       { id: "openclaw", label: "OpenClaw", available: false, modes: [], capabilities: [], unavailableReason: "No verified packaged runtime or selected host connection is available." },
     ], connections: [] }),

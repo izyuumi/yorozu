@@ -140,11 +140,22 @@ export class HarnessPlatformStore {
     const status: HarnessActionStatusData = { version: 1, operationId: event.id, requestId: answer.requestId, origin: structuredClone(answer.origin),
       status: !harnessActionAcceptsAnswer(entry.action, answer) ? "rejected" : Object.values(entry.operations).some(receipt => ["requested", "unknown"].includes(receipt.status)) ? "unknown"
         : !responder?.current() ? "no-longer-needed" : "requested" };
+    const dispatch = status.status === "requested";
+    // UI navigation never submits a native answer. Persist a non-fencing receipt
+    // even if the host exits while the UI opener is pending.
+    if (dispatch && answer.uiTargetId !== undefined) status.status = "no-longer-needed";
     (entry.answers ??= Object.create(null))[event.id] = answerKey(answer); entry.operations[event.id] = status; this.save(); this.projectAction(entry);
-    if (status.status !== "requested") return;
+    if (!dispatch) return;
     // Durable intent precedes exactly one native call. A lost result is never permission to retry.
-    try { Object.assign(status, await responder!.respond(answer)); }
-    catch { status.status = "unknown"; status.reason = "The harness answer outcome is unconfirmed. It will not be sent again automatically."; }
+    try {
+      Object.assign(status, await responder!.respond(answer));
+      if (answer.uiTargetId !== undefined) status.status = status.status === "rejected" ? "rejected" : "no-longer-needed";
+    }
+    catch {
+      status.status = answer.uiTargetId !== undefined ? "rejected" : "unknown";
+      status.reason = answer.uiTargetId !== undefined ? "The harness interface could not be opened. No native answer was sent."
+        : "The harness answer outcome is unconfirmed. It will not be sent again automatically.";
+    }
     const settled = parseHarnessActionStatus(status);
     if (settled.status === "applied") { entry.action.state = "resolved"; this.responders.delete(key); }
     if (settled.status === "unknown") this.responders.delete(key);
@@ -156,7 +167,7 @@ export class HarnessPlatformStore {
     const messageId = `agent-message-${harnessDigest([origin.agentId, nativeMessageId]).slice(0, 48)}`;
     const prior = this.journal.messages[messageId];
     if (prior) {
-      if (harnessDigest(originKey(prior.message.origin)) !== harnessDigest(originKey(origin)) || prior.message.toAgentId !== toAgentId || prior.message.text !== text
+      if (prior.message.origin.agentId !== origin.agentId || prior.message.toAgentId !== toAgentId || prior.message.text !== text
         || requestedExchangeId !== undefined && prior.message.exchangeId !== requestedExchangeId) throw new Error("Agent message identity conflict");
       return structuredClone(prior.message);
     }

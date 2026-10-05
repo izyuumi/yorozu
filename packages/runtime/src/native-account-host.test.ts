@@ -1,6 +1,6 @@
 /** Composed account/lifecycle/person seams, synthetic credentials and fake native services. */
 import { afterEach, expect, test, vi } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSiwcAccountStatus, type YorozuEvent } from "@yorozu/shared";
@@ -14,9 +14,11 @@ import { SIWC_DISCOVERY_URL, SIWC_ISSUER, SIWC_JWKS_URL, type SiwcProtectedSnaps
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); vi.restoreAllMocks(); });
 const SCOPES = ["openid", "profile", "email", "offline_access", "resource.invoke", "chatgpt.tokens.use.direct"];
-function fixture(ready = false, writerFails = false) {
+function fixture(ready = false, writerFails = false, provisioned = true) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "native-account-host-fixture-"))), dir = join(root, "state"), home = join(root, "home"), resources = join(root, "Fixture.app", "Contents", "Resources");
   mkdirSync(resources, { recursive: true }); mkdirSync(home);
+  const helperResources = join(resources, "YorozuAccounts.app", "Contents", "Resources"); mkdirSync(helperResources, { recursive: true });
+  writeFileSync(join(helperResources, "accounts-helper.json"), JSON.stringify({ schemaVersion: 1, kind: "yorozu-accounts-helper", provisioning: provisioned ? "static-input-checks" : "absent" }));
   let snapshot: SiwcProtectedSnapshot = { version: 1, revision: 0, hostId: "urn:uuid:synthetic-native-host", appName: "Yorozu", callbackPath: "/auth/callback", accounts: [] };
   if (ready) { snapshot.activeAccountBindingId = "account-a"; snapshot.accounts.push({ accountBindingId: "account-a", phase: "ready", registration: { clientId: "oaiapp_fixture", subject: "subject-fixture" },
     scopes: SCOPES, credentials: { accessToken: "synthetic_access_1234567890", refreshToken: "synthetic_refresh_1234567890", idToken: "synthetic_id_token_1234567890", expiresAt: Date.now() + 3_600_000 } }); }
@@ -106,4 +108,27 @@ test("explicit selected person preparation reuses saved protected account withou
   for (const root of [join(f.home, "Library", "Keychains"), join(f.home, "Library", "Application Support", "Yorozu", "ProtectedAccounts"), join(f.dir, "siwc-account-controls-v1")]) expect(scope.deniedRoots).toContain(root);
   await f.control("sign-out-saved", { method: "sign-out", bindingId: "account-a" }, { local: false, paired: true });
   expect(f.retirement).toHaveBeenCalledWith("account-a");
+});
+
+
+test("signing into and selecting another account does not retire explicit previous bindings", async () => {
+  const f = fixture(true), scope = f.store.resolveScope("alice");
+  expect(await f.select(scope)).toBeDefined();
+  const started = await f.control("sign-second", { method: "sign-in", bindingId: "account-b" });
+  expect(started.lastControlResult?.status).toBe("pending");
+  await f.complete();
+  expect(f.retirement).not.toHaveBeenCalled();
+  await f.control("select-first", { method: "select", bindingId: "account-a" });
+  expect(f.retirement).not.toHaveBeenCalled();
+  expect(await f.select(scope)).toBeDefined();
+});
+
+
+test("an unprovisioned helper refuses sign-in before native, browser or account-service activation", async () => {
+  const f = fixture(false, false, false);
+  expect(f.host.provisioned).toBe(false);
+  const result = await f.control("unprovisioned-sign-in", { method: "sign-in", bindingId: "account-a" });
+  expect(result).toMatchObject({ available: false, state: "unsupported", lastControlResult: { status: "rejected", reason: "unsupported" } });
+  expect(f.protectedStore.activate).not.toHaveBeenCalled(); expect(f.protectedStore.openBrowser).not.toHaveBeenCalled();
+  expect(f.request).not.toHaveBeenCalled(); expect(f.acquire).not.toHaveBeenCalled();
 });

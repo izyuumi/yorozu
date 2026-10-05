@@ -36,7 +36,7 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   if (accounts && options.personAgentPlatform && options.personAgentPlatform !== accounts.platform) throw new Error("Native account platform owner mismatch");
   const people = platform ? new PersonAgentHost(dir, platform) : undefined;
   if (people && accounts) accounts.bindPeople(people);
-  const configuration = people?.owns("yorozu-secretary-v1") ? undefined : harnessConfiguration(dir);
+  const configuration = people?.owns("yorozu-secretary-v1") || packagedResourcesFromEntry(new URL(import.meta.url)) ? undefined : harnessConfiguration(dir);
   const legacySecretary = !configuration && !people?.owns("yorozu-secretary-v1");
   // A local variable also type-checks against the unpatched development ServeOptions.
   const decoratedOptions = { ...options, stateDir: dir,
@@ -55,8 +55,8 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
     personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => people.control(event) : undefined,
     personAgentCreate: people ? (event: Parameters<PersonAgentHost["create"]>[0]) => people.create(event) : undefined,
     harnessAction: people ? (event: Parameters<PersonAgentHost["action"]>[0]) => people.action(event) : undefined,
-    siwcAccountStatus: accounts ? () => accounts.status() : undefined,
-    siwcAccountControl: accounts ? (event: Parameters<NonNullable<typeof accounts>["control"]>[0], sender: NativeAccountSender) => accounts.control(event, sender) : undefined,
+    siwcAccountStatus: accounts?.provisioned ? () => accounts.status() : undefined,
+    siwcAccountControl: accounts?.provisioned ? (event: Parameters<NonNullable<typeof accounts>["control"]>[0], sender: NativeAccountSender) => accounts.control(event, sender) : undefined,
     secretaryObserve: (event: Parameters<ReturnType<typeof secretaryCoordinator>["observe"]>[0]) => coordinator?.observe(event),
     decorateNativeRunners: (runners: Record<string, NativeAgentRunner>, host: SecretaryCoordinatorHost) => {
       if (configuration) {

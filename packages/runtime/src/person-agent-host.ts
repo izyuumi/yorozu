@@ -33,7 +33,8 @@ export class PersonAgentHost {
   constructor(readonly dir: string, private readonly platform: PersonAgentPlatform) {
     this.store = new PersonAgentStore(dir, { resourceRoots: platform.resourceRoots,
       protectedRoots: [...(platform.protectedRoots ?? []), join(dir, "harness-platform-v1")] });
-    this.runtime = new PersonAgentRuntime(dir, this.store, platform.createFactory(this.store));
+    this.runtime = new PersonAgentRuntime(dir, this.store, platform.createFactory(this.store),
+      agent => platform.catalog?.().harnesses?.some(h => h.id === agent.pluginId && h.available && h.capabilities.includes("agent-messaging-v1")) === true);
     let controls: PersonAgentControls | undefined;
     try {
       this.controls = controls = new PersonAgentControls(dir, this.store, this.runtime, { assertIdle: () => this.runtime.assertControlsIdle() });
