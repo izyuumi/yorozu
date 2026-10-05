@@ -27,6 +27,7 @@ export interface SiwcPersonBrokerServices {
   isExecutionCurrent(agent: Readonly<PersonAgent>, execution: Readonly<PersonAgentExecution>, scope: EffectiveAgentScope): boolean;
   transport: SiwcBrokerSelectorConfiguration["transport"];
   openEndpoint: SiwcBrokerSelectorConfiguration["openEndpoint"];
+  onLeaseChange?: SiwcBrokerSelectorConfiguration["onLeaseChange"];
 }
 export function siwcHermesFunctions(scope: EffectiveAgentScope, kind: PersonAgentExecution["kind"] = "ordinary"): readonly string[] {
   if (!Array.isArray(scope.allowedTools) || scope.allowedTools.some(tool => !Object.hasOwn(FUNCTIONS, tool)))
@@ -37,7 +38,7 @@ export function createSiwcPersonBroker(services: SiwcPersonBrokerServices, now: 
   const contexts = new Map<string, { agent: Readonly<PersonAgent>; execution: Readonly<PersonAgentExecution>; scope: EffectiveAgentScope;
     binding: string; active: boolean }>();
   let closed = false;
-  const selector = createSiwcBrokerSelector({ transport: services.transport, openEndpoint: services.openEndpoint,
+  const selector = createSiwcBrokerSelector({ onLeaseChange: services.onLeaseChange, transport: services.transport, openEndpoint: services.openEndpoint,
     selectGrant: async (agent, execution, signal) => {
       const context = contexts.get(`${agent.id}:${execution.id}`), accounts = services.getAccounts();
       if (!context || !context.active || closed || !accounts || !agent.model || !agent.accountBindingId) return;

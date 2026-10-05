@@ -24,3 +24,27 @@ test("a durable steer intent prevents re-delivery after a lost receipt or restar
     expect(executions).toBe(1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("durable admission intent fences restart after failed stop persistence without using history absence", async () => {
+  const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
+  const dir = mkdtempSync(join(tmpdir(), "ys-admission-fence-"));
+  try {
+    const fence = new SecretaryAdmissionFence(dir);
+    fence.begin("thread:request");
+    fence.fail(); // stop journal failed after native handoff
+    expect(() => fence.begin("other-thread:new-request")).toThrow("held");
+    expect(new SecretaryAdmissionFence(dir).blocked).toBe(true);
+    // No final-history lookup, deletion, dismissal or replay is attempted.
+    expect(readdirSync(fence.root)).toHaveLength(1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("positive cessation consumes only its exact durable execution intent", async () => {
+  const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
+  const dir = mkdtempSync(join(tmpdir(), "ys-admission-confirmed-"));
+  try {
+    const fence = new SecretaryAdmissionFence(dir); fence.begin("settled"); fence.begin("unknown"); fence.confirmed("settled");
+    expect(new SecretaryAdmissionFence(dir).blocked).toBe(true);
+    fence.confirmed("unknown"); expect(new SecretaryAdmissionFence(dir).blocked).toBe(false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

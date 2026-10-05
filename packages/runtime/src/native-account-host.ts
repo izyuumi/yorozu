@@ -103,8 +103,8 @@ export function createNativeAccountHost(resources: string, dir: string, dependen
     store.assertActorScope(scope);
     if (harnessDigest(store.list().agents.find(a => a.id === agent.id)) !== harnessDigest(agent)) throw new Error("Person account binding changed");
   };
-  const broker = createSiwcPersonBroker({ getAccounts: () => coordinator.getLifecycle(), assertScope,
-    isExecutionCurrent: (_agent, _execution, scope) => !closed && !!people && scope.chain.every(id => !people!.runtime.held(id)),
+  const broker = createSiwcPersonBroker({ onLeaseChange: (id, state) => people?.runtime.brokerLeaseChanged(id, state), getAccounts: () => coordinator.getLifecycle(), assertScope,
+    isExecutionCurrent: (_agent, _execution, scope) => !closed && !!people && scope.chain.every(id => !people!.runtime.held(id) && !people!.runtime.platformStore.hasUnconfirmedActions(id, false)),
     transport: dependencies.inferenceTransport ?? createSiwcHttpsTransport(), openEndpoint: dependencies.brokerEndpoint ?? createNumericSiwcBrokerEndpoint() });
   let refreshing: Promise<void> | undefined, refreshDirty = false;
   const refresh = (): Promise<void> => {

@@ -45,7 +45,7 @@ function fixture(ready = false, writerFails = false, provisioned = true) {
   vi.spyOn(curated, "createCuratedAgentRuntimeFactory").mockImplementation((_store, config) => { selectBroker = config.selectBroker; return vi.fn() as any; });
   host.platform.createFactory(store);
   const retirement = vi.fn(async () => {});
-  host.bindPeople({ store, runtime: { held: () => undefined, retireAccount: retirement } } as unknown as PersonAgentHost);
+  host.bindPeople({ store, runtime: { held: () => undefined, retireAccount: retirement, platformStore: { hasUnconfirmedActions: () => false } } } as unknown as PersonAgentHost);
   cleanup.push(async () => { await host.close(); rmSync(root, { recursive: true, force: true }); });
   const control = (id: string, data: any, sender = { local: true, paired: false }) => host.control({ id, threadId: "settings", ts: Date.now(), agentId: "main", kind: "siwc_account_control", data: { version: 1, ...data } } as YorozuEvent, sender);
   const complete = () => {

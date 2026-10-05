@@ -248,3 +248,42 @@ describe("curated factory broker selection", () => {
     expect(selectGrant).toHaveBeenCalledOnce(); expect(openEndpoint).not.toHaveBeenCalled();
   });
 });
+
+describe("quiescent host grant lifecycle", () => {
+  it("reprepares an expired grant on the same endpoint/bearer without resubmitting prior requests", async () => {
+    let now = NOW; const t = transport(), changed = vi.fn();
+    const initial = grant(), prepare = vi.fn(async () => grant({ budget: { ...initial.budget, expiresAt: now + 120_000 },
+      getAccessToken: async () => ({ ...token, expiresAt: now + 60_000 }) }));
+    const broker = createSiwcExecutionBroker(initial, t, () => now, { prepare, changed });
+    const selected = broker.selected("127.0.0.1", 54321);
+    await broker.dispatch(request(selected.bearer), sink());
+    now += 130_000;
+    const out = sink(); await broker.dispatch(request(selected.bearer), out);
+    expect(out.statuses).toEqual([200]); expect(t).toHaveBeenCalledTimes(2); expect(prepare).toHaveBeenCalledOnce();
+    expect(broker.selected("127.0.0.1", 54321)).toEqual(selected); expect(changed).toHaveBeenCalledWith("renewed");
+  });
+  it("renews exhausted finite request budgets, but refuses changed authority and never repeats a handoff", async () => {
+    const initial = grant(); initial.budget.maxRequests = 1; initial.budget.maxConcurrent = 1;
+    const t = transport(), changed = vi.fn(), prepare = vi.fn(async () => grant({ budget: { ...initial.budget } }));
+    const broker = createSiwcExecutionBroker(initial, t, () => NOW, { prepare, changed }), selected = broker.selected("127.0.0.1", 54321);
+    await broker.dispatch(request(selected.bearer), sink()); await broker.dispatch(request(selected.bearer), sink());
+    expect(t).toHaveBeenCalledTimes(2); expect(prepare).toHaveBeenCalledOnce();
+    prepare.mockResolvedValueOnce(grant({ model: "different-authority", budget: { ...initial.budget } }));
+    const rejected = sink(); await broker.dispatch(request(selected.bearer), rejected);
+    expect(rejected.statuses).toEqual([403]); expect(t).toHaveBeenCalledTimes(2); expect(changed).toHaveBeenCalledWith("unavailable");
+  });
+  it("does not rotate under an admitted stream or renew a held execution", async () => {
+    let release!: () => void;
+    const t = vi.fn(async () => ({ status: 200, contentType: "text/event-stream", body: (async function* () {
+      await new Promise<void>(resolve => { release = resolve; }); yield Buffer.from(frame(completed));
+    })() }));
+    let current = true; const initial = grant({ isCurrent: () => current }); initial.budget.maxRequests = 1; initial.budget.maxConcurrent = 1;
+    const prepare = vi.fn(async () => initial), changed = vi.fn(), broker = createSiwcExecutionBroker(initial, t, () => NOW, { prepare, changed });
+    const selected = broker.selected("127.0.0.1", 54321), running = broker.dispatch(request(selected.bearer), sink());
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const busy = sink(); await broker.dispatch(request(selected.bearer), busy); expect(busy.statuses).toEqual([429]); expect(prepare).not.toHaveBeenCalled();
+    release(); await running; current = false;
+    const held = sink(); await broker.dispatch(request(selected.bearer), held); expect(held.statuses).toEqual([403]); expect(prepare).not.toHaveBeenCalled();
+    expect(t).toHaveBeenCalledOnce();
+  });
+});

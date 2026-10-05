@@ -195,25 +195,53 @@ export interface SiwcExecutionBroker {
   close(): void;
 }
 /** No sockets/network/storage are opened by construction. All authority comes from trusted host grant. */
-export function createSiwcExecutionBroker(supplied: SiwcExecutionGrant, transport: SiwcTransport, now = Date.now): SiwcExecutionBroker {
-  const grant = grantCopy(supplied);
+export function createSiwcExecutionBroker(supplied: SiwcExecutionGrant, transport: SiwcTransport, now = Date.now,
+  renewal?: { prepare(): Promise<SiwcExecutionGrant | undefined>; changed(state: "renewed" | "unavailable"): void }): SiwcExecutionBroker {
+  let grant = grantCopy(supplied);
   if (typeof transport !== "function") fail("unsupported");
   const localBearer = randomBytes(32).toString("hex"), controllers = new Set<AbortController>();
   let endpoint: number | undefined, released = false, requests = 0, active = 0, bytes = 0;
   const current = (): boolean => { try { return !released && now() < grant.budget.expiresAt && grant.isCurrent() === true; } catch { return false; } };
   const charge = (n: number): void => { if ((bytes += n) > grant.budget.maxTotalBytes) fail("budget", 429); };
+  let renewing: Promise<void> | undefined;
+  const authority = (g: SiwcExecutionGrant): string => JSON.stringify([g.agentId, g.executionId, g.model, g.scopeDigest,
+    g.account, g.allowedFunctionNames, { ...g.budget, expiresAt: 0 }]);
+  const exhausted = (): boolean => now() + (renewal ? grant.budget.requestTimeoutMs : 0) >= grant.budget.expiresAt || requests >= grant.budget.maxRequests || bytes >= grant.budget.maxTotalBytes;
+  const prepareLease = async (): Promise<void> => {
+    if (!renewal || !exhausted() || released) return;
+    // Rotate only a quiescent inference grant, never an actor/session or request.
+    // Streams retain their original grant until positively drained by dispatch.finally.
+    if (active) fail("budget", 429);
+    if (!renewing) renewing = (async () => {
+      try {
+        if (!grant.isCurrent()) fail("binding", 403);
+        const next = await renewal.prepare();
+        if (!next || released || active) fail("binding", 403);
+        const candidate = grantCopy(next);
+        if (authority(candidate) !== authority(grant) || candidate.budget.expiresAt <= now() || !candidate.isCurrent()) fail("binding", 403);
+        grant = candidate; requests = 0; bytes = 0;
+        try { renewal.changed("renewed"); } catch { /* Presentation cannot change grant authority. */ }
+      } catch (error) {
+        try { renewal.changed("unavailable"); } catch {}
+        throw error;
+      }
+    })().finally(() => { renewing = undefined; });
+    await renewing;
+  };
   const dispatch = async (request: SiwcLocalRequest, sink: SiwcResponseSink): Promise<void> => {
     let started = false, admitted = false, token: SiwcAccessToken | undefined, iterator: AsyncIterator<Uint8Array> | undefined;
     const controller = new AbortController(); controllers.add(controller);
     const canceled = (): void => controller.abort(); request.signal?.addEventListener("abort", canceled, { once: true });
     if (request.signal?.aborted) controller.abort();
-    const timer = setTimeout(canceled, Math.max(0, Math.min(grant.budget.requestTimeoutMs, grant.budget.expiresAt - now()))); timer.unref();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       if (!endpoint || request.host !== `127.0.0.1:${endpoint}` || request.remoteAddress !== "127.0.0.1"
         || request.method !== "POST" || request.path !== "/v1/responses") fail("unsupported", 404);
       const credential = request.authorization?.startsWith("Bearer ") ? request.authorization.slice(7) : "";
       if (!/^[a-f0-9]{64}$/.test(credential) || !timingSafeEqual(Buffer.from(credential), Buffer.from(localBearer))) fail("unauthorized", 401);
+      await prepareLease();
       if (!current()) fail("binding", 403);
+      timer = setTimeout(canceled, Math.max(0, Math.min(grant.budget.requestTimeoutMs, grant.budget.expiresAt - now()))); timer.unref();
       if (request.contentType?.split(";")[0].trim().toLowerCase() !== "application/json" || request.contentEncoding && request.contentEncoding !== "identity") fail("unsupported", 415);
       if (active >= grant.budget.maxConcurrent || requests >= grant.budget.maxRequests) fail("budget", 429);
       active++; admitted = true; // Reservations include body readers so slow uploads cannot exceed concurrency.
@@ -319,6 +347,7 @@ export interface SiwcBrokerSelectorConfiguration {
   selectGrant(agent: Readonly<PersonAgent>, execution: Readonly<PersonAgentExecution>, signal: AbortSignal): SiwcExecutionGrant | undefined | Promise<SiwcExecutionGrant | undefined>;
   transport: SiwcTransport;
   /** Host integration acquires an approved numeric loopback endpoint. This module never opens a socket. */
+  onLeaseChange?(agentId: string, state: "renewed" | "unavailable"): void;
   openEndpoint(handler: (request: IncomingMessage, response: ServerResponse) => void, identity: Readonly<{ agentId: string; executionId: string }>, signal: AbortSignal): Promise<SiwcBrokerEndpoint>;
 }
 async function closeEndpoint(endpoint: SiwcBrokerEndpoint): Promise<void> {
@@ -331,7 +360,7 @@ export function createSiwcBrokerSelector(config: SiwcBrokerSelectorConfiguration
   release(agentId: string, executionId: string): Promise<void>;
   close(): Promise<void>;
 } {
-  if (!fields(config, ["selectGrant", "transport", "openEndpoint"]) || [config.selectGrant, config.transport, config.openEndpoint].some(fn => typeof fn !== "function")) fail("binding");
+  if (!fields(config, ["selectGrant", "transport", "openEndpoint", "onLeaseChange"]) || [config.selectGrant, config.transport, config.openEndpoint].some(fn => typeof fn !== "function")) fail("binding");
   const selectGrant = config.selectGrant, transport = config.transport, openEndpoint = config.openEndpoint;
   const pending = new Map<string, Promise<SelectedAgentBroker | undefined>>();
   const owned = new Map<string, { broker: SiwcExecutionBroker; endpoint: SiwcBrokerEndpoint }>();
@@ -359,7 +388,15 @@ export function createSiwcBrokerSelector(config: SiwcBrokerSelectorConfiguration
           if (validated.agentId !== agent.id || validated.executionId !== execution.id || validated.account.accountBindingId !== agent.accountBindingId
             || agent.model !== undefined && validated.model !== agent.model) fail("binding");
           if (closed || retired.has(instance)) fail("binding");
-          broker = createSiwcExecutionBroker(validated, transport);
+          broker = createSiwcExecutionBroker(validated, transport, Date.now, {
+            prepare: async () => {
+              const renewal = new AbortController(), timer = setTimeout(() => renewal.abort(), 5000); timer.unref();
+              try {
+                if (closed || retired.has(instance)) fail("binding");
+                return await signalBound(Promise.resolve(selectGrant(Object.freeze(structuredClone(agent)), Object.freeze(structuredClone(execution)), renewal.signal)), renewal.signal);
+              } finally { clearTimeout(timer); }
+            }, changed: state => config.onLeaseChange?.(agent.id, state),
+          });
           const opening = Promise.resolve().then(() => openEndpoint(broker!.handler, Object.freeze({ agentId: agent.id, executionId: execution.id }), controller.signal));
           void opening.then(value => { if (controller.signal.aborted) void closeEndpoint(value); }, () => {});
           endpoint = await signalBound(opening, controller.signal);

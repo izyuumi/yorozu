@@ -45,7 +45,7 @@ function fixture(mode = "complete") {
     if (method === "session.open") return Promise.resolve({ sessionId: `native-${params.conversationId}` });
     if (method === "turn.submit") {
       const p = params as Record<string, any>; currents.set(this, p);
-      if (mode === "hold" || mode === "unknown") {
+      if (mode === "hold" || mode === "delayed-stop" || mode === "silent-stop" || mode === "unknown") {
         if (mode === "unknown") queueMicrotask(() => emit(this, p, "turn.terminal", { state: "unknown", text: "lost provider", cessation: "provider-terminal" }));
       } else queueMicrotask(() => emit(this, p, "turn.terminal", { state: "completed", text: `completed by ${this.configuration.initialize.agentId}`, cessation: "provider-terminal" }));
       return Promise.resolve({ status: "accepted" });
@@ -55,7 +55,9 @@ function fixture(mode = "complete") {
     if (method === "message.deliver") return mode === "inbox-busy" && traces.filter(t => t.method === "message.deliver").length === 1 ? Promise.resolve({ status: "busy", handoff: "not-submitted" }) : mode === "inbox-hold" ? new Promise(resolve => { inboxReleases.push(() => resolve({ status: "accepted" })); }) : Promise.resolve({ status: "accepted" });
     if (method === "message.receipt") return Promise.resolve({ status: "accepted" });
     if (method === "run.stop") {
-      queueMicrotask(() => emit(this, params, "turn.terminal", { state: "stopped", text: "stopped", cessation: "provider-terminal" }));
+      if (mode === "silent-stop") return Promise.resolve({ status: "requested" });
+      const settled = () => emit(this, params, "turn.terminal", { state: "stopped", text: "stopped", cessation: "provider-terminal" });
+      if (mode === "delayed-stop") setTimeout(settled, 100); else queueMicrotask(settled);
       return Promise.resolve({ status: "requested" });
     }
     return Promise.resolve({ status: "unsupported" });
@@ -65,7 +67,7 @@ function fixture(mode = "complete") {
     return { configuration: { pluginId: agent.pluginId, upstreamVersion: "fixture-1", command: process.execPath, args: [], initialize: {} },
       runtime: { command: process.execPath, args: [], runtimeDir: execution.scratchRoot, readPaths: [], brokerPorts: [] }, release };
   };
-  const manager = new PersonAgentRuntime(dir, store, factory, agent => !(mode === "no-inbox" && agent.id === "bob")); manager.bind({ emit: e => appendThreadEvent(e, dir), changed() {} });
+  const manager = new PersonAgentRuntime(dir, store, factory, agent => !(mode === "no-inbox" && agent.id === "bob") && !(mode === "mixed-directory" && agent.pluginId === "openclaw")); manager.bind({ emit: e => appendThreadEvent(e, dir), changed() {} });
   cleanup.push(async () => { await manager.close(); rmSync(dir, { recursive: true, force: true }); });
   const invoke = (h: SecretaryHarness, id: string, text: string, extra: Partial<NativeTurn> = {}) => {
     appendThreadEvent({ id, threadId: h.conversationId, agentId: "main", ts: Date.now(), kind: "message", data: { role: "user", text } }, dir);
@@ -395,4 +397,49 @@ test("five idle agents retain background action listeners without retiring a dae
   expect(readThreadEvents(alice.conversationId, f.dir).some(e => e.kind === "harness_action")).toBe(true);
   expect(alice.process.unavailable).toBe(false);
   expect(await f.manager.owner(alice.conversationId)).toBe(alice);
+});
+
+
+test("Hermes initialization excludes an unsupported OpenClaw teammate directory entry", async () => {
+  const f = fixture("mixed-directory");
+  f.store.update("bob", { pluginId: "openclaw" }, f.store.list().revision);
+  const alice = await f.manager.conversation(f.manager.canonicalConversation("alice"), "alice");
+  expect(alice.process.configuration.initialize.platform).toMatchObject({ peers: [{ agentId: "carol", pluginId: "hermes" }] });
+  // Run the real adapter initialization validator with only an injected inert
+  // transport. No native Gateway, interpreter, provider or installed data.
+  const { createAdapter } = await import(new URL("../../harness-plugins/hermes/adapter.mjs", import.meta.url).href);
+  const adapter = createAdapter({ emit() {}, launch: async () => ({ messageJournalPath: join(f.dir, "synthetic-inbox.json"),
+    gateway: { onFrame() {}, onClose() {}, call: async () => ({}), closed: false } }) });
+  expect(await adapter.handle("initialize", alice.process.configuration.initialize)).toMatchObject({ pluginId: "hermes", agentId: "alice" });
+  expect(await f.invoke(alice, "mixed-ready", "hello")).toMatchObject({ completed: true });
+  expect(f.factories.map(v => v.agent.id)).toEqual(["alice"]);
+});
+
+
+test("ordinary shutdown allows a delayed positive terminal to settle before closing the actor", async () => {
+  const f = fixture("delayed-stop"), a = await f.manager.conversation("drain", "alice");
+  const run = f.invoke(a, "drain-request", "hello");
+  await vi.waitFor(() => expect(f.traces.some(t => t.method === "turn.submit")).toBe(true));
+  await f.manager.close(); await run;
+  expect(f.manager.held("alice")).toBeUndefined();
+});
+
+test("silent shutdown remains bounded and preserves unknown execution holds", async () => {
+  const f = fixture("silent-stop"), a = await f.manager.conversation("silent", "alice");
+  const run = f.invoke(a, "silent-request", "hello");
+  await vi.waitFor(() => expect(f.traces.some(t => t.method === "turn.submit")).toBe(true));
+  const start = Date.now(); await f.manager.close(); await run;
+  expect(Date.now() - start).toBeLessThan(2500); expect(f.manager.held("alice")).toBeDefined();
+});
+
+test("grant renewal notices are visible without submitting or changing the native session", async () => {
+  const f = fixture(), conversation = f.manager.canonicalConversation("alice");
+  const alice = await f.manager.conversation(conversation, "alice"); await f.invoke(alice, "native-ready", "hello");
+  const session = alice.ledger.state.sessionId, submissions = f.traces.filter(t => t.method === "turn.submit").length;
+  f.manager.brokerLeaseChanged("alice", "renewed"); f.manager.brokerLeaseChanged("alice", "unavailable");
+  expect(alice.ledger.state.sessionId).toBe(session);
+  expect(f.traces.filter(t => t.method === "turn.submit")).toHaveLength(submissions);
+  const visible = readThreadEvents(conversation, f.dir).filter(e => e.kind === "message").map(e => e.data.text);
+  expect(visible.some(text => text.includes("inference grant was renewed"))).toBe(true);
+  expect(visible.some(text => text.includes("inference grant is unavailable"))).toBe(true);
 });

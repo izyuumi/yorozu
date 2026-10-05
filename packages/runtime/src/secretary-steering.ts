@@ -1,6 +1,6 @@
 /** Durable delivery intent closes the provider-receipt / host-history crash window. */
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type SteerReceipt = "sending" | "received" | "declined" | "unconfirmed" | "storage-error";
@@ -52,4 +52,38 @@ export async function deliverSecretarySteer(dir: string, eventId: string, reques
   catch { record.receipt = "unconfirmed"; }
   persist(false);
   return record.receipt;
+}
+
+/** Durable pre-execution intent, independent of the fallible stop journal.
+ * A surviving marker is uncertainty, never permission to infer/replay absence. */
+export class SecretaryAdmissionFence {
+  readonly root: string;
+  private failed = false;
+  private readonly inherited: boolean;
+  constructor(dir: string) {
+    this.root = join(dir, "secretary-admission-v1");
+    mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    if (!lstatSync(this.root).isDirectory() || lstatSync(this.root).isSymbolicLink()) throw new Error("Invalid secretary admission directory");
+    const parent = openSync(dir, "r"); try { fsyncSync(parent); } finally { closeSync(parent); }
+    this.inherited = readdirSync(this.root).length !== 0;
+  }
+  get blocked(): boolean { return this.failed || this.inherited; }
+  fail(): void { this.failed = true; }
+  private path(id: string): string { return join(this.root, createHash("sha256").update(id).digest("hex") + ".intent"); }
+  begin(id: string): void {
+    if (this.blocked) throw new Error("Secretary admission is held by unconfirmed durable intent");
+    let fd: number | undefined;
+    try {
+      fd = openSync(this.path(id), "wx", 0o600);
+      writeFileSync(fd, JSON.stringify({ version: 1, id }) + "\n"); fsyncSync(fd);
+      const directory = openSync(this.root, "r"); try { fsyncSync(directory); } finally { closeSync(directory); }
+    } catch (error) { this.fail(); throw error; } finally { if (fd !== undefined) closeSync(fd); }
+  }
+  /** Only positive execution cessation or successful journal persistence consumes its matching intent. */
+  confirmed(id: string): void {
+    try {
+      unlinkSync(this.path(id));
+      const directory = openSync(this.root, "r"); try { fsyncSync(directory); } finally { closeSync(directory); }
+    } catch (error) { this.fail(); throw error; }
+  }
 }

@@ -386,7 +386,7 @@ export class PersonAgentRuntime {
         if (sibling !== scratchRoot && sibling !== nativeScratch) siblingScratch.push(sibling);
       }
       const deniedRoots = [...new Set([...scope.deniedRoots, ...siblingScratch, join(this.root, "ledgers"), this.file, join(this.root, "lease"),
-        join(this.dir, "threads"), join(this.dir, "threads.json"), join(this.dir, "person-agent-controls-v1"), this.platformStore.root])];
+        join(this.dir, "threads"), join(this.dir, "threads.json"), join(this.dir, "secretary-admission-v1"), join(this.dir, "person-agent-controls-v1"), this.platformStore.root])];
       const osScope = { ...scope, deniedRoots, directories: [...scope.directories, { path: nativeProfile, access: "write" as const }] };
       const launch = isolatedAgentLaunch(osScope, built.runtime);
       let activate: (() => void) | undefined;
@@ -405,7 +405,8 @@ export class PersonAgentRuntime {
         inheritedListeners: built.runtime.inheritedListeners,
         initialize: { ...initialize, agentId: agent.id, workspace: execution.workspace, model: agent.model,
           scope: scoped, isolation: launch.isolation, platform: { team: agent.teamIds.length > 0, computer: false,
-            peers: this.store.list().agents.filter(peer => peer.id !== agent.id && peer.teamIds.some(team => agent.teamIds.includes(team)))
+            peers: this.store.list().agents.filter(peer => peer.id !== agent.id && peer.teamIds.some(team => agent.teamIds.includes(team))
+              && (this.supportsPeerInbox ? this.supportsPeerInbox(peer) : peer.pluginId === "hermes"))
               .map(peer => ({ agentId: peer.id, name: peer.name, pluginId: peer.pluginId })) },
           ...(agent.runtime ? { lifecycle: agent.runtime } : {}),
           ...(agent.pluginId === "hermes" ? { profileRoot: nativeProfile } : { profileDir: nativeProfile }) } };
@@ -468,6 +469,14 @@ export class PersonAgentRuntime {
     if (exchange) return { personAgentExchange: exchange, canRewind: false, canResume: false };
     const conversation = this.manifest.taskOwners[id] ?? id; return this.owners.get(conversation)?.harness.summary(id);
   }
+  brokerLeaseChanged(agentId: string, state: "renewed" | "unavailable"): void {
+    const threadId = this.manifest.canonical?.[agentId]; if (!threadId) return;
+    const event: YorozuEvent = { id: randomUUID(), threadId, agentId: "main", ts: Date.now(), kind: "message",
+      data: { role: "agent", text: state === "renewed" ? "The inference grant was renewed. The native session and work were not restarted."
+        : "The inference grant is unavailable. No provider request was submitted by this renewal; existing work was not restarted." } };
+    if (this.services) this.services.emit(event); else appendThreadEvent(event, this.dir);
+    this.services?.changed();
+  }
   async taskStop(event: YorozuEvent): Promise<boolean> { return await (await this.owner(event.threadId))?.taskStop(event) ?? false; }
   /** Trusted settings operation. History and prior binding evidence remain in place. */
   configure(id: string, patch: PersonAgentPatch, expectedRevision: number): Promise<AgentRegistry> {
@@ -487,7 +496,16 @@ export class PersonAgentRuntime {
     if (this.closing) return; this.closing = true;
     for (const timer of this.inboxRetries.values()) clearTimeout(timer); this.inboxRetries.clear();
     try {
-      await Promise.allSettled([...this.owners.values()].filter(o => o.actor.agent.runtime?.mode !== "connected").map(o => o.harness.stop(`manager-close-${randomUUID()}`)));
+      const managed = [...this.owners.values()].filter(o => o.actor.agent.runtime?.mode !== "connected");
+      // A stop receipt is not cessation. Let real terminal events settle the ledgers
+      // within a bounded grace period; silence never clears an unknown outcome.
+      const stopping = Promise.allSettled(managed.map(o => o.harness.stop(`manager-close-${randomUUID()}`)));
+      const until = Date.now() + 1000;
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try { await Promise.race([stopping, new Promise(resolve => { deadline = setTimeout(resolve, 1000); })]); }
+      finally { clearTimeout(deadline); }
+      while (Date.now() < until && managed.some(o => !o.harness.idleConfirmed && !o.harness.hasUnconfirmedExecution))
+        await new Promise(resolve => setTimeout(resolve, 20));
       for (const actor of new Set([...this.actors.values(), ...[...this.owners.values()].map(o => o.actor)])) await this.closeActor(actor);
       for (const owner of [...this.owners.values()]) await owner.harness.close();
       this.refresh(); this.save(); this.owners.clear(); this.actors.clear();
