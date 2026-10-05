@@ -10,7 +10,7 @@
   },
   "runtime": {
     "kind": "external-python",
-    "entry": "tui_gateway.entry",
+    "entry": "bootstrap.py",
     "python": ">=3.11,<3.14"
   },
   "productionReady": false,
@@ -30,7 +30,7 @@
       "agent-messaging"
     ],
     "profileOwner": "persistent-agent",
-    "multipleConversations": true,
+    "multipleConversations": false,
     "productConversation": "single-continuous; legacy native sessions remain readable"
   },
   "capabilities": {
@@ -38,7 +38,7 @@
     "targetedSteer": true,
     "taskStop": true,
     "approvals": true,
-    "reconnect": true,
+    "reconnect": false,
     "attachments": false,
     "crashAutoResume": false,
     "schedules": false,

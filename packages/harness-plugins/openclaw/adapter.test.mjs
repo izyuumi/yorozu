@@ -375,7 +375,7 @@ test('connected descriptor is explicit, bounded, loopback-only and cannot adopt 
   assert.throws(() => validateLifecycle({ lifecycle: { version: 1, mode: 'managed' }, connection: connectedParams.connection }), /adopt/);
 });
 
-test('connected lifecycle observes only the selected existing native session and detach never shuts it down', async () => {
+test('inert connected seam (not enabled capability) observes only the selected existing native session and detach never shuts it down', async () => {
   const gateway = new FakeGateway(); let detached = 0; let shutdown = 0;
   gateway.sessions.set(connectedParams.connection.sessionKey, { sessionId: connectedParams.connection.sessionId, agentId: connectedParams.connection.nativeAgentId });
   gateway.detach = async () => { detached++; gateway.finish('client detach'); };
@@ -384,7 +384,7 @@ test('connected lifecycle observes only the selected existing native session and
     hostAgentId: connectedParams.agentId, authAvailable: true };
   const adapter = createAdapter({ launch: async () => runtime });
   const ready = await adapter.handle('initialize', connectedParams);
-  assert.equal(ready.extensions.connectedLifecycle, true); assert.equal(ready.auth.status, 'harness-owned');
+  assert.equal(ready.extensions.connectedLifecycle, false); assert.equal(ready.auth.status, 'harness-owned');
   assert.equal((await adapter.handle('session.open', { ...open, sessionId: 'external-session' })).sessionId, 'external-session');
   assert.equal(gateway.count('sessions.create'), 0);
   assert.equal(gateway.last('chat.history').sessionKey, connectedParams.connection.sessionKey);
@@ -424,4 +424,79 @@ test('managed resource rebinding retains native learning/autonomy and configurat
   assert.deepEqual(merged.agents.defaults.heartbeat, previous.agents.defaults.heartbeat); assert.deepEqual(merged.agents.defaults.skills, previous.agents.defaults.skills);
   assert.equal(merged.agents.entries.secretary.personality, 'native-choice'); assert.equal(merged.agents.entries.secretary.fastModeDefault, true);
   assert.deepEqual(merged.agents.entries.secretary.tools.deny, ['*']); // Host resource boundary is reapplied.
+});
+
+test('escaped reply projections and raw text overflow never shut down native work', async () => {
+  for (const character of ['"', '\n', '\\', '\u0001']) {
+    const { adapter, gateway, events } = await fixture();
+    await adapter.handle('turn.submit', turn);
+    for (let index = 0; index < 127; index++) {
+      gateway.emit(payload(gateway, 'delta', { seq: index, deltaText: character.repeat(1024) }));
+      await adapter.drain();
+    }
+    // Exercise raw overflow too: still not permission to disconnect/abort.
+    gateway.emit(payload(gateway, 'delta', { seq: 127, deltaText: character.repeat(4 * 1024) }));
+    gateway.emit(payload(gateway, 'final', { seq: 128 }));
+    await adapter.drain();
+    assert.equal(gateway.closed, false); assert.equal(gateway.count('chat.abort'), 0);
+    assert.ok(events.some(event => event.kind === 'capability.unavailable' && event.data.capability === 'replySize'));
+    assert.equal(events.at(-1).kind, 'turn.terminal'); assert.equal(events.at(-1).data.state, 'completed');
+    for (const event of events) assert.ok(Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', method: 'harness.event', params: event }) + '\n') <= 256 * 1024);
+  }
+});
+
+test('real connected launcher is held before socket creation despite valid inert descriptor', async () => {
+  const { launchRuntime } = await import('./adapter.mjs');
+  await assert.rejects(launchRuntime({ protocolVersion: 1, upstreamVersion: UPSTREAM.version, agentId: 'host-agent',
+    lifecycle: { version: 1, mode: 'connected', connectionId: 'fixture-connection' },
+    connection: { version: 1, connectionId: 'fixture-connection', endpoint: 'ws://127.0.0.1:32146/', nativeAgentId: 'native-agent', sessionKey: 'agent:native-agent:main', sessionId: 'native-session', token: 'inert-fixture-token'.repeat(4) } }), /Connected lifecycle is held/);
+  assert.equal(EXTENSIONS.connectedLifecycle, false);
+});
+
+test('reservation fsync precedes rename and directory fsync; failed file sync cannot publish reservation', async t => {
+  const { atomic } = await import('./adapter.mjs');
+  const fs = await import('node:fs/promises');
+  const directory = await mkdtemp(join(tmpdir(), 'openclaw-fsync-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'journal.json'); const calls = [];
+  const io = { open: async (file, ...args) => {
+    const handle = await fs.open(file, ...args);
+    return { writeFile: async value => { calls.push('write'); await handle.writeFile(value); },
+      sync: async () => { calls.push(file === directory ? 'directory-sync' : 'file-sync'); await handle.sync(); }, close: () => handle.close() };
+  }, rename: async (...args) => { calls.push('rename'); await fs.rename(...args); } };
+  await atomic(path, { reservation: 'unknown' }, io);
+  assert.deepEqual(calls, ['write', 'file-sync', 'rename', 'directory-sync']);
+  calls.length = 0;
+  const broken = { ...io, open: async (...args) => { const file = await io.open(...args); return { ...file, sync: async () => { throw new Error('injected fsync failure'); } }; } };
+  await assert.rejects(atomic(path, { reservation: 'replacement' }, broken), /injected fsync/);
+  assert.equal(calls.includes('rename'), false);
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), { reservation: 'unknown' });
+});
+
+test('reopen resubscribes; subscription failure prevents new handoff and idle history never settles unknown work', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'openclaw-observation-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const journalPath = join(directory, 'journal.json');
+  const first = await fixture({ journalPath });
+  await first.adapter.handle('turn.submit', turn);
+  const restored = await fixture({ journalPath, skipOpen: true });
+  assert.equal((await restored.adapter.handle('turn.submit', { ...turn, runId: 'new', attemptId: 'new' })).status, 'busy');
+  await restored.adapter.handle('session.open', open);
+  assert.equal(restored.gateway.count('sessions.messages.subscribe'), 1);
+  assert.equal((await restored.adapter.handle('turn.submit', { ...turn, runId: 'new', attemptId: 'new' })).status, 'busy');
+  assert.equal(restored.gateway.count('chat.send'), 0); // Unknown prior outcome still blocks: no absence-based settlement.
+  restored.gateway.overrides.set('sessions.messages.subscribe', () => ({ ok: false }));
+  await assert.rejects(restored.adapter.handle('session.open', open), /not acknowledged/);
+  assert.equal((await restored.adapter.handle('turn.submit', { ...turn, runId: 'new', attemptId: 'new' })).status, 'busy');
+  const fresh = await fixture({ skipOpen: true });
+  fresh.gateway.overrides.set('sessions.messages.subscribe', () => ({ ok: false }));
+  await assert.rejects(fresh.adapter.handle('session.open', open), /not acknowledged/);
+  assert.equal((await fresh.adapter.handle('turn.submit', turn)).status, 'busy'); assert.equal(fresh.gateway.count('chat.send'), 0);
+});
+
+test('inherited descriptor verification rejects regular files and missing descriptors before ownership transfer', async () => {
+  const { verifyInheritedListener } = await import('./adapter.mjs');
+  assert.throws(() => verifyInheritedListener(fd => { assert.equal(fd, 3); return { isSocket: () => false }; }), /must be a socket/);
+  assert.throws(() => verifyInheritedListener(() => { throw new Error('missing FD3'); }), /missing FD3/);
+  verifyInheritedListener(fd => { assert.equal(fd, 3); return { isSocket: () => true }; });
 });

@@ -41,7 +41,7 @@
   },
   "extensions": {
     "version": 1,
-    "connectedLifecycle": true,
+    "connectedLifecycle": false,
     "conversationActions": false,
     "autonomousEvents": false,
     "agentMessaging": false

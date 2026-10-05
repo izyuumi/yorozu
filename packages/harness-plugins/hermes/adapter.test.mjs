@@ -69,7 +69,7 @@ async function scopeFixture(t, allowedTools = ['file', 'team']) {
     workspace, python: '/usr/bin/python3', sourcePath: process.env.YOROZU_HERMES_TEST_SOURCE,
     agentId: 'agent-a', scope: { allowedTools, directories: [{ path: workspace, access: 'write' }, ...(allowedTools.includes('memory') ? [{ path: memoryDir, access: 'write' }] : [])], workspace, memoryDir },
     isolation: { backend: 'macos-seatbelt-v1', agentId: 'agent-a', policyDigest: 'a'.repeat(64) },
-    platform: { team: allowedTools.includes('team'), computer: false, peers: allowedTools.includes('team') ? [{ agentId: 'agent-b', name: 'B', pluginId: 'openclaw' }] : [] } };
+    platform: { team: allowedTools.includes('team'), computer: false, peers: allowedTools.includes('team') ? [{ agentId: 'agent-b', name: 'B', pluginId: 'hermes' }] : [] } };
   return { directory, workspace: await realpath(workspace), params };
 }
 
@@ -84,7 +84,7 @@ test('product scope rejects unsupported tools, mismatched sandbox, and escaping 
     { ...params, scope: { ...params.scope, allowedTools: ['all'] } },
     { ...params, scope: { ...params.scope, allowedTools: ['file', 'file'] } },
     { ...params, scope: { ...params.scope, allowedTools: ['computer'] } },
-    { ...params, platform: { team: false, computer: false, peers: [{ agentId: 'agent-b', name: 'B', pluginId: 'openclaw' }] } },
+    { ...params, platform: { team: false, computer: false, peers: [{ agentId: 'agent-b', name: 'B', pluginId: 'hermes' }] } },
     { ...params, scope: { ...params.scope, allowedTools: ['file', 'memory', 'team'], memoryDir: directory } },
     { ...params, scope: { ...params.scope, directories: [{ path: '/', access: 'write' }] } },
     { ...params, scope: { ...params.scope, surprise: true } },
@@ -187,19 +187,19 @@ test('approval refusal is exact, approval grants once only, unsupported secret r
   await adapter.handle('turn.submit', { ...currency, text: 'Check.' });
   gateway.request('srq-deny', 'approval', { request_id: 'queue-deny', command: 'rm example.txt', description: 'Delete file', choices: ['once', 'session', 'always', 'deny'] });
   assert.equal(events.at(-1).kind, 'action.open');
-  assert.equal((await adapter.handle('request.answer', { requestId: 'srq-deny', answer: { approved: false } })).status, 'answered');
+  assert.equal((await adapter.handle('request.answer', { sessionId: 'durable-1', requestId: 'srq-deny', answer: { approved: false } })).status, 'answered');
   assert.deepEqual(gateway.responses.at(-1), { id: 'srq-deny', result: { choice: 'deny' }, error: undefined });
-  assert.equal((await adapter.handle('request.answer', { requestId: 'srq-deny', answer: { approved: true } })).status, 'rejected');
+  assert.equal((await adapter.handle('request.answer', { sessionId: 'durable-1', requestId: 'srq-deny', answer: { approved: true } })).status, 'rejected');
   gateway.request('srq-once', 'approval', { choices: ['once', 'always', 'deny'] });
-  await adapter.handle('request.answer', { requestId: 'srq-once', answer: { approved: true } });
+  await adapter.handle('request.answer', { sessionId: 'durable-1', requestId: 'srq-once', answer: { approved: true } });
   assert.deepEqual(gateway.responses.at(-1).result, { choice: 'once' });
   gateway.request('srq-broad', 'approval', { choices: ['session', 'always', 'deny'] });
-  assert.equal((await adapter.handle('request.answer', { requestId: 'srq-broad', answer: { approved: true } })).status, 'unsupported');
+  assert.equal((await adapter.handle('request.answer', { sessionId: 'durable-1', requestId: 'srq-broad', answer: { approved: true } })).status, 'unsupported');
   gateway.request('srq-secret', 'secret', { env_var: 'SERVICE_TOKEN', prompt: 'Paste a token.' });
   assert.equal(gateway.responses.at(-1).error.code, -32601);
   assert.equal(events.at(-1).kind, 'capability.unavailable');
   gateway.request('srq-question', 'clarify', { question: 'Which output?', choices: ['A', 'B'] });
-  await adapter.handle('request.answer', { requestId: 'srq-question', answer: { text: 'B' } });
+  await adapter.handle('request.answer', { sessionId: 'durable-1', requestId: 'srq-question', answer: { text: 'B' } });
   assert.deepEqual(gateway.responses.at(-1).result, { answer: 'B' });
 });
 
@@ -269,7 +269,7 @@ test('children and cancelled requests arriving during identity lookup retain the
   const started = events.find(event => event.kind === 'turn.started');
   assert.equal(taskEvent(events, 'next').data.originRunId, currency.runId);
   assert.equal(taskEvent(events, 'next').attemptId, started.attemptId);
-  assert.equal((await adapter.handle('request.answer', { requestId: 'srq-transient', answer: { approved: true } })).status, 'rejected');
+  assert.equal((await adapter.handle('request.answer', { sessionId: 'durable-1', requestId: 'srq-transient', answer: { approved: true } })).status, 'rejected');
   assert.equal(events.filter(event => event.kind === 'action.open').length, 1);
   assert.equal(events.some(event => event.kind === 'action.cancel'), true);
 });
@@ -609,7 +609,7 @@ test('Hermes refuses unsafe connected lifecycle before launch or native observat
 const deliveredMessage = {
   version: 1, messageId: 'peer-message-1', exchangeId: 'exchange-1', deliveryId: 'delivery-1', attemptId: 'delivery-attempt-1',
   sessionId: 'durable-1', fromAgentId: 'agent-b', toAgentId: 'agent-a', text: 'A selected finding from B.', createdAt: 1791192360000,
-  origin: { version: 1, agentId: 'agent-b', pluginId: 'openclaw', conversationId: 'public-conversation-b', sessionId: 'opaque-public-session', bindingEpoch: 'binding-b' },
+  origin: { version: 1, agentId: 'agent-b', pluginId: 'hermes', conversationId: 'public-conversation-b', sessionId: 'opaque-public-session', bindingEpoch: 'binding-b' },
 };
 
 test('native peer inbox is durable, deduplicated and never submits a fake user turn', async t => {
@@ -689,4 +689,145 @@ test('peer inbox pages stay bounded and message content identity is canonical ac
   gateway.request('page-two', 'yorozu.message_read', { agent_session_id: 'durable-1', tool_call_id: 'read-page-2', afterMessageId: first.nextAfterMessageId });
   assert.deepEqual(gateway.responses.at(-1).result.messages.map(message => message.messageId), ['page-4', deliveredMessage.messageId]);
   assert.equal(gateway.calls.filter(call => call.method === 'prompt.submit').length, 0);
+});
+
+test('escaped reply overflow is only presentation loss; dense deltas and terminal do not kill the harness', async () => {
+  for (const character of ['"', '\n', '\\', '\u0001']) {
+    const { adapter, gateway, events } = await setup();
+    await adapter.handle('turn.submit', { ...currency, text: 'fixture' });
+    for (let index = 0; index < 19; index++) gateway.event('message.delta', { text: character.repeat(10 * 1024) });
+    gateway.event('message.complete', { text: character.repeat(190 * 1024), status: 'complete' });
+    assert.equal(gateway.closed, false);
+    assert.equal(gateway.calls.some(call => call.method === 'session.interrupt'), false);
+    assert.ok(events.some(event => event.kind === 'capability.unavailable' && event.data.capability === 'replySize'));
+    assert.equal(events.at(-1).kind, 'turn.terminal'); assert.equal(events.at(-1).data.state, 'completed');
+    for (const event of events) assert.ok(Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', method: 'harness.event', params: event }) + '\n') <= 256 * 1024);
+  }
+});
+
+test('dense serialized inbox stays reloadable and every escaped page advances within wire bounds', async t => {
+  const { params, directory } = await scopeFixture(t);
+  const messageJournalPath = join(directory, 'dense.json');
+  const { adapter } = await setup({ initialize: params, messageJournalPath });
+  let accepted = 0, busy = 0;
+  for (let index = 0; index < 64; index++) {
+    const receipt = await adapter.handle('message.deliver', { ...deliveredMessage, messageId: `dense-${index}`, text: '\u0001'.repeat(32 * 1024) });
+    if (receipt.status === 'accepted') accepted++; else { assert.equal(receipt.status, 'busy'); busy++; }
+  }
+  assert.ok(accepted > 0 && busy > 0);
+  assert.ok(Buffer.byteLength(await readFile(messageJournalPath)) <= 3 * 1024 * 1024);
+  await adapter.handle('shutdown');
+  const restored = await setup({ initialize: params, messageJournalPath });
+  let cursor; const seen = [];
+  do {
+    const tool = `read-${seen.length}`;
+    restored.gateway.event('tool.start', { tool_id: tool, name: 'read_agent_messages' });
+    restored.gateway.request(tool, 'yorozu.message_read', { agent_session_id: 'durable-1', tool_call_id: tool, ...(cursor ? { afterMessageId: cursor } : {}) });
+    const response = restored.gateway.responses.at(-1);
+    assert.ok(Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', ...response }) + '\n') <= 256 * 1024);
+    assert.equal(response.result.messages.length, 1);
+    seen.push(...response.result.messages.map(message => message.messageId));
+    cursor = response.result.nextAfterMessageId;
+  } while (cursor);
+  assert.equal(seen.length, accepted); assert.equal(new Set(seen).size, accepted);
+});
+
+test('explicit native retirement frees capacity, preserves unacknowledged custody and deduplicates after restart', async t => {
+  const { params, directory } = await scopeFixture(t);
+  const messageJournalPath = join(directory, 'retire.json');
+  const { adapter, gateway } = await setup({ initialize: params, messageJournalPath });
+  for (let index = 0; index < 64; index++) assert.equal((await adapter.handle('message.deliver', { ...deliveredMessage, messageId: `retire-${index}` })).status, 'accepted');
+  assert.equal((await adapter.handle('message.deliver', { ...deliveredMessage, messageId: 'sixty-fifth' })).status, 'busy');
+  gateway.event('tool.start', { tool_id: 'ack', name: 'read_agent_messages' });
+  gateway.request('ack', 'yorozu.message_read', { agent_session_id: 'durable-1', tool_call_id: 'ack', acknowledgeMessageIds: Array.from({ length: 63 }, (_, index) => `retire-${index}`) });
+  await adapter.handle('shutdown'); // Waits for durable native acknowledgement, not just the request dispatch.
+  assert.equal(gateway.responses.find(response => response.id === 'ack').result.acknowledgedMessageIds.length, 63);
+  const restored = await setup({ initialize: params, messageJournalPath });
+  assert.equal((await restored.adapter.handle('message.deliver', { ...deliveredMessage, messageId: 'sixty-fifth' })).status, 'accepted');
+  assert.equal((await restored.adapter.handle('message.deliver', { ...deliveredMessage, messageId: 'retire-0' })).status, 'accepted');
+  assert.equal((await restored.adapter.handle('message.deliver', { ...deliveredMessage, messageId: 'retire-0', text: 'changed' })).status, 'rejected');
+  const saved = JSON.parse(await readFile(messageJournalPath, 'utf8'));
+  assert.deepEqual(saved.messages.map(message => message.messageId), ['retire-63', 'sixty-fifth']);
+  assert.equal(saved.retired.length, 63);
+});
+
+test('journal load failure cleans injected gateway and concurrent initialize cannot launch twice', async t => {
+  const { params, directory } = await scopeFixture(t);
+  const path = join(directory, 'bad.json'); await writeFile(path, '{bad');
+  const gateway = new Gateway(); let launches = 0, proceed;
+  gateway.shutdown = async () => { gateway.closed = true; };
+  const adapter = createAdapter({ emit() {}, launch: async () => { launches++; await new Promise(resolve => { proceed = resolve; }); return { gateway, messageJournalPath: path }; } });
+  const first = adapter.handle('initialize', params);
+  while (!proceed) await flush();
+  await assert.rejects(adapter.handle('initialize', params), /initializ/);
+  proceed(); await assert.rejects(first);
+  assert.equal(launches, 1); assert.equal(gateway.closed, true);
+});
+
+test('real launcher rejects missing product authority before touching nonexistent provider/source', async () => {
+  const adapter = createAdapter({ emit() {} });
+  await assert.rejects(adapter.handle('initialize', { protocolVersion: 1, upstreamVersion: UPSTREAM.version,
+    providerConfigPath: '/not-accessed/provider.json' }), /product scope/);
+});
+
+test('exclusive inert profile lease rejects concurrency and stale ownership; release cannot delete a successor', async t => {
+  const { acquireProfileLock } = await import('./adapter.mjs');
+  const { directory } = await scopeFixture(t);
+  const release = await acquireProfileLock(directory);
+  await assert.rejects(acquireProfileLock(directory), /locked/);
+  await release(); const successor = await acquireProfileLock(directory);
+  await release(); await assert.rejects(acquireProfileLock(directory), /locked/);
+  await successor();
+  await mkdir(join(directory, '.hermes-adapter-owner.lock'));
+  await assert.rejects(acquireProfileLock(directory), /orphan ownership/);
+});
+
+test('approval before resume reply is buffered and replayed exactly once without an adapter answer', async () => {
+  const gateway = new Gateway(); const events = [];
+  const request = { jsonrpc: '2.0', id: 'opening-approval', method: 'approval', params: { session_id: 'live-resumed', tool_name: 'terminal', choices: ['once', 'deny'] } };
+  gateway.override = method => {
+    if (method !== 'session.resume') return;
+    gateway.frameListener(request);
+    return { session_id: 'live-resumed', stored_session_id: 'durable-1', open_requests: [request] };
+  };
+  const adapter = createAdapter({ emit: event => events.push(event), launch: async () => ({ gateway, authAvailable: true }) });
+  await adapter.handle('initialize', {});
+  await adapter.handle('session.open', { ...currency, sessionId: 'durable-1' });
+  assert.equal(gateway.responses.length, 0);
+  assert.equal(events.filter(event => event.kind === 'action.open').length, 1);
+});
+
+test('native display choices survive host busy-input rebinding', () => {
+  const previous = { display: { theme: 'native', compact: true, busy_input_mode: 'steer' } };
+  assert.deepEqual(mergeNativeConfiguration(previous, { agent: { disabled_toolsets: [] }, display: { busy_input_mode: 'queue' } }).display,
+    { theme: 'native', compact: true, busy_input_mode: 'queue' });
+});
+
+test('closed recipient session is busy, unsupported peer capability and legacy answer identity fail closed', async t => {
+  const { params, directory } = await scopeFixture(t);
+  const { adapter, gateway } = await setup({ initialize: params, messageJournalPath: join(directory, 'messages.json') });
+  assert.equal((await adapter.handle('message.deliver', { ...deliveredMessage, sessionId: 'not-open' })).status, 'busy');
+  assert.equal((await adapter.handle('message.deliver', deliveredMessage)).status, 'accepted');
+  await assert.rejects(validateAgentScope({ ...params, platform: { ...params.platform, peers: [{ agentId: 'agent-b', name: 'B', pluginId: 'openclaw' }] } }), /peer identity/);
+  gateway.request('approval', 'approval', { choices: ['once', 'deny'] });
+  assert.equal((await adapter.handle('request.answer', { requestId: 'approval', answer: { approved: true } })).status, 'rejected');
+  assert.equal(gateway.responses.length, 0);
+});
+
+test('retirement write failure never drops unacknowledged in-memory custody or reports acknowledgement', async t => {
+  const { params, directory } = await scopeFixture(t);
+  const messageJournalPath = join(directory, 'messages.json');
+  const { adapter, gateway } = await setup({ initialize: params, messageJournalPath });
+  await adapter.handle('message.deliver', deliveredMessage);
+  const saved = await readFile(messageJournalPath);
+  await rm(messageJournalPath); await mkdir(messageJournalPath); // Inert rename failure; no production disk fault.
+  gateway.event('tool.start', { tool_id: 'fail-ack', name: 'read_agent_messages' });
+  gateway.request('fail-ack', 'yorozu.message_read', { agent_session_id: 'durable-1', tool_call_id: 'fail-ack', acknowledgeMessageIds: [deliveredMessage.messageId] });
+  while (!gateway.responses.some(response => response.id === 'fail-ack')) await flush();
+  assert.equal(gateway.responses.at(-1).result.unavailable, true);
+  assert.equal(gateway.responses.at(-1).result.acknowledgedMessageIds, undefined);
+  gateway.event('tool.start', { tool_id: 'after-failure', name: 'read_agent_messages' });
+  gateway.request('after-failure', 'yorozu.message_read', { agent_session_id: 'durable-1', tool_call_id: 'after-failure' });
+  assert.deepEqual(gateway.responses.at(-1).result.messages, [deliveredMessage]);
+  await rm(messageJournalPath, { recursive: true }); await writeFile(messageJournalPath, saved);
 });

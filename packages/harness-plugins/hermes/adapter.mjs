@@ -7,6 +7,21 @@ import { resolve, join, dirname, isAbsolute, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 
+/** Bound the actual JSON-RPC envelope, not raw UTF-8 text. Presentation never interrupts native work. */
+function boundedProjection(emit, frame, limit = 256 * 1024) {
+  const fits = value => Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', method: 'harness.event', params: value }) + '\n') <= limit;
+  if (fits(frame)) { emit(frame); return true; }
+  const unavailable = { ...frame, eventId: `${frame.eventId}:size`, kind: 'capability.unavailable',
+    data: { capability: 'replySize', reason: 'Encoded projection exceeded the frame bound; native work was not interrupted' } };
+  if (fits(unavailable)) emit(unavailable);
+  // Terminal evidence must still reach the host even when its presentation cannot.
+  if (frame.kind === 'turn.terminal') {
+    const terminal = { ...frame, data: { ...frame.data, text: '', reason: 'Reply omitted: encoded projection exceeded the frame bound' } };
+    if (fits(terminal)) emit(terminal);
+  }
+  return false;
+}
+
 export const UPSTREAM = Object.freeze({ version: '0.21.5', commit: 'f97608f178d1ffeca59860195ab7da295f7c8e5f' });
 const FRAME_LIMIT = 256 * 1024;
 const TEXT_LIMIT = 192 * 1024;
@@ -68,7 +83,7 @@ export async function validateAgentScope(params) {
   for (const peer of peers) {
     object(peer, ['agentId', 'name', 'pluginId'], 'platform peer');
     required(peer.agentId, 'peer agentId', 128); required(peer.name, 'peer name', 128);
-    if (!['hermes', 'openclaw'].includes(peer.pluginId) || peer.agentId === agentId || peerIds.has(peer.agentId)) throw invalid('platform peer identity is invalid');
+    if (peer.pluginId !== 'hermes' || peer.agentId === agentId || peerIds.has(peer.agentId)) throw invalid('platform peer identity is invalid');
     peerIds.add(peer.agentId);
   }
   for (const key of ['workspace', 'memoryDir']) if (!isAbsolute(required(scope[key], `scope.${key}`))) throw invalid(`scope.${key} must be absolute`);
@@ -121,6 +136,7 @@ function readFrames(stream, onFrame, onFailure) {
 export function mergeNativeConfiguration(previousConfig, config, agent) {
   const merged = { ...previousConfig, ...config,
     agent: { ...previousConfig.agent, ...config.agent },
+    display: { ...previousConfig.display, ...config.display },
     security: { ...previousConfig.security, ...config.security } };
   const previousDisabled = Array.isArray(previousConfig.agent?.disabled_toolsets) ? previousConfig.agent.disabled_toolsets : [];
   const oldPrototype = previousConfig.desktop?.auto_continue?.enabled === false && previousConfig.approvals?.mode === 'manual'
@@ -147,6 +163,7 @@ export async function prepareRuntime(params) {
     if (!isAbsolute(params[key])) throw invalid(`${key} must be absolute`);
   }
   const agent = await validateAgentScope(params);
+  if (!agent) throw invalid('agentId and product scope are required before preparing a real runtime');
   const sourcePath = await realpath(params.sourcePath);
   const metadata = await readFile(join(sourcePath, 'pyproject.toml'), 'utf8');
   if (!/^version\s*=\s*"0\.21\.5"\s*$/m.test(metadata)) throw invalid('Hermes source version does not match the pinned release');
@@ -340,24 +357,46 @@ export class NativeGateway {
   }
 }
 
-async function launchGateway(params) {
-  const runtime = await prepareRuntime(params);
-  if (!runtime.authAvailable) {
-    // Do not even start upstream's provider prewarm/auth resolution until an
-    // explicit supported provider has been authorized for this fresh profile.
-    return { ...runtime, gateway: {
-      closed: false, onFrame() {}, onClose() {},
-      async call(method) { if (method === 'client.capabilities') return {}; throw new ProtocolError(-32010, 'authentication is unsupported'); },
-      async shutdown() { this.closed = true; },
-    } };
+/** Exclusive inert profile lease. Never infer orphan safety from PID absence. */
+export async function acquireProfileLock(profileRoot) {
+  await mkdir(profileRoot, { recursive: true, mode: 0o700 });
+  const lock = join(await realpath(profileRoot), '.hermes-adapter-owner.lock');
+  try { await mkdir(lock, { mode: 0o700 }); }
+  catch (error) { if (error.code === 'EEXIST') throw invalid('Hermes profile is locked; orphan ownership requires explicit reconciliation'); throw error; }
+  let released = false;
+  return async () => { if (released) return; released = true; await rm(lock, { recursive: true }); };
+}
+
+async function launchGateway(params, preload) {
+  if (!await validateAgentScope(params)) throw invalid('agentId and product scope are required before launch');
+  if (!isAbsolute(required(params.profileRoot, 'profileRoot'))) throw invalid('profileRoot must be absolute');
+  const release = await acquireProfileLock(params.profileRoot);
+  let child;
+  try {
+    const runtime = await prepareRuntime(params);
+    await preload?.(runtime);
+    if (!runtime.authAvailable) {
+      // Do not even start upstream's provider prewarm/auth resolution until an
+      // explicit supported provider has been authorized for this fresh profile.
+      return { ...runtime, gateway: {
+        closed: false, onFrame() {}, onClose() {},
+        async call(method) { if (method === 'client.capabilities') return {}; throw new ProtocolError(-32010, 'authentication is unsupported'); },
+        async shutdown() { this.closed = true; await release(); },
+      } };
+    }
+    await mkdir(runtime.env.TMPDIR, { recursive: true, mode: 0o700 });
+    child = spawn(runtime.python, [join(PACKAGE_ROOT, 'bootstrap.py')], {
+      cwd: runtime.sourcePath, env: runtime.env, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    child.once('exit', () => { void release().catch(() => {}); });
+    const gateway = new NativeGateway(child);
+    await gateway.ready;
+    return { ...runtime, gateway };
+  } catch (error) {
+    if (child) child.kill('SIGTERM'); // Keep lock until observed exit; never take over an orphan.
+    else await release();
+    throw error;
   }
-  await mkdir(runtime.env.TMPDIR, { recursive: true, mode: 0o700 });
-  const gateway = new NativeGateway(spawn(runtime.python, runtime.agent
-    ? [join(PACKAGE_ROOT, 'bootstrap.py')] : ['-m', 'tui_gateway.entry'], {
-    cwd: runtime.sourcePath, env: runtime.env, stdio: ['pipe', 'pipe', 'pipe'],
-  }));
-  await gateway.ready;
-  return { ...runtime, gateway };
 }
 
 async function durableJSON(path, value) {
@@ -392,12 +431,20 @@ const messageFingerprint = message => JSON.stringify({ ...message, attemptId: un
 /** The gateway dependency is also useful to embedders; no model runs in this host. */
 export function createAdapter({ emit, launch = launchGateway }) {
   const sessions = new Map(); const liveSessions = new Map(); const requests = new Map();
-  const inbox = new Map(); let messageWriting = Promise.resolve();
-  let runtime; let initialized = false; let opening = null;
+  const inbox = new Map(); const retired = new Map(); let messageWriting = Promise.resolve();
+  let runtime; let initialized = false; let initializing = false; let opening = null;
   const nonce = randomUUID(); let sequence = 0;
+  const blockedProjections = new Set();
   function event(session, kind, data, run = session?.current) {
-    emit({ protocolVersion: 1, conversationId: session?.conversationId ?? '',
+    const key = run && JSON.stringify([session?.conversationId, run.runId, run.attemptId]);
+    if (key && blockedProjections.has(key)) {
+      if (kind === 'assistant.update') return;
+      if (kind === 'turn.terminal') data = { ...data, text: '' };
+    }
+    const projected = boundedProjection(emit, { protocolVersion: 1, conversationId: session?.conversationId ?? '',
       ...(run ? { runId: run.runId, attemptId: run.attemptId } : {}), eventId: `${nonce}:${++sequence}`, kind, data });
+    if (!projected && key) blockedProjections.add(key);
+    if (kind === 'turn.terminal') blockedProjections.delete(key);
   }
   function sessionFor(params) {
     const session = sessions.get(required(params.conversationId, 'conversationId'));
@@ -427,28 +474,41 @@ export function createAdapter({ emit, launch = launchGateway }) {
       const stat = await lstat(runtime.messageJournalPath);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 3 * 1024 * 1024) throw invalid('message journal is not a bounded regular file');
       const saved = JSON.parse(await readFile(runtime.messageJournalPath, 'utf8'));
-      object(saved, ['version', 'agentId', 'messages'], 'message journal');
+      object(saved, ['version', 'agentId', 'messages', 'retired'], 'message journal');
       if (saved.version !== 1 || saved.agentId !== runtime.agent?.agentId || !Array.isArray(saved.messages) || saved.messages.length > 64) throw invalid('message journal ownership is invalid');
+      if (saved.retired !== undefined) {
+        if (!Array.isArray(saved.retired) || saved.retired.length > 1024) throw invalid('retired message bound exceeded');
+        for (const entry of saved.retired) {
+          if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[1] !== 'string' || !/^[a-f0-9]{64}$/.test(entry[1]) || retired.has(entry[0])) throw invalid('invalid retired message identity');
+          required(entry[0], 'retired messageId', 512); retired.set(...entry);
+        }
+      }
       for (const entry of saved.messages) {
         const message = peerMessage(entry);
-        if (inbox.has(message.messageId) || message.toAgentId !== runtime.agent?.agentId) throw invalid('message journal recipient or identity is invalid');
+        if (inbox.has(message.messageId) || retired.has(message.messageId) || message.toAgentId !== runtime.agent?.agentId) throw invalid('message journal recipient or identity is invalid');
         inbox.set(message.messageId, message);
       }
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
+  const journal = (messages = [...inbox.values()], receipts = [...retired]) => ({ version: 1, agentId: runtime.agent.agentId, messages, retired: receipts });
+  const fingerprintHash = message => createHash('sha256').update(messageFingerprint(message)).digest('hex');
   async function deliverMessage(params) {
     const message = peerMessage(params);
     const session = [...sessions.values()].find(item => item.storedId === message.sessionId);
-    if (!session || !runtime.agent?.platform.team || !runtime.messageJournalPath || message.toAgentId !== runtime.agent.agentId
+    if (!runtime.agent?.platform.team || !runtime.messageJournalPath || message.toAgentId !== runtime.agent.agentId
       || !runtime.agent.platform.peers.some(peer => peer.agentId === message.fromAgentId && peer.pluginId === message.origin.pluginId)) return { status: 'rejected', handoff: 'not-submitted', reason: 'no selected peer/native messaging inbox owns this agent/session' };
+    if (!session) return { status: 'busy', handoff: 'not-submitted', reason: 'recipient session is not open; host retains custody' };
     const fingerprint = messageFingerprint(message);
     const operation = messageWriting.then(async () => {
+      if (retired.has(message.messageId)) return retired.get(message.messageId) === fingerprintHash(message) ? { status: 'accepted' } : { status: 'rejected', handoff: 'not-submitted', reason: 'retired identity belongs to other content' };
       const previous = inbox.get(message.messageId);
       if (previous) return messageFingerprint(previous) === fingerprint ? { status: 'accepted' }
         : { status: 'rejected', handoff: 'not-submitted', reason: 'messageId already belongs to different content or origin' };
       if (inbox.size >= 64) return { status: 'busy', handoff: 'not-submitted', reason: 'native transport inbox is full; host retains the message' };
+      const candidate = journal([...inbox.values(), message]);
+      if (Buffer.byteLength(JSON.stringify(candidate) + '\n') > 3 * 1024 * 1024) return { status: 'busy', handoff: 'not-submitted', reason: 'serialized inbox is full; host retains custody' };
       inbox.set(message.messageId, message);
-      try { await durableJSON(runtime.messageJournalPath, { version: 1, agentId: runtime.agent.agentId, messages: [...inbox.values()] }); }
+      try { await durableJSON(runtime.messageJournalPath, journal()); }
       catch { inbox.delete(message.messageId); return { status: 'unknown', reason: 'native transport custody could not be durably verified; do not replay automatically' }; }
       return { status: 'accepted' };
     });
@@ -457,6 +517,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
   }
   function onRequest(frame) {
     const session = liveSessions.get(frame.params?.session_id);
+    if (!session && opening && frame.params?.session_id && opening.frames.length < 64) { opening.frames.push(frame); return; }
     if (!session) { runtime.gateway.respond(frame.id, null, { code: -32602, message: 'request has no owned session' }); return; }
     if (['yorozu.message_send', 'yorozu.message_read'].includes(frame.method)) {
       if (requests.has(frame.id)) return;
@@ -467,18 +528,45 @@ export function createAdapter({ emit, launch = launchGateway }) {
         if (!call || call.name !== expectedTool || call.claimed) throw invalid('message request has no unclaimed native tool identity');
         call.claimed = true;
         if (frame.method === 'yorozu.message_read') {
-          object(frame.params, ['session_id', 'agent_session_id', 'tool_call_id', 'afterMessageId', 'limit'], 'message read');
+          object(frame.params, ['session_id', 'agent_session_id', 'tool_call_id', 'afterMessageId', 'limit', 'acknowledgeMessageIds'], 'message read');
+          if (frame.params.acknowledgeMessageIds !== undefined) {
+            const ids = frame.params.acknowledgeMessageIds;
+            if (!Array.isArray(ids) || !ids.length || ids.length > 64 || new Set(ids).size !== ids.length) throw invalid('acknowledgement must name 1–64 distinct messages');
+            for (const id of ids) required(id, 'acknowledged messageId', 512);
+            if (frame.params.afterMessageId !== undefined) throw invalid('acknowledgement starts a fresh page; omit cursor');
+            const operation = messageWriting.then(async () => {
+              const next = new Map(retired);
+              for (const id of ids) {
+                if (!inbox.has(id) && !retired.has(id)) throw invalid('acknowledgement has no owned message');
+                if (inbox.has(id)) next.set(id, fingerprintHash(inbox.get(id)));
+              }
+              if (next.size > 1024) throw invalid('retirement receipt capacity reached; unacknowledged custody retained');
+              // Commit before removing custody from memory. A failed fsync stays unknown.
+              await durableJSON(runtime.messageJournalPath, journal([...inbox.values()].filter(message => !ids.includes(message.messageId)), [...next]));
+              for (const id of ids) inbox.delete(id);
+              retired.clear(); for (const entry of next) retired.set(...entry);
+              runtime.gateway.respond(frame.id, { messages: [], acknowledgedMessageIds: ids });
+            });
+            messageWriting = operation.catch(() => { runtime.gateway.respond(frame.id, { messages: [], unavailable: true }); });
+            return;
+          }
           const all = [...inbox.values()];
           let start = 0;
           if (frame.params.afterMessageId !== undefined) {
-            required(frame.params.afterMessageId, 'afterMessageId', 128);
+            required(frame.params.afterMessageId, 'afterMessageId', 512);
             const index = all.findIndex(message => message.messageId === frame.params.afterMessageId);
             if (index < 0) throw invalid('message cursor is not in this native agent inbox');
             start = index + 1;
           }
           const limit = frame.params.limit ?? 4;
           if (!Number.isInteger(limit) || limit < 1 || limit > 4) throw invalid('message page limit must be 1–4');
-          const page = all.slice(start, start + limit);
+          const page = [];
+          for (const message of all.slice(start, start + limit)) {
+            const candidate = [...page, message];
+            if (Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', id: frame.id, result: { messages: candidate, nextAfterMessageId: message.messageId } }) + '\n') > FRAME_LIMIT) break;
+            page.push(message);
+          }
+          if (!page.length && start < all.length) throw invalid('message cannot fit native response envelope');
           runtime.gateway.respond(frame.id, { messages: page, ...(start + page.length < all.length ? { nextAfterMessageId: page.at(-1).messageId } : {}) });
           return;
         }
@@ -664,7 +752,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
     } else if (type === 'message.interim') {
       // Interim commentary is already in Hermes's stream/history; never duplicate
       // an already streamed segment or treat commentary as a completed turn.
-      if (!payload.already_streamed && payload.text) { run.text += text(payload.text); event(session, 'assistant.update', { text: run.text }); }
+      if (!payload.already_streamed && payload.text) { run.text = text(run.text + text(payload.text)); event(session, 'assistant.update', { text: run.text }); }
     } else if (type === 'message.complete') {
       const state = payload.status === 'complete' ? 'completed' : payload.status === 'interrupted' ? 'stopped' : payload.status === 'error' ? 'failed' : 'unknown';
       event(session, 'turn.terminal', { text: text(payload.text) || run.text, state,
@@ -722,12 +810,15 @@ export function createAdapter({ emit, launch = launchGateway }) {
   return {
     async handle(method, params = {}) {
       if (method === 'initialize') {
-        if (initialized) throw invalid('adapter is already initialized');
+        if (initialized || initializing) throw invalid('adapter is already initialized or initializing');
+        initializing = true;
+        try {
         validateLifecycle(params);
         const agent = await validateAgentScope(params);
-        runtime = await launch(params);
+        let preloaded = false;
+        runtime = await launch(params, async prepared => { runtime = prepared; runtime.agent = agent; await loadMessages(); preloaded = true; });
         runtime.agent = agent;
-        await loadMessages();
+        if (!preloaded) await loadMessages();
         runtime.gateway.onFrame(onFrame); runtime.gateway.onClose(onClose);
         await runtime.gateway.call('client.capabilities', { server_requests: true });
         initialized = true;
@@ -736,9 +827,11 @@ export function createAdapter({ emit, launch = launchGateway }) {
           lifecycle: { version: 1, mode: 'managed' },
           extensions: { ...EXTENSIONS, agentMessaging: Boolean(agent?.platform.team && runtime.messageJournalPath) },
           ...(agent ? { agentId: agent.agentId, scopeDigest: agent.scopeDigest, isolation: agent.isolation } : {}),
-          capabilities: { backgroundTasks: delegation, targetedSteer: delegation, taskStop: delegation, approvals: true, reconnect: true, attachments: false,
+          capabilities: { backgroundTasks: delegation, targetedSteer: delegation, taskStop: delegation, approvals: true, reconnect: false, attachments: false,
             teamDelegation: false, nativeComputerUse: false, schedules: false },
           auth: { status: runtime.authAvailable ? 'local-proof' : 'unsupported', reason: runtime.authAvailable ? 'explicit loopback proof provider' : 'fresh subscription onboarding is not implemented; installed authentication is never read' } };
+        } catch (error) { await runtime?.gateway?.shutdown().catch(() => {}); inbox.clear(); retired.clear(); throw error; }
+        finally { initializing = false; }
       }
       if (!initialized) throw new ProtocolError(-32001, 'adapter is not initialized');
       if (['agentId', 'scope', 'isolation', 'platform', 'workspace', 'memoryDir', 'profileRoot', 'sourcePath', 'python', 'providerConfigPath', 'lifecycle', 'connection'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
@@ -754,6 +847,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
           return { sessionId: existing.storedId };
         }
         if (opening) throw new ProtocolError(-32003, 'another session is opening');
+        if (runtime.agent && sessions.size) throw invalid('product agent owns one continuous conversation');
         if (params.provider && params.provider !== runtime.provider) throw invalid('session provider is not available');
         if (params.model && params.model !== runtime.model) throw invalid('session model is not available');
         const resume = Boolean(params.sessionId);
@@ -867,7 +961,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
       }
       if (method === 'request.answer') {
         const request = requests.get(required(params.requestId, 'requestId'));
-        if (!request) return { status: 'rejected', reason: 'request is stale or already answered' };
+        if (!request || !['approval', 'clarify'].includes(request.frame.method) || request.session.storedId !== params.sessionId) return { status: 'rejected', reason: 'request or session is stale or not an approval/question' };
         let result;
         if (request.frame.method === 'approval') {
           if (typeof params.answer?.approved !== 'boolean') throw invalid('approval needs an explicit boolean decision');
@@ -905,7 +999,11 @@ export function serve(input = process.stdin, output = process.stdout) {
       outputFailed = true; process.stderr.write('Hermes adapter output queue exceeded its bound\n');
       void adapter.handle('shutdown').catch(() => {}); output.destroy(); input.destroy(); return;
     }
-    output.write(wire(frame));
+    try { output.write(wire(frame)); }
+    catch (error) {
+      // A host response projection overflow is not a native protocol failure.
+      if (frame.id !== undefined) output.write(wire({ jsonrpc: '2.0', id: frame.id, error: { code: -32010, message: 'response exceeds encoded projection bound' } }));
+    }
   }
   const adapter = createAdapter({ emit: params => send({ jsonrpc: '2.0', method: 'harness.event', params }) });
   let pending = 0;

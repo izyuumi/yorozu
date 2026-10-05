@@ -24,7 +24,8 @@ class SendRequest(SendArguments):
 
 
 class ReadArguments(Params):
-    afterMessageId: str | None = Field(default=None, min_length=1, max_length=128)
+    acknowledgeMessageIds: list[str] | None = Field(default=None, min_length=1, max_length=64)
+    afterMessageId: str | None = Field(default=None, min_length=1, max_length=512)
     limit: int = Field(default=4, ge=1, le=4)
 
 
@@ -66,6 +67,8 @@ class PeerMessage(Params):
 
 
 class ReadResult(Result):
+    acknowledgedMessageIds: list[str] | None = None
+    unavailable: bool | None = None
     messages: list[PeerMessage]
     nextAfterMessageId: str | None = None
 
@@ -130,6 +133,6 @@ def register(ctx):
     }, send_agent_message)
     ctx.register_tool("read_agent_messages", "yorozu_platform", {
         "name": "read_agent_messages",
-        "description": "Read the separate agent-message inbox when you choose. Entries retain stable messageId, verified sender and exchangeId. Follow nextAfterMessageId with afterMessageId to read the next bounded page. Repeated reads may contain the same entries; decide whether and when to reply.",
+        "description": "Read the separate agent-message inbox when you choose. Entries retain stable messageId, verified sender and exchangeId. Follow nextAfterMessageId with afterMessageId to read the next bounded page. Repeated reads may contain the same entries; decide whether and when to reply. To explicitly retire messages you have taken responsibility for, supply acknowledgeMessageIds without a cursor. This returns an acknowledgement, not a page. Unacknowledged messages never expire. Retirement receipt capacity is bounded; unavailable is not an acknowledgement.",
         "parameters": ReadArguments.model_json_schema(),
     }, read_agent_messages)

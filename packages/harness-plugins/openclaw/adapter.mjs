@@ -2,16 +2,31 @@
 /** Transport only: the pinned OpenClaw Gateway owns planning and the entire agent loop. */
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, readFile, writeFile, rename, readdir, lstat, realpath, rm } from 'node:fs/promises';
-import { closeSync } from 'node:fs';
+import { mkdir, readFile, writeFile, rename, readdir, lstat, realpath, rm, open } from 'node:fs/promises';
+import { closeSync, fstatSync } from 'node:fs';
 import { resolve, join, dirname, isAbsolute, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 
+/** Bound the actual JSON-RPC envelope, not raw UTF-8 text. Presentation never interrupts native work. */
+function boundedProjection(emit, frame, limit = 256 * 1024) {
+  const fits = value => Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', method: 'harness.event', params: value }) + '\n') <= limit;
+  if (fits(frame)) { emit(frame); return true; }
+  const unavailable = { ...frame, eventId: `${frame.eventId}:size`, kind: 'capability.unavailable',
+    data: { capability: 'replySize', reason: 'Encoded projection exceeded the frame bound; native work was not interrupted' } };
+  if (fits(unavailable)) emit(unavailable);
+  // Terminal evidence must still reach the host even when its presentation cannot.
+  if (frame.kind === 'turn.terminal') {
+    const terminal = { ...frame, data: { ...frame.data, text: '', reason: 'Reply omitted: encoded projection exceeded the frame bound' } };
+    if (fits(terminal)) emit(terminal);
+  }
+  return false;
+}
+
 export const UPSTREAM = Object.freeze({ version: '2026.9.8', commit: 'fc23bc864e4553c2d215e479eeec47b67a0bf943', protocol: 4 });
 export const CURATED_RUNTIME = Object.freeze({ sourceCommit: '9bbdbaec153dd28fb452e6652c3dcacd829cb00f', patchSha256: '07febe324718e72b238d465bd33f5196d9c49f3aa864405d6587ba3d9b24c908', entry: 'dist/yorozu-gateway-embedding.js', transport: 'inherited-fd-v1' });
 export const CAPABILITIES = Object.freeze({ backgroundTasks: false, targetedSteer: false, taskStop: false, approvals: false, reconnect: false, attachments: false });
-export const EXTENSIONS = Object.freeze({ version: 1, connectedLifecycle: true, conversationActions: false, autonomousEvents: false, agentMessaging: false });
+export const EXTENSIONS = Object.freeze({ version: 1, connectedLifecycle: false, conversationActions: false, autonomousEvents: false, agentMessaging: false });
 const FRAME_LIMIT = 256 * 1024;
 const MAX_SESSIONS = 16;
 const MAX_RECORDS = 1024;
@@ -45,11 +60,14 @@ async function directory(path) {
   await mkdir(path, { recursive: true, mode: 0o700 });
   if ((await lstat(path)).isSymbolicLink() || await realpath(path) !== path) throw invalid('private directories must not traverse symlinks');
 }
-async function atomic(path, value) {
+export async function atomic(path, value, io = { open, rename }) {
   try { await regular(path, 4 * 1024 * 1024); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(value) + '\n', { flag: 'wx', mode: 0o600 });
-  await rename(temporary, path);
+  const file = await io.open(temporary, 'wx', 0o600);
+  try { await file.writeFile(JSON.stringify(value) + '\n'); await file.sync(); } finally { await file.close(); }
+  await io.rename(temporary, path);
+  const directory = await io.open(dirname(path), 'r');
+  try { await directory.sync(); } finally { await directory.close(); }
 }
 
 export function validateLifecycle(params) {
@@ -340,22 +358,24 @@ export class NativeGateway {
   }
 }
 
+export function verifyInheritedListener(stat = fstatSync) {
+  if (!stat(3).isSocket()) throw invalid('inherited listener must be a socket');
+}
+
 export async function launchRuntime(params) {
   const lifecycle = validateLifecycle(params);
   if (lifecycle.mode === 'connected') {
-    const gateway = new NativeGateway(lifecycle.connection.endpoint, lifecycle.connection.token, undefined, { ownership: 'connected' });
-    try { await gateway.connect(); }
-    catch (error) { await gateway.detach(); throw error; }
-    return { gateway, ownership: 'connected', connection: lifecycle.connection,
-      agentId: lifecycle.connection.nativeAgentId, hostAgentId: params.agentId, authAvailable: true };
+    throw new ProtocolError(-32010, 'Connected lifecycle is held: durable custody and restart guarantees are unproven; no connection was made');
+
   }
   const runtime = await prepareRuntime(params);
   const lock = join(runtime.profileDir, '.adapter-owner.lock');
   try { await mkdir(lock, { mode: 0o700 }); } catch (error) { if (error.code === 'EEXIST') throw invalid('private profile already has an owner; stale ownership requires explicit recovery'); throw error; }
   let child;
   let listenerReleased = false;
-  const releaseListener = () => { if (!listenerReleased) { listenerReleased = true; closeSync(3); } };
+  const releaseListener = () => { if (!listenerReleased) { listenerReleased = true; verifyInheritedListener(); closeSync(3); } };
   try {
+    verifyInheritedListener();
     const port = runtime.gatewayPort; // Trusted host lease and inherited descriptor own the endpoint; the child has no bind grant.
     const token = randomBytes(32).toString('hex');
     await atomic(join(runtime.profileDir, 'gateway-token.json'), { token });
@@ -410,7 +430,7 @@ const unknown = reason => ({ status: 'unknown', reason });
 export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) {
   let runtime; let initializing = false; let initialized = false;
   const sessions = new Map(); const runs = new Map(); const operations = new Map();
-  const pendingEvents = new Map();
+  const pendingEvents = new Map(); const observedSessions = new Set();
   const nonce = randomUUID(); let sequence = 0; let writing = Promise.resolve(); let frames = Promise.resolve();
   const journal = () => ({ schema: 2, upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, agentId: runtime.agentId, sessions: [...sessions.values()], runs: [...runs.values()], operations: [...operations.values()] });
   const persist = () => {
@@ -419,8 +439,15 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
     const next = writing.then(() => atomic(runtime.journalPath, value));
     writing = next.catch(() => {}); return next;
   };
-  const event = (session, kind, data, run) => emit({ protocolVersion: 1, eventId: `${nonce}:${++sequence}`, conversationId: session.conversationId,
+  const blockedProjections = new Set();
+  const event = (session, kind, data, run) => {
+    const key = run?.nativeId;
+    if (kind === 'assistant.update' && blockedProjections.has(key)) return;
+    const projected = boundedProjection(emit, { protocolVersion: 1, eventId: `${nonce}:${++sequence}`, conversationId: session.conversationId,
     ...(run ? { runId: run.runId, attemptId: run.attemptId } : {}), kind, data });
+    if (!projected && key) blockedProjections.add(key);
+    if (kind === 'turn.terminal') blockedProjections.delete(key);
+  };
   function sessionFor(params) {
     required(params.conversationId, 'conversationId');
     const session = sessions.get(params.conversationId);
@@ -485,8 +512,9 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
     run.seq = data.seq;
     if (data.state === 'delta') {
       if (typeof data.deltaText !== 'string') return;
-      run.text = data.replace === true ? data.deltaText : run.text + data.deltaText;
-      if (Buffer.byteLength(run.text) > 128 * 1024) throw new Error('native text exceeded the adapter bound');
+      const candidate = data.replace === true ? data.deltaText : run.text + data.deltaText;
+      if (Buffer.byteLength(candidate) > 128 * 1024) { event(session, 'capability.unavailable', { capability: 'replySize', reason: 'native text exceeded the projection bound; native work was not interrupted' }, run); return; }
+      run.text = candidate;
       await persist(); event(session, 'assistant.update', { text: run.text }, run);
     } else if (['final', 'aborted', 'error'].includes(data.state)) {
       if (data.yielded === true) { run.state = 'unknown'; await persist(); event(session, 'capability.unavailable', { capability: 'backgroundTasks', reason: 'native yielded run has no proven continuation ownership in this prototype' }, run); return; }
@@ -561,6 +589,10 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
         if (previous) {
           if (previous.bindingId !== params.bindingId || (params.sessionId && params.sessionId !== previous.sessionId)) throw invalid('conversation is already owned by another binding or native session');
           if (previous.state !== 'open') throw new ProtocolError(-32031, 'native session creation acknowledgement is uncertain; no replay');
+          observedSessions.delete(previous.sessionKey);
+          const subscribed = await runtime.gateway.call('sessions.messages.subscribe', { key: previous.sessionKey, agentId: runtime.agentId, subscriptionId: nativeId('observer', params.bindingId) });
+          if (subscribed?.ok !== true) throw new ProtocolError(-32031, 'native session observation was not acknowledged');
+          observedSessions.add(previous.sessionKey);
           return { sessionId: previous.sessionId, recovery: 'snapshot-only' };
         }
         if (params.sessionId && runtime.ownership !== 'connected') throw invalid('only adapter-owned recorded native sessions may be resumed');
@@ -579,6 +611,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
           session.sessionId = history.sessionId;
           const subscribed = await runtime.gateway.call('sessions.messages.subscribe', { key: session.sessionKey, agentId: runtime.agentId, subscriptionId: nativeId('observer', params.bindingId) });
           if (subscribed?.ok !== true) throw new ProtocolError(-32031, 'selected native session observation was not acknowledged');
+          observedSessions.add(session.sessionKey);
           session.state = 'open';
           return { sessionId: session.sessionId, recovery: 'snapshot-only', nativeHistoryHydrated: false };
         }
@@ -587,11 +620,14 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
         catch { throw new ProtocolError(-32031, 'native session creation acknowledgement is uncertain; no replay'); }
         if (created?.ok !== true || created.key !== session.sessionKey || created.runStarted !== false || typeof created.sessionId !== 'string' || !created.sessionId || created.sessionId.length > 512 || created.entry?.sessionId !== created.sessionId) throw new ProtocolError(-32031, 'native session creation identity is unproven; no replay');
         session.sessionId = created.sessionId; session.state = 'open'; await persist();
-        await runtime.gateway.call('sessions.messages.subscribe', { key: session.sessionKey, agentId: runtime.agentId, subscriptionId: nativeId('observer', params.bindingId) });
+        const subscribed = await runtime.gateway.call('sessions.messages.subscribe', { key: session.sessionKey, agentId: runtime.agentId, subscriptionId: nativeId('observer', params.bindingId) });
+        if (subscribed?.ok !== true) throw new ProtocolError(-32031, 'native session observation was not acknowledged');
+        observedSessions.add(session.sessionKey);
         return { sessionId: session.sessionId };
       }
       if (method === 'turn.submit') {
         const session = sessionFor(params);
+        if (!observedSessions.has(session.sessionKey)) return { status: 'busy', handoff: 'not-submitted', reason: 'native session subscription has not been acknowledged on this connection' };
         required(params.runId, 'runId'); required(params.attemptId, 'attemptId'); required(params.text, 'text', 64 * 1024);
         if (params.bindingId !== session.bindingId) throw invalid('turn requires the exact conversation binding');
         if (params.attachments) throw invalid('attachments are unsupported');
@@ -660,8 +696,13 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
 export function serve(input = process.stdin, output = process.stdout) {
   let buffer = Buffer.alloc(0); let pending = 0; let failed = false;
   const send = frame => {
-    const encoded = JSON.stringify(frame) + '\n';
-    if (Buffer.byteLength(encoded) > FRAME_LIMIT || output.writableLength > 8 * 1024 * 1024) { fail(); return; }
+    let encoded = JSON.stringify(frame) + '\n';
+    if (Buffer.byteLength(encoded) > FRAME_LIMIT) {
+      if (frame.id === undefined) return;
+      encoded = JSON.stringify({ jsonrpc: '2.0', id: frame.id, error: { code: -32010, message: 'response exceeds encoded projection bound' } }) + '\n';
+      if (Buffer.byteLength(encoded) > FRAME_LIMIT) return;
+    }
+    if (output.writableLength > 8 * 1024 * 1024) { fail(); return; }
     if (!failed) output.write(encoded);
   };
   const adapter = createAdapter({ emit: params => send({ jsonrpc: '2.0', method: 'harness.event', params }) });
