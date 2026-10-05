@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Run only the four internal Swift fixture files, with non-vacuous receipts.
+"""Run source-file-scoped safe Swift fixtures with exact, non-vacuous receipts.
 
-Swift Testing top-level functions are listed as Module.function(), NOT FileTests.
-Resolve every source @Test against a fresh SwiftPM listing, then run each file's
-functions separately. Require every expected test to pass (no skips), an exact
-positive run count, and no extra executed tests. Unsupported source/output syntax
-fails closed instead of widening the filter. No UI/wire aggregate is selected.
-
-Usage: python3 scripts/check-internal-swift.py --scratch-path /tmp/unique-swift-build
-Optional --receipt writes a JSON receipt only after all four groups pass.
+All four original fixture files remain mandatory (minimum 55 baseline tests).
+Additional pure PeerInfo/SIWC/account-helper files and reviewed ChatModel functions
+are explicit selections; never select the mixed ChatModel or UI aggregate.
+New functions in complete safe files are discovered, while mixed files require
+an explicit selection update. No production Keychain/browser/helper is invoked.
 """
 from __future__ import annotations
 
@@ -24,6 +21,25 @@ from typing import Callable
 
 FIXTURES = ("OutboxTests", "HarnessPlatformTests", "PersonAgentsTests", "PersonAgentEditingTests")
 MODULE = "YorozuSharedTests"
+# package, module, minimum count, optional exact functions in a mixed source file.
+GROUPS = {
+    "OutboxTests": ("packages/shared-swift", MODULE, 42, None),
+    "HarnessPlatformTests": ("packages/shared-swift", MODULE, 3, None),
+    "PersonAgentsTests": ("packages/shared-swift", MODULE, 2, None),
+    "PersonAgentEditingTests": ("packages/shared-swift", MODULE, 8, None),
+    "PeerInfoTests": ("packages/shared-swift", MODULE, 10, None),
+    "SiwcAccountsTests": ("packages/shared-swift", MODULE, 4, None),
+    "ChatModelTests": ("packages/shared-swift", MODULE, 7, (
+        "harnessTaskControlsUseCapabilitiesAndPreserveUnsupportedDrafts",
+        "personAgentsRequireDeclaredCapabilityAndHostControlResults",
+        "personAgentSelectionAlwaysOpensCanonicalConversationWithoutCreatingAnother",
+        "personAgentSettingsSubmissionBlocksDuplicateAndStaleSaves",
+        "canonicalAgentDescriptorsRemainNavigableOfflineAfterRelaunch",
+        "harnessActionResponseEchoesExactOriginAndDoesNotBecomeUserText",
+        "agentExchangePayloadStaysInSeparateInspectionStream",
+    )),
+    "AccountsCoreTests": ("apps/mac", "YorozuAccountsCoreTests", 10, None),
+}
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
@@ -32,7 +48,7 @@ class CheckFailed(RuntimeError):
     pass
 
 
-def source_names(source: str, fixture: str) -> list[str]:
+def source_names(source: str, fixture: str, selected=None) -> list[str]:
     # Deliberately supports only the current zero-argument, top-level fixtures.
     # A move into @Suite or parameterized/trait tests needs explicit adapter review.
     if re.search(r"^\s*@Suite\b", source, re.M):
@@ -42,34 +58,40 @@ def source_names(source: str, fixture: str) -> list[str]:
         r"^\s*(?:@MainActor\s+)?@Test\s+(?:@MainActor\s+)?func\s+([A-Za-z_]\w*)\s*\(\s*\)",
         source, re.M,
     )
+    if selected is not None:
+        if not selected or len(set(selected)) != len(selected) or any(names.count(name) != 1 for name in selected):
+            raise CheckFailed(f"{fixture}: missing, duplicate, or unsupported selected @Test declarations")
+        return list(selected)
     if not names or len(names) != len(annotations) or len(set(names)) != len(names):
         raise CheckFailed(f"{fixture}: missing, duplicate, or unsupported @Test declarations")
     return names
 
 
-def resolve_groups(root: Path, listing: str) -> dict[str, list[str]]:
-    listed = Counter(ANSI.sub("", listing).splitlines())
+def resolve_groups(root: Path, listings: dict[str, str]) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {}
     owned: set[str] = set()
-    for fixture in FIXTURES:
-        path = root / "packages/shared-swift/Tests" / MODULE / f"{fixture}.swift"
+    for fixture, (package, module, minimum, selected) in GROUPS.items():
+        listed = Counter(ANSI.sub("", listings[package]).splitlines())
+        path = root / package / "Tests" / module / f"{fixture}.swift"
         try:
-            names = source_names(path.read_text(), fixture)
+            names = source_names(path.read_text(), fixture, selected)
         except OSError as error:
             raise CheckFailed(f"{fixture}: source unavailable: {error}") from error
+        if len(names) < minimum:
+            raise CheckFailed(f"{fixture}: mandatory baseline shrank below {minimum} tests")
         for name in names:
-            identifier = f"{MODULE}.{name}()"
-            if listed[identifier] != 1 or name in owned:
+            identifier = f"{module}.{name}()"
+            if listed[identifier] != 1 or identifier in owned:
                 raise CheckFailed(f"{fixture}: expected exactly one listed test: {identifier}")
-            owned.add(name)
+            owned.add(identifier)
         groups[fixture] = names
     return groups
 
 
-def selector(names: list[str]) -> str:
+def selector(names: list[str], module: str = MODULE) -> str:
     # Swift Testing appends source-location identity beyond the displayed ().
     # Anchor the module and complete function-name boundary, not the display suffix.
-    return "^(?:" + "|".join(re.escape(f"{MODULE}.{name}(") for name in names) + ")"
+    return "^(?:" + "|".join(re.escape(f"{module}.{name}(") for name in names) + ")"
 
 
 def verify_run(fixture: str, names: list[str], output: str) -> dict:
@@ -89,20 +111,26 @@ def verify_run(fixture: str, names: list[str], output: str) -> dict:
 
 
 def run_checks(root: Path, scratch: Path, runner: Runner) -> dict:
-    base = ["swift", "test", "--package-path", str(root / "packages/shared-swift"),
-            "--scratch-path", str(scratch)]
-    # Build and list current source once. Runs reuse that exact build; no stale --skip-build listing.
-    listing = runner(base + ["list"])
-    if listing.returncode:
-        raise CheckFailed("SwiftPM build/list failed")
-    groups = resolve_groups(root, listing.stdout)
+    bases = {package: ["swift", "test", "--package-path", str(root / package),
+                       "--scratch-path", str(scratch / package.replace("/", "-"))]
+             for package, _, _, _ in GROUPS.values()}
+    listings = {}
+    for package, base in bases.items():
+        listing = runner(base + ["list"])
+        if listing.returncode:
+            raise CheckFailed(f"{package}: SwiftPM build/list failed")
+        listings[package] = listing.stdout
+    groups = resolve_groups(root, listings)
     receipts = []
-    # Validate ALL groups before executing ANY. Missing Outbox cannot hide behind other suites.
+    # Validate ALL source selections before executing ANY; compile/list is not execution.
     for fixture, names in groups.items():
-        result = runner(base + ["--skip-build", "--no-parallel", "--filter", selector(names)])
+        package, module, _, _ = GROUPS[fixture]
+        result = runner(bases[package] + ["--skip-build", "--no-parallel", "--filter", selector(names, module)])
         if result.returncode:
             raise CheckFailed(f"{fixture}: SwiftPM exited {result.returncode}")
-        receipts.append(verify_run(fixture, names, result.stdout + "\n" + result.stderr))
+        receipt = verify_run(fixture, names, result.stdout + "\n" + result.stderr)
+        receipt.update(package=package, module=module, source=f"{package}/Tests/{module}/{fixture}.swift")
+        receipts.append(receipt)
     return {"schemaVersion": 1, "groups": receipts,
             "executed": sum(group["executed"] for group in receipts), "skipped": 0}
 
@@ -130,6 +158,7 @@ def main() -> int:
         else:
             with tempfile.TemporaryDirectory(prefix="yorozu-internal-swift-") as scratch:
                 receipt = run_checks(root, Path(scratch), command)
+        receipt["sourceSha"] = json.loads((root / "internal-source.json").read_text())["sourceSha"]
         encoded = json.dumps(receipt, indent=2) + "\n"
         if args.receipt:
             args.receipt.write_text(encoded)

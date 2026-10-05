@@ -79,6 +79,29 @@ class InternalReleasePolicyTests(unittest.TestCase):
         for script in ("check-internal-alpha.sh", "build-internal-alpha.sh"):
             self.assertIn("scripts/" + script, line)
 
+    def test_safe_source_scoped_gates_and_receipts_remain_wired(self):
+        script = (ROOT / "scripts/check-internal-alpha.sh").read_text()
+        self.assertIn("mktemp -d /tmp/yri.XXXXXX", script)
+        for gate in ("host", "swift"):
+            self.assertIn(f"python3 scripts/check-internal-{gate}.py --receipt", script)
+            self.assertIn(f"internal-{gate}.json", script)
+        self.assertNotIn("cargo test --locked", script)  # No file-wide mixed Rust suite runs.
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("internal-receipts/*.json", workflow)
+        staging = (ROOT / "scripts/stage-internal-alpha.py").read_text()
+        for name in ("check-internal-host.py", "test-check-internal-host.py"):
+            self.assertIn('"scripts/' + name + '"', staging)
+
+    def test_docs_and_beta_notes_disclose_provisioning_and_no_ipa_retention(self):
+        doc = (ROOT / "docs/internal-testflight.md").read_text()
+        self.assertIn("runner-local only", doc)
+        self.assertIn('provisioning:"absent"', doc)
+        self.assertIn("person-agent SIWC inference are unavailable", doc)
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        self.assertNotIn("YOROZU_ACCOUNTS_PROFILE:", workflow)
+        beta = (ROOT / "scripts/publish-internal-beta.py").read_text()
+        self.assertIn("person-agent SIWC inference are unavailable", beta)
+
     def test_staged_internal_lane_executes_outbox_and_packaging_regressions(self):
         script = (ROOT / "scripts/check-internal-alpha.sh").read_text()
         self.assertIn('python3 scripts/stage-internal-alpha.py "$SOURCE"', script)

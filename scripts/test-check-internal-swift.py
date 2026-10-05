@@ -24,21 +24,24 @@ class GateTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.directory = self.root / "packages/shared-swift/Tests/YorozuSharedTests"
         self.directory.mkdir(parents=True)
-        self.groups = {fixture: [fixture + "First", fixture + "Second"] for fixture in gate.FIXTURES}
+        self.groups = {fixture: list(selected) if selected else [fixture + "First", fixture + "Second"] +
+                       [fixture + str(i) for i in range(minimum - 2)]
+                       for fixture, (_, _, minimum, selected) in gate.GROUPS.items()}
         for fixture, names in self.groups.items():
-            (self.directory / (fixture + ".swift")).write_text("\n".join(
+            package, module, _, _ = gate.GROUPS[fixture]
+            directory = self.root / package / "Tests" / module
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / (fixture + ".swift")).write_text("\n".join(
                 "@MainActor\n@Test func " + name + "() async throws {}" for name in names))
-        self.listing = "\n".join("YorozuSharedTests." + name + "()"
-                                 for names in self.groups.values() for name in names)
+        self.listing = "\n".join(gate.GROUPS[fixture][1] + "." + name + "()"
+                                 for fixture, names in self.groups.items() for name in names)
         self.calls = []
 
     def runner(self, args):
         self.calls.append(args)
         if args[-1] == "list":
             return subprocess.CompletedProcess(args, 0, self.listing, "")
-        index = len(self.calls) - 2
-        fixture = gate.FIXTURES[index]
-        self.assertEqual(args[-1], gate.selector(self.groups[fixture]))
+        fixture = next(f for f, names in self.groups.items() if args[-1] == gate.selector(names, gate.GROUPS[f][1]))
         self.assertIn("--no-parallel", args)
         self.assertNotIn("--disable-sandbox", args)
         return subprocess.CompletedProcess(args, 0, transcript(self.groups[fixture]), "")
@@ -46,14 +49,14 @@ class GateTests(unittest.TestCase):
     def run_gate(self, runner=None):
         return gate.run_checks(self.root, self.root / "scratch", runner or self.runner)
 
-    def test_all_four_groups_have_separate_positive_receipts(self):
+    def test_all_safe_groups_have_separate_positive_receipts(self):
         receipt = self.run_gate()
-        self.assertEqual(receipt["executed"], 8)
-        self.assertEqual([g["fixture"] for g in receipt["groups"]], list(gate.FIXTURES))
-        self.assertTrue(all(g["executed"] == 2 for g in receipt["groups"]))
-        self.assertEqual(len(self.calls), 5)
+        self.assertEqual(receipt["executed"], 86)
+        self.assertEqual([g["fixture"] for g in receipt["groups"]], list(gate.GROUPS))
+        self.assertTrue(all(g["executed"] >= gate.GROUPS[g["fixture"]][2] for g in receipt["groups"]))
+        self.assertEqual(len(self.calls), 10)
         self.assertNotIn("--skip-build", self.calls[0])
-        for call in self.calls[1:]:
+        for call in self.calls[2:]:
             self.assertNotIn("WireTests", call[-1])
             self.assertNotIn("Showcase", call[-1])
 
@@ -61,13 +64,13 @@ class GateTests(unittest.TestCase):
         self.listing = "\n".join(line for line in self.listing.splitlines() if "Outbox" not in line)
         with self.assertRaisesRegex(gate.CheckFailed, "OutboxTests"):
             self.run_gate()
-        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(self.calls), 2)
 
     def test_missing_any_other_group_refuses_before_any_execution(self):
         self.listing = "\n".join(line for line in self.listing.splitlines() if "Editing" not in line)
         with self.assertRaisesRegex(gate.CheckFailed, "PersonAgentEditingTests"):
             self.run_gate()
-        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(self.calls), 2)
 
     def test_missing_outbox_file_refuses(self):
         (self.directory / "OutboxTests.swift").unlink()
@@ -111,7 +114,7 @@ class GateTests(unittest.TestCase):
             self.run_gate(runner)
 
     def test_receipts_require_every_test_not_just_positive_aggregate(self):
-        names = self.groups["OutboxTests"]
+        names = ["first", "second"]
         bad = [transcript(names[:1]), transcript(["OtherGroup"]),
                transcript(names) + "\n➜ Test extra() skipped: disabled",
                transcript(names) + "\n✘ Test x() recorded an issue",
@@ -122,6 +125,36 @@ class GateTests(unittest.TestCase):
         for output in bad:
             with self.subTest(output=output), self.assertRaises(gate.CheckFailed):
                 gate.verify_run("OutboxTests", names, output)
+
+    def test_mixed_chatmodel_source_only_selects_reviewed_functions(self):
+        source = (self.directory / "ChatModelTests.swift").read_text()
+        source += "\n@Test(arguments: [1]) func prohibitedRecovery(_ value: Int) {}\n"
+        (self.directory / "ChatModelTests.swift").write_text(source)
+        receipt = self.run_gate()
+        chat = next(g for g in receipt["groups"] if g["fixture"] == "ChatModelTests")
+        self.assertEqual(chat["tests"], self.groups["ChatModelTests"])
+        self.assertNotIn("prohibitedRecovery", " ".join(self.calls[-2]))
+
+    def test_deleting_source_test_cannot_reduce_mandatory_baseline(self):
+        path = self.directory / "OutboxTests.swift"
+        path.write_text("\n".join(path.read_text().splitlines()[:-2]))
+        with self.assertRaisesRegex(gate.CheckFailed, "baseline shrank"):
+            self.run_gate()
+
+    def test_new_safe_file_test_is_required_without_hardcoding_new_total(self):
+        path = self.directory / "OutboxTests.swift"
+        path.write_text(path.read_text() + "\n@Test func newSafeOutboxRegression() {}\n")
+        self.groups["OutboxTests"].append("newSafeOutboxRegression")
+        self.listing += "\nYorozuSharedTests.newSafeOutboxRegression()"
+        self.assertEqual(self.run_gate()["executed"], 87)
+
+    def test_missing_selected_chatmodel_or_accounts_helper_test_fails_closed(self):
+        for fixture in ("ChatModelTests", "AccountsCoreTests"):
+            old = self.listing
+            self.listing = self.listing.replace(gate.GROUPS[fixture][1] + "." + self.groups[fixture][0] + "()", "")
+            with self.assertRaisesRegex(gate.CheckFailed, fixture):
+                self.run_gate()
+            self.listing = old
 
     def test_ansi_output_and_older_summary_shape_are_supported(self):
         names = ["single"]

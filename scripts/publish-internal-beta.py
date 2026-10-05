@@ -95,7 +95,10 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
     notes = ("Non-stable Yorozu 0.6 evaluation build. Mac download only; iOS is available through the existing internal TestFlight group.\n\n"
              "This release does not update the stable or beta Sparkle feeds and does not install over an existing Mac app. "
              "Preserve your existing installation and data/rollback path. Unsupported OpenClaw features remain disabled; "
-             "live two-harness messaging and account onboarding are not claimed as proven.\n\n"
+             "live two-harness messaging and account onboarding are not claimed as proven. "
+             "This beta does not supply the required accounts-helper provisioning profile: "
+             "SIWC account-helper capability and person-agent SIWC inference are unavailable. "
+             "Packaging the helper is not account activation; enabling it requires separately authorized provisioning and native verification.\n\n"
              f"Source: {expected_source}\nCI: https://github.com/{REPOSITORY}/actions/runs/{ci}\n"
              f"Release: https://github.com/{REPOSITORY}/actions/runs/{expected_run}\n")
     with tempfile.TemporaryDirectory(prefix="yorozu-beta-metadata-") as directory:

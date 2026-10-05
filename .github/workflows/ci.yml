@@ -91,6 +91,8 @@ jobs:
           python3 scripts/test-release-notes.py
           python3 scripts/test-build-version.py
           python3 scripts/test-stage-internal-alpha.py
+          python3 scripts/test-check-internal-swift.py
+          python3 scripts/test-check-internal-host.py
           python3 scripts/test-internal-release-policy.py
           python3 scripts/test-intake-hermes-runtime.py
           python3 scripts/test-publish-internal-beta.py
@@ -199,7 +201,16 @@ jobs:
         with: { node-version: 26 }
       - name: Check the assembled production baseline and isolated Rust secretary
         # No legacy migration or recovery process is part of this candidate.
+        env:
+          YOROZU_INTERNAL_RECEIPTS: ${{ runner.temp }}/internal-receipts
         run: ./scripts/check-internal-alpha.sh
+      - name: Retain exact-source internal test receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: internal-test-receipts-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/internal-receipts/*.json
 
   ios:
     needs: changes

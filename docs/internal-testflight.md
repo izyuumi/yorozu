@@ -80,9 +80,9 @@ dispatch after a failure; do not rerun an upload with a used version/build pair.
 
 `build-ios.sh` still requires explicit numeric `VERSION` and `BUILD`.
 `INTERNAL_ONLY=1` requires version `0.6.0`, enables the internal UI before Tuist,
-and sets `testFlightInternalTestingOnly=true` for both the retained IPA export
+and sets `testFlightInternalTestingOnly=true` for both the runner-local IPA export
 and Xcode's upload export. Apple prevents these builds from being distributed
-externally or through the App Store. The retained IPA is a signed export of the
+externally or through the App Store. The runner-local IPA is a signed export of the
 same archive; it is not claimed to be byte-identical to Xcode's separate upload
 export. See [Apple's internal testing documentation](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/).
 
@@ -125,11 +125,29 @@ lockfile's SHA-256, the installed direct dependency versions, and sealed file ha
 The temporary Node bridge remains part of this candidate; a complete Rust migration
 has not shipped. The coding/review model does not select the user's runtime model.
 
-Actions retains a ZIP of the signed Mac app, DMG, signed IPA, export options,
-exact source/build metadata, Apple build ID, availability result, and SHA-256
-artifact hashes for 30 days. Failed processing still retains existing build
-artifacts and source evidence. Signing keys stay in runner temporary storage
-and are deleted; they are never included in the artifact paths.
+After internal availability and artifact provenance succeed, Actions retains the
+signed Mac app ZIP and DMG plus source/build metadata, Apple build ID, availability
+result and SHA-256 hashes for 30 days. These workflow artifacts are downloadable
+in this public repository; they are not private storage. The IPA and iOS export
+options are runner-local only: they are never uploaded as workflow artifacts or
+public release assets. On failure, only diagnostic JSON metadata is retained,
+not Mac binaries, IPA or export options. Signing keys stay in runner temporary
+storage and are deleted; they are never included in artifact paths.
+
+The current release workflow does not supply `YOROZU_ACCOUNTS_PROFILE` or its
+required app-identifier prefix. The packaged account helper therefore records
+`provisioning:"absent"` and `productionReady:false`; SIWC account-helper capability
+and person-agent SIWC inference are unavailable in this beta. A bundled helper
+is not an activated account integration. Supplying a profile/entitlements and
+proving native Keychain/signature acceptance require separate authorization and
+verification; neither is silently enabled by these tests or release notes.
+This limitation must remain explicit in public beta notes.
+
+The internal lane emits exact-source `internal-host.json` and
+`internal-swift.json` only after each gate passes; CI retains those JSON receipts.
+See [safe test coverage](internal-safe-test-coverage.md) for individual selections
+and deliberate recovery/FIFO/UI exclusions. Compilation or listing is not test
+execution, and a partial receipt set does not establish a passing whole lane.
 
 An `available=true` report proves Apple's internal availability state, not a
 successful install. Validate installation, existing pairing/history/drafts,

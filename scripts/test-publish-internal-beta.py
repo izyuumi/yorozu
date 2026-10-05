@@ -79,6 +79,8 @@ class BetaTests(unittest.TestCase):
         remote = self.gh.releases[self.tag]
         self.assertTrue(remote["isPrerelease"])
         self.assertFalse(remote["isDraft"])
+        self.assertIn("accounts-helper provisioning profile", remote["notes"])
+        self.assertIn("person-agent SIWC inference are unavailable", remote["notes"])
         self.assertEqual(set(remote["files"]), {"Yorozu.dmg", "Yorozu.app.zip", "beta.json"})
         self.assertFalse(any(event[:2] == ("release", "delete") for event in self.gh.events))
         self.assertFalse(any("--latest=true" in event for event in self.gh.events))

@@ -11,8 +11,12 @@ python3 scripts/stage-internal-alpha.py "$SOURCE"
 cd "$SOURCE"
 pnpm install --frozen-lockfile
 pnpm --filter @yorozu/shared --filter @yorozu/runtime build
-cargo test --locked --manifest-path packages/host-core/Cargo.toml --test alpha
-cargo test --locked --manifest-path packages/host-core/Cargo.toml --test secretary
+# Receipts are emitted only after every explicitly selected test passes.
+RECEIPTS=${YOROZU_INTERNAL_RECEIPTS:-$SOURCE}
+mkdir -p "$RECEIPTS"
+rm -f "$RECEIPTS/internal-host.json" "$RECEIPTS/internal-swift.json"
+python3 scripts/test-check-internal-host.py
+python3 scripts/check-internal-host.py --receipt "$RECEIPTS/internal-host.json"
 cargo build --locked --manifest-path packages/host-core/Cargo.toml --bin yorozu-host-core
 export YOROZU_SECRETARY_HOST="$SOURCE/packages/host-core/target/debug/yorozu-alpha-host"
 export YOROZU_HOST_CORE="$SOURCE/packages/host-core/target/debug/yorozu-host-core"
@@ -27,6 +31,6 @@ pnpm --filter @yorozu/shared exec vitest run person-agents peer-info siwc-
 # These are isolated persistence/wire fixtures, not the legacy recovery/UI harness.
 # Keep internal release admission dependent on executed outbox regression tests.
 python3 scripts/test-check-internal-swift.py
-env -u SDKROOT python3 scripts/check-internal-swift.py --receipt "$SOURCE/internal-swift.json"
+env -u SDKROOT python3 scripts/check-internal-swift.py --receipt "$RECEIPTS/internal-swift.json"
 env -u SDKROOT swift build --package-path apps/mac --product YorozuMac
 echo "Internal secretary checks passed for $(python3 -c 'import json; print(json.load(open("internal-source.json"))["sourceSha"])')"
