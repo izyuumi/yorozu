@@ -294,12 +294,13 @@ test("sidecar close reports bounded uncertainty rather than success for a stalle
   } finally { release(); await new Promise<void>(resolve => setImmediate(resolve)); }
 });
 
-test("Stop escalates on live ownership and replies unknown despite journal and diagnostic failure", async () => {
+test("Stop escalates on live ownership and replies unconfirmed despite journal and diagnostic failure", async () => {
   const f = await fixture("secretary", false, undefined, line => { if (line.includes("secretary-storage-unconfirmed")) throw new Error("Synthetic logger unavailable"); });
-  let aborted = 0, terminated = 0;
+  let aborted = 0, terminated = 0; let release: (() => void) | undefined;
   f.runner.run.mockImplementation(turn => { f.turns.push(turn); return new Promise(resolve => {
     turn.signal.addEventListener("abort", () => { aborted++; });
-    turn.onTerminate?.(() => { terminated++; resolve({ text: "Synthetic termination", cessation: "process-exited" } as any); });
+    release = () => resolve({ text: "Synthetic termination", cessation: "process-exited" } as any);
+    turn.onTerminate?.(() => { terminated++; release!(); });
   }); });
   f.send("message", { role: "user", text: "run" }, "escalation-target");
   await vi.waitFor(() => expect(f.turns).toHaveLength(1));
@@ -307,11 +308,11 @@ test("Stop escalates on live ownership and replies unknown despite journal and d
   try {
     f.send("interrupt", { targetEventId: "escalation-target" }, "escalation-stop");
     await vi.waitFor(() => expect(aborted).toBe(1));
-    await vi.waitFor(() => expect(f.events.some(e => e.kind === "stop_status" && e.data.requestId === "escalation-stop" && e.data.status === "unknown")).toBe(true));
+    await vi.waitFor(() => expect(f.events.some(e => e.kind === "stop_status" && e.data.requestId === "escalation-stop" && e.data.status === "unconfirmed")).toBe(true));
     await vi.waitFor(() => expect(terminated).toBe(1), { timeout: 5000 });
     const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
     expect(new SecretaryAdmissionFence(f.dir).blocked).toBe(true);
-  } finally { rmSync(join(f.dir, "stopped-turns.jsonl"), { recursive: true }); }
+  } finally { release?.(); rmSync(join(f.dir, "stopped-turns.jsonl"), { recursive: true }); }
 }, 10000);
 
 test("stop-journal failure cannot rethrow a sequence-reservation broadcast failure", () => {
@@ -322,4 +323,15 @@ test("stop-journal failure cannot rethrow a sequence-reservation broadcast failu
   const result = invoke(held, () => true, fence, () => "intent", () => { throw new Error("disk unavailable"); }, "synthetic", () => {}, () => { throw new Error("send sequence reservation failed"); }, (v: any) => v);
   expect(result).toBe(false); expect(fence.fail).toHaveBeenCalledOnce(); expect(fence.confirmed).not.toHaveBeenCalled();
   expect(held.get("target")).toMatchObject({ status: "unconfirmed", requestIds: ["stop"] });
+});
+
+test("failed child-exit journal persistence retains shutdown ownership until an explicit successful untrack", () => {
+  const source = readFileSync(new URL("../dist/serve.js", import.meta.url), "utf8");
+  const start = source.indexOf("const trackAgentProcess ="), end = source.indexOf("// An older build stored", start);
+  const owners: any[] = []; let fail = false;
+  const save = vi.fn(() => { if (fail) throw new Error("Synthetic process-journal write failure"); });
+  const track = new Function("agentIdentity", "agentProcesses", "saveAgentProcesses", source.slice(start, end) + "\nreturn trackAgentProcess;")(() => ({ startedAt: "fixture", commandLine: "synthetic-only" }), owners, save);
+  const untrack = track(123); expect(owners).toHaveLength(1);
+  fail = true; untrack(); expect(owners).toHaveLength(1);
+  fail = false; untrack(); expect(owners).toEqual([]); expect(save).toHaveBeenCalledTimes(3);
 });
