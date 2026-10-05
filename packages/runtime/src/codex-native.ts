@@ -253,6 +253,13 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
         if (!sessionId) throw new Error("Codex did not return a thread id");
         turn.onSession?.(sessionId);
         if (turn.signal.aborted) throw new Error("Codex turn cancelled before start");
+        if (turn.secretaryCoordinator && turn.sessionId) {
+          // Resume restores the original developer prompt, ignoring its replacement
+          // field. Inject the current host routing contract without rewriting history.
+          await client.request("thread/inject_items", { threadId: sessionId, items: [
+            { type: "message", role: "developer", content: [{ type: "input_text", text: SECRETARY_COORDINATOR_INSTRUCTIONS }] },
+          ] });
+        }
         startingTurn = true;
         const started = await client.request("turn/start", { threadId: sessionId,
           input: [{ type: "text", text: turn.text, text_elements: [] },

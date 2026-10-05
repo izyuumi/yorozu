@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OVERLAYS = [
     "apps/mac", "packages/shared-swift", "packages/host-core",
     "packages/runtime/src/native.ts", "packages/runtime/src/codex-native.ts",
+    "packages/runtime/src/codex-native.test.ts",
     "packages/runtime/src/secretary-runner.ts",
     "packages/runtime/src/secretary-worker.ts",
     "packages/runtime/src/secretary-serve.ts",

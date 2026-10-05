@@ -38,6 +38,7 @@ lines.on('line', line => {
     } else send({ id: frame.id, result: {} });
   }
   if (frame.method === 'config/read') send({ id: frame.id, result: { config: { mcp_servers: { fixture_connector: { enabled: true } } } } });
+  if (frame.method === 'thread/inject_items') send({ id: frame.id, result: {} });
   if (frame.method === 'skills/list') send({ id: frame.id, result: { data: [] } });
   if (frame.method === 'model/list') {
     const reply = () => send({ id: frame.id, result: { data: [{ model: 'fixture-model', displayName: 'Fixture', isDefault: true }] } });

@@ -3,6 +3,7 @@ import { PassThrough } from "node:stream";
 import { expect, test, vi } from "vitest";
 import { codexNativeRunner, connectCodex, type CodexHandlers, type ConnectCodex } from "./codex-native.js";
 import { childEnv, type NativeTurn } from "./native.js";
+import { SECRETARY_COORDINATOR_INSTRUCTIONS } from "./secretary-coordinator.js";
 
 // No test may start a real `codex`: the one test that reaches spawn gets this stand-in child.
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -19,6 +20,7 @@ function fakeCodex(work: (handlers: CodexHandlers) => Promise<void> = async (h) 
     async request(method, params) {
       calls.push([method, params]);
       if (method === "thread/start" || method === "thread/resume") return { thread: { id: "native" } };
+      if (method === "config/read") return { config: { mcp_servers: { fixture: { enabled: true } } } };
       if (method === "turn/start") {
         handlers.notify("turn/started", { threadId: "native", turn: { id: "turn-1" } });
         void work(handlers).catch(handlers.ended);
@@ -40,6 +42,27 @@ function fakeCodex(work: (handlers: CodexHandlers) => Promise<void> = async (h) 
   return { connect, calls, responses, close };
 }
 const turn = (more: Partial<NativeTurn> = {}): NativeTurn => ({ threadId: "cx", text: "work", cwd: "/tmp/project", signal: new AbortController().signal, ...more });
+
+test.each([undefined, "existing-before-coordinator"])("secretary turn instructions reach new and resumed Codex sessions (%s)", async (sessionId) => {
+  const fake = fakeCodex();
+  await codexNativeRunner(fake.connect).run(turn({ sessionId, secretaryCoordinator: true, effort: "high" }));
+  // Resume retains the original developer prompt. Reassert the host's routing
+  // contract as a developer message before submitting the next user request.
+  const inject = fake.calls.findIndex(([method]) => method === "thread/inject_items");
+  if (sessionId) {
+    expect(fake.calls[inject]).toEqual(["thread/inject_items", { threadId: "native", items: [
+      { type: "message", role: "developer", content: [{ type: "input_text", text: SECRETARY_COORDINATOR_INSTRUCTIONS }] },
+    ] }]);
+    expect(inject).toBeLessThan(fake.calls.findIndex(([method]) => method === "turn/start"));
+  } else {
+    expect(inject).toBe(-1);
+    expect(fake.calls.find(([method]) => method === "thread/start")?.[1].developerInstructions).toBe(SECRETARY_COORDINATOR_INSTRUCTIONS);
+  }
+  expect(fake.calls.find(([method]) => method === "turn/start")?.[1]).toMatchObject({ environments: [] });
+  expect(fake.calls.find(([method]) => method === (sessionId ? "thread/resume" : "thread/start"))?.[1]).toMatchObject({
+    sandbox: "read-only", config: { "features.shell_tool": false, "features.apps": false, "mcp_servers.fixture.enabled": false },
+  });
+});
 
 test("Codex starts/resumes native threads with cwd, models, effort and independent bypass", async () => {
   const fake = fakeCodex();
@@ -188,7 +211,9 @@ test("Codex failures propagate and unknown server requests fail closed", async (
     await expect(h.request("new/permission", {})).rejects.toThrow("Unsupported");
     h.notify("turn/completed", { threadId: "native", turn: { id: "turn-1", status: "failed", error: { message: "Failed safely" } } });
   });
-  await expect(codexNativeRunner(fake.connect).run(turn())).rejects.toThrow("Failed safely");
+  await expect(codexNativeRunner(fake.connect).run(turn())).resolves.toEqual({
+    text: "Failed safely", failed: true, sessionId: "native", cessation: "provider-terminal",
+  });
   expect(fake.close).toHaveBeenCalledOnce();
 });
 
@@ -248,7 +273,7 @@ test("Codex early cancellation requires observed owned exit and bounds a missing
 });
 
 test("Codex connection close and error do not resolve child exit proof", async () => {
-  const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stdin:new PassThrough(),kill:vi.fn()});
+  const child=Object.assign(new EventEmitter(),{pid:12345,stdout:new PassThrough(),stdin:new PassThrough(),kill:vi.fn()});
   spawnMock.mockReturnValueOnce(child); const client=connectCodex({notify(){},request:async()=>({}),ended(){}});
   let exited=false; void client.exited!.then(()=>{exited=true;});
   client.close(); child.emit("error",new Error("transport error"));
