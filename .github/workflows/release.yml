@@ -25,6 +25,11 @@ on:
         description: 'Internal only: exact SHA that passed Opus 5.5 review and native QA'
         required: false
         type: string
+      publish_mac_beta:
+        description: 'After internal availability: publish an immutable Mac beta download; no feeds or external testers'
+        default: false
+        required: false
+        type: boolean
 
 # Superseded pending beta builds may be skipped; never interrupt signing/upload mid-run.
 concurrency:
@@ -54,6 +59,7 @@ jobs:
       INTERNAL_ONLY: ${{ inputs.internal_only }}
       REQUESTED_VERSION: ${{ inputs.version }}
       REVIEWED_SOURCE_SHA: ${{ inputs.reviewed_source_sha }}
+      PUBLISH_MAC_BETA: ${{ inputs.publish_mac_beta }}
     steps:
       - name: Pin trusted source
         id: resolve
@@ -61,6 +67,7 @@ jobs:
           set -eu
           python3 - <<'PY_SOURCE'
           import os, re
+          assert os.environ["PUBLISH_MAC_BETA"] != "true" or os.environ["INTERNAL_ONLY"] == "true", "Mac beta publication requires the internal-only lane"
           if os.environ["INTERNAL_ONLY"] == "true":
               branch = os.environ["SOURCE_BRANCH"]
               assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch) and ".." not in branch, "invalid internal source branch"
@@ -124,6 +131,7 @@ jobs:
           CANDIDATE_SHA: ${{ needs.source.outputs.sha }}
         run: |
           set -eu
+          test "$GITHUB_RUN_ATTEMPT" = 1 || { echo 'Dispatch a fresh release; partial reruns cannot reuse a build identity' >&2; exit 1; }
           CI_RUN_ID=$(python3 scripts/release.py check-ci --source "$CANDIDATE_SHA" --branch "$SOURCE_BRANCH")
           set -- --source "$CANDIDATE_SHA" --branch "$SOURCE_BRANCH" \
             --run-number "$GITHUB_RUN_NUMBER" --run-id "$GITHUB_RUN_ID" --ci-run-id "$CI_RUN_ID"
@@ -263,6 +271,7 @@ jobs:
       - name: Verify exact reviewed source and CI
         run: |
           set -eu
+          test "$GITHUB_RUN_ATTEMPT" = 1 || { echo 'Dispatch a fresh internal release; partial reruns cannot reuse a build identity' >&2; exit 1; }
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_SHA" --jq .commit.verification.verified)" = true
           CI_RUN_ID=$(python3 scripts/release.py check-ci --source "$SOURCE_SHA" --branch "$SOURCE_BRANCH")
@@ -301,6 +310,16 @@ jobs:
           node --test scripts/asc-internal.test.mjs scripts/asc-candidate.test.mjs
           python3 scripts/test-build-ios.py
           ./scripts/check-internal-alpha.sh
+      - name: Acquire the reviewed immutable Hermes runtime
+        run: |
+          set -eu
+          python3 scripts/intake-hermes-runtime.py \
+            --pin scripts/hermes-runtime-release-input.json \
+            --source-root "$GITHUB_WORKSPACE" \
+            --download-directory "$RUNNER_TEMP/hermes-download" \
+            --destination "$RUNNER_TEMP/hermes-intake"
+          printf 'YOROZU_HERMES_RUNTIME_ARTIFACT=%s\n' "$RUNNER_TEMP/hermes-intake/hermes" >> "$GITHUB_ENV"
+          cp "$RUNNER_TEMP/hermes-intake/intake-receipt.json" dist/internal/runtime-intake.json
       - name: Prepare existing signing credentials
         env:
           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
@@ -393,3 +412,53 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/internal-AuthKey.p8" "$RUNNER_TEMP/internal-mac.p12" "$RUNNER_TEMP/internal-ios.p12"
           security delete-keychain "$RUNNER_TEMP/internal-release.keychain-db" 2>/dev/null || true
+
+  internal-beta:
+    needs: [source, internal]
+    if: github.event_name == 'workflow_dispatch' && inputs.internal_only && inputs.publish_mac_beta
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ needs.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - name: Read exact signed internal artifacts
+        run: |
+          set -eu
+          test "$GITHUB_RUN_ATTEMPT" = 1 || { echo 'Use a fresh release; partial reruns are refused' >&2; exit 1; }
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "internal-0.6.0-$GITHUB_RUN_NUMBER" --dir dist/internal
+      - name: Reverify the existing internal TestFlight group without writes
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: node scripts/asc-internal.mjs verify dist/internal/ios.json dist/internal/fresh-availability.json
+      - name: Publish exact Mac packages as a non-stable beta
+        run: |
+          set -eu
+          python3 scripts/publish-internal-beta.py --dist dist/internal \
+            --source "$SOURCE_SHA" --run-id "$GITHUB_RUN_ID" \
+            --availability dist/internal/fresh-availability.json > dist/internal/beta-availability.json
+          cat dist/internal/beta-availability.json
+          printf 'Mac beta: %s\n' "$(jq -r .url dist/internal/beta-availability.json)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain beta verification receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: internal-beta-evidence-${{ github.run_number }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            dist/internal/beta-availability.json
+            dist/internal/fresh-availability.json

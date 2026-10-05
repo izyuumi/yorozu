@@ -1,8 +1,12 @@
 # Internal 0.6 distribution
 
-This lane is only for the approved internal 0.6 evaluation. It does not create a
-GitHub Release, update a Mac feed, submit Beta App Review, or change the Public
-TestFlight group. Normal `main`/`release/*` candidate behavior is unchanged.
+This lane is only for the approved internal 0.6 evaluation. By default it does not
+create a GitHub Release. The explicit `publish_mac_beta=true` option, authorized
+for the October 5 release, publishes the exact signed Mac packages as an immutable
+`v0.6.0-beta.<Mac build>` prerelease only after internal TestFlight availability.
+It never updates a Mac feed, publishes stable 0.5, uploads a public IPA, submits
+Beta App Review, or changes the Public TestFlight group. The installed Mac app is
+not replaced. Normal `main`/`release/*` candidate behavior is unchanged.
 
 The existing `Release` workflow is registered on `main`. GitHub can dispatch its
 reviewed alternate-branch revision with `--ref`; a new workflow filename would
@@ -37,11 +41,33 @@ After these gates, dispatch the reviewed branch itself:
 ```sh
 gh workflow run release.yml --ref <reviewed-branch> \
   -f source_branch=<reviewed-branch> -f version=0.6.0 \
-  -f internal_only=true -f reviewed_source_sha=<full-reviewed-sha>
+  -f internal_only=true -f reviewed_source_sha=<full-reviewed-sha> \
+  -f publish_mac_beta=true
 ```
 
 Do not set `internal_only=false` to work around a failure. The ordinary lane
 uploads externally and publishes Mac candidate artifacts.
+
+## Immutable runtime intake and publication safeguards
+
+Before signing, `intake-hermes-runtime.py` consumes the committed
+`scripts/hermes-runtime-release-input.json`. This file must be produced from an
+actually verified runtime; its absence is a release blocker, not a default to
+local/ambient inputs. The input names one content-addressed same-repository
+runtime asset and binds compressed size/SHA-256, manifest/inventory hashes, the
+committed upstream input pin and the original-archive verification receipt.
+The intake verifies the current adapter bytes, uses bounded extraction, and
+rejects traversal, duplicates, hardlinks, devices, unexpected members and escaping
+symlinks. It never starts the downloaded runtime. Controlled build verification,
+nested signing and resealing remain separate subsequent steps.
+
+Each signing/upload job independently rejects `GITHUB_RUN_ATTEMPT != 1`, including
+partial reruns whose successful source job would otherwise be reused. The beta
+job also refuses reruns, reads only this workflow's signed artifacts, rechecks
+Apple availability without writes, verifies artifact hashes, and publishes only
+the Mac DMG, app ZIP and non-secret beta metadata. It reads published assets back
+and verifies their hashes. Existing tags/assets are never deleted or overwritten.
+A published beta download is not an app installation or a Sparkle feed update.
 
 ## Build and recipient identity
 

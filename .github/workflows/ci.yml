@@ -27,7 +27,7 @@ jobs:
       swift: ${{ steps.paths.outputs.swift }}
       ios: ${{ steps.paths.outputs.ios }}
       web: ${{ steps.paths.outputs.web }}
-      internal: ${{ github.base_ref == 'v0.6.0-alpha' || github.ref == 'refs/heads/v0.6.0-alpha' || github.ref == 'refs/heads/integration-0.6-worker' || github.ref == 'refs/heads/harness-plugins' || github.head_ref == 'harness-plugins' }}
+      internal: ${{ github.base_ref == 'v0.6.0-alpha' || github.ref == 'refs/heads/v0.6.0-alpha' || github.ref == 'refs/heads/integration-0.6-worker' || github.ref == 'refs/heads/harness-plugins' }}
     steps:
       # Depth 2 holds the pull request's merge commit and the base it merges into.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -90,6 +90,10 @@ jobs:
           python3 scripts/test-release.py
           python3 scripts/test-release-notes.py
           python3 scripts/test-build-version.py
+          python3 scripts/test-stage-internal-alpha.py
+          python3 scripts/test-internal-release-policy.py
+          python3 scripts/test-intake-hermes-runtime.py
+          python3 scripts/test-publish-internal-beta.py
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 26

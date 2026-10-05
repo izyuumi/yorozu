@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -76,6 +77,16 @@ def stage(destination):
         raise SystemExit("Staging destination must be empty")
     destination.mkdir(parents=True, exist_ok=True)
     for revision, paths in [(BASELINE, []), (source, OVERLAYS)]:
+        if paths:
+            # Directory overlays replace the baseline subtree. Extracting on top
+            # would resurrect deleted source files and compile unreviewed code.
+            for entry in git("ls-tree", "-d", source, "--", *paths).decode().splitlines():
+                relative = entry.split("\t", 1)[1]
+                target = destination / relative
+                if target.is_symlink():
+                    target.unlink()
+                elif target.exists():
+                    shutil.rmtree(target)
         with tarfile.open(fileobj=io.BytesIO(git("archive", revision, *paths))) as archive:
             archive.extractall(destination, filter="data")
     # This small, version-pinned hook decorates the production runtime's existing

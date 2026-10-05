@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Publish verified internal Mac artifacts as an immutable beta, never a feed/stable/IPA."""
+import argparse
+from datetime import datetime, timezone
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import tempfile
+
+spec = importlib.util.spec_from_file_location("release_publication", Path(__file__).with_name("release.py"))
+release = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(release)
+require = release.require
+REPOSITORY = "izyuumi/yorozu"
+GROUP = "954b8070-0ad9-4112-a061-2001bdc150b7"
+APP = "6811274963"
+
+
+def publish(gh, root, expected_source, expected_run, availability, now=None):
+    require(gh.repo == REPOSITORY, "Beta target must be the existing Yorozu repository")
+    require(os.environ.get("GITHUB_RUN_ATTEMPT", "1") == "1", "Use a fresh release run, not a partial rerun")
+    require(re.fullmatch(r"[0-9a-f]{40}", expected_source or ""), "Expected exact source SHA is required")
+    require(re.fullmatch(r"[1-9]\d*", str(expected_run)), "Expected workflow run is required")
+    root = Path(root).resolve(strict=True)
+    data = json.loads((root / "provenance.json").read_text())
+    require(data.get("source_sha") == expected_source and str(data.get("workflow_run_id")) == str(expected_run), "Artifacts belong to another source or workflow run")
+    require(data.get("version") == "0.6.0" and data.get("internal_only") is True, "Only the internal 0.6 candidate can use this beta lane")
+    branch = data.get("source_branch", "")
+    require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch) and ".." not in branch
+            and branch != "main" and not branch.startswith("release/"), "Beta source must be the isolated reviewed branch")
+    build = str(data.get("mac_build", ""))
+    require(re.fullmatch(r"[1-9]\d*", build) and int(build) > 10000, "Invalid global Mac build number")
+    ios = json.loads(Path(availability).read_text())
+    require(ios.get("app_id") == APP and ios.get("group_id") == GROUP and ios.get("version") == "0.6.0"
+            and ios.get("internal_only") is True and ios.get("available") is True
+            and ios.get("internal_state") == "IN_BETA_TESTING", "Internal TestFlight availability has not been verified")
+    previous = data.get("ios", {})
+    require(all(ios.get(k) == previous.get(k) for k in ("build_id", "build", "uploaded_date", "app_id", "group_id", "version")), "TestFlight receipt does not identify this candidate")
+    verified = datetime.fromisoformat(ios["verified_at"].replace("Z", "+00:00"))
+    now = now or datetime.now(timezone.utc)
+    require(0 <= (now - verified).total_seconds() <= 600, "Reverify TestFlight availability immediately before beta publication")
+    required = {"Yorozu.app.zip", "mac/Yorozu.dmg"}
+    rows = data.get("artifacts", [])
+    paths = {}
+    for name in required:
+        matches = [row for row in rows if row.get("path") == name]
+        require(len(matches) == 1, "Required Mac artifact is missing or duplicated")
+        row = matches[0]
+        path = root / name
+        require(path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(root), "Unsafe Mac artifact path")
+        require(type(row.get("size")) is int and row["size"] > 0 and path.stat().st_size == row["size"]
+                and release.sha256(path) == row.get("sha256"), "Mac artifact differs from signed-release provenance")
+        paths[name] = path
+    ci = release.check_ci(gh, expected_source, branch, str(data.get("ci_run_id", "")))
+    tag = "v0.6.0-beta." + build
+    # Public metadata deliberately excludes Apple recipient/account IDs and the IPA.
+    metadata = {"schemaVersion": 1, "channel": "beta", "tag": tag, "version": "0.6.0", "macBuild": build,
+                "sourceSha": expected_source, "ciRunId": ci, "releaseRunId": str(expected_run),
+                "internalTestFlightVerified": True, "iosBuild": ios["build"],
+                "sparkleFeedChanged": False, "installationPerformed": False,
+                "artifacts": [{"name": path.name, "sha256": release.sha256(path), "size": path.stat().st_size}
+                              for _, path in sorted(paths.items())]}
+    notes = ("Non-stable Yorozu 0.6 evaluation build. Mac download only; iOS is available through the existing internal TestFlight group.\n\n"
+             "This release does not update the stable or beta Sparkle feeds and does not install over an existing Mac app. "
+             "Preserve your existing installation and data/rollback path. Unsupported OpenClaw features remain disabled; "
+             "live two-harness messaging and account onboarding are not claimed as proven.\n\n"
+             f"Source: {expected_source}\nCI: https://github.com/{REPOSITORY}/actions/runs/{ci}\n"
+             f"Release: https://github.com/{REPOSITORY}/actions/runs/{expected_run}\n")
+    with tempfile.TemporaryDirectory(prefix="yorozu-beta-metadata-") as directory:
+        manifest = Path(directory) / "beta.json"
+        manifest.write_text(json.dumps(metadata, indent=2) + "\n")
+        assets = [paths["mac/Yorozu.dmg"], paths["Yorozu.app.zip"], manifest]
+        release.immutable_assets(gh, tag, expected_source, assets,
+                                 prerelease=True, notes=notes, title=f"Yorozu 0.6.0 Beta (Mac {build})")
+        remote = gh.release(tag)
+        require(remote is not None and remote["isPrerelease"] and not remote["isDraft"], "Beta is not published")
+        with tempfile.TemporaryDirectory(prefix="yorozu-beta-verify-") as verify_dir:
+            for asset in assets:
+                actual = gh.download(tag, asset.name, verify_dir)
+                require(release.sha256(actual) == release.sha256(asset), "Published beta artifact verification failed")
+    return {"available": True, "tag": tag, "url": f"https://github.com/{REPOSITORY}/releases/tag/{tag}",
+            "sourceSha": expected_source, "macBuild": build, "iosBuild": ios["build"], "stableChanged": False}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dist", type=Path, required=True)
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--availability", type=Path, required=True)
+    args = parser.parse_args()
+    print(json.dumps(publish(release.GitHub(REPOSITORY), args.dist, args.source, args.run_id, args.availability)))
+
+
+if __name__ == "__main__":
+    main()
