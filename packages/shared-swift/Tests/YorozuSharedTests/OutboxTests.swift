@@ -65,6 +65,133 @@ private func reconnect(_ transport: QueueTransport) async {
 }
 
 @MainActor
+@Test func queuedMessageEditHoldsDeliveryUntilAtomicCommit() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    let attachment = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    model.send("before", in: "home", attachments: [attachment])
+    let original = try #require(model.outbox.first?.event)
+    model.drafts["home"] = "next thought"
+    #expect(model.beginQueuedMessageEdit(original.id)?.text == "before")
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
+    #expect(await transport.messages.isEmpty)
+    // Persist first, then release the presentation hold and transmit the changed content.
+    #expect(model.editQueuedMessage(original.id, text: "after"))
+    #expect(model.drafts["home"] == "next thought")
+    #expect(await settle { model.outbox.isEmpty })
+    let sent = try #require(await transport.messages.first)
+    #expect(sent.id == original.id && sent.ts == original.ts)
+    guard case .message(let before) = original.payload, case .message(let after) = sent.payload else {
+        Issue.record("Expected message payloads"); return
+    }
+    #expect(after.text == "after" && after.attachments == [attachment])
+    #expect(after.admissionDeadline == before.admissionDeadline)
+}
+
+@MainActor
+@Test func queuedMessageEditIsAtomicWhenStorageFails() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let model = ChatModel(transport: QueueTransport(), cache: cache, device: "phone")
+    model.send("before", in: "home")
+    let original = try #require(model.outbox.first?.event)
+    #expect(model.beginQueuedMessageEdit(original.id) != nil)
+    try FileManager.default.removeItem(at: directory.appending(path: "outbox.bin"))
+    try FileManager.default.createDirectory(at: directory.appending(path: "outbox.bin"), withIntermediateDirectories: true)
+    #expect(!model.editQueuedMessage(original.id, text: "after"))
+    #expect(model.outbox.first?.event == original)
+    #expect(model.events["home"]?.first == original)
+    #expect(model.editingQueuedMessageId == original.id)
+}
+
+@MainActor
+@Test func queuedEditAndCancellationSurviveRelaunchWithoutLosingAttachmentsOrDrafts() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let attachment = MessageAttachment(name: "notes.txt", mime: "text/plain", data: "aGk=")
+    let model = ChatModel(transport: QueueTransport(), cache: cache, device: "phone")
+    model.send("before", in: "home", attachments: [attachment])
+    let original = try #require(model.outbox.first?.event)
+    #expect(model.beginQueuedMessageEdit(original.id) != nil)
+    #expect(model.editQueuedMessage(original.id, text: "after"))
+    await model.shutdown()
+    let transport = QueueTransport()
+    let restored = ChatModel(transport: transport, cache: cache, device: "phone")
+    let committed = try #require(restored.outbox.first?.event)
+    #expect(committed.id == original.id && committed.ts == original.ts)
+    guard case .message(let message) = committed.payload else { Issue.record("Expected message"); return }
+    #expect(message.text == "after" && message.attachments == [attachment])
+    restored.drafts["home"] = "next thought"
+    restored.withdraw(original.id)
+    #expect(restored.outboxStatus(of: original.id) == .withdrawn)
+    #expect(restored.drafts["home"] == "next thought\n\nafter")
+    #expect(restored.attachments["home"] == [attachment])
+    await restored.shutdown()
+    let final = ChatModel(transport: transport, cache: cache, device: "phone")
+    final.start()
+    await reconnect(transport)
+    #expect(await settle { final.canDeliver })
+    #expect(await transport.messages.isEmpty)
+    #expect(final.drafts["home"] == "next thought\n\nafter")
+    #expect(final.attachments["home"] == [attachment])
+    #expect(final.outboxStatus(of: original.id) == .withdrawn)
+}
+
+@MainActor
+@Test func queuedMessageEditingCannotMutateAnAttemptedOperation() throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().timeIntervalSince1970 * 1000)
+    let original = YorozuEvent(id: "attempted", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "original", admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: original, attemptedAt: Date())])
+    let model = ChatModel(transport: QueueTransport(), cache: cache, device: "phone")
+    #expect(model.beginQueuedMessageEdit(original.id) == nil)
+    #expect(!model.editQueuedMessage(original.id, text: "changed"))
+    #expect(cache.outbox().first?.event == original)
+    model.withdraw(original.id)
+    #expect(model.outboxStatus(of: original.id) == .withdrawalPending)
+    #expect(model.drafts["home"]?.isEmpty ?? true)
+}
+
+@MainActor
+@Test func queuedContentIsRetainedIndefinitelyAndRequiresConfirmation() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let ts = Int(Date().addingTimeInterval(-365 * 24 * 3600).timeIntervalSince1970 * 1000)
+    let original = YorozuEvent(id: "year-old", threadId: "home", ts: ts, agentId: "phone",
+        payload: .message(MessageData(role: .user, text: "keep me", admissionDeadline: ts + 30 * 60_000)))
+    try cache.savePending([OutboxItem(event: original)])
+    let transport = QueueTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    #expect(model.outbox.first?.event == original)
+    #expect(model.outboxStatus(of: original.id)?.label == "Needs confirmation · Still send?")
+    await reconnect(transport)
+    #expect(await settle { model.canDeliver })
+    #expect(await transport.messages.isEmpty)
+    #expect(cache.outbox().first?.event == original)
+    #expect(model.beginQueuedMessageEdit(original.id) != nil)
+    #expect(model.editQueuedMessage(original.id, text: "updated"))
+    #expect(model.outboxStatus(of: original.id) == .expired)
+    model.stillSend(original.id)
+    #expect(await settle { model.outbox.count == 1 })
+    let sent = try #require(await transport.messages.first)
+    #expect(sent.id != original.id)
+    guard case .message(let message) = sent.payload else { Issue.record("Expected message"); return }
+    #expect(message.text == "updated")
+}
+
+@MainActor
 @Test func persistedStopGoesAheadOfQueuedMessagesAndWaitsForOutcome() async throws {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }

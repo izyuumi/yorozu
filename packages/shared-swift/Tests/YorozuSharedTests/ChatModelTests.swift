@@ -3504,7 +3504,7 @@ func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData
 
 private func personAgentCatalog() -> PersonAgentRegistry {
     let agent = PersonAgent(id: "agent-a", name: "Ada", role: "Keep notes", pluginId: .hermes,
-        workspace: "/tmp/agent-a/workspace", memoryDir: "/tmp/agent-a/memory", allowedTools: [.file, .memory])
+        workspace: "/tmp/agent-a/workspace", memoryDir: "/tmp/agent-a/memory", allowedTools: [.file, .memory], conversationId: "person-agent-a")
     return PersonAgentRegistry(revision: 2, defaultAgentId: agent.id, agents: [agent], journalRevision: 3)
 }
 
@@ -3544,7 +3544,7 @@ private func personAgentCatalog() -> PersonAgentRegistry {
 }
 
 @MainActor
-@Test func personAgentConversationCreationSendsIdentityAndHostDerivedWorkspaceOnly() async throws {
+@Test func personAgentSelectionAlwaysOpensCanonicalConversationWithoutCreatingAnother() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
     defer { model.close() }
@@ -3560,9 +3560,9 @@ private func personAgentCatalog() -> PersonAgentRegistry {
     #expect(!model.configureDraft(draft.id, agent: .yorozu, cwd: nil))
     model.drafts[draft.id] = "Keep a harmless note"
     model.send(in: draft)
-    let creation = try #require(model.outbox.first { $0.event.threadId == draft.id && $0.event.payload.kind == .threadCreate })
-    guard case .threadCreate(let data) = creation.event.payload else { Issue.record("Missing creation"); return }
-    #expect(data.personAgentId == "agent-a" && data.agent == nil && data.cwd == nil)
+    #expect(model.newPersonThread()?.id == draft.id)
+    #expect(draft.id == "person-agent-a")
+    #expect(!model.outbox.contains { $0.event.threadId == draft.id && $0.event.payload.kind == .threadCreate })
     let submission = try #require(model.outbox.first { $0.event.threadId == draft.id && $0.event.payload.kind == .message })
     guard case .message(let message) = submission.event.payload else { Issue.record("Missing message"); return }
     #expect(message.delivery == .queue)
@@ -3691,4 +3691,128 @@ func harnessStopRefusalSettlesOnlyTheMatchedCommand(status: HarnessControlReceip
     #expect(staleEditor.operationId == nil && staleEditor.failure != nil)
     #expect(await transport.sent.filter { $0.payload.kind == .personAgentControl }.count == 1)
     #expect(model.events.values.allSatisfy { $0.allSatisfy { $0.payload.kind != .personAgentControl } })
+}
+
+@MainActor
+@Test func canonicalAgentDescriptorsRemainNavigableOfflineAfterRelaunch() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = FakeTransport()
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["person-agents-v1"])))
+    let catalog = personAgentCatalog()
+    let legacy = ThreadSummary(id: "previous-topic", title: "Earlier notes", archived: true, lastActivity: 1,
+        personAgentId: "agent-a", personAgentName: "Ada")
+    await transport.yield(.event(event("catalog", .threadList(ThreadListData(threads: [legacy], personAgents: catalog)))))
+    #expect(await eventually { model.personAgents?.revision == catalog.revision })
+    await model.shutdown()
+    let restored = ChatModel(transport: FakeTransport(), cache: cache, device: "phone")
+    #expect(!restored.supportsPersonAgents && !restored.canDeliver)
+    let conversation = try #require(restored.personConversation(agentId: "agent-a"))
+    #expect(conversation.id == "person-agent-a")
+    #expect(personAgentHistory(restored.threads, agentId: "agent-a").map(\.id) == [legacy.id])
+    restored.drafts[conversation.id] = "offline note"
+    restored.send(in: conversation)
+    #expect(restored.outbox.count == 1)
+    #expect(restored.outbox.first?.event.threadId == conversation.id)
+    #expect(restored.outbox.first?.event.payload.kind == .message)
+    #expect(restored.outboxStatus(of: restored.outbox[0].id)?.label == "Waiting for Mac")
+    #expect(restored.controlPersonAgents(PersonAgentControlData(expectedRevision: catalog.revision,
+        action: .setDefault(agentId: "agent-a"))) == nil)
+}
+
+@MainActor
+@Test func harnessActionResponseEchoesExactOriginAndDoesNotBecomeUserText() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let catalog = personAgentCatalog()
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["person-agents-v1", "harness-actions-v1"])))
+    await transport.yield(.event(event("catalog", .threadList(ThreadListData(threads: [], personAgents: catalog)))))
+    let origin = HarnessOrigin(agentId: "agent-a", pluginId: .hermes, conversationId: "person-agent-a",
+        sessionId: "host-session", workId: "autonomous-work", bindingEpoch: "current-epoch")
+    let action = HarnessActionData(requestId: "sign-in", origin: origin, kind: .signIn, title: "Sign in",
+        ui: .init(targetId: "trusted-ui", label: "Continue in harness"))
+    await transport.yield(.event(event("action", .harnessAction(action), thread: origin.conversationId)))
+    #expect(await eventually { model.canAnswerHarnessAction(action) })
+    #expect(model.answerHarnessAction(action, uiTargetId: "https://arbitrary.test") == nil)
+    #expect(model.answerHarnessAction(action, choiceId: "always") == nil)
+    var stale = action; stale.origin.bindingEpoch = "stale-epoch"
+    #expect(model.answerHarnessAction(stale, uiTargetId: "trusted-ui") == nil)
+    let operation = try #require(model.answerHarnessAction(action, uiTargetId: "trusted-ui"))
+    #expect(!model.canAnswerHarnessAction(action))
+    #expect(await eventually { await transport.sent.contains { $0.id == operation } })
+    let response = try #require(await transport.sent.first { $0.id == operation })
+    guard case .harnessActionAnswer(let answer) = response.payload else { Issue.record("Expected typed answer"); return }
+    #expect(answer.origin == origin && answer.uiTargetId == "trusted-ui")
+    #expect(model.rows(in: origin.conversationId).isEmpty)
+    #expect(!model.events[origin.conversationId, default: []].contains { $0.payload.kind == .message })
+    let wrongStatus = HarnessActionStatusData(operationId: operation, requestId: action.requestId,
+        origin: stale.origin, status: .applied)
+    await transport.yield(.event(event("wrong-status", .harnessActionStatus(wrongStatus), thread: origin.conversationId)))
+    #expect(await eventually { model.events[origin.conversationId]?.contains { $0.id == "wrong-status" } == true })
+    #expect(model.outbox.contains { $0.id == operation })
+    let correctStatus = HarnessActionStatusData(operationId: operation, requestId: action.requestId,
+        origin: origin, status: .applied)
+    await transport.yield(.event(event("correct-status", .harnessActionStatus(correctStatus), thread: origin.conversationId)))
+    #expect(await eventually { !model.outbox.contains { $0.id == operation } })
+    #expect(!model.canAnswerHarnessAction(action))
+}
+
+@MainActor
+@Test func uncertainHarnessResponseStaysBlockedAfterRelaunchAndNewCardSupersedesOld() async throws {
+    let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cache = ThreadCache(directory: directory, key: .init(size: .bits256))
+    let transport = FakeTransport(autoReceipt: true)
+    let model = ChatModel(transport: transport, cache: cache, device: "phone")
+    model.start()
+    let capabilities = ["person-agents-v1", "harness-actions-v1"]
+    await transport.yield(.state(.paired)); await transport.yield(.ownerOnline(true))
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: capabilities)))
+    let catalog = personAgentCatalog()
+    let thread = ThreadSummary(id: "person-agent-a", title: "Ada", archived: false, lastActivity: 1, personAgentId: "agent-a")
+    await transport.yield(.event(event("catalog", .threadList(ThreadListData(threads: [thread], personAgents: catalog)))))
+    let origin = HarnessOrigin(agentId: "agent-a", pluginId: .hermes, conversationId: thread.id,
+        sessionId: "session", bindingEpoch: "epoch")
+    let action = HarnessActionData(requestId: "approval", origin: origin, kind: .approval, title: "Send?",
+        choices: [.init(id: "decline", label: "Decline")])
+    await transport.yield(.event(event("action", .harnessAction(action), thread: thread.id)))
+    #expect(await eventually { model.canAnswerHarnessAction(action) })
+    let operation = try #require(model.answerHarnessAction(action, choiceId: "decline"))
+    #expect(await eventually { model.outbox.isEmpty })
+    let unknown = HarnessActionStatusData(operationId: operation, requestId: action.requestId, origin: origin, status: .unknown)
+    await transport.yield(.event(event("status", .harnessActionStatus(unknown), thread: thread.id)))
+    #expect(await eventually { model.harnessActionStatus(for: action)?.status == .unknown })
+    await model.shutdown()
+    let restoredTransport = FakeTransport()
+    let restored = ChatModel(transport: restoredTransport, cache: cache, device: "phone")
+    restored.start(); defer { restored.close() }
+    await restoredTransport.yield(.state(.paired)); await restoredTransport.yield(.ownerOnline(true))
+    await restoredTransport.yield(.compatibility(.compatible(version: 1, capabilities: capabilities)))
+    #expect(await eventually { restored.canDeliver && restored.supportsHarnessActions })
+    #expect(!restored.canAnswerHarnessAction(action))
+    #expect(restored.answerHarnessAction(action, choiceId: "decline") == nil)
+    #expect(await restoredTransport.sent.allSatisfy { $0.payload.kind != .harnessActionAnswer })
+    var cancelled = action; cancelled.state = .cancelled
+    await restoredTransport.yield(.event(event("new-card", .harnessAction(cancelled), thread: thread.id)))
+    #expect(await eventually { restored.harnessActions(in: thread.id).count == 1 && restored.harnessActions(in: thread.id).first?.id == "new-card" })
+    #expect(!restored.canAnswerHarnessAction(action))
+}
+
+@MainActor
+@Test func agentExchangePayloadStaysInSeparateInspectionStream() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    let origin = HarnessOrigin(agentId: "agent-a", pluginId: .hermes, conversationId: "person-agent-a", sessionId: "session", bindingEpoch: "epoch")
+    let exchange = AgentExchangeData(exchangeId: "exchange", messageId: "message", deliveryId: "delivery",
+        origin: origin, fromAgentId: "agent-a", toAgentId: "agent-b", text: "Shared by the harness", createdAt: 1)
+    await transport.yield(.event(event("exchange-event", .agentExchange(exchange), thread: "agent-exchange-digest")))
+    #expect(await eventually { model.events["agent-exchange-digest"]?.count == 1 })
+    #expect(model.rows(in: origin.conversationId).isEmpty)
+    #expect(model.rows(in: "agent-exchange-digest").isEmpty)
+    #expect(model.events["agent-exchange-digest"]?.first?.payload == .agentExchange(exchange))
 }

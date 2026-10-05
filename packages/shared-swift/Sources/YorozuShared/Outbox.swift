@@ -104,6 +104,7 @@ public struct OutboxItem: Codable, Equatable, Sendable, Identifiable {
     public func isExpired(at now: Date) -> Bool {
         if case .interrupt(let data) = event.payload, data.targetEventId != nil { return false }
         if case .approvalAnswer = event.payload { return false }
+        if case .harnessActionAnswer = event.payload { return false }
         if legacyHoldUntil != nil || admissionStatus == .expired || admissionStatus == .withdrawn { return true }
         if let admissionDeadline { return now >= admissionDeadline }
         return now.timeIntervalSince(reconfirmedAt ?? queuedAt) > Outbox.life
@@ -117,12 +118,12 @@ public enum OutboxStatus: String, Sendable, Equatable {
     /// The caption under the bubble.
     public var label: String {
         switch self {
-        case .queued: SecretaryUI.localized("Queued")
+        case .queued: SecretaryUI.localized("Waiting for Mac")
         case .confirming: SecretaryUI.localized("Confirming delivery…")
         case .unconfirmed: SecretaryUI.localized("Delivery unconfirmed")
         case .failed: SecretaryUI.localized("Not sent")
         case .checking: SecretaryUI.localized("Checking delivery…")
-        case .expired: SecretaryUI.localized("Expired · Still send?")
+        case .expired: SecretaryUI.localized("Needs confirmation · Still send?")
         case .rejected: SecretaryUI.localized("Not sent")
         case .withdrawalPending: SecretaryUI.localized("Withdrawal pending")
         case .withdrawn: SecretaryUI.localized("Cancelled")
@@ -155,9 +156,9 @@ public enum Outbox {
     public static func retryDelay(after attempts: Int) -> TimeInterval {
         min(60, pow(2, Double(min(max(attempts - 1, 0), 6))) * Double.random(in: 0.8...1.2))
     }
-    /// How long a message is worth sending by itself. Past that it is not dropped — the bubble
-    /// is in the transcript and has to say something honest — but it stops being sent on a
-    /// reconnect two days later and waits to be retried by hand.
+    /// Legacy operations without host deadlines retain their old retry window. New messages
+    /// carry a 30-minute admission deadline and require fresh intent after it. Content remains
+    /// in the encrypted outbox indefinitely until accepted or explicitly cancelled.
     public static let life: TimeInterval = 48 * 60 * 60
 
     /// Housekeeping over a queue, applied whenever it is read or written. Pure, so the clock

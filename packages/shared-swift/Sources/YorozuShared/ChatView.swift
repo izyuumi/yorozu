@@ -25,6 +25,7 @@ extension ModelOption {
 public struct ChatView: View {
     public let model: ChatModel
     public let thread: ThreadSummary
+    private let readOnly: Bool
     private let hosts: MultiHostModel?
     private let hostID: HostID?
     private let onDraftMove: ((HostThreadID) -> Void)?
@@ -91,6 +92,7 @@ public struct ChatView: View {
     @State private var choosingProjectAgent: ThreadAgent?
     @State private var choosingProjectHostID: HostID?
     @State private var recoveryMessage: MessageData?
+    @State private var queuedMessageEditor: QueuedMessageEditorRoute?
     /// The draft the skill picker was closed over. An edit opens it again.
     @State private var dismissedSkillDraft: String?
     #if os(macOS)
@@ -116,6 +118,7 @@ public struct ChatView: View {
     public init(
         model: ChatModel,
         thread: ThreadSummary,
+        readOnly: Bool = false,
         resumeRequest: UUID? = nil,
         notificationClass: String? = nil,
         notificationEventRef: String? = nil,
@@ -135,6 +138,7 @@ public struct ChatView: View {
     ) {
         self.model = model
         self.thread = thread
+        self.readOnly = readOnly
         self.resumeRequest = resumeRequest
         self.notificationClass = notificationClass
         self.notificationEventRef = notificationEventRef
@@ -326,7 +330,7 @@ public struct ChatView: View {
                 Banner(text: SecretaryUI.localized("Could not confirm whether this task stopped. Check the host before retrying."),
                     systemImage: "exclamationmark.triangle")
             }
-            if thread.interruptedTurnId != nil { interruptedTurnNotice }
+            if !readOnly, thread.interruptedTurnId != nil { interruptedTurnNotice }
             if !quiet, !model.isDraft(thread.id), let path = presentation.projectPath {
                 projectContext(path)
             }
@@ -367,14 +371,20 @@ public struct ChatView: View {
             // Over the transcript rather than above the composer: opening it must not move
             // the messages, and they stay readable around it.
             .overlay(alignment: .bottom) { skillPicker }
-            composerCards
-            composer
+            if !readOnly {
+                HarnessActionPresentationView(model: model, threadId: thread.id)
+                composerCards
+                composer
+            } else {
+                Text("Previous conversation · continue in the ongoing conversation")
+                    .font(.footnote).foregroundStyle(.secondary).padding()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Files and images dragged anywhere onto the conversation, from Finder, Files, Photos or
         // another app in Split View, go where the + menu and Paste put them.
         .dropDestination(for: DroppedFile.self) { files, _ in
-            dropFiles(files)
+            readOnly ? false : dropFiles(files)
         } isTargeted: { dropTargeted = $0 }
         .background(YorozuPalette.canvas.ignoresSafeArea())
         .yorozuTint()
@@ -388,6 +398,12 @@ public struct ChatView: View {
         }
         // A truncated tool result in this thread's trace asks the Mac for the rest through here.
         .environment(\.fetchToolResult) { model.requestToolResult($0, in: thread.id) }
+        .sheet(item: $queuedMessageEditor, onDismiss: {
+            if let id = model.editingQueuedMessageId { model.endQueuedMessageEdit(id) }
+        }) { route in
+            NavigationStack { QueuedMessageEditorView(model: model, route: route) }
+                .yorozuTint()
+        }
         .sheet(isPresented: $choosingAgent) {
             NewThreadPicker(projects: projectPickerModel.projects, agents: projectPickerModel.availableAgents, status: projectPickerModel.projectListStatus,
                 folderAgent: choosingProjectAgent,
@@ -959,10 +975,10 @@ public struct ChatView: View {
                     queuedStatus: queuedStatus,
                     rejectionReason: rejectionReason,
                     attachmentTransferLabels: model.attachmentTransferLabels(of: event.id),
-                    onEditFromHere: data.role == .user && model.supportsRewind(in: thread.id)
+                    onEditFromHere: !readOnly && data.role == .user && model.supportsRewind(in: thread.id)
                         ? { model.editFromHere(event) } : nil,
                     editFromHereEnabled: model.canEditFromHere(event),
-                    onRetry: data.role == .user && (!needsNewChat || onCreate != nil) &&
+                    onRetry: readOnly ? nil : data.role == .user && (!needsNewChat || onCreate != nil) &&
                         (outboxStatus == nil || outboxStatus == .rejected || outboxStatus == .withdrawn)
                         ? { if needsNewChat {
                                 recoveryMessage = data
@@ -970,12 +986,16 @@ public struct ChatView: View {
                             } else { retry(data) } } : messageActions.retry.map { prompt in
                                 { retry(prompt) }
                             },
-                    onSendNow: queuedStatus != nil && model.canSendNow(event)
+                    onSendNow: !readOnly && queuedStatus != nil && model.canSendNow(event)
                         ? { model.sendNow(event) } : nil,
-                    onWithdraw: model.canWithdraw(event)
+                    onWithdraw: !readOnly && model.canWithdraw(event)
                         ? { model.withdraw(event.id) } : nil,
+                    onEditQueued: !readOnly && model.canEditQueuedMessage(event.id)
+                        ? { if let message = model.beginQueuedMessageEdit(event.id) {
+                            queuedMessageEditor = QueuedMessageEditorRoute(id: event.id, message: message)
+                        } } : nil,
                     onDelete: { model.delete(event.id, in: thread.id) },
-                    onResend: {
+                    onResend: readOnly ? nil : {
                         if model.outboxStatus(of: event.id) == .expired { model.stillSend(event.id) }
                         else { model.retry(event.id) }
                     },
@@ -1031,6 +1051,7 @@ public struct ChatView: View {
                 ) { choice, rule in
                     model.answer(card.actionId, in: thread.id, choice, rule: rule)
                 }
+                .disabled(readOnly)
                 .id(event.id)
                 .notificationHighlight(highlightedNotificationRow == event.id)
             }
@@ -1042,6 +1063,7 @@ public struct ChatView: View {
                     onSave: { model.saveRule($0, proposalId: proposal.proposalId) },
                     onDismiss: { model.dismissProposal(proposal.proposalId) }
                 )
+                .disabled(readOnly)
                 .id(event.id)
             }
         case .question(let event):
@@ -1052,6 +1074,7 @@ public struct ChatView: View {
                     answered: model.answeredQuestions.contains(card.questionId),
                     chosen: model.questionChoices[card.questionId]
                 ) { model.answerQuestion(card.questionId, in: thread.id, $0) }
+                .disabled(readOnly)
                 .id(event.id)
                 .notificationHighlight(highlightedNotificationRow == event.id)
             }

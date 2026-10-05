@@ -73,3 +73,47 @@ private func editorCatalog() -> PersonAgentRegistry {
     #expect(personAgentChats(threads, agentId: "ada").map(\.id) == ["b", "a"])
     #expect(personAgentChats(threads).map(\.id) == ["other", "b", "a"])
 }
+
+@Test func agentEditorRequiresPublishedAvailabilityAndDoesNotInventAHarnessDefault() throws {
+    var catalog = PersonAgentRegistry(revision: 1, agents: [], harnesses: [
+        .init(id: .hermes, label: "Hermes", available: true, modes: [.managed]),
+        .init(id: .openclaw, label: "OpenClaw", available: false, modes: [.managed]),
+    ])
+    var editor = PersonAgentEditorDraft(catalog: catalog)
+    editor.name = "Ada"; editor.role = "Secretary"
+    #expect(editor.plugin == nil && editor.request == nil)
+    editor.plugin = .openclaw
+    #expect(editor.request == nil)
+    editor.plugin = .hermes
+    #expect(editor.request != nil)
+    catalog.defaultHarnessId = .hermes
+    #expect(PersonAgentEditorDraft(catalog: catalog).plugin == .hermes)
+}
+
+@Test func connectedAgentEditorUsesOnlyPublishedConnectionReferences() throws {
+    let catalog = PersonAgentRegistry(revision: 1, agents: [], harnesses: [
+        .init(id: .openclaw, label: "OpenClaw", available: true, modes: [.connected]),
+    ], connections: [
+        .init(id: "running-one", pluginId: .openclaw, label: "Mac agent", available: true),
+        .init(id: "running-two", pluginId: .hermes, label: "Other harness", available: true),
+    ])
+    var editor = PersonAgentEditorDraft(catalog: catalog)
+    editor.name = "Bea"; editor.role = "Research"; editor.plugin = .openclaw
+    editor.runtimeMode = .connected
+    #expect(editor.request == nil)
+    editor.runtimeConnectionId = "running-two"
+    #expect(editor.request == nil)
+    editor.runtimeConnectionId = "running-one"
+    let request = try #require(editor.request)
+    guard case .create(let input) = request.action else { Issue.record("Expected creation"); return }
+    #expect(input.runtime == PersonAgentRuntime(mode: .connected, connectionId: "running-one"))
+    #expect(input.model == nil && input.accountBindingId == nil)
+}
+
+@Test func previousAgentHistoryIncludesArchivesButExcludesExchangeStreams() {
+    let archived = ThreadSummary(id: "old-topic", title: "Prior notes", archived: true, lastActivity: 1, personAgentId: "ada")
+    let exchange = ThreadSummary(id: "agent-exchange-test", title: "Exchange", archived: false, lastActivity: 2,
+        personAgentId: "ada", personAgentExchange: .init(exchangeId: "exchange", fromAgentId: "ada", toAgentId: "bea"))
+    #expect(personAgentHistory([archived, exchange], agentId: "ada").map(\.id) == [archived.id])
+    #expect(personAgentChats([archived, exchange], agentId: "ada").isEmpty)
+}

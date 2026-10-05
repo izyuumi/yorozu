@@ -18,10 +18,15 @@ public final class ChatModel {
     private static let eventLogger = Logger(subsystem: "to.yumi.yorozu", category: "events")
     /// Every thread, unsent drafts included, newest first once a list has ordered them.
     public var threads: [ThreadSummary] { draftThreads + synced }
-    /// Live host-owned configuration. Cached history identifiers never enable configuration.
+    /// Host presentation descriptors, cached for offline navigation. Cached descriptors never
+    /// authorize settings or harness actions; live negotiated capabilities are required.
     public private(set) var personAgents: PersonAgentRegistry?
     public var supportsPersonAgents: Bool {
         if case .compatible(_, let capabilities) = compatibility { return capabilities.contains("person-agents-v1") }
+        return false
+    }
+    public var supportsHarnessActions: Bool {
+        if case .compatible(_, let capabilities) = compatibility { return capabilities.contains("harness-actions-v1") }
         return false
     }
     public private(set) var siwcAccounts: SiwcAccountStatusData?
@@ -195,7 +200,9 @@ public final class ChatModel {
             let status: String
             if withdrawing.contains(event.id) { status = String(localized: "Withdrawal pending") }
             else if active == event.id || sending.contains(event.id) { status = String(localized: "Sending…") }
-            else { status = index == 0 ? String(localized: "Next") : String(localized: "Sends when the turn ends") }
+            else if outbox.contains(where: { $0.id == event.id }), !canDeliver {
+                status = outboxStatus(of: event.id)?.label ?? String(localized: "Waiting for Mac")
+            } else { status = index == 0 ? String(localized: "Next") : String(localized: "Sends when the turn ends") }
             return (event.id, status)
         })
     }
@@ -566,6 +573,9 @@ public final class ChatModel {
     /// Messages typed with nowhere to send them, oldest first. Persisted, so a phone closed on
     /// the underground still has them when it comes back up. See ``OutboxItem``.
     public private(set) var outbox: [OutboxItem] = []
+    /// Local presentation hold. The encrypted queue remains the authority; a relaunch keeps
+    /// its last committed content, while an open editor prevents that content being delivered.
+    public private(set) var editingQueuedMessageId: String?
     /// The thread the user is looking at, set by whatever owns the navigation: the top of the
     /// phone's path, or the Mac's sidebar selection. Nil means none is open.
     public var openThread: String? {
@@ -731,6 +741,7 @@ public final class ChatModel {
         agents = cache.agents().map(Self.acceptedAgents)
         confirmedAgentStatus = cache.agentStatus()
         synced = cache.threads()
+        personAgents = cache.personAgents()
         syncLastSeen = cache.lastSeen()
         let storedPending = cache.outbox()
         var pending = storedPending
@@ -1226,6 +1237,52 @@ public final class ChatModel {
         outbox.first(where: { $0.id == eventId })?.rejectionReason
     }
 
+    public func canEditQueuedMessage(_ eventId: String) -> Bool {
+        guard let item = outbox.first(where: { $0.id == eventId }),
+              case .message(let message) = item.event.payload, message.role == .user else { return false }
+        return item.attemptedAt == nil && item.replacementId == nil &&
+            item.admissionStatus != .withdrawn && item.admissionStatus != .rejected &&
+            !stopPending(for: eventId)
+    }
+
+    /// Starts editing only before any transmission. An attempted operation must be withdrawn
+    /// and settled first; its restored composer content is then a new message with a new ID.
+    public func beginQueuedMessageEdit(_ eventId: String) -> MessageData? {
+        guard editingQueuedMessageId == nil, canEditQueuedMessage(eventId),
+              let item = outbox.first(where: { $0.id == eventId }),
+              case .message(let message) = item.event.payload else { return nil }
+        editingQueuedMessageId = eventId
+        return message
+    }
+
+    public func endQueuedMessageEdit(_ eventId: String) {
+        guard editingQueuedMessageId == eventId else { return }
+        editingQueuedMessageId = nil
+        flush()
+    }
+
+    /// Commit text and the retained attachments in one encrypted outbox write, before updating
+    /// the bubble. Editing never renews the admission deadline or changes an operation's ID.
+    @discardableResult
+    public func editQueuedMessage(_ eventId: String, text: String) -> Bool {
+        guard editingQueuedMessageId == eventId, canEditQueuedMessage(eventId),
+              let index = outbox.firstIndex(where: { $0.id == eventId }),
+              case .message(var message) = outbox[index].event.payload else { return false }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !message.attachments.isEmpty else { return false }
+        message.text = text
+        var pending = outbox
+        pending[index].event.payload = .message(message)
+        do { try cache?.savePending(pending) }
+        catch {
+            failure = String(localized: "Could not save queued message: \(error.localizedDescription)")
+            return false
+        }
+        outbox = pending
+        upsert(pending[index].event)
+        endQueuedMessageEdit(eventId)
+        return true
+    }
+
     /// Resumes a paused message after transport errors or age, keeping its operation ID.
     public func retry(_ eventId: String) {
         guard let index = outbox.firstIndex(where: { $0.id == eventId }) else { return }
@@ -1251,7 +1308,8 @@ public final class ChatModel {
         let ts = Int(Date().timeIntervalSince1970 * 1000)
         let renewed = YorozuEvent(id: UUID().uuidString, threadId: old.threadId, ts: ts,
             agentId: device, payload: .message(MessageData(role: .user, text: original.text,
-                attachments: original.attachments, admissionDeadline: ts + 30 * 60_000, delivery: original.delivery)))
+                attachments: original.attachments, admissionDeadline: ts + 30 * 60_000,
+                delivery: original.delivery, channelModel: original.channelModel)))
         var pending = outbox
         // A draft's creation and settings must reach the host before its renewed first message.
         // Their original IDs are safe to retry; the host deduplicates accepted operations.
@@ -1326,7 +1384,8 @@ public final class ChatModel {
                 let now = Date()
                 guard let item = self.pendingHeads(at: now, blocking: blockedThreads).first(where: {
                     !sent.contains($0.id) && $0.event.payload.kind != .interrupt &&
-                        $0.event.payload.kind != .approvalAnswer && $0.event.payload.kind != .questionAnswer && ($0.nextAttemptAt ?? .distantPast) <= now
+                        $0.event.payload.kind != .approvalAnswer && $0.event.payload.kind != .questionAnswer &&
+                        $0.event.payload.kind != .harnessActionAnswer && ($0.nextAttemptAt ?? .distantPast) <= now
                 }), let index = self.outbox.firstIndex(where: { $0.id == item.id }) else { break }
                 if case .message(let message) = item.event.payload, !message.attachments.isEmpty,
                    !self.supportsAttachmentChunks,
@@ -1381,7 +1440,7 @@ public final class ChatModel {
         let now = Date()
         guard let item = pendingHeads(at: now).first(where: {
             ($0.event.payload.kind == .interrupt || $0.event.payload.kind == .approvalAnswer ||
-                $0.event.payload.kind == .questionAnswer) &&
+                $0.event.payload.kind == .questionAnswer || $0.event.payload.kind == .harnessActionAnswer) &&
                 ($0.nextAttemptAt ?? .distantPast) <= now
         }), let index = outbox.firstIndex(where: { $0.id == item.id }) else { return }
         outbox[index].attemptedAt = outbox[index].attemptedAt ?? now
@@ -1679,17 +1738,20 @@ public final class ChatModel {
     private func pendingHeads(at now: Date, blocking blockedThreads: Set<String> = []) -> [OutboxItem] {
         var threads = blockedThreads
         let prioritized = outbox.filter { $0.event.payload.kind == .interrupt } +
-            outbox.filter { $0.event.payload.kind == .approvalAnswer || $0.event.payload.kind == .questionAnswer } +
+            outbox.filter { $0.event.payload.kind == .approvalAnswer || $0.event.payload.kind == .questionAnswer ||
+                $0.event.payload.kind == .harnessActionAnswer } +
             outbox.filter { $0.event.payload.kind != .interrupt && $0.event.payload.kind != .approvalAnswer &&
-                $0.event.payload.kind != .questionAnswer }
+                $0.event.payload.kind != .questionAnswer && $0.event.payload.kind != .harnessActionAnswer }
         return prioritized.filter { item in
             guard !item.isExpired(at: now), item.admissionStatus != .rejected,
                   item.admissionStatus != .withdrawn, item.replacementId == nil,
                   !item.harnessStopDelivered else { return false }
-            if item.event.payload.kind == .approvalAnswer || item.event.payload.kind == .questionAnswer {
+            if item.event.payload.kind == .approvalAnswer || item.event.payload.kind == .questionAnswer ||
+                item.event.payload.kind == .harnessActionAnswer {
                 return !blockedThreads.contains(item.event.threadId)
             }
             guard threads.insert(item.event.threadId).inserted else { return false }
+            if item.id == editingQueuedMessageId { return false }
             if item.event.payload.kind == .message && sendingHeld(in: item.event.threadId) { return false }
             return true
         }
@@ -2039,23 +2101,109 @@ public final class ChatModel {
         return thread
     }
 
-    /// Start another conversation with a known persistent agent. Only the host chooses its roots.
+    /// Open the host-selected ongoing conversation. Selecting an agent never creates a topic
+    /// thread or a native harness session; historical topic threads keep their original IDs.
+    public func personConversation(agentId: String? = nil) -> ThreadSummary? {
+        guard let catalog = personAgents, let selected = agentId ?? catalog.defaultAgentId,
+              let agent = catalog.agents.first(where: { $0.id == selected }),
+              let id = agent.conversationId else { return nil }
+        if let existing = threads.first(where: { $0.id == id && $0.personAgentId == agent.id }) { return existing }
+        return ThreadSummary(id: id, title: agent.name, archived: false, lastActivity: 0,
+            agent: ThreadAgent(rawValue: "harness"), cwd: agent.workspace,
+            personAgentId: agent.id, personAgentName: agent.name)
+    }
+
+    private func reconcileHarnessActionStatus(_ event: YorozuEvent) {
+        guard case .harnessActionStatus(let status) = event.payload,
+              event.threadId == status.origin.conversationId,
+              let index = outbox.firstIndex(where: {
+                  guard $0.id == status.operationId, case .harnessActionAnswer(let answer) = $0.event.payload else { return false }
+                  return answer.origin == status.origin && answer.requestId == status.requestId
+              }) else { return }
+        outbox.remove(at: index)
+        saveOutbox()
+    }
+
+    /// Harness actions keep their verified origin and are never rewritten as user messages.
+    public func harnessActions(in threadId: String) -> [YorozuEvent] {
+        var current: [HarnessActionData] = []
+        var result: [YorozuEvent] = []
+        for event in timeline(threadId).events.reversed() {
+            guard case .harnessAction(let action) = event.payload,
+                  action.origin.conversationId == threadId, action.isValid,
+                  !current.contains(where: { $0.requestId == action.requestId && $0.origin == action.origin }) else { continue }
+            current.append(action)
+            result.append(event)
+        }
+        return result.reversed()
+    }
+
+    public func harnessActionStatus(for action: HarnessActionData) -> HarnessActionStatusData? {
+        timeline(action.origin.conversationId).events.reversed().compactMap {
+            guard case .harnessActionStatus(let status) = $0.payload,
+                  status.origin == action.origin, status.requestId == action.requestId else { return nil }
+            return status
+        }.first
+    }
+
+    public func canAnswerHarnessAction(_ action: HarnessActionData) -> Bool {
+        guard canDeliver, supportsPersonAgents, supportsHarnessActions, action.state == .pending, action.isValid,
+              let agent = personAgents?.agents.first(where: { $0.id == action.origin.agentId }),
+              agent.pluginId == action.origin.pluginId, agent.conversationId == action.origin.conversationId,
+              harnessActions(in: action.origin.conversationId).contains(where: {
+                  if case .harnessAction(let current) = $0.payload { return current == action }
+                  return false
+              }) else { return false }
+        let history = timeline(action.origin.conversationId).events
+        if outbox.contains(where: {
+            if case .harnessActionAnswer(let answer) = $0.event.payload {
+                return answer.requestId == action.requestId && answer.origin == action.origin
+            }
+            return false
+        }) { return false }
+        if let terminal = harnessActionStatus(for: action), terminal.status == .applied || terminal.status == .noLongerNeeded { return false }
+        if let response = history.reversed().first(where: {
+            if case .harnessActionAnswer(let answer) = $0.payload {
+                return answer.requestId == action.requestId && answer.origin == action.origin
+            }
+            return false
+        }) {
+            // An unknown response stays unknown across relaunch. Only a host rejection permits
+            // another explicit answer; neither socket delivery nor a receipt is completion.
+            return history.contains(where: {
+                if case .harnessActionStatus(let status) = $0.payload {
+                    return status.operationId == response.id && status.origin == action.origin &&
+                        status.requestId == action.requestId && status.status == .rejected
+                }
+                return false
+            })
+        }
+        return true
+    }
+
+    @discardableResult
+    public func answerHarnessAction(_ action: HarnessActionData, choiceId: String? = nil,
+                                   text: String? = nil, uiTargetId: String? = nil) -> String? {
+        let answer = HarnessActionAnswerData(requestId: action.requestId, origin: action.origin,
+            choiceId: choiceId, text: text, uiTargetId: uiTargetId)
+        guard canAnswerHarnessAction(action), action.accepts(answer) else { return nil }
+        let response = event(.harnessActionAnswer(answer), in: action.origin.conversationId)
+        let pending = outbox + [OutboxItem(event: response)]
+        do { try cache?.savePending(pending) }
+        catch {
+            failure = String(localized: "Could not save harness response: \(error.localizedDescription)")
+            return nil
+        }
+        outbox = pending
+        upsert(response)
+        flush()
+        return response.id
+    }
+
+    /// Kept for existing callers; this now selects the same conversation rather than minting one.
     @discardableResult
     public func newPersonThread(agentId: String? = nil) -> ThreadSummary? {
-        guard supportsPersonAgents, canDeliver, let catalog = personAgents,
-              let selected = agentId ?? catalog.defaultAgentId,
-              let agent = catalog.agents.first(where: { $0.id == selected }) else { return nil }
-        var thread = newDraft()
-        thread.agent = ThreadAgent(rawValue: "harness")
-        thread.personAgentId = agent.id
-        thread.personAgentName = agent.name
-        thread.cwd = agent.workspace
-        thread.model = nil
-        thread.effort = nil
-        draftChannelModels[thread.id] = nil
-        if let index = draftThreads.firstIndex(where: { $0.id == thread.id }) { draftThreads[index] = thread }
-        saveDraftsNow()
-        return thread
+        personConversation(agentId: agentId)
     }
 
     /// Submit an explicit settings operation with its captured revisions. A host result is truth.
@@ -2764,6 +2912,7 @@ public final class ChatModel {
             case .siwcAccountStatus(let data): reconcileSiwcAccounts(data)
             case .threadList(let data):
                 personAgents = supportsPersonAgents ? data.personAgents : nil
+                if let personAgents { cache?.save(personAgents: personAgents) }
                 if let accounts = data.siwcAccounts { reconcileSiwcAccounts(accounts) }
                 // Archived threads are kept: Settings lists them and thread search finds them.
                 synced = data.threads.map { remote in
@@ -3365,6 +3514,7 @@ public final class ChatModel {
         default: break
         }
         reconcileHarnessControlReceipt(incoming)
+        reconcileHarnessActionStatus(incoming)
         var event = incoming
         if case .threadRewound(let data) = event.payload {
             receipted(data.requestId)

@@ -3,19 +3,24 @@ import Foundation
 /// An editor captures the revision it opened on. Host roots and credentials never enter it.
 struct PersonAgentEditorDraft: Equatable {
     let revision: Int
+    let catalog: PersonAgentRegistry
     let original: PersonAgent?
     var name: String
     var role: String
-    var plugin: PersonAgentPlugin
+    var plugin: PersonAgentPlugin?
+    var runtimeMode: PersonAgentRuntime.Mode
+    var runtimeConnectionId: String
     var model: String
     var connection: String
     var tools: Set<PersonAgentTool>
     var directories: [PersonAgentDirectoryGrant]
 
     init(catalog: PersonAgentRegistry, agent: PersonAgent? = nil) {
-        revision = catalog.revision; original = agent
+        revision = catalog.revision; self.catalog = catalog; original = agent
         name = agent?.name ?? ""; role = agent?.role ?? ""
-        plugin = agent?.pluginId ?? .hermes
+        plugin = agent?.pluginId ?? catalog.defaultHarnessId
+        runtimeMode = agent?.runtime?.mode ?? .managed
+        runtimeConnectionId = agent?.runtime?.connectionId ?? ""
         model = agent?.model ?? ""; connection = agent?.accountBindingId ?? ""
         tools = Set(agent?.allowedTools ?? [.file, .memory, .delegation])
         directories = agent?.directories ?? []
@@ -23,6 +28,24 @@ struct PersonAgentEditorDraft: Equatable {
 
     private func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
     var request: PersonAgentControlData? {
+        guard let plugin else { return nil }
+        // Saved configurations stay inspectable on older hosts. New or changed bindings must
+        // be an effective choice the current host published, never an assumed plugin default.
+        let bindingChanged = original == nil || original?.pluginId != plugin ||
+            (original?.runtime?.mode ?? .managed) != runtimeMode ||
+            (original?.runtime?.connectionId ?? "") != runtimeConnectionId
+        if bindingChanged {
+            guard catalog.harnesses?.contains(where: {
+                $0.id == plugin && $0.available && $0.modes.contains(runtimeMode)
+            }) == true else { return nil }
+            if runtimeMode == .connected {
+                guard catalog.connections?.contains(where: {
+                    $0.id == runtimeConnectionId && $0.pluginId == plugin && $0.available
+                }) == true else { return nil }
+            }
+        }
+        let runtime = PersonAgentRuntime(mode: runtimeMode,
+            connectionId: runtimeMode == .connected ? runtimeConnectionId : nil)
         let model = trimmed(model), connection = trimmed(connection)
         let tools = PersonAgentTool.allCases.filter { self.tools.contains($0) }
         let action: PersonAgentControlAction
@@ -32,12 +55,12 @@ struct PersonAgentEditorDraft: Equatable {
             if original.accountBindingId != nil && connection.isEmpty { clear.append(.accountBindingId) }
             action = .update(agentId: original.id, patch: PersonAgentPatch(name: trimmed(name), role: trimmed(role),
                 pluginId: plugin, model: model.isEmpty ? nil : model,
-                accountBindingId: connection.isEmpty ? nil : connection, allowedTools: tools, directories: directories,
+                accountBindingId: connection.isEmpty ? nil : connection, runtime: runtime, allowedTools: tools, directories: directories,
                 clear: clear.isEmpty ? nil : clear))
         } else {
             action = .create(PersonAgentInput(name: trimmed(name), role: trimmed(role), pluginId: plugin,
                 model: model.isEmpty ? nil : model, accountBindingId: connection.isEmpty ? nil : connection,
-                allowedTools: tools, directories: directories))
+                runtime: runtime, allowedTools: tools, directories: directories))
         }
         let data = PersonAgentControlData(expectedRevision: revision, action: action)
         return data.isValid ? data : nil
@@ -77,6 +100,13 @@ struct PersonAgentSubmission: Equatable {
 
 func personAgentChats(_ threads: [ThreadSummary], agentId: String? = nil) -> [ThreadSummary] {
     visibleThreads(threads).filter {
-        $0.harnessTask == nil && $0.personAgentId != nil && (agentId == nil || $0.personAgentId == agentId)
+        $0.harnessTask == nil && $0.personAgentExchange == nil && $0.personAgentId != nil && (agentId == nil || $0.personAgentId == agentId)
     }
+}
+
+/// Historical topic threads, including archived history, remain inspectable after migration.
+func personAgentHistory(_ threads: [ThreadSummary], agentId: String? = nil) -> [ThreadSummary] {
+    threads.filter {
+        $0.harnessTask == nil && $0.personAgentExchange == nil && $0.personAgentId != nil && (agentId == nil || $0.personAgentId == agentId)
+    }.sorted { $0.lastActivity > $1.lastActivity }
 }

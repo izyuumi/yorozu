@@ -32,7 +32,7 @@ public enum ClientConnectionStatus: Equatable, Sendable {
         switch self {
         case .connected: SecretaryUI.localized("Connected")
         case .connecting: SecretaryUI.localized("Connecting…")
-        case .hostOffline: SecretaryUI.localized("Host Mac offline")
+        case .hostOffline: SecretaryUI.localized("Waiting for Mac")
         case .offline: SecretaryUI.localized("Offline")
         case .failed: SecretaryUI.localized("Couldn’t connect")
         }

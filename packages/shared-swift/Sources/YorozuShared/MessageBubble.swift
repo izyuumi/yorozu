@@ -56,6 +56,7 @@ public struct MessageBubble: View {
     private let onRetry: (() -> Void)?
     private let onSendNow: (() -> Void)?
     private let onWithdraw: (() -> Void)?
+    private let onEditQueued: (() -> Void)?
     private let onDelete: (() -> Void)?
     /// Sends the queued message again, for a message the outbox has given up on.
     private let onResend: (() -> Void)?
@@ -83,6 +84,7 @@ public struct MessageBubble: View {
         onRetry: (() -> Void)? = nil,
         onSendNow: (() -> Void)? = nil,
         onWithdraw: (() -> Void)? = nil,
+        onEditQueued: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil,
         onResend: (() -> Void)? = nil,
         agent: ThreadAgent = .yorozu,
@@ -104,6 +106,7 @@ public struct MessageBubble: View {
         self.onRetry = onRetry
         self.onSendNow = onSendNow
         self.onWithdraw = onWithdraw
+        self.onEditQueued = onEditQueued
         self.onDelete = onDelete
         self.onResend = onResend
     }
@@ -175,9 +178,10 @@ public struct MessageBubble: View {
                     Text(queuedStatus)
                     if let onSendNow { Button("Send now", action: onSendNow) }
                     if let onWithdraw {
-                        Button("Remove", action: onWithdraw)
+                        Button("Cancel send", action: onWithdraw)
                             .accessibilityHint("Returns text and attachments to the composer")
                     }
+                    if let onEditQueued { Button("Edit", action: onEditQueued) }
                 }
                 .font(.scaled(.caption))
                 .foregroundStyle(.secondary)
@@ -248,7 +252,10 @@ public struct MessageBubble: View {
                 systemImage: "arrow.clockwise", action: onRetry)
         }
         if let onWithdraw {
-            Button(queuedStatus == nil ? "Cancel send" : "Remove", systemImage: "xmark.circle", action: onWithdraw)
+            Button("Cancel send", systemImage: "xmark.circle", action: onWithdraw)
+        }
+        if let onEditQueued {
+            Button("Edit queued message", systemImage: "pencil", action: onEditQueued)
         }
         if let onDelete {
             // Local only, which the menu says outright: the word "Delete" on its own

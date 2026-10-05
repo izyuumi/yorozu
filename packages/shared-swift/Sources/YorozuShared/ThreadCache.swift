@@ -69,6 +69,11 @@ public struct ThreadCache: Sendable {
         write(threads, to: "threads")
     }
 
+    /// Presentation descriptors from the authenticated host, for offline navigation only.
+    /// Capabilities and permission are negotiated anew on every live connection.
+    func personAgents() -> PersonAgentRegistry? { read(PersonAgentRegistry.self, from: "person-agents") }
+    func save(personAgents: PersonAgentRegistry) { write(personAgents, to: "person-agents") }
+
     public func agents() -> [AgentDescriptor]? { read([AgentDescriptor].self, from: "agents") }
     public func save(agents: [AgentDescriptor]) { write(agents, to: "agents") }
     func agentStatus() -> AgentStatusData? { read(AgentStatusData.self, from: "agent-status") }

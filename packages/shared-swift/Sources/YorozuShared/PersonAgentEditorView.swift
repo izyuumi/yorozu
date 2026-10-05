@@ -18,6 +18,7 @@ struct PersonAgentEditorView: View {
         self.model = model; self.catalog = catalog; self.presented = presented
         _draft = State(initialValue: PersonAgentEditorDraft(catalog: catalog, agent: agent))
     }
+    private var selectedHarness: PersonAgentHarnessDescriptor? { catalog.harnesses?.first { $0.id == draft.plugin } }
     private var changedElsewhere: Bool { model.personAgents?.revision != draft.revision }
     var body: some View {
         Form {
@@ -25,28 +26,60 @@ struct PersonAgentEditorView: View {
                 TextField("Name", text: $draft.name).accessibilityIdentifier("person-agent-name")
                 TextField("Role", text: $draft.role, axis: .vertical).accessibilityIdentifier("person-agent-role")
             }
-            Section("Runtime") {
+            Section("Harness") {
                 Picker("Harness", selection: $draft.plugin) {
-                    Text("Hermes").tag(PersonAgentPlugin.hermes)
-                    Text("OpenClaw").tag(PersonAgentPlugin.openclaw)
-                }
-                TextField("Model", text: $draft.model)
-                Picker("ChatGPT account", selection: $draft.connection) {
-                    Text("Select an account").tag("")
-                    ForEach(Array((model.siwcAccounts?.accounts ?? []).enumerated()), id: \.element.id) { index, account in
-                        Text("Account \(index + 1)").tag(account.id)
-                            .disabled(account.phase != .ready || !account.planUse)
+                    Text("Choose a harness").tag(PersonAgentPlugin?.none)
+                    ForEach(catalog.harnesses ?? [], id: \.id) { harness in
+                        Text(harness.label).tag(Optional(harness.id)).disabled(!harness.available)
                     }
-                    if !draft.connection.isEmpty, model.siwcAccounts?.accounts.contains(where: { $0.id == draft.connection }) != true {
-                        Text("Saved account (unavailable)").tag(draft.connection)
+                    if let selected = draft.plugin, catalog.harnesses?.contains(where: { $0.id == selected }) != true {
+                        Text("Saved harness (unavailable)").tag(Optional(selected))
                     }
                 }
-                .accessibilityIdentifier("person-agent-account")
-                Text("Choose an account and enter a model before starting a chat. Manage saved accounts in ChatGPT accounts.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                .accessibilityIdentifier("person-agent-harness")
+                Picker("Hosting", selection: $draft.runtimeMode) {
+                    Text("Run on this Mac").tag(PersonAgentRuntime.Mode.managed)
+                        .disabled(selectedHarness?.modes.contains(.managed) != true)
+                    Text("Connect to a running agent").tag(PersonAgentRuntime.Mode.connected)
+                        .disabled(selectedHarness?.modes.contains(.connected) != true)
+                }
+                if draft.runtimeMode == .connected {
+                    Picker("Connection", selection: $draft.runtimeConnectionId) {
+                        Text("Choose a running agent").tag("")
+                        ForEach((catalog.connections ?? []).filter { $0.pluginId == draft.plugin }, id: \.id) { connection in
+                            Text(connection.label).tag(connection.id).disabled(!connection.available)
+                        }
+                        if !draft.runtimeConnectionId.isEmpty,
+                           catalog.connections?.contains(where: { $0.id == draft.runtimeConnectionId && $0.pluginId == draft.plugin }) != true {
+                            Text("Saved connection (unavailable)").tag(draft.runtimeConnectionId)
+                        }
+                    }
+                    Text("The connected harness keeps control of its process, memory and sign-in. Disconnecting leaves it running.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    TextField("Model", text: $draft.model)
+                    Picker("ChatGPT account", selection: $draft.connection) {
+                        Text("Select an account").tag("")
+                        ForEach(Array((model.siwcAccounts?.accounts ?? []).enumerated()), id: \.element.id) { index, account in
+                            Text("Account \(index + 1)").tag(account.id)
+                                .disabled(account.phase != .ready || !account.planUse)
+                        }
+                        if !draft.connection.isEmpty, model.siwcAccounts?.accounts.contains(where: { $0.id == draft.connection }) != true {
+                            Text("Saved account (unavailable)").tag(draft.connection)
+                        }
+                    }
+                    .accessibilityIdentifier("person-agent-account")
+                }
+                if let reason = selectedHarness?.unavailableReason {
+                    Text(reason).font(.footnote).foregroundStyle(.secondary)
+                }
+                if catalog.harnesses == nil {
+                    Text("Reconnect to a Mac that publishes available harnesses before adding an agent.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             Section {
-                ForEach(PersonAgentTool.allCases, id: \.self) { tool in
+                ForEach(PersonAgentTool.allCases.filter { $0 != .memory && $0 != .delegation }, id: \.self) { tool in
                     Toggle(tool.label, isOn: Binding(get: { draft.tools.contains(tool) }, set: {
                         if $0 { draft.tools.insert(tool) } else { draft.tools.remove(tool) }
                     }))
@@ -98,7 +131,13 @@ struct PersonAgentEditorView: View {
         .onChange(of: model.personAgents?.lastControlResult) { _, _ in
             if submission.result(in: model.personAgents)?.status == .applied { dismiss() }
         }
-        .onAppear { model.requestSiwcAccountStatus() }
+        .onAppear { if draft.runtimeMode == .managed { model.requestSiwcAccountStatus() } }
+        .onChange(of: draft.plugin) { _, _ in
+            draft.runtimeConnectionId = ""
+            if selectedHarness?.modes.contains(draft.runtimeMode) != true {
+                draft.runtimeMode = selectedHarness?.modes.first ?? .managed
+            }
+        }
     }
     private func save() {
         guard let request = draft.request else { return }

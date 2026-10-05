@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The same host-owned agents and conversations on Mac and iPhone.
+/// The same agent identities and ongoing conversations on Mac and iPhone.
 public struct PersonAgentsView: View {
     public let model: ChatModel
     private let settings: Bool
@@ -9,19 +9,19 @@ public struct PersonAgentsView: View {
 
     public var body: some View {
         Group {
-            if model.supportsPersonAgents, let catalog = model.personAgents {
+            if model.supportsPersonAgents || !model.canDeliver, let catalog = model.personAgents {
                 List {
                     Section {
                         ForEach(catalog.agents) { agent in
                             NavigationLink {
                                 if settings { PersonAgentEditorView(model: model, catalog: catalog, agent: agent) }
-                                else { PersonAgentChatsView(model: model, agentId: agent.id) }
+                                else { PersonAgentConversationView(model: model, agentId: agent.id) }
                             } label: {
                                 VStack(alignment: .leading) {
                                     HStack {
                                         Text(agent.name).font(.headline)
                                         if catalog.defaultAgentId == agent.id {
-                                            Text("Default for new chats").font(.caption).foregroundStyle(.secondary)
+                                            Text("Default agent").font(.caption).foregroundStyle(.secondary)
                                         }
                                     }
                                     Text(agent.role).font(.subheadline).foregroundStyle(.secondary)
@@ -33,11 +33,7 @@ public struct PersonAgentsView: View {
                     }
                     Section {
                         NavigationLink { PersonAgentTeamsView(model: model) } label: { Label("Teams", systemImage: "person.2") }
-                        if catalog.journalRevision != nil {
-                            NavigationLink {
-                                PersonAgentMemoryView(model: model, catalog: catalog)
-                            } label: { Label("Shared preferences", systemImage: "bookmark") }
-                        }
+
                     }
                 }
                 .paperList()
@@ -64,8 +60,8 @@ public struct PersonAgentsView: View {
 
 public struct PersonChatsView: View {
     public let model: ChatModel
-    @State private var newThread: String?
     public init(model: ChatModel) { self.model = model }
+    private var canonicalIds: Set<String> { Set((model.personAgents?.agents ?? []).compactMap(\.conversationId)) }
     public var body: some View {
         List {
             if let secretary = model.threads.first(where: { $0.id == SecretaryUI.threadID }) {
@@ -75,93 +71,79 @@ public struct PersonChatsView: View {
                     }
                 }
             }
-            Section("Chats") {
-                ForEach(personAgentChats(model.threads).filter { $0.id != SecretaryUI.threadID }) { thread in
-                    NavigationLink { PersonConversationView(model: model, initial: thread) } label: {
+            Section("Conversations") {
+                ForEach(model.personAgents?.agents ?? []) { agent in
+                    NavigationLink { PersonAgentConversationView(model: model, agentId: agent.id) } label: {
+                        Label(agent.name, systemImage: "bubble.left.and.bubble.right")
+                    }
+                }
+            }
+            Section("Previous conversations") {
+                ForEach(personAgentHistory(model.threads).filter { !canonicalIds.contains($0.id) && $0.id != SecretaryUI.threadID }) { thread in
+                    NavigationLink { PersonConversationView(model: model, initial: thread, historical: true) } label: {
                         ThreadRow(thread: thread, agentLabel: thread.personAgentName, working: model.generating.contains(thread.id))
                     }
                 }
             }
         }
         .paperList()
-        .navigationTitle("Chats")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    ForEach(model.personAgents?.agents ?? []) { agent in
-                        Button(agent.name) { newThread = model.newPersonThread(agentId: agent.id)?.id }
-                    }
-                } label: {
-                    Label("New chat", systemImage: "square.and.pencil")
-                } primaryAction: {
-                    newThread = model.newPersonThread()?.id
-                }
-                .disabled(!model.canDeliver || model.personAgents?.agents.isEmpty != false)
-                .accessibilityIdentifier("person-chat-new")
-            }
-        }
-        .navigationDestination(item: $newThread) { id in
-            if let thread = model.threads.first(where: { $0.id == id }) { PersonConversationView(model: model, initial: thread) }
-        }
+        .navigationTitle("Conversations")
     }
 }
 
-struct PersonAgentChatsView: View {
+struct PersonAgentConversationView: View {
     let model: ChatModel
     let agentId: String
-    @State private var newThread: String?
     @State private var editor: PersonAgentEditorRoute?
-    @State private var submission = PersonAgentSubmission()
     private var agent: PersonAgent? { model.personAgents?.agents.first { $0.id == agentId } }
     var body: some View {
-        List {
-            if let agent, let catalog = model.personAgents {
-                Section {
-                    Text(agent.role).foregroundStyle(.secondary)
-                    if catalog.defaultAgentId == agent.id { Label("Default for new chats", systemImage: "checkmark") }
-                    else {
-                        Button("Use as default for new chats") {
-                            submission.submit(PersonAgentControlData(expectedRevision: catalog.revision,
-                                action: .setDefault(agentId: agent.id)), to: model)
-                        }
-                        .disabled(!model.canDeliver || submission.blocksSubmission(in: catalog))
-                    }
-                    PersonAgentControlFeedback(model: model, submission: submission)
-                }
-                Section("Chats") {
-                    Button("New chat", systemImage: "square.and.pencil") { newThread = model.newPersonThread(agentId: agent.id)?.id }
-                        .disabled(!model.canDeliver || !model.supportsPersonAgents)
-                        .accessibilityIdentifier("person-agent-new-chat")
-                    ForEach(personAgentChats(model.threads, agentId: agent.id)) { thread in
-                        NavigationLink { PersonConversationView(model: model, initial: thread) } label: {
-                            ThreadRow(thread: thread, working: model.generating.contains(thread.id))
-                        }
-                    }
-                }
-                if catalog.journalRevision != nil {
-                    Section {
-                        NavigationLink {
-                            PersonAgentMemoryView(model: model, catalog: catalog, agent: agent)
-                        } label: { Label("Preferences and shared knowledge", systemImage: "bookmark") }
-                    }
-                }
+        Group {
+            if let thread = model.personConversation(agentId: agentId) {
+                PersonConversationView(model: model, initial: thread)
+            } else {
+                ContentUnavailableView("Conversation", systemImage: "bubble.left.and.bubble.right",
+                    description: Text("Waiting for your Mac to provide this agent’s conversation."))
             }
         }
-        .paperList()
-        .navigationTitle(agent?.name ?? SecretaryUI.localized("Agent"))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Agent settings", systemImage: "slider.horizontal.3") {
-                    if let agent, let catalog = model.personAgents { editor = PersonAgentEditorRoute(catalog: catalog, agent: agent) }
-                }
+                Menu {
+                    NavigationLink("History", destination: PersonAgentHistoryView(model: model, agentId: agentId))
+                    NavigationLink("Agent exchanges", destination: AgentExchangesView(model: model, agentId: agentId))
+                    if let conversation = model.personConversation(agentId: agentId) {
+                        NavigationLink("Harness requests", destination: HarnessActionsView(model: model, threadId: conversation.id))
+                    }
+                    Button("Agent settings", systemImage: "slider.horizontal.3") {
+                        if let agent, let catalog = model.personAgents { editor = PersonAgentEditorRoute(catalog: catalog, agent: agent) }
+                    }
                     .disabled(agent == nil || !model.supportsPersonAgents)
+                } label: { Label("Agent", systemImage: "ellipsis.circle") }
             }
         }
         .sheet(item: $editor) { route in
             NavigationStack { PersonAgentEditorView(model: model, catalog: route.catalog, agent: route.agent, presented: true) }.yorozuTint()
         }
-        .navigationDestination(item: $newThread) { id in
-            if let thread = model.threads.first(where: { $0.id == id }) { PersonConversationView(model: model, initial: thread) }
+    }
+}
+
+struct PersonAgentHistoryView: View {
+    let model: ChatModel
+    let agentId: String
+    private var canonicalId: String? { model.personAgents?.agents.first { $0.id == agentId }?.conversationId }
+    var body: some View {
+        List {
+            ForEach(personAgentHistory(model.threads, agentId: agentId).filter { $0.id != canonicalId }) { thread in
+                NavigationLink { PersonConversationView(model: model, initial: thread, historical: true) } label: {
+                    ThreadRow(thread: thread, working: model.generating.contains(thread.id))
+                }
+            }
+        }
+        .paperList()
+        .navigationTitle("History")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                NavigationLink("Ongoing conversation", destination: PersonAgentConversationView(model: model, agentId: agentId))
+            }
         }
     }
 }
@@ -169,9 +151,10 @@ struct PersonAgentChatsView: View {
 struct PersonConversationView: View {
     let model: ChatModel
     let initial: ThreadSummary
+    var historical = false
     private var thread: ThreadSummary { model.threads.first { $0.id == initial.id } ?? initial }
     var body: some View {
-        ChatView(model: model, thread: thread)
+        ChatView(model: model, thread: thread, readOnly: historical)
             .environment(\.secretaryPresentation, thread.id == SecretaryUI.threadID)
             .onAppear { model.openThread = thread.id }
             .onDisappear {
