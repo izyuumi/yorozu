@@ -151,3 +151,16 @@ test("retained harness queue publishes a durable visible hold and never submits 
   expect(f.turns).toEqual([]);
   expect(JSON.parse(readFileSync(join(f.dir, "native-turn-queue.json"), "utf8"))).toEqual([{ threadId: "person", eventId: "retained-request" }]);
 });
+
+test("a persisted uncertain stop transfers its hold without poisoning unrelated admission", async () => {
+  const f = await fixture("secretary");
+  f.runner.run.mockImplementation(async turn => { f.turns.push(turn); return { text: "Synthetic lost receipt", unconfirmed: true } as any; });
+  f.send("message", { role: "user", text: "uncertain" }, "persisted-unknown");
+  await vi.waitFor(() => expect(f.events.some(e => e.kind === "stop_status" && e.data.status === "unconfirmed")).toBe(true));
+  expect(readFileSync(join(f.dir, "stopped-turns.jsonl"), "utf8")).toContain('"targetEventId":"persisted-unknown"');
+  const { SecretaryAdmissionFence } = await import("../dist/secretary-steering.js");
+  expect(new SecretaryAdmissionFence(f.dir).blocked).toBe(false);
+  f.send("message", { role: "user", text: "same thread must still wait" }, "held-next");
+  await new Promise(resolve => setTimeout(resolve, 100)); expect(f.turns).toHaveLength(1);
+  expect(f.events.some(e => e.kind === "thread_list" && e.data.threads.some((t: any) => t.id === "person" && t.turnState === "stopped-unconfirmed"))).toBe(true);
+});
