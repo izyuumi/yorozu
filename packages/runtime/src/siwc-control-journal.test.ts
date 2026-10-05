@@ -144,7 +144,10 @@ test("budget exhaustion preserves all deduplication evidence and refuses dispatc
 test("corrupt, oversized, non-private, symlinked and hardlinked snapshots are refused without resetting", () => {
   const f = fixture(); f.journal.close(); const before = fs.readFileSync(f.file);
   for (const bytes of [Buffer.from('{"version":2,"operations":{}}'), Buffer.alloc(2 * 1024 * 1024 + 1, 32)]) {
-    fs.writeFileSync(f.file, bytes); expect(() => f.open()).toThrow("journal is unavailable"); expect(fs.readFileSync(f.file)).toEqual(bytes);
+    fs.writeFileSync(f.file, bytes); expect(() => f.open()).toThrow("journal is unavailable");
+    // Compare all bytes natively; recursive matcher traversal of a 2 MiB Buffer
+    // can exceed the hosted runner timeout without testing any additional property.
+    expect(fs.readFileSync(f.file).equals(bytes)).toBe(true);
   }
   fs.writeFileSync(f.file, before); fs.chmodSync(f.file, 0o644);
   expect(() => f.open()).toThrow("journal is unavailable"); fs.chmodSync(f.file, 0o600);
