@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+subject=$(head -n 1 "$1")
+# Temporary autosquash subjects are allowed locally, but must be squashed before CI.
+case "$subject" in Merge\ *|fixup!\ *|squash!\ *) exit 0 ;; esac
+root=$(git rev-parse --show-toplevel)
+exec "$root/scripts/check-commit-msg.sh" "$subject"

@@ -3,6 +3,7 @@ on:
   push:
     branches: [main, 'release/*', v0.6.0-alpha, integration-0.6-worker, harness-plugins]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 # One run per ref: a newer push cancels the one it supersedes.
 concurrency:
@@ -53,6 +54,19 @@ jobs:
             flag web "^apps/web/|$build"
           } >> "$GITHUB_OUTPUT"
 
+  commit-messages:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { fetch-depth: 0 }
+      - name: Check PR title and non-merge commit subjects
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: scripts/check-pr-commit-msg.sh "$TITLE" "$BASE" "$HEAD"
+
   rust-host:
     needs: changes
     if: needs.changes.outputs.internal != 'true'
@@ -84,9 +98,10 @@ jobs:
       - name: Lint workflows and release scripts
         run: |
           "$(go env GOPATH)/bin/actionlint"
-          shellcheck scripts/release.sh scripts/appcast.sh scripts/build-version.sh scripts/build-mac.sh scripts/build-ios.sh scripts/dev-bundle.sh scripts/check-internal-alpha.sh scripts/build-internal-alpha.sh
+          shellcheck scripts/check-commit-msg.sh scripts/check-pr-commit-msg.sh .githooks/commit-msg scripts/release.sh scripts/appcast.sh scripts/build-version.sh scripts/build-mac.sh scripts/build-ios.sh scripts/dev-bundle.sh scripts/check-internal-alpha.sh scripts/build-internal-alpha.sh
       - name: Check publication success and failure paths
         run: |
+          python3 scripts/test-commit-msg.py
           python3 scripts/test-release.py
           python3 scripts/test-release-notes.py
           python3 scripts/test-build-version.py

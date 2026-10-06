@@ -5,6 +5,10 @@
 Follow [docs/RELEASE_WORKFLOW.md](docs/RELEASE_WORKFLOW.md) for release-related work,
 including versioning, candidate builds, release notes, beta/stable promotion, and hotfixes.
 All commits must use Conventional Commit messages and be cryptographically signed.
+The optional `.githooks/commit-msg` hook checks subjects, not signatures; opt in explicitly
+with `git config core.hooksPath .githooks`. CI checks PR titles and non-merge subjects,
+including after title edits. Local `fixup!`/`squash!` subjects must be autosquashed before CI;
+merge subjects are exempt. Neither check replaces the signing requirement.
 
 ## UI layout
 
