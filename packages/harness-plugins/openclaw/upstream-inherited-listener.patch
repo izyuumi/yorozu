@@ -1,5 +1,2457 @@
+diff --git a/apps/shared/OpenClawKit/Sources/OpenClawProtocol/GatewayModels.swift b/apps/shared/OpenClawKit/Sources/OpenClawProtocol/GatewayModels.swift
+index 816c0ab0..d8985314 100644
+--- a/apps/shared/OpenClawKit/Sources/OpenClawProtocol/GatewayModels.swift
++++ b/apps/shared/OpenClawKit/Sources/OpenClawProtocol/GatewayModels.swift
+@@ -4297,6 +4297,7 @@ public struct ChatSendParams: Codable, Sendable {
+     public let systeminputprovenance: [String: AnyCodable]?
+     public let systemprovenancereceipt: String?
+     public let suppresscommandinterpretation: Bool?
++    public let inputmode: String?
+     public let expectedleafentryid: AnyCodable?
+     public let expectedsessionroutingcontract: String?
+     public let expectedpermissionmode: AnyCodable?
+@@ -4327,6 +4328,7 @@ public struct ChatSendParams: Codable, Sendable {
+         systeminputprovenance: [String: AnyCodable]? = nil,
+         systemprovenancereceipt: String? = nil,
+         suppresscommandinterpretation: Bool? = nil,
++        inputmode: String? = nil,
+         expectedleafentryid: AnyCodable? = nil,
+         expectedsessionroutingcontract: String? = nil,
+         expectedpermissionmode: AnyCodable? = nil,
+@@ -4356,6 +4358,7 @@ public struct ChatSendParams: Codable, Sendable {
+         self.systeminputprovenance = systeminputprovenance
+         self.systemprovenancereceipt = systemprovenancereceipt
+         self.suppresscommandinterpretation = suppresscommandinterpretation
++        self.inputmode = inputmode
+         self.expectedleafentryid = expectedleafentryid
+         self.expectedsessionroutingcontract = expectedsessionroutingcontract
+         self.expectedpermissionmode = expectedpermissionmode
+@@ -4386,6 +4389,7 @@ public struct ChatSendParams: Codable, Sendable {
+         systeminputprovenance: [String: AnyCodable]? = nil,
+         systemprovenancereceipt: String? = nil,
+         suppresscommandinterpretation: Bool? = nil,
++        inputmode: String? = nil,
+         expectedleafentryid: AnyCodable? = nil,
+         expectedsessionroutingcontract: String? = nil,
+         expectedpermissionmode: AnyCodable? = nil,
+@@ -4416,6 +4420,7 @@ public struct ChatSendParams: Codable, Sendable {
+             systeminputprovenance: systeminputprovenance,
+             systemprovenancereceipt: systemprovenancereceipt,
+             suppresscommandinterpretation: suppresscommandinterpretation,
++            inputmode: inputmode,
+             expectedleafentryid: expectedleafentryid,
+             expectedsessionroutingcontract: expectedsessionroutingcontract,
+             expectedpermissionmode: expectedpermissionmode,
+@@ -4447,6 +4452,7 @@ public struct ChatSendParams: Codable, Sendable {
+         case systeminputprovenance = "systemInputProvenance"
+         case systemprovenancereceipt = "systemProvenanceReceipt"
+         case suppresscommandinterpretation = "suppressCommandInterpretation"
++        case inputmode = "inputMode"
+         case expectedleafentryid = "expectedLeafEntryId"
+         case expectedsessionroutingcontract = "expectedSessionRoutingContract"
+         case expectedpermissionmode = "expectedPermissionMode"
+diff --git a/docs/experiments/yorozu-literal-input.md b/docs/experiments/yorozu-literal-input.md
+new file mode 100644
+index 00000000..d06ced0f
+--- /dev/null
++++ b/docs/experiments/yorozu-literal-input.md
+@@ -0,0 +1,100 @@
++# Curated literal user input — development contract
++
++This extension is development-only. It is not enabled in a production Gateway,
++not upstream compatibility inferred from protocol v4, and not a sandbox for model
++semantics. Adoption requires independent review and an exact derived source/build
++pin; unsupported clients must fail closed, never drop the mode or request admin.
++
++## Admission
++
++`chat.send` accepts optional `inputMode: "literal"` on the existing authenticated
++write route for an existing native session. Create the authorized session first: the
++legacy asynchronous first-send session creation path has no pre-ACK pending-input
++custody owner, so literal first-send creation fails closed rather than weakening
++its durable contract. This restriction does not change absent-mode sends. This waives native text-command interpretation; it does not grant
++admin, system provenance, a profile, an origin, an entitlement, or session access.
++The existing legacy suppression/provenance/admin predicate is unchanged. Literal
++input cannot be combined with those fields, goal/continuation options, reconnect
++resume or trusted internal input. Browser tool bindings remain browser-only.
++Pairing, transport scopes, current session authority, CAS, route and permission
++guards stay in their existing owners. A supplied literal sessionId must match an
++existing destination even without CAS; absent-mode requests retain the older
++sessionId-as-creation-seed behavior when CAS is absent. This closes a generic-client
++SID ambiguity found by a new negative handler test without changing legacy sends. Literal `/stop` is a user message;
++`chat.abort` remains a separately authorized operation. Literal input can still
++cause the model to request tools already authorized for the ordinary caller.
++
++## Versioned durable custody
++
++Every new Gateway user source carries reserved `commandInterpretation` metadata:
++`normal-v1`, `literal-v1`, or `suppressed-v1`, together with `chatRequestIdentity`.
++These are parsing facts, never InputProvenance. Canonical/runtime write hooks
++cannot forge or remove them. Existing literal suppression on the inbound context
++remains in force; the browser restart-safe eligibility is not expanded.
++
++Pending-input hashes independently bind version, mode and input identity, before
++the existing complete request digest. The same hash flows to opt-in terminal
++completion receipts. Single versioned sources now retain consumed receipts just
++as collected sources already did. Thus retiring execution custody, expiry of RAM
++responses, a closed DB or a new process cannot erase parsing identity. The source
++is not dispatched again merely because its terminal response cache expired.
++Retained consumed rows follow the existing session deletion/repair owners.
++
++Before command shortcuts, response replay or new admission, mode/identity must
++match in both directions. An unreadable versioned custody record, unknown version,
++partial required metadata or a known literal retry with no proof is a conflict.
++Matching in-memory identities and browser-only restart fingerprints remain fast
++paths (literal is not eligible for the latter). Goal receipts retain their owner,
++but a goal cannot adopt a literal source ID. A custody digest may establish parsing
++identity after a completion intentionally removed source bytes; full request
++matching remains the stage/receipt owner's job, not an invented ACK.
++
++Early admission has its own bounded responsibility in the session accessor:
++`session_chat_input_admissions` binds the exact store/key, original SID (or the
++legacy normal first-send absence), operation ID, parsing version/identity and
++attempt before publishing the abortable RAM reservation. It stores no message
++bytes and grants no execution or cancellation authority. The additive feature
++table is installed on writes only; legacy reads do not migrate it.
++
++An early abort commits its terminal timestamp/reason under the exact durable
++attempt and synchronous live-owner check before publishing a marker or reply.
++Persistence failure leaves the RAM reservation intact and publishes no abort
++success. A stale attempt cannot retire another reservation or terminal outcome.
++The admission retains its exact terminal writer if maintenance retires an expired
++pending entry. The terminal fact is first-writer-sticky and is replayed before
++command shortcuts, including absent-mode stop parsing. These compact identity
++rows have no independent cache TTL/capacity pruning: neither five-minute response
++retirement nor one-hour marker retirement can turn a versioned operation into
++legacy no-evidence input. An original non-null SID never transfers to another
++incarnation. This is conservative idempotency evidence, not an operation adoption
++or new recovery mechanism.
++
++Unconsumed interrupted work still uses the original native recovery/admission
++rules. This change does not promise re-execution of unknown outcomes or enable a
++new browser/adapter restart path. An unsupported recovery path remains stopped.
++
++## Explicit pre-extension behavior
++
++Old records without parsing evidence are normal-only: ordinary old retries keep
++their existing behavior; literal retries cannot upgrade them. Only the normal
++version may reconstruct an old unversioned digest for a consumed source (including
++the shipped client-transport variation). Changed bytes, literal mode and new
++unknown versions cannot use that compatibility branch. Pre-extension records are
++not rewritten on read. No new global schema/readiness gate is imposed.
++
++## Development proof and adoption gates
++
++`literal-review.vitest.config.ts` selects native auth, current-authority, session,
++request, command routing, source/collector/steer, retry, cancellation and lifecycle
++regressions plus this extension's tests. The external task runner denies network;
++the provider-free Gateway shutdown/restart fixture is run separately with only
++loopback sockets allowed and external networking still denied. The two original participant-retarget failures were runner errors:
++thread-pool workers are not SQLite's host owner. The exact unmodified baseline
++passes under the fork pool; no host guard, production participant code or assertion
++was weakened. Retained external receipts document the failing and passing runs.
++
++Fresh-process tests use task-owned SQLite only, not providers or accounts. Signed
++source and full upstream-to-derived diff digests are separate external review
++artifacts. Shipping still requires sealed dependency/archive provenance, confined
++paired WebSocket and host-tool/memory acceptance, native shutdown/restart acceptance,
++profile/journal migration decisions and parent review before any adapter repin.
+diff --git a/literal-review.vitest.config.ts b/literal-review.vitest.config.ts
+new file mode 100644
+index 00000000..95cd53a7
+--- /dev/null
++++ b/literal-review.vitest.config.ts
+@@ -0,0 +1,51 @@
++import { defineConfig } from "vitest/config";
++import { sharedVitestConfig } from "./test/vitest/vitest.shared.config.js";
++export default defineConfig({
++  ...sharedVitestConfig,
++  test: {
++    ...sharedVitestConfig.test,
++    include: [
++      "src/gateway/server-methods/chat-send-literal-early-abort.test.ts",
++      "src/gateway/server-methods/chat-send-literal-early-abort-storage.test.ts",
++      "src/sessions/chat-input-parsing.test.ts",
++      "src/gateway/server-methods/chat-send-literal-handler.test.ts",
++      "src/gateway/server-methods.authorization.test.ts",
++      "src/gateway/server-methods.profile-authorization.test.ts",
++      "src/gateway/server-methods/chat-send-auth-policy.test.ts",
++      "src/gateway/server-methods/chat-send-pending-inputs.test.ts",
++      "src/gateway/server-methods/chat-send-steering-custody.test.ts",
++      "src/gateway/server-methods/chat-send-retry.test.ts",
++      "src/gateway/server-methods/chat-send-work-admission.test.ts",
++      "src/gateway/server-methods/chat-send-session-binding.test.ts",
++      "src/gateway/server-methods/chat-send-profile-binding.test.ts",
++      "src/gateway/server-methods/chat-send-projection-cancellation.test.ts",
++      "src/gateway/server-methods/chat-send-pending-input-withdrawal.test.ts",
++      "src/gateway/server-methods/sessions-goal.test.ts",
++      "src/gateway/server-methods/sessions-goal.event-custody.test.ts",
++      "src/gateway/server-close.acp-restart.test.ts",
++      "src/gateway/cron-creator-authority-grant.test.ts",
++      "src/sessions/user-turn-transcript*.test.ts",
++      "src/config/sessions/session-accessor.pending-inputs*.test.ts",
++      "src/auto-reply/reply/queue.collect.test.ts",
++      "src/auto-reply/reply/commands-handlers.registration.test.ts",
++      "src/auto-reply/reply/get-reply-directives.target-session.test.ts",
++      "src/auto-reply/reply/get-reply.message-hooks.test.ts",
++      "src/auto-reply/reply/get-reply-inline-actions.skip-when-config-empty.test.ts",
++      "src/gateway/server-methods/chat-send-literal-custody.integration.test.ts",
++      "src/gateway/server-methods/chat-send-literal-custody.test.ts",
++      "src/gateway/server-methods/chat-send-literal-durable-required.test.ts",
++      "src/gateway/server-methods/chat-send-literal-review.test.ts",
++      "src/gateway/server-methods/chat-send-request.test.ts",
++      "src/gateway/server-methods/chat-s*turn.test.ts",
++      "src/gateway/server-methods/chat-send-pre-admission.test.ts",
++      "src/gateway/session-sharing.test.ts",
++      "src/auto-reply/reply/inbound-context.test.ts",
++      "src/auto-reply/reply/commands-core.test.ts",
++      "src/auto-reply/command-auth.owner-default.test.ts",
++    ],
++    pool: "forks",
++    maxWorkers: 1,
++    fileParallelism: false,
++    isolate: true,
++  },
++});
+diff --git a/packages/gateway-protocol/src/schema/logs-chat.ts b/packages/gateway-protocol/src/schema/logs-chat.ts
+index 0e84d956..55a9ef6b 100644
+--- a/packages/gateway-protocol/src/schema/logs-chat.ts
++++ b/packages/gateway-protocol/src/schema/logs-chat.ts
+@@ -323,6 +323,8 @@ export const ChatSendParamsSchema = closedObject({
+   systemInputProvenance: Type.Optional(InputProvenanceSchema),
+   systemProvenanceReceipt: Type.Optional(Type.String()),
+   suppressCommandInterpretation: Type.Optional(Type.Boolean()),
++  // User-text parsing attenuation only; never a system-input attestation.
++  inputMode: Type.Optional(Type.Literal("literal")),
+   // Transcript-branch CAS for non-steer interactive sends: the client's displayed
+   // branch leaf (null = authoritative empty transcript). Steer sends ignore it;
+   // the Gateway steers the session's direct run or starts a turn when idle.
+diff --git a/review-abort.config.ts b/review-abort.config.ts
+new file mode 100644
+index 00000000..fabeb06a
+--- /dev/null
++++ b/review-abort.config.ts
+@@ -0,0 +1,2 @@
++import config from './literal-review.vitest.config';
++export default {...config,test:{...config.test,include:['review-abort.test.ts']}};
+diff --git a/review-abort.test.ts b/review-abort.test.ts
+new file mode 100644
+index 00000000..92391c8e
+--- /dev/null
++++ b/review-abort.test.ts
+@@ -0,0 +1,21 @@
++import {expect,it} from 'vitest';
++import {createDirectChatContext} from './src/gateway/server-chat.agent-events.test-helpers.js';
++import {pendingChatSendDedupeKey} from './src/gateway/server-shared.js';
++import {writePreRegisteredChatAbort} from './src/gateway/server-methods/chat-abort-authorization.js';
++import {normalizeChatSendRequest} from './src/gateway/server-methods/chat-send-request.js';
++import {resolveChatSendRequestConflict} from './src/gateway/server-methods/chat-send-pre-admission.js';
++it('does not reinterpret early-aborted literal operation as stop after identity cache expiry',()=>{
++ const context=createDirectChatContext();
++ const params={sessionKey:'agent:main:review',message:'/stop',idempotencyKey:'early-abort'};
++ const literal=normalizeChatSendRequest({client:null,params:{...params,inputMode:'literal'}});
++ const normal=normalizeChatSendRequest({client:null,params});
++ if(!literal.ok||!normal.ok) throw new Error('normalization failed');
++ const pending=pendingChatSendDedupeKey('early-abort');
++ context.dedupe.set(pending,{ts:1,ok:true,requestIdentity:literal.value.requestIdentity,inputParsingMode:'literal-v1',payload:{runId:'early-abort',status:'accepted',sessionKey:params.sessionKey,attemptId:'attempt'}});
++ writePreRegisteredChatAbort({context,runId:'early-abort',stopReason:'rpc',attemptId:'attempt',endedAt:2});
++ console.log('terminal mode retained:',context.dedupe.get('chat:early-abort')?.inputParsingMode);
++ context.dedupe.delete('chat:early-abort');
++ expect(context.chatRunState.hasAbortMarker('early-abort')).toBe(true);
++ const error=resolveChatSendRequestConflict({request:normal.value,context,session:{clientRunId:'early-abort',pendingChatSendKey:pending,entry:{sessionId:'review',updatedAt:1},agentId:'main',sessionKey:params.sessionKey,storePath:'/unused-review-abort',restartSafeRequest:undefined}});
++ expect(error).toMatchObject({details:{reason:'chat-request-conflict'}});
++});
+diff --git a/src/config/sessions/session-accessor.chat-admission.ts b/src/config/sessions/session-accessor.chat-admission.ts
+new file mode 100644
+index 00000000..47d0dfab
+--- /dev/null
++++ b/src/config/sessions/session-accessor.chat-admission.ts
+@@ -0,0 +1,173 @@
++import type { DatabaseSync } from "node:sqlite";
++import {
++  executeSqliteQuerySync,
++  executeSqliteQueryTakeFirstSync,
++  getNodeSqliteKysely,
++} from "../../infra/kysely-sync.js";
++import type { ChatInputParsingMode } from "../../sessions/chat-input-parsing.js";
++import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
++import { runOpenClawAgentWriteTransaction } from "../../state/openclaw-agent-db.js";
++import type { SessionAccessScope } from "./session-accessor.sqlite-contract.js";
++import { readSessionEntryRow } from "./session-accessor.sqlite-entry-store.js";
++import { resolveSqliteScope, toDatabaseOptions } from "./session-accessor.sqlite-scope.js";
++
++type AdmissionRow = {
++  session_key: string;
++  run_id: string;
++  session_id: string | null;
++  request_identity: string;
++  parsing_mode: string;
++  attempt_id: string;
++  aborted_at: number | null;
++  stop_reason: string | null;
++};
++type AdmissionScope = SessionAccessScope & { agentId: string; sessionId?: string };
++const table = "session_chat_input_admissions";
++const query = (db: DatabaseSync) =>
++  getNodeSqliteKysely<{ session_chat_input_admissions: AdmissionRow }>(db);
++function hasTable(db: DatabaseSync) {
++  // sqlite-allow-raw -- Read-only feature schema discovery, no application data.
++  return Boolean(
++    db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table),
++  );
++}
++function ensureTable(db: DatabaseSync) {
++  // sqlite-allow-raw -- Additive feature-owned DDL; rows use typed Kysely.
++  db.exec(`CREATE TABLE IF NOT EXISTS session_chat_input_admissions (
++    session_key TEXT NOT NULL, run_id TEXT NOT NULL, session_id TEXT,
++    request_identity TEXT NOT NULL, parsing_mode TEXT NOT NULL, attempt_id TEXT NOT NULL,
++    aborted_at INTEGER, stop_reason TEXT,
++    PRIMARY KEY (session_key, run_id)
++  )`);
++}
++function read(db: DatabaseSync, sessionKey: string, runId: string) {
++  return executeSqliteQueryTakeFirstSync(
++    db,
++    query(db)
++      .selectFrom(table)
++      .selectAll()
++      .where("session_key", "=", sessionKey)
++      .where("run_id", "=", runId),
++  );
++}
++function valid(row: AdmissionRow) {
++  return (
++    /^[a-f0-9]{64}$/u.test(row.request_identity) &&
++    ["literal-v1", "normal-v1", "suppressed-v1"].includes(row.parsing_mode) &&
++    Boolean(row.attempt_id) &&
++    (row.aborted_at === null || Number.isFinite(row.aborted_at))
++  );
++}
++
++/** Admission custody precedes the first await and survives response-cache retirement.
++ * It attenuates retries only; it is never execution or abort authorization.
++ * Missing pre-extension tables are read without migrating them.
++ */
++export function readChatInputAdmission(scope: AdmissionScope, runId: string) {
++  try {
++    const resolved = resolveSqliteScope(scope);
++    const result = withOpenClawAgentDatabaseReadOnly(({ db }) => {
++      if (!hasTable(db)) return undefined;
++      const row = read(db, resolved.sessionKey, runId);
++      if (!row) return undefined;
++      if (!valid(row) || (row.session_id !== null && row.session_id !== scope.sessionId))
++        return "invalid" as const;
++      return {
++        identity: row.request_identity,
++        mode: row.parsing_mode as ChatInputParsingMode,
++        abortedAt: row.aborted_at,
++        stopReason: row.stop_reason,
++      };
++    }, toDatabaseOptions(resolved));
++    return result.found ? result.value : undefined;
++  } catch {
++    return "unavailable" as const;
++  }
++}
++
++/** Reserve immutable parsing custody, returning the exact attempt's terminal writer.
++ * The transaction and caller's synchronous owner check form the abort commit boundary.
++ * No message bytes, command authority, or user input are synthesized here.
++ */
++export function reserveChatInputAdmission(params: {
++  scope: AdmissionScope;
++  runId: string;
++  attemptId: string;
++  identity: string;
++  mode: ChatInputParsingMode;
++  assertCurrent: () => void;
++}) {
++  const resolved = resolveSqliteScope(params.scope);
++  const options = toDatabaseOptions(resolved);
++  runOpenClawAgentWriteTransaction(
++    (database) => {
++      params.assertCurrent();
++      if (
++        readSessionEntryRow(database, resolved.sessionKey)?.entry.sessionId !==
++        params.scope.sessionId
++      )
++        throw new Error("Chat admission session changed");
++      ensureTable(database.db);
++      const previous = read(database.db, resolved.sessionKey, params.runId);
++      if (
++        previous &&
++        (!valid(previous) ||
++          previous.request_identity !== params.identity ||
++          previous.parsing_mode !== params.mode ||
++          previous.aborted_at !== null ||
++          (previous.session_id !== null && previous.session_id !== params.scope.sessionId))
++      )
++        throw new Error("Chat admission identity conflicts with the accepted input");
++      executeSqliteQuerySync(
++        database.db,
++        query(database.db)
++          .insertInto(table)
++          .values({
++            session_key: resolved.sessionKey,
++            run_id: params.runId,
++            session_id: params.scope.sessionId ?? null,
++            request_identity: params.identity,
++            parsing_mode: params.mode,
++            attempt_id: params.attemptId,
++            aborted_at: null,
++            stop_reason: null,
++          })
++          .onConflict((conflict) =>
++            conflict
++              .columns(["session_key", "run_id"])
++              .doUpdateSet({ attempt_id: params.attemptId }),
++          ),
++      );
++    },
++    options,
++    { operationLabel: "session.chat-input.reserve-admission" },
++  );
++  return (endedAt: number, stopReason: string, assertOwner: () => void) =>
++    runOpenClawAgentWriteTransaction(
++      (database) => {
++        assertOwner();
++        const previous = read(database.db, resolved.sessionKey, params.runId);
++        if (
++          !previous ||
++          previous.attempt_id !== params.attemptId ||
++          previous.request_identity !== params.identity ||
++          previous.parsing_mode !== params.mode
++        )
++          throw new Error("Chat abort no longer owns admission custody");
++        // Session mutation may itself cause the interruption; bind to the original
++        // reservation rather than redirecting a terminal write to its replacement.
++        if (previous.aborted_at !== null) return;
++        executeSqliteQuerySync(
++          database.db,
++          query(database.db)
++            .updateTable(table)
++            .set({ aborted_at: endedAt, stop_reason: stopReason })
++            .where("session_key", "=", resolved.sessionKey)
++            .where("run_id", "=", params.runId)
++            .where("attempt_id", "=", params.attemptId),
++        );
++      },
++      options,
++      { operationLabel: "session.chat-input.abort-admission" },
++    );
++}
+diff --git a/src/config/sessions/session-accessor.pending-input-request.ts b/src/config/sessions/session-accessor.pending-input-request.ts
+index f0730102..78a005a6 100644
+--- a/src/config/sessions/session-accessor.pending-input-request.ts
++++ b/src/config/sessions/session-accessor.pending-input-request.ts
+@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
+ import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
+ import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
+ import { MAX_PAYLOAD_BYTES } from "../../gateway/server-constants.js";
++import {
++  bindChatInputParsingHash,
++  legacyNormalChatInputHash,
++} from "../../sessions/chat-input-parsing.js";
+ import type { PersistedUserTurnMessage } from "../../sessions/user-turn-transcript.types.js";
+ import type { OpenClawConfig } from "../types.openclaw.js";
+ import type { SessionPendingInputRow } from "./session-accessor.sqlite-pending-inputs.js";
+@@ -12,9 +16,10 @@ function resolvePendingInputRequestHash(
+   message: Record<string, unknown>,
+   requestFingerprint?: string,
+ ): string {
+-  return requestFingerprint
++  const hash = requestFingerprint
+     ? `request:${requestFingerprint}`
+     : createHash("sha256").update(stableStringify(message)).digest("hex");
++  return bindChatInputParsingHash(hash, asOptionalRecord(message["__openclaw"]));
+ }
+ 
+ function preparePendingInputMessage(
+@@ -149,7 +154,10 @@ export function matchesSessionPendingInputRequest(
+   message: Record<string, unknown>,
+   requestHash: string,
+ ): boolean {
+-  if (receipt.request_hash === requestHash) {
++  if (
++    receipt.request_hash === requestHash ||
++    receipt.request_hash === legacyNormalChatInputHash(requestHash)
++  ) {
+     return true;
+   }
+   // Older collectors retain message-hash receipts. Matching one returns its
+@@ -157,10 +165,34 @@ export function matchesSessionPendingInputRequest(
+   if (receipt.consumed_event_id == null) {
+     return false;
+   }
+-  if (receipt.request_hash === resolvePendingInputRequestHash(message)) {
++  const messageHash = resolvePendingInputRequestHash(message);
++  if (
++    receipt.request_hash === messageHash ||
++    receipt.request_hash === legacyNormalChatInputHash(messageHash)
++  ) {
+     return true;
+   }
+   const metadata = asOptionalRecord(message["__openclaw"]);
++  if (
++    metadata?.commandInterpretation === "normal-v1" &&
++    metadata.chatRequestIdentity !== undefined &&
++    !receipt.request_hash.startsWith("chat-parsing-")
++  ) {
++    const legacyMetadata = { ...metadata };
++    delete legacyMetadata.commandInterpretation;
++    delete legacyMetadata.chatRequestIdentity;
++    const legacyMessage = { ...message };
++    if (Object.keys(legacyMetadata).length) legacyMessage["__openclaw"] = legacyMetadata;
++    else delete legacyMessage["__openclaw"];
++    if (
++      matchesSessionPendingInputRequest(
++        receipt,
++        legacyMessage,
++        legacyNormalChatInputHash(requestHash) ?? requestHash,
++      )
++    )
++      return true;
++  }
+   const transport = asOptionalRecord(metadata?.transport);
+   if (!metadata || !transport || !Object.hasOwn(transport, "clients")) {
+     return false;
+@@ -181,5 +213,9 @@ export function matchesSessionPendingInputRequest(
+   } else {
+     delete legacyMessage["__openclaw"];
+   }
+-  return receipt.request_hash === resolvePendingInputRequestHash(legacyMessage);
++  const legacyHash = resolvePendingInputRequestHash(legacyMessage);
++  return (
++    receipt.request_hash === legacyHash ||
++    receipt.request_hash === legacyNormalChatInputHash(legacyHash)
++  );
+ }
+diff --git a/src/config/sessions/session-accessor.pending-inputs.ts b/src/config/sessions/session-accessor.pending-inputs.ts
+index cc252a17..090614ea 100644
+--- a/src/config/sessions/session-accessor.pending-inputs.ts
++++ b/src/config/sessions/session-accessor.pending-inputs.ts
+@@ -16,6 +16,7 @@ import {
+   executeSqliteQueryTakeFirstSync,
+ } from "../../infra/kysely-sync.js";
+ import { runSqliteDeferredTransactionSync } from "../../infra/sqlite-transaction.js";
++import { readChatInputParsingHash } from "../../sessions/chat-input-parsing.js";
+ import type { PersistedUserTurnMessage } from "../../sessions/user-turn-transcript.types.js";
+ import { readOpenClawAgentDatabaseIdentity } from "../../state/openclaw-agent-db-identity.js";
+ import { withOpenClawAgentDatabaseReadOnly } from "../../state/openclaw-agent-db-readonly.js";
+@@ -694,3 +695,51 @@ export function readSessionSubmittedInput(
+     return undefined;
+   }
+ }
++
++/** Independent custody digest survives consumed source removal and rejects partial metadata.
++ * Read-only, exact SID/key; old stores are not migrated by a retry lookup.
++ */
++export function readSessionInputParsingEvidence(scope: PendingInputScope, idempotencyKey: string) {
++  try {
++    const resolved = resolveSqliteTranscriptScope(scope);
++    const result = withOpenClawAgentDatabaseReadOnly(
++      (database) =>
++        runSqliteDeferredTransactionSync(database.db, () => {
++          if (
++            readSessionEntryRow(database, resolved.sessionKey)?.entry.sessionId !==
++            resolved.sessionId
++          )
++            return undefined;
++          const db = getSessionKysely(database.db);
++          for (const table of ["session_pending_inputs", "session_input_completions"] as const) {
++            // sqlite-allow-raw -- Read-only feature-table discovery; application rows use Kysely.
++            if (
++              !database.db
++                .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?")
++                .get(table)
++            )
++              continue;
++            const row = executeSqliteQueryTakeFirstSync(
++              database.db,
++              db
++                .selectFrom(table)
++                .select("request_hash")
++                .where("session_key", "=", resolved.sessionKey)
++                .where("session_id", "=", resolved.sessionId)
++                .where("idempotency_key", "=", idempotencyKey),
++            );
++            if (row) {
++              const evidence = readChatInputParsingHash(row.request_hash);
++              if (evidence !== undefined) return evidence;
++            }
++          }
++          return undefined;
++        }),
++      toDatabaseOptions(resolved),
++    );
++    return result.found ? result.value : undefined;
++  } catch {
++    // A failed read is not proof that a versioned row is absent.
++    return "unavailable" as const;
++  }
++}
+diff --git a/src/config/sessions/session-accessor.sqlite-pending-inputs.ts b/src/config/sessions/session-accessor.sqlite-pending-inputs.ts
+index b33ffa48..399c67f5 100644
+--- a/src/config/sessions/session-accessor.sqlite-pending-inputs.ts
++++ b/src/config/sessions/session-accessor.sqlite-pending-inputs.ts
+@@ -13,6 +13,7 @@ import {
+   executeSqliteQueryTakeFirstSync,
+ } from "../../infra/kysely-sync.js";
+ import { stageSqliteTransactionState } from "../../infra/sqlite-post-commit.js";
++import { readChatInputParsingHash } from "../../sessions/chat-input-parsing.js";
+ import type { PersistedUserTurnMessage } from "../../sessions/user-turn-transcript.types.js";
+ import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
+ import type { SessionPendingInputs } from "../../state/openclaw-agent-db.generated.js";
+@@ -555,17 +556,33 @@ export function consumeSessionPendingInput(
+       candidate.databasePath === database.path &&
+       inputIds.has(candidate.inputId),
+   );
+-  if (pending.sourceInputIds) {
++  const single = !pending.sourceInputIds
++    ? executeSqliteQueryTakeFirstSync(
++        database.db,
++        getSessionKysely(database.db)
++          .selectFrom("session_pending_inputs")
++          .select("request_hash")
++          .where("input_id", "=", pending.inputId),
++      )
++    : undefined;
++  // Versioned chat sources need their exact parsing evidence after RAM expiry and
++  // restart, just like collected sources. Promotion retires custody, not identity.
++  const retainedSourceIds =
++    pending.sourceInputIds ??
++    (single && readChatInputParsingHash(single.request_hash) !== undefined
++      ? [pending.inputId]
++      : undefined);
++  if (retainedSourceIds) {
+     const updated = executeSqliteQuerySync(
+       database.db,
+       getSessionKysely(database.db)
+         .updateTable("session_pending_inputs")
+         .set({ consumed_event_id: pending.inputId })
+-        .where("input_id", "in", [...pending.sourceInputIds])
++        .where("input_id", "in", [...retainedSourceIds])
+         .where("state", "=", "queued")
+         .where("consumed_event_id", "is", null),
+     );
+-    if (updated.numAffectedRows !== BigInt(pending.sourceInputIds.length)) {
++    if (updated.numAffectedRows !== BigInt(retainedSourceIds.length)) {
+       throw new SessionPendingInputCustodyError(
+         "Collected input custody changed during transcript promotion",
+       );
+diff --git a/src/config/sessions/session-accessor.ts b/src/config/sessions/session-accessor.ts
+index 44da64a0..085544bd 100644
+--- a/src/config/sessions/session-accessor.ts
++++ b/src/config/sessions/session-accessor.ts
+@@ -11,6 +11,7 @@ export {
+   listSessionPendingInputs,
+   readSessionPendingInput,
+   readSessionSubmittedInput,
++  readSessionInputParsingEvidence,
+   stageSessionPendingInput,
+   withSessionPendingInputPersistence,
+   withSessionPendingInputRelocation,
+@@ -321,3 +322,8 @@ export { readSessionEntriesFromStoreInWorker } from "./session-entry-read-runtim
+ 
+ export { readSessionBackingFacts, type SessionBackingFact } from "./session-backing-facts.js";
+ export { readSessionBackingFactsInWorker } from "./session-backing-facts-runtime.js";
++
++export {
++  readChatInputAdmission,
++  reserveChatInputAdmission,
++} from "./session-accessor.chat-admission.js";
+diff --git a/src/gateway/agent-turn/agent-job.ts b/src/gateway/agent-turn/agent-job.ts
+index 72beae5b..117203ed 100644
+--- a/src/gateway/agent-turn/agent-job.ts
++++ b/src/gateway/agent-turn/agent-job.ts
+@@ -553,7 +553,11 @@ export function setGatewayDedupeEntry(params: {
+ 
+   // Terminal writers own outcomes, not request identity; never erase the admission binding.
+   const entry = existing?.requestIdentity
+-    ? { ...params.entry, requestIdentity: existing.requestIdentity }
++    ? {
++        ...params.entry,
++        requestIdentity: existing.requestIdentity,
++        inputParsingMode: existing.inputParsingMode,
++      }
+     : params.entry;
+   params.dedupe.set(params.key, entry);
+   if (!key) {
+diff --git a/src/gateway/server-chat-state.ts b/src/gateway/server-chat-state.ts
+index 07ee91a3..452e4317 100644
+--- a/src/gateway/server-chat-state.ts
++++ b/src/gateway/server-chat-state.ts
+@@ -31,7 +31,12 @@ export type ChatRunEntry = ChatRunRegistration & {
+   registeredSequence: number;
+ };
+ 
+-export type ChatAbortMarker = { abortedAtMs: number; sequence: number };
++export type ChatAbortMarker = {
++  abortedAtMs: number;
++  sequence: number;
++  requestIdentity?: string;
++  inputParsingMode?: import("../sessions/chat-input-parsing.js").ChatInputParsingMode;
++};
+ 
+ let chatRunOrderingSequence = 0;
+ 
+diff --git a/src/gateway/server-methods/chat-abort-authorization.ts b/src/gateway/server-methods/chat-abort-authorization.ts
+index 983b9149..e3268c26 100644
+--- a/src/gateway/server-methods/chat-abort-authorization.ts
++++ b/src/gateway/server-methods/chat-abort-authorization.ts
+@@ -7,7 +7,11 @@ import { listQueuedChatTurnsForSession } from "../chat-queued-turns.js";
+ import { chatRunBelongsToAgent, resolveChatRunOwnerAgentId } from "../chat-run-owner.js";
+ import { ADMIN_SCOPE } from "../method-scopes.js";
+ import { createChatAbortMarker } from "../server-chat-state.js";
+-import { pendingChatSendDedupeKey, PENDING_CHAT_SEND_DEDUPE_PREFIX } from "../server-shared.js";
++import {
++  pendingChatSendDedupeKey,
++  PENDING_CHAT_SEND_DEDUPE_PREFIX,
++  type DedupeEntry,
++} from "../server-shared.js";
+ import type {
+   GatewayRequestContext,
+   GatewayRequestHandlerOptions,
+@@ -282,6 +286,8 @@ export function writePreRegisteredChatAbort(params: {
+   endedAt?: number;
+   attemptId?: string;
+   expectedPayload?: PreRegisteredAgentDedupePayload;
++  /** Retained by the admission owner if maintenance retires its expired RAM reservation. */
++  reservation?: DedupeEntry;
+ }) {
+   if (
+     params.expectedPayload &&
+@@ -296,17 +302,34 @@ export function writePreRegisteredChatAbort(params: {
+     stopReason: params.stopReason,
+     endedAt,
+   });
+-  params.context.chatRunState.getOrCreate(params.runId).abortMarker =
+-    createChatAbortMarker(endedAt);
+   const pendingKey = pendingChatSendDedupeKey(params.runId);
+-  const pendingEntry = params.context.dedupe.get(pendingKey);
++  const livePendingEntry = params.context.dedupe.get(pendingKey);
++  const pendingEntry = livePendingEntry ?? params.reservation;
++  if (
++    !livePendingEntry &&
++    params.reservation &&
++    (!params.reservation.commitEarlyAbort ||
++      params.context.chatAbortControllers.has(params.runId) ||
++      params.context.dedupe.get(`chat:${params.runId}`)?.payload !== undefined)
++  )
++    return false;
+   const pendingAttemptId = normalizeOptionalString(
+     (pendingEntry?.payload as PreRegisteredAgentDedupePayload | undefined)?.attemptId,
+   );
+-  const ownsPendingAttempt = !params.attemptId || pendingAttemptId === params.attemptId;
+-  if (ownsPendingAttempt) {
+-    params.context.dedupe.delete(pendingKey);
+-  }
++  // A stale attempt must not mark, delete, or overwrite another attempt's outcome.
++  if (params.attemptId && pendingAttemptId !== params.attemptId) return false;
++  const assertOwner = () => {
++    if (params.context.dedupe.get(pendingKey) !== livePendingEntry)
++      throw new Error("Chat abort admission owner changed");
++  };
++  pendingEntry?.commitEarlyAbort?.(endedAt, params.stopReason, assertOwner);
++  assertOwner();
++  params.context.chatRunState.getOrCreate(params.runId).abortMarker = {
++    ...createChatAbortMarker(endedAt),
++    requestIdentity: pendingEntry?.requestIdentity,
++    inputParsingMode: pendingEntry?.inputParsingMode,
++  };
++  params.context.dedupe.delete(pendingKey);
+   setGatewayDedupeEntry({
+     dedupe: params.context.dedupe,
+     key: `chat:${params.runId}`,
+@@ -314,8 +337,9 @@ export function writePreRegisteredChatAbort(params: {
+       ts: endedAt,
+       ok: true,
+       payload,
+-      ...(ownsPendingAttempt && pendingEntry?.requestIdentity
+-        ? { requestIdentity: pendingEntry.requestIdentity }
++      ...(pendingEntry?.requestIdentity ? { requestIdentity: pendingEntry.requestIdentity } : {}),
++      ...(pendingEntry?.inputParsingMode
++        ? { inputParsingMode: pendingEntry.inputParsingMode }
+         : {}),
+     },
+   });
+diff --git a/src/gateway/server-methods/chat-send-admission.ts b/src/gateway/server-methods/chat-send-admission.ts
+index 07231040..32737c75 100644
+--- a/src/gateway/server-methods/chat-send-admission.ts
++++ b/src/gateway/server-methods/chat-send-admission.ts
+@@ -17,6 +17,7 @@ import {
+ import { resolveActiveReplyRunOwnerForSignal } from "../../auto-reply/reply/reply-run-registry.state.js";
+ import { resolveSessionWorkStartError } from "../../config/sessions.js";
+ import { hasRestartRecoveryTerminalRun } from "../../config/sessions/restart-recovery-state.js";
++import { reserveChatInputAdmission } from "../../config/sessions/session-accessor.js";
+ import type { SessionEntry } from "../../config/sessions/types.js";
+ import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
+ import { claimAgentRunContext, clearAgentRunContext } from "../../infra/agent-run-registry.js";
+@@ -159,10 +160,29 @@ export async function admitChatSend(
+   // Keep the run abortable while lifecycle mutation owns the session. Admission
+   // must reject an expired/missing reservation instead of reviving evicted work.
+   params.assertCurrent?.();
+-  context.dedupe.set(pendingChatSendKey, {
++  const inputParsingMode =
++    request.p.inputMode === "literal"
++      ? "literal-v1"
++      : request.suppressCommandInterpretation
++        ? "suppressed-v1"
++        : "normal-v1";
++  const commitEarlyAbort = reserveChatInputAdmission({
++    scope: { agentId, sessionKey, sessionId: entry?.sessionId, storePath },
++    runId: clientRunId,
++    attemptId: pendingAttemptId,
++    identity: request.requestIdentity,
++    mode: inputParsingMode,
++    assertCurrent: () => {
++      params.assertCurrent?.();
++      assertSessionTargetCurrent();
++    },
++  });
++  const pendingChatReservation: DedupeEntry = {
+     ts: now,
+     ok: true,
+     requestIdentity: request.requestIdentity,
++    inputParsingMode,
++    commitEarlyAbort,
+     payload: {
+       runId: clientRunId,
+       attemptId: pendingAttemptId,
+@@ -179,7 +199,8 @@ export async function admitChatSend(
+         ? { goalFingerprint: request.goalOperation.requestFingerprint }
+         : {}),
+     },
+-  });
++  };
++  context.dedupe.set(pendingChatSendKey, pendingChatReservation);
+   const clearPendingChatSendReservation = () => {
+     const pending = readPendingReservation();
+     if (
+@@ -232,6 +253,7 @@ export async function admitChatSend(
+         runId: clientRunId,
+         stopReason: "restart",
+         attemptId: pendingAttemptId,
++        reservation: pendingChatReservation,
+       });
+       return;
+     }
+@@ -244,6 +266,7 @@ export async function admitChatSend(
+         runId: clientRunId,
+         stopReason: "timeout",
+         attemptId: pendingAttemptId,
++        reservation: pendingChatReservation,
+       });
+       return;
+     }
+@@ -394,6 +417,7 @@ export async function admitChatSend(
+               runId: clientRunId,
+               stopReason,
+               attemptId: pendingAttemptId,
++              reservation: pendingChatReservation,
+             });
+           }
+         } else if (!admittedRunAbort.controller.signal.aborted) {
+@@ -450,6 +474,12 @@ export async function admitChatSend(
+       ts: Date.now(),
+       ok: true,
+       requestIdentity: request.requestIdentity,
++      inputParsingMode:
++        request.p.inputMode === "literal"
++          ? "literal-v1"
++          : request.suppressCommandInterpretation
++            ? "suppressed-v1"
++            : "normal-v1",
+     });
+   }
+   clearPendingChatSendReservation();
+@@ -486,6 +516,7 @@ export async function admitChatSend(
+         runId: clientRunId,
+         stopReason: activeRunAbort?.entry?.abortStopReason ?? "restart",
+         attemptId: pendingAttemptId,
++        reservation: pendingChatReservation,
+       });
+     }
+     const aborted = readChatSendDedupeResponse(context.dedupe, clientRunId);
+diff --git a/src/gateway/server-methods/chat-send-handler.ts b/src/gateway/server-methods/chat-send-handler.ts
+index 8a7960ec..c7e3d54f 100644
+--- a/src/gateway/server-methods/chat-send-handler.ts
++++ b/src/gateway/server-methods/chat-send-handler.ts
+@@ -162,7 +162,9 @@ async function handleChatSendWithOptions(
+     isIncognitoEntry: entry?.incognito === true,
+     isReconnectResume: reconnectResumeRequested,
+     isSystemGenerated:
+-      normalizedRequest.value.suppressCommandInterpretation ||
++      // Literal text is still ordinary caller-authored user input. Normalization
++      // rejects mixing it with any system-input or continuation option.
++      (normalizedRequest.value.suppressCommandInterpretation && p.inputMode !== "literal") ||
+       normalizedRequest.value.systemProvenanceReceipt !== undefined,
+     turnKind: normalizedRequest.value.turnKind,
+   };
+diff --git a/src/gateway/server-methods/chat-send-literal-custody.integration.test.ts b/src/gateway/server-methods/chat-send-literal-custody.integration.test.ts
+new file mode 100644
+index 00000000..dff1a0b7
+--- /dev/null
++++ b/src/gateway/server-methods/chat-send-literal-custody.integration.test.ts
+@@ -0,0 +1,216 @@
++import { execFileSync } from "node:child_process";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { buildAgentRunTerminalOutcome } from "../../agents/agent-run-terminal-outcome.js";
++import {
++  appendTranscriptMessage,
++  loadTranscriptEvents,
++  readSessionSubmittedInput,
++  upsertSessionEntryCore,
++} from "../../config/sessions/session-accessor.js";
++import {
++  stageSessionPendingInput,
++  bindSessionPendingInputSources,
++  type SessionPendingInputReceipt,
++} from "../../config/sessions/session-accessor.pending-inputs.js";
++import {
++  resolveSqliteScope,
++  toDatabaseOptions,
++} from "../../config/sessions/session-accessor.sqlite-scope.js";
++import { useTempSessionsFixture } from "../../config/sessions/test-helpers.js";
++import { buildPersistedUserTurnMessage } from "../../sessions/user-turn-transcript.message.js";
++import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db-lifecycle.js";
++import {
++  openOpenClawAgentDatabase,
++  closeOpenClawAgentDatabasesForTest,
++} from "../../state/openclaw-agent-db.js";
++import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
++import { pendingChatSendDedupeKey } from "../server-shared.js";
++import { resolveChatSendRequestConflict } from "./chat-send-pre-admission.js";
++import { normalizeChatSendRequest } from "./chat-send-request.js";
++
++describe("literal source custody on real SQLite", () => {
++  const fixture = useTempSessionsFixture("literal-custody-");
++  const sessionKey = "agent:main:literal";
++  const sessionId = "literal-session";
++  const scope = () => ({ agentId: "main", sessionKey, sessionId, storePath: fixture.storePath() });
++  const receipts: SessionPendingInputReceipt[] = [];
++  beforeEach(async () => {
++    await upsertSessionEntryCore(scope(), { sessionId, updatedAt: 1 });
++  });
++  afterEach(() => {
++    for (const r of receipts.splice(0)) r.finish("interrupted");
++    closeOpenClawAgentDatabasesForTest();
++  });
++  function request(literal: boolean) {
++    const r = normalizeChatSendRequest({
++      client: null,
++      params: {
++        sessionKey,
++        sessionId,
++        message: "/stop",
++        idempotencyKey: "once",
++        ...(literal ? { inputMode: "literal" } : {}),
++      },
++    });
++    if (!r.ok) throw new Error(r.error);
++    return r.value;
++  }
++  function conflict(literal: boolean) {
++    return resolveChatSendRequestConflict({
++      request: request(literal),
++      context: createDirectChatContext(),
++      session: {
++        ...scope(),
++        entry: { sessionId, updatedAt: 1 },
++        clientRunId: "once",
++        pendingChatSendKey: pendingChatSendDedupeKey("once"),
++        restartSafeRequest: undefined,
++      },
++    });
++  }
++  it.each([
++    { literal: true, collected: false },
++    { literal: false, collected: false },
++    { literal: true, collected: true },
++    { literal: false, collected: true },
++  ])(
++    "retains symmetric parsing identity through pending, consumed, closed database and retry (%j)",
++    async ({ literal, collected }) => {
++      const r = request(literal);
++      const message = buildPersistedUserTurnMessage({
++        text: r.rawMessage,
++        timestamp: 1,
++        idempotencyKey: "once:user",
++        commandInterpretation: literal ? "literal-v1" : "normal-v1",
++        chatRequestIdentity: r.requestIdentity,
++      });
++      const options = { runId: "once", message, assertCurrent: () => {} };
++      const first = await stageSessionPendingInput(scope(), options);
++      expect(first).toBeDefined();
++      receipts.push(first!);
++      expect(readSessionSubmittedInput(scope(), "once:user")?.__openclaw).toEqual(
++        message.__openclaw,
++      );
++      expect(conflict(!literal)).toBeDefined();
++      expect(conflict(literal)).toBeUndefined();
++      let promoted = first!;
++      if (collected) {
++        const sibling = (await stageSessionPendingInput(scope(), {
++          runId: "sibling",
++          assertCurrent: () => {},
++          message: buildPersistedUserTurnMessage({
++            text: "second ordinary source",
++            timestamp: 2,
++            idempotencyKey: "sibling:user",
++          }),
++        }))!;
++        receipts.push(sibling);
++        promoted = bindSessionPendingInputSources(
++          [first!, sibling],
++          buildPersistedUserTurnMessage({
++            text: "collected inputs",
++            timestamp: 3,
++            idempotencyKey: "aggregate:user",
++          }),
++        )!;
++        receipts.push(promoted);
++      }
++      let executions = 0;
++      await promoted.run(async () => {
++        executions++;
++        await appendTranscriptMessage(scope(), { message: promoted.message });
++      });
++      for (const receipt of receipts.splice(0)) receipt.finish("interrupted");
++      await closeOpenClawAgentDatabasesAsync();
++      // A new context has no dedupe, abort or terminal cache; source evidence remains authoritative.
++      expect(conflict(!literal)).toBeDefined();
++      expect(conflict(literal)).toBeUndefined();
++      const freshProcess = JSON.parse(
++        execFileSync(
++          process.execPath,
++          [
++            "--import",
++            "./scripts/tsx.mjs",
++            "test/fixtures/chat-literal-retry-process.ts",
++            JSON.stringify({ scope: scope(), message }),
++          ],
++          { encoding: "utf8" },
++        ),
++      );
++      expect(freshProcess).toEqual({
++        evidence: { mode: literal ? "literal-v1" : "normal-v1", identity: r.requestIdentity },
++        state: "consumed",
++      });
++      const replay = await stageSessionPendingInput(scope(), options);
++      expect(replay?.state).toBe("consumed");
++      receipts.push(replay!);
++      if (replay?.state !== "consumed") executions++;
++      expect(executions).toBe(1);
++      expect(
++        (await loadTranscriptEvents(scope())).filter(
++          (e) => typeof e === "object" && e !== null && "type" in e && e.type === "message",
++        ),
++      ).toHaveLength(1);
++      expect(readSessionSubmittedInput(scope(), "once:user")?.__openclaw).toEqual(
++        message.__openclaw,
++      );
++    },
++  );
++  it.each([true, false])(
++    "retains terminal completion mode after the source row is retired (%s)",
++    async (literal) => {
++      const r = request(literal);
++      const message = buildPersistedUserTurnMessage({
++        text: r.rawMessage,
++        timestamp: 1,
++        idempotencyKey: "once:user",
++        commandInterpretation: literal ? "literal-v1" : "normal-v1",
++        chatRequestIdentity: r.requestIdentity,
++      });
++      const options = { runId: "once", message, trackCompletion: true, assertCurrent: () => {} };
++      const first = (await stageSessionPendingInput(scope(), options))!;
++      receipts.push(first);
++      first.complete!(buildAgentRunTerminalOutcome({ status: "ok" }));
++      first.finish("interrupted");
++      receipts.pop();
++      await closeOpenClawAgentDatabasesAsync();
++      expect(readSessionSubmittedInput(scope(), "once:user")).toBeUndefined();
++      expect(conflict(!literal)).toBeDefined();
++      expect(conflict(literal)).toBeUndefined();
++      const replay = (await stageSessionPendingInput(scope(), options))!;
++      receipts.push(replay);
++      expect(replay.state).toBe("consumed");
++      expect(() =>
++        replay.run(() => {
++          throw new Error("MUST NOT EXECUTE");
++        }),
++      ).toThrow("already completed");
++    },
++  );
++  it.each([true, false])(
++    "fails closed for damaged required parsing metadata in retained custody (%s)",
++    async (literal) => {
++      const r = request(literal);
++      const message = buildPersistedUserTurnMessage({
++        text: r.rawMessage,
++        timestamp: 1,
++        idempotencyKey: "once:user",
++        commandInterpretation: literal ? "literal-v1" : "normal-v1",
++        chatRequestIdentity: r.requestIdentity,
++      });
++      const first = (await stageSessionPendingInput(scope(), {
++        runId: "once",
++        message,
++        assertCurrent: () => {},
++      }))!;
++      receipts.push(first);
++      const database = openOpenClawAgentDatabase(toDatabaseOptions(resolveSqliteScope(scope())));
++      const damaged = { ...message, __openclaw: {} };
++      database.db
++        .prepare("UPDATE session_pending_inputs SET message_json = ? WHERE input_id = ?")
++        .run(JSON.stringify(damaged), first.inputId);
++      expect(conflict(literal)).toBeDefined();
++      expect(conflict(!literal)).toBeDefined();
++    },
++  );
++});
+diff --git a/src/gateway/server-methods/chat-send-literal-custody.test.ts b/src/gateway/server-methods/chat-send-literal-custody.test.ts
+new file mode 100644
+index 00000000..6c37e467
+--- /dev/null
++++ b/src/gateway/server-methods/chat-send-literal-custody.test.ts
+@@ -0,0 +1,123 @@
++import { beforeEach, describe, expect, it, vi } from "vitest";
++import { readSessionSubmittedInput } from "../../config/sessions/session-accessor.js";
++import { buildPersistedUserTurnMessage } from "../../sessions/user-turn-transcript.message.js";
++import {
++  preparePersistedUserTurnMessageForTranscriptWrite,
++  restorePreparedUserTurnOperationalMetaForRuntime,
++} from "../../sessions/user-turn-transcript.metadata.js";
++import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
++import { pendingChatSendDedupeKey } from "../server-shared.js";
++import { resolveChatSendRequestConflict, respondChatSendRetry } from "./chat-send-pre-admission.js";
++import { normalizeChatSendRequest } from "./chat-send-request.js";
++vi.mock("../../config/sessions/session-accessor.js", async (original) => ({
++  ...(await original<typeof import("../../config/sessions/session-accessor.js")>()),
++  readSessionSubmittedInput: vi.fn(),
++}));
++beforeEach(() => vi.mocked(readSessionSubmittedInput).mockReset());
++function fixture(literal: boolean) {
++  const normalized = normalizeChatSendRequest({
++    client: null,
++    params: {
++      sessionKey: "agent:main:literal",
++      message: "/stop",
++      idempotencyKey: "durable",
++      ...(literal ? { inputMode: "literal" } : {}),
++    },
++  });
++  if (!normalized.ok) throw new Error(normalized.error);
++  return {
++    request: normalized.value,
++    context: createDirectChatContext(),
++    respond: vi.fn(),
++    session: {
++      clientRunId: "durable",
++      pendingChatSendKey: pendingChatSendDedupeKey("durable"),
++      entry: { sessionId: "literal", updatedAt: 1 },
++      agentId: "main",
++      sessionKey: "agent:main:literal",
++      storePath: "/unused",
++      restartSafeRequest: undefined,
++    },
++  };
++}
++function source(literal: boolean) {
++  const { request } = fixture(literal);
++  return buildPersistedUserTurnMessage({
++    text: request.rawMessage,
++    idempotencyKey: "durable:user",
++    timestamp: 1,
++    commandInterpretation: literal ? "literal-v1" : "normal-v1",
++    chatRequestIdentity: request.requestIdentity,
++  });
++}
++describe("versioned parsing custody", () => {
++  it("checks retained terminal parsing attestation even when raw identity matches", () => {
++    const f = fixture(false);
++    f.context.dedupe.set("chat:durable", {
++      ts: 1,
++      ok: true,
++      requestIdentity: f.request.requestIdentity,
++      inputParsingMode: "literal-v1",
++      payload: { status: "ok" },
++    });
++    expect(resolveChatSendRequestConflict(f)).toBeDefined();
++  });
++  it.each([true, false])(
++    "denies symmetric mode changes without any RAM/terminal entry: original literal=%s",
++    (literal) => {
++      vi.mocked(readSessionSubmittedInput).mockReturnValue(source(literal));
++      expect(resolveChatSendRequestConflict(fixture(!literal))).toMatchObject({
++        details: { reason: "chat-request-conflict" },
++      });
++      expect(resolveChatSendRequestConflict(fixture(literal))).toBeUndefined();
++    },
++  );
++  it.each([true, false])("denies missing/invalid required identity, mode=%s", (literal) => {
++    const message = source(literal);
++    delete message.__openclaw!.chatRequestIdentity;
++    vi.mocked(readSessionSubmittedInput).mockReturnValue(message);
++    expect(resolveChatSendRequestConflict(fixture(literal))).toBeDefined();
++    message.__openclaw!.commandInterpretation = "literal-v2";
++    expect(resolveChatSendRequestConflict(fixture(literal))).toBeDefined();
++  });
++  it("preserves legacy normal sources, never reinterprets them as literal", () => {
++    const legacy = buildPersistedUserTurnMessage({
++      text: "/stop",
++      idempotencyKey: "durable:user",
++      timestamp: 1,
++    });
++    vi.mocked(readSessionSubmittedInput).mockReturnValue(legacy);
++    expect(resolveChatSendRequestConflict(fixture(false))).toBeUndefined();
++    expect(resolveChatSendRequestConflict(fixture(true))).toBeDefined();
++  });
++  it("does not globally reject legacy terminal retries with no submitted source", () => {
++    const f = fixture(false);
++    f.context.dedupe.set("chat:durable", { ts: 1, ok: true, payload: { status: "ok" } });
++    expect(respondChatSendRetry(f)).toBe(true);
++    expect(f.respond).toHaveBeenCalledWith(true, { status: "ok" }, undefined, { cached: true });
++  });
++  it.each([true, false])(
++    "restores reserved parsing evidence after hooks, literal=%s",
++    (literal) => {
++      const original = source(literal);
++      const expected = structuredClone(original.__openclaw);
++      const prepared = preparePersistedUserTurnMessageForTranscriptWrite(original, {
++        beforeMessageWrite: ({ message }) => {
++          message.__openclaw = { commandInterpretation: "forged", chatRequestIdentity: "forged" };
++          return message;
++        },
++      });
++      expect(prepared?.__openclaw).toEqual(expected);
++      const runtime = restorePreparedUserTurnOperationalMetaForRuntime({
++        preparedMessage: prepared,
++        runtimeMessage: {
++          role: "user",
++          content: "changed",
++          timestamp: 2,
++          __openclaw: { commandInterpretation: "forged" },
++        },
++      });
++      expect(runtime.__openclaw).toEqual(expected);
++    },
++  );
++});
+diff --git a/src/gateway/server-methods/chat-send-literal-durable-required.test.ts b/src/gateway/server-methods/chat-send-literal-durable-required.test.ts
+new file mode 100644
+index 00000000..9b82bad2
+--- /dev/null
++++ b/src/gateway/server-methods/chat-send-literal-durable-required.test.ts
+@@ -0,0 +1,43 @@
++// REQUIRED SECURITY ACCEPTANCE: originally red on the normalization-only prototype.
++// Keep this fail-closed assertion uninverted and unskipped.
++import { expect, it, vi } from "vitest";
++import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
++import { pendingChatSendDedupeKey } from "../server-shared.js";
++import { resolveChatSendRequestConflict } from "./chat-send-pre-admission.js";
++import { normalizeChatSendRequest } from "./chat-send-request.js";
++vi.mock("../../config/sessions/session-accessor.js", async (original) => ({
++  ...(await original<typeof import("../../config/sessions/session-accessor.js")>()),
++  readSessionSubmittedInput: vi.fn(() => undefined),
++}));
++it("fails closed for literal retry when terminal evidence outlives the parsing-mode fingerprint", () => {
++  const normalized = normalizeChatSendRequest({
++    client: null,
++    params: {
++      sessionKey: "agent:main:literal-review",
++      message: "/stop",
++      inputMode: "literal",
++      idempotencyKey: "mode-retired",
++    },
++  });
++  if (!normalized.ok) throw new Error(normalized.error);
++  const context = createDirectChatContext();
++  context.dedupe.set("chat:mode-retired", {
++    ts: 1,
++    ok: true,
++    payload: { runId: "mode-retired", status: "ok" },
++  });
++  const error = resolveChatSendRequestConflict({
++    request: normalized.value,
++    context,
++    session: {
++      clientRunId: "mode-retired",
++      pendingChatSendKey: pendingChatSendDedupeKey("mode-retired"),
++      entry: { sessionId: "literal-review", updatedAt: 1 },
++      agentId: "main",
++      sessionKey: "agent:main:literal-review",
++      storePath: "/unused-review-fixture",
++      restartSafeRequest: undefined,
++    },
++  });
++  expect(error).toMatchObject({ details: { reason: "chat-request-conflict" } });
++});
+diff --git a/src/gateway/server-methods/chat-send-literal-early-abort-storage.test.ts b/src/gateway/server-methods/chat-send-literal-early-abort-storage.test.ts
+new file mode 100644
+index 00000000..e2d76528
+--- /dev/null
++++ b/src/gateway/server-methods/chat-send-literal-early-abort-storage.test.ts
+@@ -0,0 +1,118 @@
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import {
++  readChatInputAdmission,
++  reserveChatInputAdmission,
++  upsertSessionEntryCore,
++} from "../../config/sessions/session-accessor.js";
++import {
++  resolveSqliteScope,
++  toDatabaseOptions,
++} from "../../config/sessions/session-accessor.sqlite-scope.js";
++import { useTempSessionsFixture } from "../../config/sessions/test-helpers.js";
++import {
++  openOpenClawAgentDatabase,
++  closeOpenClawAgentDatabasesForTest,
++} from "../../state/openclaw-agent-db.js";
++import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
++import { pendingChatSendDedupeKey } from "../server-shared.js";
++import { resolveChatSendRequestConflict } from "./chat-send-pre-admission.js";
++import { normalizeChatSendRequest } from "./chat-send-request.js";
++
++describe("durable early admission owner", () => {
++  const fixture = useTempSessionsFixture("early-chat-admission-");
++  const scope = () => ({
++    agentId: "main",
++    sessionKey: "agent:main:early",
++    sessionId: "early-sid",
++    storePath: fixture.storePath(),
++  });
++  const database = () => openOpenClawAgentDatabase(toDatabaseOptions(resolveSqliteScope(scope())));
++  beforeEach(async () => {
++    await upsertSessionEntryCore(scope(), { sessionId: "early-sid", updatedAt: 1 });
++  });
++  afterEach(() => closeOpenClawAgentDatabasesForTest());
++  const reserve = (attemptId: string, literal = true, assertCurrent = () => {}) =>
++    reserveChatInputAdmission({
++      scope: scope(),
++      runId: "once",
++      attemptId,
++      identity: "a".repeat(64),
++      mode: literal ? "literal-v1" : "normal-v1",
++      assertCurrent,
++    });
++  it("does not migrate a legacy store merely to read missing evidence", () => {
++    expect(readChatInputAdmission(scope(), "once")).toBeUndefined();
++    expect(
++      database()
++        .db.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'session_chat_input_admissions'")
++        .get(),
++    ).toBeUndefined();
++  });
++  it.each([true, false])(
++    "enforces immutable identity, exact attempt and first terminal outcome, literal=%s",
++    (literal) => {
++      const old = reserve("old", literal);
++      expect(() => reserve("opposite", !literal)).toThrow("conflicts");
++      const current = reserve("current", literal);
++      expect(() => old(10, "rpc", () => {})).toThrow("no longer owns");
++      expect(readChatInputAdmission(scope(), "once")).toMatchObject({ abortedAt: null });
++      expect(() =>
++        current(20, "rpc", () => {
++          throw new Error("owner revoked");
++        }),
++      ).toThrow("owner revoked");
++      expect(readChatInputAdmission(scope(), "once")).toMatchObject({ abortedAt: null });
++      current(30, "rpc", () => {});
++      current(40, "restart", () => {});
++      expect(readChatInputAdmission(scope(), "once")).toMatchObject({
++        abortedAt: 30,
++        stopReason: "rpc",
++      });
++      expect(() => reserve("retry", literal)).toThrow("conflicts");
++      closeOpenClawAgentDatabasesForTest();
++      expect(readChatInputAdmission(scope(), "once")).toMatchObject({
++        abortedAt: 30,
++        mode: literal ? "literal-v1" : "normal-v1",
++      });
++    },
++  );
++  it("rolls back a failed reservation without publishing a replacement owner", () => {
++    const current = reserve("first");
++    database().db.exec(
++      "CREATE TRIGGER fail_reservation BEFORE UPDATE OF attempt_id ON session_chat_input_admissions BEGIN SELECT RAISE(ABORT, 'reservation persistence failure'); END",
++    );
++    expect(() => reserve("replacement")).toThrow("reservation persistence failure");
++    database().db.exec("DROP TRIGGER fail_reservation");
++    current(10, "rpc", () => {});
++    expect(readChatInputAdmission(scope(), "once")).toMatchObject({ abortedAt: 10 });
++  });
++  it("does not redirect an old session's evidence to a new incarnation", async () => {
++    reserve("first")(10, "rpc", () => {});
++    await upsertSessionEntryCore(scope(), { sessionId: "replacement", updatedAt: 2 });
++    expect(readChatInputAdmission({ ...scope(), sessionId: "replacement" }, "once")).toBe(
++      "invalid",
++    );
++    expect(() => reserve("replacement")).toThrow("session changed");
++  });
++  it("versioned corrupt custody cannot fall through the legacy no-evidence path", () => {
++    reserve("first")(10, "rpc", () => {});
++    database().db.exec("UPDATE session_chat_input_admissions SET parsing_mode = 'literal-v999'");
++    const normalized = normalizeChatSendRequest({
++      client: null,
++      params: { sessionKey: scope().sessionKey, message: "/stop", idempotencyKey: "once" },
++    });
++    if (!normalized.ok) throw new Error("normalization failed");
++    const conflict = resolveChatSendRequestConflict({
++      request: normalized.value,
++      context: createDirectChatContext(),
++      session: {
++        ...scope(),
++        entry: { sessionId: scope().sessionId, updatedAt: 1 },
++        clientRunId: "once",
++        pendingChatSendKey: pendingChatSendDedupeKey("once"),
++        restartSafeRequest: undefined,
++      },
++    });
++    expect(conflict).toMatchObject({ details: { reason: "chat-request-conflict" } });
++  });
++});
+diff --git a/src/gateway/server-methods/chat-send-literal-early-abort.test.ts b/src/gateway/server-methods/chat-send-literal-early-abort.test.ts
+new file mode 100644
+index 00000000..5da7b1ba
+--- /dev/null
++++ b/src/gateway/server-methods/chat-send-literal-early-abort.test.ts
+@@ -0,0 +1,297 @@
++import { execFileSync } from "node:child_process";
++import { describe, expect, it, vi } from "vitest";
++import { createDeferred } from "../../../test/helpers/promise.js";
++import { registerAgentSessionLoopTestLifecycle } from "../../agents/sessions/agent-session-loop-correctness.test-support.js";
++import { getRuntimeConfig } from "../../config/config.js";
++import {
++  readChatInputAdmission,
++  readSessionSubmittedInput,
++} from "../../config/sessions/session-accessor.js";
++import {
++  resolveSqliteScope,
++  toDatabaseOptions,
++} from "../../config/sessions/session-accessor.sqlite-scope.js";
++import * as lifecycle from "../../sessions/session-lifecycle-admission.js";
++import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db-lifecycle.js";
++import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
++import {
++  createGatewaySchedulerClock,
++  createTestGatewayScheduler,
++} from "../../test-utils/gateway-scheduler-clock.js";
++import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
++import { DEDUPE_MAX, DEDUPE_TTL_MS } from "../server-constants.js";
++import { startGatewayMaintenanceTimers } from "../server-maintenance.js";
++import { pendingChatSendDedupeKey } from "../server-shared.js";
++import { installGatewayTestHooks, dispatchInboundMessageMock } from "../test-helpers.js";
++import { createGatewayMaintenanceStateForTest } from "../test-helpers.maintenance-state.js";
++import { writePreRegisteredChatAbort } from "./chat-abort-authorization.js";
++import { handleChatAbortRequest } from "./chat-abort-handler.js";
++import { handleChatSend } from "./chat-send-handler.js";
++import { useBrowserFollowupFixture } from "./chat-send-pending-inputs.test-support.js";
++installGatewayTestHooks();
++registerAgentSessionLoopTestLifecycle();
++const createFixture = useBrowserFollowupFixture();
++
++describe("early abort parsing custody at the handler boundary", () => {
++  it.each(
++    [true, false].flatMap((literal) =>
++      ["expiry", "eviction", "restart"].map((retire) => ({ literal, retire })),
++    ),
++  )("retains symmetric custody before staging: %j", async ({ literal, retire }) => {
++    const f = await createFixture({ preserveContent: true });
++    f.client.connect.scopes = ["operator.read", "operator.write"];
++    f.params.message = literal ? "/stop" : "/status";
++    if (literal) f.params.inputMode = "literal";
++    const entered = createDeferred();
++    const release = createDeferred();
++    const original = lifecycle.beginSessionWorkAdmission;
++    const gate = vi
++      .spyOn(lifecycle, "beginSessionWorkAdmission")
++      .mockImplementationOnce(async (p) => {
++        entered.resolve();
++        await release.promise;
++        return original(p);
++      });
++    const sending = f.send();
++    try {
++      await entered.promise;
++      expect(readSessionSubmittedInput(f.scope, `${f.params.idempotencyKey}:user`)).toBeUndefined();
++      const abortParams = { sessionKey: f.params.sessionKey, runId: f.params.idempotencyKey };
++      const aborted = vi.fn();
++      await handleChatAbortRequest({
++        params: abortParams,
++        req: { type: "req", id: "abort", method: "chat.abort", params: abortParams },
++        client: f.client,
++        context: f.context,
++        respond: aborted,
++        isWebchatConnect: () => true,
++      });
++      expect(aborted).toHaveBeenCalledWith(true, expect.objectContaining({ aborted: true }));
++      expect(readChatInputAdmission(f.scope, f.params.idempotencyKey)).toMatchObject({
++        mode: literal ? "literal-v1" : "normal-v1",
++        abortedAt: expect.any(Number),
++      });
++      release.resolve();
++      await sending;
++      gate.mockRestore();
++      expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
++      let context = f.context;
++      if (retire !== "restart") {
++        const now = Date.now();
++        const clock = createGatewaySchedulerClock(now);
++        const scheduler = createTestGatewayScheduler(clock.clock);
++        const scheduled = vi.spyOn(scheduler, "schedule");
++        const maintenance = startGatewayMaintenanceTimers({
++          ...createGatewayMaintenanceStateForTest(),
++          scheduler,
++          dedupe: context.dedupe,
++          chatRunState: context.chatRunState,
++          chatAbortControllers: context.chatAbortControllers,
++        });
++        try {
++          if (retire === "expiry") {
++            clock.setTime(now + DEDUPE_TTL_MS + 60_000);
++          } else {
++            for (let i = 0; i < DEDUPE_MAX; i++)
++              context.dedupe.set(`unrelated:${i}`, { ts: now + i + 1, ok: true });
++          }
++          const dedupeTick = scheduled.mock.calls.find(
++            ([job]) => job.id === "maintenance:dedupe",
++          )?.[0];
++          expect(dedupeTick).toBeDefined();
++          await dedupeTick!.run();
++          expect(context.dedupe.has(`chat:${f.params.idempotencyKey}`)).toBe(false);
++          expect(context.chatRunState.hasAbortMarker(f.params.idempotencyKey)).toBe(true);
++          // Capacity coverage also removes all markers: SQLite alone must suffice.
++          if (retire === "eviction") context.chatRunState.runs.clear();
++        } finally {
++          await maintenance.stopPeriodicTasks();
++          await maintenance.skillUsageCleanup();
++          scheduled.mockRestore();
++        }
++      } else {
++        f.context.dedupe.clear();
++        f.context.chatRunState.runs.clear();
++        await closeOpenClawAgentDatabasesAsync();
++        execFileSync(
++          process.execPath,
++          [
++            "node_modules/vitest/vitest.mjs",
++            "run",
++            "--config",
++            "test/fixtures/chat-early-abort-restart.vitest.config.ts",
++          ],
++          {
++            encoding: "utf8",
++            env: {
++              ...process.env,
++              CHAT_EARLY_ABORT_FIXTURE: JSON.stringify({
++                scope: f.scope,
++                params: f.params,
++                client: f.client,
++              }),
++            },
++          },
++        );
++        context = createDirectChatContext({ getRuntimeConfig, chatQueuedTurns: new Map() });
++      }
++      const retry = async () => {
++        const respond = vi.fn();
++        await handleChatSend({
++          params: f.params,
++          req: { type: "req", id: "retry", method: "chat.send", params: f.params },
++          context,
++          client: f.client,
++          respond,
++          isWebchatConnect: () => true,
++        });
++        return respond;
++      };
++      const replay = await retry();
++      expect(replay).toHaveBeenCalledWith(
++        true,
++        expect.objectContaining({ status: "timeout", summary: "aborted" }),
++        undefined,
++        expect.anything(),
++      );
++      if (literal) delete f.params.inputMode;
++      else f.params.inputMode = "literal";
++      const conflict = await retry();
++      expect(conflict).toHaveBeenCalledWith(
++        false,
++        undefined,
++        expect.objectContaining({ details: { reason: "chat-request-conflict" } }),
++      );
++      // An absent-mode /stop must not acquire stop effects under either original mode.
++      delete f.params.inputMode;
++      f.params.message = "/stop";
++      const stop = await retry();
++      expect(stop).toHaveBeenCalledWith(
++        false,
++        undefined,
++        expect.objectContaining({ details: { reason: "chat-request-conflict" } }),
++      );
++      expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
++      expect(f.activeRun?.abortSignal.aborted).toBe(false);
++      expect(readSessionSubmittedInput(f.scope, `${f.params.idempotencyKey}:user`)).toBeUndefined();
++    } finally {
++      release.resolve();
++      await sending;
++      gate.mockRestore();
++      await f.cleanup();
++    }
++  });
++
++  it.each([true, false])(
++    "terminalizes an expired pending reservation using its retained durable owner, literal=%s",
++    async (literal) => {
++      const f = await createFixture({ preserveContent: true });
++      f.params.message = literal ? "/stop" : "/status";
++      if (literal) f.params.inputMode = "literal";
++      const entered = createDeferred();
++      const release = createDeferred();
++      const original = lifecycle.beginSessionWorkAdmission;
++      const gate = vi
++        .spyOn(lifecycle, "beginSessionWorkAdmission")
++        .mockImplementationOnce(async (p) => {
++          entered.resolve();
++          await release.promise;
++          return original(p);
++        });
++      const sending = f.send();
++      try {
++        await entered.promise;
++        f.context.dedupe.delete(pendingChatSendDedupeKey(f.params.idempotencyKey));
++        release.resolve();
++        expect(await sending).toHaveBeenCalledWith(
++          true,
++          expect.objectContaining({ status: "timeout", summary: "aborted" }),
++          undefined,
++          expect.anything(),
++        );
++        expect(readChatInputAdmission(f.scope, f.params.idempotencyKey)).toMatchObject({
++          abortedAt: expect.any(Number),
++        });
++        f.context.dedupe.clear();
++        f.context.chatRunState.runs.clear();
++        expect(await f.send()).toHaveBeenCalledWith(
++          true,
++          expect.objectContaining({ summary: "aborted" }),
++          undefined,
++          expect.anything(),
++        );
++        expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
++      } finally {
++        release.resolve();
++        await sending;
++        gate.mockRestore();
++        await f.cleanup();
++      }
++    },
++  );
++
++  it("does not acknowledge, retire custody, or publish RAM abort on persistence failure", async () => {
++    const f = await createFixture({ preserveContent: true });
++    f.params.inputMode = "literal";
++    f.params.message = "/stop";
++    const entered = createDeferred();
++    const release = createDeferred();
++    const original = lifecycle.beginSessionWorkAdmission;
++    const gate = vi
++      .spyOn(lifecycle, "beginSessionWorkAdmission")
++      .mockImplementationOnce(async (p) => {
++        entered.resolve();
++        await release.promise;
++        return original(p);
++      });
++    const sending = f.send();
++    try {
++      await entered.promise;
++      const key = pendingChatSendDedupeKey(f.params.idempotencyKey);
++      const pending = f.context.dedupe.get(key)!;
++      const database = openOpenClawAgentDatabase(toDatabaseOptions(resolveSqliteScope(f.scope)));
++      database.db.exec(
++        "CREATE TRIGGER fail_early_abort BEFORE UPDATE OF aborted_at ON session_chat_input_admissions BEGIN SELECT RAISE(ABORT, 'fixture persistence failure'); END",
++      );
++      expect(() =>
++        writePreRegisteredChatAbort({
++          context: f.context,
++          runId: f.params.idempotencyKey,
++          stopReason: "rpc",
++        }),
++      ).toThrow("fixture persistence failure");
++      expect(f.context.dedupe.get(key)).toBe(pending);
++      expect(f.context.dedupe.has(`chat:${f.params.idempotencyKey}`)).toBe(false);
++      expect(f.context.chatRunState.hasAbortMarker(f.params.idempotencyKey)).toBe(false);
++      expect(readChatInputAdmission(f.scope, f.params.idempotencyKey)).toMatchObject({
++        abortedAt: null,
++      });
++      database.db.exec("DROP TRIGGER fail_early_abort");
++      expect(
++        writePreRegisteredChatAbort({
++          context: f.context,
++          runId: f.params.idempotencyKey,
++          stopReason: "rpc",
++          attemptId: "stale",
++        }),
++      ).toBe(false);
++      expect(f.context.dedupe.get(key)).toBe(pending);
++      expect(f.context.chatRunState.hasAbortMarker(f.params.idempotencyKey)).toBe(false);
++      expect(
++        writePreRegisteredChatAbort({
++          context: f.context,
++          runId: f.params.idempotencyKey,
++          stopReason: "rpc",
++        }),
++      ).toBe(true);
++      release.resolve();
++      await sending;
++      expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
++    } finally {
++      release.resolve();
++      await sending;
++      gate.mockRestore();
++      await f.cleanup();
++    }
++  });
++});
+diff --git a/src/gateway/server-methods/chat-send-literal-handler.test.ts b/src/gateway/server-methods/chat-send-literal-handler.test.ts
+new file mode 100644
+index 00000000..f0537585
+--- /dev/null
++++ b/src/gateway/server-methods/chat-send-literal-handler.test.ts
+@@ -0,0 +1,130 @@
++import { describe, expect, it, vi } from "vitest";
++import { registerAgentSessionLoopTestLifecycle } from "../../agents/sessions/agent-session-loop-correctness.test-support.js";
++import { readSessionSubmittedInput } from "../../config/sessions/session-accessor.js";
++import { installGatewayTestHooks, dispatchInboundMessageMock } from "../test-helpers.js";
++import type { ChatSendExternalAuthorityAdmission } from "./chat-send-external-authority-contract.js";
++import { handleChatSend } from "./chat-send-handler.js";
++import { useBrowserFollowupFixture } from "./chat-send-pending-inputs.test-support.js";
++import { resolveGatewayChatCronCreatorAuthorityAdmission } from "./cron-creator-authority-admission.js";
++installGatewayTestHooks();
++registerAgentSessionLoopTestLifecycle();
++const createFixture = useBrowserFollowupFixture();
++describe("literal authenticated user handler", () => {
++  it.each([false, true])(
++    "keeps the ordinary nonadmin authority ceiling, literal=%s",
++    async (literal) => {
++      const f = await createFixture({ preserveContent: true, persistDuringDispatch: true });
++      f.client.connect.scopes = ["operator.read", "operator.write"];
++      f.client.connect.client = { id: "cli", mode: "cli", platform: "test", version: "test" };
++      f.params.message = literal ? "/stop" : "ordinary user text";
++      if (literal) f.params.inputMode = "literal";
++      const resolve = vi.fn<ChatSendExternalAuthorityAdmission["resolve"]>((p) => {
++        const admission = resolveGatewayChatCronCreatorAuthorityAdmission({
++          ...p,
++          resolvedSessionKey: p.sessionKey,
++          isIncognito: p.isIncognitoEntry,
++          isDirectExternalUser: true,
++        });
++        expect(admission).toBeUndefined();
++        return undefined;
++      });
++      const authority: ChatSendExternalAuthorityAdmission = {
++        resolve,
++        allowsDashboardReads: () => false,
++        run: (_capability, run) => run(),
++      };
++      const respond = vi.fn();
++      try {
++        await handleChatSend(
++          {
++            req: { type: "req", id: "literal", method: "chat.send", params: f.params },
++            params: f.params,
++            client: f.client,
++            context: f.context,
++            respond,
++            isWebchatConnect: () => false,
++          },
++          undefined,
++          authority,
++        );
++        expect(resolve).toHaveBeenCalledWith(
++          expect.objectContaining({ isSystemGenerated: false, inputProvenance: undefined }),
++        );
++        expect(resolve.mock.results[0]?.value).toBeUndefined(); // no Cron creator/operator elevation
++        expect(respond).toHaveBeenCalledWith(
++          true,
++          expect.objectContaining({ status: "started" }),
++          undefined,
++          expect.anything(),
++        );
++        const recorder = await f.dispatchedRecorder;
++        expect(recorder.getPendingInputMessage?.()?.__openclaw).toMatchObject({
++          commandInterpretation: literal ? "literal-v1" : "normal-v1",
++        });
++        const dispatched = dispatchInboundMessageMock.mock.calls[0]?.[0];
++        expect(dispatched?.ctx.CommandInterpretationSuppressed).toBe(literal ? true : undefined);
++        expect(dispatched?.ctx.InputProvenance).toBeUndefined();
++        await f.finishDispatch();
++        expect(
++          readSessionSubmittedInput(f.scope, `${f.params.idempotencyKey}:user`)?.__openclaw,
++        ).toMatchObject({ commandInterpretation: literal ? "literal-v1" : "normal-v1" });
++        const count = dispatchInboundMessageMock.mock.calls.length;
++        f.context.dedupe.clear();
++        const retry = await f.send();
++        expect(retry).toHaveBeenCalledWith(
++          true,
++          expect.objectContaining({ status: "ok" }),
++          undefined,
++          expect.anything(),
++        );
++        expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(count);
++        if (literal) {
++          delete f.params.inputMode;
++          const mismatch = await f.send();
++          expect(mismatch).toHaveBeenCalledWith(
++            false,
++            undefined,
++            expect.objectContaining({ details: { reason: "chat-request-conflict" } }),
++          );
++          expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(count);
++        }
++      } finally {
++        await f.cleanup();
++      }
++    },
++  );
++  it.each([
++    "readonly",
++    "node",
++    "wrong-sid",
++    "missing-session",
++    "wrong-cas",
++    "protected-suppression",
++    "forged-role",
++  ] as const)("keeps literal admission fail-closed before dispatch: %s", async (denial) => {
++    const f = await createFixture({ preserveContent: true });
++    f.client.connect.scopes = ["operator.read", "operator.write"];
++    f.client.connect.client = { id: "cli", mode: "cli", platform: "test", version: "test" };
++    f.params.inputMode = "literal";
++    f.params.message = "/stop";
++    if (denial === "readonly") f.client.connect.scopes = ["operator.read"];
++    if (denial === "node") f.client.connect.role = "node";
++    if (denial === "wrong-sid") f.params.sessionId = "different-session";
++    if (denial === "missing-session") f.params.sessionKey = "agent:main:literal-not-created";
++    if (denial === "wrong-cas") f.params.expectedLeafEntryId = "different-leaf";
++    if (denial === "protected-suppression") f.params.suppressCommandInterpretation = true;
++    if (denial === "forged-role") Object.assign(f.params, { role: "system" });
++    try {
++      const respond = await f.send(vi.fn(), {});
++      expect(respond).toHaveBeenCalledWith(
++        false,
++        undefined,
++        expect.objectContaining({ code: denial === "readonly" ? "FORBIDDEN" : "INVALID_REQUEST" }),
++      );
++      expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
++      expect(readSessionSubmittedInput(f.scope, `${f.params.idempotencyKey}:user`)).toBeUndefined();
++    } finally {
++      await f.cleanup();
++    }
++  });
++});
+diff --git a/src/gateway/server-methods/chat-send-literal-review.test.ts b/src/gateway/server-methods/chat-send-literal-review.test.ts
+new file mode 100644
+index 00000000..81e3b0ae
+--- /dev/null
++++ b/src/gateway/server-methods/chat-send-literal-review.test.ts
+@@ -0,0 +1,139 @@
++import { describe, expect, it } from "vitest";
++import { handleCommands } from "../../auto-reply/reply/commands-core.js";
++import type { CommandDispatchParams } from "../../auto-reply/reply/commands-types.js";
++import { finalizeInboundContext } from "../../auto-reply/reply/inbound-context.js";
++import { authorizeOperatorScopesForMethod } from "../method-scopes.js";
++import { normalizeChatSendRequest } from "./chat-send-request.js";
++import type { GatewayRequestHandlerOptions } from "./types.js";
++
++const client = {
++  connId: "literal-review",
++  pairedClientId: "gateway-client",
++  connect: {
++    role: "operator",
++    scopes: ["operator.read", "operator.write"],
++    client: { id: "gateway-client", version: "test", platform: "node", mode: "backend" },
++  },
++} as unknown as NonNullable<GatewayRequestHandlerOptions["client"]>;
++const request = (extra: Record<string, unknown> = {}) => ({
++  sessionKey: "agent:main:literal-review",
++  sessionId: "literal-review",
++  message: "hello",
++  idempotencyKey: "literal-review-1",
++  inputMode: "literal",
++  ...extra,
++});
++
++// These are real native normalization/command functions, not a Gateway replacement.
++// They do NOT establish a signed-device handshake or a complete native run.
++describe("review-only non-admin literal input", () => {
++  it.each([
++    "/stop",
++    "/new",
++    "/reset",
++    "/btw hello",
++    "/config set x y",
++    "/debug set x y",
++    "/approve fake allow-always",
++    "/elevated full",
++    "/exec host=gateway security=full",
++    "/model other",
++    "/think high",
++    "/fast on",
++    "!touch /must-not-execute",
++    "hello /status",
++  ])("keeps %s in user text without dispatching commands", async (message) => {
++    const result = normalizeChatSendRequest({ params: request({ message }), client });
++    expect(result.ok).toBe(true);
++    if (!result.ok) throw new Error(result.error);
++    expect(result.value).toMatchObject({
++      inboundMessage: message,
++      rawMessage: message,
++      suppressCommandInterpretation: true,
++      stopCommand: false,
++      turnKind: "main",
++    });
++    expect(result.value.systemInputProvenance).toBeUndefined();
++    expect(result.value.systemProvenanceReceipt).toBeUndefined();
++    expect(result.value.explicitOrigin).toBeUndefined();
++    // Match the native turn projection; the existing native turn suite separately
++    // verifies that prepareChatSendUserTurn projects this flag.
++    const ctx = finalizeInboundContext({
++      Body: message,
++      BodyForAgent: message,
++      BodyForCommands: message,
++      CommandAuthorized: true,
++      CommandInterpretationSuppressed: result.value.suppressCommandInterpretation,
++    });
++    expect(ctx.agentText).toBe(message);
++    expect(ctx.commandText).toBe("");
++    expect(ctx.CommandAuthorized).toBe(false);
++    // Deliberately omit every dispatch dependency: any attempt to reach a reset
++    // handler, admin action, plugin loader or session mutation fails this test.
++    expect(await handleCommands({ ctx } as CommandDispatchParams)).toEqual({
++      shouldContinue: true,
++    });
++    expect(client.connect.scopes).toEqual(["operator.read", "operator.write"]);
++  });
++
++  it.each([
++    { systemInputProvenance: { kind: "internal_system", sourceTool: "forged" } },
++    { systemProvenanceReceipt: "forged" },
++    { suppressCommandInterpretation: true },
++    { suppressCommandInterpretation: false },
++    { originatingChannel: "slack", originatingTo: "someone" },
++    { trustedSystemInput: true },
++    { role: "admin" },
++    { scopes: ["operator.admin"] },
++    { createdActor: { id: "someone" } },
++    { InputProvenance: { kind: "internal_system" } },
++    { inputMode: false },
++    { inputMode: true },
++    { inputMode: "command" },
++    { inputMode: null },
++    { toolBindings: { browser: {} } },
++    { intent: { kind: "session-goal-start", version: 1, issuedAtMs: 1 } },
++  ])("rejects mixed or forged fields: %j", (extra) => {
++    expect(normalizeChatSendRequest({ params: request(extra), client }).ok).toBe(false);
++  });
++
++  it("preserves exact legacy admin denial with and without literal mode", () => {
++    for (const inputMode of [undefined, "literal"]) {
++      expect(
++        normalizeChatSendRequest({
++          params: request({ inputMode, suppressCommandInterpretation: true }),
++          client,
++        }),
++      ).toEqual({ ok: false, error: "system provenance fields require admin scope" });
++    }
++  });
++  it("binds parsing mode into idempotency identity without changing legacy identity", () => {
++    const literal = normalizeChatSendRequest({ params: request(), client });
++    const legacy = normalizeChatSendRequest({ params: request({ inputMode: undefined }), client });
++    const retry = normalizeChatSendRequest({ params: request(), client });
++    if (!literal.ok || !legacy.ok || !retry.ok) throw new Error("normalization failed");
++    expect(literal.value.requestIdentity).not.toBe(legacy.value.requestIdentity);
++    expect(literal.value.requestIdentity).toBe(retry.value.requestIdentity);
++  });
++  it("does not add method scopes or allow read-only sends/admin methods", () => {
++    expect(
++      authorizeOperatorScopesForMethod("chat.send", ["operator.read"], request()).allowed,
++    ).toBe(false);
++    expect(
++      authorizeOperatorScopesForMethod("chat.send", client.connect.scopes!, request()).allowed,
++    ).toBe(true);
++    expect(
++      authorizeOperatorScopesForMethod("config.set", client.connect.scopes!, request()).allowed,
++    ).toBe(false);
++  });
++  it("does not remove legacy stop parsing when the new field is absent", () => {
++    const result = normalizeChatSendRequest({
++      params: request({ inputMode: undefined, message: "/stop" }),
++      client,
++    });
++    expect(result).toMatchObject({
++      ok: true,
++      value: { stopCommand: true, suppressCommandInterpretation: false },
++    });
++  });
++});
+diff --git a/src/gateway/server-methods/chat-send-pre-admission.test.ts b/src/gateway/server-methods/chat-send-pre-admission.test.ts
+index 4f6fb061..cce9a7df 100644
+--- a/src/gateway/server-methods/chat-send-pre-admission.test.ts
++++ b/src/gateway/server-methods/chat-send-pre-admission.test.ts
+@@ -472,3 +472,29 @@ describe("chat send retry identity", () => {
+     },
+   );
+ });
++
++it("rechecks parsing custody at the stop commit guard before abort effects", async () => {
++  const { params } = preAdmissionFixture("stop-mode-race");
++  params.request.stopCommand = true;
++  params.request.rawMessage = "/stop";
++  params.request.inboundMessage = "/stop";
++  params.request.mentions = undefined;
++  vi.mocked(readSessionSubmittedInput)
++    .mockReturnValueOnce(undefined)
++    .mockReturnValue({
++      role: "user",
++      content: "/stop",
++      timestamp: 1,
++      idempotencyKey: "stop-mode-race:user",
++      __openclaw: { commandInterpretation: "literal-v1", chatRequestIdentity: "literal-request" },
++    });
++  expect(await runChatSendPreAdmission(params)).toBe(false);
++  expect(params.respond).toHaveBeenCalledWith(
++    false,
++    undefined,
++    expect.objectContaining({
++      code: "INVALID_REQUEST",
++      message: expect.stringContaining("different input"),
++    }),
++  );
++});
+diff --git a/src/gateway/server-methods/chat-send-pre-admission.ts b/src/gateway/server-methods/chat-send-pre-admission.ts
+index fa29ea22..4902c6c9 100644
+--- a/src/gateway/server-methods/chat-send-pre-admission.ts
++++ b/src/gateway/server-methods/chat-send-pre-admission.ts
+@@ -11,6 +11,8 @@ import { hasRestartRecoveryTerminalRun } from "../../config/sessions/restart-rec
+ import {
+   loadExactSessionEntryCandidates,
+   readSessionSubmittedInput,
++  readSessionInputParsingEvidence,
++  readChatInputAdmission,
+ } from "../../config/sessions/session-accessor.js";
+ import { isSessionTranscriptProjectionUnavailableError } from "../../config/sessions/session-transcript-projection-error.js";
+ import { resolveSendPolicy } from "../../sessions/send-policy.js";
+@@ -130,7 +132,8 @@ type ChatSendRetryParams = {
+   request: Pick<
+     NormalizedChatSendRequest,
+     "goalOperation" | "requestIdentity" | "rawMessage" | "mentions" | "workContext"
+-  >;
++  > &
++    Partial<Pick<NormalizedChatSendRequest, "p" | "suppressCommandInterpretation">>;
+   session: Pick<
+     LoadedChatSendSession,
+     | "clientRunId"
+@@ -167,21 +170,69 @@ export function resolveChatSendRequestConflict({
+   session,
+   context,
+ }: Omit<ChatSendRetryParams, "respond">) {
+-  if (request.goalOperation) {
+-    return undefined;
+-  }
+   const entries = [
+     context.dedupe.get(`chat:${session.clientRunId}`),
+     context.dedupe.get(session.pendingChatSendKey),
++    context.chatRunState.runs.get(session.clientRunId)?.abortMarker,
+   ];
+   const conflict = (unverifiable = false) =>
+     errorShape(
+       ErrorCodes.INVALID_REQUEST,
+       unverifiable
+-        ? "The previous mention selections cannot be verified. Check the conversation history and use a new message ID to send again."
++        ? "The previous input identity and parsing mode cannot be verified. Check the conversation history and use a new message ID to send again."
+         : "This message ID was already used for different input. Check the conversation history and use a new message ID to send again.",
+       { details: { reason: "chat-request-conflict" } },
+     );
++  const expectedMode =
++    request.p?.inputMode === "literal"
++      ? "literal-v1"
++      : request.suppressCommandInterpretation
++        ? "suppressed-v1"
++        : "normal-v1";
++  if (
++    entries.some(
++      (entry) => entry?.inputParsingMode !== undefined && entry.inputParsingMode !== expectedMode,
++    )
++  )
++    return conflict();
++  const admission = readChatInputAdmission(
++    {
++      agentId: session.agentId,
++      sessionKey: session.sessionKey,
++      sessionId: session.entry?.sessionId,
++      storePath: session.storePath,
++    },
++    session.clientRunId,
++  );
++  if (admission === "invalid" || admission === "unavailable") return conflict(true);
++  if (
++    admission &&
++    (admission.mode !== expectedMode || admission.identity !== request.requestIdentity)
++  )
++    return conflict();
++  if (request.goalOperation) {
++    // Goal's own receipt owns its legacy retries, but cannot adopt a literal ID.
++    const target = session.entry?.sessionId
++      ? {
++          agentId: session.agentId,
++          sessionId: session.entry.sessionId,
++          sessionKey: session.sessionKey,
++          storePath: session.storePath,
++        }
++      : undefined;
++    const evidence = target
++      ? readSessionInputParsingEvidence(target, `${session.clientRunId}:user`)
++      : undefined;
++    const source = target
++      ? readSessionSubmittedInput(target, `${session.clientRunId}:user`)
++      : undefined;
++    return evidence === "invalid" ||
++      evidence === "unavailable" ||
++      (evidence && evidence.mode === "literal-v1") ||
++      source?.["__openclaw"]?.commandInterpretation === "literal-v1"
++      ? conflict()
++      : undefined;
++  }
+   if (
+     entries.some(
+       (entry) =>
+@@ -190,6 +241,7 @@ export function resolveChatSendRequestConflict({
+   ) {
+     return conflict();
+   }
++  if (admission && admission.abortedAt !== null) return undefined;
+   const sameDurableSource =
+     session.entry?.restartRecoveryDeliverySourceRunId === session.clientRunId;
+   const storedFingerprint = sameDurableSource
+@@ -208,7 +260,53 @@ export function resolveChatSendRequestConflict({
+   if (entries.some((entry) => entry?.requestIdentity === request.requestIdentity)) {
+     return undefined;
+   }
++  // The source custody row outlives RAM and terminal caches. Consult it even for
++  // an apparently new ID, and before command shortcuts or response replay.
++  const submitted = session.entry?.sessionId
++    ? readSessionSubmittedInput(
++        {
++          agentId: session.agentId,
++          sessionId: session.entry.sessionId,
++          sessionKey: session.sessionKey,
++          storePath: session.storePath,
++        },
++        `${session.clientRunId}:user`,
++      )
++    : undefined;
++  const literal = request.p?.inputMode === "literal";
++  const custody = session.entry?.sessionId
++    ? readSessionInputParsingEvidence(
++        {
++          agentId: session.agentId,
++          sessionId: session.entry.sessionId,
++          sessionKey: session.sessionKey,
++          storePath: session.storePath,
++        },
++        `${session.clientRunId}:user`,
++      )
++    : undefined;
++  if (custody === "invalid" || custody === "unavailable") return conflict(true);
++  if (custody && (custody.mode !== expectedMode || custody.identity !== request.requestIdentity))
++    return conflict();
++  const storedMode = submitted?.["__openclaw"]?.commandInterpretation;
++  const storedIdentity = submitted?.["__openclaw"]?.chatRequestIdentity;
++  if (
++    (storedMode === undefined && storedIdentity !== undefined) ||
++    (custody && submitted && storedMode === undefined)
++  ) {
++    return conflict(true);
++  }
++  if (storedMode !== undefined) {
++    if (storedMode !== expectedMode || storedIdentity !== request.requestIdentity) {
++      return conflict();
++    }
++  } else if (submitted && literal) {
++    // Pre-extension sources remain normal-only; never upgrade uncertain history.
++    return conflict(true);
++  }
+   const knownRetry =
++    Boolean(submitted) ||
++    Boolean(custody) ||
+     entries.some(Boolean) ||
+     sameDurableSource ||
+     hasRestartRecoveryTerminalRun(session.entry, session.clientRunId) ||
+@@ -220,19 +318,10 @@ export function resolveChatSendRequestConflict({
+   }
+   // Terminal tombstones outlive the RAM fingerprint. Read the exact submitted source,
+   // including collected inputs, never infer mention identity from aggregate history.
+-  const submitted = session.entry?.sessionId
+-    ? readSessionSubmittedInput(
+-        {
+-          agentId: session.agentId,
+-          sessionId: session.entry.sessionId,
+-          sessionKey: session.sessionKey,
+-          storePath: session.storePath,
+-        },
+-        `${session.clientRunId}:user`,
+-      )
+-    : undefined;
+   if (!submitted) {
+-    return request.mentions?.length || request.workContext ? conflict(true) : undefined;
++    return (literal && !custody) || request.mentions?.length || request.workContext
++      ? conflict(true)
++      : undefined;
+   }
+   const storedMentions = submitted["__openclaw"]?.humanMentions;
+   const storedContext = submitted["__openclaw"]?.workContext;
+@@ -411,6 +500,36 @@ export async function runChatSendPreAdmission(
+     return false;
+   }
+ 
++  const parsingConflict = resolveChatSendRequestConflict(params);
++  if (parsingConflict) {
++    respond(false, undefined, parsingConflict);
++    return false;
++  }
++
++  // Durable early-abort replay precedes command shortcuts, including normal /stop.
++  const earlyAdmission = readChatInputAdmission(
++    {
++      agentId: session.agentId,
++      sessionKey,
++      sessionId: entry?.sessionId,
++      storePath,
++    },
++    clientRunId,
++  );
++  if (earlyAdmission && typeof earlyAdmission === "object" && earlyAdmission.abortedAt !== null) {
++    respond(
++      true,
++      buildAbortedChatSendPayload({
++        runId: clientRunId,
++        endedAt: earlyAdmission.abortedAt,
++        stopReason: earlyAdmission.stopReason ?? "rpc",
++      }),
++      undefined,
++      { cached: true, runId: clientRunId },
++    );
++    return false;
++  }
++
+   if (request.goalOperation) {
+     const retry = inspectGoalChatSendRetry(params);
+     if (retry.kind === "settled") {
+@@ -467,6 +586,10 @@ export async function runChatSendPreAdmission(
+       }
+       try {
+         params.assertCurrent?.();
++        // Stop can yield while checking descendants. A competing literal admission
++        // must not become a text-command retry between the initial check and abort.
++        const currentConflict = resolveChatSendRequestConflict(params);
++        if (currentConflict) throw new Error(currentConflict.message);
+         if (request.p.queueMode !== "steer" && session.expectedLeafEntryId !== undefined) {
+           assertExpectedLeafActive(
+             {
+diff --git a/src/gateway/server-methods/chat-send-request.ts b/src/gateway/server-methods/chat-send-request.ts
+index 39eeba86..1cfa099b 100644
+--- a/src/gateway/server-methods/chat-send-request.ts
++++ b/src/gateway/server-methods/chat-send-request.ts
+@@ -128,6 +128,7 @@ export function normalizeChatSendRequest(params: {
+       p.systemInputProvenance ||
+       p.systemProvenanceReceipt ||
+       p.suppressCommandInterpretation !== undefined ||
++      p.inputMode !== undefined ||
+       p.thinking !== undefined ||
+       p.fastMode !== undefined ||
+       p.timeoutMs !== undefined)
+@@ -161,6 +162,23 @@ export function normalizeChatSendRequest(params: {
+     };
+   }
+ 
++  // Keep the legacy system-input authorization above unchanged. Literal user
++  // input is a separate, attenuation-only contract, not trusted internal input.
++  if (
++    p.inputMode === "literal" &&
++    (params.trustedSystemInput ||
++      params.goalResume ||
++      params.providerReviewAcknowledgment ||
++      p.intent !== undefined ||
++      p.systemInputProvenance !== undefined ||
++      p.systemProvenanceReceipt !== undefined ||
++      p.suppressCommandInterpretation !== undefined ||
++      explicitOriginResult.value !== undefined ||
++      controlUiReconnectResume.resumeRequested)
++  ) {
++    return { ok: false, error: "Literal input cannot carry system-input or continuation options." };
++  }
++
+   const sanitizedMessageResult = sanitizeChatSendMessageInput(p.message);
+   if (!sanitizedMessageResult.ok) {
+     return sanitizedMessageResult;
+@@ -174,6 +192,7 @@ export function normalizeChatSendRequest(params: {
+       p.systemInputProvenance !== undefined ||
+       p.systemProvenanceReceipt !== undefined ||
+       p.suppressCommandInterpretation !== undefined ||
++      p.inputMode !== undefined ||
+       sanitizedMessageResult.message !== p.message.normalize("NFC"))
+   ) {
+     return {
+@@ -217,7 +236,10 @@ export function normalizeChatSendRequest(params: {
+         }
+       : undefined);
+   const commandInterpretationSuppressed =
+-    suppressCommandInterpretation || goalOperation !== undefined || providerReview !== undefined;
++    suppressCommandInterpretation ||
++    p.inputMode === "literal" ||
++    goalOperation !== undefined ||
++    providerReview !== undefined;
+   // This text comes from the current provider review, not a browser-supplied command.
+   const inboundMessage = p.intent || providerReview ? p.message : sanitizedMessageResult.message;
+   const systemInputProvenance = params.goalResume
+@@ -309,6 +331,7 @@ export function normalizeChatSendRequest(params: {
+     .update(
+       JSON.stringify([
+         p.message,
++        ...(p.inputMode === "literal" ? [["inputMode", "literal"]] : []),
+         p.mentions?.map(({ profileId, start, end }) => [profileId, start, end]) ?? [],
+         ...(workContext ? [workContext.snapshot] : []),
+         ...(providerReview ? [providerReview.review.id, providerReview.target.sessionId] : []),
+diff --git a/src/gateway/server-methods/chat-send-session.ts b/src/gateway/server-methods/chat-send-session.ts
+index 906fabf7..673ee5c1 100644
+--- a/src/gateway/server-methods/chat-send-session.ts
++++ b/src/gateway/server-methods/chat-send-session.ts
+@@ -204,7 +204,27 @@ export function prepareChatSendSession(params: {
+     };
+   }
+ 
++  // Literal ACKs require the existing accepted-input custody owner. Legacy first
++  // sends can create a session asynchronously, before that owner exists; do not
++  // silently give this new parsing contract weaker durable retry guarantees.
++  if (p.inputMode === "literal" && !entry) {
++    return {
++      ok: false as const,
++      error: "Literal input requires an existing session; create it before sending.",
++    };
++  }
+   const requestedSessionId = normalizeOptionalString(p.sessionId);
++  if (
++    p.inputMode === "literal" &&
++    requestedSessionId &&
++    entry &&
++    requestedSessionId !== entry.sessionId
++  ) {
++    return {
++      ok: false as const,
++      error: "Literal input sessionId no longer matches the current session.",
++    };
++  }
+   const backingSessionId = entry?.sessionId ?? requestedSessionId;
+   if (!entry) {
+     const creationError = authorizeGatewaySessionCreation({
+diff --git a/src/gateway/server-methods/chat-send-user-turn.test.ts b/src/gateway/server-methods/chat-send-user-turn.test.ts
+index 3b755461..65c114f3 100644
+--- a/src/gateway/server-methods/chat-send-user-turn.test.ts
++++ b/src/gateway/server-methods/chat-send-user-turn.test.ts
+@@ -308,6 +308,71 @@ describe("prepareChatSendUserTurn", () => {
+     },
+   );
+ 
++  it.each(["/stop", "/new", "/reset", "/btw hello", "/elevated full", "/model other"])(
++    "projects non-admin literal API input through native turn/directive routing: %s",
++    async (message) => {
++      const { normalizeChatSendRequest } = await import("./chat-send-request.js");
++      const client = {
++        connId: "literal-review",
++        pairedClientId: "gateway-client",
++        connect: {
++          role: "operator",
++          scopes: ["operator.read", "operator.write"],
++          client: { id: "gateway-client", version: "test", platform: "node", mode: "backend" },
++        },
++      } as never;
++      const normalized = normalizeChatSendRequest({
++        client,
++        params: {
++          sessionKey: "agent:main:literal-review",
++          sessionId: "literal-review",
++          message,
++          idempotencyKey: "literal-review",
++          inputMode: "literal",
++        },
++      });
++      if (!normalized.ok) throw new Error(normalized.error);
++      const { controller } = createUserTurnInputController(message);
++      const prepared = prepareChatSendUserTurn({
++        request: normalized.value,
++        session: {
++          agentId: "main",
++          clientRunId: "literal-review",
++          sessionKey: "agent:main:literal-review",
++        },
++        admission: { originatingRoute: { originatingChannel: "webchat" } },
++        attachments: createAttachments({ parsedMessage: message }),
++        client,
++        logGateway: { warn: vi.fn() } as never,
++        userTurn: controller,
++      });
++      expect(prepared.ctx.InputProvenance).toBeUndefined();
++      expect(prepared.ctx.CommandInterpretationSuppressed).toBe(true);
++      expect(prepared.ctx.CommandAuthorized).toBe(false);
++      expect(prepared.ctx.GatewayClientScopes).toEqual(["operator.read", "operator.write"]);
++      expect(prepared.isInternalTextSlashCommandTurn).toBe(false);
++      const ctx = finalizeInboundContext(prepared.ctx);
++      expect(ctx.agentText).toBe(message);
++      expect(ctx.commandText).toBe("");
++      const routed = resolveReplyDirectiveRouting({
++        commandText: ctx.commandText,
++        agentText: ctx.agentText,
++        modelAliases: [],
++        canInterpretTextDirectives: false,
++        isAuthorizedSender: false,
++        isGroup: false,
++        wasMentioned: false,
++        ctx,
++        cfg: {},
++        agentId: "main",
++        resetTriggered: false,
++      });
++      expect(routed.hasInlineStatus).toBe(false);
++      const { handleCommands } = await import("../../auto-reply/reply/commands-core.js");
++      expect(await handleCommands({ ctx } as never)).toEqual({ shouldContinue: true });
++    },
++  );
++
+   it.each([
+     { name: "status", inboundMessage: "/status", suppressed: false },
+     {
+diff --git a/src/gateway/server-methods/chat-user-turn-recorder.ts b/src/gateway/server-methods/chat-user-turn-recorder.ts
+index 2b69f5b8..4c30724f 100644
+--- a/src/gateway/server-methods/chat-user-turn-recorder.ts
++++ b/src/gateway/server-methods/chat-user-turn-recorder.ts
+@@ -69,6 +69,13 @@ export function createGatewayChatUserTurnController(params: {
+   const baseInput: UserTurnInput = {
+     ...params.transcript,
+     ...(request.goalOperation?.action === "resume" ? { display: false } : {}),
++    commandInterpretation:
++      request.p.inputMode === "literal"
++        ? "literal-v1"
++        : request.suppressCommandInterpretation
++          ? "suppressed-v1"
++          : "normal-v1",
++    chatRequestIdentity: request.requestIdentity,
+     text: request.rawMessage,
+     ...(request.workContext ? { workContext: request.workContext } : {}),
+     ...(request.mentions ? { mentions: request.mentions } : {}),
 diff --git a/src/gateway/server-public.ts b/src/gateway/server-public.ts
-index 4a5ef45efa0e1ab87ae2ea6868f9f78b367c1608..a23b35fabdcc87824efcefbf4001190e84ef1fbe 100644
+index 4a5ef45e..a23b35fa 100644
 --- a/src/gateway/server-public.ts
 +++ b/src/gateway/server-public.ts
 @@ -56,6 +56,8 @@ export type GatewayServer = {
@@ -11,8 +2463,23 @@ index 4a5ef45efa0e1ab87ae2ea6868f9f78b367c1608..a23b35fabdcc87824efcefbf4001190e
    /** Retained run-loop ownership; direct servers acquire and release their own owner. */
    gatewayStateOwner?: Pick<
      import("../infra/gateway-lock.js").GatewayLockHandle,
+diff --git a/src/gateway/server-shared.ts b/src/gateway/server-shared.ts
+index 406e1b08..b8851b8a 100644
+--- a/src/gateway/server-shared.ts
++++ b/src/gateway/server-shared.ts
+@@ -15,6 +15,10 @@ export type DedupeEntry = {
+   ok: boolean;
+   /** Optional effectful-request fingerprint for methods with caller-supplied operation ids. */
+   requestIdentity?: string;
++  /** Parsing evidence only; terminal writers retain it without granting authority. */
++  inputParsingMode?: import("../sessions/chat-input-parsing.js").ChatInputParsingMode;
++  /** Exact early-admission terminal writer; called before publishing an abort receipt. */
++  commitEarlyAbort?: (endedAt: number, stopReason: string, assertOwner: () => void) => void;
+   /** Retain source privacy for diagnostic replay after the live session binding is gone. */
+   incognito?: true;
+   payload?: unknown;
 diff --git a/src/gateway/server-start.ts b/src/gateway/server-start.ts
-index 9d061f59a936fedffe15a9643a3bf65ba2a21938..bb0b709fb4407183a5f634298b3e1b0f74006890 100644
+index 9d061f59..bb0b709f 100644
 --- a/src/gateway/server-start.ts
 +++ b/src/gateway/server-start.ts
 @@ -57,6 +57,7 @@ async function startGatewayServerWithSdkHost(
@@ -23,9 +2490,29 @@ index 9d061f59a936fedffe15a9643a3bf65ba2a21938..bb0b709fb4407183a5f634298b3e1b0f
        updateCanary: opts.updateCanary,
        ...(!gatewayKernel.minimalTestGateway && gatewayKernel.tailscaleMode !== "off"
          ? {
+diff --git a/src/gateway/session-sharing.test.ts b/src/gateway/session-sharing.test.ts
+index 4efb3d13..73c01678 100644
+--- a/src/gateway/session-sharing.test.ts
++++ b/src/gateway/session-sharing.test.ts
+@@ -176,6 +176,15 @@ describe("session sharing policy", () => {
+       for (const [method, requestParams] of [
+         ["agent", { sessionKey }],
+         ["chat.send", { sessionKey }],
++        [
++          "chat.send",
++          {
++            sessionKey,
++            inputMode: "literal",
++            message: "/config set x y",
++            idempotencyKey: "literal-denied",
++          },
++        ],
+         ["sessions.goal.update", { sessionKey, action: "resume" }],
+         ["sessions.providerReview.continue", { sessionKey }],
+         ["message.action", { sessionKey }],
 diff --git a/src/gateway/yorozu-embedding.ts b/src/gateway/yorozu-embedding.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..e08a0d8ac445848b4b12cc88ab71ffcd180349b7
+index 00000000..e08a0d8a
 --- /dev/null
 +++ b/src/gateway/yorozu-embedding.ts
 @@ -0,0 +1,143 @@
@@ -172,8 +2659,278 @@ index 0000000000000000000000000000000000000000..e08a0d8ac445848b4b12cc88ab71ffcd
 +  if (shutdownDeadline) clearTimeout(shutdownDeadline);
 +  process.exit(exitCode);
 +}
+diff --git a/src/sessions/chat-input-parsing.test.ts b/src/sessions/chat-input-parsing.test.ts
+new file mode 100644
+index 00000000..1162c228
+--- /dev/null
++++ b/src/sessions/chat-input-parsing.test.ts
+@@ -0,0 +1,40 @@
++import { createHash } from "node:crypto";
++import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
++import { expect, it } from "vitest";
++import {
++  matchesSessionPendingInputRequest,
++  preparePendingInputRequest,
++} from "../config/sessions/session-accessor.pending-input-request.js";
++import { bindChatInputParsingHash, readChatInputParsingHash } from "./chat-input-parsing.js";
++it("keeps consumed pre-extension normal receipts without upgrading or accepting changed/literal input", () => {
++  const old = { role: "user" as const, content: "hello", idempotencyKey: "old:user" };
++  const receipt = {
++    request_hash: createHash("sha256").update(stableStringify(old)).digest("hex"),
++    consumed_event_id: "old-event",
++  };
++  for (const mode of ["normal-v1", "literal-v1"] as const) {
++    const message = {
++      ...old,
++      timestamp: 1,
++      __openclaw: { commandInterpretation: mode, chatRequestIdentity: "a".repeat(64) },
++    };
++    const prepared = preparePendingInputRequest({ runId: "old", message });
++    expect(
++      matchesSessionPendingInputRequest(receipt, prepared.stableMessage, prepared.requestHash),
++    ).toBe(mode === "normal-v1");
++    expect(
++      matchesSessionPendingInputRequest(
++        receipt,
++        { ...prepared.stableMessage, content: "changed" },
++        prepared.requestHash,
++      ),
++    ).toBe(false);
++  }
++});
++it("rejects malformed or future versions and cannot synthesize missing evidence", () => {
++  expect(readChatInputParsingHash("chat-parsing-v2:literal-v1:unknown")).toBe("invalid");
++  expect(() => bindChatInputParsingHash("hash", { commandInterpretation: "literal-v1" })).toThrow(
++    "incomplete",
++  );
++  expect(readChatInputParsingHash("request:legacy")).toBeUndefined();
++});
+diff --git a/src/sessions/chat-input-parsing.ts b/src/sessions/chat-input-parsing.ts
+new file mode 100644
+index 00000000..7326db5b
+--- /dev/null
++++ b/src/sessions/chat-input-parsing.ts
+@@ -0,0 +1,36 @@
++/** Parsing attenuation evidence, not input provenance or caller authority. */
++export type ChatInputParsingMode = "normal-v1" | "literal-v1" | "suppressed-v1";
++export type ChatInputParsingEvidence = { mode: ChatInputParsingMode; identity: string };
++const PREFIX = "chat-parsing-v1:";
++export function readChatInputParsingHash(
++  hash: string,
++): ChatInputParsingEvidence | "invalid" | undefined {
++  if (!hash.startsWith("chat-parsing-")) return undefined;
++  const match = /^chat-parsing-v1:(normal-v1|literal-v1|suppressed-v1):([a-f0-9]{64}):(.+)$/u.exec(
++    hash,
++  );
++  return match ? { mode: match[1] as ChatInputParsingMode, identity: match[2]! } : "invalid";
++}
++export function bindChatInputParsingHash(
++  hash: string,
++  metadata: Record<string, unknown> | undefined,
++): string {
++  if (metadata?.commandInterpretation === undefined && metadata?.chatRequestIdentity === undefined)
++    return hash;
++  const mode = metadata?.commandInterpretation;
++  const identity = metadata?.chatRequestIdentity;
++  if (
++    (mode !== "normal-v1" && mode !== "literal-v1" && mode !== "suppressed-v1") ||
++    typeof identity !== "string" ||
++    !/^[a-f0-9]{64}$/u.test(identity)
++  ) {
++    throw new Error("Chat parsing evidence is incomplete");
++  }
++  return `${PREFIX}${mode}:${identity}:${hash}`;
++}
++/** Only pre-extension NORMAL sources can use their unversioned request digest. */
++export function legacyNormalChatInputHash(hash: string): string | undefined {
++  return readChatInputParsingHash(hash) !== "invalid" && hash.startsWith(`${PREFIX}normal-v1:`)
++    ? hash.slice(`${PREFIX}normal-v1:`.length + 65)
++    : undefined;
++}
+diff --git a/src/sessions/user-turn-transcript.metadata.ts b/src/sessions/user-turn-transcript.metadata.ts
+index 31e68cdb..609485b4 100644
+--- a/src/sessions/user-turn-transcript.metadata.ts
++++ b/src/sessions/user-turn-transcript.metadata.ts
+@@ -62,6 +62,8 @@ export function buildPersistedUserTurnMetadata(
+   const replyPreviewText = normalizeOptionalString(input.replyToPreview?.text);
+   const replyPreviewSender = normalizeOptionalString(input.replyToPreview?.senderLabel);
+   return {
++    ...(input.commandInterpretation ? { commandInterpretation: input.commandInterpretation } : {}),
++    ...(input.chatRequestIdentity ? { chatRequestIdentity: input.chatRequestIdentity } : {}),
+     // Privileged synthetic handoffs may execute owner tools but never author trusted memory.
+     ...(input.senderIsOwner === undefined
+       ? {}
+@@ -154,6 +156,10 @@ export function restorePreparedUserTurnOperationalMetaForRuntime<
+     nextMessage.display = false;
+   }
+   const runtimeMeta = { ...nextMessage["__openclaw"] };
++  for (const key of ["commandInterpretation", "chatRequestIdentity"] as const) {
++    delete runtimeMeta[key];
++    if (preparedMeta?.[key] !== undefined) runtimeMeta[key] = preparedMeta[key];
++  }
+   delete runtimeMeta.intent;
+   if (preparedMeta?.intent) {
+     runtimeMeta.intent = preparedMeta.intent;
+@@ -231,6 +237,8 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
+       : structuredClone(message.content);
+   const workContext = structuredClone(originalMeta?.workContext);
+   const humanMentions = structuredClone(originalMeta?.humanMentions);
++  const commandInterpretation = originalMeta?.commandInterpretation;
++  const chatRequestIdentity = originalMeta?.chatRequestIdentity;
+   const display = message.display;
+   const intent = structuredClone(originalMeta?.intent);
+   const senderIsOwner = originalMeta?.senderIsOwner;
+@@ -279,6 +287,10 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
+     ...(mediaImageLayout === undefined ? {} : { mediaImageLayout }),
+     ...(intent === undefined ? {} : { intent }),
+   };
++  for (const [key, value] of Object.entries({ commandInterpretation, chatRequestIdentity })) {
++    delete protectedMeta[key];
++    if (value !== undefined) protectedMeta[key] = value;
++  }
+   if (intent === undefined) {
+     delete protectedMeta.intent;
+   }
+diff --git a/src/sessions/user-turn-transcript.types.ts b/src/sessions/user-turn-transcript.types.ts
+index d3831adf..ed3c4d4d 100644
+--- a/src/sessions/user-turn-transcript.types.ts
++++ b/src/sessions/user-turn-transcript.types.ts
+@@ -1,4 +1,3 @@
+-// User-turn transcript type contracts shared by runtime and queue option types.
+ import type { HumanMention } from "@openclaw/gateway-protocol";
+ import type { AgentMessage } from "../../packages/agent-core/src/types.js";
+ import type { AgentRunTerminalOutcome } from "../agents/agent-run-terminal-outcome.types.js";
+@@ -17,6 +16,8 @@ import type { TranscriptEntryAnchor } from "../config/sessions/transcript-entry-
+ import type { TranscriptTurnAdmission } from "../config/sessions/transcript-turn-admission.js";
+ import type { SessionEntry } from "../config/sessions/types.js";
+ import type { MediaFactInput } from "../media/media-facts.js";
++// User-turn transcript type contracts shared by runtime and queue option types.
++import type { ChatInputParsingMode } from "./chat-input-parsing.js";
+ import type { InputProvenance } from "./input-provenance.js";
+ 
+ export type PersistedUserTurnMediaInput = Pick<
+@@ -48,6 +49,9 @@ export type PersistedUserTurnMessage = Extract<AgentMessage, { role: "user" }> &
+ };
+ 
+ export type UserTurnInput = Pick<PersistedUserTurnMessage, "display" | "excludeFromContext"> & {
++  /** Versioned parsing contract; never provenance or authority. */
++  commandInterpretation?: ChatInputParsingMode;
++  chatRequestIdentity?: string;
+   text?: string | null;
+   /** Authored text and its captured reference; model content stays unchanged. */
+   workContext?: AttachedChatWorkContext;
+diff --git a/test/fixtures/chat-early-abort-restart.test.ts b/test/fixtures/chat-early-abort-restart.test.ts
+new file mode 100644
+index 00000000..c00a31a8
+--- /dev/null
++++ b/test/fixtures/chat-early-abort-restart.test.ts
+@@ -0,0 +1,66 @@
++// A separate Node/Vitest process: no inherited Gateway/cache/database handles.
++import { expect, it, vi } from "vitest";
++import { registerAgentSessionLoopTestLifecycle } from "../../src/agents/sessions/agent-session-loop-correctness.test-support.js";
++import { getRuntimeConfig, setRuntimeConfigSnapshot } from "../../src/config/config.js";
++import { readChatInputAdmission } from "../../src/config/sessions/session-accessor.js";
++import { createDirectChatContext } from "../../src/gateway/server-chat.agent-events.test-helpers.js";
++import { handleChatSend } from "../../src/gateway/server-methods/chat-send-handler.js";
++import { createActiveRun } from "../../src/gateway/server-methods/chat.abort.test-helpers.js";
++import {
++  dispatchInboundMessageMock,
++  installGatewayTestHooks,
++  testState,
++} from "../../src/gateway/test-helpers.js";
++installGatewayTestHooks();
++registerAgentSessionLoopTestLifecycle();
++it("fresh process replays early abort before commands and never dispatches", async () => {
++  const input = JSON.parse(process.env.CHAT_EARLY_ABORT_FIXTURE!);
++  testState.sessionStorePath = input.scope.storePath;
++  const cfg = getRuntimeConfig();
++  setRuntimeConfigSnapshot({ ...cfg, session: { ...cfg.session, store: input.scope.storePath } });
++  expect(readChatInputAdmission(input.scope, input.params.idempotencyKey)).toMatchObject({
++    abortedAt: expect.any(Number),
++  });
++  const context = createDirectChatContext({ getRuntimeConfig, chatQueuedTurns: new Map() });
++  const active = createActiveRun(input.scope.sessionKey, {
++    sessionId: input.scope.sessionId,
++    agentId: "main",
++    owner: { connId: input.client.connId },
++  });
++  context.chatAbortControllers.set("unrelated-active", active);
++  const send = async () => {
++    const respond = vi.fn();
++    await handleChatSend({
++      params: input.params,
++      req: { type: "req", id: "restart", method: "chat.send", params: input.params },
++      client: input.client,
++      context,
++      respond,
++      isWebchatConnect: () => true,
++    });
++    return respond;
++  };
++  expect(await send()).toHaveBeenCalledWith(
++    true,
++    expect.objectContaining({ status: "timeout", summary: "aborted" }),
++    undefined,
++    expect.anything(),
++  );
++  if (input.params.inputMode === "literal") delete input.params.inputMode;
++  else input.params.inputMode = "literal";
++  expect(await send()).toHaveBeenCalledWith(
++    false,
++    undefined,
++    expect.objectContaining({ details: { reason: "chat-request-conflict" } }),
++  );
++  delete input.params.inputMode;
++  input.params.message = "/stop";
++  expect(await send()).toHaveBeenCalledWith(
++    false,
++    undefined,
++    expect.objectContaining({ details: { reason: "chat-request-conflict" } }),
++  );
++  expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
++  expect(active.controller.signal.aborted).toBe(false);
++  expect(context.chatAbortControllers.get("unrelated-active")).toBe(active);
++});
+diff --git a/test/fixtures/chat-early-abort-restart.vitest.config.ts b/test/fixtures/chat-early-abort-restart.vitest.config.ts
+new file mode 100644
+index 00000000..0b3596fe
+--- /dev/null
++++ b/test/fixtures/chat-early-abort-restart.vitest.config.ts
+@@ -0,0 +1,9 @@
++import config from "../../literal-review.vitest.config.js";
++export default {
++  ...config,
++  test: {
++    ...config.test,
++    exclude: ["**/node_modules/**"],
++    include: ["test/fixtures/chat-early-abort-restart.test.ts"],
++  },
++};
+diff --git a/test/fixtures/chat-literal-retry-process.ts b/test/fixtures/chat-literal-retry-process.ts
+new file mode 100644
+index 00000000..569cc92e
+--- /dev/null
++++ b/test/fixtures/chat-literal-retry-process.ts
+@@ -0,0 +1,17 @@
++// Fresh process reads only task-owned SQLite custody. No Gateway or provider is started.
++import {
++  readSessionInputParsingEvidence,
++  stageSessionPendingInput,
++} from "../../src/config/sessions/session-accessor.js";
++import { closeOpenClawAgentDatabasesAsync } from "../../src/state/openclaw-agent-db-lifecycle.js";
++const input = JSON.parse(process.argv[2]!);
++const evidence = readSessionInputParsingEvidence(input.scope, input.message.idempotencyKey);
++const replay = await stageSessionPendingInput(input.scope, {
++  runId: "once",
++  message: input.message,
++  assertCurrent: () => {},
++});
++if (replay?.state !== "consumed") throw new Error("Fresh process would redispatch accepted input");
++console.log(JSON.stringify({ evidence, state: replay.state }));
++replay.finish("interrupted");
++await closeOpenClawAgentDatabasesAsync();
 diff --git a/tsdown.config.ts b/tsdown.config.ts
-index 3fd630b5ea3b1d29af9de7d3172749a31b69cb1b..69bc051861b1c3ddb80f831cf9580b924582fd88 100644
+index 3fd630b5..69bc0518 100644
 --- a/tsdown.config.ts
 +++ b/tsdown.config.ts
 @@ -445,6 +445,7 @@ function buildCoreDistEntries(): Record<string, string> {

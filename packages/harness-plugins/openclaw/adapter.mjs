@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /** Transport only: the pinned OpenClaw Gateway owns planning and the entire agent loop. */
+import { NATIVE_PINS, INPUT_CONTRACT, RUNTIME_IDENTITY, validateLiteralOwner } from './literal-migration.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rename, readdir, lstat, realpath, rm, open } from 'node:fs/promises';
@@ -24,7 +25,7 @@ function boundedProjection(emit, frame, limit = 256 * 1024) {
 }
 
 export const UPSTREAM = Object.freeze({ version: '2026.9.8', commit: 'fc23bc864e4553c2d215e479eeec47b67a0bf943', protocol: 4 });
-export const CURATED_RUNTIME = Object.freeze({ sourceCommit: '9bbdbaec153dd28fb452e6652c3dcacd829cb00f', patchSha256: '07febe324718e72b238d465bd33f5196d9c49f3aa864405d6587ba3d9b24c908', entry: 'dist/yorozu-gateway-embedding.js', transport: 'inherited-fd-v1' });
+export const CURATED_RUNTIME = Object.freeze({ sourceCommit: 'f04797ef4d24f3da0f9df74acd58ab773ab5f11e', patchSha256: '601c2eea193de989977a122a98bda8653910848092f7c4937195e40bf63ebc4e', entry: 'dist/yorozu-gateway-embedding.js', transport: 'inherited-fd-v1' });
 export const CAPABILITIES = Object.freeze({ backgroundTasks: false, targetedSteer: false, taskStop: false, approvals: false, reconnect: false, attachments: false });
 export const EXTENSIONS = Object.freeze({ version: 1, connectedLifecycle: false, conversationActions: false, autonomousEvents: false, agentMessaging: false });
 const FRAME_LIMIT = 256 * 1024;
@@ -180,7 +181,7 @@ export async function prepareRuntime(params) {
   const revision = await exec(git, ['-C', source, 'rev-parse', 'HEAD'], gitOptions);
   if (revision.stdout.trim() !== CURATED_RUNTIME.sourceCommit) throw invalid('OpenClaw source commit does not match the explicit curated pin; stock sources are gated');
   await exec(git, ['-C', source, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
-  const patch = await exec(git, ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--full-index', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { ...gitOptions, maxBuffer: 512 * 1024 });
+  const patch = await exec(git, ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--abbrev=8', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { ...gitOptions, maxBuffer: 512 * 1024 });
   if (sha(patch.stdout) !== CURATED_RUNTIME.patchSha256) throw invalid('OpenClaw curated patch digest does not match the approved base and patch');
   try {
     await regular(join(source, 'openclaw.mjs'));
@@ -192,22 +193,29 @@ export async function prepareRuntime(params) {
     if (error.code === 'ENOENT') throw new ProtocolError(-32020, 'pinned OpenClaw requires its intact built package and node_modules; this adapter never installs or builds it');
     throw error;
   }
+  for (const [path, digest] of [
+    ['dist/build-info.json', NATIVE_PINS.buildInfoSha256],
+    [CURATED_RUNTIME.entry, NATIVE_PINS.entrySha256],
+    ['dist/protocol.schema.json', NATIVE_PINS.protocolSchemaSha256],
+    ['pnpm-lock.yaml', NATIVE_PINS.lockfileSha256],
+  ]) {
+    await regular(join(source, path), 16 * 1024 * 1024);
+    if (sha(await readFile(join(source, path))) !== digest) throw invalid('native artifact does not match the development pin');
+  }
+  await regular(node, 256 * 1024 * 1024);
+  if (sha(await readFile(node)) !== NATIVE_PINS.node.binarySha256) throw invalid('Node binary does not match the development pin');
   const build = JSON.parse(await readFile(join(source, 'dist', 'build-info.json'), 'utf8'));
   if (build.commit !== CURATED_RUNTIME.sourceCommit || build.version !== UPSTREAM.version) throw invalid('OpenClaw build metadata does not match the explicit curated source pin');
   const probe = await exec(node, ['--input-type=module', '-e', 'process.stdout.write(JSON.stringify({version:process.versions.node,sqlite:!!process.getBuiltinModule("node:sqlite")}))'], { env: { PATH: '/usr/bin:/bin', NODE_DISABLE_COMPILE_CACHE: '1' }, maxBuffer: 4096 });
   const nodeInfo = JSON.parse(probe.stdout);
-  const [major, minor] = nodeInfo.version.split('.').map(Number);
-  if (!nodeInfo.sqlite || !((major === 24 && minor >= 16) || major > 26 || (major === 26 && minor >= 1))) throw invalid('unsupported OpenClaw Node runtime; automatic recovery/install is disabled');
+  if (!nodeInfo.sqlite || nodeInfo.version !== NATIVE_PINS.node.version) throw invalid('unsupported OpenClaw Node runtime; automatic recovery/install is disabled');
   await directory(scoped.profileDir);
   const marker = join(scoped.profileDir, '.yorozu-openclaw-owner.json');
-  const owner = { schema: 3, pluginId: 'openclaw', upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, patchSha256: CURATED_RUNTIME.patchSha256, agentId: scoped.agentId };
+  const owner = { schema: 4, inputContract: INPUT_CONTRACT, runtimeIdentity: RUNTIME_IDENTITY, pluginId: 'openclaw', upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, patchSha256: CURATED_RUNTIME.patchSha256, agentId: scoped.agentId };
   try {
     await regular(marker, 2048);
     const previous = JSON.parse(await readFile(marker, 'utf8'));
-    if (![2, 3].includes(previous.schema) || Object.entries(owner).some(([key, value]) => key !== 'schema' && previous[key] !== value)) throw invalid('profile belongs to another agent or pinned runtime');
-    // Scope is revalidated against the current host sandbox/configuration. It is
-    // resource authority, not the identity of native memory and conversation.
-    if (previous.schema === 2) await atomic(marker, owner);
+    validateLiteralOwner(previous, owner);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
     const bootstrapNames = scoped.workspace === join(scoped.profileDir, 'scratch') ? ['proof-provider.json', 'scratch'] : ['proof-provider.json'];
@@ -468,7 +476,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
   const sessions = new Map(); const runs = new Map(); const operations = new Map();
   const pendingEvents = new Map(); const observedSessions = new Set();
   const nonce = randomUUID(); let sequence = 0; let writing = Promise.resolve(); let frames = Promise.resolve();
-  const journal = () => ({ schema: 2, upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, agentId: runtime.agentId, sessions: [...sessions.values()], runs: [...runs.values()], operations: [...operations.values()] });
+  const journal = () => ({ schema: 3, inputContract: INPUT_CONTRACT, runtimeIdentity: RUNTIME_IDENTITY, upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, agentId: runtime.agentId, sessions: [...sessions.values()], runs: [...runs.values()], operations: [...operations.values()] });
   const persist = () => {
     if (!runtime.journalPath) return Promise.resolve();
     const value = journal();
@@ -503,8 +511,8 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
     let saved;
     try { await regular(runtime.journalPath, 4 * 1024 * 1024); saved = JSON.parse(await readFile(runtime.journalPath, 'utf8')); }
     catch (error) { if (error.code === 'ENOENT') return; throw error; }
-    only(saved, ['schema', 'upstream', 'curatedSource', 'agentId', 'sessions', 'runs', 'operations'], 'adapter journal');
-    if (saved.schema !== 2 || saved.upstream !== UPSTREAM.commit || saved.curatedSource !== CURATED_RUNTIME.sourceCommit || saved.agentId !== runtime.agentId || !Array.isArray(saved.sessions) || saved.sessions.length > MAX_SESSIONS || !Array.isArray(saved.runs) || saved.runs.length > MAX_RECORDS || !Array.isArray(saved.operations) || saved.operations.length > MAX_RECORDS) throw invalid('adapter journal identity or limits are invalid');
+    only(saved, ['schema', 'inputContract', 'runtimeIdentity', 'upstream', 'curatedSource', 'agentId', 'sessions', 'runs', 'operations'], 'adapter journal');
+    if (saved.schema !== 3 || saved.inputContract !== INPUT_CONTRACT || saved.runtimeIdentity !== RUNTIME_IDENTITY || saved.upstream !== UPSTREAM.commit || saved.curatedSource !== CURATED_RUNTIME.sourceCommit || saved.agentId !== runtime.agentId || !Array.isArray(saved.sessions) || saved.sessions.length > MAX_SESSIONS || !Array.isArray(saved.runs) || saved.runs.length > MAX_RECORDS || !Array.isArray(saved.operations) || saved.operations.length > MAX_RECORDS) throw invalid('adapter journal identity or limits are invalid');
     for (const session of saved.sessions) {
       only(session, ['conversationId', 'bindingId', 'sessionKey', 'sessionId', 'state', 'reference'], 'journal session');
       required(session.conversationId, 'conversationId'); required(session.bindingId, 'bindingId');
@@ -692,7 +700,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
         // additional protection, never an excuse to replay an uncertain send.
         try {
           receipt = await runtime.gateway.call('chat.send', { sessionKey: session.sessionKey, sessionId: session.sessionId, agentId: runtime.agentId, message: params.text,
-            idempotencyKey: id, queueMode: 'followup', suppressCommandInterpretation: true, expectedLeafEntryId: info.activeLeafEntryId, deliver: false });
+            idempotencyKey: id, queueMode: 'followup', inputMode: 'literal', expectedLeafEntryId: info.activeLeafEntryId, deliver: false });
           if (receipt?.runId !== id || receipt.status !== 'started') throw new Error('native acknowledgement is queued, redirected or malformed');
           run.receipt = { status: 'accepted' }; if (run.state === 'admitting') run.state = 'running';
           await persist(); event(session, 'turn.started', { background: false }, run);

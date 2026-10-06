@@ -2,15 +2,46 @@
 
 This adapter maps the private Yorozu harness protocol v1 to the **OpenClaw Gateway**, not to a model API. OpenClaw owns its secretary conversation, native inference loop, transcript and runtime state. The host owns UI/history projections, admission currency, process supervision and explicit OS resource isolation. Native memory, autonomy and approval decisions belong to OpenClaw. No Yorozu planner is inserted above OpenClaw.
 
-The official base is `openclaw/openclaw` tag `v2026.9.8`, commit `fc23bc864e4553c2d215e479eeec47b67a0bf943`. The explicitly derived, locally signed source is `9bbdbaec153dd28fb452e6652c3dcacd829cb00f`, with [the narrow inherited-listener patch](upstream-inherited-listener.patch) SHA-256 `07febe324718e72b238d465bd33f5196d9c49f3aa864405d6587ba3d9b24c908`. This is not an untouched official release. Gateway protocol v4 is separate from the outer harness protocol v1. `productionReady` is false. Fake Gateway contract tests do not prove native execution, live subscription access, native UI integration, or interchangeability.
+The official base is `openclaw/openclaw` tag `v2026.9.8`, commit `fc23bc864e4553c2d215e479eeec47b67a0bf943`. The explicitly derived, locally signed source is `f04797ef4d24f3da0f9df74acd58ab773ab5f11e`, with [the full official-upstream-to-candidate patch](upstream-inherited-listener.patch) SHA-256 `601c2eea193de989977a122a98bda8653910848092f7c4937195e40bf63ebc4e`. This is not an untouched official release. Gateway protocol v4 is separate from the outer harness protocol v1. `productionReady` is false. Fake Gateway contract tests do not prove native execution, live subscription access, native UI integration, or interchangeability.
+
+## DEVELOPMENT literal adoption and fresh-only migration
+
+The corrected native candidate passed independent DEVELOPMENT review. This adapter now
+sends only `inputMode:"literal"`; `/stop`, `/new`, command-like text and Unicode
+remain exact user bytes. Stopping uses separately requested `chat.abort`, never text.
+The paired device still requests only `operator.read` / `operator.write`.
+
+`literal-migration.mjs` and `manifest.json` pin source, full upstream diff, build-info,
+embedding entry, protocol schema, exact Node 26.10.0 binary and lockfile together.
+The launcher verifies these runtime files before profile creation. Archive/manifest
+digests are provenance references, not a claim of sealed dependencies: reused
+node_modules remain unsealed and the native development archive is non-standalone.
+Production readiness stays false; no memory capability completion is claimed.
+
+**Migration policy: fresh-only, no in-place adoption.** Preserve earlier profiles,
+owner markers and journals unchanged, stopped and snapshot-only. Do not rewrite an
+old schema/source/build/mode to pass validation. Provision a distinct empty private
+profile with a new host binding only for explicitly new work. Never copy uncertain
+operations, replay old text or use fresh attempt IDs to evade an unknown outcome.
+Old work requires evidence-backed recovery under its original binding; that recovery
+is not implemented here. Current schema-3 journal restarts retain stable operation
+IDs and unknown receipts without dispatch. Schema-4 owner identity and journal
+identity both bind `literal-v1` plus the entire development pin set. Resource grants
+can change only through current host scope validation, not profile identity changes.
+
+Paired-device, host-tool approval/memory/isolation and embedding-owned stop/restart/
+lifetime acceptance of the integrated candidate remain separate shipping gates.
+No account, provider, installation, release or production change is authorized by
+these development pins. Memory bridge work is separately owned and not accepted by
+this adapter change.
 
 ## Connected lifecycle and platform ownership
 
 **Connected lifecycle is held and disabled (`extensions.connectedLifecycle:false`).** The production launcher rejects a connected descriptor before opening a socket. The existing descriptor, fake-socket and detach seams remain only for inert contract regression fixtures. There is no proven connected durable reservation journal or restart lifecycle, so this candidate must not expose connected service access, messaging or an automatic fallback to managed launch. Endpoint authentication alone would not establish those guarantees.
 
-Managed mode retains the exact curated source/build and inherited-listener requirements below and remains held, not production-ready. October 6 built and partially exercised the native runtime offline; inference is blocked by the protected native command-suppression API described below.
+Managed mode retains the exact curated source/build and inherited-listener requirements below and remains held, not production-ready. October 6 built and partially exercised the native runtime offline; the historical suppression blocker is superseded by DEVELOPMENT literal adoption; integrated native acceptance remains outstanding.
 
-Managed bootstrap no longer forces heartbeat off, memory-provider none, bootstrap/context suppression, empty skills or fast mode. Native settings survive restart while host resources and broker bindings are reapplied. The managed zero-tool prototype still denies unsupported resource tools and does not enable scheduler/computer/auxiliary listeners. Host preference/shared-memory text is not injected into turns. Schema 2 owner markers migrate to stable schema 3 agent/runtime identity after current scope validation, so changing an explicit resource grant does not select fresh native memory.
+Managed bootstrap no longer forces heartbeat off, memory-provider none, bootstrap/context suppression, empty skills or fast mode. Native settings survive restart while host resources and broker bindings are reapplied. The managed zero-tool prototype still denies unsupported resource tools and does not enable scheduler/computer/auxiliary listeners. Host preference/shared-memory text is not injected into turns. Schema 4 owner markers bind the literal parsing contract and full development build identity. Old markers are refused: see the fresh-only migration policy below. Current resource scope is revalidated independently.
 
 `conversationActions`, `autonomousEvents` and `agentMessaging` extensions remain false: this pin's generic chat-send lane cannot invent trusted peer provenance, and no approved native action mapping has been proved. Message/action methods return `unsupported/not-submitted`; they do not become ordinary user prompts. General two-harness exchange and connected live service acceptance remain outstanding.
 
@@ -68,7 +99,7 @@ Fresh managed subscription onboarding is unsupported. Without an explicit local 
 | --- | --- | --- |
 | `initialize` | `connect.challenge` → `connect` → `hello-ok` | Version/scopes/readiness verified; no planner or model calls. |
 | `session.open` | `sessions.create` (managed) or `chat.history` (connected), `sessions.messages.subscribe` | Deterministic agent-prefixed session key, native session ID; no initial task/message/title request. Only adapter-owned sessions resume. |
-| `turn.submit` | `chat.history`, `chat.send` | Exact native session/run currency, idle preflight, transcript branch CAS, `followup` queue mode, native-selected fast mode, suppressed command interpretation and native idempotency key. |
+| `turn.submit` | `chat.history`, `chat.send` | Exact native session/run currency, idle preflight, transcript branch CAS, `followup` queue mode, native-selected fast mode, `inputMode:"literal"` (no privileged suppression, no normal fallback) and native idempotency key. |
 | `assistant.update` | Native `chat` delta/final events | Full host text assembled from actual native text; strict agent/session/run/sequence ownership. |
 | `turn.started` | Exact native `started` receipt | An ACK is admission, not completion. Pre-ACK events are buffered. |
 | `turn.terminal` | Native `chat` final/error/aborted | Completion/failure/Stop only from that run's terminal event; yielded runs stay unknown. |
@@ -79,7 +110,7 @@ Fresh managed subscription onboarding is unsupported. Without an explicit local 
 
 `backgroundTasks`, `targetedSteer`, `taskStop`, `approvals`, `reconnect` and `attachments` are false. OpenClaw itself supports more features, but these capabilities cannot be claimed for this prototype without native ownership, exact-control, permission and recovery proofs. Scheduling and computer use remain disabled. `run.stop` is an exact conversation turn control, distinct from unsupported child-task Stop.
 
-Adapter-owned `adapter-journal-v1.json` contains session bindings, input fingerprints, receipts and projections. Its schema 2 binds both official base and curated source; stock, earlier-schema and foreign patch journals are refused without native RPC. It is separate from OpenClaw's private state. Unknown send/control outcomes are reserved durably before handoff and cached; duplicate currency cannot replay execution even after adapter restart. A proven native busy preflight returns `handoff:"not-submitted"` and may be retried with the same input. A race after preflight can become queued or uncertain; neither is automatically retried. This is not an atomic native reject-if-busy guarantee.
+Adapter-owned `adapter-journal-v1.json` contains session bindings, input fingerprints, receipts and projections. Its schema 3 binds the literal-v1 contract, full pinned runtime identity, official base and curated source; stock, earlier-schema and foreign patch journals are refused without native RPC. It is separate from OpenClaw's private state. Unknown send/control outcomes are reserved durably before handoff and cached; duplicate currency cannot replay execution even after adapter restart. A proven native busy preflight returns `handoff:"not-submitted"` and may be retried with the same input. A race after preflight can become queued or uncertain; neither is automatically retried. This is not an atomic native reject-if-busy guarantee.
 
 OpenClaw alone owns native sessions/transcripts/model state. The host must retain portable app history/preferences and schedules across plugin switches. This slice does not import old harness transcripts, hydrate native history, implement switch/migration UI, enable native children or implement host broker bindings. On switch, unresolved old work remains tied to its original binding/process; never send its controls or retries into the new plugin. Rollback can select the original plugin while preserving app history and its original private profile.
 
@@ -93,15 +124,15 @@ The synthetic contract tests exercise wire parsing/handshake with a fake socket 
 
 `native-proof.mjs` is an acceptance fixture; its October 6 partial native execution is documented below (the full acceptance remains failed). It constructs fictional agents through the host's real `PersonAgentStore`, derives zero tools, acquires real host listener leases, calls `isolatedAgentLaunch`, transfers actual descriptors and requires physical kernel checks before launching OpenClaw. It then checks native Gateway readiness, conversation history across two inference turns, exact Stop/provider cancellation, accepted-input deduplication and clean-restart non-replay. Its provider is local synthetic Responses inference only. It persists `evidence.json`; unsupported policy, lease, build, startup or lifecycle failures cannot become acceptance evidence.
 
-## October 6 native build and bounded execution result
+## Historical October 6 native build and bounded execution result (pre-literal adapter)
 
-The source-only build blocker below is superseded: exact curated source now builds offline with its supported `OPENCLAW_BUILD_ALL_NO_PNPM=1` route, network denied, no dependency fetch or signature/integrity bypass. Actual confined Gateway readiness, signed isolated-device pairing under native policy, session creation, exact subscription/history identity and clean shutdown were observed. **Inference remains blocked:** the unchanged safety field `suppressCommandInterpretation: true` is rejected with `system provenance fields require admin scope`; this adapter still requests only read/write. No admin scope, command-suppression removal, production Gateway, native source patch or capability enablement was attempted. `commands.text=false` does not disable text-command interpretation for this non-native-command surface. See [the exact follow-up report](../../../docs/verification/openclaw-native-build-gate-20261006.md).
+The source-only build blocker below is superseded: exact curated source now builds offline with its supported `OPENCLAW_BUILD_ALL_NO_PNPM=1` route, network denied, no dependency fetch or signature/integrity bypass. Actual confined Gateway readiness, signed isolated-device pairing under native policy, session creation, exact subscription/history identity and clean shutdown were observed. **Historical inference blocker (not the current literal adapter):** the unchanged safety field `suppressCommandInterpretation: true` is rejected with `system provenance fields require admin scope`; that adapter requested only read/write. No admin scope, command-suppression removal, production Gateway, native source patch or capability enablement was attempted. `commands.text=false` does not disable text-command interpretation for this non-native-command surface. See [the exact follow-up report](../../../docs/verification/openclaw-native-build-gate-20261006.md).
 
 The managed adapter now maintains a fresh private Ed25519 client identity in its owned profile; Gateway-generated device tokens are not retained or imported. Existing native pairing/approval policy remains authoritative. The optional trusted `git` initialize path selects a development verifier and its explicit read-only dependency closure; default `/usr/bin/git` behavior is unchanged. Shipping still needs sealed runtime input preparation, not an ambient developer toolchain.
 
 ## Curated inherited-listener route
 
-The source patch is implemented and signed; its build and partial native execution are now proved, but complete Gateway/inference acceptance remains blocked as described above. This is a curated extension, not a supported upstream embedding API. The public base already has an internal `HttpServer` seam: `src/gateway/server-runtime-state.ts:73` accepts `testListener`, lines 135–149 validate address `127.0.0.1` and configured port, `src/gateway/server-http.ts:200` attaches native HTTP handlers, and `server-runtime-state.ts:539` skips the ordinary listen call. Native WebSocket handlers and the complete Gateway loop remain upstream-owned. The public base's startup options do not forward a listener; its `test-helpers.listener.ts:68` injects one with a Vitest spy. The plugin SDK exports clients, not a prebound-server startup API.
+The source patch is implemented and signed; its build and partial native execution are now proved, but integrated Gateway/inference acceptance remains pending; the historical denial below is preserved as evidence. This is a curated extension, not a supported upstream embedding API. The public base already has an internal `HttpServer` seam: `src/gateway/server-runtime-state.ts:73` accepts `testListener`, lines 135–149 validate address `127.0.0.1` and configured port, `src/gateway/server-http.ts:200` attaches native HTTP handlers, and `server-runtime-state.ts:539` skips the ordinary listen call. Native WebSocket handlers and the complete Gateway loop remain upstream-owned. The public base's startup options do not forward a listener; its `test-helpers.listener.ts:68` injects one with a Vitest spy. The plugin SDK exports clients, not a prebound-server startup API.
 
 The independent kernel owner proved numeric-loopback inherited HTTP under the actual sandbox: host `BoundSocket.fd()` captured before server adoption, stdio FD3 duplication, parent close, real child HTTP response, non-loopback refusal, new IPv4/IPv6/wildcard and inherited-child bind denial, and peer file/memory denial. The production minted-lease/compiler path has a separate raw HTTP proof. These establish the descriptor mechanism, not OpenClaw execution. [Node's documented descriptor adoption](https://nodejs.org/api/net.html#serverlistenhandle-backlog-callback) and [server-handle transfer](https://nodejs.org/api/child_process.html#subprocesssendmessage-sendhandle-options-callback) explain the mechanism; the kernel canaries supply physical evidence.
 

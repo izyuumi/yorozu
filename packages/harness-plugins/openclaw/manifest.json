@@ -2,21 +2,21 @@
   "schemaVersion": 1,
   "protocolVersion": 1,
   "pluginId": "openclaw",
-  "version": "2026.9.8-yorozu.1",
+  "version": "2026.9.8-yorozu.literal-dev.1",
   "entry": "adapter.mjs",
   "upstream": {
     "version": "2026.9.8",
     "sourceSha": "fc23bc864e4553c2d215e479eeec47b67a0bf943"
   },
   "curatedRuntime": {
-    "sourceSha": "9bbdbaec153dd28fb452e6652c3dcacd829cb00f",
-    "patchSha256": "07febe324718e72b238d465bd33f5196d9c49f3aa864405d6587ba3d9b24c908",
+    "sourceSha": "f04797ef4d24f3da0f9df74acd58ab773ab5f11e",
+    "patchSha256": "601c2eea193de989977a122a98bda8653910848092f7c4937195e40bf63ebc4e",
     "patch": "upstream-inherited-listener.patch"
   },
   "runtime": {
     "kind": "external-node",
     "entry": "dist/yorozu-gateway-embedding.js",
-    "node": ">=24.16.0 <25 || >=26.1.0",
+    "node": "26.10.0",
     "listener": "trusted-host-numeric-loopback-inherited-fd3; child-bind-denied"
   },
   "productionReady": false,
@@ -51,5 +51,27 @@
     "profileOwner": "external",
     "disconnect": "socket-only",
     "subscriptionAccess": "harness-owned-unverified"
+  },
+  "developmentPins": {
+    "derivedCommit": "f04797ef4d24f3da0f9df74acd58ab773ab5f11e",
+    "fullUpstreamDiffSha256": "601c2eea193de989977a122a98bda8653910848092f7c4937195e40bf63ebc4e",
+    "buildInfoSha256": "38390412b3f1a8109e5e63c30ba9686076571539efa8df3010d4c0d45a55514d",
+    "entrySha256": "c7f8d626f2751ee75995ca991b594fb41a21afe0d053e81883a8f85c2eede68e",
+    "protocolSchemaSha256": "e5dad9efc6acfb59124d1c9872541b811abc56956d3d11abea7f2c37866aed4a",
+    "lockfileSha256": "c717cc8ed7331b2b4787ed4cbe80d46d3d733de69e3dc9dd7f1d49e6b4942802",
+    "node": {
+      "binarySha256": "56d28b39a8048f0cd1af7ad7e09f6cbe1c04439b6dfeb6c8d9090c082af60861",
+      "version": "26.10.0"
+    },
+    "artifactManifestSha256": "9db6607638d61a5688e94981d5cf66bdc8ef68d64ded824666f32bb2ae68684f",
+    "runtimeArchiveSha256": "a023bf8fd6ee63c8fe82c42c64fb6598eaeb63746c89513230509694cf5b557b"
+  },
+  "inputContract": {
+    "mode": "literal",
+    "version": 1,
+    "normalFallback": false,
+    "profileSchema": 4,
+    "journalSchema": 3,
+    "migration": "fresh-profile-only; preserve historical profiles stopped/snapshot-only; no unknown replay"
   }
 }

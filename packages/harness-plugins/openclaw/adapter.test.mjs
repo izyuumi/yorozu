@@ -123,7 +123,7 @@ test('idle submission uses exact native session, run idempotency, branch CAS and
   const call = gateway.last('chat.send');
   assert.equal(gateway.last('chat.history').sessionId, undefined);
   assert.equal(call.sessionKey, gateway.last('sessions.create').key); assert.equal(call.sessionId, 'native-session-0'); assert.equal(call.agentId, 'secretary');
-  assert.equal(call.queueMode, 'followup'); assert.equal(call.expectedLeafEntryId, null); assert.equal(call.fastMode, undefined); assert.equal(call.deliver, false); assert.equal(call.suppressCommandInterpretation, true);
+  assert.equal(call.queueMode, 'followup'); assert.equal(call.expectedLeafEntryId, null); assert.equal(call.fastMode, undefined); assert.equal(call.deliver, false); assert.equal(call.inputMode, 'literal'); assert.equal(Object.hasOwn(call, 'suppressCommandInterpretation'), false);
   assert.match(call.idempotencyKey, /^yz-[a-f0-9]{64}$/);
   assert.equal(events[0].kind, 'turn.started'); assert.equal(events[0].runId, turn.runId); assert.equal(events[0].attemptId, turn.attemptId);
   assert.equal((await adapter.handle('turn.submit', turn)).status, 'accepted'); assert.equal(gateway.count('chat.send'), 1);
@@ -525,13 +525,14 @@ test('isolated native device identity persists privately and signs exact nonce/t
 });
 
 
-test('native admin-only command-suppression denial is never retried without protection or broader scopes', async () => {
+test('native literal rejection is never retried in normal mode or with broader scopes', async () => {
   const { adapter, gateway } = await fixture();
-  gateway.overrides.set('chat.send', () => { throw Object.assign(new Error('native rejection'), { data: { code: 'INVALID_REQUEST', message: 'system provenance fields require admin scope' } }); });
+  gateway.overrides.set('chat.send', () => { throw Object.assign(new Error('native rejection'), { data: { code: 'INVALID_REQUEST', message: 'literal unavailable' } }); });
   assert.equal((await adapter.handle('turn.submit', turn)).status, 'unknown');
   assert.equal((await adapter.handle('turn.submit', turn)).status, 'unknown');
   assert.equal(gateway.count('chat.send'), 1);
-  assert.equal(gateway.last('chat.send').suppressCommandInterpretation, true);
+  assert.equal(gateway.last('chat.send').inputMode, 'literal');
+  assert.equal(Object.hasOwn(gateway.last('chat.send'), 'suppressCommandInterpretation'), false);
 });
 
 test('subscription acknowledgement requires exact native agent and session identity', async () => {
@@ -542,4 +543,59 @@ test('subscription acknowledgement requires exact native agent and session ident
     assert.equal((await adapter.handle('turn.submit', turn)).handoff, 'not-submitted');
     assert.equal(gateway.count('chat.send'), 0);
   }
+});
+
+test('literal command-looking and Unicode inputs preserve exact precreated identity and branch CAS', async () => {
+  for (const text of ['/stop', '/new', '/reset', '/model other', ' /stop\n日本語😀', '[[reply_to_current]] literal']) {
+    const { adapter, gateway } = await fixture();
+    gateway.overrides.set('chat.history', params => {
+      const session = gateway.sessions.get(params.sessionKey);
+      return { sessionKey: params.sessionKey, sessionId: session.sessionId,
+        sessionInfo: { agentId: session.agentId, hasActiveRun: false, activeRunIds: [], activeLeafEntryId: 'exact-leaf' } };
+    });
+    assert.equal((await adapter.handle('turn.submit', { ...turn, text })).status, 'accepted');
+    const send = gateway.last('chat.send');
+    assert.equal(send.message, text);
+    assert.equal(send.inputMode, 'literal');
+    assert.equal(Object.hasOwn(send, 'suppressCommandInterpretation'), false);
+    assert.equal(send.sessionKey, gateway.last('sessions.create').key);
+    assert.equal(send.sessionId, gateway.sessions.get(send.sessionKey).sessionId);
+    assert.equal(send.agentId, 'secretary');
+    assert.equal(send.expectedLeafEntryId, 'exact-leaf');
+    assert.equal(send.queueMode, 'followup'); assert.equal(send.deliver, false);
+    await adapter.handle('turn.submit', { ...turn, text });
+    assert.equal(gateway.count('chat.send'), 1);
+    assert.equal(gateway.count('chat.abort'), 0);
+  }
+});
+
+test('literal journal binds parsing and full runtime identity and refuses legacy migration without RPC', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'literal-migration-'));
+  try {
+    const journalPath = join(root, 'journal.json');
+    await fixture({ journalPath });
+    const saved = JSON.parse(await readFile(journalPath, 'utf8'));
+    assert.equal(saved.schema, 3); assert.equal(saved.inputContract, 'literal-v1');
+    for (const change of [{ schema: 2 }, { inputContract: 'normal-v1' }, { runtimeIdentity: 'foreign-build' }]) {
+      await writeFile(journalPath, JSON.stringify({ ...saved, ...change }));
+      const gateway = new FakeGateway();
+      await assert.rejects(fixture({ journalPath, gateway }), /journal identity/);
+      assert.equal(gateway.calls.length, 0);
+      assert.deepEqual(JSON.parse(await readFile(journalPath, 'utf8')), { ...saved, ...change });
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('fresh-only owner policy refuses old schema, parsing and build identity; manifest pins agree', async () => {
+  const { NATIVE_PINS, INPUT_CONTRACT, RUNTIME_IDENTITY, validateLiteralOwner } = await import('./literal-migration.mjs');
+  const owner = { schema: 4, inputContract: INPUT_CONTRACT, runtimeIdentity: RUNTIME_IDENTITY, agentId: 'secretary' };
+  validateLiteralOwner({ ...owner }, owner);
+  for (const change of [{ schema: 3 }, { runtimeIdentity: 'old-build' }, { inputContract: 'normal' }, { agentId: 'foreign' }]) {
+    assert.throws(() => validateLiteralOwner({ ...owner, ...change }, owner), /migration required.*never replay unknown/);
+  }
+  const manifest = JSON.parse(await readFile(new URL('./manifest.json', import.meta.url), 'utf8'));
+  assert.deepEqual(manifest.developmentPins, NATIVE_PINS);
+  assert.equal(NATIVE_PINS.derivedCommit, CURATED_RUNTIME.sourceCommit);
+  assert.equal(NATIVE_PINS.fullUpstreamDiffSha256, CURATED_RUNTIME.patchSha256);
+  assert.equal(manifest.runtime.node, NATIVE_PINS.node.version);
 });
