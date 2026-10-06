@@ -36,6 +36,19 @@ assert receipt['inventorySha256'] == unsigned['inventorySha256']
 assert receipt['manifestSha256'] == hashlib.sha256((root / 'hermes-unsigned-manifest.json').read_bytes()).hexdigest()
 assert manifest['harnessPlugins']['hermes']['bundledRuntime'] is True
 assert manifest['harnessPlugins']['hermes']['inventorySha256'] == bundled['inventorySha256']
+openclaw = app / 'Contents/Resources/agent-runtimes/openclaw/runtime-artifact.json'
+if os.environ.get('YOROZU_OPENCLAW_RUNTIME_ARTIFACT'):
+    sealed = json.loads(openclaw.read_text())
+    unsigned = json.loads((root / 'openclaw-unsigned-manifest.json').read_text())
+    assert manifest['harnessPlugins']['openclaw']['bundledRuntime'] is True
+    assert manifest['harnessPlugins']['openclaw']['inventorySha256'] == sealed['inventorySha256']
+    assert sealed['hashStage'] == 'after-nested-signing-before-outer-bundle-signing'
+    assert sealed['reseal']['unsignedInventorySha256'] == unsigned['inventorySha256'] == manifest['harnessPlugins']['openclaw']['unsignedInventorySha256']
+    assert sealed['productionReady'] is False and manifest['harnessPlugins']['openclaw']['productionReady'] is False
+    manifest['openclawRuntimeIntake'] = {'unsignedInventorySha256': unsigned['inventorySha256'], 'unsignedManifestSha256': hashlib.sha256((root / 'openclaw-unsigned-manifest.json').read_bytes()).hexdigest(),
+        'signedInventorySha256': sealed['inventorySha256'], 'dependencyEvidence': sealed['dependencyEvidence'], 'pins': sealed['pins']}
+else:
+    assert not openclaw.exists() and manifest['harnessPlugins']['openclaw']['bundledRuntime'] is False
 manifest['runtimeIntake'] = {'receiptSha256': hashlib.sha256(intake.read_bytes()).hexdigest(),
     'archiveSha256': receipt['archiveSha256'], 'unsignedInventorySha256': unsigned['inventorySha256'],
     'signedInventorySha256': bundled['inventorySha256'], 'archiveProvenanceSha256': receipt['archiveProvenanceSha256']}

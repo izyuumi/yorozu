@@ -43,11 +43,16 @@ async function regular(path: string, max: number) {
   try { const s = await f.stat(); if (!s.isFile() || s.nlink !== 1 || s.mode & 0o022 || s.size > max) fail(); return f; }
   catch (e) { await f.close(); throw e; }
 }
+export const OPENCLAW_HASH_STAGES = Object.freeze(["assembled-before-signing", "after-nested-signing-before-outer-bundle-signing"] as const);
 export interface VerifiedPackagedOpenClawRuntime {
   readonly productionReady: false;
-  readonly dependencyArchiveProvenanceVerified: false;
+  /** true only for pnpm-frozen-lockfile-install-v1 evidence (see docs/openclaw-sealed-runtime.md). */
+  readonly dependencyArchiveProvenanceVerified: boolean;
+  readonly dependencyEvidenceKind: "reused-local-bytes-inventory-only" | "pnpm-frozen-lockfile-install-v1";
   readonly inventorySha256: string;
   readonly entries: number;
+  /** Nested (Mach-O) signing may only change bytes recorded by the packager's reseal. */
+  readonly hashStage: typeof OPENCLAW_HASH_STAGES[number];
 }
 /** Rechecks the exact inventory each preparation; self-described digests require
  * an immutable, trusted outer bundle/signature. No success cache, no fallback. */
@@ -57,12 +62,22 @@ export async function verifyPackagedOpenClawArtifact(resourcesRoot: string): Pro
     const root = join(resourcesRoot, "agent-runtimes", "openclaw"); await directory(root);
     const f = await regular(join(root, MANIFEST), 64 * 1024 * 1024);
     let a: any; try { a = JSON.parse(await f.readFile("utf8")); } finally { await f.close(); }
-    fields(a, ["schemaVersion", "kind", "productionReady", "hashStage", "pins", "dependencyEvidence", "files", "inventorySha256"]);
-    if (a.schemaVersion !== 1 || a.kind !== "yorozu-openclaw-runtime" || a.productionReady !== false || a.hashStage !== "assembled-before-signing") fail();
+    fields(a, ["schemaVersion", "kind", "productionReady", "hashStage", "pins", "dependencyEvidence", "files", "inventorySha256", ...(a?.hashStage === "after-nested-signing-before-outer-bundle-signing" ? ["reseal"] : [])]);
+    if (a.schemaVersion !== 1 || a.kind !== "yorozu-openclaw-runtime" || a.productionReady !== false || !OPENCLAW_HASH_STAGES.includes(a.hashStage)) fail();
     fields(a.pins, Object.keys(SEALED_OPENCLAW_PIN));
     if (Object.entries(SEALED_OPENCLAW_PIN).some(([k, v]) => a.pins[k] !== v)) fail();
-    fields(a.dependencyEvidence, ["kind", "archiveProvenanceVerified", "lockfileMatchEstablished"]);
-    if (a.dependencyEvidence.kind !== "reused-local-bytes-inventory-only" || a.dependencyEvidence.archiveProvenanceVerified !== false || a.dependencyEvidence.lockfileMatchEstablished !== false) fail();
+    const evidence = a.dependencyEvidence;
+    if (evidence?.kind === "pnpm-frozen-lockfile-install-v1") {
+      // pnpm verified every fetched archive against the reviewed lockfile's integrity
+      // digests with resolution frozen; the assembler rechecked the pinned lockfile and
+      // the pnpm-written installed lock. Lifecycle-script downloads are not covered.
+      fields(evidence, ["kind", "archiveProvenanceVerified", "lockfileMatchEstablished", "packageManager", "lockSha256", "installedLockSha256"]);
+      if (evidence.archiveProvenanceVerified !== true || evidence.lockfileMatchEstablished !== true || !/^pnpm@\d+\.\d+\.\d+$/.test(evidence.packageManager)
+        || evidence.lockSha256 !== SEALED_OPENCLAW_PIN.lockSha256 || !/^[a-f0-9]{64}$/.test(evidence.installedLockSha256)) fail();
+    } else {
+      fields(evidence, ["kind", "archiveProvenanceVerified", "lockfileMatchEstablished"]);
+      if (evidence.kind !== "reused-local-bytes-inventory-only" || evidence.archiveProvenanceVerified !== false || evidence.lockfileMatchEstablished !== false) fail();
+    }
     if (!Array.isArray(a.files) || !a.files.length || a.files.length > MAX_FILES) fail();
     const expected = new Map<string, Row>();
     let previous = "";
@@ -96,9 +111,11 @@ export async function verifyPackagedOpenClawArtifact(resourcesRoot: string): Pro
       "source/package.json": undefined, "source/dist/entry.js": undefined,
       "plugin/adapter.mjs": undefined, "plugin/manifest.json": undefined,
     };
+    const signed = a.hashStage === "after-nested-signing-before-outer-bundle-signing";
     for (const [name, hash] of Object.entries(required)) {
-      const r = expected.get(name); if (!r || !("sha256" in r) || hash && r.sha256 !== hash) fail();
+      const r = expected.get(name); if (!r || !("sha256" in r) || hash && r.sha256 !== hash && !(signed && name === "node")) fail();
     }
+    if (signed) { fields(a.reseal, ["unsignedInventorySha256", "unsignedNodeSha256", "resignedPaths"]); if (a.reseal.unsignedNodeSha256 !== SEALED_OPENCLAW_PIN.nodeSha256 || !/^[a-f0-9]{64}$/.test(a.reseal.unsignedInventorySha256) || !Array.isArray(a.reseal.resignedPaths) || !a.reseal.resignedPaths.includes("node")) fail(); }
     if (!a.files.some((r: Row) => r.path.startsWith("source/node_modules/"))) fail();
     let total = 0, visited = 0; const found = new Set<string>(); const pending: string[] = [];
     async function walk(dir: string): Promise<void> {
@@ -130,7 +147,7 @@ export async function verifyPackagedOpenClawArtifact(resourcesRoot: string): Pro
         } finally { await file.close(); }
       }
     }));
-    return Object.freeze({ productionReady: false, dependencyArchiveProvenanceVerified: false, inventorySha256: a.inventorySha256, entries: expected.size });
+    return Object.freeze({ productionReady: false, dependencyArchiveProvenanceVerified: evidence.archiveProvenanceVerified === true, dependencyEvidenceKind: evidence.kind, inventorySha256: a.inventorySha256, entries: expected.size, hashStage: a.hashStage });
   } catch { throw new Error(BAD); }
 }
 /** Pure input loader: preserves the existing supervisor's scope/identity, listener,

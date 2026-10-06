@@ -70,15 +70,36 @@ is not by itself proof of a standalone installable release. The artifact contain
 development dependencies as a conservative superset; no minimal/production
 closure claim is made. No production profile/account material is needed.
 
-The schema deliberately permits only `productionReady:false`,
-`archiveProvenanceVerified:false`, and `lockfileMatchEstablished:false` with
-`reused-local-bytes-inventory-only`. A future genuinely verified provenance chain
-needs a separately reviewed schema/pin change, not flipping these fields.
-Distribution signatures may change Node/native bytes; this pre-sign development
-schema must reject those changes until a reviewed post-sign resealing path exists.
+The schema permits `productionReady:false` only, and exactly two dependency
+evidence shapes:
 
-Remaining shipping gates: upstream dependency archive and lock correspondence,
-native shared-library/platform relocation, independent review of the integrated
+- `reused-local-bytes-inventory-only` (`archiveProvenanceVerified:false`,
+  `lockfileMatchEstablished:false`): an existing local closure was reused by bytes.
+- `pnpm-frozen-lockfile-install-v1` (`archiveProvenanceVerified:true`,
+  `lockfileMatchEstablished:true`, `packageManager`, `lockSha256` = the pinned reviewed
+  lockfile, `installedLockSha256`): the closure came from
+  `pnpm@<pinned> install --frozen-lockfile --ignore-scripts` of the exact reviewed
+  lockfile, so pnpm verified every fetched archive against the lockfile's integrity
+  digests and refused resolution changes. The assembler re-checks the pinned lockfile
+  digest and the pnpm-written `node_modules/.pnpm/lock.yaml`. Lifecycle scripts are
+  not run, so no script-fetched platform binary enters the closure. This is package
+  manager integrity verification, not an independent audit of upstream publishers.
+
+Nested code signing changes Mach-O bytes. `package-openclaw-runtime.py
+--reseal-after-nested-signing <artifact>` admits only hash changes of existing
+Mach-O files with unchanged modes and layout, requires the sealed `node` to be
+among them, records `reseal{unsignedInventorySha256, unsignedNodeSha256,
+resignedPaths}` and advances `hashStage` to
+`after-nested-signing-before-outer-bundle-signing`. The loader accepts that stage
+only with that record; every other pin stays exact. `build-mac.sh` bundles an
+explicit `YOROZU_OPENCLAW_RUNTIME_ARTIFACT` beside the Hermes runtime, signs its
+Node with the Node entitlements, verifies the nested signatures, reseals, re-verifies
+through the packaged loader and records the result in `internal-source.json`;
+`build-internal-alpha.sh` asserts the signed/unsigned descent in `provenance.json`.
+
+Remaining shipping gates: independent audit of upstream publishers (pnpm
+integrity is the only archive check), native shared-library/platform relocation
+acceptance beyond the bundle-relocated proof, independent review of the integrated
 adapter/memory/packaged composition, `PersonAgentRuntime`-level mixed-harness and
 approval-card acceptance, paired-device and provider/account acceptance,
 distribution signing/post-sign inventory. The adapter-level integrated Gateway

@@ -26,6 +26,63 @@ PIN = {
     'nodeSha256': '56d28b39a8048f0cd1af7ad7e09f6cbe1c04439b6dfeb6c8d9090c082af60861',
 }
 EVIDENCE = {'kind': 'reused-local-bytes-inventory-only', 'archiveProvenanceVerified': False, 'lockfileMatchEstablished': False}
+# A closure produced by `pnpm install --frozen-lockfile` with the pinned package manager:
+# pnpm verified every fetched archive against the integrity digests of the reviewed
+# lockfile and refused resolution changes. The assembler re-checks the pinned lockfile
+# digest and the pnpm-written installed lock before admitting this claim.
+FROZEN_EVIDENCE = {'kind': 'pnpm-frozen-lockfile-install-v1', 'archiveProvenanceVerified': True, 'lockfileMatchEstablished': True}
+MACHO = {b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe', b'\xfe\xed\xfa\xcf', b'\xce\xfa\xed\xfe', b'\xbe\xba\xfe\xca'}
+MANIFEST = 'runtime-artifact.json'
+SIGNED_STAGE = 'after-nested-signing-before-outer-bundle-signing'
+
+
+def frozen_evidence(source, package_manager, installed_lock_sha256):
+    """Admit the frozen-install claim only with explicit, rechecked facts."""
+    if not isinstance(package_manager, str) or not package_manager.startswith('pnpm@'):
+        raise ValueError('frozen-lockfile evidence requires the pinned pnpm version')
+    modules = source / 'node_modules' / '.modules.yaml'
+    installed = source / 'node_modules' / '.pnpm' / 'lock.yaml'
+    if not modules.is_file() or not installed.is_file():
+        raise ValueError('frozen-lockfile evidence requires a pnpm-written installation')
+    if digest(installed) != installed_lock_sha256:
+        raise ValueError('installed lock digest differs from the explicit frozen-install receipt')
+    return {**FROZEN_EVIDENCE, 'packageManager': package_manager, 'lockSha256': PIN['lockSha256'], 'installedLockSha256': installed_lock_sha256}
+
+
+def reseal_after_nested_signing(root):
+    """Record nested code-signing byte changes of existing Mach-O files only."""
+    root = root.resolve(strict=True)
+    manifest = json.loads((root / MANIFEST).read_text())
+    if manifest.get('kind') != 'yorozu-openclaw-runtime' or manifest.get('hashStage') != 'assembled-before-signing' or manifest.get('pins') != PIN:
+        raise ValueError('reseal requires an unsigned sealed OpenClaw artifact with the exact pins')
+    if hashlib.sha256(encoded(manifest['files'])).hexdigest() != manifest['inventorySha256']:
+        raise ValueError('sealed inventory digest mismatch')
+    prior = {r['path']: r for r in manifest['files']}
+    rows = [r for r in inventory(root) if r['path'] != MANIFEST]
+    current = {r['path']: r for r in rows}
+    if prior.keys() != current.keys():
+        raise ValueError('signing changed the artifact layout')
+    resigned = []
+    for path, row in current.items():
+        if prior[path] == row:
+            continue
+        if 'sha256' not in row or 'sha256' not in prior[path] or prior[path]['mode'] != row['mode']:
+            raise ValueError('reseal permits hash updates to existing regular files only')
+        with (root / path).open('rb') as f:
+            if f.read(4) not in MACHO:
+                raise ValueError('reseal permits changed bytes in Mach-O files only: ' + path)
+        resigned.append(path)
+    if 'node' not in resigned:
+        raise ValueError('nested signing must have resigned the sealed Node binary')
+    manifest['reseal'] = {'unsignedInventorySha256': manifest['inventorySha256'], 'unsignedNodeSha256': PIN['nodeSha256'], 'resignedPaths': sorted(resigned)}
+    manifest['files'] = rows
+    manifest['inventorySha256'] = hashlib.sha256(encoded(rows)).hexdigest()
+    manifest['hashStage'] = SIGNED_STAGE
+    (root / MANIFEST).write_bytes(encoded(manifest) + b'\n')
+    (root / MANIFEST).chmod(0o644)
+    receipt = {'hashStage': SIGNED_STAGE, 'inventorySha256': manifest['inventorySha256'], 'resignedPaths': len(resigned), 'unsignedInventorySha256': manifest['reseal']['unsignedInventorySha256']}
+    print(json.dumps(receipt, sort_keys=True))
+    return receipt
 
 
 def encoded(v):
@@ -130,7 +187,7 @@ def verify_archive(root, output):
     return len(seen)
 
 
-def assemble(source, evidence, plugin, node, output):
+def assemble(source, evidence, plugin, node, output, dependency_evidence=EVIDENCE):
     if output.exists():
         raise ValueError('output must be fresh')
     if git(source, 'rev-parse', 'HEAD').decode().strip() != PIN['sourceSha'] or git(source, 'status', '--porcelain', '--untracked-files=no').strip():
@@ -208,7 +265,7 @@ def assemble(source, evidence, plugin, node, output):
     copy_file(node, root / 'node', node.parent)
     rows = inventory(root)
     artifact = {'schemaVersion': 1, 'kind': 'yorozu-openclaw-runtime', 'productionReady': False,
-                'hashStage': 'assembled-before-signing', 'pins': PIN, 'dependencyEvidence': EVIDENCE,
+                'hashStage': 'assembled-before-signing', 'pins': PIN, 'dependencyEvidence': dependency_evidence,
                 'files': rows, 'inventorySha256': hashlib.sha256(encoded(rows)).hexdigest()}
     (root / 'runtime-artifact.json').write_bytes(encoded(artifact) + b'\n')
     (root / 'runtime-artifact.json').chmod(0o644)
@@ -218,8 +275,8 @@ def assemble(source, evidence, plugin, node, output):
     receipt = {'productionReady': False, 'sourceCommit': PIN['sourceSha'], 'pins': PIN,
                'inventorySha256': artifact['inventorySha256'], 'archiveSha256': digest(archive_path),
                'manifestSha256': digest(root / 'runtime-artifact.json'), 'archiveVerifiedEntries': entries,
-               'reusedDependencyEntries': len(dependency_paths), 'dependencyEvidence': EVIDENCE,
-               'remainingGates': ['Original dependency archive provenance and lockfile correspondence',
+               'reusedDependencyEntries': len(dependency_paths), 'dependencyEvidence': dependency_evidence,
+               'remainingGates': [*([] if dependency_evidence.get('lockfileMatchEstablished') else ['Original dependency archive provenance and lockfile correspondence']),
                    'Native shared-library closure/platform relocation acceptance',
                    'Independent integrated loader/adapter/memory review and paired-device/host-tool acceptance',
                    'Embedding-owned stop/restart/lifetime acceptance', 'Distribution signing and post-sign inventory resealing']}
@@ -229,7 +286,21 @@ def assemble(source, evidence, plugin, node, output):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--reseal-after-nested-signing', type=Path, help='sealed artifact root inside a nested-signed bundle')
     for name in ('source', 'evidence', 'plugin', 'node', 'output'):
-        parser.add_argument('--' + name, required=True, type=Path)
+        parser.add_argument('--' + name, type=Path)
+    parser.add_argument('--frozen-install-package-manager', help='e.g. pnpm@12.5.1; selects pnpm-frozen-lockfile-install-v1 evidence')
+    parser.add_argument('--frozen-install-installed-lock-sha256', help='sha256 of node_modules/.pnpm/lock.yaml written by that install')
     args = parser.parse_args()
-    assemble(**vars(args))
+    if args.reseal_after_nested_signing:
+        reseal_after_nested_signing(args.reseal_after_nested_signing)
+    else:
+        inputs = {name: getattr(args, name) for name in ('source', 'evidence', 'plugin', 'node', 'output')}
+        if any(value is None for value in inputs.values()):
+            raise SystemExit('assembly requires --source --evidence --plugin --node --output')
+        evidence = EVIDENCE
+        if args.frozen_install_package_manager or args.frozen_install_installed_lock_sha256:
+            if not (args.frozen_install_package_manager and args.frozen_install_installed_lock_sha256):
+                raise SystemExit('frozen-install evidence requires both the package manager and the installed lock digest')
+            evidence = frozen_evidence(inputs['source'], args.frozen_install_package_manager, args.frozen_install_installed_lock_sha256)
+        assemble(**inputs, dependency_evidence=evidence)

@@ -34,13 +34,18 @@ function fixture() {
     if (method === "run.stop") { queueMicrotask(() => emit(this, params, "stopped")); return { status: "requested" }; }
     return { status: "unsupported" };
   });
-  const platform = createMinimalWorkerPlatform({ secretaryAgentId: "alice", adapters: [{ id: "hermes", label: "Fixture Hermes", memory: "worker-memory-v1",
-    createFactory: () => (agent, _scope, execution) => ({
-      configuration: { pluginId: agent.pluginId, upstreamVersion: "fixture", command: process.execPath, args: [], initialize: {} },
-      runtime: { command: process.execPath, args: [], runtimeDir: execution.scratchRoot, readPaths: [], brokerPorts: [] },
-    }) }], initialAgent: { id: "alice", name: "Alice", role: "Writer", pluginId: "hermes", allowedTools: ["memory"] } });
+  // Mixed registry: alice selects Hermes, bob selects OpenClaw. Both adapters are the
+  // same uniform worker-memory-v1 contract behind the one central map.
+  const createFactory = () => (agent: any, _scope: any, execution: any) => ({
+    configuration: { pluginId: agent.pluginId, upstreamVersion: "fixture", command: process.execPath, args: [], initialize: {} },
+    runtime: { command: process.execPath, args: [], runtimeDir: execution.scratchRoot, readPaths: [], brokerPorts: [] },
+  });
+  const platform = createMinimalWorkerPlatform({ secretaryAgentId: "alice", adapters: [
+    { id: "hermes", label: "Fixture Hermes", memory: "worker-memory-v1", createFactory },
+    { id: "openclaw", label: "Fixture OpenClaw", memory: "worker-memory-v1", createFactory },
+  ], initialAgent: { id: "alice", name: "Alice", role: "Writer", pluginId: "hermes", allowedTools: ["memory"] } });
   const host = new PersonAgentHost(dir, platform);
-  host.store.create({ id: "bob", name: "Bob", role: "Reader", pluginId: "hermes", allowedTools: ["memory"] }, host.store.list().revision);
+  host.store.create({ id: "bob", name: "Bob", role: "Reader", pluginId: "openclaw", allowedTools: ["memory"] }, host.store.list().revision);
   host.bind({ emit: e => { events.push(e); appendThreadEvent(e, dir); }, changed() {} });
   const registry = host.registry();
   cleanup.push(async () => { await host.close(); closeSyncHost(dir); rmSync(dir, { recursive: true, force: true }); });

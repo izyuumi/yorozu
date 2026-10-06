@@ -215,6 +215,13 @@ if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
   sh scripts/check-hermes-native-memory.sh
   mkdir -p "$APP/Contents/Resources/agent-runtimes"
   cp -R "$YOROZU_HERMES_RUNTIME_ARTIFACT" "$APP/Contents/Resources/agent-runtimes/hermes"
+  # Optional sealed OpenClaw DEVELOPMENT runtime (package-openclaw-runtime.py output root
+  # `Resources/agent-runtimes/openclaw`). Verified by the sealed loader before copying;
+  # never discovered, never installed here.
+  if [ -n "${YOROZU_OPENCLAW_RUNTIME_ARTIFACT:-}" ]; then
+    cp "$YOROZU_OPENCLAW_RUNTIME_ARTIFACT/runtime-artifact.json" "$DIST/openclaw-unsigned-manifest.json"
+    cp -R "$YOROZU_OPENCLAW_RUNTIME_ARTIFACT" "$APP/Contents/Resources/agent-runtimes/openclaw"
+  fi
 fi
 # The OpenClaw channel plugin, for `openclaw plugins install --link` from inside the bundle so
 # it updates with the app. Plain JavaScript that OpenClaw loads directly; no dependencies.
@@ -296,7 +303,7 @@ find "$APP/Contents" -depth \( -type f -o -type d \) -print | while IFS= read -r
       codesign --force --options runtime --timestamp \
         --preserve-metadata=entitlements,requirements,flags --sign "$IDENTITY" "$code" || exit 1
       ;;
-    "$APP/Contents/Resources/runtime/node_modules/@anthropic-ai/claude-agent-sdk-darwin-"*/claude)
+    "$APP/Contents/Resources/runtime/node_modules/@anthropic-ai/claude-agent-sdk-darwin-"*/claude|"$APP/Contents/Resources/agent-runtimes/openclaw/node")
       codesign --force --options runtime --timestamp \
         --entitlements apps/mac/Node.entitlements --sign "$IDENTITY" "$code" || exit 1
       ;;
@@ -329,6 +336,31 @@ source.harnessPlugins.hermes={...source.harnessPlugins.hermes,bundledRuntime:tru
   adapterSourceSha:verified.adapterSourceSha,inventorySha256:verified.inventorySha256,hashStage:verified.hashStage,productionReady:false};
 writeFileSync(path,JSON.stringify(source,null,2)+'\n');
 JS
+  if [ -n "${YOROZU_OPENCLAW_RUNTIME_ARTIFACT:-}" ]; then
+    find "$APP/Contents/Resources/agent-runtimes/openclaw" -type f -print | while IFS= read -r code; do
+      case "$(file -b "$code")" in
+        *Mach-O*) codesign --verify --strict "$code" || exit 1 ;;
+      esac
+    done
+    python3 scripts/package-openclaw-runtime.py --reseal-after-nested-signing "$APP/Contents/Resources/agent-runtimes/openclaw"
+    "$APP/Contents/Resources/node" --input-type=module - "$APP/Contents/Resources" "$DIST/openclaw-unsigned-manifest.json" <<'JS'
+import {pathToFileURL} from 'node:url';
+import {resolve, join} from 'node:path';
+import {readFileSync, writeFileSync} from 'node:fs';
+const resources=resolve(process.argv[2]);
+const {verifyPackagedOpenClawArtifact}=await import(pathToFileURL(join(resources,'runtime/dist/packaged-agent-runtime.js')));
+const verified=await verifyPackagedOpenClawArtifact(resources);
+if(verified.hashStage!=='after-nested-signing-before-outer-bundle-signing')throw new Error('OpenClaw runtime was not resealed after nested signing');
+const unsigned=JSON.parse(readFileSync(process.argv[3],'utf8'));
+const sealed=JSON.parse(readFileSync(join(resources,'agent-runtimes/openclaw/runtime-artifact.json'),'utf8'));
+if(sealed.reseal.unsignedInventorySha256!==unsigned.inventorySha256)throw new Error('OpenClaw reseal does not descend from the explicit unsigned manifest');
+const path=join(resources,'internal-source.json'), source=JSON.parse(readFileSync(path,'utf8'));
+source.harnessPlugins.openclaw={...source.harnessPlugins.openclaw,bundledRuntime:true,unsignedInventorySha256:unsigned.inventorySha256,
+  inventorySha256:verified.inventorySha256,hashStage:verified.hashStage,dependencyEvidenceKind:verified.dependencyEvidenceKind,
+  dependencyArchiveProvenanceVerified:verified.dependencyArchiveProvenanceVerified,productionReady:false};
+writeFileSync(path,JSON.stringify(source,null,2)+'\n');
+JS
+  fi
 fi
 codesign --force --options runtime --timestamp \
   --entitlements apps/mac/Node.entitlements --sign "$IDENTITY" "$APP/Contents/Resources/node"

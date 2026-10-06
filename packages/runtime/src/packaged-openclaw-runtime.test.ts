@@ -16,7 +16,9 @@ test("complete offline artifact verifies and produces fixed inputs without launc
   assert.ok(input, "explicit test artifact required; no skip or ambient runtime discovery");
   const proof = await verifyPackagedOpenClawArtifact(input);
   assert.equal(proof.productionReady, false);
-  assert.equal(proof.dependencyArchiveProvenanceVerified, false);
+  const declared = JSON.parse(await readFile(join(input, "agent-runtimes/openclaw/runtime-artifact.json"), "utf8")).dependencyEvidence;
+  assert.equal(proof.dependencyEvidenceKind, declared.kind);
+  assert.equal(proof.dependencyArchiveProvenanceVerified, declared.kind === "pnpm-frozen-lockfile-install-v1");
   assert.ok(proof.entries > 100);
   const loaded = await loadPackagedOpenClawRuntime(input);
   assert.equal(loaded.openclaw.sourceSha, SEALED_OPENCLAW_PIN.sourceSha);
@@ -36,6 +38,8 @@ test("sealed loader rejects malformed, tampered and escaping inputs", async t =>
   await mkdir(root, { recursive: true });
   const names = ["node", "source/pnpm-lock.yaml", "source/dist/yorozu-gateway-embedding.js", "source/dist/build-info.json", "source/dist/protocol.schema.json", "source/package.json", "source/dist/entry.js", "plugin/adapter.mjs", "plugin/manifest.json"];
   const baseline = structuredClone(a); baseline.files = a.files.filter((r: any) => names.includes(r.path));
+  // Rejection cases start from the reused-bytes evidence shape regardless of the input artifact's own evidence.
+  baseline.dependencyEvidence = { kind: "reused-local-bytes-inventory-only", archiveProvenanceVerified: false, lockfileMatchEstablished: false };
   for (const r of baseline.files) {
     const p = join(root, r.path); await mkdir(dirname(p), { recursive: true }); await copyFile(join(original, r.path), p); await chmod(p, r.mode);
   }
@@ -63,5 +67,21 @@ test("sealed loader rejects malformed, tampered and escaping inputs", async t =>
     await t.test("relative escaping symlink", async () => { const b = structuredClone(baseline); b.files.push({ path: "escape", link: "../../../outside" }); await symlink("../../../outside", join(root, "escape")); await manifest(b); await reject(); await rm(join(root, "escape")); });
     await t.test("linked resources root", async () => { await manifest(); const alias = join(resources, "alias"); await symlink(root, alias); await assert.rejects(verifyPackagedOpenClawArtifact(join(alias, "../.."))); await rm(alias); });
     await t.test("restored bytes accepted", async () => { await manifest(); await verifyPackagedOpenClawArtifact(resources); });
+    await t.test("frozen-install evidence requires exact pinned lock, pnpm pin and installed lock digest", async () => {
+      const frozen = structuredClone(baseline); frozen.dependencyEvidence = { kind: "pnpm-frozen-lockfile-install-v1", archiveProvenanceVerified: true, lockfileMatchEstablished: true, packageManager: "pnpm@12.5.1", lockSha256: SEALED_OPENCLAW_PIN.lockSha256, installedLockSha256: "1".repeat(64) };
+      await manifest(frozen); const proof = await verifyPackagedOpenClawArtifact(resources);
+      assert.equal(proof.dependencyArchiveProvenanceVerified, true); assert.equal(proof.dependencyEvidenceKind, "pnpm-frozen-lockfile-install-v1");
+      for (const change of [{ lockSha256: "0".repeat(64) }, { packageManager: "npm@11.0.0" }, { installedLockSha256: "short" }, { lockfileMatchEstablished: false }]) { const b = structuredClone(frozen); Object.assign(b.dependencyEvidence, change); await manifest(b); await reject(); }
+      const reused = structuredClone(baseline); reused.dependencyEvidence.packageManager = "pnpm@12.5.1"; await manifest(reused); await reject();
+    });
+    await t.test("nested-signed stage needs a reseal record naming the resigned sealed Node and the unsigned pins", async () => {
+      const signed = structuredClone(baseline); signed.hashStage = "after-nested-signing-before-outer-bundle-signing";
+      await manifest(signed); await reject(); // no reseal record
+      signed.reseal = { unsignedInventorySha256: baseline.inventorySha256 ?? "2".repeat(64), unsignedNodeSha256: SEALED_OPENCLAW_PIN.nodeSha256, resignedPaths: ["node"] };
+      await manifest(signed); assert.equal((await verifyPackagedOpenClawArtifact(resources)).hashStage, "after-nested-signing-before-outer-bundle-signing");
+      // A resigned node may differ from the unsigned pin only in this stage; other pins stay exact.
+      const node = signed.files.find((r: any) => r.path === "node"); const original = node.sha256; node.sha256 = "3".repeat(64); await manifest(signed); await reject(); node.sha256 = original;
+      for (const change of [(b: any) => { b.reseal.unsignedNodeSha256 = "4".repeat(64); }, (b: any) => { b.reseal.resignedPaths = []; }, (b: any) => { b.hashStage = "signed"; }]) { const b = structuredClone(signed); change(b); await manifest(b); await reject(); }
+    });
   } finally { await rm(resources, { recursive: true, force: true }); }
 });
