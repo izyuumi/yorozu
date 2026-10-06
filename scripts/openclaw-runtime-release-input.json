@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "kind": "yorozu-openclaw-release-input",
+  "repository": "izyuumi/yorozu",
+  "tag": "runtime-input-0.6.0-17fc00f79cef59b8",
+  "asset": "yorozu-openclaw-runtime-17fc00f79cef59b8.tar.gz",
+  "archiveSha256": "17fc00f79cef59b8a18ddc7a3f5e09a427f6022955aaf45deb06d8aee388fc03",
+  "archiveBytes": 1389006518,
+  "manifestSha256": "4de418d08ae107fba501deb5c2133a2e64a7695b27b9e956b3852b96c84ddfd3",
+  "inventorySha256": "6236ee9cfdc56e8c11f803957e72033d8b1ec4bfa044dfc1ccdcfc03e7b91e6d",
+  "sourceCommit": "f04797ef4d24f3da0f9df74acd58ab773ab5f11e"
+}

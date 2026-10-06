@@ -90,6 +90,7 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
                 "sourceSha": expected_source, "ciRunId": ci, "releaseRunId": str(expected_run),
                 "internalTestFlightVerified": True, "iosBuild": ios["build"],
                 "sparkleFeedChanged": False, "installationPerformed": False, "runtimeIntake": intake,
+                "openclawRuntimeIntake": data.get("openclaw_runtime_intake", {}),
                 "artifacts": [{"name": path.name, "sha256": release.sha256(path), "size": path.stat().st_size}
                               for _, path in sorted(paths.items())]}
     notes = ("Non-stable Yorozu 0.6 evaluation build. Mac download only; iOS is available through the existing internal TestFlight group.\n\n"

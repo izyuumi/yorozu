@@ -97,6 +97,16 @@ Node with the Node entitlements, verifies the nested signatures, reseals, re-ver
 through the packaged loader and records the result in `internal-source.json`;
 `build-internal-alpha.sh` asserts the signed/unsigned descent in `provenance.json`.
 
+The Release workflow's internal job acquires the sealed runtime the same way it
+acquires Hermes: `scripts/intake-openclaw-runtime.py` downloads the content-addressed
+GitHub release asset named in `scripts/openclaw-runtime-release-input.json`
+(`runtime-input-0.6.0-<archive sha16>` / `yorozu-openclaw-runtime-<sha16>.tar.gz`),
+checks the archive hash and size, extracts without following links, and accepts it
+only if the manifest, inventory, packager pins, frozen-lockfile evidence, sealed Node
+and plugin bytes match the reviewed source. The intake receipt is retained as
+`openclaw-runtime-intake.json` and bound into the internal provenance. Publishing
+that asset is a separate owner action; the pin names bytes that must already exist.
+
 Remaining shipping gates: independent audit of upstream publishers (pnpm
 integrity is the only archive check), native shared-library/platform relocation
 acceptance beyond the bundle-relocated proof, independent review of the integrated

@@ -323,6 +323,16 @@ jobs:
             --destination "$RUNNER_TEMP/hermes-intake"
           printf 'YOROZU_HERMES_RUNTIME_ARTIFACT=%s\n' "$RUNNER_TEMP/hermes-intake/hermes" >> "$GITHUB_ENV"
           cp "$RUNNER_TEMP/hermes-intake/intake-receipt.json" dist/internal/runtime-intake.json
+      - name: Acquire the reviewed immutable sealed OpenClaw runtime
+        run: |
+          set -eu
+          python3 scripts/intake-openclaw-runtime.py \
+            --pin scripts/openclaw-runtime-release-input.json \
+            --source-root "$GITHUB_WORKSPACE" \
+            --download-directory "$RUNNER_TEMP/openclaw-download" \
+            --destination "$RUNNER_TEMP/openclaw-intake"
+          printf 'YOROZU_OPENCLAW_RUNTIME_ARTIFACT=%s\n' "$RUNNER_TEMP/openclaw-intake/openclaw" >> "$GITHUB_ENV"
+          cp "$RUNNER_TEMP/openclaw-intake/intake-receipt.json" dist/internal/openclaw-runtime-intake.json
       - name: Required offline native Hermes memory regression
         run: |
           YOROZU_REVIEWED_REPO="$GITHUB_WORKSPACE" YOROZU_REVIEWED_SHA="$GITHUB_SHA" \
@@ -396,6 +406,7 @@ jobs:
               **json.loads((root / "source.json").read_text()),
               "ci_run_id": os.environ["CI_RUN_ID"], "ios": ios,
               "runtime_intake": json.loads((root / "mac/provenance.json").read_text())["runtimeIntake"],
+              "openclaw_runtime_intake": json.loads((root / "mac/provenance.json").read_text())["openclawRuntimeIntake"],
               "ipa_origin": "signed export of the same archive supplied to Xcode internal-only upload",
               "artifacts": [{"path": str(p.relative_to(root)), "sha256": hashlib.file_digest(p.open("rb"), "sha256").hexdigest(),
                              "size": p.stat().st_size} for p in paths],
