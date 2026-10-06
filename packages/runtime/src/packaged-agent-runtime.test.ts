@@ -83,12 +83,19 @@ test("factory delegates only fixed packaged paths after validation and ignores e
   const run = vi.fn(async () => { throw new curated.CuratedRuntimeUnavailable("auth", "No host broker is selected"); });
   const make = vi.spyOn(curated, "createCuratedAgentRuntimeFactory").mockReturnValue(run);
   const platform = packagedPersonAgentPlatform(f.resources, { selectBroker }), factory = platform.createFactory(store);
+  const openclawRuntime = join(f.resources, "agent-runtimes/openclaw");
   expect(make).toHaveBeenCalledExactlyOnceWith(store, { node: { executable: join(f.resources, "node"), version: "26.10.0" },
     hermes: { version: "0.21.5", sourceSha: "f97608f178d1ffeca59860195ab7da295f7c8e5f", source: join(f.runtime, "source"), sourceIntegrity: "sealed-inventory-v1", adapter: join(f.runtime, "plugin/adapter.mjs"),
-      python: { executable: join(f.runtime, "python/bin/python3.13"), canonicalExecutable: join(f.runtime, "python/bin/python3.13"), version: "3.13.16", libraryRoots: [join(f.runtime, "python/lib"), join(f.runtime, "python/share")] } }, selectBroker });
+      python: { executable: join(f.runtime, "python/bin/python3.13"), canonicalExecutable: join(f.runtime, "python/bin/python3.13"), version: "3.13.16", libraryRoots: [join(f.runtime, "python/lib"), join(f.runtime, "python/share")] } },
+    openclaw: { version: "2026.9.8", sourceSha: "f04797ef4d24f3da0f9df74acd58ab773ab5f11e", source: join(openclawRuntime, "source"), adapter: join(openclawRuntime, "plugin/adapter.mjs"), sourceIntegrity: "sealed-inventory-v1" },
+    selectBroker });
   const args = [{ pluginId: "hermes" }, {}, {}] as any;
   await expect(factory(...args)).rejects.toMatchObject({ capability: "auth" }); expect(run).toHaveBeenCalledTimes(1);
-  expect(() => factory({ pluginId: "openclaw" } as any, {} as any, {} as any)).toThrow("unregistered worker harness"); expect(run).toHaveBeenCalledTimes(1);
+  // OpenClaw is registered for uniform memory, but without a complete sealed OpenClaw
+  // inventory its preparation is unavailable before any broker/listener work.
+  await expect(factory({ pluginId: "openclaw" } as any, {} as any, {} as any)).rejects.toMatchObject({ capability: "runtime", message: "The packaged OpenClaw development runtime is unavailable or its sealed inventory is invalid." });
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(platform.catalog!().harnesses).toEqual(expect.arrayContaining([expect.objectContaining({ id: "openclaw", available: false, modes: [], capabilities: [] })]));
   fs.writeFileSync(join(f.runtime, "plugin/bootstrap.py"), "Changed after first preparation");
   await expect(factory(...args)).rejects.toMatchObject({ capability: "runtime" }); expect(run).toHaveBeenCalledTimes(1);
 });

@@ -23,6 +23,22 @@ the existing curated runtime, and must preserve that runtime's isolation,
 listener leases, embedding lifetime and fresh-profile/journal rules. Availability
 must not imply provider authorization or a completed paired-device acceptance.
 
+`packaged-agent-runtime.ts` now does exactly that: for an OpenClaw agent it runs
+`verifyPackagedOpenClawArtifact(resourcesRoot)` on every preparation (no cached
+success) before the curated factory selects a broker or acquires the Gateway
+listener, passes the fixed `source`/`plugin/adapter.mjs` paths with
+`sourceIntegrity: "sealed-inventory-v1"`, and keeps the curated factory's ordinary
+exact-commit/clean-tree Git checks and the adapter's full-diff/build/Node/lock
+pins against the sealed minimal Git metadata. The curated pin is the reviewed
+corrected commit `f04797ef4d24f3da0f9df74acd58ab773ab5f11e` with full diff
+`601c2eea…ebc4e`; only an empty or exact `["memory"]` OpenClaw resource scope is
+admitted. The packaged catalog shows OpenClaw available only when the sealed
+`runtime-artifact.json` is present and registers `worker-memory-v1` for it on the
+basis of the integrated adapter proof (`memory-gateway-proof.mjs`), DEVELOPMENT
+only. The sealed plugin tree must contain the complete `plugin/memory-plugin/`
+package (bridge module, plugin entry, manifests); the pinned Gateway captures a
+plugin as a self-contained package.
+
 ## Offline assembly
 
 `scripts/package-openclaw-runtime.py` takes **explicit** `--source`, `--evidence`,
@@ -62,10 +78,13 @@ Distribution signatures may change Node/native bytes; this pre-sign development
 schema must reject those changes until a reviewed post-sign resealing path exists.
 
 Remaining shipping gates: upstream dependency archive and lock correspondence,
-native shared-library/platform relocation, coherent adapter/memory/supervisor
-integration and independent review, paired-device and host-tool approval/memory/
-isolation acceptance, embedding-owned stop/restart/lifetime acceptance,
-distribution signing/post-sign inventory. No upload/install/release is performed.
+native shared-library/platform relocation, independent review of the integrated
+adapter/memory/packaged composition, `PersonAgentRuntime`-level mixed-harness and
+approval-card acceptance, paired-device and provider/account acceptance,
+distribution signing/post-sign inventory. The adapter-level integrated Gateway
+proof (catalog, dispatch to host SQL, isolation, approval share/revoke, Stop
+fencing, restart) is development evidence, not release acceptance. No
+upload/install/release is performed.
 
 ## Offline tests
 

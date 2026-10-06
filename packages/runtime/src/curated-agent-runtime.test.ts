@@ -7,7 +7,7 @@ import * as listenerApi from "./agent-listener.js";
 import { fileURLToPath } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
 import { PersonAgentStore } from "./agent-store.js";
-import { createCuratedAgentRuntimeFactory, HERMES_RUNTIME_PIN, type CuratedAgentRuntimeConfiguration, type SelectedAgentBroker } from "./curated-agent-runtime.js";
+import { createCuratedAgentRuntimeFactory, HERMES_RUNTIME_PIN, OPENCLAW_RUNTIME_PIN, type CuratedAgentRuntimeConfiguration, type SelectedAgentBroker } from "./curated-agent-runtime.js";
 import type { PersonAgentExecution } from "./person-agent-runtime.js";
 
 const TASK = "/Users/yumi/Documents/Codex/2026-10-04/task-5";
@@ -126,13 +126,21 @@ test("OpenClaw rejects unsupported scopes and wrong curated source before acquir
   const f = fixture([]), acquire = vi.spyOn(listenerApi, "acquireHostListener").mockRejectedValue(new Error("must never bind"));
   f.store.update("alice", { pluginId: "openclaw" }, f.store.list().revision);
   const agent = f.store.list().agents[0], scope = f.store.resolveScope(agent.id);
-  f.config.openclaw = { version: "2026.9.8", sourceSha: "9bbdbaec153dd28fb452e6652c3dcacd829cb00f", source: SOURCE,
+  f.config.openclaw = { version: "2026.9.8", sourceSha: OPENCLAW_RUNTIME_PIN.sourceSha, source: SOURCE,
     adapter: fileURLToPath(new URL("../../harness-plugins/openclaw/adapter.mjs", import.meta.url)) };
   await expect(createCuratedAgentRuntimeFactory(f.store, f.config)(agent, scope, { ...f.execution, workspace: agent.workspace, memoryDir: agent.memoryDir })).rejects.toThrow("approved commit");
   expect(acquire).not.toHaveBeenCalled();
+  expect(() => createCuratedAgentRuntimeFactory(f.store, { ...f.config, openclaw: { ...f.config.openclaw!, sourceSha: "9bbdbaec153dd28fb452e6652c3dcacd829cb00f" as any } })).toThrow("Unsupported curated runtime pin");
+  expect(() => createCuratedAgentRuntimeFactory(f.store, { ...f.config, openclaw: { ...f.config.openclaw!, sourceIntegrity: "trust-me" as any } })).toThrow("source integrity");
   f.store.update("alice", { allowedTools: ["file"] }, f.store.list().revision);
   const withTools = f.store.list().agents[0];
-  await expect(createCuratedAgentRuntimeFactory(f.store, f.config)(withTools, f.store.resolveScope("alice"), f.execution)).rejects.toThrow("chat only");
+  await expect(createCuratedAgentRuntimeFactory(f.store, f.config)(withTools, f.store.resolveScope("alice"), f.execution)).rejects.toThrow("chat and uniform memory only");
+  expect(acquire).not.toHaveBeenCalled();
+  // Uniform memory is the one accepted OpenClaw resource tool; the pinned-source check
+  // still runs before any broker selection or listener acquisition.
+  f.store.update("alice", { allowedTools: ["memory"] }, f.store.list().revision);
+  const withMemory = f.store.list().agents[0];
+  await expect(createCuratedAgentRuntimeFactory(f.store, f.config)(withMemory, f.store.resolveScope("alice"), f.execution)).rejects.toThrow("approved commit");
   expect(acquire).not.toHaveBeenCalled();
 });
 

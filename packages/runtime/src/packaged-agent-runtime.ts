@@ -6,7 +6,8 @@ import { constants, promises as fs, openSync, fstatSync, readFileSync, closeSync
 import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathWithin, safeAgentPath } from "./agent-scope.js";
-import { createCuratedAgentRuntimeFactory, CuratedRuntimeUnavailable, HERMES_RUNTIME_PIN, type CuratedAgentRuntimeConfiguration } from "./curated-agent-runtime.js";
+import { createCuratedAgentRuntimeFactory, CuratedRuntimeUnavailable, HERMES_RUNTIME_PIN, OPENCLAW_RUNTIME_PIN, type CuratedAgentRuntimeConfiguration } from "./curated-agent-runtime.js";
+import { verifyPackagedOpenClawArtifact as verifySealedOpenClaw } from "./packaged-openclaw-runtime.js";
 import { createMinimalWorkerPlatform } from "./worker-platform.js";
 import type { PersonAgentPlatform } from "./person-agent-host.js";
 
@@ -20,6 +21,9 @@ const JPEG = Object.freeze({ path: "python/lib/python3.13/site-packages/PIL/.dyl
   removeRpath: "/Users/runner/work/Pillow/Pillow/build/deps/darwin/lib" });
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024, MAX_FILES = 32768, MAX_FILE_BYTES = 256 * 1024 * 1024, MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
 const BAD = "The packaged Hermes runtime is unavailable or its sealed inventory is invalid.";
+const BAD_OPENCLAW = "The packaged OpenClaw development runtime is unavailable or its sealed inventory is invalid.";
+/** Fixed sealed OpenClaw layout (see packaged-openclaw-runtime.ts); never a discovered path. */
+const OPENCLAW_PATHS = Object.freeze({ source: "source", adapter: "plugin/adapter.mjs" });
 interface FileRow { path: string; sha256: string; mode: 420 | 493 }
 interface LinkRow { path: string; link: string }
 type Row = FileRow | LinkRow;
@@ -197,23 +201,37 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
     || services.releaseBroker !== undefined && typeof services.releaseBroker !== "function"
     || services.bindStore !== undefined && typeof services.bindStore !== "function")
     throw new CuratedRuntimeUnavailable("runtime", "Explicit trusted packaged resources and broker selector are required.");
-  const selected = services.selectBroker, root = join(resourcesRoot, "agent-runtimes", "hermes");
+  const selected = services.selectBroker, root = join(resourcesRoot, "agent-runtimes", "hermes"), openclawRoot = join(resourcesRoot, "agent-runtimes", "openclaw");
+  // Presence only decides visibility; every preparation re-verifies the complete sealed
+  // inventory before any broker or listener is acquired. A sealed DEVELOPMENT input
+  // never implies provider authorization or paired-device acceptance.
+  const openclawPresent = () => existsSync(join(openclawRoot, "runtime-artifact.json"));
+  const factories = new WeakMap<import("./agent-store.js").PersonAgentStore, import("./person-agent-runtime.js").PersonAgentRuntimeFactory>();
   const packaged: PersonAgentPlatform = { initialAgent: { id: "yorozu", name: "Yorozu", role: "Secretary", pluginId: "hermes", allowedTools: ["file", "memory", "delegation"], directories: [] },
     catalog: () => ({ ...(existsSync(root) ? { defaultHarnessId: "hermes" as const } : {}), harnesses: [
       { id: "hermes", label: "Hermes", available: existsSync(root), modes: ["managed"], capabilities: ["agent-messaging-v1"],
         ...(!existsSync(root) ? { unavailableReason: "The packaged Hermes runtime is unavailable." } : {}) },
-      { id: "openclaw", label: "OpenClaw", available: false, modes: [], capabilities: [], unavailableReason: "No verified packaged runtime or selected host connection is available." },
+      { id: "openclaw", label: "OpenClaw", available: openclawPresent(), modes: openclawPresent() ? ["managed"] : [], capabilities: [],
+        ...(!openclawPresent() ? { unavailableReason: "No verified packaged runtime or selected host connection is available." } : {}) },
     ], connections: [] }),
     protectedRoots: services.protectedRoots,
     createFactory: store => {
+      // Both registered harness IDs share one curated factory per store, so the
+      // bearer-uniqueness budget and broker binding are enforced in one place.
+      const existing = factories.get(store); if (existing) return existing;
       services.bindStore?.(store);
       const factory = createCuratedAgentRuntimeFactory(store, { node: { executable: join(resourcesRoot, "node"), version: "26.10.0" },
         hermes: { ...HERMES_RUNTIME_PIN, source: join(root, PATHS.source), sourceIntegrity: "sealed-inventory-v1", adapter: join(root, PATHS.adapter),
-          python: { executable: join(root, PATHS.python), canonicalExecutable: join(root, PATHS.python), version: PIN.pythonVersion, libraryRoots: [join(root, "python", "lib"), join(root, "python", "share")] } }, selectBroker: selected });
-      return async (agent, scope, execution) => {
-        if (agent.pluginId !== "hermes") throw new CuratedRuntimeUnavailable("runtime", "The selected plugin has no packaged runtime.");
+          python: { executable: join(root, PATHS.python), canonicalExecutable: join(root, PATHS.python), version: PIN.pythonVersion, libraryRoots: [join(root, "python", "lib"), join(root, "python", "share")] } },
+        openclaw: { version: OPENCLAW_RUNTIME_PIN.version, sourceSha: OPENCLAW_RUNTIME_PIN.sourceSha, source: join(openclawRoot, OPENCLAW_PATHS.source), adapter: join(openclawRoot, OPENCLAW_PATHS.adapter), sourceIntegrity: "sealed-inventory-v1" },
+        selectBroker: selected });
+      const prepared: import("./person-agent-runtime.js").PersonAgentRuntimeFactory = async (agent, scope, execution) => {
         // Deliberately no cached success: changed payload bytes must fail the next preparation.
-        await verifyPackagedHermesArtifact(resourcesRoot);
+        // The sealed verification precedes the curated factory's broker selection and
+        // Gateway listener acquisition; it launches nothing and selects no provider.
+        if (agent.pluginId === "hermes") await verifyPackagedHermesArtifact(resourcesRoot);
+        else if (agent.pluginId === "openclaw") { try { await verifySealedOpenClaw(resourcesRoot); } catch { throw new CuratedRuntimeUnavailable("runtime", BAD_OPENCLAW); } }
+        else throw new CuratedRuntimeUnavailable("runtime", "The selected plugin has no packaged runtime.");
         try {
           const built = await factory(agent, scope, execution);
           let released = false;
@@ -226,12 +244,20 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
           await services.releaseBroker?.(agent.id, execution.id);
           const capability = error instanceof CuratedRuntimeUnavailable ? error.capability : "runtime";
           throw new CuratedRuntimeUnavailable(capability, capability === "auth" ? "A supported trusted account broker is unavailable for this agent."
-            : capability === "scope" ? "The selected agent execution scope is unavailable." : BAD);
+            : capability === "scope" ? "The selected agent execution scope is unavailable." : agent.pluginId === "openclaw" ? BAD_OPENCLAW : BAD);
         }
       };
+      factories.set(store, prepared);
+      return prepared;
     } };
+  // OpenClaw registers the same uniform worker-memory-v1 contract as Hermes only
+  // because the integrated Gateway proof (memory-gateway-proof.mjs) passed for the
+  // sealed development input; there is no connected/normal-mode fallback.
   const workers = createMinimalWorkerPlatform({
-    adapters: [{ id: "hermes", label: "Hermes", memory: "worker-memory-v1", createFactory: packaged.createFactory }],
+    adapters: [
+      { id: "hermes", label: "Hermes", memory: "worker-memory-v1", createFactory: packaged.createFactory },
+      { id: "openclaw", label: "OpenClaw", memory: "worker-memory-v1", createFactory: packaged.createFactory },
+    ],
     initialAgent: packaged.initialAgent, secretaryAgentId: "yorozu", protectedRoots: packaged.protectedRoots,
   });
   // Availability remains deferred and fail-closed, while adapter dispatch and memory
@@ -239,7 +265,7 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
   return { ...workers, catalog: () => {
     const catalog = packaged.catalog!();
     return { ...catalog, harnesses: catalog.harnesses?.map(h => ({ ...h,
-      capabilities: h.id === "hermes" ? [...h.capabilities, "worker-memory-v1"] : h.capabilities })) };
+      capabilities: h.available ? [...h.capabilities, "worker-memory-v1"] : h.capabilities })) };
   } };
 }
 

@@ -46,11 +46,16 @@ legacy secretary coordinator is not started. Ordinary coding conversations retai
 runners and history; they are not silently converted into workers.
 
 The shared native protocol currently names Hermes and OpenClaw. The central map handles independent
-agents selecting those IDs, but **only Hermes has a uniform-memory native adapter in this slice**.
-An OpenClaw descriptor alone is not implementation: a compatible reviewed adapter must explicitly
-acknowledge the memory contract before any turn. Arbitrary third-party harness IDs require a later
-coordinated registry/wire change, not a speculative universal SDK today. Connected external harnesses
-are refused by this selection because their native memory authority is not controlled here.
+agents selecting those IDs. Hermes has the original uniform-memory native adapter. OpenClaw is
+registered for the same `worker-memory-v1` contract on a **DEVELOPMENT** basis only: the packaged
+platform verifies the sealed OpenClaw development inventory before any broker/listener work, the
+curated factory admits only an empty or exact `["memory"]` OpenClaw scope, and
+`packages/harness-plugins/openclaw/adapter.mjs` acknowledges `workerMemory` only after the uniform
+native configuration, private FD4 bridge and Gateway readiness are real. The integrated acceptance
+fixture is `memory-gateway-proof.mjs` (actual host transport/SQL, actual sandboxed Gateway, synthetic
+loopback inference). Arbitrary third-party harness IDs require a later coordinated registry/wire change,
+not a speculative universal SDK today. Connected external harnesses are refused by this selection
+because their native memory authority is not controlled here.
 
 ## Memory contract
 

@@ -51,8 +51,14 @@ export async function verifySealedHermesSource(source: string): Promise<void> {
 }
 
 export const HERMES_RUNTIME_PIN = Object.freeze({ version: "0.21.5", sourceSha: "f97608f178d1ffeca59860195ab7da295f7c8e5f" });
-export const OPENCLAW_RUNTIME_PIN = Object.freeze({ version: "2026.9.8", sourceSha: "9bbdbaec153dd28fb452e6652c3dcacd829cb00f",
-  upstreamSha: "fc23bc864e4553c2d215e479eeec47b67a0bf943", patchSha256: "07febe324718e72b238d465bd33f5196d9c49f3aa864405d6587ba3d9b24c908" });
+/** Independently reviewed corrected native candidate (DEVELOPMENT): exact derived
+ * commit and the full official-upstream-to-candidate binary diff digest. Repinned
+ * coherently with the adapter manifest/literal-migration pins and the sealed loader. */
+export const OPENCLAW_RUNTIME_PIN = Object.freeze({ version: "2026.9.8", sourceSha: "f04797ef4d24f3da0f9df74acd58ab773ab5f11e",
+  upstreamSha: "fc23bc864e4553c2d215e479eeec47b67a0bf943", patchSha256: "601c2eea193de989977a122a98bda8653910848092f7c4937195e40bf63ebc4e" });
+/** The only OpenClaw resource scopes with an integrated native proof: chat only, or
+ * uniform host-owned memory. Native file/terminal/web/browser tools stay disabled. */
+export const OPENCLAW_SUPPORTED_TOOLS: readonly string[] = Object.freeze(["memory"]);
 export interface CuratedNodeRuntime { executable: string; version: "26.10.0"; libraryRoots?: string[] }
 export interface CuratedPythonRuntime {
   /** May be the final interpreter link in the explicitly selected virtual environment. */
@@ -60,8 +66,10 @@ export interface CuratedPythonRuntime {
 }
 /** sealed-inventory-v1 selects another mandatory verifier, never skips integrity. */
 export interface CuratedHermesRuntime { version: "0.21.5"; sourceSha: typeof HERMES_RUNTIME_PIN.sourceSha; source: string; adapter: string; sourceIntegrity?: "sealed-inventory-v1"; python: CuratedPythonRuntime }
+/** sealed-inventory-v1 marks a sealed-loader-verified input; the ordinary Git
+ * identity/full-diff checks still run against its minimal detached metadata. */
 export interface CuratedOpenClawRuntime {
-  version: "2026.9.8"; sourceSha: typeof OPENCLAW_RUNTIME_PIN.sourceSha; source: string; adapter: string;
+  version: "2026.9.8"; sourceSha: typeof OPENCLAW_RUNTIME_PIN.sourceSha; source: string; adapter: string; sourceIntegrity?: "sealed-inventory-v1";
 }
 /** Minted/selected by trusted host code, never a catalog, environment or client record.
  * The broker must bind numeric loopback, authenticate this fresh bearer, and enforce
@@ -151,11 +159,12 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
   fields(supplied.node, ["executable", "version", "libraryRoots"]);
   fields(supplied.hermes, ["version", "sourceSha", "source", "adapter", "python", "sourceIntegrity"]);
   fields(supplied.hermes.python, ["executable", "canonicalExecutable", "version", "libraryRoots", "venvRoot"]);
-  if (supplied.openclaw) fields(supplied.openclaw, ["version", "sourceSha", "source", "adapter"]);
+  if (supplied.openclaw) fields(supplied.openclaw, ["version", "sourceSha", "source", "adapter", "sourceIntegrity"]);
   if (supplied.node.version !== "26.10.0" || supplied.hermes.version !== HERMES_RUNTIME_PIN.version || supplied.hermes.sourceSha !== HERMES_RUNTIME_PIN.sourceSha
     || supplied.openclaw && (supplied.openclaw.version !== OPENCLAW_RUNTIME_PIN.version || supplied.openclaw.sourceSha !== OPENCLAW_RUNTIME_PIN.sourceSha)
     || typeof supplied.selectBroker !== "function") throw new CuratedRuntimeUnavailable("runtime", "Unsupported curated runtime pin or broker selector");
   if (supplied.hermes.sourceIntegrity !== undefined && supplied.hermes.sourceIntegrity !== "sealed-inventory-v1") throw new CuratedRuntimeUnavailable("runtime", "Unsupported source integrity contract");
+  if (supplied.openclaw?.sourceIntegrity !== undefined && supplied.openclaw.sourceIntegrity !== "sealed-inventory-v1") throw new CuratedRuntimeUnavailable("runtime", "Unsupported source integrity contract");
   const selector = supplied.selectBroker;
   // Freeze configuration values independently of the caller. Do not retain bearer records.
   const config = structuredClone({ node: supplied.node, hermes: supplied.hermes, openclaw: supplied.openclaw, terminalBinaries: supplied.terminalBinaries ?? [] });
@@ -175,7 +184,10 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
     const workspace = canonical(execution.workspace, true), memoryDir = safeAgentPath(execution.memoryDir);
     if (execution.kind === "ordinary" ? workspace !== agent.workspace || memoryDir !== agent.memoryDir
       : !pathWithin(join(scratch, "profile"), workspace) || !pathWithin(join(scratch, "profile"), memoryDir)) throw new CuratedRuntimeUnavailable("scope", "Execution paths exceed their immutable owner");
-    if (agent.pluginId === "openclaw" && scope.allowedTools.length) throw new CuratedRuntimeUnavailable("scope", "The curated OpenClaw candidate supports chat only; native tools are disabled");
+    // Uniform host-owned memory is the only proved OpenClaw resource tool; it is a host
+    // capability behind the adapter's private pipe, never a native file or memory grant.
+    if (agent.pluginId === "openclaw" && scope.allowedTools.some(tool => !OPENCLAW_SUPPORTED_TOOLS.includes(tool)))
+      throw new CuratedRuntimeUnavailable("scope", "The curated OpenClaw candidate supports chat and uniform memory only; native tools are disabled");
     let selected: SelectedAgentBroker | undefined, timer: NodeJS.Timeout | undefined;
     try {
       selected = await Promise.race([
@@ -210,6 +222,8 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
       throw new CuratedRuntimeUnavailable("runtime", "Selected adapter manifest does not match the pinned isolated plugin");
     const sealed = agent.pluginId === "hermes" && config.hermes.sourceIntegrity === "sealed-inventory-v1";
     if (sealed) { try { await verifySealedHermesSource(source); } catch { throw new CuratedRuntimeUnavailable("runtime", "Sealed Hermes source integrity check failed"); } }
+    // A sealed OpenClaw input keeps minimal detached Git metadata, so the ordinary exact
+    // commit/clean-tree checks still run here and the adapter verifies the full diff.
     const readPaths = [...(sealed ? [source] : await pinnedSource(source, sourceConfig.sourceSha, scratch)), node, canonical(dirname(adapter), true), ...roots(config.node.libraryRoots ?? [])];
     let python: string | undefined;
     if (agent.pluginId === "hermes") {

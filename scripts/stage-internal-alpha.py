@@ -178,7 +178,8 @@ def stage(destination):
         "legacyStorageMigration": False, "publicUpdateFeed": False,
         "harnessProtocolVersion": 1,
         "personAgentPlatform": {"kind": "packaged-hermes-v1", "productionReady": False},
-        "harnessPlugins": {"hermes": {"version": "0.21.5", "sourceSha": "f97608f178d1ffeca59860195ab7da295f7c8e5f", "bundledRuntime": False}},
+        "harnessPlugins": {"hermes": {"version": "0.21.5", "sourceSha": "f97608f178d1ffeca59860195ab7da295f7c8e5f", "bundledRuntime": False},
+                           "openclaw": {"version": "2026.9.8", "sourceSha": "f04797ef4d24f3da0f9df74acd58ab773ab5f11e", "bundledRuntime": False}},
         "dependencyLockSha256": hashlib.sha256((destination / "pnpm-lock.yaml").read_bytes()).hexdigest(),
         "overlaySha256": hashes, "overlaySymlinks": symlinks,
     }
