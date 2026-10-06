@@ -11,6 +11,7 @@ function peer(tool?: SupervisedHarnessConfiguration["workerTool"], mode = "norma
       createInterface({input:process.stdin}).on('line', line => {const f = JSON.parse(line);
         if(f.method==='initialize') return send({id:f.id,result:{protocolVersion:1,pluginId:'hermes',upstreamVersion:'synthetic',workerMemory:${mode !== "unconfirmed"},capabilities:{backgroundTasks:false,targetedSteer:false,taskStop:false,approvals:true,reconnect:false,attachments:false}}});
         if(f.method==='invoke'){waiting=f.id;send({id:'tool-1',method:'worker.memory',params:f.params});${mode === "duplicate" ? "send({id:'tool-1',method:'worker.memory',params:f.params});" : ""}return;}
+        if(f.method==='cancel'){send({method:'worker.memory.cancel',params:{requestId:f.params.requestId ?? 'tool-1'}});return send({id:f.id,result:{cancelled:true}});}
         if(f.id==='tool-1' && !f.method) return send({id:waiting,result:{result:f.result,error:f.error}});
         if(f.method==='shutdown'){send({id:f.id,result:{stopped:true}});process.exit(0);}
       });`] });
@@ -46,4 +47,28 @@ test("closing the process aborts an outstanding privileged tool request", async 
   });
   await p.start(); const pending = p.request("invoke", { action: "grant", key: "note", toAgentId: "bob", operationId: "grant-1" }).catch(() => undefined);
   await entered; await p.close(); await pending; expect(aborted).toBe(true);
+});
+test("native per-call cancellation reaches a pending host effect without closing another owner", async () => {
+  let aborted = false;
+  let p: HarnessProcess;
+  p = peer(async (_method, _params, signal) => {
+    await p.request("cancel", {});
+    aborted = signal.aborted;
+    signal.throwIfAborted();
+    throw new Error("Cancellation must precede the privileged effect");
+  });
+  await p.start();
+  const result = await p.request("invoke", { action: "grant", key: "note", toAgentId: "bob", operationId: "grant-1" });
+  expect(aborted).toBe(true); expect(result.error.code).toBe(-32001); expect(p.unavailable).toBe(false);
+});
+test("an unknown cancellation identity fails the child closed", async () => {
+  const p = peer(async () => ({ ok: true })); await p.start();
+  await expect(p.request("cancel", { requestId: "not-admitted" })).rejects.toThrow("protocol");
+  expect(p.unavailable).toBe(true);
+});
+test("a late cancellation for completed work is a harmless no-op, never a new request", async () => {
+  const calls = vi.fn(async () => ({ value: null })); const p = peer(calls); await p.start();
+  await p.request("invoke", { action: "read", ownerId: "alice", key: "note" });
+  expect(await p.request("cancel", {})).toEqual({ cancelled: true });
+  expect(calls).toHaveBeenCalledOnce(); expect(p.unavailable).toBe(false);
 });

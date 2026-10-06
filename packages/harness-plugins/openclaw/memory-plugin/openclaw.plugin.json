@@ -1,0 +1,1 @@
+{"id": "yorozu-worker-memory", "name": "Yorozu worker memory", "description": "Private host SQL memory bridge; no native memory storage", "configSchema": {"type": "object", "properties": {}, "additionalProperties": false}, "contracts": {"tools": ["worker_memory"]}}

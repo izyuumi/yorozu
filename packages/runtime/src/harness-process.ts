@@ -24,6 +24,7 @@ export class HarnessProcess {
   private ready?: HarnessReady;
   private readonly toolAbort = new AbortController();
   private readonly toolRequests = new Set<string>();
+  private readonly toolControllers = new Map<string, AbortController>();
   private activeTools = 0;
   private readonly lifecycle?: HarnessLifecycle;
   readonly listeners = new Set<(event: HarnessEvent) => void>();
@@ -95,6 +96,14 @@ export class HarnessProcess {
             for (const listener of this.listeners) listener(frame.params);
           } else if (frame.method === "worker.memory" && typeof frame.id === "string") {
             this.receiveWorkerTool(frame);
+          } else if (frame.method === "worker.memory.cancel") {
+            // Private ordered transport: cancel only a request admitted from this
+            // exact child. No model-owned execution selector or global abort.
+            if (Object.keys(frame).length !== 3 || !frame.params || typeof frame.params !== "object"
+              || Array.isArray(frame.params) || Object.keys(frame.params).length !== 1
+              || typeof frame.params.requestId !== "string" || !this.toolRequests.has(frame.params.requestId))
+              throw new Error("Invalid worker tool cancellation");
+            this.toolControllers.get(frame.params.requestId)?.abort();
           } else if (typeof frame.id === "string" && ("result" in frame || "error" in frame)) {
             const pending = this.pending.get(frame.id);
             if (!pending) throw new Error("Unknown receipt");
@@ -154,12 +163,16 @@ export class HarnessProcess {
       reply(undefined, { code: -32003, message: "Worker tool unavailable" }); return;
     }
     this.toolRequests.add(frame.id); this.activeTools++;
+    const controller = new AbortController();
+    this.toolControllers.set(frame.id, controller);
+    const signal = AbortSignal.any([this.toolAbort.signal, controller.signal]);
     // No replay. Durable mutation identity is checked independently by the memory store.
+    // A native tool cancellation must also reach the final host approval/apply guard.
     void Promise.resolve().then(() => {
-      this.toolAbort.signal.throwIfAborted();
-      return this.configuration.workerTool!("worker.memory", frame.params, this.toolAbort.signal);
+      signal.throwIfAborted();
+      return this.configuration.workerTool!("worker.memory", frame.params, signal);
     }).then(value => reply(value), () => reply(undefined, { code: -32001, message: "Worker tool denied or unconfirmed; do not retry automatically" }))
-      .finally(() => { this.activeTools--; });
+      .finally(() => { this.toolControllers.delete(frame.id); this.activeTools--; });
   }
   request(method: string, params: Record<string, unknown>): Promise<any> {
     if (this.lifecycle?.mode === "connected" && method === "shutdown")
