@@ -1,7 +1,7 @@
 /** Native source tests; run only with memory-native-vitest.config.mjs and the exact reviewed source. */
 import { test, expect } from 'vitest';
 import { resolveAttemptBootstrapContext } from '@native/attempt-bootstrap';
-import { uniformMemoryConfig } from './memory-bridge.mjs';
+import { uniformMemoryConfig } from './memory-plugin/memory-bridge.mjs';
 
 test('native attempt does not read/inject retained bootstrap memory in uniform mode', async () => {
   const cfg = uniformMemoryConfig({ agents: { defaults: {}, entries: { alice: { workspace: '/fictional' } } } }, '/fictional/plugin', 'alice', true);

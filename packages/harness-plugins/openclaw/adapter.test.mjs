@@ -197,15 +197,27 @@ test('native terminal arriving before send ACK is emitted after turn.started', a
   assert.equal((await adapter.handle('turn.submit', turn)).status, 'accepted'); await adapter.drain();
   assert.deepEqual(events.map(event => event.kind), ['turn.started', 'assistant.update', 'turn.terminal']);
 });
-test('yielded runs and sequence gaps are uncertain and never create fake child tasks', async () => {
-  for (const kind of ['yield', 'gap']) {
-    const { adapter, gateway, events } = await fixture(); await adapter.handle('turn.submit', turn);
-    if (kind === 'gap') { gateway.emit(payload(gateway, 'delta', { seq: 0, deltaText: 'first' })); gateway.emit(payload(gateway, 'final', { seq: 2 })); }
-    else gateway.emit(payload(gateway, 'final', { yielded: true }));
-    await adapter.drain();
-    assert.equal(events.at(-1).kind, 'capability.unavailable'); assert.equal(events.some(event => event.kind === 'turn.terminal' || event.kind === 'task.changed'), false);
-    assert.equal((await adapter.handle('session.snapshot', open)).current.state, 'unknown');
-  }
+test('yielded runs are uncertain and never create fake child tasks', async () => {
+  const { adapter, gateway, events } = await fixture(); await adapter.handle('turn.submit', turn);
+  gateway.emit(payload(gateway, 'final', { yielded: true }));
+  await adapter.drain();
+  assert.equal(events.at(-1).kind, 'capability.unavailable'); assert.equal(events.some(event => event.kind === 'turn.terminal' || event.kind === 'task.changed'), false);
+  assert.equal((await adapter.handle('session.snapshot', open)).current.state, 'unknown');
+});
+test('native chat seq is strictly increasing but not consecutive; stale or repeated seq is ignored and the final message is authoritative', async () => {
+  // The actual Gateway shares one per-run agent-event counter across tool/item/status
+  // events and merges paced deltas, so chat events legitimately skip numbers.
+  const { adapter, gateway, events } = await fixture(); await adapter.handle('turn.submit', turn);
+  gateway.emit(payload(gateway, 'delta', { seq: 2, deltaText: 'first' }));
+  gateway.emit(payload(gateway, 'delta', { seq: 1, deltaText: 'stale' }));
+  gateway.emit(payload(gateway, 'delta', { seq: 2, deltaText: 'repeat' }));
+  gateway.emit(payload(gateway, 'delta', { seq: 7, deltaText: ' second' }));
+  gateway.emit(payload(gateway, 'final', { seq: 11, message: { content: 'complete native text' } }));
+  await adapter.drain();
+  assert.deepEqual(events.map(event => event.kind), ['turn.started', 'assistant.update', 'assistant.update', 'assistant.update', 'turn.terminal']);
+  assert.equal(events[2].data.text, 'first second'); assert.equal(events[3].data.text, 'complete native text'); assert.equal(events.at(-1).data.state, 'completed');
+  assert.equal(events.some(event => event.kind === 'capability.unavailable'), false);
+  assert.equal((await adapter.handle('session.snapshot', open)).current, null);
 });
 test('Stop requires exact origin currency and reports requested until native termination', async () => {
   const { adapter, gateway, events } = await fixture(); await adapter.handle('turn.submit', turn);
@@ -682,16 +694,18 @@ test('exact native agent/key/SID/run binding precedes chat.send and currency end
   // authority was already revoked before the RPC; the bridge's controller is final.
   assert.equal((await f.adapter.handle('run.stop', { ...second, operationId: 'stop' })).status, 'unknown'); assert.equal(stopped.revoked, true);
   f.gateway.emit(payload(f.gateway, 'aborted')); await f.adapter.drain();
-  // Gap and yield become unknown: no live memory authority remains.
-  for (const [index, kind] of [['c', 'gap'], ['d', 'yield']]) {
-    const run = { ...turn, runId: `host-run-${index}`, attemptId: `host-attempt-${index}` };
-    await f.adapter.handle('turn.submit', run); const current = f.bridge.bindings.at(-1);
-    if (kind === 'gap') { f.gateway.emit(payload(f.gateway, 'delta', { seq: 0, deltaText: 'a' })); f.gateway.emit(payload(f.gateway, 'final', { seq: 2 })); }
-    else f.gateway.emit(payload(f.gateway, 'final', { yielded: true }));
-    await f.adapter.drain(); assert.equal(current.revoked, true); assert.equal(current.current(), false);
-    assert.equal((await f.adapter.handle('session.snapshot', open)).current.state, 'unknown');
-    await f.adapter.handle('run.stop', { ...run, operationId: `clear-${index}` }); f.gateway.emit(payload(f.gateway, 'aborted', { seq: 1 })); await f.adapter.drain();
-  }
+  // Non-consecutive native seq keeps authority (ordinary Gateway behaviour); a yield
+  // becomes unknown and no live memory authority remains.
+  const sparse = { ...turn, runId: 'host-run-c', attemptId: 'host-attempt-c' };
+  await f.adapter.handle('turn.submit', sparse); const sparseBinding = f.bridge.bindings.at(-1);
+  f.gateway.emit(payload(f.gateway, 'delta', { seq: 3, deltaText: 'a' })); await f.adapter.drain(); assert.equal(sparseBinding.revoked, false); assert.equal(sparseBinding.current(), true);
+  f.gateway.emit(payload(f.gateway, 'final', { seq: 9, message: { content: 'done' } })); await f.adapter.drain(); assert.equal(sparseBinding.revoked, true);
+  const yielded = { ...turn, runId: 'host-run-d', attemptId: 'host-attempt-d' };
+  await f.adapter.handle('turn.submit', yielded); const yieldedBinding = f.bridge.bindings.at(-1);
+  f.gateway.emit(payload(f.gateway, 'final', { yielded: true }));
+  await f.adapter.drain(); assert.equal(yieldedBinding.revoked, true); assert.equal(yieldedBinding.current(), false);
+  assert.equal((await f.adapter.handle('session.snapshot', open)).current.state, 'unknown');
+  await f.adapter.handle('run.stop', { ...yielded, operationId: 'clear-d' }); f.gateway.emit(payload(f.gateway, 'aborted', { seq: 1 })); await f.adapter.drain();
   // Lost send acknowledgement revokes immediately; nothing is replayed.
   f.gateway.overrides.set('chat.send', () => { throw new Error('socket lost'); });
   const lost = { ...turn, runId: 'host-run-e', attemptId: 'host-attempt-e' };

@@ -17,22 +17,39 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { UPSTREAM, CURATED_RUNTIME } from './adapter.mjs';
-import { MEMORY_PLUGIN_ID, MEMORY_TOOL } from './memory-bridge.mjs';
+import { MEMORY_PLUGIN_ID, MEMORY_TOOL } from './memory-plugin/memory-bridge.mjs';
 
 const options = new Map();
 for (let index = 2; index < process.argv.length; index += 2) options.set(process.argv[index], process.argv[index + 1]);
 const required = key => { const value = options.get(key); if (!value || !value.startsWith('/')) throw new Error(`${key} must be an authorized absolute task path`); return value; };
 const source = await realpath(required('--source'));
 const node = await realpath(required('--node'));
-const hostRuntime = await realpath(required('--host-runtime'));
 const git = options.has('--git') ? await realpath(required('--git')) : undefined;
-const gitReadRoots = options.has('--git-read-roots') ? await Promise.all(JSON.parse(options.get('--git-read-roots')).map(path => realpath(path))) : [];
+const readRootList = value => value.startsWith('[') ? JSON.parse(value) : value.split(':').filter(Boolean);
+const gitReadRoots = options.has('--git-read-roots') ? await Promise.all(readRootList(options.get('--git-read-roots')).map(path => realpath(path))) : [];
 const output = resolve(required('--output'));
 await mkdir(output, { mode: 0o700 }); // Fresh evidence/profiles only; never adopts or deletes an old fixture.
 const root = await realpath(output);
 const evidence = { schema: 1, kind: 'actual-openclaw-gateway-uniform-memory', upstream: UPSTREAM, curatedRuntime: CURATED_RUNTIME, success: false,
   liveSubscription: false, capabilityAdvertisedByThisProof: false, personAgentRuntimeExercised: false, approvalCardUiExercised: false,
   checks: {}, requests: [], events: [], memoryCalls: [], failures: [], output: root };
+// Actual host implementation. Either a compiled host dist (--host-runtime) or the
+// exact repository TypeScript sources transpiled here with the explicitly selected
+// local TypeScript module (--host-source + --typescript); both forms are hashed.
+let hostRuntime;
+if (options.has('--host-runtime')) hostRuntime = await realpath(required('--host-runtime'));
+else {
+  const hostSource = await realpath(required('--host-source')); const ts = (await import(pathToFileURL(await realpath(required('--typescript'))))).default;
+  hostRuntime = join(root, 'host-code'); await mkdir(hostRuntime);
+  evidence.hostSource = { directory: hostSource, typescript: ts.version, files: {} };
+  for (const file of ['agent-scope', 'agent-store', 'agent-isolation', 'agent-listener', 'harness-contract', 'harness-process', 'worker-memory', 'worker-tools']) {
+    const original = await readFile(join(hostSource, `${file}.ts`), 'utf8');
+    const compiled = ts.transpileModule(original, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
+    await writeFile(join(hostRuntime, `${file}.js`), compiled);
+    evidence.hostSource.files[file] = { originalSha256: createHash('sha256').update(original).digest('hex'), executedSha256: createHash('sha256').update(compiled).digest('hex') };
+  }
+  await writeFile(join(hostRuntime, 'package.json'), '{"type":"module"}\n');
+}
 const { PersonAgentStore } = await import(pathToFileURL(join(hostRuntime, 'agent-store.js')));
 const { isolatedAgentLaunch } = await import(pathToFileURL(join(hostRuntime, 'agent-isolation.js')));
 const { acquireHostListener, prepareHostListenerTransfer, releaseHostListener } = await import(pathToFileURL(join(hostRuntime, 'agent-listener.js')));
@@ -220,8 +237,8 @@ try {
   const probeLease = await acquireHostListener('alice');
   const probeScope = { ...aliceBase, deniedRoots: [...new Set([...aliceBase.deniedRoots, sqlRoot, alicePaths.memoryDir, bobPaths.memoryDir, store.paths('carol').memoryDir])], directories: aliceBase.directories.filter(g => g.path !== alicePaths.memoryDir) };
   const probeFile = join(alicePaths.workspace, 'kernel-probe.mjs');
-  const probeLaunch = isolatedAgentLaunch(probeScope, { command: node, args: [probeFile], readPaths: [dirname(adapterFile), source], runtimeDir: join(root, 'runtime', 'probe'), brokerPorts: [providerPort, probeLease.port], inheritedListeners: [probeLease] });
   await mkdir(join(root, 'runtime', 'probe'), { recursive: true, mode: 0o700 });
+  const probeLaunch = isolatedAgentLaunch(probeScope, { command: node, args: [probeFile], readPaths: [dirname(adapterFile), source], runtimeDir: join(root, 'runtime', 'probe'), brokerPorts: [providerPort, probeLease.port], inheritedListeners: [probeLease] });
   const probeTransfer = prepareHostListenerTransfer([probeLease], 'alice'); transfers.push(probeTransfer);
   await writeFile(probeFile, `import fs from 'node:fs';import net from 'node:net';import http from 'node:http';
     const result={};const denied=e=>['EPERM','EACCES'].includes(e.code);

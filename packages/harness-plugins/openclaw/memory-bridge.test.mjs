@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
-import { createAdapterMemoryClient, createMemoryHostBridge, memoryRequest, registerMemoryPlugin, uniformMemoryConfig } from './memory-bridge.mjs';
+import { createAdapterMemoryClient, createMemoryHostBridge, memoryRequest, registerMemoryPlugin, uniformMemoryConfig } from './memory-plugin/memory-bridge.mjs';
 const root = await mkdtemp(join(realpathSync(tmpdir()), 'openclaw-memory-'));
 for (const file of ['agent-scope', 'worker-memory', 'worker-tools']) {
   const text = await readFile(new URL(`../../runtime/src/${file}.ts`, import.meta.url), 'utf8');
@@ -94,6 +94,7 @@ test('uniform configuration replaces retained memory slots, hooks, per-agent sea
   assert.equal(c.memory.search.enabled, false); assert.equal(c.agents.entries.alice.memory.search.enabled, false);
   assert.equal(c.agents.defaults.compaction.memoryFlush.enabled, false); assert.equal(c.agents.defaults.contextInjection, 'never');
   assert.equal(c.agents.defaults.startupContext.enabled, false); assert.equal(c.hooks.internal.enabled, false);
+  assert.equal(c.tools.toolSearch, false); assert.equal(c.tools.codeMode, false); assert.deepEqual(c.tools.allow, ['worker_memory']);
   assert.equal(before.plugins.slots.memory, 'memory-core');
 });
 test('native preparation/finalization custody cannot be forged, rewritten, or reused across colliding calls', async () => {

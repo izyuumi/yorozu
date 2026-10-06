@@ -32,8 +32,51 @@ can change only through current host scope validation, not profile identity chan
 Paired-device, host-tool approval/memory/isolation and embedding-owned stop/restart/
 lifetime acceptance of the integrated candidate remain separate shipping gates.
 No account, provider, installation, release or production change is authorized by
-these development pins. Memory bridge work is separately owned and not accepted by
-this adapter change.
+these development pins.
+
+## Uniform host-owned memory (DEVELOPMENT integration)
+
+With trusted `workerMemory: true` the adapter runs the `worker-memory-v1` contract
+implemented by the self-contained native plugin package `memory-plugin/`
+(bridge module plus plugin entry; see [MEMORY-BRIDGE.md](MEMORY-BRIDGE.md)). Only managed owned profiles with an empty resource scope or exactly
+`["memory"]` are accepted; any other native tool stays disabled. The grant decides
+whether the native plugin/tool exists at all:
+
+- `effectiveRuntimeConfig` applies `uniformMemoryConfig` **after** the retained
+  configuration merge, so a historical profile edit cannot merge a native memory
+  provider, plugin or hook back in (memory slot `none`, search off, compaction flush
+  off, context injection `never`, hooks off, plugin allowlist = the memory plugin).
+- A granted agent's Gateway is spawned with one private duplex pipe at **FD4** beside
+  the unchanged inherited FD3 listener; `attachMemoryHost` binds it to the bridge.
+- Before every literal `chat.send` the adapter binds the exact native run ID, native
+  session ID and session key to the host execution `{sessionId, runId, attemptId}` from
+  trusted admitted context only (never model arguments or a latest-session lookup).
+  Revokers live in RAM, never in the journal, and are invoked before `chat.abort`, on
+  send uncertainty, yields, terminal events, connection loss and shutdown.
+- `serve` routes host `worker.memory` receipts through `createAdapterMemoryClient`, so
+  cancellation keeps its `{signal, assertCurrent}` authority through to the host's
+  final synchronous approval/apply guard.
+- Profile owner schema 5 and journal schema 4 bind `memoryContract`
+  (`worker-memory-v1` or `native-retained-v1`): a profile prepared under one contract is
+  never reinterpreted under the other; fresh profile only, no replay.
+
+Native chat `seq` is the shared per-run agent-event counter (tool/item/status/lifecycle
+events consume numbers and paced deltas are merged), so chat events are strictly
+increasing but not consecutive. The adapter enforces ordering and takes the terminal
+message as authoritative; a non-consecutive sequence is ordinary Gateway behaviour,
+not an uncertain outcome.
+
+`memory-gateway-proof.mjs` is the integrated acceptance fixture: actual host
+`HarnessProcess` transport and `WorkerMemory` SQL, this adapter under the actual
+per-agent sandbox, the actual pinned Gateway with the plugin loaded, ordinary paired
+literal `chat.send`, and synthetic LOCAL loopback inference that emits `worker_memory`
+tool calls. It proves the native catalog is exactly `[worker_memory]` for a granted
+agent and empty for a zero-tool agent, dispatch reaching host SQL, two-agent private
+isolation, rejected model-supplied identity, exact approval share, search, immediate
+revoke, a Stop that fences a pending approval before SQL apply, lifetime after Stop,
+embedding-owned stop/restart on the same profile, and kernel-level denial of the host
+SQL and native memory paths. It does not exercise `PersonAgentRuntime`, the approval
+card UI, a live provider/account, or a paired device; those remain separate gates.
 
 ## Connected lifecycle and platform ownership
 
@@ -85,7 +128,7 @@ These fields are trusted local configuration, never accepted from chat or events
 
 The trusted host acquires a minted `HostListenerLease` through `acquireHostListener(agentId)`, compiles isolation with that held lease in `inheritedListeners`, and obtains `prepareHostListenerTransfer([lease], agentId)`. It spawns this adapter with the returned native descriptor in stdio slot 3 and joins `afterSpawn(child)` to close its parent copy. Only wire metadata `{transport,fd,host,port}` crosses initialize; an ID, asserted FD or restored JSON object cannot create a lease. `gatewayPort` must equal its port. This adapter duplicates FD3 into its native child, then closes its own copy. The curated native entry verifies the actual socket address before using it. The kernel denies new binds; ordinary `listenerPorts` grants and the stock Gateway launcher remain gated. There is no ephemeral or broad-network fallback.
 
-The prototype disables **all native tools** with `deny: ["*"]` at global and agent levels. It can therefore accept a broader host tool allowlist while operating strictly below it. Host broker tools are not implemented and cannot be granted by widening OpenClaw's native policy. Channels, cron execution, browser control, automatic updates, delivery, uploads, ambient environment and login-shell snapshots are disabled. This is **not native-memory suppression**: native memory plugins/skills and dormant heartbeat state may still initialize. No account setup, installed profile adoption, scheduled execution or billed fallback is performed. Only the isolated client device is paired through native policy; no production device identity is adopted.
+The prototype disables **all native tools** with `deny: ["*"]` at global and agent levels. It can therefore accept a broader host tool allowlist while operating strictly below it. Host broker tools are not implemented and cannot be granted by widening OpenClaw's native policy. Channels, cron execution, browser control, automatic updates, delivery, uploads, ambient environment and login-shell snapshots are disabled. Without the trusted uniform-memory selection this is **not native-memory suppression**: native memory plugins/skills and dormant heartbeat state may still initialize. With `workerMemory: true` the uniform configuration below replaces those settings. No account setup, installed profile adoption, scheduled execution or billed fallback is performed. Only the isolated client device is paired through native policy; no production device identity is adopted.
 
 The launcher requires a clean exact curated checkout, the original public base object, matching patch digest, `dist/entry.js`, `dist/yorozu-gateway-embedding.js`, exact `dist/build-info.json`, normal `node_modules` and a supported real Node runtime with `node:sqlite`. Stock or dirty sources and official-base build metadata are rejected. It never downloads dependencies, builds, repairs configuration or invokes `doctor`. Package preparation is a separate authorized task; embedding does not flatten the runtime package.
 
@@ -102,7 +145,7 @@ Fresh managed subscription onboarding is unsupported. Without an explicit local 
 | `turn.submit` | `chat.history`, `chat.send` | Exact native session/run currency, idle preflight, transcript branch CAS, `followup` queue mode, native-selected fast mode, `inputMode:"literal"` (no privileged suppression, no normal fallback) and native idempotency key. |
 | `assistant.update` | Native `chat` delta/final events | Full host text assembled from actual native text; strict agent/session/run/sequence ownership. |
 | `turn.started` | Exact native `started` receipt | An ACK is admission, not completion. Pre-ACK events are buffered. |
-| `turn.terminal` | Native `chat` final/error/aborted | Completion/failure/Stop only from that run's terminal event; yielded runs stay unknown. |
+| `turn.terminal` | Native `chat` final/error/aborted | Completion/failure/Stop only from that run's terminal event; yielded runs stay unknown. Non-consecutive native `seq` is ordinary. |
 | `run.stop` | `chat.abort` with exact run ID | Preserves side runs and pending unrelated input; ACK must name exactly the origin. `requested` waits for terminal evidence. |
 | `task.steer`, `task.stop`, `request.answer` | No verified mapping yet | Cached `unsupported`, without native RPC mutation. |
 | `session.snapshot` | Adapter-owned projection | Recorded current currency/text and empty task list; not a native history hydration or crash-resume claim. |
@@ -120,7 +163,7 @@ OpenClaw alone owns native sessions/transcripts/model state. The host must retai
 /absolute/task/node --test packages/harness-plugins/openclaw/adapter.test.mjs
 ```
 
-The synthetic contract tests exercise wire parsing/handshake with a fake socket and adapter methods with a fake Gateway: explicit connected descriptor/identity checks, socket-only detach, identity filtering, duplicate currency, lost/queued/malformed ACKs, unknown caches, restart without replay, Stop receipt versus terminal, event gaps/yielded runs, strict scope/environment policy, derived-source identity, shipped patch digest and exact FD3 metadata. They are synthetic tests. Native build and confined inference are separate gates. Live subscription onboarding, packaged Mac/iOS integration, background tasks, child steer/Stop, approvals, native history hydration and broker-tool execution remain unproven.
+The synthetic contract tests exercise wire parsing/handshake with a fake socket and adapter methods with a fake Gateway: explicit connected descriptor/identity checks, socket-only detach, identity filtering, duplicate currency, lost/queued/malformed ACKs, unknown caches, restart without replay, Stop receipt versus terminal, sparse/stale native sequence numbers and yielded runs, strict scope/environment policy, derived-source identity, shipped patch digest, exact FD3 metadata, and the uniform-memory binding/revocation order against a fake bridge. They are synthetic tests. Native build and confined inference are separate gates. Live subscription onboarding, packaged Mac/iOS integration, background tasks, child steer/Stop, approvals, native history hydration and broker-tool execution remain unproven.
 
 `native-proof.mjs` is an acceptance fixture; its October 6 partial native execution is documented below (the full acceptance remains failed). It constructs fictional agents through the host's real `PersonAgentStore`, derives zero tools, acquires real host listener leases, calls `isolatedAgentLaunch`, transfers actual descriptors and requires physical kernel checks before launching OpenClaw. It then checks native Gateway readiness, conversation history across two inference turns, exact Stop/provider cancellation, accepted-input deduplication and clean-restart non-replay. Its provider is local synthetic Responses inference only. It persists `evidence.json`; unsupported policy, lease, build, startup or lifecycle failures cannot become acceptance evidence.
 

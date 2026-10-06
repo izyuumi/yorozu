@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /** Transport only: the pinned OpenClaw Gateway owns planning and the entire agent loop. */
 import { NATIVE_PINS, INPUT_CONTRACT, RUNTIME_IDENTITY, OWNER_SCHEMA, JOURNAL_SCHEMA, memoryContract, validateLiteralOwner } from './literal-migration.mjs';
-import { uniformMemoryConfig, createMemoryHostBridge, attachMemoryHost, createAdapterMemoryClient } from './memory-bridge.mjs';
+// The bridge lives inside the native plugin package: the pinned Gateway captures a
+// plugin as a self-contained package (nearest package.json), so shared code outside
+// it would require a read grant beyond the plugin tree.
+import { uniformMemoryConfig, createMemoryHostBridge, attachMemoryHost, createAdapterMemoryClient } from './memory-plugin/memory-bridge.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rename, readdir, lstat, realpath, rm, open } from 'node:fs/promises';
@@ -587,8 +590,10 @@ export function createAdapter({ launch = launchRuntime, emit = () => {}, callHos
     }
     const session = sessions.get(run.conversationId);
     if (!session || ['completed', 'failed', 'stopped'].includes(run.state)) return;
-    // Missing sequence creates a truthful uncertain outcome; never patch gaps with invented text.
-    if (run.seq >= 0 && data.seq > run.seq + 1) { revoke(run.nativeId); run.state = 'unknown'; await persist(); event(session, 'capability.unavailable', { capability: 'event-sequence', reason: 'native chat event gap; reconnect recovery is unsupported' }, run); return; }
+    // Native chat `seq` is the shared per-run agent-event counter (tool, item, status
+    // and lifecycle events consume numbers too, and paced deltas are merged), so chat
+    // events are strictly increasing but not consecutive. Ordering is enforced above;
+    // the terminal event carries the complete native message, never patched text.
     run.seq = data.seq;
     if (data.state === 'delta') {
       if (typeof data.deltaText !== 'string') return;

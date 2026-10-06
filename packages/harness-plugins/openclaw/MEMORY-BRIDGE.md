@@ -1,10 +1,15 @@
 # Development-only native memory bridge
 
-`memory-bridge.mjs` and `memory-plugin/` implement a host-owned SQL memory tool for
-reviewed native OpenClaw `f04797ef4d24f3da0f9df74acd58ab773ab5f11e`.
-**This module does not register `worker-memory-v1`, alter the curated availability
-gate, or activate itself in `adapter.mjs`.** The separately owned adapter needs the
-integration hooks below and its own end-to-end Gateway acceptance.
+`memory-plugin/memory-bridge.mjs` and the surrounding `memory-plugin/` package
+implement a host-owned SQL memory tool for reviewed native OpenClaw
+`f04797ef4d24f3da0f9df74acd58ab773ab5f11e`. The bridge lives inside the plugin
+package because the pinned Gateway captures a plugin as a self-contained package
+(nearest `package.json`); a sibling import outside that package would need a read
+grant beyond the plugin tree and is refused by the loader.
+This module registers nothing itself. `adapter.mjs` now performs the integration
+hooks below (see the README section "Uniform host-owned memory"), and
+`memory-gateway-proof.mjs` is the integrated Gateway acceptance fixture; the
+packaged platform registers `worker-memory-v1` for OpenClaw only on that basis.
 
 ## Boundaries
 

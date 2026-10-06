@@ -9,7 +9,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { uniformMemoryConfig, createMemoryHostBridge, attachMemoryHost } from './memory-bridge.mjs';
+import { uniformMemoryConfig, createMemoryHostBridge, attachMemoryHost } from './memory-plugin/memory-bridge.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const [source, output, mode, actor = 'alice', phase = 'main'] = process.argv.slice(2);
 if (!source?.startsWith('/') || !output?.startsWith('/')) throw new Error('Explicit source and output required');

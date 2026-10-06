@@ -58,7 +58,9 @@ export function uniformMemoryConfig(config, pluginDirectory, agentId, memoryGran
   return { ...config,
     agents: { ownership: 'explicit', defaults: { ...config.agents.defaults, ...noMemory, skipBootstrap: true },
       entries: { [agentId]: { ...entry, memory: { search: { enabled: false } }, contextInjection: 'never', tools: { ...(memoryGranted ? { allow: [MEMORY_TOOL] } : { deny: ['*'] }), elevated: { enabled: false } } } } },
-    tools: { ...(memoryGranted ? { allow: [MEMORY_TOOL] } : { deny: ['*'] }), codeMode: false, elevated: { enabled: false }, agentToAgent: { enabled: false }, sessions: { visibility: 'self' } },
+    // Native tool search would replace the catalog with meta tools; the host-owned
+    // surface is the exact explicit tool, so the model sees worker_memory itself.
+    tools: { ...(memoryGranted ? { allow: [MEMORY_TOOL] } : { deny: ['*'] }), toolSearch: false, codeMode: false, elevated: { enabled: false }, agentToAgent: { enabled: false }, sessions: { visibility: 'self' } },
     memory: { search: { enabled: false } },
     hooks: { enabled: false, internal: { enabled: false } },
     plugins: { enabled: memoryGranted, allow: memoryGranted ? [MEMORY_PLUGIN_ID] : [], load: { paths: memoryGranted ? [pluginDirectory] : [] },
