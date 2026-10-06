@@ -44,6 +44,7 @@ GROUPS = {
         "closingLocalTransportCancelsMissingSocketRetry",
     )),
     "AccountsCoreTests": ("apps/mac", "YorozuAccountsCoreTests", 10, None),
+    "HostWindowModeTests": ("apps/mac", "YorozuKeepaliveTests", 4, None),
 }
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
