@@ -34,6 +34,7 @@ export class PersonAgentHost {
   readonly controls: PersonAgentControls;
   readonly runner: NativeAgentRunner;
   private readonly memory?: WorkerMemory;
+  private closingRegistry?: PersonAgentRegistry;
   constructor(readonly dir: string, private readonly platform: PersonAgentPlatform) {
     this.store = new PersonAgentStore(dir, { resourceRoots: platform.resourceRoots,
       protectedRoots: [...(platform.protectedRoots ?? []), join(dir, "harness-platform-v1"), join(dir, "worker-memory-v1")] });
@@ -69,6 +70,7 @@ export class PersonAgentHost {
   bind(services: HarnessServices): void { this.runtime.bind({ ...services,
     ...(this.platform.openHarnessUI ? { openUI: (origin, targetId) => this.platform.openHarnessUI!(origin.agentId, targetId) } : {}) }); }
   registry(): PersonAgentRegistry {
+    if (this.closingRegistry) return structuredClone(this.closingRegistry);
     const registry = this.controls.registry();
     return { ...registry, ...this.platform.catalog?.(), agents: registry.agents.map(agent => ({ ...agent,
       conversationId: this.runtime.canonicalConversation(agent.id) })) };
@@ -112,5 +114,11 @@ export class PersonAgentHost {
       { agent: "harness", cwd: agent.workspace, creation });
     this.runtime.bindConversation(event.threadId, agent.id, event.data.title ?? agent.name);
   }
-  async close(): Promise<void> { try { await this.controls.close(); } finally { try { await this.runtime.close(); } finally { this.memory?.close(); } } }
+  async close(): Promise<void> {
+    try { await this.controls.close(); }
+    finally {
+      try { this.closingRegistry ??= this.registry(); }
+      finally { try { await this.runtime.close(); } finally { this.memory?.close(); } }
+    }
+  }
 }

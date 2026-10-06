@@ -48,8 +48,8 @@ test.skipIf(process.platform !== "darwin")("minimal workers isolate memory and r
         initialAgent: { id: "alice", name: "Alice", role: "Synthetic secretary", pluginId: "hermes", allowedTools: ["memory"] },
         adapters: [{ id: "hermes", label: "Synthetic protocol peer", memory: "worker-memory-v1", createFactory: () => (agent, _scope, execution) => {
           launches.push(agent.id);
-          return { configuration: { pluginId: "hermes", upstreamVersion: "synthetic-worker-v1", command: process.execPath, args: [peer], initialize: {} },
-            runtime: { command: process.execPath, args: [peer], runtimeDir: execution.scratchRoot,
+          return { configuration: { pluginId: "hermes", upstreamVersion: "synthetic-worker-v1", command: process.execPath, args: [peer, join(stateDir, "worker-memory-v1", "worker-memory.sqlite")], initialize: {} },
+            runtime: { command: process.execPath, args: [peer, join(stateDir, "worker-memory-v1", "worker-memory.sqlite")], runtimeDir: execution.scratchRoot,
               readPaths: [code], brokerPorts: [] } };
         } }],
       } });
@@ -82,6 +82,7 @@ test.skipIf(process.platform !== "darwin")("minimal workers isolate memory and r
       }
     })(), "encrypted response");
     await until(e => e.kind === "device_list");
+    expect(events.filter(e => e.kind === "thread_list").every(e => e.data.personAgents === undefined)).toBe(true);
     const negotiate = send("thread_list", { threads: [], peerInfo: localPeerInfo("worker-fixture") });
     let registry = (await until(e => e.kind === "thread_list" && e.data.peerInfoReplyTo === negotiate)).data.personAgents!;
     expect(registry.agents.map(a => a.id)).toEqual(["alice"]);

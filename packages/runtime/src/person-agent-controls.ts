@@ -137,7 +137,7 @@ export class PersonAgentControls {
   private open(): void { if (this.closed) throw new Error("Person-agent controls are closed"); }
   get hasUnknownControls(): boolean { return this.broken || Object.values(this.journal.operations).some(entry => entry.state === "unknown" || entry.state === "pending"); }
   registry(): PersonAgentRegistry {
-    this.open();
+    // Read-only shutdown projection remains available; control() still rejects after close.
     return structuredClone(parsePersonAgentRegistry({ ...this.store.list(), journalRevision: this.store.journal().revision,
       ...(this.journal.lastControlResult ? { lastControlResult: this.journal.lastControlResult } : {}) }));
   }

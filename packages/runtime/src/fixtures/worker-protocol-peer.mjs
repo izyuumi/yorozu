@@ -1,5 +1,6 @@
 /** Synthetic protocol peer only: no model, native harness, account or provider proof. */
 import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
 let sequence = 0;
 const pending = new Map();
 const send = value => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...value }) + '\n');
@@ -19,6 +20,12 @@ createInterface({ input: process.stdin }).on('line', async line => {
   const reply = result => send({ id: frame.id, result });
   if (frame.method === 'initialize') {
     if (p.workerMemory !== true || p.isolation?.backend !== 'macos-seatbelt-v1') process.exit(2);
+    // Test-only path to an existing synthetic host database: actual kernel denial,
+    // not a model-facing path capability or an ENOENT mistaken for isolation.
+    for (const path of process.argv.slice(2)) {
+      try { readFileSync(path); process.exit(3); }
+      catch (error) { if (!['EPERM', 'EACCES'].includes(error.code)) process.exit(4); }
+    }
     reply({ protocolVersion: 1, pluginId: 'hermes', upstreamVersion: 'synthetic-worker-v1',
       workerMemory: true, agentId: p.agentId, isolation: p.isolation,
       capabilities: { backgroundTasks: false, targetedSteer: false, taskStop: true, approvals: true, reconnect: false, attachments: false } });

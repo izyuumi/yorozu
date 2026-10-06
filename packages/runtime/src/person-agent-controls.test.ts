@@ -163,6 +163,7 @@ test("queued requests use their captured input and close drains without admittin
   expect((await beforeClose).lastControlResult?.status).toBe("rejected"); await closing;
   expect(f.store.list().agents.map(a => a.id)).toEqual(["alice", "bob"]); expect(f.released).toHaveBeenCalledTimes(1);
   expect(() => f.controls.control("closed", f.data("carol"))).toThrow("closed");
+  expect(f.controls.registry().agents.length).toBeGreaterThan(0);
 });
 
 test("damaged, symlinked, and hard-linked operation ledgers never reset existing state", async () => {

@@ -5,6 +5,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PersonAgentHost } from "./person-agent-host.js";
+import { WorkerMemory } from "./worker-memory.js";
 import { createMinimalWorkerPlatform } from "./worker-platform.js";
 import { HarnessProcess } from "./harness-process.js";
 import { appendThreadEvent, setNativeTurn } from "./threads.js";
@@ -119,4 +120,26 @@ test("cancellation journal failure cannot leave the privileged tool promise hang
   const rejected = expect(sharing).rejects.toThrow("cancelled");
   vi.spyOn(f.host.runtime.platformStore, "cancelAction").mockImplementation(() => { throw new Error("synthetic persistence failure"); });
   alice.abort.abort(); await rejected; await alice.pending;
+});
+
+
+test("a lost receipt after the SQL grant commit remains unknown and fences further owner tools", async () => {
+  const bind = WorkerMemory.prototype.bind; let loseReceipt = false;
+  vi.spyOn(WorkerMemory.prototype, "bind").mockImplementation(function (this: WorkerMemory, agentId) {
+    const capability = bind.call(this, agentId);
+    return Object.freeze({ ...capability, grant(to: string, key: string, operationId: string) {
+      capability.grant(to, key, operationId);
+      if (loseReceipt) throw new Error("synthetic post-commit receipt loss");
+    } });
+  });
+  const f = fixture(), alice = await f.start("alice", "uncertain-origin"), bob = await f.start("bob", "uncertain-reader");
+  await alice.call({ action: "write", key: "note", body: "SELECTED_SYNTHETIC", operationId: "write-1" });
+  loseReceipt = true;
+  const sharing = alice.call({ action: "grant", toAgentId: "bob", key: "note", operationId: "grant-uncertain" });
+  const uncertain = expect(sharing).rejects.toThrow("unconfirmed");
+  await f.answer(f.action(), "uncertain-answer", "allow-once"); await uncertain;
+  expect(f.host.runtime.platformStore.hasUnconfirmedActions("alice")).toBe(true);
+  await expect(alice.call({ action: "write", key: "other", body: "blocked", operationId: "blocked-write" })).rejects.toThrow();
+  expect(await bob.call({ action: "read", ownerId: "alice", key: "note" })).toEqual({ value: "SELECTED_SYNTHETIC" });
+  f.emit(alice.process, alice.params); f.emit(bob.process, bob.params); await Promise.all([alice.pending, bob.pending]);
 });

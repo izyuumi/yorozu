@@ -456,3 +456,33 @@ test("shutdown grace remains bounded when the wall clock stops advancing", async
     expect(f.manager.held("alice")).toBeDefined();
   } finally { clock.mockRestore(); }
 });
+
+test("uniform memory selects a separate native profile and rollback preserves both sources without importing", async () => {
+  const { WorkerMemory } = await import("./worker-memory.js");
+  const f = fixture();
+  const legacy = await f.manager.conversation("memory-migration", "alice");
+  expect(await f.invoke(legacy, "legacy-input", "fixture")).toMatchObject({ completed: true });
+  const originalProfile = legacy.process.configuration.initialize.profileRoot;
+  const legacyNote = join(f.store.paths("alice").memoryDir, "legacy.md");
+  writeFileSync(legacyNote, "LEGACY_SYNTHETIC_NOTE");
+  await f.manager.close();
+  const memory = new WorkerMemory(join(f.dir, "worker-memory-v1"), id => f.store.list().agents.some(a => a.id === id));
+  const selected = new PersonAgentRuntime(f.dir, f.store, f.manager.factory, undefined, memory);
+  try {
+    const uniform = await selected.conversation("memory-migration");
+    expect(await f.invoke(uniform, "uniform-input", "fixture")).toMatchObject({ completed: true });
+    expect(uniform.process.configuration.initialize.profileRoot).not.toBe(originalProfile);
+    expect(memory.bind("alice").search("alice", "LEGACY")).toEqual([]);
+    memory.bind("alice").write("new", "UNIFORM_SYNTHETIC_NOTE", "write-new");
+    expect(readFileSync(legacyNote, "utf8")).toBe("LEGACY_SYNTHETIC_NOTE");
+  } finally { await selected.close(); memory.close(); }
+  const rollback = new PersonAgentRuntime(f.dir, f.store, f.manager.factory);
+  try {
+    const restored = await rollback.conversation("memory-migration");
+    expect(restored.process.configuration.initialize.profileRoot).toBe(originalProfile);
+    expect(readFileSync(legacyNote, "utf8")).toBe("LEGACY_SYNTHETIC_NOTE");
+  } finally { await rollback.close(); }
+  const reopened = new WorkerMemory(join(f.dir, "worker-memory-v1"), id => f.store.list().agents.some(a => a.id === id));
+  try { expect(reopened.bind("alice").read("alice", "new")).toBe("UNIFORM_SYNTHETIC_NOTE"); }
+  finally { reopened.close(); }
+});
