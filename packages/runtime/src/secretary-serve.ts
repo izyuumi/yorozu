@@ -73,7 +73,7 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
       ? { ...people?.summary(id), canResume: false, canRewind: false, needsAttention: true, lastMessage: holdReason() }
       : people?.summary(id) ?? harness?.summary(id),
     secretaryThreadWorkspace: (id: string) => people?.workspace(id),
-    secretaryTaskStop: (event: Parameters<SecretaryHarness["taskStop"]>[0]) => people?.ownsTask(event.threadId)
+    secretaryTaskStop: (event: Parameters<SecretaryHarness["taskStop"]>[0]) => held(event.threadId) ? Promise.resolve(false) : people?.ownsTask(event.threadId)
       ? people.runtime.taskStop(event) : harness?.taskStop(event) ?? Promise.resolve(false),
     personAgentRegistry: people ? () => people.registry() : undefined,
     personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => { if (migrationHold) return Promise.reject(new Error(migrationHold)); return people.control(event); } : undefined,

@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { serveSecretary } from "../dist/secretary-serve.js";
 
 const f = vi.hoisted(() => ({
-  migrationBlocked: false, bindSecretary: vi.fn(), options: {} as any, registered: {} as any, mainPerson: false, selectedHarness: false, packaged: false,
+  migrationBlocked: false, bindSecretary: vi.fn(), personStop: vi.fn(async () => true), options: {} as any, registered: {} as any, mainPerson: false, selectedHarness: false, packaged: false,
   ordinary: vi.fn(async () => ({ text: "ordinary" })),
   person: vi.fn(async () => ({ text: "person" })),
   planner: vi.fn(async () => ({ text: "legacy" })),
@@ -32,7 +32,7 @@ vi.mock("../dist/person-agent-host.js", () => ({ PersonAgentHost: class {
   registry() { return { version: 1, revision: 0, agents: [] }; }
   workspace() { return undefined; } summary() { return undefined; }
   control() {} create() {} bind = f.personBind; close = f.personClose;
-  runtime = { bindSecretary(id: string) { f.bindSecretary(id); if (f.migrationBlocked) throw new Error("unsettled"); f.mainPerson = true; }, taskStop: async () => false };
+  runtime = { bindSecretary(id: string) { f.bindSecretary(id); if (f.migrationBlocked) throw new Error("unsettled"); f.mainPerson = true; }, taskStop: f.personStop };
 } }));
 beforeEach(() => { vi.clearAllMocks(); f.migrationBlocked = false; f.mainPerson = false; f.selectedHarness = false; f.packaged = false; f.unavailable = undefined; });
 
@@ -122,6 +122,8 @@ for (const blocked of [false, true]) test(`packaged account composition selects 
     await expect(f.options.harnessAction({})).rejects.toThrow("reconciliation");
     expect(f.person).not.toHaveBeenCalled();
     expect(f.personBind).not.toHaveBeenCalled(); // bind can deliver durable peer messages
+    expect(await f.options.secretaryTaskStop({ threadId: "person-task" })).toBe(false);
+    expect(f.personStop).not.toHaveBeenCalled();
   } else expect(f.personBind).toHaveBeenCalledOnce();
   expect(await f.registered.codex.run({ threadId: "ordinary" })).toEqual({ text: "ordinary" });
   expect(f.planner).not.toHaveBeenCalled(); expect(f.reconcile).not.toHaveBeenCalled(); expect(f.selected).not.toHaveBeenCalled();
