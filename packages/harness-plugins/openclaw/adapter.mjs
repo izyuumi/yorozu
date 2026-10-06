@@ -188,10 +188,21 @@ export function validateNodeIntegrity(value) {
   if (!/^[a-f0-9]{64}$/.test(value.sha256 ?? '') || value.hashStage !== 'after-nested-signing-before-outer-bundle-signing') throw invalid('unsupported sealed Node integrity record');
   return { sha256: value.sha256, hashStage: value.hashStage };
 }
+/** Trusted host record only: the host verified exact commit, clean tree and full
+ * upstream diff of a sealed input outside the sandbox. Accepted only when it names
+ * this adapter's exact pins; every file-hash and Node pin below still applies. */
+export function validateSourceIntegrity(value) {
+  if (value === undefined) return undefined;
+  only(value, ['kind', 'sourceSha', 'patchSha256'], 'sourceIntegrity');
+  if (value.kind !== 'sealed-inventory-v1' || value.sourceSha !== CURATED_RUNTIME.sourceCommit || value.patchSha256 !== CURATED_RUNTIME.patchSha256) throw invalid('unsupported sealed source integrity record');
+  return { kind: value.kind, sourceSha: value.sourceSha, patchSha256: value.patchSha256 };
+}
 export async function prepareRuntime(params) {
   if (validateLifecycle(params).mode !== 'managed') throw invalid('connected lifecycle must use the connection launcher');
-  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle', 'git', 'workerMemory', 'nodeIntegrity'], 'initialize');
+  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle', 'git', 'workerMemory', 'nodeIntegrity', 'sourceIntegrity'], 'initialize');
   const nodeIntegrity = validateNodeIntegrity(params.nodeIntegrity);
+  const sourceIntegrity = validateSourceIntegrity(params.sourceIntegrity);
+  if (sourceIntegrity && params.git !== undefined) throw invalid('a sealed source integrity record and a git verifier are mutually exclusive');
   const memory = validateWorkerMemory(params);
   if (params.platform !== undefined) {
     only(params.platform, ['team', 'computer', 'peers'], 'platform');
@@ -205,14 +216,19 @@ export async function prepareRuntime(params) {
   const node = await realpath(absolute(params.node, 'node'));
   const packageInfo = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'));
   if (packageInfo.name !== 'openclaw' || packageInfo.version !== UPSTREAM.version) throw invalid('OpenClaw package version does not match the pin');
-  const git = params.git === undefined ? '/usr/bin/git' : await realpath(absolute(params.git, 'git'));
-  await regular(git, 16 * 1024 * 1024);
-  const gitOptions = { maxBuffer: 4096, env: { PATH: '/usr/bin:/bin', TMPDIR: scoped.profileDir, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
-  const revision = await exec(git, ['-C', source, 'rev-parse', 'HEAD'], gitOptions);
-  if (revision.stdout.trim() !== CURATED_RUNTIME.sourceCommit) throw invalid('OpenClaw source commit does not match the explicit curated pin; stock sources are gated');
-  await exec(git, ['-C', source, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
-  const patch = await exec(git, ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--abbrev=8', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { ...gitOptions, maxBuffer: 512 * 1024 });
-  if (sha(patch.stdout) !== CURATED_RUNTIME.patchSha256) throw invalid('OpenClaw curated patch digest does not match the approved base and patch');
+  if (!sourceIntegrity) {
+    // Development inputs: verify exact commit, clean tree and the full upstream diff
+    // with git. A sealed app input has no git toolchain inside the seatbelt; its host
+    // verified the same facts outside and supplied the exact record checked above.
+    const git = params.git === undefined ? '/usr/bin/git' : await realpath(absolute(params.git, 'git'));
+    await regular(git, 16 * 1024 * 1024);
+    const gitOptions = { maxBuffer: 4096, env: { PATH: '/usr/bin:/bin', TMPDIR: scoped.profileDir, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
+    const revision = await exec(git, ['-C', source, 'rev-parse', 'HEAD'], gitOptions);
+    if (revision.stdout.trim() !== CURATED_RUNTIME.sourceCommit) throw invalid('OpenClaw source commit does not match the explicit curated pin; stock sources are gated');
+    await exec(git, ['-C', source, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
+    const patch = await exec(git, ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--abbrev=8', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { ...gitOptions, maxBuffer: 512 * 1024 });
+    if (sha(patch.stdout) !== CURATED_RUNTIME.patchSha256) throw invalid('OpenClaw curated patch digest does not match the approved base and patch');
+  }
   try {
     await regular(join(source, 'openclaw.mjs'));
     await regular(join(source, 'dist', 'entry.js'), 16 * 1024 * 1024);
@@ -687,7 +703,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {}, callHos
         revokeAll(); runtime.memory?.bridge.close();
         await runtime.gateway.shutdown(); await writing; return { stopped: runtime.gateway.closed };
       }
-      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'profileDir', 'source', 'node', 'nodeIntegrity', 'providerConfigPath', 'lifecycle', 'connection', 'git'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
+      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'profileDir', 'source', 'node', 'nodeIntegrity', 'sourceIntegrity', 'providerConfigPath', 'lifecycle', 'connection', 'git'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
       if (['message.deliver', 'message.receipt', 'action.answer'].includes(method)) return { status: 'unsupported', handoff: 'not-submitted', reason: 'no verified native peer-inbox or action mapping exists for this OpenClaw pin' };
       if (method === 'session.open') {
         required(params.conversationId, 'conversationId'); required(params.bindingId, 'bindingId');

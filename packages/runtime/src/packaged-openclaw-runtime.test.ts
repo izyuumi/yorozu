@@ -40,6 +40,7 @@ test("sealed loader rejects malformed, tampered and escaping inputs", async t =>
   const baseline = structuredClone(a); baseline.files = a.files.filter((r: any) => names.includes(r.path));
   // Rejection cases start from the reused-bytes evidence shape regardless of the input artifact's own evidence.
   baseline.dependencyEvidence = { kind: "reused-local-bytes-inventory-only", archiveProvenanceVerified: false, lockfileMatchEstablished: false };
+  baseline.hashStage = "assembled-before-signing"; delete baseline.reseal; // a signed input artifact must not pre-seed the signed-stage cases
   for (const r of baseline.files) {
     const p = join(root, r.path); await mkdir(dirname(p), { recursive: true }); await copyFile(join(original, r.path), p); await chmod(p, r.mode);
   }

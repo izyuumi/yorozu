@@ -760,3 +760,14 @@ test('sealed Node integrity is a trusted nested-signed host record, never free-f
   const f = await memoryFixture();
   await assert.rejects(f.adapter.handle('turn.submit', { ...turn, nodeIntegrity: { sha256: 'a'.repeat(64), hashStage: 'after-nested-signing-before-outer-bundle-signing' } }), /immutable after initialize/);
 });
+test('sealed source integrity is an exact host record for this adapter pin; it never widens or replaces file pins', async () => {
+  const { validateSourceIntegrity } = await import('./adapter.mjs');
+  const exact = { kind: 'sealed-inventory-v1', sourceSha: CURATED_RUNTIME.sourceCommit, patchSha256: CURATED_RUNTIME.patchSha256 };
+  assert.equal(validateSourceIntegrity(undefined), undefined);
+  assert.deepEqual(validateSourceIntegrity(exact), exact);
+  for (const bad of [{ ...exact, sourceSha: UPSTREAM.commit }, { ...exact, patchSha256: '0'.repeat(64) }, { ...exact, kind: 'trust-me' }, { kind: 'sealed-inventory-v1' }, { ...exact, git: '/usr/bin/git' }, 'sealed-inventory-v1']) {
+    assert.throws(() => validateSourceIntegrity(bad), /integrity record|unsupported fields|object/);
+  }
+  const f = await memoryFixture();
+  await assert.rejects(f.adapter.handle('turn.submit', { ...turn, sourceIntegrity: exact }), /immutable after initialize/);
+});

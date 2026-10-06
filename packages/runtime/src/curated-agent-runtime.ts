@@ -115,6 +115,23 @@ async function inspect(command: string, args: string[], limit = 4096, privateInd
       timeout: 10_000, maxBuffer: limit, encoding: "utf8" })).stdout.trim();
   } catch { throw new CuratedRuntimeUnavailable("runtime", "Selected pinned code or interpreter validation failed; no repair or fallback was attempted"); }
 }
+/** Host-side exact-commit and full official-upstream→candidate diff checks for a sealed
+ * input, outside the agent sandbox. Commit-to-commit; the worktree bytes were already
+ * verified by the sealed inventory, so no worktree hashing of ~170k files is repeated. */
+export async function verifyPinnedPatch(source: string, upstreamSha: string, expectedSha256: string): Promise<void> {
+  let patch: Buffer;
+  try {
+    patch = (await runInspection("/usr/bin/git", ["-C", source, "diff", upstreamSha, "HEAD", "--binary", "--abbrev=8", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"],
+      { env: { PATH: "/usr/bin:/bin", GIT_OPTIONAL_LOCKS: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" }, timeout: 60_000, maxBuffer: 512 * 1024, encoding: "buffer" })).stdout;
+  } catch { throw new CuratedRuntimeUnavailable("runtime", "Selected source does not match its approved full upstream diff"); }
+  if (createHash("sha256").update(patch).digest("hex") !== expectedSha256) throw new CuratedRuntimeUnavailable("runtime", "Selected source does not match its approved full upstream diff");
+}
+async function sealedOpenClawSource(source: string): Promise<string[]> {
+  try { safeAgentPath(join(source, ".git"), true); } catch { throw new CuratedRuntimeUnavailable("runtime", "Selected Git metadata must not be a symlink"); }
+  if (await inspect("/usr/bin/git", ["-C", source, "rev-parse", "HEAD"]) !== OPENCLAW_RUNTIME_PIN.sourceSha) throw new CuratedRuntimeUnavailable("runtime", "Selected source does not match its approved commit");
+  await verifyPinnedPatch(source, OPENCLAW_RUNTIME_PIN.upstreamSha, OPENCLAW_RUNTIME_PIN.patchSha256);
+  return [source];
+}
 async function pinnedSource(source: string, sha: string, scratch: string): Promise<string[]> {
   try { safeAgentPath(join(source, ".git"), true); } catch { throw new CuratedRuntimeUnavailable("runtime", "Selected Git metadata must not be a symlink"); }
   if (await inspect("/usr/bin/git", ["-C", source, "rev-parse", "HEAD"]) !== sha) throw new CuratedRuntimeUnavailable("runtime", "Selected source does not match its approved commit");
@@ -236,8 +253,10 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
     if (sealed) { try { await verifySealedHermesSource(source); } catch { throw new CuratedRuntimeUnavailable("runtime", "Sealed Hermes source integrity check failed"); } }
     // A sealed OpenClaw input keeps minimal detached Git metadata, so the ordinary exact
     // commit/clean-tree checks still run here and the adapter verifies the full diff.
-    const readPaths = [...(sealed ? [source] : await pinnedSource(source, sourceConfig.sourceSha, scratch)), node, canonical(dirname(adapter), true), ...roots(config.node.libraryRoots ?? [])];
+    const sealedOpenClaw = agent.pluginId === "openclaw" && config.openclaw!.sourceIntegrity === "sealed-inventory-v1";
+    const readPaths = [...(sealed ? [source] : sealedOpenClaw ? await sealedOpenClawSource(source) : await pinnedSource(source, sourceConfig.sourceSha, scratch)), node, canonical(dirname(adapter), true), ...roots(config.node.libraryRoots ?? [])];
     let python: string | undefined; let gatewayNode = node;
+    let sealedSourceIntegrity: { kind: "sealed-inventory-v1"; sourceSha: string; patchSha256: string } | undefined;
     if (agent.pluginId === "hermes") {
       const p = config.hermes.python, target = canonical(p.canonicalExecutable), parent = canonical(dirname(p.executable), true);
       if (resolve(p.executable) !== p.executable || realpathSync(p.executable) !== target) throw new CuratedRuntimeUnavailable("runtime", "Selected Python link does not resolve to its explicit canonical interpreter");
@@ -257,13 +276,18 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
       const metadata = readFileSync(join(source, "pyproject.toml"), "utf8");
       if (!/^version\s*=\s*"0\.21\.5"\s*$/m.test(metadata)) throw new CuratedRuntimeUnavailable("runtime", "Hermes package metadata differs from its pin");
     } else {
+      // A sealed input runs inside a seatbelt that has no git toolchain. The host
+      // verified exact commit and clean tree above; it also verifies the full upstream
+      // diff here and hands the adapter an exact record instead of a git dependency.
+      if (sealedOpenClaw) sealedSourceIntegrity = { kind: "sealed-inventory-v1", sourceSha: OPENCLAW_RUNTIME_PIN.sourceSha, patchSha256: OPENCLAW_RUNTIME_PIN.patchSha256 };
       if (config.openclaw!.node) {
         gatewayNode = canonical(config.openclaw!.node.executable);
         if (await inspect(gatewayNode, ["-p", "process.versions.node"]) !== config.openclaw!.node.version) throw new CuratedRuntimeUnavailable("runtime", "Sealed OpenClaw Node version differs from the explicit Node26 pin");
         readPaths.push(gatewayNode, ...roots(config.openclaw!.node.libraryRoots ?? []));
       }
       // Read-only source/build checks. This code never invokes install/build/Gateway.
-      const packageInfo = readJson(join(source, "package.json"), 128 * 1024, false);
+      // The pinned OpenClaw root package.json is ~142 KiB (workspace overrides); bound at 256 KiB.
+      const packageInfo = readJson(join(source, "package.json"), 256 * 1024, false);
       if (packageInfo?.name !== "openclaw" || packageInfo?.version !== OPENCLAW_RUNTIME_PIN.version) throw new CuratedRuntimeUnavailable("runtime", "OpenClaw package metadata differs from its pin");
       for (const file of ["dist/entry.js", "dist/yorozu-gateway-embedding.js", "dist/build-info.json"]) canonical(join(source, file));
       canonical(join(source, "node_modules"), true);
@@ -294,7 +318,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
         ...(agent.pluginId === "hermes" ? { apiMode: "codex_responses" } : { api: "openai-responses" }) });
       return { configuration: { pluginId: agent.pluginId, command: node, args: [adapter], upstreamVersion: sourceConfig.version,
         initialize: { upstreamVersion: sourceConfig.version, providerConfigPath, ...(agent.pluginId === "hermes" ? { python, sourcePath: source, ...(sealed ? { sourceIntegrity: { kind: "sealed-inventory-v1", sourceSha: HERMES_RUNTIME_PIN.sourceSha, inventorySha256: SEALED_HERMES_SOURCE_SHA256 } } : {}), provider: "custom:yorozu-local-proof", model: broker.model }
-          : { source, node: gatewayNode, gatewayPort: listener!.port, ...(config.openclaw!.nodeIntegrity ? { nodeIntegrity: { ...config.openclaw!.nodeIntegrity } } : {}) }) } },
+          : { source, node: gatewayNode, gatewayPort: listener!.port, ...(sealedSourceIntegrity ? { sourceIntegrity: sealedSourceIntegrity } : {}), ...(config.openclaw!.nodeIntegrity ? { nodeIntegrity: { ...config.openclaw!.nodeIntegrity } } : {}) }) } },
       runtime: { command: node, args: [adapter], runtimeDir: scratch, readPaths: curated, brokerPorts: [broker.port], ...(listener ? { inheritedListeners: [listener] } : {}) } };
     } catch (error) { if (listener) await releaseHostListener(listener); throw error; }
   };

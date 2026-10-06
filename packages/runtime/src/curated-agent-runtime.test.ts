@@ -182,3 +182,40 @@ defineTest.skipIf(!process.env.YOROZU_HERMES_SEALED_TEST_SOURCE)("host independe
   await expect(verifySealedHermesSource(source)).rejects.toThrow("integrity"); chmodSync(join(source, "pyproject.toml"), 0o644);
   await verifySealedHermesSource(source);
 });
+
+// Host-side sealed source verification runs outside the agent sandbox; the adapter
+// receives an exact record instead of needing git inside the seatbelt (review B1).
+import { execFileSync } from "node:child_process";
+import { verifyPinnedPatch } from "./curated-agent-runtime.js";
+defineTest("sealed OpenClaw source gate verifies the full upstream diff on the host and rejects a wrong digest", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "yorozu-pinned-patch-"))); roots.push(root);
+  const git = (...args: string[]) => execFileSync("/usr/bin/git", ["-C", root, ...args], { env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid" }, encoding: "utf8" }).trim();
+  git("init", "-q"); writeFileSync(join(root, "a.txt"), "base\n"); git("add", "a.txt"); git("commit", "-q", "-m", "base", "--no-gpg-sign");
+  const upstream = git("rev-parse", "HEAD");
+  writeFileSync(join(root, "a.txt"), "candidate\n"); git("commit", "-q", "-am", "candidate", "--no-gpg-sign");
+  const patch = execFileSync("/usr/bin/git", ["-C", root, "diff", upstream, "HEAD", "--binary", "--abbrev=8", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"]);
+  const digest = createHash("sha256").update(patch).digest("hex");
+  await verifyPinnedPatch(root, upstream, digest);
+  await expect(verifyPinnedPatch(root, upstream, "0".repeat(64))).rejects.toThrow("approved full upstream diff");
+  await expect(verifyPinnedPatch(root, "0".repeat(40), digest)).rejects.toThrow();
+});
+const sealedResources = process.env.YOROZU_TEST_SEALED_OPENCLAW_RESOURCES;
+defineTest.skipIf(!sealedResources)("sealed OpenClaw preparation hands the adapter a host-verified source record and no git verifier", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "yorozu-sealed-curated-"))); roots.push(root);
+  const store = new PersonAgentStore(join(root, "state"));
+  store.create({ id: "alice", name: "Alice", role: "Sealed", pluginId: "openclaw", model: "synthetic", allowedTools: ["memory"] }, 0);
+  const agent = store.list().agents[0], scope = store.resolveScope("alice"), id = "b".repeat(64), scratchRoot = join(root, "scratch", id); mkdirSync(scratchRoot, { recursive: true, mode: 0o700 });
+  const sealed = join(sealedResources!, "agent-runtimes", "openclaw");
+  const acquire = vi.spyOn(listenerApi, "acquireHostListener").mockResolvedValue({ id: "lease", host: "127.0.0.1", port: 32146 } as any);
+  const release = vi.spyOn(listenerApi, "releaseHostListener").mockResolvedValue();
+  const config: CuratedAgentRuntimeConfiguration = { node: { executable: join(sealedResources!, "node"), version: "26.10.0" },
+    hermes: { ...HERMES_RUNTIME_PIN, source: SOURCE, adapter: ADAPTER, python: { executable: PYTHON, canonicalExecutable: existsSync(PYTHON) ? realpathSync(PYTHON) : PYTHON, version: "3.13.16", libraryRoots: [] } },
+    openclaw: { version: "2026.9.8", sourceSha: OPENCLAW_RUNTIME_PIN.sourceSha, source: join(sealed, "source"), adapter: join(sealed, "plugin", "adapter.mjs"), sourceIntegrity: "sealed-inventory-v1", node: { executable: join(sealed, "node"), version: "26.10.0" } },
+    selectBroker: () => ({ kind: "host-inference-broker-v1", agentId: "alice", executionId: id, host: "127.0.0.1", port: 53717, model: "synthetic", bearer: randomBytes(32).toString("hex") }) };
+  if (!existsSync(join(sealedResources!, "node"))) { (config.node as any).executable = NODE; }
+  const built = await createCuratedAgentRuntimeFactory(store, config)(agent, scope, { kind: "ordinary", id, scratchRoot, workspace: agent.workspace, memoryDir: agent.memoryDir });
+  expect(built.configuration.initialize).toMatchObject({ sourceIntegrity: { kind: "sealed-inventory-v1", sourceSha: OPENCLAW_RUNTIME_PIN.sourceSha, patchSha256: OPENCLAW_RUNTIME_PIN.patchSha256 }, node: join(sealed, "node") });
+  expect(built.configuration.initialize).not.toHaveProperty("git");
+  expect(built.runtime.readPaths.some(p => p.includes("homebrew") || p.includes("Xcode"))).toBe(false);
+  expect(acquire).toHaveBeenCalledTimes(1); expect(release).not.toHaveBeenCalled();
+});

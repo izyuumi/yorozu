@@ -31,7 +31,7 @@ EVIDENCE = {'kind': 'reused-local-bytes-inventory-only', 'archiveProvenanceVerif
 # lockfile and refused resolution changes. The assembler re-checks the pinned lockfile
 # digest and the pnpm-written installed lock before admitting this claim.
 FROZEN_EVIDENCE = {'kind': 'pnpm-frozen-lockfile-install-v1', 'archiveProvenanceVerified': True, 'lockfileMatchEstablished': True}
-MACHO = {b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe', b'\xfe\xed\xfa\xcf', b'\xce\xfa\xed\xfe', b'\xbe\xba\xfe\xca'}
+MACHO = {b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xfe\xed\xfa\xce', b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca'}  # same set as build-mac.sh
 MANIFEST = 'runtime-artifact.json'
 SIGNED_STAGE = 'after-nested-signing-before-outer-bundle-signing'
 

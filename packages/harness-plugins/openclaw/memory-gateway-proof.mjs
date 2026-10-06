@@ -27,13 +27,26 @@ const node = await realpath(required('--node'));
 // Signed bundle proofs: the host-verified sealed Node hash (nested-signed stage) replaces the unsigned pin.
 const nodeIntegrity = options.has('--node-integrity') ? { sha256: options.get('--node-integrity'), hashStage: 'after-nested-signing-before-outer-bundle-signing' } : undefined;
 const git = options.has('--git') ? await realpath(required('--git')) : undefined;
+// App-shaped sealed runs: like the packaged host, verify commit/clean tree/full diff with
+// host git OUTSIDE the sandbox and hand the adapter the exact record; no git inside.
+const sealedSourceIntegrity = options.get('--sealed-source') === 'host-verified' ? await (async () => {
+  const { execFile } = await import('node:child_process'); const { promisify } = await import('node:util'); const run = promisify(execFile);
+  const env = { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  assert.equal((await run('/usr/bin/git', ['-C', source, 'rev-parse', 'HEAD'], { env })).stdout.trim(), CURATED_RUNTIME.sourceCommit);
+  await run('/usr/bin/git', ['-C', source, 'diff', '--quiet', 'HEAD', '--'], { env });
+  const patch = await run('/usr/bin/git', ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--abbrev=8', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { env, maxBuffer: 512 * 1024 });
+  assert.equal(createHash('sha256').update(patch.stdout).digest('hex'), CURATED_RUNTIME.patchSha256);
+  if (git || gitReadRootsRequested) throw new Error('host-verified sealed source excludes --git/--git-read-roots');
+  return { kind: 'sealed-inventory-v1', sourceSha: CURATED_RUNTIME.sourceCommit, patchSha256: CURATED_RUNTIME.patchSha256 };
+})() : undefined;
+const gitReadRootsRequested = options.has('--git-read-roots');
 const readRootList = value => value.startsWith('[') ? JSON.parse(value) : value.split(':').filter(Boolean);
 const gitReadRoots = options.has('--git-read-roots') ? await Promise.all(readRootList(options.get('--git-read-roots')).map(path => realpath(path))) : [];
 const output = resolve(required('--output'));
 await mkdir(output, { mode: 0o700 }); // Fresh evidence/profiles only; never adopts or deletes an old fixture.
 const root = await realpath(output);
 const evidence = { schema: 1, kind: 'actual-openclaw-gateway-uniform-memory', upstream: UPSTREAM, curatedRuntime: CURATED_RUNTIME, success: false,
-  liveSubscription: false, capabilityAdvertisedByThisProof: false, personAgentRuntimeExercised: false, approvalCardUiExercised: false,
+  liveSubscription: false, capabilityAdvertisedByThisProof: false, personAgentRuntimeExercised: false, approvalCardUiExercised: false, sandboxGit: options.has('--git') ? 'explicit-developer-git' : options.get('--sealed-source') === 'host-verified' ? 'none-host-verified-record' : '/usr/bin/git',
   checks: {}, requests: [], events: [], memoryCalls: [], failures: [], output: root };
 // Actual host implementation. Either a compiled host dist (--host-runtime) or the
 // exact repository TypeScript sources transpiled here with the explicitly selected
@@ -161,7 +174,7 @@ async function startHost(agentId, fixedPort) {
   assert.equal(launch.command, '/usr/bin/sandbox-exec'); assert.match(launch.policy, /\(deny default\)/); assert.ok(!launch.policy.includes('(allow network-bind'));
   assert.ok(launch.policy.includes(`(subpath ${JSON.stringify(sqlRoot)})`), 'host SQL root must be denied to the native process');
   await writeFile(join(profileDir, 'proof-provider.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${providerPort}/v1`, model: 'synthetic', api: 'openai-responses' }), { mode: 0o600 });
-  const initialize = { upstreamVersion: UPSTREAM.version, source, node, ...(nodeIntegrity ? { nodeIntegrity } : {}), ...(git ? { git } : {}), workspace: agent.workspace, profileDir, agentId, workerMemory: true,
+  const initialize = { upstreamVersion: UPSTREAM.version, source, node, ...(nodeIntegrity ? { nodeIntegrity } : {}), ...(sealedSourceIntegrity ? { sourceIntegrity: sealedSourceIntegrity } : {}), ...(git ? { git } : {}), workspace: agent.workspace, profileDir, agentId, workerMemory: true,
     scope: { allowedTools: [...base.allowedTools], directories: directories.map(grant => ({ ...grant })), workspace: agent.workspace, memoryDir: agent.memoryDir, deniedRoots },
     isolation: launch.isolation, providerConfigPath: join(profileDir, 'proof-provider.json'), platform: { team: false, computer: false } };
   const host = { agentId, profileDir, port: lease.port, launch, initialize, events: [], turns: new Map(), active: undefined, sessionId: undefined, conversationId: `conversation-${agentId}`, bindingId: `binding-${agentId}` };
