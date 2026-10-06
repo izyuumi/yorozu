@@ -230,3 +230,19 @@ test("lost continuation owner fences restart and cannot replay or remint memory 
     expect(f.rows().filter(row => row.method === "turn.submit")).toHaveLength(1);
   } finally { await reopened.close(); }
 });
+
+test("all continuation capabilities are invalidated before bounded serialized Stop handoffs", async () => {
+  const f = fixture(), first = f.invoke("many-continuations", "synthetic delegation");
+  const run = await f.admitted("many-continuations");
+  await f.emit("turn.terminal", { state: "completed", text: "Started", cessation: "provider-terminal" }, run); await first;
+  const continuations = Array.from({ length: 40 }, (_, i) => ({ runId: run.runId, attemptId: `bounded-continuation-${i}` }));
+  for (const work of continuations) await f.emit("turn.started", { continuation: true, originRunId: run.runId }, work);
+  const capabilities = continuations.map(work => f.harness.workerWork({ ...work, sessionId: "private-upstream-session" })!);
+  expect(capabilities.every(capability => capability.current())).toBe(true);
+  const stopping = f.harness.stop("stop-all-continuations");
+  expect(capabilities.every(capability => capability.signal.aborted && !capability.current())).toBe(true);
+  await stopping;
+  expect(f.rows().filter(row => row.method === "run.stop")).toHaveLength(40);
+  expect(Object.values(f.harness.ledger.state.controls).some(control => control.state === "unknown")).toBe(false);
+  for (const work of continuations) await f.emit("turn.terminal", { state: "stopped", text: "Stopped", cessation: "provider-terminal" }, work);
+});
