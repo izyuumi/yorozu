@@ -229,7 +229,29 @@ test.skipIf(process.platform !== "darwin" || process.env.YOROZU_TEST_AGENT_SANDB
 test("policy never grants ambient signals to the host or other same-user agents", () => {
   const { scope, runtime } = fixture();
   const policy = isolatedAgentLaunch(scope, runtime, "darwin").policy;
-  expect(policy).toContain("(allow signal (target self))");
+  expect(policy).toContain("(allow signal (target self) (target children))");
+  expect(policy).not.toContain("(target others)");
   expect(policy).not.toContain("process-fork signal");
   expect(policy).not.toContain("(allow signal)");
 });
+
+test.skipIf(process.platform !== "darwin" || process.env.YOROZU_TEST_AGENT_SANDBOX !== "1")(
+  "native verifier can use null sink and stop its own child, never signal outside its sandbox", async () => {
+    const { scope, runtime } = fixture();
+    const script = join(runtime.runtimeDir, "native-process-probe.mjs");
+    writeFileSync(script, `import fs from 'node:fs'; import {spawn} from 'node:child_process';
+      const fd=fs.openSync('/dev/null','r+'); fs.writeSync(fd,'inert'); fs.closeSync(fd);
+      let foreignDenied=false; try { process.kill(process.ppid,0); } catch(e) { foreignDenied=e.code==='EPERM'; }
+      const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+      await new Promise((yes,no)=>{child.once('spawn',yes);child.once('error',no)});
+      const exited=new Promise(yes=>child.once('exit',(code,signal)=>yes({code,signal})));
+      if(!child.kill('SIGTERM'))throw new Error('own child signal denied');
+      console.log(JSON.stringify({nullSink:true,foreignDenied,exit:await exited}));`);
+    const launch = isolatedAgentLaunch(scope, { ...runtime, args: [script] });
+    const result = spawnSync(launch.command, launch.args, { encoding: "utf8", timeout: 10_000,
+      env: { HOME: runtime.runtimeDir, TMPDIR: runtime.runtimeDir, PATH: "/usr/bin:/bin" } });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ nullSink: true, foreignDenied: true, exit: { code: null, signal: "SIGTERM" } });
+    expect(launch.policy).not.toContain('(target others)');
+    expect(launch.policy).not.toContain('(subpath "/dev")');
+  });

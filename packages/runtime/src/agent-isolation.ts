@@ -82,8 +82,13 @@ export function isolatedAgentLaunch(scope: EffectiveAgentScope, runtime: AgentIs
     }
   }
   // Ancestor directory enumeration is necessary for dyld startup; it grants no descendant data.
+  // Native adapters must be able to join their own descendants on shutdown.
+  // The children target does not permit signalling the host or sibling agents.
   const lines = ["(version 1)", "(deny default)",
-    "(allow process-exec process-fork sysctl-read)", "(allow signal (target self))", "(allow file-read-metadata)",
+    "(allow process-exec process-fork sysctl-read)", "(allow signal (target self) (target children))", "(allow file-read-metadata)",
+    // Native verifier/tool runtimes open the null sink O_RDWR. This is not a
+    // directory grant and confers no persistent storage or sibling access.
+    '(allow file-write-data (literal "/dev/null"))',
     '(allow file-read* (subpath "/System") (subpath "/usr/lib") (subpath "/usr/bin") (subpath "/usr/share") (subpath "/bin") (subpath "/sbin") (subpath "/Library/Apple/System") (subpath "/private/var/db/dyld") (subpath "/private/var/db/uuidtext") (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random") (literal "/dev/zero"))',
     `(allow file-read* ${[...ancestors].sort().map(path => `(literal ${quoted(path)})`).join(" ")})`,
     `(allow file-read* ${[...readPaths, runtimeDir, ...directories.map(grant => grant.path)].map(filter).join(" ")})`,
