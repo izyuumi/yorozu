@@ -41,8 +41,35 @@
       }
     ],
     "transformation": "Lossless WebP, downsampling only, metadata removed; natural aspect preserved",
-    "presentation": "Supporting context below phone-first hero/features; native2400px capture from a wide1x window with supported textScale2, not a larger/Retina display or bitmap upscale. Decorative full-window overview with caption; not intended for reading individual messages.",
-    "nativeDecodedPixelVerification": "All opaque pixels and alpha values identical between sourcePNG and2400WebP. One partially transparent edge pixel has a different RGB triplet; no opaque pixel differs."
+    "presentation": "SupportingnativeMacconversation belowphone-firsthero/features; fullsectionwidthonwide screens, exactdetailcroponnarrower screens, originalsourcecropreadingview. Existing1xwindow/textScale2capture, no bitmapupscale/newdisplayclaim.",
+    "nativeDecodedPixelVerification": "All opaque pixels and alpha values identical between sourcePNG and2400WebP. One partially transparent edge pixel has a different RGB triplet; no opaque pixel differs.",
+    "readabilityCorrection": {
+      "source": {
+        "sourceSHA256": "4265fa995de78e7233b00d07f0ccb754a30e27653e9299242577ce7ddee18478",
+        "sourceDimensions": [
+          2400,
+          971
+        ],
+        "crop": {
+          "x": 975,
+          "y": 620,
+          "width": 720,
+          "height": 351
+        },
+        "file": "mac-conversation-detail.webp",
+        "bytes": 15332,
+        "sha256": "0cb6610b05d35e57b64be9a1af4707e78038189ab5af00b5292d19d1465a06cc",
+        "sourceCropRGBA_MD5": "fb3af326c7ee18e58cd4357ce10a991c",
+        "outputRGBA_MD5": "fb3af326c7ee18e58cd4357ce10a991c",
+        "identicalNativeCropPixels": true,
+        "transformation": "Exact native crop, lossless WebP, ICC preserved if present; no resizing/upscaling/redraw"
+      },
+      "presentation": "Full native window fills the available section on screens1200px and wider; original srcset preserved. Below1200px, a native720x351 detail crop shows the complete reminder paragraph, user reply and composer without empty window space. Native details reading view shows original crop at720CSSpixels with bounded horizontal scrolling on smaller screens.",
+      "representation": "Illustrative native sample, not a performed reminder or live remote execution proof",
+      "capture": "No new capture or restricted app reopening; existing authentic native pixels only",
+      "sourceColour": "Native sourcePNG explicitly taggedsRGB,8-bitRGBA,noICC profile. Existingfull-windowWebP andnativecrop both displayassRGB; colour interpretation consistent.",
+      "densityLimit": "720nativepixels cover mobile348CSSpx at2x. At701\u20131199px screens the crop can reach720CSSpx, hence1x source density; at3x mobile source density is below3x. No high-density or larger-display capture claim."
+    }
   },
   "iphone": {
     "capture": "Native iPhone17Pro Simulator iOS27 recording from JapaneseStreamingTests/testGrowingJapaneseReplyBecomesSelectableWithoutLosingItsBlocks; synthetic offline JapaneseReplyFixture, captured during0.5 rendering validation and included in the released0.5 source (DEBUG-only synthetic fixture, not part of a production app binary). Exact capture commit not in attachment manifest.",
@@ -114,7 +141,7 @@
     "inspection": "Selected segment contains only native synthetic Japanese prose/list/table; launch screen and home screen excluded; beginning and completion inspected",
     "representation": "Sample app UI, not backend execution proof"
   },
-  "boundaries": "No installed app/private chats, release feeds, routes, existing icon identity, auth or security settings changed",
+  "boundaries": "ExistingiPhone-firsthero/media/player,legal/pairing/routes/downloadfeeds/CSP/hosting/appreleases/auth/security unchanged. Websiteiconchanged only with separateexplicitlogoapproval.",
   "iphonePrimary": {
     "sourceName": "BAC68765-76C5-41CB-A2C6-576D4F0CA3A2.png",
     "sourceSHA256": "d3c868cffa205dd87b41abbe37241f1afc3056cda7612cc14a43f5a88a85b8db",
@@ -141,5 +168,58 @@
     "appSource": "Exact capture commit not in attachment manifest; native renderer and DEBUG-only JapaneseReplyFixture included in released0.5 source ddf8d6a4d11c68a36da782a8c4f3d1a66dfb7a7d",
     "colour": "Original PNG explicitly tagged sRGB,8-bit RGB, no ICC profile; sRGB retained in browser interpretation.",
     "reproducibleVerification": "prepare-iphone-screenshot.py rejects other dimensions/bit depths, preserves any ICC profile, and compares full decoded RGBA before writing the asset."
+  },
+  "websiteIdentity": {
+    "selectedIconComposerDocument": "AppIcon.icon from icon-composer-integration/apps/ios/Resources",
+    "selectedExport": {
+      "sourceName": "icon-1024.png",
+      "sourceSHA256": "9e72b449b456cd3479fa04da23052debd62912cf1310d5df974e8519bdd9e0eb",
+      "sourceDimensions": [
+        1024,
+        1024
+      ],
+      "sourceColour": "OriginalPNG explicitly sRGB,8-bitRGBA,noICC",
+      "transformation": "Native sips downsampling only; no new design, crop or enlargement",
+      "outputs": [
+        {
+          "file": "assets/icon.png",
+          "colour": "Explicit sRGB with canonical gamma/chromaticities",
+          "exportMetadataRemoved": true,
+          "dimensions": [
+            512,
+            512
+          ],
+          "bytes": 175183,
+          "sha256": "597205e5a5204292841cbcdc920b25efa0bd4d07b73140715133ad01f317796d"
+        },
+        {
+          "file": "favicon.png",
+          "colour": "Explicit sRGB with canonical gamma/chromaticities",
+          "exportMetadataRemoved": true,
+          "dimensions": [
+            64,
+            64
+          ],
+          "bytes": 5563,
+          "sha256": "4320efbf4c7923acbda2c1dad148d82afc79d389fd9de4e6f664567066a901a1"
+        },
+        {
+          "file": "apple-touch-icon.png",
+          "colour": "Explicit sRGB with canonical gamma/chromaticities",
+          "exportMetadataRemoved": true,
+          "dimensions": [
+            180,
+            180
+          ],
+          "bytes": 27603,
+          "sha256": "eaba311dd5269cf9356dafcaaf4b3e9f68a9f629d0a095afa5913532244b5a43"
+        }
+      ]
+    },
+    "visualInspection": "Selectedslatecrossedloops/redcentre/warmwhite rounded-square nativeIconComposerexport, matching nativeIcondocument front/backloop,centre andringlayers",
+    "publicationAuthorization": "Explicit additional useryes2026-10-06 05:46UTC Sentinel_25bf12a840508191aac0613f9760474f",
+    "scope": "Websiteheader/footer, existingfavicon andapple-touch paths only; no appassetedit ornewdesign",
+    "transparency": "Approvednativeexport alpha preserved; notflattened/redesigned. HomeScreen/WebClip appearance untested.",
+    "cache": "VersionedlogoURLs throughout homepage/sharedlayout; versionedhomepageCSS preventsstale-cache unreadability. Existingassetpaths/legaltext/routes unchanged."
   }
 }

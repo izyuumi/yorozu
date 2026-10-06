@@ -1,5 +1,5 @@
 ---
-// Website publication retains the existing cleared identity while the new mark is on hold.
+// Website identity uses the explicitly approved Icon Composer export.
 // Implemented from the native Claude Design artifact FaSj2YqDjPSvT3tTHiLP8L.
 ---
 <!doctype html>
@@ -12,10 +12,10 @@
   <link rel="canonical" href="https://yorozu.yumi.to/">
   <meta property="og:title" content="Yorozu — Your Mac’s tools, on your iPhone.">
   <meta property="og:description" content="Use your Mac's agents and tools remotely from your iPhone. Start a task, review a request and read the result wherever you are.">
-  <meta property="og:image" content="https://yorozu.yumi.to/assets/icon.png">
-  <link rel="icon" href="/favicon.png" type="image/png">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/secretary.css">
+  <meta property="og:image" content="https://yorozu.yumi.to/assets/icon.png?v=9e72b449">
+  <link rel="icon" href="/favicon.png?v=9e72b449" type="image/png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=9e72b449">
+  <link rel="stylesheet" href="/secretary.css?v=42be2696188f">
   <script is:inline src="/copy.js" defer></script>
   <script is:inline src="/demo.js" defer></script>
 </head>
@@ -26,7 +26,7 @@
 <header class="y1">
 <div class="y2">
 <a href="/" class="y3">
-<img src="/assets/icon.png" width="34" height="34" alt="">
+<img src="/assets/icon.png?v=9e72b449" width="34" height="34" alt="">
 <span>Yorozu</span>
 </a>
 <nav aria-label="Primary" class="y4">
@@ -87,8 +87,17 @@
 </div>
 </div>
 <figure class="host-context app-window">
-<img src="/assets/mac-demo-light.webp" srcset="/assets/mac-demo-light-640.webp 640w, /assets/mac-demo-light.webp 820w, /assets/mac-demo-light-1280.webp 1280w, /assets/mac-demo-light-1920.webp 1920w, /assets/mac-demo-light-2400.webp 2400w" sizes="(min-width: 720px) 640px, calc(100vw - clamp(2.5rem, 7vw, 6rem) - 2px)" alt="" width="2400" height="971" loading="lazy">
-<figcaption>Native Mac app overview. Your Mac stays online and does the work.</figcaption>
+<picture>
+<source media="(max-width: 1199px)" srcset="/assets/mac-conversation-detail.webp" width="720" height="351">
+<img src="/assets/mac-demo-light-2400.webp" srcset="/assets/mac-demo-light-640.webp 640w, /assets/mac-demo-light.webp 820w, /assets/mac-demo-light-1280.webp 1280w, /assets/mac-demo-light-1920.webp 1920w, /assets/mac-demo-light-2400.webp 2400w" sizes="(min-width: 1372px) 1198px, calc(100vw - clamp(2.5rem, 7vw, 6rem) - 2px)" alt="Native Mac conversation: an assistant offers a reminder before an invoice is due, and the user asks to be reminded. Illustrative sample." width="2400" height="971" loading="lazy">
+</picture>
+<figcaption>Conversation in the native Mac app. Illustrative sample.</figcaption>
+<details class="mac-reading-view">
+<summary>Read conversation at full size</summary>
+<div class="mac-reading-scroll" tabindex="0" role="region" aria-label="Full-size Mac conversation; scroll horizontally on smaller screens">
+<img src="/assets/mac-conversation-detail.webp" alt="Illustrative native Mac conversation detail: reminder proposal, user reply and message composer" width="720" height="351" loading="lazy">
+</div>
+</details>
 </figure>
 </div>
 </section>
@@ -215,7 +224,7 @@ Your browser cannot play this demo.
 <footer class="y1">
 <div class="y102">
 <div class="y103">
-<img src="/assets/icon.png" width="28" height="28" alt="">
+<img src="/assets/icon.png?v=9e72b449" width="28" height="28" alt="">
 <span>© 2026 Yumi Izumi. Yorozu is not affiliated with OpenClaw, Anthropic or OpenAI.</span>
 </div>
 <nav aria-label="Footer" class="y104">
