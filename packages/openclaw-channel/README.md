@@ -143,3 +143,14 @@ Text only for now. The Yorozu side lives in
 ```sh
 npm test
 ```
+
+
+## Development scope
+
+This is the **legacy channel plugin**, not the minimal-worker harness adapter. See
+[the developer navigation map](../../docs/developer-navigation.md) before choosing a test lane.
+Its fixture command remains `pnpm --filter @yorozu/openclaw-channel test`. Discover the actual
+SDK source and inspect the imported `openclaw/plugin-sdk/*` interfaces rather than guessing an
+API or hardcoding an installation path. Use isolated fixtures, announce only implemented
+capabilities, and update this README protocol together with `docs/architecture.md` when changing
+channel frames. An ambient-SDK import is not proof of curated harness-runtime provenance.

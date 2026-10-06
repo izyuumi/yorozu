@@ -12,6 +12,12 @@ Follow [docs/ui-layout.md](docs/ui-layout.md): size from the container with the 
 native mechanisms, never from a hard-coded number, unless building a custom component that
 owns its own geometry.
 
+## Developer navigation
+
+Read [docs/developer-navigation.md](docs/developer-navigation.md) for owning boundaries and
+scoped staging, adapter, runtime and native checks. The minimal-worker path and legacy OpenClaw
+channel have different test contracts; do not substitute broad legacy suites for the current gate.
+
 ## Parallel feature work and cleanup
 
 - Before starting a new feature, fetch the target base branch and create a dedicated Git
