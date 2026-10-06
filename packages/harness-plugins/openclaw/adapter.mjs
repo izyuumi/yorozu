@@ -340,7 +340,7 @@ export class NativeGateway {
     this.device = device;
     this.url = url; this.token = token; this.child = child; this.WebSocketClass = WebSocketClass; this.timeoutMs = timeoutMs;
     this.pending = new Map(); this.listeners = new Set(); this.closeListeners = new Set(); this.nextId = 0; this.closed = false; this.connected = false;
-    this.ownership = ownership;
+    this.ownership = ownership; this.released = Promise.resolve();
   }
   onFrame(listener) { this.listeners.add(listener); }
   onClose(listener) { this.closeListeners.add(listener); }
@@ -425,6 +425,8 @@ export class NativeGateway {
         this.child.once('exit', () => { clearTimeout(timer); yes(); });
       });
     }
+    // The shutdown receipt must not precede the profile ownership release.
+    await this.released;
   }
   async detach() {
     // This client owns a socket, never the external service/process or its work.
@@ -476,7 +478,9 @@ export async function launchRuntime(params, { callHost } = {}) {
     let childError;
     child.on('error', error => { childError = error; });
     const gateway = new NativeGateway(`ws://127.0.0.1:${port}`, token, child, { device: await localDeviceIdentity(runtime.profileDir) });
-    child.on('exit', (code, signal) => { gateway.finish(code === 78 ? 'native Gateway rejected configuration (exit 78)' : `native Gateway exited (${signal ?? code})`); void rm(lock, { recursive: true }); });
+    // Ownership release is awaited by shutdown: the host may kill this adapter right
+    // after the shutdown receipt, and an unfinished removal would orphan the lock.
+    child.on('exit', (code, signal) => { gateway.finish(code === 78 ? 'native Gateway rejected configuration (exit 78)' : `native Gateway exited (${signal ?? code})`); gateway.released = rm(lock, { recursive: true, force: true }).catch(() => {}); });
     const deadline = Date.now() + 60_000;
     for (;;) {
       if (childError) throw childError;

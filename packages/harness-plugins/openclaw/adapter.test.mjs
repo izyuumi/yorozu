@@ -741,3 +741,14 @@ test('uniform journal binds the memory contract; a native-retained journal is re
     await assert.rejects(fixture({ journalPath, gateway: plain }), /journal identity/); assert.equal(plain.calls.length, 0);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+test('managed shutdown receipt waits for the profile ownership release that follows native exit', async () => {
+  const { EventEmitter } = await import('node:events');
+  const child = new EventEmitter(); child.exitCode = null; child.signalCode = null;
+  child.kill = () => setImmediate(() => { child.exitCode = 0; child.emit('exit', 0, null); }); // real exit is asynchronous
+  const gateway = new NativeGateway('ws://127.0.0.1:12345', 'own-token', child, { ownership: 'managed' });
+  let released = false;
+  // launchRuntime registers its exit handler before shutdown's own listener.
+  child.on('exit', () => { gateway.released = new Promise(yes => setTimeout(() => { released = true; yes(); }, 20)); });
+  await gateway.shutdown();
+  assert.equal(released, true); assert.equal(gateway.closed, true);
+});
