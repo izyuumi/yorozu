@@ -35,6 +35,8 @@ export const EXTENSIONS = Object.freeze({ version: 1, connectedLifecycle: false,
 const FRAME_LIMIT = 256 * 1024;
 /** Native memory plugin shipped beside this adapter; the only tool uniform mode can grant. */
 const MEMORY_PLUGIN_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), 'memory-plugin');
+// Host session.open carries up to 20 history entries of 4000 chars plus a reference.
+const PORTABLE_CONTEXT_LIMIT = 128 * 1024;
 const MAX_SESSIONS = 16;
 const MAX_RECORDS = 1024;
 const exec = promisify(execFile);
@@ -592,7 +594,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {}, callHos
       required(session.conversationId, 'conversationId'); required(session.bindingId, 'bindingId');
       if (session.sessionKey !== `agent:${runtime.agentId}:${nativeId(session.bindingId, session.conversationId)}` || !['open', 'unknown'].includes(session.state) || sessions.has(session.conversationId)) throw invalid('journal session origin is invalid');
       if (session.state === 'open') required(session.sessionId, 'sessionId');
-      if (typeof session.reference !== 'string' || Buffer.byteLength(session.reference) > 48 * 1024) throw invalid('journal reference is invalid');
+      if (typeof session.reference !== 'string' || Buffer.byteLength(session.reference) > PORTABLE_CONTEXT_LIMIT) throw invalid('journal reference is invalid');
       sessions.set(session.conversationId, session);
     }
     for (const run of saved.runs) {
@@ -645,7 +647,9 @@ export function createAdapter({ launch = launchRuntime, emit = () => {}, callHos
       run.state = data.state === 'final' ? 'completed' : data.state === 'aborted' ? 'stopped' : 'failed';
       await persist();
       if (run.text) event(session, 'assistant.update', { text: run.text }, run);
-      event(session, 'turn.terminal', { state: run.state, cessation: 'provider-terminal', ...(data.state === 'error' ? { reason: 'native chat error', errorKind: data.errorKind ?? 'unknown' } : {}) }, run);
+      // The host supervisor requires the final text on every terminal (bounded; the
+      // projection fallback already blanks it when the encoded frame is too large).
+      event(session, 'turn.terminal', { text: run.text, state: run.state, cessation: 'provider-terminal', ...(data.state === 'error' ? { reason: 'native chat error', errorKind: data.errorKind ?? 'unknown' } : {}) }, run);
     }
   }
   function closed(reason) {
@@ -712,9 +716,12 @@ export function createAdapter({ launch = launchRuntime, emit = () => {}, callHos
       if (['message.deliver', 'message.receipt', 'action.answer'].includes(method)) return { status: 'unsupported', handoff: 'not-submitted', reason: 'no verified native peer-inbox or action mapping exists for this OpenClaw pin' };
       if (method === 'session.open') {
         required(params.conversationId, 'conversationId'); required(params.bindingId, 'bindingId');
-        if (params.provider || params.model || params.attachments) throw invalid('session model/provider/attachment override is unsupported');
+        // The host repeats the agent's selected model on session.open; the explicit broker
+        // bootstrap decides what runs, so only a different model or any provider/attachment
+        // override is refused (same contract as the Hermes adapter).
+        if (params.provider !== undefined || params.attachments !== undefined || (params.model !== undefined && params.model !== runtime.provider?.model)) throw invalid('session model/provider/attachment override is unsupported');
         const reference = JSON.stringify({ preferences: params.preferences ?? '', historicalContext: params.context ?? '' });
-        if ((params.preferences !== undefined && typeof params.preferences !== 'string') || (params.context !== undefined && typeof params.context !== 'string') || Buffer.byteLength(reference) > 48 * 1024) throw invalid('portable context exceeds its bound or is not text');
+        if ((params.preferences !== undefined && typeof params.preferences !== 'string') || (params.context !== undefined && typeof params.context !== 'string') || Buffer.byteLength(reference) > PORTABLE_CONTEXT_LIMIT) throw invalid('portable context exceeds its bound or is not text');
         const previous = sessions.get(params.conversationId);
         if (previous) {
           if (previous.bindingId !== params.bindingId || (params.sessionId && params.sessionId !== previous.sessionId)) throw invalid('conversation is already owned by another binding or native session');
@@ -799,7 +806,10 @@ export function createAdapter({ launch = launchRuntime, emit = () => {}, callHos
             idempotencyKey: id, queueMode: 'followup', inputMode: 'literal', expectedLeafEntryId: info.activeLeafEntryId, deliver: false });
           if (receipt?.runId !== id || receipt.status !== 'started') throw new Error('native acknowledgement is queued, redirected or malformed');
           run.receipt = { status: 'accepted' }; if (run.state === 'admitting') run.state = 'running';
-          await persist(); event(session, 'turn.started', { background: false }, run);
+          // The accepted receipt is the host's admission. `turn.started` belongs only to
+          // harness-owned continuations; emitting it for an ordinary turn is an unowned
+          // continuation to the host supervisor and fails the protocol closed.
+          await persist();
         } catch { revoke(id); run.receipt = unknown('native send acknowledgement is lost, queued or malformed; no replay'); if (!['completed', 'failed', 'stopped'].includes(run.state)) run.state = 'unknown'; await persist(); }
         if (!['admitting', 'running'].includes(run.state)) revoke(id);
         const buffered = pendingEvents.get(run.nativeId) ?? []; pendingEvents.delete(run.nativeId);

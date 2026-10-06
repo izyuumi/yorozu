@@ -125,7 +125,7 @@ test('idle submission uses exact native session, run idempotency, branch CAS and
   assert.equal(call.sessionKey, gateway.last('sessions.create').key); assert.equal(call.sessionId, 'native-session-0'); assert.equal(call.agentId, 'secretary');
   assert.equal(call.queueMode, 'followup'); assert.equal(call.expectedLeafEntryId, null); assert.equal(call.fastMode, undefined); assert.equal(call.deliver, false); assert.equal(call.inputMode, 'literal'); assert.equal(Object.hasOwn(call, 'suppressCommandInterpretation'), false);
   assert.match(call.idempotencyKey, /^yz-[a-f0-9]{64}$/);
-  assert.equal(events[0].kind, 'turn.started'); assert.equal(events[0].runId, turn.runId); assert.equal(events[0].attemptId, turn.attemptId);
+  assert.equal(events.length, 0); // the accepted receipt is the admission; no continuation-only turn.started is invented
   assert.equal((await adapter.handle('turn.submit', turn)).status, 'accepted'); assert.equal(gateway.count('chat.send'), 1);
   await assert.rejects(adapter.handle('turn.submit', { ...turn, text: 'Different request' }), /reused/);
 });
@@ -187,7 +187,7 @@ test('only the exact known native agent, session and run may publish host events
   assert.equal(events.at(-1).kind, 'turn.terminal'); assert.equal(events.at(-1).data.state, 'completed');
   for (const event of events) { assert.equal(event.conversationId, open.conversationId); assert.equal(event.runId, turn.runId); assert.equal(event.attemptId, turn.attemptId); }
 });
-test('native terminal arriving before send ACK is emitted after turn.started', async () => {
+test('native terminal arriving before send ACK is emitted after the accepted receipt', async () => {
   const { adapter, gateway, events } = await fixture();
   gateway.overrides.set('chat.send', async params => {
     gateway.emit({ runId: params.idempotencyKey, sessionKey: params.sessionKey, agentId: params.agentId, seq: 0, state: 'final', message: { content: 'done' } });
@@ -195,7 +195,7 @@ test('native terminal arriving before send ACK is emitted after turn.started', a
     return { status: 'started', runId: params.idempotencyKey };
   });
   assert.equal((await adapter.handle('turn.submit', turn)).status, 'accepted'); await adapter.drain();
-  assert.deepEqual(events.map(event => event.kind), ['turn.started', 'assistant.update', 'turn.terminal']);
+  assert.deepEqual(events.map(event => event.kind), ['assistant.update', 'turn.terminal']);
 });
 test('yielded runs are uncertain and never create fake child tasks', async () => {
   const { adapter, gateway, events } = await fixture(); await adapter.handle('turn.submit', turn);
@@ -214,8 +214,8 @@ test('native chat seq is strictly increasing but not consecutive; stale or repea
   gateway.emit(payload(gateway, 'delta', { seq: 7, deltaText: ' second' }));
   gateway.emit(payload(gateway, 'final', { seq: 11, message: { content: 'complete native text' } }));
   await adapter.drain();
-  assert.deepEqual(events.map(event => event.kind), ['turn.started', 'assistant.update', 'assistant.update', 'assistant.update', 'turn.terminal']);
-  assert.equal(events[2].data.text, 'first second'); assert.equal(events[3].data.text, 'complete native text'); assert.equal(events.at(-1).data.state, 'completed');
+  assert.deepEqual(events.map(event => event.kind), ['assistant.update', 'assistant.update', 'assistant.update', 'turn.terminal']);
+  assert.equal(events[1].data.text, 'first second'); assert.equal(events[2].data.text, 'complete native text'); assert.equal(events.at(-1).data.state, 'completed'); assert.equal(events.at(-1).data.text, 'complete native text');
   assert.equal(events.some(event => event.kind === 'capability.unavailable'), false);
   assert.equal((await adapter.handle('session.snapshot', open)).current, null);
 });
@@ -788,4 +788,15 @@ test('host-selected model is accepted as a bounded identifier and must match the
     assert.equal((await f.adapter.handle('turn.submit', { ...turn, model: 'synthetic' })).status, 'accepted');
     await assert.rejects(f.adapter.handle('session.snapshot', { ...open, scope: { allowedTools: [] } }), /immutable after initialize/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+test('session.open accepts the host-repeated broker model and refuses any other model, provider or attachments', async () => {
+  const gateway = new FakeGateway(); const events = [];
+  const runtime = { gateway, agentId: 'secretary', workspace: '/unused-private-workspace', authAvailable: true, provider: { baseUrl: 'http://127.0.0.1:32146/v1', model: 'synthetic', api: 'openai-responses' } };
+  const adapter = createAdapter({ launch: async () => runtime, emit: event => events.push(event) });
+  await adapter.handle('initialize', {});
+  await assert.rejects(adapter.handle('session.open', { ...open, model: 'other-model' }), /override is unsupported/);
+  await assert.rejects(adapter.handle('session.open', { ...open, provider: 'anything' }), /override is unsupported/);
+  await assert.rejects(adapter.handle('session.open', { ...open, attachments: [] }), /override is unsupported/);
+  assert.equal(gateway.count('sessions.create'), 0);
+  assert.equal((await adapter.handle('session.open', { ...open, model: 'synthetic', context: JSON.stringify([{ role: 'user', text: 'history' }]) })).sessionId, 'native-session-0');
 });

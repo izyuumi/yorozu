@@ -144,7 +144,7 @@ Fresh managed subscription onboarding is unsupported. Without an explicit local 
 | `session.open` | `sessions.create` (managed) or `chat.history` (connected), `sessions.messages.subscribe` | Deterministic agent-prefixed session key, native session ID; no initial task/message/title request. Only adapter-owned sessions resume. |
 | `turn.submit` | `chat.history`, `chat.send` | Exact native session/run currency, idle preflight, transcript branch CAS, `followup` queue mode, native-selected fast mode, `inputMode:"literal"` (no privileged suppression, no normal fallback) and native idempotency key. |
 | `assistant.update` | Native `chat` delta/final events | Full host text assembled from actual native text; strict agent/session/run/sequence ownership. |
-| `turn.started` | Exact native `started` receipt | An ACK is admission, not completion. Pre-ACK events are buffered. |
+| (no `turn.started`) | Exact native `started` receipt | The `accepted` receipt is the host's admission; `turn.started` is reserved for harness-owned continuations and is never emitted for an ordinary turn. Pre-ACK events are buffered. |
 | `turn.terminal` | Native `chat` final/error/aborted | Completion/failure/Stop only from that run's terminal event; yielded runs stay unknown. Non-consecutive native `seq` is ordinary. |
 | `run.stop` | `chat.abort` with exact run ID | Preserves side runs and pending unrelated input; ACK must name exactly the origin. `requested` waits for terminal evidence. |
 | `task.steer`, `task.stop`, `request.answer` | No verified mapping yet | Cached `unsupported`, without native RPC mutation. |
