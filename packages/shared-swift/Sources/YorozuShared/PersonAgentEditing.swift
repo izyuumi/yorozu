@@ -22,8 +22,24 @@ struct PersonAgentEditorDraft: Equatable {
         runtimeMode = agent?.runtime?.mode ?? .managed
         runtimeConnectionId = agent?.runtime?.connectionId ?? ""
         model = agent?.model ?? ""; connection = agent?.accountBindingId ?? ""
-        tools = Set(agent?.allowedTools ?? [.file])
+        let uniformMemory = catalog.harnesses?.contains {
+            $0.id == (agent?.pluginId ?? catalog.defaultHarnessId) && $0.available && $0.modes.contains(.managed) && $0.capabilities.contains("worker-memory-v1")
+        } == true && runtimeMode == .managed
+        tools = Set(agent?.allowedTools ?? (uniformMemory ? [.file, .memory] : [.file]))
         directories = agent?.directories ?? []
+    }
+
+    /// The host advertises the uniform capability; a vendor name never implies memory authority.
+    var editableTools: [PersonAgentTool] {
+        PersonAgentTool.allCases.filter { tool in
+            if tool == .delegation { return false }
+            if tool == .memory {
+                return runtimeMode == .managed && catalog.harnesses?.contains {
+                    $0.id == plugin && $0.available && $0.modes.contains(.managed) && $0.capabilities.contains("worker-memory-v1")
+                } == true
+            }
+            return true
+        }
     }
 
     private func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }

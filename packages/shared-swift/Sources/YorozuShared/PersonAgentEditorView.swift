@@ -79,13 +79,16 @@ struct PersonAgentEditorView: View {
                 }
             }
             Section {
-                ForEach(PersonAgentTool.allCases.filter { $0 != .memory && $0 != .delegation }, id: \.self) { tool in
+                ForEach(draft.editableTools, id: \.self) { tool in
                     Toggle(tool.label, isOn: Binding(get: { draft.tools.contains(tool) }, set: {
                         if $0 { draft.tools.insert(tool) } else { draft.tools.remove(tool) }
                     }))
                 }
             } header: { Text("Access") } footer: {
                 Text("Your Mac confirms available access before saving.")
+                if draft.editableTools.contains(.memory) {
+                    Text("Memory is private to this agent. Ask it in its conversation to save, share or revoke a note. Sharing requires your confirmation in a harness request card.")
+                }
             }
             Section {
                 ForEach(draft.directories.indices, id: \.self) { index in

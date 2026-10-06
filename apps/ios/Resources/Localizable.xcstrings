@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Memory is private to this agent. Ask it in its conversation to save, share or revoke a note. Sharing requires your confirmation in a harness request card.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メモリはこのエージェント専用です。会話でノートの保存・共有・共有の解除を依頼できます。共有には、ハーネスのリクエストカードでの確認が必要です。"
+          }
+        }
+      }
+    },
     "%@ · %@" : {"localizations": {"ja": {"stringUnit": {"state": "translated", "value": "%@ · %@"}}}},
     "%@ → %@" : {"localizations": {"ja": {"stringUnit": {"state": "translated", "value": "%@ → %@"}}}},
     "Account %lld" : {"localizations": {"ja": {"stringUnit": {"state": "translated", "value": "アカウント %lld"}}}},

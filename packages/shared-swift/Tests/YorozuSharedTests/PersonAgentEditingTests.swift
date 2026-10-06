@@ -123,3 +123,35 @@ private func editorCatalog() -> PersonAgentRegistry {
     let editor = PersonAgentEditorDraft(catalog: editorCatalog())
     #expect(editor.tools == [.file])
 }
+
+
+@Test func uniformMemoryIsVisibleAndCanBeEnabledOrRemovedForANewNativeAgent() throws {
+    let catalog = PersonAgentRegistry(revision: 1, agents: [], harnesses: [
+        .init(id: .hermes, label: "Hermes", available: true, modes: [.managed], capabilities: ["worker-memory-v1"]),
+    ], defaultHarnessId: .hermes)
+    var editor = PersonAgentEditorDraft(catalog: catalog)
+    editor.name = "Bea"; editor.role = "Keep independent notes"
+    #expect(editor.editableTools.contains(.memory) && editor.tools.contains(.memory))
+    #expect(!editor.editableTools.contains(.delegation))
+    let selected = try #require(editor.request)
+    guard case .create(let input) = selected.action else { Issue.record("Expected creation"); return }
+    #expect(input.allowedTools.contains(.memory))
+    editor.tools.remove(.memory)
+    let removed = try #require(editor.request)
+    guard case .create(let narrowed) = removed.action else { Issue.record("Expected creation"); return }
+    #expect(!narrowed.allowedTools.contains(.memory))
+    editor.runtimeMode = .connected
+    #expect(!editor.editableTools.contains(.memory))
+}
+
+@Test func nativeEditorDoesNotInferUniformMemoryFromVendorNameOrAnUnavailableDescriptor() {
+    let legacy = PersonAgentEditorDraft(catalog: editorCatalog())
+    #expect(!legacy.editableTools.contains(.memory))
+    for available in [false, true] {
+        let catalog = PersonAgentRegistry(revision: 1, agents: [], harnesses: [
+            .init(id: .hermes, label: "Hermes", available: available, modes: [.managed], capabilities: available ? [] : ["worker-memory-v1"]),
+        ], defaultHarnessId: .hermes)
+        let editor = PersonAgentEditorDraft(catalog: catalog)
+        #expect(!editor.editableTools.contains(.memory) && !editor.tools.contains(.memory))
+    }
+}
