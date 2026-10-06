@@ -14,7 +14,8 @@ rm -f "$RECEIPTS/internal-host.json" "$RECEIPTS/internal-swift.json"
 python3 scripts/stage-internal-alpha.py "$SOURCE"
 cd "$SOURCE"
 pnpm install --frozen-lockfile
-pnpm --filter @yorozu/shared --filter @yorozu/runtime build
+# worker-transport.test.ts imports @yorozu/relay's dist; build it with the runtime.
+pnpm --filter @yorozu/shared --filter @yorozu/runtime --filter @yorozu/relay build
 python3 scripts/test-check-internal-host.py
 python3 scripts/check-internal-host.py --receipt "$RECEIPTS/internal-host.json"
 cargo build --locked --manifest-path packages/host-core/Cargo.toml --bin yorozu-host-core

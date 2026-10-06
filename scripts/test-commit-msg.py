@@ -14,8 +14,8 @@ HOOK = ROOT / '.githooks/commit-msg'
 
 class Guardrails(unittest.TestCase):
     def run_check(self, command, ok, **kwargs):
-        result = subprocess.run([str(x) for x in command], cwd=ROOT,
-                                capture_output=True, text=True, timeout=10, **kwargs)
+        result = subprocess.run([str(x) for x in command], capture_output=True, text=True,
+                                timeout=10, **{'cwd': ROOT, **kwargs})
         self.assertEqual(result.returncode == 0, ok, result.stdout + result.stderr)
 
     def test_subjects(self):
@@ -33,12 +33,23 @@ class Guardrails(unittest.TestCase):
         self.run_check([CHECK, 'invalid', 'fix: valid'], False)
 
     def test_real_git_revisions(self):
-        self.run_check([PR, 'ci: check', 'HEAD', 'HEAD'], True)
-        self.run_check([PR, 'ci: check', 'HEAD~1', 'HEAD'], True)
-        for base, head in [('missing-base', 'HEAD'), ('HEAD', 'missing-head')]:
-            self.run_check([PR, 'ci: check', base, head], False)
-        self.run_check([PR, 'invalid', 'HEAD', 'HEAD'], False)
-        self.run_check([PR], False)
+        # A hermetic two-commit repository: CI checkouts are shallow (no HEAD~1) and the
+        # checked-out subjects are not this test's fixture.
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+                       GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@t', GIT_COMMITTER_NAME='t',
+                       GIT_COMMITTER_EMAIL='t@t')
+            subprocess.run(['git', 'init', '-q', directory], check=True, env=env)
+            for subject in ['feat: first', 'docs: second']:
+                subprocess.run(['git', '-C', directory, 'commit', '-q', '--allow-empty', '-m', subject],
+                               check=True, env=env)
+            repo = {'cwd': directory, 'env': env}
+            self.run_check([PR, 'ci: check', 'HEAD', 'HEAD'], True, **repo)
+            self.run_check([PR, 'ci: check', 'HEAD~1', 'HEAD'], True, **repo)
+            for base, head in [('missing-base', 'HEAD'), ('HEAD', 'missing-head'), ('HEAD~2', 'HEAD')]:
+                self.run_check([PR, 'ci: check', base, head], False, **repo)
+            self.run_check([PR, 'invalid', 'HEAD', 'HEAD'], False, **repo)
+            self.run_check([PR], False, **repo)
 
     def test_enumeration_failure_and_subjects(self):
         with tempfile.TemporaryDirectory() as directory:
