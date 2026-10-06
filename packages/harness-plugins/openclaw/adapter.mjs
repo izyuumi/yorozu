@@ -708,7 +708,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {}, callHos
         revokeAll(); runtime.memory?.bridge.close();
         await runtime.gateway.shutdown(); await writing; return { stopped: runtime.gateway.closed };
       }
-      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'profileDir', 'source', 'node', 'nodeIntegrity', 'sourceIntegrity', 'providerConfigPath', 'lifecycle', 'connection', 'git', 'model'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
+      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'profileDir', 'source', 'node', 'nodeIntegrity', 'sourceIntegrity', 'providerConfigPath', 'lifecycle', 'connection', 'git'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
       if (['message.deliver', 'message.receipt', 'action.answer'].includes(method)) return { status: 'unsupported', handoff: 'not-submitted', reason: 'no verified native peer-inbox or action mapping exists for this OpenClaw pin' };
       if (method === 'session.open') {
         required(params.conversationId, 'conversationId'); required(params.bindingId, 'bindingId');

@@ -782,7 +782,10 @@ test('host-selected model is accepted as a bounded identifier and must match the
     // Field validation precedes any source inspection: a malformed model is refused first.
     await assert.rejects(prepareRuntime({ ...base, model: 'bad model!' }), /bounded identifier/);
     await assert.rejects(prepareRuntime({ ...base, model: 'synthetic', unknownField: 1 }), /unsupported fields/);
+    // The host names the turn model on ordinary requests (HarnessRunner); only agent
+    // authority and runtime paths are immutable after initialize, not the turn model.
     const f = await memoryFixture();
-    await assert.rejects(f.adapter.handle('turn.submit', { ...turn, model: 'synthetic' }), /immutable after initialize/);
+    assert.equal((await f.adapter.handle('turn.submit', { ...turn, model: 'synthetic' })).status, 'accepted');
+    await assert.rejects(f.adapter.handle('session.snapshot', { ...open, scope: { allowedTools: [] } }), /immutable after initialize/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
