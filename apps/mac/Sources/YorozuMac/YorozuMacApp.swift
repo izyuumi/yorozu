@@ -461,16 +461,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             TextScale.acceptUnshiftedPlus()
-            let event = NSAppleEventManager.shared().currentAppleEvent
-            let loginLaunch = event?.eventID == kAEOpenApplication
-                && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
-            let watchdogLaunch = ProcessInfo.processInfo.arguments.contains("-yorozuWatchdogLaunch")
-            let updateRelaunch = UserDefaults.standard.bool(forKey: HostWindowMode.updateRelaunchKey)
+            // Cold launch (including Finder, login, watchdog and update) stays menu-bar-only
+            // for a host. A subsequent reopen or a menu action is deliberate UI access.
             UserDefaults.standard.removeObject(forKey: HostWindowMode.updateRelaunchKey)
-            if HostWindowMode.active && event?.eventID == kAEOpenApplication
-                && !loginLaunch && !watchdogLaunch && !updateRelaunch {
-                HostWindowMode.pendingExplicitOpen = true
-            }
             let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
             Log.write("launch: build \(version) at \(Bundle.main.bundlePath)")
             // Debug builds only: the screenshot scripts and the keyboard UI tests run a debug
@@ -547,7 +540,7 @@ struct YorozuMacApp: App {
     @Environment(\.dismissWindow) private var dismissWindow
     /// Whether setup was finished, so the menu can offer the way back to it until it was.
     @AppStorage(OnboardingWindow.completedKey) private var onboardingCompleted = false
-    @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = false
+    @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = HostWindowMode.defaultEnabled
     @AppStorage(MacNotificationPreference.attentionIndicator) private var attentionIndicator = true
 
     /// The chat window's id, so the status item can ask for it by name.
@@ -565,13 +558,7 @@ struct YorozuMacApp: App {
         // it a toolbar, a resizable frame, working sheets and share pickers, and any menu bar
         // at all to hang ⌘N, ⌘F and Stop off — see ``ChatWindowView``.
         Window("Yorozu", id: Self.chatWindow) {
-            Group {
-                if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
-                    Color.clear.task { dismissWindow(id: Self.chatWindow) }
-                } else {
-                    ChatWindowView()
-                }
-            }
+            ChatWindowView()
                 // A `yorozu://pair` link, from Messages or a browser. Asked about before it
                 // replaces anything — see ``MacChatSession/handlePairingLink(_:)``. Other hosts
                 // are the phone's, and mean nothing here.
@@ -587,6 +574,10 @@ struct YorozuMacApp: App {
                 }
         }
         .defaultSize(width: 1040, height: 680)
+        .defaultLaunchBehavior(HostWindowMode.suppressAutomaticChat(role: session.role,
+            enabled: backgroundOnlyHost) ? .suppressed : .automatic)
+        .restorationBehavior(HostWindowMode.suppressAutomaticChat(role: session.role,
+            enabled: backgroundOnlyHost) ? .disabled : .automatic)
         .commands {
             ChatMenus()
             HostQuitCommands(backgroundOnly: HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost))
@@ -606,6 +597,8 @@ struct YorozuMacApp: App {
             .onDisappear { Speaker.shared.stop() }
         }
         .defaultSize(width: QuickChatView.initialWidth, height: QuickChatView.initialHeight)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
         .commands { HostQuitCommands(backgroundOnly: HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)) }
 
         // The status item is now the way to that window rather than the place the chat lives.
@@ -620,10 +613,8 @@ struct YorozuMacApp: App {
                     openQuickChat()
                 }
             }
-            if !HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
-                Button("Open Yorozu") { openWindow(id: Self.chatWindow) }
-                    .keyboardShortcut("o")
-            }
+            Button("Open Yorozu") { openWindow(id: Self.chatWindow) }
+                .keyboardShortcut("o")
             if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost) {
                 let attention = MacAttentionItem.pending(in: session.model)
                 if !attention.isEmpty || Updates.pending.failure != nil {
@@ -685,7 +676,7 @@ struct YorozuMacApp: App {
                     // The setup window's way into the chat: it is an NSWindow outside this
                     // scene graph, and this is the `openWindow` that works.
                     OnboardingWindow.openChat = {
-                        if !HostWindowMode.active { openWindow(id: Self.chatWindow) }
+                        openWindow(id: Self.chatWindow)
                     }
                     SettingsPaneRouter.openWindow = { openWindow(id: Self.settingsWindow) }
                     HostWindowMode.openQuickChat = { openQuickChat() }
@@ -710,6 +701,7 @@ struct YorozuMacApp: App {
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .defaultSize(width: 800, height: 580)
+        .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
         .commands {
             CommandGroup(replacing: .appSettings) {

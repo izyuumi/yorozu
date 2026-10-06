@@ -11,7 +11,7 @@ struct GeneralView: View {
     @State private var router = ChatWindowRouter.shared
     @State private var showingArchive = false
     @AppStorage(ChatView.sendWithCommandReturnKey) private var sendWithCommandReturn = false
-    @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = false
+    @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = HostWindowMode.defaultEnabled
     @AppStorage(ChatModel.followUpBehaviorKey) private var followUpBehavior = MessageDelivery.queue
     @Environment(\.openWindow) private var openWindow
 
@@ -29,7 +29,7 @@ struct GeneralView: View {
                 } else if session.role == .host {
                     Toggle(isOn: $backgroundOnlyHost) {
                         Text("Background-only host")
-                        Text("Runs as a menu bar–only app. Quick Chat and Settings open from the menu bar.")
+                        Text("Starts in the menu bar. Open Yorozu, Quick Chat and Settings remain available there.")
                     }
                     .onChange(of: backgroundOnlyHost) { _, _ in WindowPresence.modeChanged() }
                 }

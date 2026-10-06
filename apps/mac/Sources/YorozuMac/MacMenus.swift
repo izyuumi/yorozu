@@ -105,12 +105,22 @@ struct HostQuitCommands: Commands {
 /// previously a host; switching back to host restores the saved choice.
 enum HostWindowMode {
     static let key = "backgroundOnlyHost"
+    static let defaultEnabled = true
     static let updateRelaunchKey = "backgroundOnlyUpdateRelaunch"
 
     static func active(role: MacRole?, enabled: Bool) -> Bool { role == .host && enabled }
 
+    /// An absent preference is not an explicit opt-out. Keep old saved choices intact.
+    static func enabled(savedPreference: Bool?) -> Bool { savedPreference ?? defaultEnabled }
+
+    static func suppressAutomaticChat(role: MacRole?, enabled: Bool) -> Bool {
+        // First-run setup owns the unconfigured presentation. A client keeps normal launch.
+        role == nil || active(role: role, enabled: enabled)
+    }
+
     @MainActor static var active: Bool {
-        active(role: MacChatSession.shared.role, enabled: UserDefaults.standard.bool(forKey: key))
+        active(role: MacChatSession.shared.role,
+               enabled: enabled(savedPreference: UserDefaults.standard.object(forKey: key) as? Bool))
     }
 
     @MainActor static var openQuickChat: (() -> Void)?

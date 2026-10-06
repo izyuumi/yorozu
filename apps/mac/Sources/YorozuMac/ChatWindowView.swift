@@ -480,7 +480,7 @@ struct SettingsView: View {
     @ObservedObject var sidecar: Sidecar
     @State private var session = MacChatSession.shared
     @State private var route = SettingsPaneRouter.shared
-    @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = false
+    @AppStorage(HostWindowMode.key) private var backgroundOnlyHost = HostWindowMode.defaultEnabled
     // The pane, or the one a screenshot asked for — see ``Showcase``.
     @State private var selection: String? = launchArgument("yorozuSettingsPane") ?? "general"
 
