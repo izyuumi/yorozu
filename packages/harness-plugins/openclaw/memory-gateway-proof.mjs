@@ -27,13 +27,14 @@ const node = await realpath(required('--node'));
 // Signed bundle proofs: the host-verified sealed Node hash (nested-signed stage) replaces the unsigned pin.
 const nodeIntegrity = options.has('--node-integrity') ? { sha256: options.get('--node-integrity'), hashStage: 'after-nested-signing-before-outer-bundle-signing' } : undefined;
 const git = options.has('--git') ? await realpath(required('--git')) : undefined;
-// App-shaped sealed runs: like the packaged host, verify commit/clean tree/full diff with
+// App-shaped sealed runs: like the packaged host, verify the exact commit and full diff with
 // host git OUTSIDE the sandbox and hand the adapter the exact record; no git inside.
 const sealedSourceIntegrity = options.get('--sealed-source') === 'host-verified' ? await (async () => {
   const { execFile } = await import('node:child_process'); const { promisify } = await import('node:util'); const run = promisify(execFile);
   const env = { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
   assert.equal((await run('/usr/bin/git', ['-C', source, 'rev-parse', 'HEAD'], { env })).stdout.trim(), CURATED_RUNTIME.sourceCommit);
-  await run('/usr/bin/git', ['-C', source, 'diff', '--quiet', 'HEAD', '--'], { env });
+  // No worktree diff: it refreshes and rewrites .git/index, breaking the sealed inventory; the
+  // inventory already proves worktree bytes, so only the exact commit and the full patch are checked.
   const patch = await run('/usr/bin/git', ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--abbrev=8', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { env, maxBuffer: 512 * 1024 });
   assert.equal(createHash('sha256').update(patch.stdout).digest('hex'), CURATED_RUNTIME.patchSha256);
   return { kind: 'sealed-inventory-v1', sourceSha: CURATED_RUNTIME.sourceCommit, patchSha256: CURATED_RUNTIME.patchSha256 };
