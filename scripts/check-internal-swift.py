@@ -45,6 +45,8 @@ GROUPS = {
     )),
     "AccountsCoreTests": ("apps/mac", "YorozuAccountsCoreTests", 10, None),
     "HostWindowModeTests": ("apps/mac", "YorozuKeepaliveTests", 4, None),
+    # Reviewed offscreen native field fixture; no app activation or external transport.
+    "ComposerEditingTests": ("packages/shared-swift", MODULE, 1, ("composerNewlineUsesNativeSelection",)),
 }
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]

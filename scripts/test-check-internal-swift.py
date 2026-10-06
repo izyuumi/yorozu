@@ -51,10 +51,10 @@ class GateTests(unittest.TestCase):
 
     def test_all_safe_groups_have_separate_positive_receipts(self):
         receipt = self.run_gate()
-        self.assertEqual(receipt["executed"], 93)
+        self.assertEqual(receipt["executed"], 94)
         self.assertEqual([g["fixture"] for g in receipt["groups"]], list(gate.GROUPS))
         self.assertTrue(all(g["executed"] >= gate.GROUPS[g["fixture"]][2] for g in receipt["groups"]))
-        self.assertEqual(len(self.calls), 12)
+        self.assertEqual(len(self.calls), 13)
         self.assertNotIn("--skip-build", self.calls[0])
         for call in self.calls[2:]:
             self.assertNotIn("WireTests", call[-1])
@@ -146,10 +146,10 @@ class GateTests(unittest.TestCase):
         path.write_text(path.read_text() + "\n@Test func newSafeOutboxRegression() {}\n")
         self.groups["OutboxTests"].append("newSafeOutboxRegression")
         self.listing += "\nYorozuSharedTests.newSafeOutboxRegression()"
-        self.assertEqual(self.run_gate()["executed"], 94)
+        self.assertEqual(self.run_gate()["executed"], 95)
 
     def test_missing_selected_chatmodel_or_accounts_helper_test_fails_closed(self):
-        for fixture in ("ChatModelTests", "AccountsCoreTests", "HostWindowModeTests"):
+        for fixture in ("ChatModelTests", "AccountsCoreTests", "HostWindowModeTests", "ComposerEditingTests"):
             old = self.listing
             self.listing = self.listing.replace(gate.GROUPS[fixture][1] + "." + self.groups[fixture][0] + "()", "")
             with self.assertRaisesRegex(gate.CheckFailed, fixture):
