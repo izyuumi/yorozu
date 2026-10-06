@@ -1,4 +1,6 @@
 /** Trusted app-bundle loader. No environment, profile, account, or client path discovery. */
+export { loadPackagedOpenClawRuntime, verifyPackagedOpenClawArtifact } from "./packaged-openclaw-runtime.js";
+export type { VerifiedPackagedOpenClawRuntime } from "./packaged-openclaw-runtime.js";
 import { createHash } from "node:crypto";
 import { constants, promises as fs, openSync, fstatSync, readFileSync, closeSync, existsSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";

@@ -1,0 +1,77 @@
+# Sealed OpenClaw inputs — DEVELOPMENT ONLY
+
+`packaged-openclaw-runtime.ts`, re-exported by `packaged-agent-runtime.ts`, supplies
+`loadPackagedOpenClawRuntime(resourcesRoot)` and
+`verifyPackagedOpenClawArtifact(resourcesRoot)`. Only trusted host composition may
+supply Resources. It is not a client/config/environment discovery interface.
+
+Fixed layout: `Resources/agent-runtimes/openclaw/{node,source,plugin}`. The loader
+validates the complete manifest and rehashes every regular file on every
+preparation. Extra/missing/duplicate files, altered bytes/modes, hardlinks,
+nonregular files, escaping/dangling/absolute links, linked parents and malformed
+metadata fail closed. The manifest binds the exact corrected native commit,
+full official-upstream diff, lockfile, build-info, entry, protocol and Node pins.
+A sealed inventory cannot authenticate itself: its trust root must be the
+immutable trusted app payload/outer signature. Mutable caller-owned Resources
+are never suitable. No success cache is permitted. Hashing is before execution,
+not a defense against a party allowed to mutate the trusted bundle concurrently.
+
+The helper returns explicit Node and OpenClaw input records. It does not acquire
+a broker/listener, launch a Gateway, read a profile, adopt old work or change
+scope/identity/memory semantics. Host composition must call it before preparing
+the existing curated runtime, and must preserve that runtime's isolation,
+listener leases, embedding lifetime and fresh-profile/journal rules. Availability
+must not imply provider authorization or a completed paired-device acceptance.
+
+## Offline assembly
+
+`scripts/package-openclaw-runtime.py` takes **explicit** `--source`, `--evidence`,
+`--plugin`, `--node`, and fresh `--output` paths. It requires the exact clean
+reviewed native source/full diff and build digests. It copies tracked source,
+reviewed build artifacts and all existing workspace-local node_modules closures,
+not a guessed minimal set. It never resolves, installs or downloads dependencies.
+Links must stay within the copied closure; each copy is compared with its input.
+
+A new minimal detached Git metadata set retains only the corrected and official
+base commits plus their trees/blobs. This satisfies the adapter's existing Git
+identity/full-diff verification without weakening it. No branches, original
+config, remotes, hooks, alternates or accounts are copied. Missing parent history
+is deliberate; the artifact is runtime input, not a complete development clone.
+No invocation of a Git repository template occurs.
+
+The archive has canonical metadata and is stream-verified against every file/link
+in its inventory. Generated `receipt.json` records archive/manifest/inventory
+hashes and explicit provenance limits. All bytes (including adapter and manifest)
+are sealed; adapter semantic review remains a separate integration gate.
+
+## What this proves and does not prove
+
+It proves **local byte custody and filesystem closure** from the explicit local
+inputs to the packaged archive, not original npm archive provenance, not full
+lockfile correspondence of reused installations, not native dynamic-library
+relocatability. Including dependencies fixes the earlier archive omission but
+is not by itself proof of a standalone installable release. The artifact contains
+development dependencies as a conservative superset; no minimal/production
+closure claim is made. No production profile/account material is needed.
+
+The schema deliberately permits only `productionReady:false`,
+`archiveProvenanceVerified:false`, and `lockfileMatchEstablished:false` with
+`reused-local-bytes-inventory-only`. A future genuinely verified provenance chain
+needs a separately reviewed schema/pin change, not flipping these fields.
+Distribution signatures may change Node/native bytes; this pre-sign development
+schema must reject those changes until a reviewed post-sign resealing path exists.
+
+Remaining shipping gates: upstream dependency archive and lock correspondence,
+native shared-library/platform relocation, coherent adapter/memory/supervisor
+integration and independent review, paired-device and host-tool approval/memory/
+isolation acceptance, embedding-owned stop/restart/lifetime acceptance,
+distribution signing/post-sign inventory. No upload/install/release is performed.
+
+## Offline tests
+
+- `python3 scripts/test-package-openclaw-runtime.py`
+- With the deliberately assembled test fixture, set only
+  `YOROZU_TEST_SEALED_OPENCLAW_RESOURCES=<assembly>/Resources` and run Node 26.10.0
+  `--experimental-strip-types --test packages/runtime/src/packaged-openclaw-runtime.test.ts`.
+  This environment variable belongs to the test harness only. Missing fixture is
+  a failure, not a skipped positive test. Run under a network-denied sandbox.
