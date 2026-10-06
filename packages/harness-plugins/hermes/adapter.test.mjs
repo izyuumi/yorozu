@@ -875,3 +875,138 @@ test('assembled sealed source is rehashed in the child; edits, extra files and m
   await assert.rejects(verifySealedHermesSource(source), /integrity/); await rm(project); await writeFile(project, original);
   await verifySealedHermesSource(source);
 });
+
+test('uniform memory gateway enforces native identity and exact actions without model sender authority', async t => {
+  const { params } = await scopeFixture(t, []);
+  const gateway = new Gateway(), calls = [];
+  const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }),
+    callHost: async (method, args) => { calls.push({ method, args }); return args.action === 'read' ? { value: 'fixture memory' } : args.action === 'search' ? { entries: [{ key: 'note', body: 'fixture memory' }] } : { ok: true }; } });
+  await adapter.handle('initialize', { ...params, workerMemory: true });
+  await adapter.handle('session.open', currency);
+  await adapter.handle('turn.submit', { ...currency, text: 'fixture' });
+  const request = (id, args, context = {}) => {
+    gateway.event('tool.start', { name: 'worker_memory', tool_id: id });
+    gateway.request(id, 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: id, ...args, ...context });
+  };
+  const actions = [ { action: 'read', ownerId: 'agent-a', key: 'note' }, { action: 'search', ownerId: 'agent-b', query: 'fixture' },
+    { action: 'write', key: 'note', body: 'fixture memory', operationId: 'write-1' },
+    { action: 'grant', toAgentId: 'agent-b', key: 'note', operationId: 'grant-1' },
+    { action: 'revoke', toAgentId: 'agent-b', key: 'note', operationId: 'revoke-1' } ];
+  for (const [i, args] of actions.entries()) { request(`ok-${i}`, args); await flush(); assert.equal(gateway.responses.at(-1).error, undefined); }
+  assert.deepEqual(calls, actions.map(args => ({ method: 'worker.memory', args })));
+  for (const [i, args] of [ { ...actions[2], actorId: 'agent-b' }, { ...actions[2], sender: 'agent-b' }, { ...actions[2], ownerId: 'agent-b' },
+    { ...actions[0], unexpected: true }, { action: 'grant', toAgentId: 'agent-b', key: 'note' }, { ...actions[2], body: 'x'.repeat(32769) } ].entries()) {
+    request(`bad-${i}`, args); await flush(); assert.equal(gateway.responses.at(-1).error.code, -32602);
+  }
+  request('wrong-session', actions[0], { agent_session_id: 'other-native-session' });
+  gateway.request('no-start', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'invented', ...actions[0] });
+  gateway.request('reused', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'ok-0', ...actions[0] });
+  await flush(); assert.equal(calls.length, 5);
+  await assert.rejects(adapter.handle('session.snapshot', { ...currency, workerMemory: false }), /immutable/);
+});
+
+test('uniform memory requires explicit host mode and callback before launch', async t => {
+  const { params } = await scopeFixture(t, []); let launches = 0;
+  const adapter = createAdapter({ emit() {}, launch: async () => { launches++; throw Error('unexpected launch'); } });
+  await assert.rejects(adapter.handle('initialize', { ...params, workerMemory: true }), /callback/);
+  await assert.rejects(adapter.handle('initialize', { ...params, workerMemory: 'true' }), /boolean/);
+  assert.equal(launches, 0);
+  const legacy = await setup();
+  legacy.gateway.event('tool.start', { name: 'worker_memory', tool_id: 'legacy-tool' });
+  legacy.gateway.request('legacy', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'legacy-tool', action: 'read', ownerId: 'agent-a', key: 'note' });
+  assert.equal(legacy.gateway.responses.at(-1).error.code, -32602);
+});
+
+test('uniform memory bounds in-flight calls and marks timeout unknown without retry', async t => {
+  const { params } = await scopeFixture(t, []); const gateway = new Gateway(); let calls = 0;
+  const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }), callHost: () => { calls++; return new Promise(() => {}); } });
+  await adapter.handle('initialize', { ...params, workerMemory: true }); await adapter.handle('session.open', currency);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (let i = 0; i < 33; i++) {
+    gateway.event('tool.start', { name: 'worker_memory', tool_id: `bounded-${i}` });
+    gateway.request(i, 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: `bounded-${i}`, action: 'write', key: 'note', body: 'fixture', operationId: `operation-${i}` });
+  }
+  await flush(); assert.equal(calls, 32); assert.equal(gateway.responses.length, 1);
+  t.mock.timers.tick(30_000); await flush();
+  assert.equal(gateway.responses.length, 33); assert.equal(calls, 32);
+  for (const response of gateway.responses.slice(1)) assert.match(response.error.message, /unknown.*not retry/);
+});
+
+test('uniform memory actual bidirectional serve path correlates private pipe replies', async t => {
+  const { PassThrough } = await import('node:stream'); const { serve } = await import('./adapter.mjs');
+  const { params } = await scopeFixture(t, []); const gateway = new Gateway();
+  const input = new PassThrough(), output = new PassThrough(), frames = []; let buffer = '';
+  output.on('data', chunk => { buffer += chunk; let end; while ((end = buffer.indexOf('\n')) >= 0) { frames.push(JSON.parse(buffer.slice(0, end))); buffer = buffer.slice(end + 1); } });
+  serve(input, output, { launch: async () => ({ gateway, authAvailable: true }) });
+  t.after(() => { input.end(); output.destroy(); });
+  const send = frame => input.write(JSON.stringify({ jsonrpc: '2.0', ...frame }) + '\n');
+  send({ id: 1, method: 'initialize', params: { ...params, workerMemory: true } });
+  for (let i = 0; i < 100 && !frames.some(f => f.id === 1); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.ok(frames.find(f => f.id === 1)?.result);
+  send({ id: 2, method: 'session.open', params: currency }); await flush();
+  gateway.event('tool.start', { name: 'worker_memory', tool_id: 'pipe-tool' });
+  gateway.request('native-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'pipe-tool', action: 'read', ownerId: 'agent-a', key: 'note' });
+  await flush(); const hostRequest = frames.find(f => f.method === 'worker.memory');
+  assert.ok(hostRequest); assert.deepEqual(hostRequest.params, { action: 'read', ownerId: 'agent-a', key: 'note' });
+  send({ id: 'unrelated', result: { value: 'wrong' } }); await flush(); assert.equal(gateway.responses.length, 0);
+  send({ id: hostRequest.id, result: { value: 'pipe fixture' } }); await flush();
+  assert.deepEqual(gateway.responses.at(-1), { id: 'native-memory', result: { value: 'pipe fixture' }, error: undefined });
+  send({ id: hostRequest.id, result: { value: 'late' } }); await flush(); assert.equal(gateway.responses.length, 1);
+});
+
+test('uniform memory rejects malformed host receipts without successful native results', async t => {
+  const { params } = await scopeFixture(t, []); const gateway = new Gateway();
+  const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }), callHost: async () => ({ ok: true, actorId: 'forged' }) });
+  await adapter.handle('initialize', { ...params, workerMemory: true }); await adapter.handle('session.open', currency);
+  gateway.event('tool.start', { name: 'worker_memory', tool_id: 'bad-receipt' });
+  gateway.request('bad-receipt', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'bad-receipt', action: 'write', key: 'note', body: 'fixture', operationId: 'operation-1' });
+  await flush(); assert.equal(gateway.responses.at(-1).result, null); assert.match(gateway.responses.at(-1).error.message, /unknown/);
+});
+
+test('native uniform memory discovery replaces vendor memory and preserves messaging checks', {
+  skip: !process.env.YOROZU_HERMES_TEST_SOURCE || !process.env.YOROZU_HERMES_TEST_PYTHON,
+}, async t => {
+  for (const allowed of [[], ['team']]) {
+    const { params } = await scopeFixture(t, allowed);
+    params.python = process.env.YOROZU_HERMES_TEST_PYTHON; params.workerMemory = true;
+    const runtime = await prepareRuntime(params);
+    const config = JSON.parse(await readFile(join(runtime.env.HERMES_HOME, 'config.yaml'), 'utf8'));
+    assert.ok(config.agent.disabled_toolsets.includes('memory'));
+    assert.equal(config.plugins.entries['yorozu-platform'].settings.workerMemory, true);
+    const bootstrap = new URL('./bootstrap.py', import.meta.url).pathname;
+    const verified = JSON.parse((await exec(params.python, [bootstrap, '--verify'], { cwd: runtime.sourcePath, env: runtime.env, maxBuffer: 64 * 1024 })).stdout);
+    assert.ok(verified.toolsets.includes('yorozu_memory')); assert.equal(verified.toolsets.includes('memory'), false);
+    assert.ok(verified.tools.includes('worker_memory')); assert.equal(verified.tools.includes('memory'), false);
+    assert.equal(verified.tools.includes('send_agent_message'), allowed.includes('team'));
+    const proof = JSON.parse((await exec(params.python, ['-c', `
+import runpy, sys, json
+runpy.run_path(sys.argv[1])["verify"]()
+from gateway.session_context import set_session_vars
+from tui_gateway import server_requests
+from tools.registry import registry
+from tools.approval_context import set_current_observability_context
+from agent.agent_init import _init_memory
+from hermes_cli.config import load_config_readonly
+from types import SimpleNamespace
+cfg=load_config_readonly()
+agent=SimpleNamespace(enabled_toolsets=["yorozu_memory","delegation","yorozu_empty"],disabled_toolsets=cfg["agent"]["disabled_toolsets"],tools=[])
+_init_memory(agent,cfg,False,"yorozu")
+captured=[]
+def fake_send(method, sid, params, *, timeout):
+    captured.append({"method":method,"sid":sid,"params":params,"timeout":timeout})
+    return {"ok":True}
+server_requests.send=fake_send
+set_session_vars(session_key="proof",session_id="durable-proof",ui_session_id="live-proof")
+set_current_observability_context(tool_call_id="native-call-proof",session_id="durable-proof",turn_id="native-turn-proof")
+args={"action":"write","key":"note","body":"fixture","operationId":"operation-proof"}
+completed=json.loads(registry.dispatch("worker_memory",args,session_id="durable-proof"))
+invalid=json.loads(registry.dispatch("worker_memory",{**args,"actorId":"forged"},session_id="durable-proof"))
+print(json.dumps({"captured":captured,"completed":completed,"invalid":invalid,"memoryEnabled":agent._memory_enabled,"userEnabled":agent._user_profile_enabled}))
+`, bootstrap], { cwd: runtime.sourcePath, env: runtime.env, maxBuffer: 64 * 1024 })).stdout);
+    assert.equal(proof.memoryEnabled, false); assert.equal(proof.userEnabled, false);
+    assert.equal(proof.captured.length, 1); assert.equal(proof.captured[0].method, 'yorozu.worker_memory');
+    assert.equal(proof.captured[0].params.agent_session_id, 'durable-proof');
+    assert.equal(proof.captured[0].params.tool_call_id, 'native-call-proof');
+    assert.deepEqual(proof.completed, { ok: true }); assert.match(proof.invalid.error, /not submitted/);
+  }
+});

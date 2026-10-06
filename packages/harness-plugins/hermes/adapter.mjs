@@ -72,7 +72,7 @@ const ACTIVE = new Set(['running', 'waiting', 'stopping']);
 const exec = promisify(execFile);
 const NATIVE_TOOLS = ['file', 'terminal', 'delegation', 'memory', 'web', 'browser'];
 const RESOURCE_TOOLS = ['file', 'terminal', 'web', 'browser'];
-const nativeTools = allowed => [...new Set([...allowed.filter(name => RESOURCE_TOOLS.includes(name)), 'memory', 'delegation'])].sort();
+const nativeTools = (allowed, uniform = false) => [...new Set([...allowed.filter(name => RESOURCE_TOOLS.includes(name)), ...(uniform ? ['yorozu_memory'] : ['memory']), 'delegation'])].sort();
 const HOST_TOOLS = [...NATIVE_TOOLS, 'team', 'computer'];
 const PACKAGE_ROOT = dirname(fileURLToPath(import.meta.url));
 export const EXTENSIONS = Object.freeze({ version: 1, connectedLifecycle: false, conversationActions: true, autonomousEvents: false, agentMessaging: true });
@@ -199,6 +199,8 @@ export function mergeNativeConfiguration(previousConfig, config, agent) {
 /** An explicit host-owned directory, never an installed Hermes or Codex profile. */
 export async function prepareRuntime(params) {
   validateLifecycle(params);
+  if (params.workerMemory !== undefined && typeof params.workerMemory !== 'boolean') throw invalid('workerMemory must be boolean');
+  if (params.workerMemory === true && !params.agentId) throw invalid('uniform memory requires owned scope');
   if (params.protocolVersion !== 1 || params.upstreamVersion !== UPSTREAM.version) throw invalid('unsupported protocol or Hermes version');
   for (const key of ['profileRoot', 'workspace', 'python', 'sourcePath']) {
     required(params[key], key);
@@ -286,8 +288,9 @@ export async function prepareRuntime(params) {
   };
   if (agent) {
     config.agent.disabled_toolsets = [...RESOURCE_TOOLS.filter(name => !agent.scope.allowedTools.includes(name)), 'cronjob', 'computer_use'];
-    config.platform_toolsets = { cli: nativeTools(agent.scope.allowedTools) };
-    config.plugins = { enabled: ['yorozu-platform'], entries: { 'yorozu-platform': { settings: { team: agent.platform.team, peers: agent.platform.peers } } } };
+    if (params.workerMemory === true) config.agent.disabled_toolsets.push('memory');
+    config.platform_toolsets = { cli: nativeTools(agent.scope.allowedTools, params.workerMemory === true) };
+    config.plugins = { enabled: ['yorozu-platform'], entries: { 'yorozu-platform': { settings: { team: agent.platform.team, peers: agent.platform.peers, workerMemory: params.workerMemory === true } } } };
     const pluginsRoot = join(hermesHome, 'plugins'), pluginRoot = join(pluginsRoot, 'yorozu-platform');
     for (const directory of [pluginsRoot, pluginRoot]) {
       await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -340,7 +343,7 @@ export async function prepareRuntime(params) {
       PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1', PYTHONNOUSERSITE: '1',
       HERMES_DISABLE_LAZY_INSTALLS: '1',
       TIRITH_ENABLED: '1', TIRITH_BIN: config.security.tirith_path, TIRITH_FAIL_OPEN: '0',
-      ...(agent ? { HERMES_TUI_TOOLSETS: [...nativeTools(agent.scope.allowedTools),
+      ...(agent ? { HERMES_TUI_TOOLSETS: [...nativeTools(agent.scope.allowedTools, params.workerMemory === true),
         ...(agent.platform.team ? ['yorozu_platform'] : []), 'yorozu_empty'].join(',') } : {}),
       // No inherited env, .env, sidecars, auth variables or scheduler settings.
     },
@@ -485,10 +488,29 @@ function peerMessage(params) {
 }
 const messageFingerprint = message => JSON.stringify({ ...message, attemptId: undefined, sessionId: undefined });
 
+function validateMemoryRequest(args) {
+  const keys = { read: ['action', 'ownerId', 'key'], search: ['action', 'ownerId', 'query'], write: ['action', 'key', 'body', 'operationId'], grant: ['action', 'toAgentId', 'key', 'operationId'], revoke: ['action', 'toAgentId', 'key', 'operationId'] }[args?.action];
+  if (!Array.isArray(keys)) throw invalid('unsupported memory action');
+  object(args, keys, 'memory request');
+  for (const key of keys) required(args[key], key, key === 'body' ? 32768 : key === 'query' ? 4096 : 128);
+}
+function validateMemoryResult(action, result) {
+  if (action === 'read') {
+    object(result, ['value'], 'memory result');
+    if (result.value !== null && (typeof result.value !== 'string' || Buffer.byteLength(result.value) > 32768)) throw invalid('invalid memory value');
+  } else if (action === 'search') {
+    object(result, ['entries'], 'memory result');
+    if (!Array.isArray(result.entries) || result.entries.length > 64) throw invalid('invalid memory entries');
+    for (const entry of result.entries) { object(entry, ['key', 'body'], 'memory entry'); required(entry.key, 'key', 128); required(entry.body, 'body', 32768); }
+  } else { object(result, ['ok'], 'memory result'); if (result.ok !== true) throw invalid('invalid memory receipt'); }
+  wire({ jsonrpc: '2.0', id: 'memory', result });
+}
+
 /** The gateway dependency is also useful to embedders; no model runs in this host. */
-export function createAdapter({ emit, launch = launchGateway }) {
+export function createAdapter({ emit, launch = launchGateway, callHost }) {
   const sessions = new Map(); const liveSessions = new Map(); const requests = new Map();
   const inbox = new Map(); const retired = new Map(); let messageWriting = Promise.resolve();
+  let workerMemory = false; let memoryPending = 0;
   let runtime; let initialized = false; let initializing = false; let opening = null;
   const nonce = randomUUID(); let sequence = 0;
   const blockedProjections = new Set();
@@ -576,6 +598,25 @@ export function createAdapter({ emit, launch = launchGateway }) {
     const session = liveSessions.get(frame.params?.session_id);
     if (!session && opening && frame.params?.session_id && opening.frames.length < 64) { opening.frames.push(frame); return; }
     if (!session) { runtime.gateway.respond(frame.id, null, { code: -32602, message: 'request has no owned session' }); return; }
+    if (frame.method === 'yorozu.worker_memory') {
+      try {
+        if (!workerMemory || typeof callHost !== 'function' || frame.params.agent_session_id !== session.storedId) throw invalid('memory request has no native ownership or supported mode');
+        const call = session.nativeToolCalls.get(required(frame.params.tool_call_id, 'native tool_call_id', 128));
+        if (!call || call.name !== 'worker_memory' || call.claimed) throw invalid('memory request has no unclaimed native tool identity');
+        call.claimed = true;
+        const { session_id, agent_session_id, tool_call_id, ...args } = frame.params;
+        validateMemoryRequest(args);
+        if (memoryPending >= MAX_PENDING) throw invalid('too many pending memory operations');
+        memoryPending++;
+        let timer;
+        Promise.race([Promise.resolve().then(() => callHost('worker.memory', args)), new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new ProtocolError(-32004, 'Memory outcome unknown; do not retry.')), 30_000);
+        })]).then(result => { validateMemoryResult(args.action, result); runtime.gateway.respond(frame.id, result); })
+          .catch(() => runtime.gateway.respond(frame.id, null, { code: -32004, message: 'Memory outcome unknown; do not retry.' }))
+          .finally(() => { clearTimeout(timer); memoryPending--; });
+      } catch (error) { runtime.gateway.respond(frame.id, null, { code: error.code ?? -32602, message: error.message }); }
+      return;
+    }
     if (['yorozu.message_send', 'yorozu.message_read'].includes(frame.method)) {
       if (requests.has(frame.id)) return;
       try {
@@ -772,7 +813,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
       } else if (!ACTIVE.has(task.state)) return;
       publishTask(session, task); return;
     }
-    if (type === 'tool.start' && ['send_agent_message', 'read_agent_messages'].includes(payload.name) && typeof payload.tool_id === 'string') {
+    if (type === 'tool.start' && ['send_agent_message', 'read_agent_messages', 'worker_memory'].includes(payload.name) && typeof payload.tool_id === 'string') {
       if (!session.nativeToolCalls.has(payload.tool_id) && session.nativeToolCalls.size < 64) session.nativeToolCalls.set(payload.tool_id, { run: session.current, name: payload.name, claimed: false });
       return;
     }
@@ -871,6 +912,9 @@ export function createAdapter({ emit, launch = launchGateway }) {
         initializing = true;
         try {
         validateLifecycle(params);
+        if (params.workerMemory !== undefined && typeof params.workerMemory !== 'boolean') throw invalid('workerMemory must be boolean');
+        if (params.workerMemory === true && (!params.agentId || typeof callHost !== 'function')) throw invalid('uniform memory requires owned scope and host callback');
+        workerMemory = params.workerMemory === true;
         const agent = await validateAgentScope(params);
         let preloaded = false;
         runtime = await launch(params, async prepared => { runtime = prepared; runtime.agent = agent; await loadMessages(); preloaded = true; });
@@ -891,7 +935,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
         finally { initializing = false; }
       }
       if (!initialized) throw new ProtocolError(-32001, 'adapter is not initialized');
-      if (['agentId', 'scope', 'isolation', 'platform', 'workspace', 'memoryDir', 'profileRoot', 'sourcePath', 'sourceIntegrity', 'python', 'providerConfigPath', 'lifecycle', 'connection'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
+      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'memoryDir', 'profileRoot', 'sourcePath', 'sourceIntegrity', 'python', 'providerConfigPath', 'lifecycle', 'connection'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
       if (method === 'detach') return { status: 'unsupported', reason: 'this managed adapter owns its native process; connected lifecycle is unavailable' };
       if (method === 'shutdown') { await messageWriting; await runtime.gateway.shutdown(); return { stopped: runtime.gateway.closed }; }
       if (runtime.gateway.closed && method !== 'session.snapshot') throw new ProtocolError(-32002, 'Hermes runtime is closed; uncertain actions cannot be replayed');
@@ -1048,7 +1092,7 @@ export function createAdapter({ emit, launch = launchGateway }) {
   };
 }
 
-export function serve(input = process.stdin, output = process.stdout) {
+export function serve(input = process.stdin, output = process.stdout, options = {}) {
   let outputFailed = false;
   function send(frame) {
     if (outputFailed || output.destroyed) return;
@@ -1062,9 +1106,27 @@ export function serve(input = process.stdin, output = process.stdout) {
       if (frame.id !== undefined) output.write(wire({ jsonrpc: '2.0', id: frame.id, error: { code: -32010, message: 'response exceeds encoded projection bound' } }));
     }
   }
-  const adapter = createAdapter({ emit: params => send({ jsonrpc: '2.0', method: 'harness.event', params }) });
+  const hostPending = new Map(); let hostSequence = 0;
+  const callHost = (method, params) => new Promise((resolve, reject) => {
+    if (method !== 'worker.memory' || hostPending.size >= MAX_PENDING || outputFailed || output.destroyed) { reject(invalid('host memory unavailable')); return; }
+    const id = `host-memory:${++hostSequence}`;
+    const timer = setTimeout(() => { hostPending.delete(id); reject(new Error('Memory outcome unknown; do not retry.')); }, 30_000);
+    hostPending.set(id, { resolve, reject, timer });
+    send({ jsonrpc: '2.0', id, method, params });
+  });
+  function closeHost() { for (const pending of hostPending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Memory outcome unknown; do not retry.')); } hostPending.clear(); }
+  input.on('end', closeHost); input.on('close', closeHost); output.on('close', closeHost);
+  const adapter = createAdapter({ ...options, callHost, emit: params => send({ jsonrpc: '2.0', method: 'harness.event', params }) });
   let pending = 0;
   readFrames(input, frame => {
+    if (frame.method === undefined && hostPending.has(frame.id)) {
+      const pending = hostPending.get(frame.id); hostPending.delete(frame.id); clearTimeout(pending.timer);
+      if (frame.jsonrpc !== '2.0' || Object.keys(frame).some(key => !['jsonrpc', 'id', 'result', 'error'].includes(key)) || ('result' in frame) === ('error' in frame) || frame.error) pending.reject(new Error('Memory outcome unknown; do not retry.'));
+      else pending.resolve(frame.result);
+      return;
+    }
+    // Late/unsolicited replies cannot be interpreted as new requests.
+    if (frame.method === undefined) return;
     if (frame.jsonrpc !== '2.0' || typeof frame.method !== 'string' || !['string', 'number'].includes(typeof frame.id)) {
       send({ jsonrpc: '2.0', id: frame.id ?? null, error: { code: -32600, message: 'request needs JSON-RPC 2.0 method and id' } }); return;
     }

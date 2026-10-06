@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Literal
+from typing import Literal, Annotated, Union
 
-from pydantic import Field
+from pydantic import Field, ConfigDict, TypeAdapter, model_validator, model_serializer
 from tui_gateway.contracts.base import Params, Result
 from tui_gateway.contracts.registry import SERVER_REQUESTS, server_request
 
@@ -114,10 +114,107 @@ def read_agent_messages(args, *, session_id=""):
     return json.dumps({"messages": [], "unavailable": True})
 
 
+class MemoryBase(Params):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class MemoryRead(MemoryBase):
+    action: Literal["read"]
+    ownerId: str = Field(min_length=1, max_length=128)
+    key: str = Field(min_length=1, max_length=128)
+
+
+class MemorySearch(MemoryBase):
+    action: Literal["search"]
+    ownerId: str = Field(min_length=1, max_length=128)
+    query: str = Field(min_length=1, max_length=4096)
+
+
+class MemoryWrite(MemoryBase):
+    action: Literal["write"]
+    key: str = Field(min_length=1, max_length=128)
+    body: str = Field(min_length=1, max_length=32768)
+    operationId: str = Field(min_length=1, max_length=128)
+
+
+class MemoryGrant(MemoryBase):
+    action: Literal["grant", "revoke"]
+    toAgentId: str = Field(min_length=1, max_length=128)
+    key: str = Field(min_length=1, max_length=128)
+    operationId: str = Field(min_length=1, max_length=128)
+
+
+MemoryArguments = TypeAdapter(Annotated[Union[MemoryRead, MemorySearch, MemoryWrite, MemoryGrant], Field(discriminator="action")])
+
+
+class MemoryRequest(MemoryBase):
+    # Transport contract carries native context plus the validated discriminated
+    # args. The before validator enforces the exact action shape, not optional
+    # fields that could accidentally widen write/share authority.
+    session_id: str
+    agent_session_id: str
+    tool_call_id: str
+    action: Literal["read", "search", "write", "grant", "revoke"]
+    ownerId: str | None = None
+    key: str | None = None
+    query: str | None = None
+    body: str | None = None
+    operationId: str | None = None
+    toAgentId: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_action(cls, value):
+        if not isinstance(value, dict):
+            raise ValueError("Invalid memory request")
+        MemoryArguments.validate_python({k: v for k, v in value.items()
+            if k not in {"session_id", "agent_session_id", "tool_call_id"}})
+        return value
+
+    @model_serializer(mode="plain")
+    def exact_arguments(self):
+        # Native serializers must not reintroduce other actions' optional fields.
+        return {key: getattr(self, key) for key in self.model_fields_set}
+
+
+class MemoryResult(Result):
+    value: str | None = None
+    entries: list[dict[str, str]] | None = None
+    ok: Literal[True] | None = None
+
+    @model_serializer(mode="plain")
+    def exact_result(self):
+        return {key: getattr(self, key) for key in self.model_fields_set}
+
+
+def worker_memory(args, *, session_id=""):
+    try:
+        arguments = MemoryArguments.validate_python(args).model_dump()
+    except Exception:
+        return json.dumps({"error": "Invalid memory arguments; not submitted."})
+    try:
+        result = _owned_request("yorozu.worker_memory", arguments, session_id)
+        if result is not None:
+            # Adapter validates exact action-specific replies before this point.
+            return json.dumps(result)
+    except Exception:
+        pass
+    return json.dumps({"error": "Memory outcome unknown. Do not automatically retry."})
+
+
 def register(ctx):
     from toolsets import create_custom_toolset
     # Prevent the native empty-selection => ALL fallback for a chat-only agent.
     create_custom_toolset("yorozu_empty", "No model tools", tools=[])
+    if ctx.get_config("workerMemory", False):
+        if "yorozu.worker_memory" not in SERVER_REQUESTS:
+            server_request("yorozu.worker_memory", params=MemoryRequest, result=MemoryResult,
+                doc="Owned uniform memory transport only.")
+        ctx.register_tool("worker_memory", "yorozu_memory", {
+            "name": "worker_memory",
+            "description": "Read/search owned or explicitly shared host memory, write your memory, or explicitly grant/revoke a peer's access. Never retry uncertain mutations. Identity comes from the native runtime, not tool arguments.",
+            "parameters": MemoryArguments.json_schema(),
+        }, worker_memory)
     if not ctx.get_config("team", False):
         return
     for name, params, result in [

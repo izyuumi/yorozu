@@ -51,3 +51,28 @@ Tracked-source checks do **not** attest untracked/ignored Python import inputs o
 `node --test packages/harness-plugins/hermes/adapter.test.mjs` uses synthetic native protocol fixtures. It verifies typed choices, exact control receipts, no fake peer turns, durable inbox/restart deduplication, native tool/session identity and unsafe connection refusal. Optional source/interpreter tests require separately authorized `YOROZU_HERMES_TEST_SOURCE` and `YOROZU_HERMES_TEST_PYTHON`; ordinary protocol runs leave them unset. Fixtures do not prove native discovery, model/subscription access, OS sandbox enforcement, native UI or product acceptance.
 
 Native seams: `tui_gateway/contracts/{sessions,prompt_voice,server_requests,events}.py`, `tui_gateway/server_requests.py`, `methods_subagents.py`, `session_notifications.py`, `hermes_cli/plugins.py`, `gateway/session_context.py`, `tools/approval_context.py`, `tools/registry.py` and `toolsets.py`. Package `bootstrap.py`, `platform/`, `adapter.mjs`, `manifest.json` and this README together; changing them invalidates earlier packaged-adapter digests and requires a new verified runtime artifact before delivery.
+
+### Uniform worker memory (host-only opt-in)
+
+`initialize.workerMemory === true` replaces the native `memory` toolset with the
+single `yorozu_memory` / `worker_memory` platform tool. Native memory is explicitly
+disabled, not copied, imported, or shared. The host must provide owned product
+scope and `createAdapter({ callHost })`; unsupported activation fails before
+launch. The host, never a model-provided sender, determines the owning worker.
+`workerMemory` cannot change after initialization. Existing non-uniform profiles
+retain the native-memory path.
+
+The native request `yorozu.worker_memory` must match an owned live/stored session
+and an unclaimed `tool.start` for `worker_memory`. Only the exact action arguments
+are forwarded to `callHost('worker.memory', args)`: read/search name `ownerId`,
+write names key/body/operationId, and explicit grant/revoke name
+`toAgentId`/key/operationId. No automatic grants or sender/actor arguments exist.
+The private stdio server supports correlated host replies with at most 32 pending
+memory calls and a 30-second timeout. Unknown outcomes are never retried. Strings
+are bounded (128-byte identifiers/keys, 4 KiB query, 32 KiB body), results and the
+256 KiB transport frame remain bounded, and search returns at most 64 entries.
+
+The synthetic tests exercise actual adapter gateway handling and the bidirectional
+`serve` stream path, not a live provider or OS isolation. Optional pinned-native
+checks also verify conditional tool discovery and native memory initialization;
+they stay skipped without the separately authorized source and interpreter.

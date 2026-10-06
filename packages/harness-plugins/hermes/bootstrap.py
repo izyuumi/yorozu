@@ -15,13 +15,16 @@ def verify():
         from toolsets import resolve_toolset, validate_toolset
         discover_plugins()
         requested = os.environ.get("HERMES_TUI_TOOLSETS", "").split(",")
-        supported = {"file", "terminal", "delegation", "memory", "web", "browser", "yorozu_platform", "yorozu_empty"}
+        supported = {"file", "terminal", "delegation", "memory", "web", "browser", "yorozu_platform", "yorozu_empty", "yorozu_memory"}
         if not requested or any(name not in supported or not validate_toolset(name) for name in requested):
             raise RuntimeError("Unverified scoped native toolset; refusing fallback.")
         if resolve_toolset("yorozu_empty"):
             raise RuntimeError("Chat-only native toolset is not empty.")
         if "yorozu_platform" in requested and set(resolve_toolset("yorozu_platform")) != {"send_agent_message", "read_agent_messages"}:
             raise RuntimeError("Platform messaging registration is unavailable.")
+        if "yorozu_memory" in requested:
+            if "memory" in requested or set(resolve_toolset("yorozu_memory")) != {"worker_memory"}:
+                raise RuntimeError("Uniform memory selection is unavailable or has dual sources.")
         from model_tools import get_tool_definitions
         # The profile is already an isolated host resource. Native memory and
         # delegation settings are owned by Hermes, not Yorozu feature flags.
@@ -34,6 +37,10 @@ def verify():
         expected = {name for toolset in requested for name in resolve_toolset(toolset)}
         if not names.issubset(expected):
             raise RuntimeError("Native model catalog exceeds agent tool scope.")
+        if "yorozu_memory" in requested and "worker_memory" not in names:
+            raise RuntimeError("Uniform memory is not exposed.")
+        if "yorozu_memory" not in requested and "worker_memory" in names:
+            raise RuntimeError("Uniform memory was exposed without authorization.")
         if "yorozu_platform" in requested and not {"send_agent_message", "read_agent_messages"}.issubset(names):
             raise RuntimeError("Scoped platform messaging is not exposed.")
     return {"toolsets": selected, "tools": sorted(names)}
