@@ -36,10 +36,10 @@ const sealedSourceIntegrity = options.get('--sealed-source') === 'host-verified'
   await run('/usr/bin/git', ['-C', source, 'diff', '--quiet', 'HEAD', '--'], { env });
   const patch = await run('/usr/bin/git', ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--abbrev=8', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { env, maxBuffer: 512 * 1024 });
   assert.equal(createHash('sha256').update(patch.stdout).digest('hex'), CURATED_RUNTIME.patchSha256);
-  if (git || gitReadRootsRequested) throw new Error('host-verified sealed source excludes --git/--git-read-roots');
   return { kind: 'sealed-inventory-v1', sourceSha: CURATED_RUNTIME.sourceCommit, patchSha256: CURATED_RUNTIME.patchSha256 };
 })() : undefined;
 const gitReadRootsRequested = options.has('--git-read-roots');
+if (sealedSourceIntegrity && (git || gitReadRootsRequested)) throw new Error('host-verified sealed source excludes --git/--git-read-roots');
 const readRootList = value => value.startsWith('[') ? JSON.parse(value) : value.split(':').filter(Boolean);
 const gitReadRoots = options.has('--git-read-roots') ? await Promise.all(readRootList(options.get('--git-read-roots')).map(path => realpath(path))) : [];
 const output = resolve(required('--output'));
