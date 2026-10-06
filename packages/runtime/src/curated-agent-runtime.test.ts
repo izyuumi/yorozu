@@ -217,5 +217,6 @@ defineTest.skipIf(!sealedResources)("sealed OpenClaw preparation hands the adapt
   expect(built.configuration.initialize).toMatchObject({ sourceIntegrity: { kind: "sealed-inventory-v1", sourceSha: OPENCLAW_RUNTIME_PIN.sourceSha, patchSha256: OPENCLAW_RUNTIME_PIN.patchSha256 }, node: join(sealed, "node") });
   expect(built.configuration.initialize).not.toHaveProperty("git");
   expect(built.runtime.readPaths.some(p => p.includes("homebrew") || p.includes("Xcode"))).toBe(false);
+  expect(built.runtime.brokerPorts).toEqual([53717, 32146]); // inference broker + the adapter's own Gateway lease port
   expect(acquire).toHaveBeenCalledTimes(1); expect(release).not.toHaveBeenCalled();
 });

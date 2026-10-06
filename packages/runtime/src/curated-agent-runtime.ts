@@ -319,7 +319,9 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
       return { configuration: { pluginId: agent.pluginId, command: node, args: [adapter], upstreamVersion: sourceConfig.version,
         initialize: { upstreamVersion: sourceConfig.version, providerConfigPath, ...(agent.pluginId === "hermes" ? { python, sourcePath: source, ...(sealed ? { sourceIntegrity: { kind: "sealed-inventory-v1", sourceSha: HERMES_RUNTIME_PIN.sourceSha, inventorySha256: SEALED_HERMES_SOURCE_SHA256 } } : {}), provider: "custom:yorozu-local-proof", model: broker.model }
           : { source, node: gatewayNode, gatewayPort: listener!.port, ...(sealedSourceIntegrity ? { sourceIntegrity: sealedSourceIntegrity } : {}), ...(config.openclaw!.nodeIntegrity ? { nodeIntegrity: { ...config.openclaw!.nodeIntegrity } } : {}) }) } },
-      runtime: { command: node, args: [adapter], runtimeDir: scratch, readPaths: curated, brokerPorts: [broker.port], ...(listener ? { inheritedListeners: [listener] } : {}) } };
+      // The OpenClaw adapter dials the Gateway it hosts on the inherited loopback lease;
+      // a lease alone grants inbound only, so that port is an explicit outbound grant too.
+      runtime: { command: node, args: [adapter], runtimeDir: scratch, readPaths: curated, brokerPorts: [broker.port, ...(listener ? [listener.port] : [])], ...(listener ? { inheritedListeners: [listener] } : {}) } };
     } catch (error) { if (listener) await releaseHostListener(listener); throw error; }
   };
 }

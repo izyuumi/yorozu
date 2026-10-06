@@ -224,7 +224,9 @@ export async function prepareRuntime(params) {
     // verified the same facts outside and supplied the exact record checked above.
     const git = params.git === undefined ? '/usr/bin/git' : await realpath(absolute(params.git, 'git'));
     await regular(git, 16 * 1024 * 1024);
-    const gitOptions = { maxBuffer: 4096, env: { PATH: '/usr/bin:/bin', TMPDIR: scoped.profileDir, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
+    // Subprocesses never inherit this adapter's working directory: the sandbox grants
+    // the private profile, not whatever directory the host process was launched from.
+    const gitOptions = { maxBuffer: 4096, cwd: scoped.profileDir, env: { PATH: '/usr/bin:/bin', TMPDIR: scoped.profileDir, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
     const revision = await exec(git, ['-C', source, 'rev-parse', 'HEAD'], gitOptions);
     if (revision.stdout.trim() !== CURATED_RUNTIME.sourceCommit) throw invalid('OpenClaw source commit does not match the explicit curated pin; stock sources are gated');
     await exec(git, ['-C', source, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
@@ -254,7 +256,7 @@ export async function prepareRuntime(params) {
   if (![NATIVE_PINS.node.binarySha256, ...(nodeIntegrity ? [nodeIntegrity.sha256] : [])].includes(sha(await readFile(node)))) throw invalid('Node binary does not match the development pin or the trusted sealed integrity record');
   const build = JSON.parse(await readFile(join(source, 'dist', 'build-info.json'), 'utf8'));
   if (build.commit !== CURATED_RUNTIME.sourceCommit || build.version !== UPSTREAM.version) throw invalid('OpenClaw build metadata does not match the explicit curated source pin');
-  const probe = await exec(node, ['--input-type=module', '-e', 'process.stdout.write(JSON.stringify({version:process.versions.node,sqlite:!!process.getBuiltinModule("node:sqlite")}))'], { env: { PATH: '/usr/bin:/bin', NODE_DISABLE_COMPILE_CACHE: '1' }, maxBuffer: 4096 });
+  const probe = await exec(node, ['--input-type=module', '-e', 'process.stdout.write(JSON.stringify({version:process.versions.node,sqlite:!!process.getBuiltinModule("node:sqlite")}))'], { cwd: scoped.profileDir, env: { PATH: '/usr/bin:/bin', NODE_DISABLE_COMPILE_CACHE: '1' }, maxBuffer: 4096 });
   const nodeInfo = JSON.parse(probe.stdout);
   if (!nodeInfo.sqlite || nodeInfo.version !== NATIVE_PINS.node.version) throw invalid('unsupported OpenClaw Node runtime; automatic recovery/install is disabled');
   await directory(scoped.profileDir);
