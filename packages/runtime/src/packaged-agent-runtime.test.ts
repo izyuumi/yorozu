@@ -95,7 +95,7 @@ test("factory delegates only fixed packaged paths after validation and ignores e
   // inventory its preparation is unavailable before any broker/listener work.
   await expect(factory({ pluginId: "openclaw" } as any, {} as any, {} as any)).rejects.toMatchObject({ capability: "runtime", message: "The packaged OpenClaw development runtime is unavailable or its sealed inventory is invalid." });
   expect(run).toHaveBeenCalledTimes(1);
-  expect(platform.catalog!().harnesses).toEqual(expect.arrayContaining([expect.objectContaining({ id: "openclaw", available: false, modes: [], capabilities: [] })]));
+  expect(platform.catalog!().harnesses).toEqual(expect.arrayContaining([expect.objectContaining({ id: "openclaw", available: false, modes: [], capabilities: ["worker-memory-v1"] })]));
   fs.writeFileSync(join(f.runtime, "plugin/bootstrap.py"), "Changed after first preparation");
   await expect(factory(...args)).rejects.toMatchObject({ capability: "runtime" }); expect(run).toHaveBeenCalledTimes(1);
 });

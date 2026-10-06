@@ -265,7 +265,7 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
   return { ...workers, catalog: () => {
     const catalog = packaged.catalog!();
     return { ...catalog, harnesses: catalog.harnesses?.map(h => ({ ...h,
-      capabilities: h.available ? [...h.capabilities, "worker-memory-v1"] : h.capabilities })) };
+      capabilities: ["hermes", "openclaw"].includes(h.id) ? [...h.capabilities, "worker-memory-v1"] : h.capabilities })) };
   } };
 }
 
