@@ -90,7 +90,12 @@ lines.on('line', line => {
     }
     send({ id: frame.id, result: { turn: { id: 'fixture-turn' } } });
     if (mode === 'STEER' || mode === 'STEER_LOST') {
-      setTimeout(() => send({ method: 'item/agentMessage/delta', params: { threadId: session, itemId: 'reply', delta: 'Waiting for controlled change' } }), 30);
+      const readinessDelay = Number(process.env.CODEX_FIXTURE_READINESS_DELAY_MS || 30);
+      log({ readiness: 'scheduled', delayMs: readinessDelay, at: Date.now() });
+      setTimeout(() => {
+        log({ readiness: 'emitted', at: Date.now() });
+        send({ method: 'item/agentMessage/delta', params: { threadId: session, itemId: 'reply', delta: 'Waiting for controlled change' } });
+      }, readinessDelay);
       const timer = setInterval(() => {
         if (!fs.existsSync(process.env.CODEX_FIXTURE_RELEASE)) return;
         clearInterval(timer);
@@ -322,8 +327,11 @@ test("settings subcommands retain the baseline CLI without starting the secretar
   } finally { rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 
-test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never becomes another execution", async (mode) => {
+test.each([
+  ["STEER", 30], ["STEER_LOST", 30], ["STEER", 1250], ["STEER_LOST", 1250],
+] as const)("%s reaches the same provider turn and never becomes another execution (readiness %dms)", async (mode, readinessDelay) => {
   const { temp, state, rows } = fixture();
+  vi.stubEnv("CODEX_FIXTURE_READINESS_DELAY_MS", String(readinessDelay));
   const release = join(temp, "release-task");
   const resultFile = join(temp, "result.txt");
   vi.stubEnv("CODEX_FIXTURE_RELEASE", release);
@@ -346,7 +354,32 @@ test.each(["STEER", "STEER_LOST"])("%s reaches the same provider turn and never 
     sidecar = serveLedger({ stateDir: state, relayUrl: "ws://127.0.0.1:9", log: () => {} });
     await connect();
     send(message("steer-original", mode));
-    await vi.waitFor(() => expect(events.some((event) => event.kind === "message" && event.data.text === "Waiting for controlled change")).toBe(true));
+    // Wait on the actual service event, not a guessed sleep or a retry of submission.
+    // Five seconds bounds cold Rust/Node startup + the deterministic delayed peer;
+    // all subsequent same-turn, receipt-loss and no-reexecution assertions stay exact.
+    const started = performance.now();
+    const ready = () => events.some(event => event.kind === "message" && event.data.text === "Waiting for controlled change");
+    const diagnostic = () => {
+      let protocol: any[] = [];
+      try { protocol = rows(); } catch { /* Missing trace is reported as missing, not readiness. */ }
+      return JSON.stringify({ mode, readinessDelay, elapsedMs: Math.round(performance.now() - started),
+        protocol: protocol.map(row => ({ method: row.method, readiness: row.readiness, delayMs: row.delayMs, at: row.at })),
+        events: events.map(event => ({ kind: event.kind, id: event.id,
+          text: event.kind === "message" ? event.data.text : undefined })),
+        durable: readThreadEvents(SECRETARY_THREAD_ID, state).map(event => ({ kind: event.kind, id: event.id })),
+        threads: listThreads(state).map(thread => ({ id: thread.id, nativeTurn: thread.nativeTurn })) });
+    };
+    if (readinessDelay > 1000) {
+      // Explicitly reproduce why the old one-second polling default is insufficient.
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      expect(ready(), diagnostic()).toBe(false);
+      expect(rows().filter(row => row.method === "turn/steer")).toHaveLength(0);
+    }
+    await vi.waitFor(() => expect(ready(), diagnostic()).toBe(true), { timeout: 5000, interval: 25 });
+    const readiness = rows().filter(row => row.readiness);
+    expect(readiness.map(row => row.readiness)).toEqual(["scheduled", "emitted"]);
+    expect(readiness[1].at - readiness[0].at).toBeGreaterThanOrEqual(readinessDelay - 10);
+    console.info(`STEER_READINESS ${JSON.stringify({ mode, readinessDelay, elapsedMs: Math.round(performance.now() - started), readiness })}`);
     const change = message("steer-change", "write B instead", "steer");
     send(change);
     await vi.waitFor(() => expect(rows().filter((row) => row.method === "turn/steer")).toHaveLength(1));
