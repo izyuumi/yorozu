@@ -87,7 +87,7 @@ test("factory delegates only fixed packaged paths after validation and ignores e
   expect(make).toHaveBeenCalledExactlyOnceWith(store, { node: { executable: join(f.resources, "node"), version: "26.10.0" },
     hermes: { version: "0.21.5", sourceSha: "f97608f178d1ffeca59860195ab7da295f7c8e5f", source: join(f.runtime, "source"), sourceIntegrity: "sealed-inventory-v1", adapter: join(f.runtime, "plugin/adapter.mjs"),
       python: { executable: join(f.runtime, "python/bin/python3.13"), canonicalExecutable: join(f.runtime, "python/bin/python3.13"), version: "3.13.16", libraryRoots: [join(f.runtime, "python/lib"), join(f.runtime, "python/share")] } },
-    openclaw: { version: "2026.9.8", sourceSha: "f04797ef4d24f3da0f9df74acd58ab773ab5f11e", source: join(openclawRuntime, "source"), adapter: join(openclawRuntime, "plugin/adapter.mjs"), sourceIntegrity: "sealed-inventory-v1" },
+    openclaw: { version: "2026.9.8", sourceSha: "f04797ef4d24f3da0f9df74acd58ab773ab5f11e", source: join(openclawRuntime, "source"), adapter: join(openclawRuntime, "plugin/adapter.mjs"), sourceIntegrity: "sealed-inventory-v1", node: { executable: join(openclawRuntime, "node"), version: "26.10.0" } },
     selectBroker });
   const args = [{ pluginId: "hermes" }, {}, {}] as any;
   await expect(factory(...args)).rejects.toMatchObject({ capability: "auth" }); expect(run).toHaveBeenCalledTimes(1);

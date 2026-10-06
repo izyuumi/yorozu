@@ -24,6 +24,8 @@ for (let index = 2; index < process.argv.length; index += 2) options.set(process
 const required = key => { const value = options.get(key); if (!value || !value.startsWith('/')) throw new Error(`${key} must be an authorized absolute task path`); return value; };
 const source = await realpath(required('--source'));
 const node = await realpath(required('--node'));
+// Signed bundle proofs: the host-verified sealed Node hash (nested-signed stage) replaces the unsigned pin.
+const nodeIntegrity = options.has('--node-integrity') ? { sha256: options.get('--node-integrity'), hashStage: 'after-nested-signing-before-outer-bundle-signing' } : undefined;
 const git = options.has('--git') ? await realpath(required('--git')) : undefined;
 const readRootList = value => value.startsWith('[') ? JSON.parse(value) : value.split(':').filter(Boolean);
 const gitReadRoots = options.has('--git-read-roots') ? await Promise.all(readRootList(options.get('--git-read-roots')).map(path => realpath(path))) : [];
@@ -159,7 +161,7 @@ async function startHost(agentId, fixedPort) {
   assert.equal(launch.command, '/usr/bin/sandbox-exec'); assert.match(launch.policy, /\(deny default\)/); assert.ok(!launch.policy.includes('(allow network-bind'));
   assert.ok(launch.policy.includes(`(subpath ${JSON.stringify(sqlRoot)})`), 'host SQL root must be denied to the native process');
   await writeFile(join(profileDir, 'proof-provider.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${providerPort}/v1`, model: 'synthetic', api: 'openai-responses' }), { mode: 0o600 });
-  const initialize = { upstreamVersion: UPSTREAM.version, source, node, ...(git ? { git } : {}), workspace: agent.workspace, profileDir, agentId, workerMemory: true,
+  const initialize = { upstreamVersion: UPSTREAM.version, source, node, ...(nodeIntegrity ? { nodeIntegrity } : {}), ...(git ? { git } : {}), workspace: agent.workspace, profileDir, agentId, workerMemory: true,
     scope: { allowedTools: [...base.allowedTools], directories: directories.map(grant => ({ ...grant })), workspace: agent.workspace, memoryDir: agent.memoryDir, deniedRoots },
     isolation: launch.isolation, providerConfigPath: join(profileDir, 'proof-provider.json'), platform: { team: false, computer: false } };
   const host = { agentId, profileDir, port: lease.port, launch, initialize, events: [], turns: new Map(), active: undefined, sessionId: undefined, conversationId: `conversation-${agentId}`, bindingId: `binding-${agentId}` };

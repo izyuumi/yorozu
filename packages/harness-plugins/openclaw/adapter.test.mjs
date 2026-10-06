@@ -752,3 +752,11 @@ test('managed shutdown receipt waits for the profile ownership release that foll
   await gateway.shutdown();
   assert.equal(released, true); assert.equal(gateway.closed, true);
 });
+test('sealed Node integrity is a trusted nested-signed host record, never free-form', async () => {
+  const { validateNodeIntegrity } = await import('./adapter.mjs');
+  assert.equal(validateNodeIntegrity(undefined), undefined);
+  assert.deepEqual(validateNodeIntegrity({ sha256: 'a'.repeat(64), hashStage: 'after-nested-signing-before-outer-bundle-signing' }), { sha256: 'a'.repeat(64), hashStage: 'after-nested-signing-before-outer-bundle-signing' });
+  for (const bad of [{ sha256: 'a'.repeat(64), hashStage: 'assembled-before-signing' }, { sha256: 'xyz', hashStage: 'after-nested-signing-before-outer-bundle-signing' }, { sha256: 'a'.repeat(64) }, { sha256: 'a'.repeat(64), hashStage: 'after-nested-signing-before-outer-bundle-signing', origin: 'chat' }, 'a'.repeat(64)]) assert.throws(() => validateNodeIntegrity(bad), /integrity record|object|unsupported fields/);
+  const f = await memoryFixture();
+  await assert.rejects(f.adapter.handle('turn.submit', { ...turn, nodeIntegrity: { sha256: 'a'.repeat(64), hashStage: 'after-nested-signing-before-outer-bundle-signing' } }), /immutable after initialize/);
+});

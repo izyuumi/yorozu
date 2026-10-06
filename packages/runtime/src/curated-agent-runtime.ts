@@ -70,6 +70,10 @@ export interface CuratedHermesRuntime { version: "0.21.5"; sourceSha: typeof HER
  * identity/full-diff checks still run against its minimal detached metadata. */
 export interface CuratedOpenClawRuntime {
   version: "2026.9.8"; sourceSha: typeof OPENCLAW_RUNTIME_PIN.sourceSha; source: string; adapter: string; sourceIntegrity?: "sealed-inventory-v1";
+  /** Sealed Node that runs the Gateway (the adapter itself runs under the host Node). */
+  node?: CuratedNodeRuntime;
+  /** Trusted verified hash of a nested-signed sealed Node, from the sealed inventory only. */
+  nodeIntegrity?: { sha256: string; hashStage: "after-nested-signing-before-outer-bundle-signing" };
 }
 /** Minted/selected by trusted host code, never a catalog, environment or client record.
  * The broker must bind numeric loopback, authenticate this fresh bearer, and enforce
@@ -159,8 +163,16 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
   fields(supplied.node, ["executable", "version", "libraryRoots"]);
   fields(supplied.hermes, ["version", "sourceSha", "source", "adapter", "python", "sourceIntegrity"]);
   fields(supplied.hermes.python, ["executable", "canonicalExecutable", "version", "libraryRoots", "venvRoot"]);
-  if (supplied.openclaw) fields(supplied.openclaw, ["version", "sourceSha", "source", "adapter", "sourceIntegrity"]);
-  if (supplied.node.version !== "26.10.0" || supplied.hermes.version !== HERMES_RUNTIME_PIN.version || supplied.hermes.sourceSha !== HERMES_RUNTIME_PIN.sourceSha
+  if (supplied.openclaw) {
+    fields(supplied.openclaw, ["version", "sourceSha", "source", "adapter", "sourceIntegrity", "node", "nodeIntegrity"]);
+    if (supplied.openclaw.node) fields(supplied.openclaw.node, ["executable", "version", "libraryRoots"]);
+    if (supplied.openclaw.nodeIntegrity) {
+      fields(supplied.openclaw.nodeIntegrity, ["sha256", "hashStage"]);
+      if (!/^[a-f0-9]{64}$/.test(supplied.openclaw.nodeIntegrity.sha256) || supplied.openclaw.nodeIntegrity.hashStage !== "after-nested-signing-before-outer-bundle-signing"
+        || supplied.openclaw.sourceIntegrity !== "sealed-inventory-v1") throw new CuratedRuntimeUnavailable("runtime", "Unsupported sealed Node integrity record");
+    }
+  }
+  if (supplied.node.version !== "26.10.0" || supplied.openclaw?.node && supplied.openclaw.node.version !== "26.10.0" || supplied.hermes.version !== HERMES_RUNTIME_PIN.version || supplied.hermes.sourceSha !== HERMES_RUNTIME_PIN.sourceSha
     || supplied.openclaw && (supplied.openclaw.version !== OPENCLAW_RUNTIME_PIN.version || supplied.openclaw.sourceSha !== OPENCLAW_RUNTIME_PIN.sourceSha)
     || typeof supplied.selectBroker !== "function") throw new CuratedRuntimeUnavailable("runtime", "Unsupported curated runtime pin or broker selector");
   if (supplied.hermes.sourceIntegrity !== undefined && supplied.hermes.sourceIntegrity !== "sealed-inventory-v1") throw new CuratedRuntimeUnavailable("runtime", "Unsupported source integrity contract");
@@ -225,7 +237,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
     // A sealed OpenClaw input keeps minimal detached Git metadata, so the ordinary exact
     // commit/clean-tree checks still run here and the adapter verifies the full diff.
     const readPaths = [...(sealed ? [source] : await pinnedSource(source, sourceConfig.sourceSha, scratch)), node, canonical(dirname(adapter), true), ...roots(config.node.libraryRoots ?? [])];
-    let python: string | undefined;
+    let python: string | undefined; let gatewayNode = node;
     if (agent.pluginId === "hermes") {
       const p = config.hermes.python, target = canonical(p.canonicalExecutable), parent = canonical(dirname(p.executable), true);
       if (resolve(p.executable) !== p.executable || realpathSync(p.executable) !== target) throw new CuratedRuntimeUnavailable("runtime", "Selected Python link does not resolve to its explicit canonical interpreter");
@@ -245,6 +257,11 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
       const metadata = readFileSync(join(source, "pyproject.toml"), "utf8");
       if (!/^version\s*=\s*"0\.21\.5"\s*$/m.test(metadata)) throw new CuratedRuntimeUnavailable("runtime", "Hermes package metadata differs from its pin");
     } else {
+      if (config.openclaw!.node) {
+        gatewayNode = canonical(config.openclaw!.node.executable);
+        if (await inspect(gatewayNode, ["-p", "process.versions.node"]) !== config.openclaw!.node.version) throw new CuratedRuntimeUnavailable("runtime", "Sealed OpenClaw Node version differs from the explicit Node26 pin");
+        readPaths.push(gatewayNode, ...roots(config.openclaw!.node.libraryRoots ?? []));
+      }
       // Read-only source/build checks. This code never invokes install/build/Gateway.
       const packageInfo = readJson(join(source, "package.json"), 128 * 1024, false);
       if (packageInfo?.name !== "openclaw" || packageInfo?.version !== OPENCLAW_RUNTIME_PIN.version) throw new CuratedRuntimeUnavailable("runtime", "OpenClaw package metadata differs from its pin");
@@ -277,7 +294,7 @@ export function createCuratedAgentRuntimeFactory(store: PersonAgentStore, suppli
         ...(agent.pluginId === "hermes" ? { apiMode: "codex_responses" } : { api: "openai-responses" }) });
       return { configuration: { pluginId: agent.pluginId, command: node, args: [adapter], upstreamVersion: sourceConfig.version,
         initialize: { upstreamVersion: sourceConfig.version, providerConfigPath, ...(agent.pluginId === "hermes" ? { python, sourcePath: source, ...(sealed ? { sourceIntegrity: { kind: "sealed-inventory-v1", sourceSha: HERMES_RUNTIME_PIN.sourceSha, inventorySha256: SEALED_HERMES_SOURCE_SHA256 } } : {}), provider: "custom:yorozu-local-proof", model: broker.model }
-          : { source, node, gatewayPort: listener!.port }) } },
+          : { source, node: gatewayNode, gatewayPort: listener!.port, ...(config.openclaw!.nodeIntegrity ? { nodeIntegrity: { ...config.openclaw!.nodeIntegrity } } : {}) }) } },
       runtime: { command: node, args: [adapter], runtimeDir: scratch, readPaths: curated, brokerPorts: [broker.port], ...(listener ? { inheritedListeners: [listener] } : {}) } };
     } catch (error) { if (listener) await releaseHostListener(listener); throw error; }
   };

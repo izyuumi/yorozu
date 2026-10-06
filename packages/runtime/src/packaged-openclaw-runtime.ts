@@ -53,6 +53,8 @@ export interface VerifiedPackagedOpenClawRuntime {
   readonly entries: number;
   /** Nested (Mach-O) signing may only change bytes recorded by the packager's reseal. */
   readonly hashStage: typeof OPENCLAW_HASH_STAGES[number];
+  /** Verified bytes of the sealed Node; equals the unsigned pin until nested signing resealed it. */
+  readonly nodeSha256: string;
 }
 /** Rechecks the exact inventory each preparation; self-described digests require
  * an immutable, trusted outer bundle/signature. No success cache, no fallback. */
@@ -147,17 +149,31 @@ export async function verifyPackagedOpenClawArtifact(resourcesRoot: string): Pro
         } finally { await file.close(); }
       }
     }));
-    return Object.freeze({ productionReady: false, dependencyArchiveProvenanceVerified: evidence.archiveProvenanceVerified === true, dependencyEvidenceKind: evidence.kind, inventorySha256: a.inventorySha256, entries: expected.size, hashStage: a.hashStage });
+    const nodeRow = expected.get("node") as Exclude<Row, { link: string }>;
+    return Object.freeze({ productionReady: false, dependencyArchiveProvenanceVerified: evidence.archiveProvenanceVerified === true, dependencyEvidenceKind: evidence.kind, inventorySha256: a.inventorySha256, entries: expected.size, hashStage: a.hashStage, nodeSha256: nodeRow.sha256 });
   } catch { throw new Error(BAD); }
 }
 /** Pure input loader: preserves the existing supervisor's scope/identity, listener,
  * embedding lifetime and broker controls. Never launches or selects a provider. */
 export async function loadPackagedOpenClawRuntime(resourcesRoot: string) {
-  await verifyPackagedOpenClawArtifact(resourcesRoot);
+  const verified = await verifyPackagedOpenClawArtifact(resourcesRoot);
   const root = join(resourcesRoot, "agent-runtimes", "openclaw");
   return Object.freeze({
     node: { executable: join(root, "node"), version: "26.10.0" as const },
     openclaw: { version: "2026.9.8" as const, sourceSha: SEALED_OPENCLAW_PIN.sourceSha,
-      source: join(root, "source"), adapter: join(root, "plugin", "adapter.mjs"), sourceIntegrity: "sealed-inventory-v1" as const },
+      source: join(root, "source"), adapter: join(root, "plugin", "adapter.mjs"), sourceIntegrity: "sealed-inventory-v1" as const,
+      // After nested signing the sealed Node no longer matches the adapter's unsigned pin;
+      // the verified inventory (under the outer bundle signature) is the trusted substitute.
+      ...(verified.hashStage === "after-nested-signing-before-outer-bundle-signing" ? { nodeIntegrity: { sha256: verified.nodeSha256, hashStage: verified.hashStage } } : {}) },
   });
+}
+/** Reads only the sealed Node row of a manifest without full verification; preparation re-verifies everything. */
+export async function readSealedOpenClawNodeIntegrity(resourcesRoot: string): Promise<{ sha256: string; hashStage: "after-nested-signing-before-outer-bundle-signing" } | undefined> {
+  try {
+    const f = await regular(join(resourcesRoot, "agent-runtimes", "openclaw", MANIFEST), 64 * 1024 * 1024);
+    let a: any; try { a = JSON.parse(await f.readFile("utf8")); } finally { await f.close(); }
+    if (a?.hashStage !== "after-nested-signing-before-outer-bundle-signing") return undefined;
+    const row = Array.isArray(a.files) ? a.files.find((r: any) => r?.path === "node") : undefined;
+    return /^[a-f0-9]{64}$/.test(row?.sha256 ?? "") ? { sha256: row.sha256, hashStage: a.hashStage } : undefined;
+  } catch { return undefined; }
 }

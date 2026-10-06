@@ -179,9 +179,19 @@ export function validateWorkerMemory(params) {
   if (!Array.isArray(tools) || tools.some(tool => tool !== 'memory') || tools.length > 1) throw invalid('uniform memory supports only an empty resource scope or exactly [memory]');
   return { workerMemory, memoryGranted: tools.includes('memory') };
 }
+/** Trusted host record only: after nested code signing the sealed Node's bytes differ
+ * from the unsigned development pin. The host supplies the hash it verified from the
+ * sealed inventory under the outer bundle signature; chat or events never can. */
+export function validateNodeIntegrity(value) {
+  if (value === undefined) return undefined;
+  only(value, ['sha256', 'hashStage'], 'nodeIntegrity');
+  if (!/^[a-f0-9]{64}$/.test(value.sha256 ?? '') || value.hashStage !== 'after-nested-signing-before-outer-bundle-signing') throw invalid('unsupported sealed Node integrity record');
+  return { sha256: value.sha256, hashStage: value.hashStage };
+}
 export async function prepareRuntime(params) {
   if (validateLifecycle(params).mode !== 'managed') throw invalid('connected lifecycle must use the connection launcher');
-  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle', 'git', 'workerMemory'], 'initialize');
+  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle', 'git', 'workerMemory', 'nodeIntegrity'], 'initialize');
+  const nodeIntegrity = validateNodeIntegrity(params.nodeIntegrity);
   const memory = validateWorkerMemory(params);
   if (params.platform !== undefined) {
     only(params.platform, ['team', 'computer', 'peers'], 'platform');
@@ -223,7 +233,7 @@ export async function prepareRuntime(params) {
     if (sha(await readFile(join(source, path))) !== digest) throw invalid('native artifact does not match the development pin');
   }
   await regular(node, 256 * 1024 * 1024);
-  if (sha(await readFile(node)) !== NATIVE_PINS.node.binarySha256) throw invalid('Node binary does not match the development pin');
+  if (![NATIVE_PINS.node.binarySha256, ...(nodeIntegrity ? [nodeIntegrity.sha256] : [])].includes(sha(await readFile(node)))) throw invalid('Node binary does not match the development pin or the trusted sealed integrity record');
   const build = JSON.parse(await readFile(join(source, 'dist', 'build-info.json'), 'utf8'));
   if (build.commit !== CURATED_RUNTIME.sourceCommit || build.version !== UPSTREAM.version) throw invalid('OpenClaw build metadata does not match the explicit curated source pin');
   const probe = await exec(node, ['--input-type=module', '-e', 'process.stdout.write(JSON.stringify({version:process.versions.node,sqlite:!!process.getBuiltinModule("node:sqlite")}))'], { env: { PATH: '/usr/bin:/bin', NODE_DISABLE_COMPILE_CACHE: '1' }, maxBuffer: 4096 });
@@ -677,7 +687,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {}, callHos
         revokeAll(); runtime.memory?.bridge.close();
         await runtime.gateway.shutdown(); await writing; return { stopped: runtime.gateway.closed };
       }
-      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'profileDir', 'source', 'node', 'providerConfigPath', 'lifecycle', 'connection', 'git'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
+      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'profileDir', 'source', 'node', 'nodeIntegrity', 'providerConfigPath', 'lifecycle', 'connection', 'git'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
       if (['message.deliver', 'message.receipt', 'action.answer'].includes(method)) return { status: 'unsupported', handoff: 'not-submitted', reason: 'no verified native peer-inbox or action mapping exists for this OpenClaw pin' };
       if (method === 'session.open') {
         required(params.conversationId, 'conversationId'); required(params.bindingId, 'bindingId');

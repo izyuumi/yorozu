@@ -7,7 +7,7 @@ import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathWithin, safeAgentPath } from "./agent-scope.js";
 import { createCuratedAgentRuntimeFactory, CuratedRuntimeUnavailable, HERMES_RUNTIME_PIN, OPENCLAW_RUNTIME_PIN, type CuratedAgentRuntimeConfiguration } from "./curated-agent-runtime.js";
-import { verifyPackagedOpenClawArtifact as verifySealedOpenClaw } from "./packaged-openclaw-runtime.js";
+import { verifyPackagedOpenClawArtifact as verifySealedOpenClaw, readSealedOpenClawNodeIntegrity } from "./packaged-openclaw-runtime.js";
 import { createMinimalWorkerPlatform } from "./worker-platform.js";
 import type { PersonAgentPlatform } from "./person-agent-host.js";
 
@@ -220,20 +220,37 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
       // bearer-uniqueness budget and broker binding are enforced in one place.
       const existing = factories.get(store); if (existing) return existing;
       services.bindStore?.(store);
-      const factory = createCuratedAgentRuntimeFactory(store, { node: { executable: join(resourcesRoot, "node"), version: "26.10.0" },
-        hermes: { ...HERMES_RUNTIME_PIN, source: join(root, PATHS.source), sourceIntegrity: "sealed-inventory-v1", adapter: join(root, PATHS.adapter),
-          python: { executable: join(root, PATHS.python), canonicalExecutable: join(root, PATHS.python), version: PIN.pythonVersion, libraryRoots: [join(root, "python", "lib"), join(root, "python", "share")] } },
-        openclaw: { version: OPENCLAW_RUNTIME_PIN.version, sourceSha: OPENCLAW_RUNTIME_PIN.sourceSha, source: join(openclawRoot, OPENCLAW_PATHS.source), adapter: join(openclawRoot, OPENCLAW_PATHS.adapter), sourceIntegrity: "sealed-inventory-v1" },
+      const curatedBase = { node: { executable: join(resourcesRoot, "node"), version: "26.10.0" as const },
+        hermes: { ...HERMES_RUNTIME_PIN, source: join(root, PATHS.source), sourceIntegrity: "sealed-inventory-v1" as const, adapter: join(root, PATHS.adapter),
+          python: { executable: join(root, PATHS.python), canonicalExecutable: join(root, PATHS.python), version: PIN.pythonVersion, libraryRoots: [join(root, "python", "lib"), join(root, "python", "share")] } } };
+      const sealedOpenClaw = { version: OPENCLAW_RUNTIME_PIN.version, sourceSha: OPENCLAW_RUNTIME_PIN.sourceSha, source: join(openclawRoot, OPENCLAW_PATHS.source), adapter: join(openclawRoot, OPENCLAW_PATHS.adapter), sourceIntegrity: "sealed-inventory-v1" as const,
+        node: { executable: join(openclawRoot, "node"), version: "26.10.0" as const } };
+      const factory = createCuratedAgentRuntimeFactory(store, { ...curatedBase,
+        openclaw: { ...sealedOpenClaw },
         selectBroker: selected });
+      // The nested-signed sealed Node differs from the adapter's unsigned pin; its verified
+      // inventory hash is the trusted substitute. Each preparation re-verifies the whole
+      // inventory and uses a curated factory bound to the hash it just verified.
+      const sealedFactories = new Map<string, ReturnType<typeof createCuratedAgentRuntimeFactory>>();
       const prepared: import("./person-agent-runtime.js").PersonAgentRuntimeFactory = async (agent, scope, execution) => {
         // Deliberately no cached success: changed payload bytes must fail the next preparation.
         // The sealed verification precedes the curated factory's broker selection and
         // Gateway listener acquisition; it launches nothing and selects no provider.
+        let selectedFactory = factory;
         if (agent.pluginId === "hermes") await verifyPackagedHermesArtifact(resourcesRoot);
-        else if (agent.pluginId === "openclaw") { try { await verifySealedOpenClaw(resourcesRoot); } catch { throw new CuratedRuntimeUnavailable("runtime", BAD_OPENCLAW); } }
+        else if (agent.pluginId === "openclaw") {
+          let verified: Awaited<ReturnType<typeof verifySealedOpenClaw>>;
+          try { verified = await verifySealedOpenClaw(resourcesRoot); } catch { throw new CuratedRuntimeUnavailable("runtime", BAD_OPENCLAW); }
+          if (verified.hashStage === "after-nested-signing-before-outer-bundle-signing") {
+            const integrity = await readSealedOpenClawNodeIntegrity(resourcesRoot);
+            if (!integrity || integrity.sha256 !== verified.nodeSha256) throw new CuratedRuntimeUnavailable("runtime", BAD_OPENCLAW);
+            selectedFactory = sealedFactories.get(verified.nodeSha256) ?? createCuratedAgentRuntimeFactory(store, { ...curatedBase, openclaw: { ...sealedOpenClaw, nodeIntegrity: integrity }, selectBroker: selected });
+            sealedFactories.set(verified.nodeSha256, selectedFactory);
+          }
+        }
         else throw new CuratedRuntimeUnavailable("runtime", "The selected plugin has no packaged runtime.");
         try {
-          const built = await factory(agent, scope, execution);
+          const built = await selectedFactory(agent, scope, execution);
           let released = false;
           return { ...built, release: async () => {
             if (released) return; released = true;
