@@ -22,5 +22,14 @@ python3 "$ROOT/scripts/package-hermes-runtime.py" verify --artifact "$YOROZU_HER
 export YOROZU_REQUIRE_NATIVE_MEMORY=1 YOROZU_HERMES_TEST_SEALED=1
 export YOROZU_HERMES_TEST_SOURCE="$YOROZU_HERMES_RUNTIME_ARTIFACT/source"
 export YOROZU_HERMES_TEST_PYTHON="$YOROZU_HERMES_RUNTIME_ARTIFACT/python/bin/python3.13"
-node --test --test-name-pattern='^native uniform memory discovery replaces vendor memory and preserves messaging checks$' \
-  "$ROOT/packages/harness-plugins/hermes/adapter.test.mjs"
+LOG=$(mktemp "${TMPDIR:-/tmp}/yorozu-native-memory.XXXXXX")
+trap 'rm -f "$LOG"' EXIT HUP INT TERM
+if ! node --test --test-reporter=tap --test-name-pattern='^native uniform memory discovery replaces vendor memory and preserves messaging checks$' \
+  "$ROOT/packages/harness-plugins/hermes/adapter.test.mjs" > "$LOG" 2>&1; then
+  cat "$LOG"; exit 1
+fi
+cat "$LOG"
+# A renamed/deleted/skipped regression is not a successful release gate.
+grep -qx '# tests 1' "$LOG"
+grep -qx '# pass 1' "$LOG"
+grep -qx '# skipped 0' "$LOG"
