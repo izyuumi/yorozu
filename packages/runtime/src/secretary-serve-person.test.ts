@@ -121,7 +121,8 @@ for (const blocked of [false, true]) test(`packaged account composition selects 
     await expect(f.options.personAgentControl({})).rejects.toThrow("reconciliation");
     await expect(f.options.harnessAction({})).rejects.toThrow("reconciliation");
     expect(f.person).not.toHaveBeenCalled();
-  }
+    expect(f.personBind).not.toHaveBeenCalled(); // bind can deliver durable peer messages
+  } else expect(f.personBind).toHaveBeenCalledOnce();
   expect(await f.registered.codex.run({ threadId: "ordinary" })).toEqual({ text: "ordinary" });
   expect(f.planner).not.toHaveBeenCalled(); expect(f.reconcile).not.toHaveBeenCalled(); expect(f.selected).not.toHaveBeenCalled();
   await sidecar.close(); expect(accounts.close).toHaveBeenCalledOnce();
