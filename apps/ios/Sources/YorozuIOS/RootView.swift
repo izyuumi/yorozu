@@ -778,17 +778,21 @@ struct RootView: View {
     @ViewBuilder private var content: some View {
         if SecretaryUI.enabled && !session.isDemo, let model = secretaryModel {
             if showingSecretaryHistory {
-                historyContent
-                    .safeAreaInset(edge: .top, spacing: 0) {
-                        HStack {
-                            Button("Yorozu", systemImage: "bubble.left.and.bubble.right") { showingSecretaryHistory = false }
-                                .accessibilityIdentifier("secretary-return")
-                            Spacer()
-                        }
-                        .padding(.horizontal)
-                        .padding(.vertical, LayoutMetrics.inner)
-                        .background(YorozuPalette.canvas)
+                // History owns a NavigationStack (or NavigationSplitView). An outer top
+                // safeAreaInset overlays that container's native navigation bar on iOS 27,
+                // hiding its title and clipping the toolbar above Search threads. Give the
+                // header its own layout space instead; the native bar keeps its full proposal.
+                VStack(spacing: 0) {
+                    HStack {
+                        Button("Yorozu", systemImage: "bubble.left.and.bubble.right") { showingSecretaryHistory = false }
+                            .accessibilityIdentifier("secretary-return")
+                        Spacer()
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, LayoutMetrics.inner)
+                    .background(YorozuPalette.canvas)
+                    historyContent
+                }
             } else {
                 NavigationStack {
                     SecretaryChatView(model: model,
