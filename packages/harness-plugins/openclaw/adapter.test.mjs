@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath, stat } from
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createAdapter, NativeGateway, CAPABILITIES, UPSTREAM, CURATED_RUNTIME, validateScope, validateGatewayListener, parseProviderBootstrap, nativeGatewayLaunch, runtimeConfig, runtimeEnvironment, validateLifecycle, EXTENSIONS, mergeRuntimeConfig, localDeviceIdentity, signedDevice } from './adapter.mjs';
+import { createAdapter, NativeGateway, CAPABILITIES, UPSTREAM, CURATED_RUNTIME, validateScope, validateGatewayListener, parseProviderBootstrap, nativeGatewayLaunch, runtimeConfig, runtimeEnvironment, validateLifecycle, EXTENSIONS, mergeRuntimeConfig, localDeviceIdentity, signedDevice, validateWorkerMemory, effectiveRuntimeConfig } from './adapter.mjs';
 
 // Contract tests deliberately fake the Gateway. They are not native execution,
 // subscription authentication or interchangeable-harness acceptance evidence.
@@ -575,8 +575,8 @@ test('literal journal binds parsing and full runtime identity and refuses legacy
     const journalPath = join(root, 'journal.json');
     await fixture({ journalPath });
     const saved = JSON.parse(await readFile(journalPath, 'utf8'));
-    assert.equal(saved.schema, 3); assert.equal(saved.inputContract, 'literal-v1');
-    for (const change of [{ schema: 2 }, { inputContract: 'normal-v1' }, { runtimeIdentity: 'foreign-build' }]) {
+    assert.equal(saved.schema, 4); assert.equal(saved.inputContract, 'literal-v1'); assert.equal(saved.memoryContract, 'native-retained-v1');
+    for (const change of [{ schema: 3 }, { inputContract: 'normal-v1' }, { runtimeIdentity: 'foreign-build' }, { memoryContract: 'worker-memory-v1' }]) {
       await writeFile(journalPath, JSON.stringify({ ...saved, ...change }));
       const gateway = new FakeGateway();
       await assert.rejects(fixture({ journalPath, gateway }), /journal identity/);
@@ -587,15 +587,143 @@ test('literal journal binds parsing and full runtime identity and refuses legacy
 });
 
 test('fresh-only owner policy refuses old schema, parsing and build identity; manifest pins agree', async () => {
-  const { NATIVE_PINS, INPUT_CONTRACT, RUNTIME_IDENTITY, validateLiteralOwner } = await import('./literal-migration.mjs');
-  const owner = { schema: 4, inputContract: INPUT_CONTRACT, runtimeIdentity: RUNTIME_IDENTITY, agentId: 'secretary' };
+  const { NATIVE_PINS, INPUT_CONTRACT, RUNTIME_IDENTITY, OWNER_SCHEMA, JOURNAL_SCHEMA, MEMORY_CONTRACTS, memoryContract, validateLiteralOwner } = await import('./literal-migration.mjs');
+  const owner = { schema: OWNER_SCHEMA, inputContract: INPUT_CONTRACT, memoryContract: memoryContract(true), runtimeIdentity: RUNTIME_IDENTITY, agentId: 'secretary' };
   validateLiteralOwner({ ...owner }, owner);
-  for (const change of [{ schema: 3 }, { runtimeIdentity: 'old-build' }, { inputContract: 'normal' }, { agentId: 'foreign' }]) {
+  for (const change of [{ schema: 4 }, { runtimeIdentity: 'old-build' }, { inputContract: 'normal' }, { agentId: 'foreign' }, { memoryContract: memoryContract(false) }]) {
     assert.throws(() => validateLiteralOwner({ ...owner, ...change }, owner), /migration required.*never replay unknown/);
   }
+  // A schema-4 (pre-uniform-memory) owner marker never passes as either memory contract.
+  const legacy = { schema: 4, inputContract: INPUT_CONTRACT, runtimeIdentity: RUNTIME_IDENTITY, agentId: 'secretary' };
+  assert.throws(() => validateLiteralOwner(legacy, owner), /migration required/);
+  assert.throws(() => validateLiteralOwner(legacy, { ...owner, memoryContract: memoryContract(false) }), /migration required/);
+  assert.throws(() => memoryContract('yes'));
   const manifest = JSON.parse(await readFile(new URL('./manifest.json', import.meta.url), 'utf8'));
   assert.deepEqual(manifest.developmentPins, NATIVE_PINS);
+  assert.equal(manifest.inputContract.profileSchema, OWNER_SCHEMA); assert.equal(manifest.inputContract.journalSchema, JOURNAL_SCHEMA);
+  assert.deepEqual(manifest.inputContract.memoryContracts, Object.values(MEMORY_CONTRACTS));
+  assert.equal(manifest.uniformMemory.contract, MEMORY_CONTRACTS.uniform);
   assert.equal(NATIVE_PINS.derivedCommit, CURATED_RUNTIME.sourceCommit);
   assert.equal(NATIVE_PINS.fullUpstreamDiffSha256, CURATED_RUNTIME.patchSha256);
   assert.equal(manifest.runtime.node, NATIVE_PINS.node.version);
+});
+
+// Uniform host-owned memory integration. The bridge is faked here only to observe
+// exact binding/revocation order; real native dispatch is memory-gateway-proof.mjs.
+class FakeBridge {
+  constructor() { this.bindings = []; this.closed = false; }
+  bind(record) { const entry = { ...record, revoked: false }; this.bindings.push(entry); return () => { entry.revoked = true; }; }
+  close() { this.closed = true; }
+  live() { return this.bindings.filter(entry => !entry.revoked).length; }
+}
+async function memoryFixture(options = {}) {
+  const gateway = options.gateway ?? new FakeGateway(); const events = []; const bridge = new FakeBridge();
+  const runtime = { gateway, agentId: 'secretary', workspace: '/unused-private-workspace', authAvailable: true, workerMemory: true, memoryGranted: options.memoryGranted ?? true,
+    ...(options.memoryGranted === false ? {} : { memory: { bridge } }), ...(options.journalPath ? { journalPath: options.journalPath } : {}) };
+  const adapter = createAdapter({ launch: async (params, context) => { assert.equal(typeof context.callHost, 'function'); return runtime; }, emit: event => events.push(event), callHost: async () => ({ ok: true }) });
+  const ready = await adapter.handle('initialize', { workerMemory: true, agentId: 'secretary', scope: { allowedTools: options.memoryGranted === false ? [] : ['memory'] } });
+  await adapter.handle('session.open', open);
+  return { adapter, gateway, events, ready, bridge, runtime };
+}
+test('uniform memory accepts only owned managed profiles with an empty or exact memory resource scope', () => {
+  assert.deepEqual(validateWorkerMemory({}), { workerMemory: false, memoryGranted: false });
+  assert.deepEqual(validateWorkerMemory({ workerMemory: true, scope: { allowedTools: [] } }), { workerMemory: true, memoryGranted: false });
+  assert.deepEqual(validateWorkerMemory({ workerMemory: true, scope: { allowedTools: ['memory'] } }), { workerMemory: true, memoryGranted: true });
+  for (const scope of [{ allowedTools: ['file'] }, { allowedTools: ['memory', 'file'] }, { allowedTools: ['memory', 'memory'] }, {}]) assert.throws(() => validateWorkerMemory({ workerMemory: true, scope }), /only an empty resource scope or exactly \[memory\]/);
+  assert.throws(() => validateWorkerMemory({ workerMemory: 'yes' }), /boolean/);
+  const connection = { version: 1, connectionId: 'x', endpoint: 'ws://127.0.0.1:32146/', nativeAgentId: 'a', sessionKey: 'agent:a:main', sessionId: 's', token: 'inert-fixture-token'.repeat(4) };
+  assert.throws(() => validateWorkerMemory({ workerMemory: true, scope: { allowedTools: [] }, lifecycle: { version: 1, mode: 'connected', connectionId: 'x' }, protocolVersion: 1, upstreamVersion: UPSTREAM.version, agentId: 'a', connection }), /managed owned profile|connected lifecycle/);
+  assert.throws(() => validateWorkerMemory({ workerMemory: true, lifecycle: { version: 1, mode: 'connected', connectionId: 'x' }, protocolVersion: 1, upstreamVersion: UPSTREAM.version, agentId: 'a', connection }), /managed owned profile/);
+  const runtime = { node: '/curated/node', source: '/curated/openclaw', gatewayPort: 32146, workspace: '/own/scratch', profileDir: '/own/runtime', home: '/own/runtime/home', state: '/own/runtime/state', temporary: '/own/runtime/tmp' };
+  assert.deepEqual(nativeGatewayLaunch({ ...runtime, workerMemory: true, memoryGranted: false }).options.stdio, ['ignore', 'pipe', 'pipe', 3]);
+  assert.deepEqual(nativeGatewayLaunch({ ...runtime, workerMemory: true, memoryGranted: true }).options.stdio, ['ignore', 'pipe', 'pipe', 3, 'pipe']);
+});
+test('uniform configuration is applied after the retained merge so old memory plugins/hooks never merge back', () => {
+  const runtime = { agentId: 'secretary', workspace: '/private/agent/workspace', profileDir: '/private/agent/runtime', home: '/private/agent/runtime/isolated-home', state: '/private/agent/runtime/openclaw-state', temporary: '/private/agent/runtime/tmp', node: '/curated/node' };
+  const retained = { plugins: { slots: { memory: 'memory-core' }, entries: { 'memory-core': { enabled: true } }, load: { paths: ['/old/plugins'] } }, hooks: { enabled: true },
+    memory: { search: { enabled: true } }, agents: { defaults: { contextInjection: 'always', compaction: { memoryFlush: { enabled: true } } }, entries: { secretary: { memory: { search: { enabled: true } }, tools: { allow: ['exec'] } }, other: {} } } };
+  const native = effectiveRuntimeConfig(retained, runtime, 12345, 'own-token');
+  assert.equal(native.plugins.slots.memory, 'memory-core'); assert.equal(native.hooks.enabled, true); // retained prototype keeps native settings
+  const granted = effectiveRuntimeConfig(retained, { ...runtime, workerMemory: true, memoryGranted: true }, 12345, 'own-token');
+  assert.equal(granted.plugins.slots.memory, 'none'); assert.deepEqual(Object.keys(granted.plugins.entries), ['yorozu-worker-memory']);
+  assert.deepEqual(granted.plugins.allow, ['yorozu-worker-memory']); assert.equal(granted.plugins.load.paths.length, 1); assert.match(granted.plugins.load.paths[0], /\/memory-plugin$/);
+  assert.equal(granted.hooks.enabled, false); assert.equal(granted.memory.search.enabled, false); assert.equal(granted.agents.defaults.contextInjection, 'never');
+  assert.equal(granted.agents.defaults.compaction.memoryFlush.enabled, false); assert.deepEqual(granted.tools.allow, ['worker_memory']); assert.deepEqual(granted.agents.entries.secretary.tools.allow, ['worker_memory']);
+  assert.equal(granted.agents.entries.other, undefined); assert.equal(granted.gateway.auth.token, 'own-token');
+  const denied = effectiveRuntimeConfig(retained, { ...runtime, workerMemory: true, memoryGranted: false }, 12345, 'own-token');
+  assert.equal(denied.plugins.enabled, false); assert.deepEqual(denied.plugins.load.paths, []); assert.deepEqual(denied.tools.deny, ['*']); assert.equal(denied.plugins.slots.memory, 'none');
+});
+test('uniform memory is acknowledged only after actual launch and requires the private host callback', async () => {
+  const f = await memoryFixture();
+  assert.equal(f.ready.workerMemory, true); assert.equal(f.ready.agentId, 'secretary');
+  const plain = await fixture(); assert.equal(plain.ready.workerMemory, undefined);
+  const noCallback = createAdapter({ launch: async () => ({ gateway: new FakeGateway(), agentId: 'secretary', authAvailable: true, workerMemory: true, memoryGranted: true }) });
+  await assert.rejects(noCallback.handle('initialize', { workerMemory: true, agentId: 'secretary', scope: { allowedTools: ['memory'] } }), /host memory callback/);
+  const detached = createAdapter({ launch: async () => ({ gateway: new FakeGateway(), agentId: 'secretary', authAvailable: true, workerMemory: true, memoryGranted: true }), callHost: async () => ({}) });
+  await assert.rejects(detached.handle('initialize', { workerMemory: true, agentId: 'secretary', scope: { allowedTools: ['memory'] } }), /not actually attached/);
+  await assert.rejects(f.adapter.handle('turn.submit', { ...turn, workerMemory: false }), /immutable after initialize/);
+});
+test('exact native agent/key/SID/run binding precedes chat.send and currency ends with terminal, stop, gaps, yields, loss and shutdown', async () => {
+  const f = await memoryFixture();
+  f.gateway.overrides.set('chat.send', params => { assert.equal(f.bridge.live(), 1); return { status: 'started', runId: params.idempotencyKey }; });
+  assert.equal((await f.adapter.handle('turn.submit', turn)).status, 'accepted');
+  const send = f.gateway.last('chat.send'); const binding = f.bridge.bindings[0];
+  assert.equal(binding.nativeRunId, send.idempotencyKey); assert.equal(binding.nativeSessionId, 'native-session-0'); assert.equal(binding.sessionKey, send.sessionKey);
+  assert.deepEqual(binding.execution, { sessionId: 'native-session-0', runId: turn.runId, attemptId: turn.attemptId });
+  assert.equal(binding.current(), true);
+  f.gateway.emit(payload(f.gateway, 'delta', { deltaText: 'working' })); await f.adapter.drain(); assert.equal(binding.current(), true);
+  f.gateway.emit(payload(f.gateway, 'final', { seq: 1, message: { content: 'done' } })); await f.adapter.drain();
+  assert.equal(binding.revoked, true); assert.equal(binding.current(), false); assert.equal(f.events.at(-1).kind, 'turn.terminal');
+  // Stop: revocation precedes the abort RPC regardless of its acknowledgement.
+  const second = { ...turn, runId: 'host-run-b', attemptId: 'host-attempt-b' };
+  await f.adapter.handle('turn.submit', second); const stopped = f.bridge.bindings[1];
+  f.gateway.overrides.set('chat.abort', () => { assert.equal(stopped.revoked, true); throw new Error('lost ack'); });
+  // A lost abort acknowledgement leaves the native run uncertain, but the memory
+  // authority was already revoked before the RPC; the bridge's controller is final.
+  assert.equal((await f.adapter.handle('run.stop', { ...second, operationId: 'stop' })).status, 'unknown'); assert.equal(stopped.revoked, true);
+  f.gateway.emit(payload(f.gateway, 'aborted')); await f.adapter.drain();
+  // Gap and yield become unknown: no live memory authority remains.
+  for (const [index, kind] of [['c', 'gap'], ['d', 'yield']]) {
+    const run = { ...turn, runId: `host-run-${index}`, attemptId: `host-attempt-${index}` };
+    await f.adapter.handle('turn.submit', run); const current = f.bridge.bindings.at(-1);
+    if (kind === 'gap') { f.gateway.emit(payload(f.gateway, 'delta', { seq: 0, deltaText: 'a' })); f.gateway.emit(payload(f.gateway, 'final', { seq: 2 })); }
+    else f.gateway.emit(payload(f.gateway, 'final', { yielded: true }));
+    await f.adapter.drain(); assert.equal(current.revoked, true); assert.equal(current.current(), false);
+    assert.equal((await f.adapter.handle('session.snapshot', open)).current.state, 'unknown');
+    await f.adapter.handle('run.stop', { ...run, operationId: `clear-${index}` }); f.gateway.emit(payload(f.gateway, 'aborted', { seq: 1 })); await f.adapter.drain();
+  }
+  // Lost send acknowledgement revokes immediately; nothing is replayed.
+  f.gateway.overrides.set('chat.send', () => { throw new Error('socket lost'); });
+  const lost = { ...turn, runId: 'host-run-e', attemptId: 'host-attempt-e' };
+  assert.equal((await f.adapter.handle('turn.submit', lost)).status, 'unknown'); assert.equal(f.bridge.bindings.at(-1).revoked, true);
+  assert.equal(f.bridge.live(), 0);
+  // Connection loss closes the bridge and revokes everything; shutdown does the same.
+  f.gateway.finish('lost socket'); await f.adapter.drain(); assert.equal(f.bridge.closed, true);
+  const g = await memoryFixture(); await g.adapter.handle('turn.submit', turn); assert.equal(g.bridge.live(), 1);
+  await g.adapter.handle('shutdown'); assert.equal(g.bridge.live(), 0); assert.equal(g.bridge.closed, true);
+});
+test('a failed memory admission never submits input, and ungranted uniform mode binds nothing', async () => {
+  const f = await memoryFixture();
+  f.bridge.bind = () => { throw new Error('bridge closed'); };
+  const receipt = await f.adapter.handle('turn.submit', turn);
+  assert.equal(receipt.status, 'rejected'); assert.equal(f.gateway.count('chat.send'), 0);
+  assert.equal((await f.adapter.handle('session.snapshot', open)).current, null);
+  const denied = await memoryFixture({ memoryGranted: false });
+  assert.equal(denied.ready.workerMemory, true);
+  assert.equal((await denied.adapter.handle('turn.submit', turn)).status, 'accepted'); assert.equal(denied.bridge.bindings.length, 0);
+});
+test('uniform journal binds the memory contract; a native-retained journal is refused in uniform mode without RPC', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'uniform-journal-'));
+  try {
+    const journalPath = join(root, 'journal.json');
+    await memoryFixture({ journalPath });
+    const saved = JSON.parse(await readFile(journalPath, 'utf8'));
+    assert.equal(saved.schema, 4); assert.equal(saved.memoryContract, 'worker-memory-v1');
+    await writeFile(journalPath, JSON.stringify({ ...saved, memoryContract: 'native-retained-v1' }));
+    const gateway = new FakeGateway();
+    await assert.rejects(memoryFixture({ journalPath, gateway }), /journal identity/); assert.equal(gateway.calls.length, 0);
+    const plain = new FakeGateway();
+    await writeFile(journalPath, JSON.stringify(saved));
+    await assert.rejects(fixture({ journalPath, gateway: plain }), /journal identity/); assert.equal(plain.calls.length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

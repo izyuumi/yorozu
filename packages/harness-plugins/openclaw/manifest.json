@@ -70,8 +70,17 @@
     "mode": "literal",
     "version": 1,
     "normalFallback": false,
-    "profileSchema": 4,
-    "journalSchema": 3,
-    "migration": "fresh-profile-only; preserve historical profiles stopped/snapshot-only; no unknown replay"
+    "profileSchema": 5,
+    "journalSchema": 4,
+    "memoryContracts": ["worker-memory-v1", "native-retained-v1"],
+    "migration": "fresh-profile-only; preserve historical profiles stopped/snapshot-only; no unknown replay; memory contract bound per profile"
+  },
+  "uniformMemory": {
+    "contract": "worker-memory-v1",
+    "transport": "private-inherited-fd4-duplex; host JSON-RPC worker.memory with worker.memory.cancel",
+    "nativePlugin": "memory-plugin/ (yorozu-worker-memory, context-v2 tool worker_memory)",
+    "resourceTools": ["memory"],
+    "nativeMemory": "slot none; search off; compaction flush off; context injection never; hooks/plugins replaced",
+    "acceptance": "development; see docs/openclaw-sealed-runtime.md and claude-evidence receipts"
   }
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Transport only: the pinned OpenClaw Gateway owns planning and the entire agent loop. */
-import { NATIVE_PINS, INPUT_CONTRACT, RUNTIME_IDENTITY, validateLiteralOwner } from './literal-migration.mjs';
+import { NATIVE_PINS, INPUT_CONTRACT, RUNTIME_IDENTITY, OWNER_SCHEMA, JOURNAL_SCHEMA, memoryContract, validateLiteralOwner } from './literal-migration.mjs';
+import { uniformMemoryConfig, createMemoryHostBridge, attachMemoryHost, createAdapterMemoryClient } from './memory-bridge.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rename, readdir, lstat, realpath, rm, open } from 'node:fs/promises';
@@ -29,6 +30,8 @@ export const CURATED_RUNTIME = Object.freeze({ sourceCommit: 'f04797ef4d24f3da0f
 export const CAPABILITIES = Object.freeze({ backgroundTasks: false, targetedSteer: false, taskStop: false, approvals: false, reconnect: false, attachments: false });
 export const EXTENSIONS = Object.freeze({ version: 1, connectedLifecycle: false, conversationActions: false, autonomousEvents: false, agentMessaging: false });
 const FRAME_LIMIT = 256 * 1024;
+/** Native memory plugin shipped beside this adapter; the only tool uniform mode can grant. */
+const MEMORY_PLUGIN_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), 'memory-plugin');
 const MAX_SESSIONS = 16;
 const MAX_RECORDS = 1024;
 const exec = promisify(execFile);
@@ -160,9 +163,23 @@ export function parseProviderBootstrap(encoded) {
     throw invalid('Invalid private inference broker bootstrap');
   }
 }
+/** Uniform host-owned memory: trusted host selection only. Accepts the exact
+ * narrow resource scope this implementation proves: no tools, or only `memory`.
+ * The grant boolean decides whether the native memory plugin/tool exists at all.
+ */
+export function validateWorkerMemory(params) {
+  if (params.workerMemory !== undefined && typeof params.workerMemory !== 'boolean') throw invalid('workerMemory must be boolean');
+  const workerMemory = params.workerMemory === true;
+  if (!workerMemory) return { workerMemory, memoryGranted: false };
+  if (validateLifecycle(params).mode !== 'managed') throw invalid('uniform memory requires a managed owned profile');
+  const tools = params.scope?.allowedTools;
+  if (!Array.isArray(tools) || tools.some(tool => tool !== 'memory') || tools.length > 1) throw invalid('uniform memory supports only an empty resource scope or exactly [memory]');
+  return { workerMemory, memoryGranted: tools.includes('memory') };
+}
 export async function prepareRuntime(params) {
   if (validateLifecycle(params).mode !== 'managed') throw invalid('connected lifecycle must use the connection launcher');
-  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle', 'git'], 'initialize');
+  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle', 'git', 'workerMemory'], 'initialize');
+  const memory = validateWorkerMemory(params);
   if (params.platform !== undefined) {
     only(params.platform, ['team', 'computer', 'peers'], 'platform');
     if (typeof params.platform.team !== 'boolean' || params.platform.computer !== false) throw invalid('native computer access is unsupported');
@@ -211,7 +228,7 @@ export async function prepareRuntime(params) {
   if (!nodeInfo.sqlite || nodeInfo.version !== NATIVE_PINS.node.version) throw invalid('unsupported OpenClaw Node runtime; automatic recovery/install is disabled');
   await directory(scoped.profileDir);
   const marker = join(scoped.profileDir, '.yorozu-openclaw-owner.json');
-  const owner = { schema: 4, inputContract: INPUT_CONTRACT, runtimeIdentity: RUNTIME_IDENTITY, pluginId: 'openclaw', upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, patchSha256: CURATED_RUNTIME.patchSha256, agentId: scoped.agentId };
+  const owner = { schema: OWNER_SCHEMA, inputContract: INPUT_CONTRACT, memoryContract: memoryContract(memory.workerMemory), runtimeIdentity: RUNTIME_IDENTITY, pluginId: 'openclaw', upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, patchSha256: CURATED_RUNTIME.patchSha256, agentId: scoped.agentId };
   try {
     await regular(marker, 2048);
     const previous = JSON.parse(await readFile(marker, 'utf8'));
@@ -233,7 +250,7 @@ export async function prepareRuntime(params) {
     await regular(file, 4096);
     provider = parseProviderBootstrap(await readFile(file, 'utf8'));
   }
-  return { ...scoped, source, node, home, state, temporary, provider, gatewayPort: params.gatewayPort, authAvailable: Boolean(provider), journalPath: join(scoped.profileDir, 'adapter-journal-v1.json') };
+  return { ...scoped, ...memory, source, node, home, state, temporary, provider, gatewayPort: params.gatewayPort, authAvailable: Boolean(provider), journalPath: join(scoped.profileDir, 'adapter-journal-v1.json') };
 }
 
 export function runtimeConfig(runtime, port, token) {
@@ -260,6 +277,15 @@ export function mergeRuntimeConfig(previousConfig, hostConfig, agentId) {
   return config;
 }
 
+/** Uniform mode replaces retained native memory/plugin/hook settings AFTER the
+ * retained-configuration merge, so a previous profile edit can never merge a
+ * native memory provider, plugin or hook back in. Without the uniform selection
+ * the managed prototype keeps its retained native settings unchanged. */
+export function effectiveRuntimeConfig(previousConfig, runtime, port, token) {
+  const merged = mergeRuntimeConfig(previousConfig, runtimeConfig(runtime, port, token), runtime.agentId);
+  if (runtime.workerMemory !== true) return merged;
+  return uniformMemoryConfig(merged, MEMORY_PLUGIN_DIRECTORY, runtime.agentId, runtime.memoryGranted === true);
+}
 export function runtimeEnvironment(runtime) {
   return {
     PATH: `${dirname(runtime.node)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: runtime.home, CODEX_HOME: join(runtime.profileDir, 'isolated-codex'),
@@ -270,9 +296,11 @@ export function runtimeEnvironment(runtime) {
     OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: '1', OPENCLAW_SKIP_CANVAS_HOST: '1',
   };
 }
+/** FD3 is the unchanged inherited Gateway listener. A granted uniform memory tool
+ * adds one private duplex pipe at FD4 for the native plugin; never a listener. */
 export function nativeGatewayLaunch(runtime) {
   return { command: runtime.node, args: [join(runtime.source, CURATED_RUNTIME.entry), '--port', String(runtime.gatewayPort)],
-    options: { cwd: runtime.workspace, env: runtimeEnvironment(runtime), stdio: ['ignore', 'pipe', 'pipe', 3] } };
+    options: { cwd: runtime.workspace, env: runtimeEnvironment(runtime), stdio: ['ignore', 'pipe', 'pipe', 3, ...(runtime.memoryGranted === true ? ['pipe'] : [])] } };
 }
 // Private isolated-client identity only. Native pairing policy remains authoritative;
 // never imports a production identity, fabricates a principal, or broadens scopes.
@@ -406,13 +434,14 @@ export function verifyInheritedListener(stat = fstatSync) {
   if (!stat(3).isSocket()) throw invalid('inherited listener must be a socket');
 }
 
-export async function launchRuntime(params) {
+export async function launchRuntime(params, { callHost } = {}) {
   const lifecycle = validateLifecycle(params);
   if (lifecycle.mode === 'connected') {
     throw new ProtocolError(-32010, 'Connected lifecycle is held: durable custody and restart guarantees are unproven; no connection was made');
 
   }
   const runtime = await prepareRuntime(params);
+  if (runtime.memoryGranted && typeof callHost !== 'function') throw invalid('uniform memory grant requires the private host memory callback');
   const lock = join(runtime.profileDir, '.adapter-owner.lock');
   try { await mkdir(lock, { mode: 0o700 }); } catch (error) { if (error.code === 'EEXIST') throw invalid('private profile already has an owner; stale ownership requires explicit recovery'); throw error; }
   let child;
@@ -430,13 +459,15 @@ export async function launchRuntime(params) {
       if (error instanceof SyntaxError) throw invalid('native configuration could not be parsed; its existing file was preserved');
       if (error.code !== 'ENOENT') throw error;
     }
-    const hostConfig = runtimeConfig(runtime, port, token);
-    const config = mergeRuntimeConfig(previousConfig, hostConfig, runtime.agentId);
+    const config = effectiveRuntimeConfig(previousConfig, runtime, port, token);
     await atomic(configPath, config);
+    const bridge = runtime.memoryGranted ? createMemoryHostBridge({ agentId: runtime.agentId, callHost }) : undefined;
     const launch = nativeGatewayLaunch(runtime);
     child = spawn(launch.command, launch.args, launch.options);
     child.stdout.on('data', () => {}); // Consume logs without treating them as protocol or exposing private context.
     child.stderr.on('data', () => {});
+    // The private FD4 duplex belongs to this adapter and the native plugin only.
+    const memoryWire = bridge ? attachMemoryHost(child.stdio[4], bridge) : undefined;
     await new Promise((yes, no) => { child.once('spawn', yes); child.once('error', no); });
     releaseListener(); // The native child owns its duplicated descriptor from this point.
     let childError;
@@ -455,7 +486,7 @@ export async function launchRuntime(params) {
         await new Promise(yes => setTimeout(yes, startup ? Math.min(1000, Math.max(100, error.data.retryAfterMs ?? 500)) : 200));
       }
     }
-    return { ...runtime, gateway };
+    return { ...runtime, gateway, ...(bridge ? { memory: { bridge, wire: memoryWire } } : {}) };
   } catch (error) {
     try { releaseListener(); } catch { /* Failed descriptor ownership remains a startup failure. */ }
     if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
@@ -471,12 +502,17 @@ function messageText(message) {
 }
 const unknown = reason => ({ status: 'unknown', reason });
 
-export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) {
+export function createAdapter({ launch = launchRuntime, emit = () => {}, callHost } = {}) {
   let runtime; let initializing = false; let initialized = false;
   const sessions = new Map(); const runs = new Map(); const operations = new Map();
   const pendingEvents = new Map(); const observedSessions = new Set();
+  // RAM-only native memory admissions. Revokers are never journaled, so a restart
+  // cannot reconstruct a capability for work whose outcome is unknown.
+  const revokers = new Map();
+  const revoke = nativeRunId => { const revoker = revokers.get(nativeRunId); if (revoker) { revokers.delete(nativeRunId); revoker(); } };
+  const revokeAll = () => { for (const id of [...revokers.keys()]) revoke(id); };
   const nonce = randomUUID(); let sequence = 0; let writing = Promise.resolve(); let frames = Promise.resolve();
-  const journal = () => ({ schema: 3, inputContract: INPUT_CONTRACT, runtimeIdentity: RUNTIME_IDENTITY, upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, agentId: runtime.agentId, sessions: [...sessions.values()], runs: [...runs.values()], operations: [...operations.values()] });
+  const journal = () => ({ schema: JOURNAL_SCHEMA, inputContract: INPUT_CONTRACT, memoryContract: memoryContract(runtime.workerMemory === true), runtimeIdentity: RUNTIME_IDENTITY, upstream: UPSTREAM.commit, curatedSource: CURATED_RUNTIME.sourceCommit, agentId: runtime.agentId, sessions: [...sessions.values()], runs: [...runs.values()], operations: [...operations.values()] });
   const persist = () => {
     if (!runtime.journalPath) return Promise.resolve();
     const value = journal();
@@ -511,8 +547,8 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
     let saved;
     try { await regular(runtime.journalPath, 4 * 1024 * 1024); saved = JSON.parse(await readFile(runtime.journalPath, 'utf8')); }
     catch (error) { if (error.code === 'ENOENT') return; throw error; }
-    only(saved, ['schema', 'inputContract', 'runtimeIdentity', 'upstream', 'curatedSource', 'agentId', 'sessions', 'runs', 'operations'], 'adapter journal');
-    if (saved.schema !== 3 || saved.inputContract !== INPUT_CONTRACT || saved.runtimeIdentity !== RUNTIME_IDENTITY || saved.upstream !== UPSTREAM.commit || saved.curatedSource !== CURATED_RUNTIME.sourceCommit || saved.agentId !== runtime.agentId || !Array.isArray(saved.sessions) || saved.sessions.length > MAX_SESSIONS || !Array.isArray(saved.runs) || saved.runs.length > MAX_RECORDS || !Array.isArray(saved.operations) || saved.operations.length > MAX_RECORDS) throw invalid('adapter journal identity or limits are invalid');
+    only(saved, ['schema', 'inputContract', 'memoryContract', 'runtimeIdentity', 'upstream', 'curatedSource', 'agentId', 'sessions', 'runs', 'operations'], 'adapter journal');
+    if (saved.schema !== JOURNAL_SCHEMA || saved.inputContract !== INPUT_CONTRACT || saved.memoryContract !== memoryContract(runtime.workerMemory === true) || saved.runtimeIdentity !== RUNTIME_IDENTITY || saved.upstream !== UPSTREAM.commit || saved.curatedSource !== CURATED_RUNTIME.sourceCommit || saved.agentId !== runtime.agentId || !Array.isArray(saved.sessions) || saved.sessions.length > MAX_SESSIONS || !Array.isArray(saved.runs) || saved.runs.length > MAX_RECORDS || !Array.isArray(saved.operations) || saved.operations.length > MAX_RECORDS) throw invalid('adapter journal identity or limits are invalid');
     for (const session of saved.sessions) {
       only(session, ['conversationId', 'bindingId', 'sessionKey', 'sessionId', 'state', 'reference'], 'journal session');
       required(session.conversationId, 'conversationId'); required(session.bindingId, 'bindingId');
@@ -552,7 +588,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
     const session = sessions.get(run.conversationId);
     if (!session || ['completed', 'failed', 'stopped'].includes(run.state)) return;
     // Missing sequence creates a truthful uncertain outcome; never patch gaps with invented text.
-    if (run.seq >= 0 && data.seq > run.seq + 1) { run.state = 'unknown'; await persist(); event(session, 'capability.unavailable', { capability: 'event-sequence', reason: 'native chat event gap; reconnect recovery is unsupported' }, run); return; }
+    if (run.seq >= 0 && data.seq > run.seq + 1) { revoke(run.nativeId); run.state = 'unknown'; await persist(); event(session, 'capability.unavailable', { capability: 'event-sequence', reason: 'native chat event gap; reconnect recovery is unsupported' }, run); return; }
     run.seq = data.seq;
     if (data.state === 'delta') {
       if (typeof data.deltaText !== 'string') return;
@@ -561,6 +597,8 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
       run.text = candidate;
       await persist(); event(session, 'assistant.update', { text: run.text }, run);
     } else if (['final', 'aborted', 'error'].includes(data.state)) {
+      // Memory authority ends with the run, before any terminal projection.
+      revoke(run.nativeId);
       if (data.yielded === true) { run.state = 'unknown'; await persist(); event(session, 'capability.unavailable', { capability: 'backgroundTasks', reason: 'native yielded run has no proven continuation ownership in this prototype' }, run); return; }
       const text = messageText(data.message);
       if (text !== null && Buffer.byteLength(text) <= 128 * 1024) run.text = text;
@@ -571,6 +609,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
     }
   }
   function closed(reason) {
+    revokeAll(); runtime.memory?.bridge.close();
     for (const session of sessions.values()) {
       for (const run of runs.values()) if (run.conversationId === session.conversationId && !['completed', 'failed', 'stopped'].includes(run.state)) run.state = 'unknown';
       event(session, 'runtime.closed', { reason: String(reason).slice(0, 300), uncertain: true });
@@ -596,11 +635,16 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
         if (initialized || initializing) throw invalid('adapter is already initializing or initialized');
         initializing = true;
         try {
-          validateLifecycle(params);
-          runtime = await launch(params); await loadJournal();
+          validateLifecycle(params); validateWorkerMemory(params);
+          if (params.workerMemory === true && typeof callHost !== 'function') throw invalid('uniform memory requires the private host memory callback');
+          runtime = await launch(params, { callHost }); await loadJournal();
+          if (runtime.memoryGranted && !runtime.memory?.bridge) throw invalid('uniform memory grant was not actually attached to the native Gateway');
           runtime.gateway.onFrame(frame => { frames = frames.then(() => onFrame(frame)).catch(() => { runtime.gateway.finish?.('native event processing failed'); closed('native event processing failed'); }); });
           runtime.gateway.onClose(closed); initialized = true;
+          // Acknowledged only after the actual uniform configuration, bridge and
+          // Gateway readiness; absence of the flag never permits a native fallback.
           return { protocolVersion: 1, pluginId: 'openclaw', upstreamVersion: UPSTREAM.version, capabilities: CAPABILITIES, extensions: EXTENSIONS,
+            ...(runtime.workerMemory === true ? { workerMemory: true } : {}),
             agentId: runtime.hostAgentId ?? runtime.agentId,
             lifecycle: runtime.ownership === 'connected' ? { version: 1, mode: 'connected', connectionId: runtime.connection.connectionId } : { version: 1, mode: 'managed' },
             ...(runtime.scopeDigest && runtime.policyDigest ? { scopeDigest: runtime.scopeDigest,
@@ -621,8 +665,10 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
       }
       if (method === 'shutdown') {
         if (runtime.ownership === 'connected') { await runtime.gateway.detach(); await writing; return { detached: runtime.gateway.closed, nativeStopped: false }; }
+        revokeAll(); runtime.memory?.bridge.close();
         await runtime.gateway.shutdown(); await writing; return { stopped: runtime.gateway.closed };
       }
+      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'profileDir', 'source', 'node', 'providerConfigPath', 'lifecycle', 'connection', 'git'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
       if (['message.deliver', 'message.receipt', 'action.answer'].includes(method)) return { status: 'unsupported', handoff: 'not-submitted', reason: 'no verified native peer-inbox or action mapping exists for this OpenClaw pin' };
       if (method === 'session.open') {
         required(params.conversationId, 'conversationId'); required(params.bindingId, 'bindingId');
@@ -696,6 +742,16 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
           runs.delete(id); await persist(); return { status: 'busy', handoff: 'not-submitted', reason: 'native session is active; input was not submitted' };
         }
         let receipt;
+        // Exact native agent/key/SID/run identity is bound to this host execution
+        // BEFORE the send, from trusted admitted context only. Currency is live for
+        // the narrowly reserved admitting state and running; never unknown/terminal.
+        if (runtime.memory) {
+          try {
+            revokers.set(id, runtime.memory.bridge.bind({ nativeRunId: id, nativeSessionId: session.sessionId, sessionKey: session.sessionKey,
+              execution: { sessionId: session.sessionId, runId: params.runId, attemptId: params.attemptId },
+              current: () => runs.get(id) === run && ['admitting', 'running'].includes(run.state) && !runtime.gateway.closed && sessions.get(session.conversationId) === session }));
+          } catch { runs.delete(id); await persist(); return { status: 'rejected', reason: 'native memory admission could not be bound; input was not submitted' }; }
+        }
         // Every post-handoff error remains unknown; native durable idempotency is
         // additional protection, never an excuse to replay an uncertain send.
         try {
@@ -704,7 +760,8 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
           if (receipt?.runId !== id || receipt.status !== 'started') throw new Error('native acknowledgement is queued, redirected or malformed');
           run.receipt = { status: 'accepted' }; if (run.state === 'admitting') run.state = 'running';
           await persist(); event(session, 'turn.started', { background: false }, run);
-        } catch { run.receipt = unknown('native send acknowledgement is lost, queued or malformed; no replay'); if (!['completed', 'failed', 'stopped'].includes(run.state)) run.state = 'unknown'; await persist(); }
+        } catch { revoke(id); run.receipt = unknown('native send acknowledgement is lost, queued or malformed; no replay'); if (!['completed', 'failed', 'stopped'].includes(run.state)) run.state = 'unknown'; await persist(); }
+        if (!['admitting', 'running'].includes(run.state)) revoke(id);
         const buffered = pendingEvents.get(run.nativeId) ?? []; pendingEvents.delete(run.nativeId);
         frames = frames.then(async () => { for (const frame of buffered) await onFrame(frame); });
         await frames;
@@ -714,6 +771,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
         const { session, run } = runFor(params);
         return reserveOperation(params, method, async () => {
           if (['completed', 'failed', 'stopped'].includes(run.state)) return { status: 'rejected', reason: 'native run is already terminal' };
+          revoke(run.nativeId); // Memory authority ends before the stop request, whatever its acknowledgement.
           const result = await runtime.gateway.call('chat.abort', { sessionKey: session.sessionKey, agentId: runtime.agentId, runId: run.nativeId, preserveSideRuns: true, discardPendingInput: false });
           if (result?.ok !== true || result.aborted !== true || !Array.isArray(result.runIds) || result.runIds.length !== 1 || result.runIds[0] !== run.nativeId) return unknown('Gateway did not prove abort of exactly the origin run');
           if (!['completed', 'failed', 'stopped'].includes(run.state)) run.state = 'stopping';
@@ -749,8 +807,11 @@ export function serve(input = process.stdin, output = process.stdout) {
     if (output.writableLength > 8 * 1024 * 1024) { fail(); return; }
     if (!failed) output.write(encoded);
   };
-  const adapter = createAdapter({ emit: params => send({ jsonrpc: '2.0', method: 'harness.event', params }) });
-  const fail = () => { if (failed) return; failed = true; input.destroy(); void adapter.handle('shutdown').catch(() => {}); };
+  // Private host memory client: forwards checked execution currency and exact
+  // per-request cancellation; it never discards the third authority argument.
+  const memoryClient = createAdapterMemoryClient(send);
+  const adapter = createAdapter({ emit: params => send({ jsonrpc: '2.0', method: 'harness.event', params }), callHost: memoryClient.callHost });
+  const fail = () => { if (failed) return; failed = true; memoryClient.close(); input.destroy(); void adapter.handle('shutdown').catch(() => {}); };
   input.on('data', chunk => {
     buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
     for (;;) {
@@ -759,6 +820,7 @@ export function serve(input = process.stdin, output = process.stdout) {
       const line = buffer.subarray(0, index); buffer = buffer.subarray(index + 1);
       let request;
       try { request = JSON.parse(line.toString('utf8')); } catch { return fail(); }
+      if (memoryClient.receive(request)) continue; // Host memory receipts are consumed before request parsing.
       if (request?.jsonrpc !== '2.0' || typeof request.method !== 'string' || !['string', 'number'].includes(typeof request.id) || typeof request.id === 'number' && !Number.isFinite(request.id)) { send({ jsonrpc: '2.0', id: request?.id ?? null, error: { code: -32600, message: 'request requires JSON-RPC method and id' } }); continue; }
       if (pending >= 32) { send({ jsonrpc: '2.0', id: request.id, error: { code: -32003, message: 'pending request bound exceeded' } }); continue; }
       pending++;
@@ -766,7 +828,7 @@ export function serve(input = process.stdin, output = process.stdout) {
     }
     if (buffer.length > FRAME_LIMIT) fail();
   });
-  input.on('end', () => { void adapter.handle('shutdown').catch(() => {}); });
+  input.on('end', () => { memoryClient.close(); void adapter.handle('shutdown').catch(() => {}); });
   input.on('error', fail); output.on('error', fail);
   return adapter;
 }

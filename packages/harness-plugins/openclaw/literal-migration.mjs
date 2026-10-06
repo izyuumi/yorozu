@@ -15,6 +15,17 @@ export const NATIVE_PINS = Object.freeze({
 });
 export const INPUT_CONTRACT = 'literal-v1';
 export const RUNTIME_IDENTITY = JSON.stringify(NATIVE_PINS);
+/** Profile owner marker and adapter journal schemas bind the memory ownership
+ * contract explicitly. A profile prepared under native-retained memory is never
+ * reinterpreted as uniform host-owned memory (or the reverse); fresh profile only.
+ */
+export const OWNER_SCHEMA = 5;
+export const JOURNAL_SCHEMA = 4;
+export const MEMORY_CONTRACTS = Object.freeze({ uniform: 'worker-memory-v1', native: 'native-retained-v1' });
+export function memoryContract(workerMemory) {
+  if (typeof workerMemory !== 'boolean') throw new Error('workerMemory must be boolean');
+  return workerMemory ? MEMORY_CONTRACTS.uniform : MEMORY_CONTRACTS.native;
+}
 export function validateLiteralOwner(previous, owner) {
   if (Object.keys(previous).length !== Object.keys(owner).length ||
       Object.entries(owner).some(([key, value]) => previous[key] !== value)) {
