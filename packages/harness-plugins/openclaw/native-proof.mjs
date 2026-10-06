@@ -16,6 +16,9 @@ const required = key => { const value = options.get(key); if (!value || !value.s
 const source = await realpath(required('--source'));
 const node = await realpath(required('--node'));
 const hostRuntime = await realpath(required('--host-runtime'));
+// Explicit read-only verifier code/dependencies; never a data/profile grant.
+const git = options.has('--git') ? await realpath(required('--git')) : undefined;
+const gitReadRoots = options.has('--git-read-roots') ? await Promise.all(JSON.parse(options.get('--git-read-roots')).map(path => realpath(path))) : [];
 const output = resolve(required('--output'));
 await mkdir(output, { mode: 0o700 }); // Fresh evidence/profile only; never adopts or deletes an old fixture.
 const root = await realpath(output);
@@ -120,7 +123,7 @@ try {
   });
   const providerPort = await listen(provider);
   forbidden = tcpServer(socket => { forbiddenConnections++; socket.destroy(); }); const forbiddenPort = await listen(forbidden);
-  const runtime = { command: node, args: [adapterFile], readPaths: [dirname(adapterFile), source], runtimeDir: profileDir, brokerPorts: [providerPort] };
+  const runtime = { command: node, args: [adapterFile], readPaths: [dirname(adapterFile), source, ...(git ? [git] : []), ...gitReadRoots], runtimeDir: profileDir, brokerPorts: [providerPort] };
   const prepare = async (args, fixedPort) => {
     const lease = await acquireHostListener(scope.agentId, fixedPort);
     try {
@@ -157,7 +160,18 @@ try {
   const physical = JSON.parse(probeResult.stdout);
   assert.deepEqual(physical, { allowedConnect: true, deniedConnect: true, deniedListen: true, peerDenied: true, inheritedPeerDenied: true, inheritedAddress: '127.0.0.1', inheritedPort: probePort });
   assert.equal(forbiddenConnections, 0); evidence.checks.actualKernel = physical;
-  const gatewayOwner = await prepare([adapterFile]);
+  // Fictional offline diagnostics observe session/history failures and identity
+  // summaries only; no token, message content, provider bootstrap, native logs
+  // or connect responses are projected.
+  const adapterEntry = join(workspace, 'diagnostic-adapter.mjs');
+  await writeFile(adapterEntry, `import {NativeGateway,serve} from ${JSON.stringify(pathToFileURL(adapterFile).href)};
+    const call=NativeGateway.prototype.call;
+    NativeGateway.prototype.call=async function(method,params){try{const result=await call.call(this,method,params);
+      if(method==='chat.history')process.stderr.write(JSON.stringify({method,keys:Object.keys(result??{}),sessionKey:result?.sessionKey,sessionId:result?.sessionId,sessionInfo:result?.sessionInfo})+'\\n');
+      return result;}catch(error){
+      if(['sessions.create','chat.history','chat.send'].includes(method))process.stderr.write(JSON.stringify({method,code:error.data?.code,message:error.data?.message})+'\\n');throw error;}};
+    serve();`);
+  const gatewayOwner = await prepare([adapterEntry]);
   const { launch, transfer } = gatewayOwner; const gatewayPort = gatewayOwner.port;
   assert.equal(launch.command, '/usr/bin/sandbox-exec'); assert.match(launch.policy, /\(deny default\)/);
   assert.ok(!launch.policy.includes('(allow network-bind'), 'actual child may adopt its minted descriptor but may never bind');
@@ -165,9 +179,9 @@ try {
   assert.equal(createHash('sha256').update(launch.policy).digest('hex'), launch.isolation.policyDigest);
   await writeFile(join(root, 'actual-kernel-policy.sbpl'), launch.policy, { mode: 0o600 });
   await writeFile(join(profileDir, 'proof-provider.json'), JSON.stringify({ baseUrl: `http://127.0.0.1:${providerPort}/v1`, model: 'synthetic', api: 'openai-responses' }), { mode: 0o600 });
-  const init = { protocolVersion: 1, upstreamVersion: UPSTREAM.version, source, node, workspace, profileDir, gatewayPort, agentId: scope.agentId,
+  const init = { protocolVersion: 1, upstreamVersion: UPSTREAM.version, source, node, ...(git ? { git } : {}), workspace, profileDir, gatewayPort, agentId: scope.agentId,
     gatewayListener: { transport: CURATED_RUNTIME.transport, fd: 3, host: '127.0.0.1', port: gatewayPort },
-    scope: { allowedTools: scope.allowedTools, directories: scope.directories, workspace: scope.workspace, memoryDir: scope.memoryDir, deniedRoots: scope.deniedRoots },
+    scope: { allowedTools: scope.allowedTools, directories: scope.directories, workspace: store.paths('proof-main').workspace, memoryDir: store.paths('proof-main').memoryDir, deniedRoots: scope.deniedRoots },
     isolation: launch.isolation, providerConfigPath: join(profileDir, 'proof-provider.json'), platform: { team: false, computer: false } };
   adapter = await client(launch, transfer);
   const ready = await adapter.call('initialize', init);
@@ -203,16 +217,16 @@ try {
   for (const event of evidence.events) { assert.equal(event.conversationId, session.conversationId); if (event.runId) assert.ok([first.runId, second.runId, held.runId].includes(event.runId)); }
   assert.deepEqual((await adapter.call('session.snapshot', session)).tasks, []);
   await adapter.stop(); adapter = null;
-  const resumed = await prepare([adapterFile], gatewayPort);
+  const resumed = await prepare([adapterEntry], gatewayPort);
   assert.equal(resumed.launch.isolation.policyDigest, launch.isolation.policyDigest, 'same effective endpoint/scope must preserve profile policy identity');
   adapter = await client(resumed.launch, resumed.transfer); await adapter.call('initialize', init); await adapter.call('session.open', { ...session, sessionId: opened.sessionId });
   assert.equal((await adapter.call('turn.submit', second)).status, 'accepted');
   await new Promise(yes => setTimeout(yes, 500)); assert.equal(evidence.requests.length, 3); evidence.checks.noReplayAfterCleanRestart = true;
   evidence.success = true;
 } catch (error) {
-  evidence.failure = { message: error.message, stack: error.stack }; process.exitCode = 1;
+  evidence.failure = { message: error.message, stack: error.stack, sessionDiagnostic: adapter?.stderr() }; process.exitCode = 1;
 } finally {
-  if (adapter) { try { await adapter.stop(); } catch (error) { evidence.shutdownFailure = error.message; evidence.success = false; adapter.child.kill('SIGTERM'); process.exitCode = 1; } }
+  if (adapter) { try { await adapter.stop(); if (evidence.checks.realGatewayReadiness) evidence.checks.cleanNativeShutdown = true; } catch (error) { evidence.shutdownFailure = error.message; evidence.success = false; adapter.child.kill('SIGTERM'); process.exitCode = 1; } }
   for (const response of pendingResponses) response.destroy();
   if (probeChild && probeChild.exitCode === null && probeChild.signalCode === null) probeChild.kill('SIGTERM');
   for (const transfer of transfers) { try { await transfer.release(); } catch (error) { evidence.listenerReleaseFailure = error.message; evidence.success = false; process.exitCode = 1; } }

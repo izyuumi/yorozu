@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile, rename, readdir, lstat, realpath, rm, open 
 import { closeSync, fstatSync } from 'node:fs';
 import { resolve, join, dirname, isAbsolute, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, randomUUID, createHash } from 'node:crypto';
+import { randomBytes, randomUUID, createHash, generateKeyPairSync, createPrivateKey, createPublicKey, sign } from 'node:crypto';
 
 /** Bound the actual JSON-RPC envelope, not raw UTF-8 text. Presentation never interrupts native work. */
 function boundedProjection(emit, frame, limit = 256 * 1024) {
@@ -79,7 +79,7 @@ export function validateLifecycle(params) {
     return { mode: 'managed' };
   }
   if (params.protocolVersion !== 1 || params.upstreamVersion !== UPSTREAM.version) throw invalid('unsupported connected protocol or OpenClaw version');
-  for (const key of ['source', 'node', 'workspace', 'profileDir', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener']) {
+  for (const key of ['source', 'node', 'workspace', 'profileDir', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'git']) {
     if (params[key] !== undefined) throw invalid('connected lifecycle cannot provision or adopt a native profile/resource scope');
   }
   required(params.agentId, 'agentId', 128);
@@ -161,7 +161,7 @@ export function parseProviderBootstrap(encoded) {
 }
 export async function prepareRuntime(params) {
   if (validateLifecycle(params).mode !== 'managed') throw invalid('connected lifecycle must use the connection launcher');
-  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle'], 'initialize');
+  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle', 'git'], 'initialize');
   if (params.platform !== undefined) {
     only(params.platform, ['team', 'computer', 'peers'], 'platform');
     if (typeof params.platform.team !== 'boolean' || params.platform.computer !== false) throw invalid('native computer access is unsupported');
@@ -174,11 +174,13 @@ export async function prepareRuntime(params) {
   const node = await realpath(absolute(params.node, 'node'));
   const packageInfo = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'));
   if (packageInfo.name !== 'openclaw' || packageInfo.version !== UPSTREAM.version) throw invalid('OpenClaw package version does not match the pin');
-  const gitOptions = { maxBuffer: 4096, env: { PATH: '/usr/bin:/bin', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
-  const revision = await exec('/usr/bin/git', ['-C', source, 'rev-parse', 'HEAD'], gitOptions);
+  const git = params.git === undefined ? '/usr/bin/git' : await realpath(absolute(params.git, 'git'));
+  await regular(git, 16 * 1024 * 1024);
+  const gitOptions = { maxBuffer: 4096, env: { PATH: '/usr/bin:/bin', TMPDIR: scoped.profileDir, GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
+  const revision = await exec(git, ['-C', source, 'rev-parse', 'HEAD'], gitOptions);
   if (revision.stdout.trim() !== CURATED_RUNTIME.sourceCommit) throw invalid('OpenClaw source commit does not match the explicit curated pin; stock sources are gated');
-  await exec('/usr/bin/git', ['-C', source, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
-  const patch = await exec('/usr/bin/git', ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--full-index', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { ...gitOptions, maxBuffer: 512 * 1024 });
+  await exec(git, ['-C', source, 'diff', '--quiet', 'HEAD', '--'], gitOptions);
+  const patch = await exec(git, ['-C', source, 'diff', UPSTREAM.commit, 'HEAD', '--binary', '--full-index', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/'], { ...gitOptions, maxBuffer: 512 * 1024 });
   if (sha(patch.stdout) !== CURATED_RUNTIME.patchSha256) throw invalid('OpenClaw curated patch digest does not match the approved base and patch');
   try {
     await regular(join(source, 'openclaw.mjs'));
@@ -264,8 +266,39 @@ export function nativeGatewayLaunch(runtime) {
   return { command: runtime.node, args: [join(runtime.source, CURATED_RUNTIME.entry), '--port', String(runtime.gatewayPort)],
     options: { cwd: runtime.workspace, env: runtimeEnvironment(runtime), stdio: ['ignore', 'pipe', 'pipe', 3] } };
 }
+// Private isolated-client identity only. Native pairing policy remains authoritative;
+// never imports a production identity, fabricates a principal, or broadens scopes.
+export async function localDeviceIdentity(profileDir) {
+  const path = join(profileDir, 'adapter-device-v1.json');
+  let saved;
+  try {
+    await regular(path, 4096); const info = await lstat(path);
+    if (info.nlink !== 1 || info.mode & 0o077) throw invalid('isolated device identity permissions are invalid');
+    saved = JSON.parse(await readFile(path, 'utf8'));
+  }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw invalid('isolated device identity is invalid');
+    const pair = generateKeyPairSync('ed25519');
+    saved = { version: 1, privateKey: pair.privateKey.export({ type: 'pkcs8', format: 'pem' }) };
+    await atomic(path, saved);
+  }
+  try {
+    only(saved, ['version', 'privateKey'], 'isolated device identity');
+    if (saved.version !== 1) throw new Error();
+    const key = createPrivateKey(saved.privateKey);
+    if (key.asymmetricKeyType !== 'ed25519') throw new Error();
+    const raw = createPublicKey(key).export({ format: 'jwk' }).x;
+    const publicKey = Buffer.from(raw, 'base64url').toString('base64url');
+    return { key, publicKey, id: createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex') };
+  } catch { throw invalid('isolated device identity is invalid'); }
+}
+export function signedDevice(identity, nonce, token, platform = process.platform, signedAt = Date.now()) {
+  const payload = ['v3', identity.id, 'gateway-client', 'backend', 'operator', 'operator.read,operator.write', String(signedAt), token, nonce, platform.trim().toLowerCase(), ''].join('|');
+  return { id: identity.id, publicKey: identity.publicKey, signature: sign(null, Buffer.from(payload), identity.key).toString('base64url'), signedAt, nonce };
+}
 export class NativeGateway {
-  constructor(url, token, child, { WebSocketClass = WebSocket, timeoutMs = 10_000, ownership = 'managed' } = {}) {
+  constructor(url, token, child, { WebSocketClass = WebSocket, timeoutMs = 10_000, ownership = 'managed', device } = {}) {
+    this.device = device;
     this.url = url; this.token = token; this.child = child; this.WebSocketClass = WebSocketClass; this.timeoutMs = timeoutMs;
     this.pending = new Map(); this.listeners = new Set(); this.closeListeners = new Set(); this.nextId = 0; this.closed = false; this.connected = false;
     this.ownership = ownership;
@@ -289,16 +322,19 @@ export class NativeGateway {
       } catch { this.finish('invalid or oversized Gateway frame'); }
     });
     socket.addEventListener('close', () => { if (this.connected) this.finish('Gateway connection closed; handed-off work is uncertain'); });
-    await challenge;
+    const challenged = await challenge;
     // gateway-client/backend is the upstream generic embedding class. This is an
-    // isolated loopback token session, with no device token, pairing or admin scope.
+    // isolated loopback token session with a private signed device when supplied.
+    // Native pairing policy is enforced; issued device tokens are not retained,
+    // no production identity is imported, and admin scope is never requested.
     const hello = await this.call('connect', {
       minProtocol: UPSTREAM.protocol, maxProtocol: UPSTREAM.protocol,
       client: { id: 'gateway-client', displayName: 'Yorozu harness connection', version: '1', platform: process.platform, mode: 'backend', instanceId: randomUUID() },
       role: 'operator', scopes: ['operator.read', 'operator.write'], auth: { token: this.token }, caps: ['session-scoped-events'],
+      ...(this.device ? { device: signedDevice(this.device, challenged.nonce, this.token) } : {}),
     });
     if (hello?.type !== 'hello-ok' || hello.protocol !== UPSTREAM.protocol || hello.server?.version !== UPSTREAM.version || hello.auth?.role !== 'operator'
-      || hello.auth?.method !== 'token' || hello.auth?.deviceToken || !['operator.read', 'operator.write'].every(scope => hello.auth?.scopes?.includes(scope))
+      || hello.auth?.method !== 'token' || (!this.device && hello.auth?.deviceToken) || !['operator.read', 'operator.write'].every(scope => hello.auth?.scopes?.includes(scope))
       || hello.auth.scopes.some(scope => !['operator.read', 'operator.write'].includes(scope))
       || ![...(this.ownership === 'managed' ? ['sessions.create'] : []), 'chat.history', 'chat.send', 'chat.abort', 'sessions.messages.subscribe'].every(method => hello.features?.methods?.includes(method))) throw new Error('Gateway identity, scopes or required methods do not match the pinned contract');
     this.connected = true; this.epoch = required(hello.server.bootId ?? hello.server.connId, 'gateway generation');
@@ -397,7 +433,7 @@ export async function launchRuntime(params) {
     releaseListener(); // The native child owns its duplicated descriptor from this point.
     let childError;
     child.on('error', error => { childError = error; });
-    const gateway = new NativeGateway(`ws://127.0.0.1:${port}`, token, child);
+    const gateway = new NativeGateway(`ws://127.0.0.1:${port}`, token, child, { device: await localDeviceIdentity(runtime.profileDir) });
     child.on('exit', (code, signal) => { gateway.finish(code === 78 ? 'native Gateway rejected configuration (exit 78)' : `native Gateway exited (${signal ?? code})`); void rm(lock, { recursive: true }); });
     const deadline = Date.now() + 60_000;
     for (;;) {
@@ -591,7 +627,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
           if (previous.state !== 'open') throw new ProtocolError(-32031, 'native session creation acknowledgement is uncertain; no replay');
           observedSessions.delete(previous.sessionKey);
           const subscribed = await runtime.gateway.call('sessions.messages.subscribe', { key: previous.sessionKey, agentId: runtime.agentId, subscriptionId: nativeId('observer', params.bindingId) });
-          if (subscribed?.ok !== true) throw new ProtocolError(-32031, 'native session observation was not acknowledged');
+          if (subscribed?.subscribed !== true || subscribed.key !== previous.sessionKey || subscribed.agentId !== runtime.agentId) throw new ProtocolError(-32031, 'native session observation was not acknowledged');
           observedSessions.add(previous.sessionKey);
           return { sessionId: previous.sessionId, recovery: 'snapshot-only' };
         }
@@ -605,12 +641,12 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
         sessions.set(session.conversationId, session); await persist();
         if (runtime.ownership === 'connected') {
           let history;
-          try { history = await runtime.gateway.call('chat.history', { sessionKey: session.sessionKey, agentId: runtime.agentId, sessionId: runtime.connection.sessionId, limit: 1 }); }
+          try { history = await runtime.gateway.call('chat.history', { sessionKey: session.sessionKey, agentId: runtime.agentId, limit: 1 }); }
           catch { throw new ProtocolError(-32031, 'selected native session could not be observed; no session was created or resumed'); }
           if (history?.sessionKey !== session.sessionKey || history?.sessionId !== runtime.connection.sessionId || history?.sessionInfo?.agentId !== runtime.agentId) throw new ProtocolError(-32031, 'selected native agent/session identity was not verified');
           session.sessionId = history.sessionId;
           const subscribed = await runtime.gateway.call('sessions.messages.subscribe', { key: session.sessionKey, agentId: runtime.agentId, subscriptionId: nativeId('observer', params.bindingId) });
-          if (subscribed?.ok !== true) throw new ProtocolError(-32031, 'selected native session observation was not acknowledged');
+          if (subscribed?.subscribed !== true || subscribed.key !== session.sessionKey || subscribed.agentId !== runtime.agentId) throw new ProtocolError(-32031, 'selected native session observation was not acknowledged');
           observedSessions.add(session.sessionKey);
           session.state = 'open';
           return { sessionId: session.sessionId, recovery: 'snapshot-only', nativeHistoryHydrated: false };
@@ -621,7 +657,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
         if (created?.ok !== true || created.key !== session.sessionKey || created.runStarted !== false || typeof created.sessionId !== 'string' || !created.sessionId || created.sessionId.length > 512 || created.entry?.sessionId !== created.sessionId) throw new ProtocolError(-32031, 'native session creation identity is unproven; no replay');
         session.sessionId = created.sessionId; session.state = 'open'; await persist();
         const subscribed = await runtime.gateway.call('sessions.messages.subscribe', { key: session.sessionKey, agentId: runtime.agentId, subscriptionId: nativeId('observer', params.bindingId) });
-        if (subscribed?.ok !== true) throw new ProtocolError(-32031, 'native session observation was not acknowledged');
+        if (subscribed?.subscribed !== true || subscribed.key !== session.sessionKey || subscribed.agentId !== runtime.agentId) throw new ProtocolError(-32031, 'native session observation was not acknowledged');
         observedSessions.add(session.sessionKey);
         return { sessionId: session.sessionId };
       }
@@ -644,7 +680,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {} } = {}) 
           receipt: unknown('attempt reserved; native handoff has not been proven'), state: 'admitting', text: '', seq: -1 };
         runs.set(id, run); await persist();
         let history;
-        try { history = await runtime.gateway.call('chat.history', { sessionKey: session.sessionKey, agentId: runtime.agentId, sessionId: session.sessionId, limit: 1 }); }
+        try { history = await runtime.gateway.call('chat.history', { sessionKey: session.sessionKey, agentId: runtime.agentId, limit: 1 }); }
         catch { run.state = 'unknown'; await persist(); return run.receipt; }
         const info = history?.sessionInfo;
         if (history?.sessionKey !== session.sessionKey || history?.sessionId !== session.sessionId || info?.agentId !== runtime.agentId || !Array.isArray(info?.activeRunIds) || !Object.hasOwn(info, 'activeLeafEntryId')) { run.state = 'unknown'; await persist(); return run.receipt; }

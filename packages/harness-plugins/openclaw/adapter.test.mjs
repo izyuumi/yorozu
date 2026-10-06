@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath, stat } from 'node:fs/promises';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createAdapter, NativeGateway, CAPABILITIES, UPSTREAM, CURATED_RUNTIME, validateScope, validateGatewayListener, parseProviderBootstrap, nativeGatewayLaunch, runtimeConfig, runtimeEnvironment, validateLifecycle, EXTENSIONS, mergeRuntimeConfig } from './adapter.mjs';
+import { createAdapter, NativeGateway, CAPABILITIES, UPSTREAM, CURATED_RUNTIME, validateScope, validateGatewayListener, parseProviderBootstrap, nativeGatewayLaunch, runtimeConfig, runtimeEnvironment, validateLifecycle, EXTENSIONS, mergeRuntimeConfig, localDeviceIdentity, signedDevice } from './adapter.mjs';
 
 // Contract tests deliberately fake the Gateway. They are not native execution,
 // subscription authentication or interchangeable-harness acceptance evidence.
@@ -25,7 +25,7 @@ class FakeGateway {
       this.sessions.set(params.key, { sessionId, agentId: params.agentId });
       return { ok: true, key: params.key, sessionId, entry: { sessionId }, runStarted: false, resolved: { modelProvider: 'yorozu-local-proof', model: 'synthetic' } };
     }
-    if (method === 'sessions.messages.subscribe') return { ok: true };
+    if (method === 'sessions.messages.subscribe') return { subscribed: true, key: params.key, agentId: params.agentId };
     if (method === 'chat.history') {
       const session = this.sessions.get(params.sessionKey);
       return { sessionKey: params.sessionKey, sessionId: session.sessionId, sessionInfo: { agentId: session.agentId, hasActiveRun: false, activeRunIds: [], activeLeafEntryId: null }, messages: [] };
@@ -121,6 +121,7 @@ test('idle submission uses exact native session, run idempotency, branch CAS and
   const { adapter, gateway, events } = await fixture();
   assert.equal((await adapter.handle('turn.submit', turn)).status, 'accepted');
   const call = gateway.last('chat.send');
+  assert.equal(gateway.last('chat.history').sessionId, undefined);
   assert.equal(call.sessionKey, gateway.last('sessions.create').key); assert.equal(call.sessionId, 'native-session-0'); assert.equal(call.agentId, 'secretary');
   assert.equal(call.queueMode, 'followup'); assert.equal(call.expectedLeafEntryId, null); assert.equal(call.fastMode, undefined); assert.equal(call.deliver, false); assert.equal(call.suppressCommandInterpretation, true);
   assert.match(call.idempotencyKey, /^yz-[a-f0-9]{64}$/);
@@ -137,7 +138,7 @@ test('platform reference history and preferences are not injected into native re
 });
 test('native activity is a proven no-handoff busy receipt and fresh topics never steer', async () => {
   const { adapter, gateway } = await fixture();
-  gateway.overrides.set('chat.history', params => ({ sessionKey: params.sessionKey, sessionId: params.sessionId, sessionInfo: { agentId: params.agentId, activeRunIds: ['native-busy'], hasActiveRun: true, activeLeafEntryId: 'leaf' } }));
+  gateway.overrides.set('chat.history', params => ({ sessionKey: params.sessionKey, sessionId: gateway.sessions.get(params.sessionKey).sessionId, sessionInfo: { agentId: params.agentId, activeRunIds: ['native-busy'], hasActiveRun: true, activeLeafEntryId: 'leaf' } }));
   assert.deepEqual((await adapter.handle('turn.submit', turn)).handoff, 'not-submitted');
   assert.equal(gateway.count('chat.send'), 0);
   gateway.overrides.delete('chat.history');
@@ -149,7 +150,7 @@ test('native activity is a proven no-handoff busy receipt and fresh topics never
 test('ambiguous or foreign native history blocks admission and caches uncertainty', async () => {
   for (const info of [{ agentId: 'foreign', activeRunIds: [], hasActiveRun: false, activeLeafEntryId: null }, { agentId: 'secretary', hasActiveRun: false, activeLeafEntryId: null }, { agentId: 'secretary', activeRunIds: [], hasActiveRun: false }]) {
     const { adapter, gateway } = await fixture();
-    gateway.overrides.set('chat.history', params => ({ sessionKey: params.sessionKey, sessionId: params.sessionId, sessionInfo: info }));
+    gateway.overrides.set('chat.history', params => ({ sessionKey: params.sessionKey, sessionId: gateway.sessions.get(params.sessionKey).sessionId, sessionInfo: info }));
     assert.equal((await adapter.handle('turn.submit', turn)).status, 'unknown');
     assert.equal((await adapter.handle('turn.submit', turn)).status, 'unknown');
     assert.equal(gateway.count('chat.send'), 0); assert.equal(gateway.count('chat.history'), 1);
@@ -499,4 +500,46 @@ test('inherited descriptor verification rejects regular files and missing descri
   assert.throws(() => verifyInheritedListener(fd => { assert.equal(fd, 3); return { isSocket: () => false }; }), /must be a socket/);
   assert.throws(() => verifyInheritedListener(() => { throw new Error('missing FD3'); }), /missing FD3/);
   verifyInheritedListener(fd => { assert.equal(fd, 3); return { isSocket: () => true }; });
+});
+
+
+test('isolated native device identity persists privately and signs exact nonce/token/read-write authority', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'yorozu-device-fixture-'));
+  try {
+    const identity = await localDeviceIdentity(root), reloaded = await localDeviceIdentity(root);
+    assert.equal(reloaded.id, identity.id);
+    assert.equal((await stat(join(root, 'adapter-device-v1.json'))).mode & 0o777, 0o600);
+    const device = signedDevice(identity, 'fictional-challenge', 'fictional-local-token', 'darwin', 12345);
+    const payload = ['v3', identity.id, 'gateway-client', 'backend', 'operator', 'operator.read,operator.write', '12345', 'fictional-local-token', 'fictional-challenge', 'darwin', ''].join('|');
+    assert.equal(verify(null, Buffer.from(payload), createPublicKey(identity.key), Buffer.from(device.signature, 'base64url')), true);
+    assert.equal(verify(null, Buffer.from(payload.replace('operator.read,operator.write', 'operator.admin')), createPublicKey(identity.key), Buffer.from(device.signature, 'base64url')), false);
+    assert.equal(verify(null, Buffer.from(payload.replace('fictional-challenge', 'foreign-challenge')), createPublicKey(identity.key), Buffer.from(device.signature, 'base64url')), false);
+    const gateway = new NativeGateway('ws://127.0.0.1:12345', 'fictional-local-token', null, { WebSocketClass: FakeSocket, device: identity });
+    await gateway.connect();
+    assert.equal(gateway.socket.requests[0].params.device.id, identity.id);
+    assert.deepEqual(gateway.socket.requests[0].params.scopes, ['operator.read', 'operator.write']);
+    await gateway.shutdown();
+    await writeFile(join(root, 'adapter-device-v1.json'), JSON.stringify({ version: 2, privateKey: 'invalid' }));
+    await assert.rejects(localDeviceIdentity(root), /identity is invalid/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test('native admin-only command-suppression denial is never retried without protection or broader scopes', async () => {
+  const { adapter, gateway } = await fixture();
+  gateway.overrides.set('chat.send', () => { throw Object.assign(new Error('native rejection'), { data: { code: 'INVALID_REQUEST', message: 'system provenance fields require admin scope' } }); });
+  assert.equal((await adapter.handle('turn.submit', turn)).status, 'unknown');
+  assert.equal((await adapter.handle('turn.submit', turn)).status, 'unknown');
+  assert.equal(gateway.count('chat.send'), 1);
+  assert.equal(gateway.last('chat.send').suppressCommandInterpretation, true);
+});
+
+test('subscription acknowledgement requires exact native agent and session identity', async () => {
+  for (const reply of [{ok:true}, {subscribed:true,key:'foreign',agentId:'secretary'}, {subscribed:true,key:'unused',agentId:'foreign'}]) {
+    const { adapter, gateway } = await fixture({ skipOpen: true });
+    gateway.overrides.set('sessions.messages.subscribe', () => reply);
+    await assert.rejects(adapter.handle('session.open', open), /observation was not acknowledged/);
+    assert.equal((await adapter.handle('turn.submit', turn)).handoff, 'not-submitted');
+    assert.equal(gateway.count('chat.send'), 0);
+  }
 });
