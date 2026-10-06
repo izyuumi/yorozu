@@ -1,5 +1,9 @@
 # Whole-harness plugin candidate
 
+The explicit `minimalWorkers` composition adds a uniform host-owned memory/tool slice through
+these retained boundaries. See [minimal-workers.md](minimal-workers.md) for selection, security,
+rollback and remaining scope. It is off by default and does not authorize a release.
+
 This opt-in development path retains native SwiftUI, encrypted device connections,
 visible history and ordinary coding sessions. Hermes owns the secretary loop,
 delegation and result continuation. The legacy JSON coordinator is used only when
@@ -95,7 +99,8 @@ secretary continuation must remain inside Hermes. The Codex app-server transport
 that takes over the loop cannot satisfy this whole-Hermes acceptance gate.
 
 The host preserves its legacy preference journal without injecting it into person
-sessions. Shared memory is deferred. No new
+sessions. Shared memory remains unavailable in the legacy selection; the explicit minimal-worker
+selection uses a separate uniform SQL source with per-note approval/grants/revocation. No new
 scheduler, marketplace, updater, installed-profile migration or release is added.
 
 ## Local candidate validation
@@ -166,7 +171,8 @@ Peer data goes to the recipient's existing native inbox and has its own inspecta
 exchange thread. The platform never creates a temporary teammate or substitutes a
 user prompt. Inbox admission and model execution are distinct; unknown handoffs are
 never replayed. Recipients without a verified inbox receive a visible not-submitted
-rejection. Shared memory remains deferred; old host journals are preserved.
+rejection. Shared memory remains deferred on this legacy path; old host journals are preserved. The separate
+explicit minimal-worker selection supplies uniform memory without importing those journals.
 
 New offline user messages remain in the encrypted outbox indefinitely until first
 delivery, with Waiting for Mac, edit and cancel controls. If the original wire

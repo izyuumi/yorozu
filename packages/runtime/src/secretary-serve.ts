@@ -11,8 +11,11 @@ import { harnessConfiguration, SecretaryHarness } from "./harness-runner.js";
 import { PersonAgentHost, type PersonAgentPlatform } from "./person-agent-host.js";
 import { packagedResourcesFromEntry } from "./packaged-agent-runtime.js";
 import { createNativeAccountHost, type NativeAccountSender } from "./native-account-host.js";
+import { createMinimalWorkerPlatform, type MinimalWorkerSelection } from "./worker-platform.js";
 
 export interface SecretaryServeOptions extends ServeOptions {
+  /** Explicit trusted host selection; never sourced from relay/device settings or ambient env. */
+  minimalWorkers?: MinimalWorkerSelection;
   personAgentPlatform?: PersonAgentPlatform;
   nativeAccountHost?: ReturnType<typeof createNativeAccountHost>;
 }
@@ -32,7 +35,8 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   let harness: SecretaryHarness | undefined;
   let harnessHost: SecretaryCoordinatorHost | undefined;
   const accounts = options.nativeAccountHost;
-  const platform = accounts?.platform ?? options.personAgentPlatform;
+  if (options.minimalWorkers && (accounts || options.personAgentPlatform)) throw new Error("Select one worker platform owner");
+  const platform = options.minimalWorkers ? createMinimalWorkerPlatform(options.minimalWorkers) : accounts?.platform ?? options.personAgentPlatform;
   if (accounts && options.personAgentPlatform && options.personAgentPlatform !== accounts.platform) throw new Error("Native account platform owner mismatch");
   const people = platform ? new PersonAgentHost(dir, platform) : undefined;
   if (people && accounts) accounts.bindPeople(people);

@@ -9,8 +9,11 @@ import type { HarnessServices } from "./harness-runner.js";
 import type { NativeAgentRunner } from "./native.js";
 import { createThread, listThreads } from "./threads.js";
 import { join } from "node:path";
+import { WorkerMemory } from "./worker-memory.js";
 
 export interface PersonAgentPlatform {
+  /** Trusted composition only; devices cannot switch persistence or execution code. */
+  workerMemory?: true;
   createFactory(store: PersonAgentStore): PersonAgentRuntimeFactory;
   /** Previously selected resources, supplied only by trusted host configuration. */
   resourceRoots?: DirectoryGrant[];
@@ -30,17 +33,23 @@ export class PersonAgentHost {
   readonly runtime: PersonAgentRuntime;
   readonly controls: PersonAgentControls;
   readonly runner: NativeAgentRunner;
+  private readonly memory?: WorkerMemory;
   constructor(readonly dir: string, private readonly platform: PersonAgentPlatform) {
     this.store = new PersonAgentStore(dir, { resourceRoots: platform.resourceRoots,
-      protectedRoots: [...(platform.protectedRoots ?? []), join(dir, "harness-platform-v1")] });
-    this.runtime = new PersonAgentRuntime(dir, this.store, platform.createFactory(this.store),
-      agent => platform.catalog?.().harnesses?.some(h => h.id === agent.pluginId && h.available && h.capabilities.includes("agent-messaging-v1")) === true);
+      protectedRoots: [...(platform.protectedRoots ?? []), join(dir, "harness-platform-v1"), join(dir, "worker-memory-v1")] });
+    this.memory = platform.workerMemory ? new WorkerMemory(join(dir, "worker-memory-v1"),
+      id => this.store.list().agents.some(agent => agent.id === id)) : undefined;
+    try {
+      this.runtime = new PersonAgentRuntime(dir, this.store, platform.createFactory(this.store),
+        agent => platform.catalog?.().harnesses?.some(h => h.id === agent.pluginId && h.available && h.capabilities.includes("agent-messaging-v1")) === true,
+        this.memory);
+    } catch (error) { this.memory?.close(); throw error; }
     let controls: PersonAgentControls | undefined;
     try {
       this.controls = controls = new PersonAgentControls(dir, this.store, this.runtime, { assertIdle: () => this.runtime.assertControlsIdle() });
       if (platform.initialAgent && !this.store.list().agents.length) this.store.create(platform.initialAgent, 0);
       if (platform.secretaryAgentId) this.runtime.bindSecretary(platform.secretaryAgentId);
-    } catch (error) { void controls?.close(); void this.runtime.close(); throw error; }
+    } catch (error) { void controls?.close(); void this.runtime.close().finally(() => this.memory?.close()); throw error; }
     this.runner = { descriptor: { id: "harness", label: "Yorozu", description: "Selected person agent", needsFolder: true },
       run: async turn => {
         let owner;
@@ -103,5 +112,5 @@ export class PersonAgentHost {
       { agent: "harness", cwd: agent.workspace, creation });
     this.runtime.bindConversation(event.threadId, agent.id, event.data.title ?? agent.name);
   }
-  async close(): Promise<void> { try { await this.controls.close(); } finally { await this.runtime.close(); } }
+  async close(): Promise<void> { try { await this.controls.close(); } finally { try { await this.runtime.close(); } finally { this.memory?.close(); } } }
 }

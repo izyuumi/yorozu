@@ -15,6 +15,8 @@ import type { HarnessConfiguration } from "./harness-contract.js";
 import { SecretaryHarness, type HarnessServices, type HarnessHandoffResult } from "./harness-runner.js";
 import { appendThreadEvent, createThread, listThreads } from "./threads.js";
 import { retainSharedSyncHost } from "./rust-sync.js";
+import type { WorkerMemory } from "./worker-memory.js";
+import { workerMemoryTools, WorkerToolPreconditionError, type WorkerShareRequest } from "./worker-tools.js";
 
 export interface PersonAgentExecution {
   kind: "ordinary" | "handoff"; id: string; scratchRoot: string; workspace: string; memoryDir: string;
@@ -116,7 +118,8 @@ export class PersonAgentRuntime {
   private delivering = new Set<string>();
   private inboxRetries = new Map<string, ReturnType<typeof setTimeout>>();
   constructor(readonly dir: string, readonly store: PersonAgentStore, readonly factory: PersonAgentRuntimeFactory,
-    private readonly supportsPeerInbox?: (agent: PersonAgent) => boolean) {
+    private readonly supportsPeerInbox?: (agent: PersonAgent) => boolean,
+    private readonly workerMemory?: WorkerMemory) {
     this.root = safeAgentPath(join(dir, "person-agent-runtime-v1")); mkdirSync(this.root, { recursive: true, mode: 0o700 });
     if (owned.has(this.root)) throw new Error("Person agent runtime already owned");
     this.release = retainSharedSyncHost(join(this.root, "lease")); owned.add(this.root); this.file = join(this.root, "manifest.json");
@@ -207,19 +210,21 @@ export class PersonAgentRuntime {
   private ledgerDir(id: string, epoch: string): string { return join(this.root, "ledgers", harnessDigest(id), epoch); }
   private ledgerFile(id: string, epoch: string): string { return join(this.ledgerDir(id, epoch), "harness-v1", "binding.json"); }
   private signature(agent: PersonAgent, scope: EffectiveAgentScope): string {
-    return harnessDigest({ agent, allowedTools: scope.allowedTools, directories: scope.directories });
+    return harnessDigest({ agent, allowedTools: scope.allowedTools, directories: scope.directories,
+      ...(this.workerMemory ? { memory: "worker-memory-v1" } : {}) });
   }
   /** Permission/settings epochs do not fork the harness's learned native state. */
   private profileEpoch(agent: PersonAgent): string {
-    const key = harnessDigest([agent.pluginId, agent.runtime?.mode ?? "managed", agent.runtime?.mode === "connected" ? agent.runtime.connectionId : null]);
+    const key = harnessDigest([agent.pluginId, agent.runtime?.mode ?? "managed", agent.runtime?.mode === "connected" ? agent.runtime.connectionId : null,
+      ...(this.workerMemory ? ["worker-memory-v1"] : [])]);
     const profiles = (this.manifest.profiles ??= Object.create(null))[agent.id] ??= Object.create(null);
     if (profiles[key]) return profiles[key];
     // Adopt only this host's already owned profile and matching plugin ledger.
-    for (const [id, b] of Object.entries(this.manifest.bindings).reverse()) if (b.agentId === agent.id) {
+    for (const [id, b] of Object.entries(this.manifest.bindings).reverse()) if (!this.workerMemory && b.agentId === agent.id) {
       for (const epoch of [...b.epochs].reverse()) {
         const ledger = readObject(this.ledgerFile(id, epoch), 16 * 1024 * 1024);
         const marker = readObject(join(this.root, "scratch", agent.id, epoch, "owner.json"), 4096);
-        if (ledger?.pluginId === agent.pluginId && marker?.agentId === agent.id && marker.kind === "ordinary" && marker.id === epoch
+        if (ledger?.pluginId === agent.pluginId && marker?.agentId === agent.id && marker.kind === "ordinary" && marker.id === epoch && marker.memory === undefined
           && (agent.runtime?.mode ?? "managed") === "managed") { profiles[key] = epoch; this.save(); return epoch; }
       }
     }
@@ -340,7 +345,8 @@ export class PersonAgentRuntime {
   }
   private async prepare(agent: PersonAgent, scope: EffectiveAgentScope, kind: "ordinary" | "handoff", id: string): Promise<Actor> {
     const scratchRoot = safeAgentPath(join(this.root, "scratch", agent.id, id)); mkdirSync(scratchRoot, { recursive: true, mode: 0o700 });
-    const markerPath = join(scratchRoot, "owner.json"), expected = { version: 1, agentId: agent.id, kind, id };
+    const markerPath = join(scratchRoot, "owner.json"), expected = { version: 1, agentId: agent.id, kind, id,
+      ...(this.workerMemory ? { memory: "worker-memory-v1" } : {}) };
     const prior = readObject(markerPath, 4096);
     if (prior && JSON.stringify(prior) !== JSON.stringify(expected)) throw new Error("Vendor scratch has another owner");
     if (!prior) {
@@ -353,7 +359,8 @@ export class PersonAgentRuntime {
     const nativeEpoch = kind === "ordinary" ? this.profileEpoch(agent) : id;
     const nativeScratch = safeAgentPath(join(this.root, "scratch", agent.id, nativeEpoch));
     mkdirSync(nativeScratch, { recursive: true, mode: 0o700 });
-    const nativeMarker = join(nativeScratch, "owner.json"), nativeOwner = { version: 1, agentId: agent.id, kind, id: nativeEpoch };
+    const nativeMarker = join(nativeScratch, "owner.json"), nativeOwner = { version: 1, agentId: agent.id, kind, id: nativeEpoch,
+      ...(this.workerMemory ? { memory: "worker-memory-v1" } : {}) };
     const previousNativeOwner = readObject(nativeMarker, 4096);
     if (previousNativeOwner && JSON.stringify(previousNativeOwner) !== JSON.stringify(nativeOwner)) throw new Error("Native profile has another owner");
     if (!previousNativeOwner) {
@@ -385,9 +392,12 @@ export class PersonAgentRuntime {
         const sibling = safeAgentPath(join(scratchBase, agent.id, name), true);
         if (sibling !== scratchRoot && sibling !== nativeScratch) siblingScratch.push(sibling);
       }
-      const deniedRoots = [...new Set([...scope.deniedRoots, ...siblingScratch, join(this.root, "ledgers"), this.file, join(this.root, "lease"),
+      // Uniform memory lives only behind the owning process capability, never in native file grants.
+      const memoryDenied = this.workerMemory ? [join(this.dir, "worker-memory-v1"), agent.memoryDir, execution.memoryDir] : [];
+      const directories = this.workerMemory ? scope.directories.filter(g => ![agent.memoryDir, execution.memoryDir].includes(g.path)) : scope.directories;
+      const deniedRoots = [...new Set([...scope.deniedRoots, ...memoryDenied, ...siblingScratch, join(this.root, "ledgers"), this.file, join(this.root, "lease"),
         join(this.dir, "threads"), join(this.dir, "threads.json"), join(this.dir, "secretary-admission-v1"), join(this.dir, "person-agent-controls-v1"), this.platformStore.root])];
-      const osScope = { ...scope, deniedRoots, directories: [...scope.directories, { path: nativeProfile, access: "write" as const }] };
+      const osScope = { ...scope, deniedRoots, directories: [...directories, { path: nativeProfile, access: "write" as const }] };
       const launch = isolatedAgentLaunch(osScope, built.runtime);
       let activate: (() => void) | undefined;
       if (typeof initialize.providerConfigPath === "string") {
@@ -397,25 +407,97 @@ export class PersonAgentRuntime {
         initialize.providerConfigPath = selectedPath;
         activate = () => writeObject(selectedPath, provider);
       }
-      const scoped = { allowedTools: tools, directories: scope.directories.map(g => ({ ...g })),
+      const scoped = { allowedTools: tools, directories: directories.map(g => ({ ...g })),
         workspace: agent.pluginId === "openclaw" ? agent.workspace : execution.workspace,
         memoryDir: agent.pluginId === "openclaw" ? agent.memoryDir : execution.memoryDir,
         ...(agent.pluginId === "openclaw" ? { deniedRoots } : {}) };
+      let actor: Actor;
+      const memoryCapability = this.workerMemory?.bind(agent.id);
+      const workerTool = memoryCapability ? async (method: string, params: unknown, signal: AbortSignal) => {
+        const owners = [...this.owners.values()].filter(owner => owner.actor === actor && !owner.transient);
+        const turn = owners.length === 1 ? owners[0].harness.workerTurn() : undefined;
+        if (!turn) throw new Error("Worker memory requires exact active foreground authority");
+        const invoke = workerMemoryTools(memoryCapability, () => {
+          this.admission(actor);
+          if (!turn.current() || kind !== "ordinary" || !scope.allowedTools.includes("memory")) throw new Error("Memory tool is not granted to this execution");
+        }, (request, apply, requestSignal) => this.approveMemoryShare(actor, request, apply, requestSignal));
+        return invoke(method, params, AbortSignal.any([signal, turn.signal]));
+      } : undefined;
       const configuration: SupervisedHarnessConfiguration = { ...built.configuration, command: launch.command, args: launch.args, runtime: agent.runtime,
+        workerTool,
         inheritedListeners: built.runtime.inheritedListeners,
-        initialize: { ...initialize, agentId: agent.id, workspace: execution.workspace, model: agent.model,
+        initialize: { ...initialize, ...(this.workerMemory ? { workerMemory: true } : {}), agentId: agent.id, workspace: execution.workspace, model: agent.model,
           scope: scoped, isolation: launch.isolation, platform: { team: agent.teamIds.length > 0, computer: false,
             peers: this.store.list().agents.filter(peer => peer.id !== agent.id && peer.teamIds.some(team => agent.teamIds.includes(team))
               && (this.supportsPeerInbox ? this.supportsPeerInbox(peer) : peer.pluginId === "hermes"))
               .map(peer => ({ agentId: peer.id, name: peer.name, pluginId: peer.pluginId })) },
           ...(agent.runtime ? { lifecycle: agent.runtime } : {}),
           ...(agent.pluginId === "hermes" ? { profileRoot: nativeProfile } : { profileDir: nativeProfile }) } };
-      return { agent, scope, signature: this.signature(agent, scope), execution, configuration, process: new HarnessProcess(configuration), owners: new Set(), activate, release: built.release };
+      actor = { agent, scope, signature: this.signature(agent, scope), execution, configuration, process: new HarnessProcess(configuration), owners: new Set(), activate, release: built.release };
+      return actor;
     } catch (error) {
       let held = [] as ReturnType<typeof validateHostListeners>;
       try { held = validateHostListeners(built?.runtime?.inheritedListeners ?? [], agent.id); } catch { /* Unowned handles stay with their original host. */ }
       await Promise.all(held.map(releaseHostListener)); await built.release?.(); throw error;
     }
+  }
+  /** A sharing grant is privileged: reuse the native conversation's exact one-shot action boundary. */
+  private approveMemoryShare(actor: Actor, request: WorkerShareRequest, apply: () => void, signal: AbortSignal): Promise<void> {
+    const owned = [...this.owners.values()].filter(owner => owner.actor === actor && !owner.transient);
+    if (owned.length !== 1 || !this.workerMemory || signal.aborted) return Promise.reject(new Error("No unique live memory owner"));
+    const owner = owned[0], h = owner.harness, session = h.ledger.state.sessionId, turn = h.workerTurn();
+    if (!session || !turn) return Promise.reject(new Error("Sharing requires a current foreground harness turn"));
+    const body = this.workerMemory.bind(actor.agent.id).read(actor.agent.id, request.key);
+    if (body === undefined || body.length > 6000) return Promise.reject(new Error("Sharing needs an existing note that fits the approval card"));
+    const digest = harnessDigest(body), requestId = `memory-share-${harnessDigest([actor.agent.id, request.operationId]).slice(0, 48)}`;
+    const origin: HarnessOrigin = { version: 1, agentId: actor.agent.id, pluginId: actor.agent.pluginId,
+      conversationId: h.conversationId, sessionId: `session-${harnessDigest([h.ledger.state.bindingId, session]).slice(0, 48)}`, bindingEpoch: owner.epoch,
+      workId: `work-${harnessDigest([h.ledger.state.bindingId, turn.runId, turn.attemptId]).slice(0, 48)}` };
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const current = () => !settled && !signal.aborted && !this.closing && !actor.process.unavailable
+        && this.owners.get(h.conversationId) === owner && turn.current();
+      const finish = (error?: Error) => {
+        if (settled) return; settled = true; clearTimeout(timer); signal.removeEventListener("abort", abort);
+        turn.signal.removeEventListener("abort", abort); actor.process.listeners.delete(terminal);
+        if (error) {
+          try { this.platformStore.cancelAction(origin, requestId); } catch { /* Journal failure remains fenced; never grant on cancellation. */ }
+          reject(error);
+        } else resolve();
+      };
+      const abort = () => finish(new Error("Memory sharing was cancelled before confirmation"));
+      const terminal = (event: import("./harness-contract.js").HarnessEvent) => {
+        if (event.conversationId === h.conversationId && event.kind === "turn.terminal"
+          && event.runId === turn.runId && event.attemptId === turn.attemptId) abort();
+      };
+      const timer = setTimeout(abort, 25_000);
+      signal.addEventListener("abort", abort, { once: true });
+      turn.signal.addEventListener("abort", abort, { once: true }); actor.process.listeners.add(terminal);
+      try {
+        this.platformStore.openAction({ version: 1, requestId, origin, kind: "approval", state: "pending",
+          title: `Share ${request.key} with ${request.toAgentId}?`,
+          text: `Read/search access to this note and its future updates, until revoked. No write access.\n\n${body}`,
+          choices: [{ id: "allow-once", label: "Grant note access" }, { id: "deny", label: "Do not share" }] }, async answer => {
+          if (!current()) return { status: "rejected", reason: "The original sharing request is no longer current." };
+          if (answer.choiceId !== "allow-once") { finish(new Error("Memory sharing was not approved")); return { status: "applied" }; }
+          try {
+            this.admission(actor);
+            if (harnessDigest(this.workerMemory!.bind(actor.agent.id).read(actor.agent.id, request.key)) !== digest)
+              throw new Error("Note changed before approval");
+          } catch {
+            finish(new Error("Sharing precondition changed; no grant was attempted"));
+            return { status: "rejected", reason: "The note or authority changed before approval. No grant was attempted." };
+          }
+          try { apply(); finish(); return { status: "applied" }; }
+          catch (error) {
+            if (error instanceof WorkerToolPreconditionError) {
+              finish(error); return { status: "rejected", reason: "The original authority is no longer current. No grant was attempted." };
+            }
+            finish(new Error("Sharing outcome is unconfirmed; inspect before retrying")); return { status: "unknown" };
+          }
+        }, current);
+      } catch (error) { finish(error instanceof Error ? error : new Error("Memory approval unavailable")); }
+    });
   }
   /** Bind a new ordinary chat, or reopen its immutable agent binding. */
   conversation(id: string, agentId?: string, title = "Conversation"): Promise<SecretaryHarness> {

@@ -127,13 +127,13 @@ class MemoryRead(MemoryBase):
 class MemorySearch(MemoryBase):
     action: Literal["search"]
     ownerId: str = Field(min_length=1, max_length=128)
-    query: str = Field(min_length=1, max_length=4096)
+    query: str = Field(min_length=1, max_length=256)
 
 
 class MemoryWrite(MemoryBase):
     action: Literal["write"]
     key: str = Field(min_length=1, max_length=128)
-    body: str = Field(min_length=1, max_length=32768)
+    body: str = Field(min_length=1, max_length=16384)
     operationId: str = Field(min_length=1, max_length=128)
 
 
@@ -212,7 +212,7 @@ def register(ctx):
                 doc="Owned uniform memory transport only.")
         ctx.register_tool("worker_memory", "yorozu_memory", {
             "name": "worker_memory",
-            "description": "Read/search owned or explicitly shared host memory, write your memory, or explicitly grant/revoke a peer's access. Never retry uncertain mutations. Identity comes from the native runtime, not tool arguments.",
+            "description": "Read/search owned or explicitly shared host memory, write your memory, or explicitly grant/revoke a peer's access. Search returns up to 16 snippets of 2048 characters; use read for full notes. Grants need an exact owner approval. Never retry uncertain mutations. Identity comes from the native runtime, not tool arguments.",
             "parameters": MemoryArguments.json_schema(),
         }, worker_memory)
     if not ctx.get_config("team", False):

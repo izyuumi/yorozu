@@ -41,6 +41,8 @@ export interface HarnessEvent {
   data: Record<string, unknown>;
 }
 export interface HarnessReady {
+  /** Explicit host-selected uniform memory; absence never permits a fallback. */
+  workerMemory?: true;
   protocolVersion: 1;
   pluginId: HarnessPluginId;
   upstreamVersion: string;

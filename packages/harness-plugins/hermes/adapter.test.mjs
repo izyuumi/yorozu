@@ -877,7 +877,7 @@ test('assembled sealed source is rehashed in the child; edits, extra files and m
 });
 
 test('uniform memory gateway enforces native identity and exact actions without model sender authority', async t => {
-  const { params } = await scopeFixture(t, []);
+  const { params } = await scopeFixture(t, ['memory']);
   const gateway = new Gateway(), calls = [];
   const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }),
     callHost: async (method, args) => { calls.push({ method, args }); return args.action === 'read' ? { value: 'fixture memory' } : args.action === 'search' ? { entries: [{ key: 'note', body: 'fixture memory' }] } : { ok: true }; } });
@@ -906,7 +906,7 @@ test('uniform memory gateway enforces native identity and exact actions without 
 });
 
 test('uniform memory requires explicit host mode and callback before launch', async t => {
-  const { params } = await scopeFixture(t, []); let launches = 0;
+  const { params } = await scopeFixture(t, ['memory']); let launches = 0;
   const adapter = createAdapter({ emit() {}, launch: async () => { launches++; throw Error('unexpected launch'); } });
   await assert.rejects(adapter.handle('initialize', { ...params, workerMemory: true }), /callback/);
   await assert.rejects(adapter.handle('initialize', { ...params, workerMemory: 'true' }), /boolean/);
@@ -918,9 +918,10 @@ test('uniform memory requires explicit host mode and callback before launch', as
 });
 
 test('uniform memory bounds in-flight calls and marks timeout unknown without retry', async t => {
-  const { params } = await scopeFixture(t, []); const gateway = new Gateway(); let calls = 0;
+  const { params } = await scopeFixture(t, ['memory']); const gateway = new Gateway(); let calls = 0;
   const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }), callHost: () => { calls++; return new Promise(() => {}); } });
   await adapter.handle('initialize', { ...params, workerMemory: true }); await adapter.handle('session.open', currency);
+  await adapter.handle('turn.submit', { ...currency, text: 'fixture' });
   t.mock.timers.enable({ apis: ['setTimeout'] });
   for (let i = 0; i < 33; i++) {
     gateway.event('tool.start', { name: 'worker_memory', tool_id: `bounded-${i}` });
@@ -934,7 +935,7 @@ test('uniform memory bounds in-flight calls and marks timeout unknown without re
 
 test('uniform memory actual bidirectional serve path correlates private pipe replies', async t => {
   const { PassThrough } = await import('node:stream'); const { serve } = await import('./adapter.mjs');
-  const { params } = await scopeFixture(t, []); const gateway = new Gateway();
+  const { params } = await scopeFixture(t, ['memory']); const gateway = new Gateway();
   const input = new PassThrough(), output = new PassThrough(), frames = []; let buffer = '';
   output.on('data', chunk => { buffer += chunk; let end; while ((end = buffer.indexOf('\n')) >= 0) { frames.push(JSON.parse(buffer.slice(0, end))); buffer = buffer.slice(end + 1); } });
   serve(input, output, { launch: async () => ({ gateway, authAvailable: true }) });
@@ -944,6 +945,7 @@ test('uniform memory actual bidirectional serve path correlates private pipe rep
   for (let i = 0; i < 100 && !frames.some(f => f.id === 1); i++) await new Promise(resolve => setTimeout(resolve, 5));
   assert.ok(frames.find(f => f.id === 1)?.result);
   send({ id: 2, method: 'session.open', params: currency }); await flush();
+  send({ id: 3, method: 'turn.submit', params: { ...currency, text: 'fixture' } }); await flush();
   gateway.event('tool.start', { name: 'worker_memory', tool_id: 'pipe-tool' });
   gateway.request('native-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'pipe-tool', action: 'read', ownerId: 'agent-a', key: 'note' });
   await flush(); const hostRequest = frames.find(f => f.method === 'worker.memory');
@@ -955,9 +957,10 @@ test('uniform memory actual bidirectional serve path correlates private pipe rep
 });
 
 test('uniform memory rejects malformed host receipts without successful native results', async t => {
-  const { params } = await scopeFixture(t, []); const gateway = new Gateway();
+  const { params } = await scopeFixture(t, ['memory']); const gateway = new Gateway();
   const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }), callHost: async () => ({ ok: true, actorId: 'forged' }) });
   await adapter.handle('initialize', { ...params, workerMemory: true }); await adapter.handle('session.open', currency);
+  await adapter.handle('turn.submit', { ...currency, text: 'fixture' });
   gateway.event('tool.start', { name: 'worker_memory', tool_id: 'bad-receipt' });
   gateway.request('bad-receipt', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'bad-receipt', action: 'write', key: 'note', body: 'fixture', operationId: 'operation-1' });
   await flush(); assert.equal(gateway.responses.at(-1).result, null); assert.match(gateway.responses.at(-1).error.message, /unknown/);
@@ -966,7 +969,7 @@ test('uniform memory rejects malformed host receipts without successful native r
 test('native uniform memory discovery replaces vendor memory and preserves messaging checks', {
   skip: !process.env.YOROZU_HERMES_TEST_SOURCE || !process.env.YOROZU_HERMES_TEST_PYTHON,
 }, async t => {
-  for (const allowed of [[], ['team']]) {
+  for (const allowed of [['memory'], ['memory', 'team']]) {
     const { params } = await scopeFixture(t, allowed);
     params.python = process.env.YOROZU_HERMES_TEST_PYTHON; params.workerMemory = true;
     const runtime = await prepareRuntime(params);
@@ -1009,4 +1012,29 @@ print(json.dumps({"captured":captured,"completed":completed,"invalid":invalid,"m
     assert.equal(proof.captured[0].params.tool_call_id, 'native-call-proof');
     assert.deepEqual(proof.completed, { ok: true }); assert.match(proof.invalid.error, /not submitted/);
   }
+});
+
+test('uniform mode acknowledges the contract without requiring a native memory filesystem grant', async t => {
+  for (const allowed of [[], ['memory']]) {
+    const { params } = await scopeFixture(t, allowed); const gateway = new Gateway(); let calls = 0;
+    params.scope.directories = params.scope.directories.filter(g => g.path !== params.scope.memoryDir);
+    params.scope.memoryDir = join(params.scope.memoryDir, 'ungranted-host-only');
+    const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }), callHost: async () => { calls++; return { value: 'synthetic' }; } });
+    const ready = await adapter.handle('initialize', { ...params, workerMemory: true }); assert.equal(ready.workerMemory, true);
+    await adapter.handle('session.open', currency); await adapter.handle('turn.submit', { ...currency, text: 'fixture' });
+    gateway.event('tool.start', { name: 'worker_memory', tool_id: 'memory-tool' });
+    gateway.request('memory-tool', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'memory-tool', action: 'read', ownerId: 'agent-a', key: 'note' });
+    await flush(); assert.equal(calls, allowed.includes('memory') ? 1 : 0);
+  }
+});
+
+test('native stop currency refuses an unconsumed memory tool before host handoff', async t => {
+  const { params } = await scopeFixture(t, ['memory']); const gateway = new Gateway(); let calls = 0;
+  const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }), callHost: async () => { calls++; return { ok: true }; } });
+  await adapter.handle('initialize', { ...params, workerMemory: true }); await adapter.handle('session.open', currency);
+  await adapter.handle('turn.submit', { ...currency, text: 'fixture' });
+  gateway.event('tool.start', { name: 'worker_memory', tool_id: 'stopped-memory' });
+  await adapter.handle('run.stop', { ...currency, operationId: 'memory-stop' });
+  gateway.request('stopped-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'stopped-memory', action: 'write', key: 'note', body: 'late', operationId: 'late-write' });
+  await flush(); assert.equal(calls, 0); assert.equal(gateway.responses.at(-1).error.code, -32602);
 });

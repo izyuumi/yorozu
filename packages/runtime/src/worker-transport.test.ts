@@ -50,7 +50,7 @@ test.skipIf(process.platform !== "darwin")("minimal workers isolate memory and r
           launches.push(agent.id);
           return { configuration: { pluginId: "hermes", upstreamVersion: "synthetic-worker-v1", command: process.execPath, args: [peer], initialize: {} },
             runtime: { command: process.execPath, args: [peer], runtimeDir: execution.scratchRoot,
-              readPaths: [code, ...["/opt/homebrew/lib"].filter(existsSync)], brokerPorts: [] } };
+              readPaths: [code], brokerPorts: [] } };
         } }],
       } });
     const qr = decodeQrPayload(await bounded(printed, "host QR"));

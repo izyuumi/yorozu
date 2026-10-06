@@ -4,7 +4,11 @@ import { prepareHostListenerTransfer, releaseHostListener, validateHostListeners
 import { HARNESS_FRAME_BYTES, HARNESS_PENDING_REQUESTS, validHarnessEvent, validHarnessExtensions, validHarnessLifecycle, type HarnessConfiguration, type HarnessEvent, type HarnessReady, type HarnessLifecycle } from "./harness-contract.js";
 
 /** Live capabilities remain host memory; shared wire contracts contain no raw descriptor. */
-export type SupervisedHarnessConfiguration = HarnessConfiguration & { inheritedListeners?: readonly HostListenerLease[] };
+export type SupervisedHarnessConfiguration = HarnessConfiguration & {
+  inheritedListeners?: readonly HostListenerLease[];
+  /** Host-minted callback, never serialized or taken from initialize/model input. */
+  workerTool?(method: string, params: unknown, signal: AbortSignal): Promise<unknown>;
+};
 
 /** Bounded supervised process; never respawns or replays execution after failure. */
 export class HarnessProcess {
@@ -18,6 +22,9 @@ export class HarnessProcess {
   private listenerTransfer?: HostListenerTransfer;
   private sessionOpens: Promise<unknown> = Promise.resolve();
   private ready?: HarnessReady;
+  private readonly toolAbort = new AbortController();
+  private readonly toolRequests = new Set<string>();
+  private activeTools = 0;
   private readonly lifecycle?: HarnessLifecycle;
   readonly listeners = new Set<(event: HarnessEvent) => void>();
   readonly failures = new Set<(reason: string) => void>();
@@ -86,6 +93,8 @@ export class HarnessProcess {
               || (kind === "agent.message" || kind === "agent.message.status") && !this.ready?.extensions?.agentMessaging)
               throw new Error("Unnegotiated harness extension event");
             for (const listener of this.listeners) listener(frame.params);
+          } else if (frame.method === "worker.memory" && typeof frame.id === "string") {
+            this.receiveWorkerTool(frame);
           } else if (typeof frame.id === "string" && ("result" in frame || "error" in frame)) {
             const pending = this.pending.get(frame.id);
             if (!pending) throw new Error("Unknown receipt");
@@ -122,8 +131,35 @@ export class HarnessProcess {
       this.fail("Harness did not confirm its scoped agent identity");
       throw new Error("Harness did not confirm its scoped agent identity");
     }
+    if (initialize.workerMemory === true && (ready.workerMemory !== true || !this.configuration.workerTool)) {
+      this.fail("Harness did not confirm uniform worker memory");
+      throw new Error("Harness did not confirm uniform worker memory");
+    }
     this.ready = ready;
     return ready;
+  }
+  private receiveWorkerTool(frame: Record<string, any>): void {
+    if (Object.keys(frame).some(k => !["jsonrpc", "id", "method", "params"].includes(k))
+      || !/^[a-zA-Z0-9_.-]{1,128}$/.test(frame.id) || frame.id.trim() !== frame.id || this.toolRequests.has(frame.id))
+      throw new Error("Invalid or repeated worker tool request");
+    const reply = (result?: unknown, error?: { code: number; message: string }) => {
+      if (this.dead || this.closing || this.toolAbort.signal.aborted) return;
+      const encoded = JSON.stringify({ jsonrpc: "2.0", id: frame.id, ...(error ? { error } : { result }) }) + "\n";
+      if (Buffer.byteLength(encoded) > HARNESS_FRAME_BYTES || !this.child || this.child.stdin.writableLength > 8 * 1024 * 1024)
+        return this.fail("Worker tool response exceeded its bound");
+      this.child.stdin.write(encoded);
+    };
+    if (!this.ready || this.configuration.initialize.workerMemory !== true || !this.configuration.workerTool
+      || this.activeTools >= HARNESS_PENDING_REQUESTS || this.toolRequests.size >= 4096) {
+      reply(undefined, { code: -32003, message: "Worker tool unavailable" }); return;
+    }
+    this.toolRequests.add(frame.id); this.activeTools++;
+    // No replay. Durable mutation identity is checked independently by the memory store.
+    void Promise.resolve().then(() => {
+      this.toolAbort.signal.throwIfAborted();
+      return this.configuration.workerTool!("worker.memory", frame.params, this.toolAbort.signal);
+    }).then(value => reply(value), () => reply(undefined, { code: -32001, message: "Worker tool denied or unconfirmed; do not retry automatically" }))
+      .finally(() => { this.activeTools--; });
   }
   request(method: string, params: Record<string, unknown>): Promise<any> {
     if (this.lifecycle?.mode === "connected" && method === "shutdown")
@@ -154,6 +190,7 @@ export class HarnessProcess {
   private fail(reason: string): void {
     if (this.dead) return;
     this.dead = true;
+    this.toolAbort.abort(new Error("Owned harness is unavailable"));
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error(reason)); }
     this.pending.clear();
     if (!this.closing) for (const listener of this.failures) listener(reason);
@@ -162,6 +199,7 @@ export class HarnessProcess {
   async close(): Promise<void> {
     if (this.closing) return this.exited;
     this.closing = true;
+    this.toolAbort.abort(new Error("Owned harness is closing"));
     if (!this.dead) {
       // This process is our bridge. The harness behind a connection belongs to its
       // external owner; detach must only release the bridge's transport/session watch.

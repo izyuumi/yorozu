@@ -21,7 +21,7 @@ cargo build --locked --manifest-path packages/host-core/Cargo.toml --bin yorozu-
 export YOROZU_SECRETARY_HOST="$SOURCE/packages/host-core/target/debug/yorozu-alpha-host"
 export YOROZU_HOST_CORE="$SOURCE/packages/host-core/target/debug/yorozu-host-core"
 pnpm --filter @yorozu/runtime exec vitest run secretary- --maxWorkers=2
-pnpm --filter @yorozu/runtime exec vitest run harness agent- person-agent- curated-agent- packaged-agent- siwc- native-account- --maxWorkers=2
+pnpm --filter @yorozu/runtime exec vitest run harness agent- person-agent- curated-agent- packaged-agent- siwc- native-account- worker- --maxWorkers=2
 python3 scripts/test-package-hermes-runtime.py
 python3 scripts/test-hermes-release-provenance.py
 python3 scripts/test-hermes-public-archive-provenance.py

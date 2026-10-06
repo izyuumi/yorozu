@@ -171,3 +171,19 @@ test.each(["platform", "unscoped", "scoped"])("%s refusal uses an exact session-
     expect(request).toHaveBeenCalledWith("request.answer", { requestId: "refuse-native", sessionId: "private-upstream-session", answer: { approved: false } });
   } finally { request.mockRestore(); }
 });
+
+test("privileged worker approval currency dies on stop and never revives for a later turn", async () => {
+  const f = fixture(); expect(f.harness.workerTurn()).toBeUndefined();
+  const first = f.invoke("worker-turn-1", "request a memory share"), run = await f.admitted("worker-turn-1");
+  const currency = f.harness.workerTurn()!;
+  expect(currency).toMatchObject({ runId: run.runId, attemptId: run.attemptId }); expect(currency.current()).toBe(true);
+  await f.harness.stop("stop-worker-turn-1");
+  // Requested cancellation is enough to remove authority; no terminal proof is fabricated.
+  expect(currency.current()).toBe(false); expect(f.harness.workerTurn()).toBeUndefined();
+  expect(f.harness.ledger.state.runs["worker-turn-1"].state).toBe("running");
+  await f.emit("turn.terminal", { state: "stopped", text: "Stopped", cessation: "provider-terminal" }, run); await first;
+  const second = f.invoke("worker-turn-2", "a different request"), next = await f.admitted("worker-turn-2");
+  expect(f.harness.workerTurn()?.current()).toBe(true); expect(currency.current()).toBe(false);
+  await f.emit("turn.terminal", { state: "completed", text: "Done", cessation: "provider-terminal" }, next); await second;
+  expect(f.harness.workerTurn()).toBeUndefined();
+});

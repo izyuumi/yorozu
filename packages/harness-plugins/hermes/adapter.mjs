@@ -72,7 +72,7 @@ const ACTIVE = new Set(['running', 'waiting', 'stopping']);
 const exec = promisify(execFile);
 const NATIVE_TOOLS = ['file', 'terminal', 'delegation', 'memory', 'web', 'browser'];
 const RESOURCE_TOOLS = ['file', 'terminal', 'web', 'browser'];
-const nativeTools = (allowed, uniform = false) => [...new Set([...allowed.filter(name => RESOURCE_TOOLS.includes(name)), ...(uniform ? ['yorozu_memory'] : ['memory']), 'delegation'])].sort();
+const nativeTools = (allowed, uniform = false) => [...new Set([...allowed.filter(name => RESOURCE_TOOLS.includes(name)), ...(uniform ? (allowed.includes('memory') ? ['yorozu_memory'] : []) : ['memory']), 'delegation'])].sort();
 const HOST_TOOLS = [...NATIVE_TOOLS, 'team', 'computer'];
 const PACKAGE_ROOT = dirname(fileURLToPath(import.meta.url));
 export const EXTENSIONS = Object.freeze({ version: 1, connectedLifecycle: false, conversationActions: true, autonomousEvents: false, agentMessaging: true });
@@ -142,13 +142,13 @@ export async function validateAgentScope(params) {
   }
   const workspace = await realpath(scope.workspace);
   if (!(await lstat(workspace)).isDirectory()) throw invalid('workspace must be a directory');
-  const memoryDir = allowedTools.includes('memory') ? await realpath(scope.memoryDir) : resolve(scope.memoryDir);
-  if (allowedTools.includes('memory') && !(await lstat(memoryDir)).isDirectory()) throw invalid('private memory must be a directory');
+  const memoryDir = allowedTools.includes('memory') && params.workerMemory !== true ? await realpath(scope.memoryDir) : resolve(scope.memoryDir);
+  if (params.workerMemory !== true && allowedTools.includes('memory') && !(await lstat(memoryDir)).isDirectory()) throw invalid('private memory must be a directory');
   if (workspace !== await realpath(params.workspace)) throw invalid('workspace must match the immutable agent scope');
   if (!directories.some(grant => contained(grant.path, workspace))) {
     if (!isAbsolute(required(params.profileRoot, 'profileRoot')) || !contained(await realpath(params.profileRoot), workspace)) throw invalid('workspace is outside agent directory scope and owned runtime scratch');
   }
-  if (allowedTools.includes('memory') && !directories.some(grant => grant.access === 'write' && contained(grant.path, memoryDir))) throw invalid('enabled private memory directory needs a write grant');
+  if (params.workerMemory !== true && allowedTools.includes('memory') && !directories.some(grant => grant.access === 'write' && contained(grant.path, memoryDir))) throw invalid('enabled private memory directory needs a write grant');
   const normalized = { allowedTools, directories: directories.sort((a, b) => a.path.localeCompare(b.path)), workspace, memoryDir };
   return Object.freeze({ agentId, scope: normalized, isolation: { ...isolation }, platform: { ...platform, peers: peers.map(peer => ({ ...peer })) },
     scopeDigest: createHash('sha256').update(JSON.stringify(normalized)).digest('hex') });
@@ -290,7 +290,7 @@ export async function prepareRuntime(params) {
     config.agent.disabled_toolsets = [...RESOURCE_TOOLS.filter(name => !agent.scope.allowedTools.includes(name)), 'cronjob', 'computer_use'];
     if (params.workerMemory === true) config.agent.disabled_toolsets.push('memory');
     config.platform_toolsets = { cli: nativeTools(agent.scope.allowedTools, params.workerMemory === true) };
-    config.plugins = { enabled: ['yorozu-platform'], entries: { 'yorozu-platform': { settings: { team: agent.platform.team, peers: agent.platform.peers, workerMemory: params.workerMemory === true } } } };
+    config.plugins = { enabled: ['yorozu-platform'], entries: { 'yorozu-platform': { settings: { team: agent.platform.team, peers: agent.platform.peers, workerMemory: params.workerMemory === true && agent.scope.allowedTools.includes('memory') } } } };
     const pluginsRoot = join(hermesHome, 'plugins'), pluginRoot = join(pluginsRoot, 'yorozu-platform');
     for (const directory of [pluginsRoot, pluginRoot]) {
       await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -492,16 +492,16 @@ function validateMemoryRequest(args) {
   const keys = { read: ['action', 'ownerId', 'key'], search: ['action', 'ownerId', 'query'], write: ['action', 'key', 'body', 'operationId'], grant: ['action', 'toAgentId', 'key', 'operationId'], revoke: ['action', 'toAgentId', 'key', 'operationId'] }[args?.action];
   if (!Array.isArray(keys)) throw invalid('unsupported memory action');
   object(args, keys, 'memory request');
-  for (const key of keys) required(args[key], key, key === 'body' ? 32768 : key === 'query' ? 4096 : 128);
+  for (const key of keys) required(args[key], key, key === 'body' ? 16384 : key === 'query' ? 256 : 128);
 }
 function validateMemoryResult(action, result) {
   if (action === 'read') {
     object(result, ['value'], 'memory result');
-    if (result.value !== null && (typeof result.value !== 'string' || Buffer.byteLength(result.value) > 32768)) throw invalid('invalid memory value');
+    if (result.value !== null && (typeof result.value !== 'string' || Buffer.byteLength(result.value) > 16384)) throw invalid('invalid memory value');
   } else if (action === 'search') {
     object(result, ['entries'], 'memory result');
-    if (!Array.isArray(result.entries) || result.entries.length > 64) throw invalid('invalid memory entries');
-    for (const entry of result.entries) { object(entry, ['key', 'body'], 'memory entry'); required(entry.key, 'key', 128); required(entry.body, 'body', 32768); }
+    if (!Array.isArray(result.entries) || result.entries.length > 16) throw invalid('invalid memory entries');
+    for (const entry of result.entries) { object(entry, ['key', 'body'], 'memory entry'); required(entry.key, 'key', 128); required(entry.body, 'body', 8192); }
   } else { object(result, ['ok'], 'memory result'); if (result.ok !== true) throw invalid('invalid memory receipt'); }
   wire({ jsonrpc: '2.0', id: 'memory', result });
 }
@@ -600,9 +600,9 @@ export function createAdapter({ emit, launch = launchGateway, callHost }) {
     if (!session) { runtime.gateway.respond(frame.id, null, { code: -32602, message: 'request has no owned session' }); return; }
     if (frame.method === 'yorozu.worker_memory') {
       try {
-        if (!workerMemory || typeof callHost !== 'function' || frame.params.agent_session_id !== session.storedId) throw invalid('memory request has no native ownership or supported mode');
+        if (!workerMemory || !runtime.agent?.scope.allowedTools.includes('memory') || typeof callHost !== 'function' || frame.params.agent_session_id !== session.storedId) throw invalid('memory request has no native ownership or supported mode');
         const call = session.nativeToolCalls.get(required(frame.params.tool_call_id, 'native tool_call_id', 128));
-        if (!call || call.name !== 'worker_memory' || call.claimed) throw invalid('memory request has no unclaimed native tool identity');
+        if (!call || call.name !== 'worker_memory' || call.claimed || !call.run || call.run !== session.current || session.stoppedOrigins.has(JSON.stringify([call.run.runId, call.run.attemptId]))) throw invalid('memory request has no unclaimed native tool identity');
         call.claimed = true;
         const { session_id, agent_session_id, tool_call_id, ...args } = frame.params;
         validateMemoryRequest(args);
@@ -926,6 +926,7 @@ export function createAdapter({ emit, launch = launchGateway, callHost }) {
         const delegation = true; // Native orchestration is not a host preference flag.
         return { protocolVersion: 1, pluginId: 'hermes', upstreamVersion: UPSTREAM.version,
           lifecycle: { version: 1, mode: 'managed' },
+          ...(workerMemory ? { workerMemory: true } : {}),
           extensions: { ...EXTENSIONS, agentMessaging: Boolean(agent?.platform.team && runtime.messageJournalPath) },
           ...(agent ? { agentId: agent.agentId, scopeDigest: agent.scopeDigest, isolation: agent.isolation } : {}),
           capabilities: { backgroundTasks: delegation, targetedSteer: delegation, taskStop: delegation, approvals: true, reconnect: false, attachments: false,

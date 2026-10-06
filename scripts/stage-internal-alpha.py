@@ -31,6 +31,8 @@ OVERLAYS = [
     "packages/runtime/src/agent-isolation.ts", "packages/runtime/src/agent-listener.ts",
     "packages/runtime/src/person-agent-runtime.ts",
     "packages/runtime/src/person-agent-host.ts", "packages/runtime/src/person-agent-controls.ts",
+    "packages/runtime/src/fixtures/worker-protocol-peer.mjs",
+    "packages/runtime/src/worker-platform.ts", "packages/runtime/src/worker-tools.ts", "packages/runtime/src/worker-memory.ts",
     "packages/runtime/src/curated-agent-runtime.ts",
     "packages/runtime/src/packaged-agent-runtime.ts",
     "packages/runtime/src/siwc-inference-broker.ts",
@@ -51,7 +53,7 @@ OVERLAYS = [
     "packages/harness-plugins",
     "scripts/harness-proof.mjs",
     "scripts/harness-host-proof.mjs", "docs/harness-host-proof.md",
-    "docs/harness-proof.md", "docs/harness-contract.md",
+    "docs/harness-proof.md", "docs/harness-contract.md", "docs/minimal-workers.md",
     "docs/siwc-inference-broker.md", "scripts/capture-hermes-siwc-shape.py",
     "docs/siwc-account-lifecycle.md",
     "docs/siwc-id-token-verifier.md",
@@ -109,7 +111,7 @@ def extract_verified(destination, revision, paths):
 def selected_test(name):
     path = Path(name)
     prefixes = {
-        "packages/runtime/src": ("secretary-", "harness", "agent-", "person-agent-", "curated-agent-", "packaged-agent-", "siwc-", "native-account-"),
+        "packages/runtime/src": ("secretary-", "harness", "agent-", "person-agent-", "curated-agent-", "packaged-agent-", "siwc-", "native-account-", "worker-"),
         "packages/shared/src": ("person-agents", "peer-info", "siwc-"),
     }
     return any(name.startswith(root + "/") and path.name.startswith(starts)

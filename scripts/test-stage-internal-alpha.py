@@ -123,6 +123,15 @@ class StageTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "differ from Git blob"):
             stage.stage(self.root / "substituted")
 
+    def test_worker_boundary_tests_are_part_of_the_staged_gate(self):
+        self.put("packages/runtime/src/worker-transport.test.ts", "inert encrypted-transport fixture\n")
+        self.commit("worker regression gate")
+        out = self.root / "workers"
+        stage.stage(out)
+        manifest = json.loads((out / "internal-source.json").read_text())
+        self.assertIn("packages/runtime/src/worker-transport.test.ts", manifest["overlaySha256"])
+        self.assertTrue((out / "packages/runtime/src/worker-transport.test.ts").exists())
+
     def test_dirty_source_is_rejected(self):
         self.put("unreviewed", "not committed")
         with self.assertRaisesRegex(SystemExit, "clean source"):

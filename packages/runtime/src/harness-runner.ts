@@ -481,6 +481,19 @@ export class SecretaryHarness {
       && (this.live?.run.runId === identity.runId && this.live.run.attemptId === identity.attemptId
         || this.continuations.get(identity.attemptId)?.run.runId === identity.runId);
   }
+  /** Host-only capability for a new privileged tool action, tied to this exact foreground attempt.
+   * It cannot become current again when a later turn starts. Autonomous sharing needs its own
+   * provenance contract; never guess a background task from the current conversation alone.
+   */
+  workerTurn(): { runId: string; attemptId: string; signal: AbortSignal; current(): boolean } | undefined {
+    const live = this.live;
+    if (!live) return;
+    const current = () => !this.closed && this.live === live && !live.turn.signal.aborted
+      && !this.stopped.has(JSON.stringify([live.run.runId, live.run.attemptId]))
+      && ["sending", "running"].includes(live.run.state) && !this.hasUnconfirmedExecution;
+    if (!current()) return;
+    return Object.freeze({ runId: live.run.runId, attemptId: live.run.attemptId, signal: live.turn.signal, current });
+  }
   get hasUnconfirmedExecution(): boolean {
     return Object.values(this.ledger.state.runs).some(r => r.state === "unknown")
       || Object.values(this.ledger.state.tasks).some(t => t.state === "unknown")
