@@ -672,7 +672,7 @@ struct YorozuMacApp: App {
                 delegate.requestQuit()
             }
         } label: {
-            Image(systemName: (session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired) ? "circle.fill" : "circle.dotted")
+            Image(nsImage: YorozuMenuBarIcon.image(connected: session.role == .client ? session.hosts.sessions.contains { $0.model.canDeliver } : session.model.state == .paired))
                 .overlay(alignment: .topTrailing) {
                     if HostWindowMode.active(role: session.role, enabled: backgroundOnlyHost)
                         && attentionIndicator
