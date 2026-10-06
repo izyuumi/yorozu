@@ -48,7 +48,7 @@ change, or iOS source change was introduced.
    Disconnected/stale registry, changed session or binding, duplicate answers, and
    unsupported capability must not become new authority. The card distinguishes applied,
    rejected, no-longer-needed and unknown outcomes. Host-side grant confirmation is also
-   fenced to the live foreground turn and unchanged note content (25-second timeout).
+   fenced to exact current foreground or verified-continuation work and unchanged note content (25-second timeout).
 4. To revoke, ask the owning agent in that same native chat to revoke access to the note
    from the recipient. `packages/runtime/src/worker-tools.ts` handles `worker.memory`
    `action: "revoke"` with the same recipient/key/operation fields, without granting new

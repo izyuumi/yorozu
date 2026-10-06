@@ -1,6 +1,6 @@
 # Minimal worker integration handoff
 
-**Status: source follow-ups integrated; final combined validation in progress.** The earlier `4f5305b` receipt remains historical. Packaged activation, native menu-bar policy, native memory settings and autonomous work currency are now in the candidate; the combined staged receipt will be added below.
+**Status: supported managed-Hermes source integration complete and signed; ready for parent review/build.** This is not a live-provider/device or publication receipt. The final handoff commit contains only documentation/evidence/staging selection after executable checkpoint `e8c657ecca6411b770d2dbeb072d957311d3d6c4`. Obtain the one final candidate SHA with `git rev-parse HEAD`; the parent reply supplies it explicitly. All children have finished and their work is integrated. No second integrator or duplicate child jobs are needed.
 
 ## Location and custody
 
@@ -29,16 +29,43 @@ There is a separate active canonical-branch cleanup/PR review. No branch refs ar
 | Requirement | Implemented/proven so far | Remaining acceptance |
 | --- | --- | --- |
 | Minimal native SwiftUI macOS/iOS clients | Existing native scene/chat/agent/settings/action surfaces retained; no web/Electron replacement. Native memory-editor change compiled; three selected Swift tests and localization guard passed. | Final Mac build and both native-client display checks; physical iPhone not exercised by this worker. |
-| Configured host defaults to menu-bar-only | Existing `MenuBarExtra`, explicit Open/Settings, onboarding and independent host service retained. | Native policy source integrated; child compiled the real app target and passed 30 Mac tests. Final combined receipt and actual window behavior still need verification. Verify a configured cold launch shows no automatic chat window, onboarding still appears when needed, and closing a client window leaves the host running. |
+| Configured host defaults to menu-bar-only | Existing `MenuBarExtra`, explicit Open/Settings, onboarding and independent host service retained. | Native policy source integrated; child compiled the real app target and passed 30 Mac tests. Combined native receipt is above; actual window/device behavior remains a parent acceptance gate. Verify a configured cold launch shows no automatic chat window, onboarding still appears when needed, and closing a client window leaves the host running. |
 | Packaged new backend actually active | The actual packaged factory now selects uniform workers and the `yorozu` secretary through the existing protected native account host. No legacy planner fallback; no ambient selector. | Fresh/quiescent activation and eleven unsettled/damaged migration conditions have compiled-entry tests. Verify final bundled entry and exact runtime artifact, not only an injected test option. |
 | Two registered agents, independent durable memory | Real encrypted loopback relay registers Alice/Bob; canonical SQL, scope and immutable receipts are exercised. SQL reopening and quiescent native/uniform profile rollback preserve notes without import. | Run the same scenario with the final native gateway/provider and connected iPhone; fake protocol peers are not live execution proof. |
 | Intentional share/revoke through existing iPhone UI | Existing native `HarnessActionCard`/`answerHarnessAction` carries exact origin and one-shot choice. Encrypted denial, pending-state denial, approval, selected-note-only sharing and revocation pass. Memory toggle is now reachable in the native agent editor. | Actual iPhone Create Agent → Memory permission → chat request → approval card → recipient read → revoke. Sharing is a chat/tool flow, not the obsolete preference-journal form. |
 | Relay, pairing, onboarding and history preservation | Relay/crypto/public schemas unchanged; registry projection repaired behind negotiated capability filtering. No pairing/credential/history migration or production data import. Old evidence/profile bytes retained; unresolved work never automatically resubmitted. | Test final bundle against retained pairing/history and a fresh onboarding profile before replacing the normal app. Never clear old work merely to satisfy the migration gate. |
 | Tools and approvals | Scoped native tools remain harness-owned. New memory tool cannot select its actor or write another namespace. Grant requires exact owner approval; changed-note rejection does not fabricate unknown mutation. | Native tool discovery and harmless live tool call in the final bundle. Verified-continuation provenance is implemented and tested against native contract fixtures; no guessing onto a foreground turn. |
-| Cancel and restart | Exact stop intent invalidates foreground memory/approval authority; stale card cannot revive in a later turn. Lost post-commit receipt retains unknown fence. Cancellation persistence errors settle the tool promise. Durable notes/receipts survive reopen; no automatic replay. | Combined continuation-currency regression plus packaged clean restart/stop readback. Crash/unknown tests use isolated fixtures, not destructive experiments on production work. |
+| Cancel and restart | Exact stop intent invalidates foreground memory/approval authority; stale card cannot revive in a later turn. Lost post-commit receipt retains unknown fence. Cancellation persistence errors settle the tool promise. Durable notes/receipts survive reopen; no automatic replay. | Continuation-currency regressions passed. Actual packaged clean restart/stop readback remains required. Crash/unknown tests use isolated fixtures, not destructive experiments on production work. |
 | Different harnesses | Central map separates implementation ID from person identity; multiple agents can share one implementation without sharing memory. Existing OpenClaw remains explicitly unavailable unless a verified compatible implementation is selected. | No claim of a real mixed-harness deployment. A second real uniform-memory adapter/packaged runtime remains a gate if mixed-harness operation is required for this delivery. Do not broaden the earlier blocked OpenClaw fetch/build authority. |
 
-## Existing receipts (historical source, not follow-up completion)
+## Final integrated receipts
+
+Current record: `docs/verification/minimal-workers-integrated-20261006.json`.
+
+- Runtime: **547 passed / 6 optional skipped**, 40 files, at `9147d80`; 105 runtime/shared-TS/adapter executable files were byte-identical through final integration, so the unchanged full suite was not repeated.
+- Adapters: **86 passed / 6 optional native skipped**; shared wire projection: **10 passed**.
+- Native bounded gate: **97 passed / zero skipped**, source `02556cf`; actual Mac/shared Swift targets compiled. The only later native product-source difference is the reviewed composer handler extraction, separately compiled/executed with **1 exact native regression passed**. Future bounded CI includes that exact case; there is no fabricated single 98-test receipt.
+- Final changed-path packaged/304 checks: **22 passed**, source `0163819`.
+- Commit guardrails: **5 passed**, shell syntax checked; files match the prepared reviewed guardrail patch. Native selector self-tests: **16 passed**. Staging: **9 passed**, with reviewed iOS source and toolbar fixtures retained. Localizations passed.
+- Earlier exact isolated Rust **22-pass** receipt remains applicable: Rust source/tests have not changed.
+- Historical iOS toolbar simulator receipts were preserved with `d871ff9`; no fresh simulator or physical-iPhone run is claimed here.
+
+### Prepared patches integrated
+
+| Prepared patch | Integrated commit | Review/validation |
+| --- | --- | --- |
+| `bf65ad5` | `dece570` | Candidate-aware navigation; updated to actual packaged selection |
+| `e46c5ad` | `73aa83b` | Fail-closed PR subject enumeration; five local tests and shell syntax; unchanged prepared workflow |
+| `ece28f` | `52ef274` | Native handler extraction preserves original logic; exact real-field caret regression passed |
+| `d871ff9` | `f2f6e29` | Scoped offline history-toolbar test/docs preserved; no new UI acceptance claim |
+
+### 304 decision
+
+**Resolved for the final packaged candidate by retiring legacy admission, not by adopting the declined legacy planner extension.** The compiled-entry `304 retirement gate` test proves both runner routes refuse retained legacy task resumption, resume/rewind are disabled, task Stop cannot prepare an owner, the old planner is not instantiated, and old history is unchanged. Worker startup with unsettled state stays visibly held without fallback.
+
+**Legacy execution/rollback remains explicitly restricted.** This is not a narrow fix to the old resume implementation, and an older app or unselected developer composition must not be approved for legacy worker resumption on this evidence. Preserve it for evidence/custody; separately fix or prove the specific rollback path before enabling that execution.
+
+## Earlier slice receipt (historical)
 
 `docs/verification/minimal-workers-20261006.json` records source `e3282e5`:
 
@@ -52,7 +79,7 @@ There is a separate active canonical-branch cleanup/PR review. No branch refs ar
 - Actual Hermes `serve()` + `HarnessProcess` + SQL test passes against a deterministic native gateway.
 - Native editor follow-up: **3 selected Swift tests passed**, shared package compiled; English/Japanese catalog guard passed.
 
-Deterministic gateway/protocol peers are **not** live Python/harness/model/provider/subscription or physical-device proof. The final follow-up needs its own assembled-source receipt; these counts must not be relabeled with a later executable SHA.
+Deterministic gateway/protocol peers are **not** live Python/harness/model/provider/subscription or physical-device proof. The newer integrated receipts above supersede this slice for source acceptance; historical counts are never relabeled with later executable SHAs.
 
 ## Parent commands: local review and source validation only
 
@@ -106,7 +133,7 @@ The owner has conditionally authorized eventual existing internal TestFlight dis
 
 Before those parent commit points:
 
-1. Review the integrated source corrections and complete the combined staged proof; compile/test the exact assembled candidate, including real packaged selection with no legacy fallback and native menu-bar launch policy.
+1. Review the integrated source corrections and obtain final branch-bound CI. The combined local proofs above cover packaged selection/no fallback and native launch policy; they do not replace the final branch/build/device checks.
 2. Obtain canonical-branch/PR review clearance and exact target/source ancestry from the separate cleanup owner. Preserve every unique/dirty/active source. Run branch-bound CI/review against the final integrated SHA, not an unrelated green run.
 3. Regenerate and verify the packaged Hermes runtime artifact against the changed adapter/plugin/bootstrap source and pinned public inputs. Old adapter inventory/digests cannot stand in for this source. Verify the protected account helper's real provisioning/entitlements and exact source/bundle provenance. Do not alter permissions or use ambient credentials to bypass a failure.
 4. Execute authorized bounded native/tool/account validation with a fresh test profile and explicit selected account/model: subscription/broker path only, no automatic paid/provider fallback. Prove tool catalog, native memory-disable behavior, actual invocation, approval, stop and restart. Deterministic tests do not clear this gate.
@@ -128,3 +155,7 @@ Use synthetic note contents and a fresh unique nonce; no private files, messagin
 ## Rollback proof limit
 
 The automated profile rollback test switches compositions within this candidate and verifies preserved sources; it is not proof that an older installed binary can safely consume every new journal. Validate the retained original app and a safely isolated profile copy before normal-app replacement. Preserve both pre-adoption and candidate-created history/memory evidence and protected account identity; do not restore stale credentials or discard candidate data to make rollback appear successful.
+
+## Canonical-branch coordination
+
+No named local or remote ref was changed by this worker. The last local cached readback was local alpha at reviewed `be87a28`, remote-tracking alpha at `1673b2e`, and main at `5be369c`; no fetch was performed. These are **not current GitHub/PR clearance**. The parent must reconcile the active cleanup/PR owner before applying the signed delta. Check that the approved target contains `be87a28`; otherwise stop and reconcile ancestry. Do not cherry-pick only this delta onto an older base missing its retained supervisors.

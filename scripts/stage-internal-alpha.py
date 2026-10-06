@@ -54,7 +54,7 @@ OVERLAYS = [
     "scripts/harness-proof.mjs",
     "scripts/harness-host-proof.mjs", "docs/harness-host-proof.md",
     "docs/harness-proof.md", "docs/harness-contract.md", "docs/minimal-workers.md",
-    "docs/verification/minimal-workers-20261006.json",
+    "docs/verification/minimal-workers-20261006.json", "docs/verification/minimal-workers-integrated-20261006.json",
     "HANDOFF.md", "docs/developer-navigation.md",
     "docs/verification/native-host-launch-20261006.md",
     "docs/verification/thread-history-toolbar.md", "docs/verification/thread-history-toolbar-delivery.md",

@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-06",
+  "codeCheckpoint": "e8c657ecca6411b770d2dbeb072d957311d3d6c4",
+  "base": "be87a28fc75f1a8a0124a8ce3557f85de6ad2b2c",
+  "status": "source integrated; parent review/build and live acceptance pending",
+  "packagedWorkersSelected": true,
+  "legacyPlannerFallback": false,
+  "physicalDeviceProof": false,
+  "liveNativeProviderProof": false,
+  "preparedPatches": {
+    "bf65ad5": "dece570",
+    "e46c5ad": "73aa83b",
+    "ece28f": "52ef274",
+    "d871ff9": "f2f6e29"
+  },
+  "receipts": {
+    "runtime": {
+      "source": "9147d801175db8193eea07b6b6aca5fc4f1b75c0",
+      "files": 40,
+      "passed": 547,
+      "skipped": 6,
+      "failed": 0,
+      "carriedForward": "105 runtime/shared-TS/adapter executable files byte-identical in final integration; no repeat of unchanged full suite"
+    },
+    "adapters": {
+      "passed": 86,
+      "skipped": 6,
+      "failed": 0,
+      "kind": "Hermes and OpenClaw contract fixtures, not live native/provider proof"
+    },
+    "sharedProtocol": {
+      "passed": 10,
+      "failed": 0
+    },
+    "nativeGate": {
+      "source": "02556cf6d2e003f794865499d1dd53b0ce828570",
+      "passed": 97,
+      "skipped": 0,
+      "failed": 0
+    },
+    "nativeComposer": {
+      "source": "0163819403bf70c05e1d0cbc3f9d8a93bfad39a4",
+      "passed": 1,
+      "failed": 0,
+      "selector": "composerNewlineUsesNativeSelection",
+      "kind": "real offscreen AppKit field/binding/key handler; no app activation or live transport"
+    },
+    "finalPackagedAdmission": {
+      "source": "0163819403bf70c05e1d0cbc3f9d8a93bfad39a4",
+      "passed": 22,
+      "failed": 0,
+      "selectors": [
+        "worker-packaged.test.ts",
+        "secretary-serve-person.test.ts"
+      ]
+    },
+    "staging": {
+      "passed": 9,
+      "failed": 0,
+      "includes": "reviewed apps/ios subtree, toolbar fixture and handoff documents"
+    },
+    "nativeGateSelector": {
+      "passed": 16,
+      "failed": 0,
+      "note": "future bounded gate now selects the 97 prior cases plus the exact composer case; not claiming a single new 98-test execution"
+    },
+    "commitGuard": {
+      "passed": 5,
+      "failed": 0,
+      "shellSyntax": "passed",
+      "workflowAndGuardSource": "byte-identical to reviewed prepared e46c5ad"
+    },
+    "retainedRust": {
+      "passed": 22,
+      "scope": "exact isolated gate from earlier receipt; no Rust source/test delta since that run"
+    }
+  },
+  "builds": [
+    "final staged shared/runtime TypeScript passed",
+    "native gate compiled actual shared Swift and Mac app targets",
+    "prepared composer integration compiled and executed the exact native regression",
+    "final iOS source and toolbar test preserved in assembly; current iOS archive/UI tests not rerun"
+  ],
+  "gate304": {
+    "newPackagedAdmission": "resolved by retirement and no-fallback test, including both runner routes, disabled resume/rewind, no owner preparation and byte-preserved history",
+    "legacyExecutionOrRollback": "not certified; do not enable or resume legacy worker execution without a separately reviewed narrow resume fix or compatible proven rollback path"
+  },
+  "actualReleaseGates": [
+    "parent canonical-branch/active-PR review and exact integrated SHA CI",
+    "regenerated verified Hermes artifact matching changed adapter/plugin/bootstrap plus protected helper signing/provisioning",
+    "actual native tool discovery and bounded explicit account/model provider path, approval/stop/restart",
+    "normal Mac menu-bar behavior, existing onboarding/pairing/history and connected-iPhone two-agent share/revoke acceptance",
+    "source/build/artifact identity, existing internal TestFlight group and GitHub alpha publication readback, then parent-owned normal-app replacement with proven rollback custody"
+  ],
+  "remainingSourceLimitations": [
+    "OpenClaw/second real uniform-memory runtime is unavailable; no mixed-harness deployment claim",
+    "native shared UI uses chat plus generic approval cards, not a dedicated memory-note/grant browser",
+    "unverified native work provenance is refused; deterministic continuation proof is not live native acceptance"
+  ],
+  "actionsNotTaken": [
+    "push",
+    "branch-ref change",
+    "release/tag/upload",
+    "install or installed-app replacement",
+    "production account/provider access",
+    "production data import"
+  ],
+  "logSha256": {
+    "runtime": "2a2ceaa405ccd230e02bd2ef5f186ca4066599ba5fe411a2c2952d3118406730",
+    "adapters": "c13832a09cdecd4a12356990548d63aa914b566251595b50782e993e73db328f",
+    "shared": "a71b44bb5cf4ee94be653b64c8e581b145248ca75510b916ff45ce3de05c59cd",
+    "native": "47b672636eaa5e8f814233530cf11a63bb5b96d3df03515792ff3f032937761b",
+    "packaged304": "f8c8a3192bd259419c62248953f6393688fd7ead43b665ba80bbfd1cae9e6b2f",
+    "composer": "c65cb243b586ecfae8a5dca32546138445db569a99b1800a571941118cf79482",
+    "commitGuards": "4022c4e442bd19d72077500f0e7479b69bea29f602d1cfae3673c5749193074d",
+    "nativeSelector": "c5c1634603f92628fdac8402aac8ac6847ea323f8558458736d7dbc32e471903",
+    "staging": "d66c37178fdf578877abafdf65497489969984242716b63819dbb16ad2863380"
+  }
+}

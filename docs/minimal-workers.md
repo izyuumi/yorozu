@@ -133,12 +133,7 @@ defaults to menu-bar-only, while deliberate Open Yorozu/Settings and onboarding 
 
 ## Evidence boundaries
 
-The October 6 local run is recorded in [verification/minimal-workers-20261006.json](verification/minimal-workers-20261006.json).
-It tested code source `e3282e5` through the clean production assembly: 526 runtime tests passed
-(6 optional skips), 84 adapter tests passed (6 optional native skips), 10 shared protocol tests,
-22 exact isolated Rust cases, 9 staging tests and the explicit kernel file-isolation probe passed.
-This includes the encrypted two-agent slice and the actual Hermes adapter/host-pipe bridge, not
-live native/provider acceptance.
+The current source integration is recorded in [verification/minimal-workers-integrated-20261006.json](verification/minimal-workers-integrated-20261006.json) and `../HANDOFF.md`. It includes actual packaged selection/account composition, verified-continuation memory, native menu-bar/default policy, native memory settings and the four prepared patches. Local receipts:547 runtime passes (6 optional skips),86 adapter passes (6 optional native skips),10 shared,97 native plus the separately executed exact composer regression,22 final packaged/admission checks,9 staging and16 native-selector checks. The earlier isolated Rust22-pass receipt is retained with unchanged Rust sources. These are source/fixture proofs, not live native/provider/device acceptance. The first-slice `minimal-workers-20261006.json` remains historical.
 
 Run `worker-*` plus retained harness/person/registry/isolation tests against the **staged production
 source**; raw checkout `serve.ts` does not contain the production decorator. `stage-internal-alpha.py`
