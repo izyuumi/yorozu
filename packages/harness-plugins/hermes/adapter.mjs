@@ -1110,7 +1110,7 @@ export function serve(input = process.stdin, output = process.stdout, options = 
   const hostPending = new Map(); let hostSequence = 0;
   const callHost = (method, params) => new Promise((resolve, reject) => {
     if (method !== 'worker.memory' || hostPending.size >= MAX_PENDING || outputFailed || output.destroyed) { reject(invalid('host memory unavailable')); return; }
-    const id = `host-memory:${++hostSequence}`;
+    const id = `host-memory-${++hostSequence}`;
     const timer = setTimeout(() => { hostPending.delete(id); reject(new Error('Memory outcome unknown; do not retry.')); }, 30_000);
     hostPending.set(id, { resolve, reject, timer });
     send({ jsonrpc: '2.0', id, method, params });
