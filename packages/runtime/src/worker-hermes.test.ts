@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { HarnessProcess } from "./harness-process.js";
 import { WorkerMemory } from "./worker-memory.js";
-import { workerMemoryTools } from "./worker-tools.js";
+import { parseWorkerMemoryEnvelope, workerMemoryTools } from "./worker-tools.js";
 
 test("real Hermes-generated memory RPC IDs round-trip through the strict host process and SQL capability", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "yorozu-worker-hermes-"))), workspace = join(root, "workspace");
@@ -21,7 +21,11 @@ test("real Hermes-generated memory RPC IDs round-trip through the strict host pr
     initialize: { workerMemory: true, agentId: "alice", isolation, workspace,
       scope: { allowedTools: ["memory"], directories: [{ path: workspace, access: "write" }], workspace, memoryDir: join(root, "ungranted-native-memory") },
       platform: { team: false, computer: false, peers: [] } },
-    workerTool: workerMemoryTools(memory.bind("alice"), () => {}, async () => { throw new Error("No sharing approval in this fixture"); }),
+    workerTool: (method, params, signal) => {
+      const envelope = parseWorkerMemoryEnvelope(params);
+      expect(envelope.execution).toEqual({ sessionId: "durable-1", runId: "run-1", attemptId: "attempt-1" });
+      return workerMemoryTools(memory.bind("alice"), () => {}, async () => { throw new Error("No sharing approval in this fixture"); })(method, envelope.request, signal);
+    },
     args: ["--input-type=module", "-e", `
       import {serve} from ${JSON.stringify(adapter)};
       const gateway = {

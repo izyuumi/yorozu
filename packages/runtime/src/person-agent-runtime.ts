@@ -16,7 +16,7 @@ import { SecretaryHarness, type HarnessServices, type HarnessHandoffResult } fro
 import { appendThreadEvent, createThread, listThreads } from "./threads.js";
 import { retainSharedSyncHost } from "./rust-sync.js";
 import type { WorkerMemory } from "./worker-memory.js";
-import { workerMemoryTools, WorkerToolPreconditionError, type WorkerShareRequest } from "./worker-tools.js";
+import { parseWorkerMemoryEnvelope, workerMemoryTools, WorkerToolPreconditionError, type WorkerShareRequest } from "./worker-tools.js";
 
 export interface PersonAgentExecution {
   kind: "ordinary" | "handoff"; id: string; scratchRoot: string; workspace: string; memoryDir: string;
@@ -415,13 +415,14 @@ export class PersonAgentRuntime {
       const memoryCapability = this.workerMemory?.bind(agent.id);
       const workerTool = memoryCapability ? async (method: string, params: unknown, signal: AbortSignal) => {
         const owners = [...this.owners.values()].filter(owner => owner.actor === actor && !owner.transient);
-        const turn = owners.length === 1 ? owners[0].harness.workerTurn() : undefined;
-        if (!turn) throw new Error("Worker memory requires exact active foreground authority");
+        const envelope = parseWorkerMemoryEnvelope(params);
+        const turn = owners.length === 1 ? owners[0].harness.workerWork(envelope.execution) : undefined;
+        if (!turn) throw new Error("Worker memory requires exact active execution authority");
         const invoke = workerMemoryTools(memoryCapability, () => {
           this.admission(actor);
           if (!turn.current() || kind !== "ordinary" || !scope.allowedTools.includes("memory")) throw new Error("Memory tool is not granted to this execution");
-        }, (request, apply, requestSignal) => this.approveMemoryShare(actor, request, apply, requestSignal));
-        return invoke(method, params, AbortSignal.any([signal, turn.signal]));
+        }, (request, apply, requestSignal) => this.approveMemoryShare(actor, turn, request, apply, requestSignal));
+        return invoke(method, envelope.request, AbortSignal.any([signal, turn.signal]));
       } : undefined;
       const configuration: SupervisedHarnessConfiguration = { ...built.configuration, command: launch.command, args: launch.args, runtime: agent.runtime,
         workerTool,
@@ -442,11 +443,11 @@ export class PersonAgentRuntime {
     }
   }
   /** A sharing grant is privileged: reuse the native conversation's exact one-shot action boundary. */
-  private approveMemoryShare(actor: Actor, request: WorkerShareRequest, apply: () => void, signal: AbortSignal): Promise<void> {
+  private approveMemoryShare(actor: Actor, turn: import("./worker-tools.js").WorkerWork, request: WorkerShareRequest, apply: () => void, signal: AbortSignal): Promise<void> {
     const owned = [...this.owners.values()].filter(owner => owner.actor === actor && !owner.transient);
     if (owned.length !== 1 || !this.workerMemory || signal.aborted) return Promise.reject(new Error("No unique live memory owner"));
-    const owner = owned[0], h = owner.harness, session = h.ledger.state.sessionId, turn = h.workerTurn();
-    if (!session || !turn) return Promise.reject(new Error("Sharing requires a current foreground harness turn"));
+    const owner = owned[0], h = owner.harness, session = h.ledger.state.sessionId;
+    if (!session || session !== turn.sessionId || !turn.current()) return Promise.reject(new Error("Sharing requires current exact harness work"));
     const body = this.workerMemory.bind(actor.agent.id).read(actor.agent.id, request.key);
     if (body === undefined || body.length > 6000) return Promise.reject(new Error("Sharing needs an existing note that fits the approval card"));
     const digest = harnessDigest(body), requestId = `memory-share-${harnessDigest([actor.agent.id, request.operationId]).slice(0, 48)}`;

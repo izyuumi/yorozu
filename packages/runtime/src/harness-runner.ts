@@ -12,6 +12,7 @@ import { SECRETARY_THREAD_ID } from "./secretary-runner.js";
 import { HarnessProcess } from "./harness-process.js";
 import { HarnessLedger, harnessDigest, type HarnessRun } from "./harness-ledger.js";
 import { taskIsLive, validHarnessTask, type HarnessConfiguration, type HarnessEvent, type HarnessReady, type HarnessReceipt, type HarnessTask } from "./harness-contract.js";
+import type { WorkerExecution, WorkerWork } from "./worker-tools.js";
 import type { ScopeSelection } from "./agent-scope.js";
 
 export interface HarnessHandoffIdentity {
@@ -54,7 +55,7 @@ export class SecretaryHarness {
   private ready?: HarnessReady;
   private starting?: Promise<void>;
   private live?: Live;
-  private continuations = new Map<string, { run: HarnessRun; text: string }>();
+  private continuations = new Map<string, { run: HarnessRun; text: string; abort: AbortController }>();
   private seen = new Set<string>();
   private requests = new Map<string, AbortController>();
   private requestScopes = new Map<string, string>();
@@ -62,6 +63,7 @@ export class SecretaryHarness {
   private readonly platformEpoch = randomUUID();
   private platformActions = new Map<string, { origin: HarnessOrigin; runId?: string; attemptId?: string }>();
   private stopped = new Set<string>();
+  private workerScopes = new Map<string, AbortController>();
   private waiters = new Set<() => void>();
   readonly workspace: string;
   readonly conversationId: string;
@@ -338,7 +340,7 @@ export class SecretaryHarness {
       if (resultTaskIds !== undefined && (!Array.isArray(resultTaskIds) || resultTaskIds.length > 64
         || resultTaskIds.some(id => typeof id !== "string" || this.ledger.state.tasks[id]?.originRunId !== run.runId))) throw new Error("Invalid continuation result ownership");
       this.ledger.state.autonomous[event.attemptId] = { runId: run.runId, state: "running", ...(resultTaskIds ? { resultTaskIds: resultTaskIds as string[] } : {}) }; this.ledger.save();
-      this.continuations.set(event.attemptId, { run, text: "" }); return;
+      this.continuations.set(event.attemptId, { run, text: "", abort: new AbortController() }); return;
     }
     const continuation = this.continuations.get(event.attemptId);
     if (!current && !continuation) return;
@@ -348,11 +350,13 @@ export class SecretaryHarness {
       else if (this.live?.run === run) { this.live.text = event.data.text; this.live.turn.onUpdate?.(event.data.text); }
     } else if (event.kind === "turn.terminal") {
       if (typeof event.data.text !== "string" || event.data.text.length > 100_000 || !["completed", "failed", "stopped", "unknown"].includes(String(event.data.state))) throw new Error("Invalid harness terminal");
+      const workKey = JSON.stringify([event.runId, event.attemptId]);
+      this.workerScopes.get(workKey)?.abort(); this.workerScopes.delete(workKey);
       if (continuation) {
         const confirmed = event.data.cessation === "provider-terminal" && event.data.state !== "unknown";
         this.ledger.state.autonomous[event.attemptId].state = confirmed ? event.data.state as "completed" | "failed" | "stopped" : "unknown";
         if (confirmed) for (const id of this.ledger.state.autonomous[event.attemptId].resultTaskIds ?? []) delete this.ledger.state.pendingResults[id];
-        this.ledger.save(); continuation.text = event.data.text; this.projectContinuation(event, continuation, true); this.continuations.delete(event.attemptId);
+        continuation.abort.abort(); this.ledger.save(); continuation.text = event.data.text; this.projectContinuation(event, continuation, true); this.continuations.delete(event.attemptId);
         for (const wake of [...this.waiters]) wake(); return;
       }
       if (!["running", "sending"].includes(run.state)) return;
@@ -468,6 +472,8 @@ export class SecretaryHarness {
   }
   private stopRun(run: HarnessRun, operationId: string, attemptId = run.attemptId): Promise<any> {
     const key = JSON.stringify([run.runId, attemptId]); this.stopped.add(key);
+    this.continuations.get(attemptId)?.abort.abort();
+    this.workerScopes.get(key)?.abort(); this.workerScopes.delete(key);
     for (const [id, scope] of this.requestScopes) if (scope === key) this.requests.get(id)?.abort();
     for (const [id, pending] of this.platformActions) if (pending.runId === run.runId && pending.attemptId === attemptId) {
       this.services?.cancelAction?.(pending.origin, id); this.platformActions.delete(id);
@@ -481,10 +487,30 @@ export class SecretaryHarness {
       && (this.live?.run.runId === identity.runId && this.live.run.attemptId === identity.attemptId
         || this.continuations.get(identity.attemptId)?.run.runId === identity.runId);
   }
-  /** Host-only capability for a new privileged tool action, tied to this exact foreground attempt.
-   * It cannot become current again when a later turn starts. Autonomous sharing needs its own
-   * provenance contract; never guess a background task from the current conversation alone.
-   */
+  /** Exact adapter-owned currency only. A continuation must already have passed native
+   * ownership validation; neither lastRun nor a caller-selected actor can mint authority. */
+  workerWork(execution: WorkerExecution): WorkerWork | undefined {
+    const { sessionId, runId, attemptId } = execution;
+    if (sessionId !== this.ledger.state.sessionId || this.closed || this.process.unavailable) return;
+    const foreground = this.workerTurn();
+    if (foreground?.runId === runId && foreground.attemptId === attemptId) {
+      const key = JSON.stringify([runId, attemptId]);
+      let abort = this.workerScopes.get(key);
+      if (!abort) { abort = new AbortController(); this.workerScopes.set(key, abort); }
+      const signal = AbortSignal.any([foreground.signal, abort.signal]);
+      return Object.freeze({ ...foreground, sessionId, signal, current: () => sessionId === this.ledger.state.sessionId
+        && !signal.aborted && !this.process.unavailable && foreground.current() });
+    }
+    const continuation = this.continuations.get(attemptId);
+    if (!continuation || continuation.run.runId !== runId) return;
+    const current = () => !this.closed && !this.process.unavailable && sessionId === this.ledger.state.sessionId
+      && this.continuations.get(attemptId) === continuation && !continuation.abort.signal.aborted
+      && !this.stopped.has(JSON.stringify([runId, attemptId]))
+      && this.ledger.state.autonomous[attemptId]?.state === "running" && !this.hasUnconfirmedExecution;
+    if (!current()) return;
+    return Object.freeze({ sessionId, runId, attemptId, signal: continuation.abort.signal, current });
+  }
+  /** Foreground introspection retained for host callers, not a wire authorization fallback. */
   workerTurn(): { runId: string; attemptId: string; signal: AbortSignal; current(): boolean } | undefined {
     const live = this.live;
     if (!live) return;
@@ -509,8 +535,11 @@ export class SecretaryHarness {
       && !Object.keys(this.ledger.state.pendingResults).length;
   }
   async stop(operationId: string): Promise<void> {
-    if (this.live) await this.stopRun(this.live.run, operationId);
-    for (const [attemptId, continuation] of this.continuations) await this.stopRun(continuation.run, `${operationId}-${attemptId}`, attemptId);
+    // Invalidate every owned capability synchronously, before awaiting any native receipt.
+    const stopping: Promise<unknown>[] = [];
+    if (this.live) stopping.push(this.stopRun(this.live.run, operationId));
+    for (const [attemptId, continuation] of this.continuations) stopping.push(this.stopRun(continuation.run, `${operationId}-${attemptId}`, attemptId));
+    await Promise.all(stopping);
   }
   async taskStop(event: YorozuEvent): Promise<boolean> {
     const task = this.taskForThread(event.threadId); if (!task || event.kind !== "interrupt") return false;
@@ -526,11 +555,13 @@ export class SecretaryHarness {
     this.services?.changed(); return true;
   }
   private unknown(reason: string): void {
+    for (const abort of this.workerScopes.values()) abort.abort(); this.workerScopes.clear();
     for (const r of Object.values(this.ledger.state.runs)) if (["sending", "running"].includes(r.state)) {
       r.state = "unknown"; r.result = { text: `${reason}. The outcome is unconfirmed and will not run again automatically.`, unconfirmed: true };
     }
     for (const task of Object.values(this.ledger.state.tasks)) if (taskIsLive(task)) { task.state = "unknown"; task.canSteer = false; task.canStop = false; }
     for (const a of Object.values(this.ledger.state.autonomous)) if (a.state === "running") a.state = "unknown";
+    for (const continuation of this.continuations.values()) continuation.abort.abort();
     this.continuations.clear(); for (const wake of [...this.waiters]) wake();
     if (this.ledger.committed) this.ledger.save();
     for (const task of Object.values(this.ledger.state.tasks)) this.project(task);
@@ -541,6 +572,8 @@ export class SecretaryHarness {
   }
   async close(): Promise<void> {
     if (this.closed) return;
+    for (const abort of this.workerScopes.values()) abort.abort(); this.workerScopes.clear();
+    for (const continuation of this.continuations.values()) continuation.abort.abort();
     try {
       if (this.live && (this.configuration.initialize.lifecycle as { mode?: string } | undefined)?.mode !== "connected")
         await this.stopRun(this.live.run, `close-${randomUUID()}`).catch(() => {});

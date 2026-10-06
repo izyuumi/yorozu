@@ -59,3 +59,19 @@ export function workerMemoryTools(memory: WorkerMemoryCapability, current: () =>
     }
   };
 }
+
+/** Private adapter-to-host currency; never accepted from model tool arguments. */
+export interface WorkerExecution { sessionId: string; runId: string; attemptId: string }
+export interface WorkerWork extends WorkerExecution { signal: AbortSignal; current(): boolean }
+export function parseWorkerMemoryEnvelope(value: unknown): { execution: WorkerExecution; request: WorkerMemoryRequest } {
+  const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v)
+    && [Object.prototype, null].includes(Object.getPrototypeOf(v));
+  if (!object(value) || Object.keys(value).length !== 2 || !Object.hasOwn(value, "execution") || !Object.hasOwn(value, "request"))
+    throw new Error("Worker memory requires exact execution provenance");
+  const e = value.execution;
+  if (!object(e) || Object.keys(e).length !== 3 || ["sessionId", "runId", "attemptId"].some(k =>
+    !Object.hasOwn(e, k) || typeof e[k] !== "string" || !e[k].trim() || e[k].length > 512 || /[\0\r\n]/.test(e[k])))
+    throw new Error("Invalid worker execution provenance");
+  return { execution: { sessionId: e.sessionId as string, runId: e.runId as string, attemptId: e.attemptId as string },
+    request: parseWorkerMemoryRequest(value.request) };
+}

@@ -187,3 +187,46 @@ test("privileged worker approval currency dies on stop and never revives for a l
   await f.emit("turn.terminal", { state: "completed", text: "Done", cessation: "provider-terminal" }, next); await second;
   expect(f.harness.workerTurn()).toBeUndefined();
 });
+
+test("exact foreground and verified continuation memory currency cancels before stop receipt and never revives", async () => {
+  const f = fixture(), first = f.invoke("memory-origin", "delegate"), run = await f.admitted("memory-origin");
+  const execution = { sessionId: "private-upstream-session", runId: run.runId, attemptId: run.attemptId };
+  const foreground = f.harness.workerWork(execution)!;
+  expect(foreground.current()).toBe(true);
+  for (const field of ["sessionId", "runId", "attemptId"]) expect(f.harness.workerWork({ ...execution, [field]: "wrong" })).toBeUndefined();
+  await f.emit("turn.terminal", { state: "completed", text: "delegated", cessation: "provider-terminal" }, run); await first;
+  expect(foreground.signal.aborted).toBe(true); expect(foreground.current()).toBe(false);
+  const continuation = { ...execution, attemptId: "verified-continuation" };
+  expect(f.harness.workerWork(continuation)).toBeUndefined();
+  await f.emit("turn.started", { continuation: true, originRunId: run.runId }, continuation);
+  const work = f.harness.workerWork(continuation)!;
+  expect(work.current()).toBe(true); expect(f.harness.workerWork(execution)).toBeUndefined();
+  for (const field of ["sessionId", "runId", "attemptId"]) expect(f.harness.workerWork({ ...continuation, [field]: "wrong" })).toBeUndefined();
+  const stopping = f.harness.stop("stop-memory-continuation");
+  expect(work.signal.aborted).toBe(true); expect(work.current()).toBe(false);
+  await stopping;
+  expect(f.harness.ledger.state.autonomous[continuation.attemptId].state).toBe("running");
+  expect(f.harness.workerWork(continuation)).toBeUndefined();
+  await f.emit("turn.terminal", { state: "stopped", text: "stopped", cessation: "provider-terminal" }, continuation);
+  const next = f.invoke("memory-next", "new work"), nextRun = await f.admitted("memory-next");
+  expect(work.current()).toBe(false); expect(f.harness.workerWork(continuation)).toBeUndefined();
+  await f.emit("turn.terminal", { state: "completed", text: "done", cessation: "provider-terminal" }, nextRun); await next;
+  expect(f.rows().filter(row => row.method === "turn.submit")).toHaveLength(2);
+});
+
+test("lost continuation owner fences restart and cannot replay or remint memory authority", async () => {
+  const f = fixture(), first = f.invoke("lost-memory-owner", "delegate"), run = await f.admitted("lost-memory-owner");
+  await f.emit("turn.terminal", { state: "completed", text: "delegated", cessation: "provider-terminal" }, run); await first;
+  const execution = { sessionId: "private-upstream-session", runId: run.runId, attemptId: "lost-continuation" };
+  await f.emit("turn.started", { continuation: true, originRunId: run.runId }, execution);
+  const work = f.harness.workerWork(execution)!;
+  await f.harness.close();
+  expect(work.signal.aborted).toBe(true); expect(work.current()).toBe(false);
+  const reopened = new SecretaryHarness(f.dir, f.harness.configuration);
+  try {
+    expect(reopened.workerWork(execution)).toBeUndefined();
+    expect(reopened.hasUnconfirmedExecution).toBe(true);
+    expect(await reopened.runner.run({ threadId: SECRETARY_THREAD_ID, cwd: reopened.workspace, text: "do not replay", signal: new AbortController().signal })).toMatchObject({ failed: true, cessation: "not-submitted" });
+    expect(f.rows().filter(row => row.method === "turn.submit")).toHaveLength(1);
+  } finally { await reopened.close(); }
+});

@@ -599,6 +599,13 @@ export function createAdapter({ emit, launch = launchGateway, callHost }) {
     if (!session && opening && frame.params?.session_id && opening.frames.length < 64) { opening.frames.push(frame); return; }
     if (!session) { runtime.gateway.respond(frame.id, null, { code: -32602, message: 'request has no owned session' }); return; }
     if (frame.method === 'yorozu.worker_memory') {
+      if (session.probe) {
+        if (session.probe.frames.length >= 64) {
+          runtime.gateway.respond(frame.id, null, { code: -32602, message: 'continuation buffer exceeded its bound' });
+          rejectContinuation(session, 'continuation buffer exceeded its bound'); return;
+        }
+        session.probe.frames.push(frame); void identifyContinuation(session); return;
+      }
       try {
         if (!workerMemory || !runtime.agent?.scope.allowedTools.includes('memory') || typeof callHost !== 'function' || frame.params.agent_session_id !== session.storedId) throw invalid('memory request has no native ownership or supported mode');
         const call = session.nativeToolCalls.get(required(frame.params.tool_call_id, 'native tool_call_id', 128));
@@ -609,7 +616,7 @@ export function createAdapter({ emit, launch = launchGateway, callHost }) {
         if (memoryPending >= MAX_PENDING) throw invalid('too many pending memory operations');
         memoryPending++;
         let timer;
-        Promise.race([Promise.resolve().then(() => callHost('worker.memory', args)), new Promise((_, reject) => {
+        Promise.race([Promise.resolve().then(() => callHost('worker.memory', { execution: { sessionId: session.storedId, runId: call.run.runId, attemptId: call.run.attemptId }, request: args })), new Promise((_, reject) => {
           timer = setTimeout(() => reject(new ProtocolError(-32004, 'Memory outcome unknown; do not retry.')), 30_000);
         })]).then(result => { validateMemoryResult(args.action, result); runtime.gateway.respond(frame.id, result); })
           .catch(() => runtime.gateway.respond(frame.id, null, { code: -32004, message: 'Memory outcome unknown; do not retry.' }))
@@ -705,6 +712,8 @@ export function createAdapter({ emit, launch = launchGateway, callHost }) {
       choices, allowText: frame.method === 'clarify' && frame.params.multi_select !== true });
   }
   function rejectContinuation(session, reason) {
+    for (const frame of session.probe?.frames ?? []) if (frame.method === 'yorozu.worker_memory')
+      runtime.gateway.respond(frame.id, null, { code: -32602, message: 'native memory execution currency is unverified' });
     session.probe = null; session.unattributedTurn = { state: 'unknown', reason };
     event(session, 'capability.unavailable', { capability: 'autonomousContinuation', reason });
     // Unavailable projection currency is not permission to stop native work.
@@ -813,7 +822,10 @@ export function createAdapter({ emit, launch = launchGateway, callHost }) {
       } else if (!ACTIVE.has(task.state)) return;
       publishTask(session, task); return;
     }
-    if (type === 'tool.start' && ['send_agent_message', 'read_agent_messages', 'worker_memory'].includes(payload.name) && typeof payload.tool_id === 'string') {
+    // Session-scoped messaging keeps its existing contract. Only memory must wait
+    // for the continuation probe before minting an exact native work identity.
+    if (type === 'tool.start' && ['send_agent_message', 'read_agent_messages', 'worker_memory'].includes(payload.name) && typeof payload.tool_id === 'string'
+      && (!session.probe || payload.name !== 'worker_memory')) {
       if (!session.nativeToolCalls.has(payload.tool_id) && session.nativeToolCalls.size < 64) session.nativeToolCalls.set(payload.tool_id, { run: session.current, name: payload.name, claimed: false });
       return;
     }

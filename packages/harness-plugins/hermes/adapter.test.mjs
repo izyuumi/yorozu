@@ -880,7 +880,7 @@ test('uniform memory gateway enforces native identity and exact actions without 
   const { params } = await scopeFixture(t, ['memory']);
   const gateway = new Gateway(), calls = [];
   const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }),
-    callHost: async (method, args) => { calls.push({ method, args }); return args.action === 'read' ? { value: 'fixture memory' } : args.action === 'search' ? { entries: [{ key: 'note', body: 'fixture memory' }] } : { ok: true }; } });
+    callHost: async (method, args) => { calls.push({ method, args }); return args.request.action === 'read' ? { value: 'fixture memory' } : args.request.action === 'search' ? { entries: [{ key: 'note', body: 'fixture memory' }] } : { ok: true }; } });
   await adapter.handle('initialize', { ...params, workerMemory: true });
   await adapter.handle('session.open', currency);
   await adapter.handle('turn.submit', { ...currency, text: 'fixture' });
@@ -893,7 +893,7 @@ test('uniform memory gateway enforces native identity and exact actions without 
     { action: 'grant', toAgentId: 'agent-b', key: 'note', operationId: 'grant-1' },
     { action: 'revoke', toAgentId: 'agent-b', key: 'note', operationId: 'revoke-1' } ];
   for (const [i, args] of actions.entries()) { request(`ok-${i}`, args); await flush(); assert.equal(gateway.responses.at(-1).error, undefined); }
-  assert.deepEqual(calls, actions.map(args => ({ method: 'worker.memory', args })));
+  assert.deepEqual(calls, actions.map(request => ({ method: 'worker.memory', args: { execution: { sessionId: 'durable-1', runId: currency.runId, attemptId: currency.attemptId }, request } })));
   for (const [i, args] of [ { ...actions[2], actorId: 'agent-b' }, { ...actions[2], sender: 'agent-b' }, { ...actions[2], ownerId: 'agent-b' },
     { ...actions[0], unexpected: true }, { action: 'grant', toAgentId: 'agent-b', key: 'note' }, { ...actions[2], body: 'x'.repeat(32769) } ].entries()) {
     request(`bad-${i}`, args); await flush(); assert.equal(gateway.responses.at(-1).error.code, -32602);
@@ -949,7 +949,7 @@ test('uniform memory actual bidirectional serve path correlates private pipe rep
   gateway.event('tool.start', { name: 'worker_memory', tool_id: 'pipe-tool' });
   gateway.request('native-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'pipe-tool', action: 'read', ownerId: 'agent-a', key: 'note' });
   await flush(); const hostRequest = frames.find(f => f.method === 'worker.memory');
-  assert.ok(hostRequest); assert.deepEqual(hostRequest.params, { action: 'read', ownerId: 'agent-a', key: 'note' });
+  assert.ok(hostRequest); assert.deepEqual(hostRequest.params, { execution: { sessionId: 'durable-1', runId: currency.runId, attemptId: currency.attemptId }, request: { action: 'read', ownerId: 'agent-a', key: 'note' } });
   send({ id: 'unrelated', result: { value: 'wrong' } }); await flush(); assert.equal(gateway.responses.length, 0);
   send({ id: hostRequest.id, result: { value: 'pipe fixture' } }); await flush();
   assert.deepEqual(gateway.responses.at(-1), { id: 'native-memory', result: { value: 'pipe fixture' }, error: undefined });
@@ -1037,4 +1037,54 @@ test('native stop currency refuses an unconsumed memory tool before host handoff
   await adapter.handle('run.stop', { ...currency, operationId: 'memory-stop' });
   gateway.request('stopped-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'stopped-memory', action: 'write', key: 'note', body: 'late', operationId: 'late-write' });
   await flush(); assert.equal(calls, 0); assert.equal(gateway.responses.at(-1).error.code, -32602);
+});
+
+test('initial native continuation memory waits for exact provenance, never stamps the old foreground or sends a prompt', async t => {
+  const { params } = await scopeFixture(t, ['memory']);
+  const gateway = new Gateway(), calls = [], events = [];
+  const adapter = createAdapter({ emit: event => events.push(event), launch: async () => ({ gateway, authAvailable: true }),
+    callHost: async (method, args) => { calls.push({ method, args }); return { value: 'continuation note' }; } });
+  await adapter.handle('initialize', { ...params, workerMemory: true });
+  await adapter.handle('session.open', currency); await adapter.handle('turn.submit', { ...currency, text: 'delegate' });
+  startChild(gateway, 'one'); gateway.event('message.complete', { status: 'complete', text: 'delegated' });
+  gateway.event('subagent.complete', { subagent_id: 'one', status: 'completed', summary: 'done' });
+  let identify;
+  gateway.override = method => method === 'session.activate' ? new Promise(resolve => { identify = resolve; }) : undefined;
+  gateway.event('message.start');
+  gateway.event('tool.start', { name: 'worker_memory', tool_id: 'first-continuation-memory' });
+  gateway.request('continuation-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'first-continuation-memory', action: 'read', ownerId: 'agent-a', key: 'note' });
+  await flush(); assert.equal(calls.length, 0); assert.equal(gateway.responses.length, 0);
+  identify({ running: true, inflight: { display_kind: 'async_delegation_complete', display_metadata: { delegation_id: 'unit-one' } } });
+  await flush();
+  const started = events.find(event => event.kind === 'turn.started');
+  assert.ok(started); assert.notEqual(started.attemptId, currency.attemptId);
+  assert.deepEqual(calls, [{ method: 'worker.memory', args: { execution: { sessionId: 'durable-1', runId: currency.runId, attemptId: started.attemptId },
+    request: { action: 'read', ownerId: 'agent-a', key: 'note' } } }]);
+  assert.deepEqual(gateway.responses.at(-1).result, { value: 'continuation note' });
+  // Model-selected currency is never accepted, even when it looks valid.
+  gateway.event('tool.start', { name: 'worker_memory', tool_id: 'forged-currency' });
+  gateway.request('forged-currency', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'forged-currency', action: 'read', ownerId: 'agent-a', key: 'note', execution: calls[0].args.execution });
+  assert.equal(gateway.responses.at(-1).error.code, -32602);
+  await adapter.handle('run.stop', { ...currency, attemptId: started.attemptId, operationId: 'stop-continuation' });
+  gateway.event('tool.start', { name: 'worker_memory', tool_id: 'stopped-continuation-memory' });
+  gateway.request('stopped-continuation-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'stopped-continuation-memory', action: 'read', ownerId: 'agent-a', key: 'note' });
+  await flush(); assert.equal(calls.length, 1); assert.equal(gateway.responses.at(-1).error.code, -32602);
+  assert.equal(gateway.calls.filter(call => call.method === 'prompt.submit').length, 1);
+});
+
+test('unverified initial continuation tool and request are refused, not guessed or replayed', async t => {
+  const { params } = await scopeFixture(t, ['memory']);
+  const gateway = new Gateway(), calls = [];
+  const adapter = createAdapter({ emit() {}, launch: async () => ({ gateway, authAvailable: true }),
+    callHost: async (...args) => { calls.push(args); return { ok: true }; } });
+  await adapter.handle('initialize', { ...params, workerMemory: true });
+  await adapter.handle('session.open', currency); await adapter.handle('turn.submit', { ...currency, text: 'fixture' });
+  gateway.event('message.complete', { status: 'complete', text: 'done' });
+  gateway.event('message.start');
+  gateway.event('tool.start', { name: 'worker_memory', tool_id: 'unverified-memory' });
+  gateway.request('unverified-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'unverified-memory', action: 'write', key: 'note', body: 'never written', operationId: 'unverified-write' });
+  await flush(); assert.equal(calls.length, 0); assert.equal(gateway.responses.at(-1).error.code, -32602);
+  gateway.request('late-unverified-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'unverified-memory', action: 'write', key: 'note', body: 'never written', operationId: 'unverified-write' });
+  await flush(); assert.equal(calls.length, 0);
+  assert.equal(gateway.calls.filter(call => call.method === 'prompt.submit').length, 1);
 });

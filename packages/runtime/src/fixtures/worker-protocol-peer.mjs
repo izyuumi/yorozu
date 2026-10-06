@@ -33,7 +33,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
   else if (frame.method === 'turn.submit') {
     reply({ status: 'accepted' });
     const responses = [];
-    for (const request of JSON.parse(p.text)) responses.push(await tool(request));
+    for (const request of JSON.parse(p.text)) responses.push(await tool({ execution: { sessionId: `synthetic-${p.conversationId}`, runId: p.runId, attemptId: p.attemptId }, request }));
     send({ method: 'harness.event', params: { protocolVersion: 1, eventId: `event-${++sequence}`,
       conversationId: p.conversationId, runId: p.runId, attemptId: p.attemptId,
       kind: 'turn.terminal', data: { state: 'completed', text: JSON.stringify(responses), cessation: 'provider-terminal' } } });

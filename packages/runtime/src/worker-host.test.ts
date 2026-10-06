@@ -52,7 +52,7 @@ function fixture() {
     const pending = host.runner.run({ threadId, text: "synthetic request", cwd: "/caller-spoof", signal: abort.signal, bypass: true });
     await vi.waitFor(() => expect(turns.slice(before).some(t => t.params.conversationId === threadId)).toBe(true));
     const turn = turns.filter(t => t.params.conversationId === threadId).at(-1)!;
-    const call = (params: unknown) => turn.process.configuration.workerTool!("worker.memory", params, new AbortController().signal);
+    const call = (params: unknown) => turn.process.configuration.workerTool!("worker.memory", { execution: { sessionId: `native-${turn.params.conversationId}`, runId: turn.params.runId, attemptId: turn.params.attemptId }, request: params }, new AbortController().signal);
     return { ...turn, pending, call, abort, threadId };
   };
   const answer = (action: any, id: string, choiceId: string, origin = action.origin) => host.action({ id, kind: "harness_action_answer",
@@ -93,7 +93,7 @@ test("stop cancels a pending memory grant; an old card cannot acquire authority 
   const sharing = alice.call({ action: "grant", toAgentId: "bob", key: "note", operationId: "grant-stop" });
   const cancelled = expect(sharing).rejects.toThrow("cancelled"), old = f.action();
   alice.abort.abort(); await cancelled; await alice.pending;
-  await expect(alice.call({ action: "write", key: "note", body: "late write", operationId: "write-after-stop" })).rejects.toThrow("active foreground");
+  await expect(alice.call({ action: "write", key: "note", body: "late write", operationId: "write-after-stop" })).rejects.toThrow("active execution");
   const next = await f.start("alice", "next-turn");
   await f.answer(old, "stale-allow", "allow-once");
   await expect(bob.call({ action: "read", ownerId: "alice", key: "note" })).rejects.toThrow();
@@ -142,4 +142,40 @@ test("a lost receipt after the SQL grant commit remains unknown and fences furth
   await expect(alice.call({ action: "write", key: "other", body: "blocked", operationId: "blocked-write" })).rejects.toThrow();
   expect(await bob.call({ action: "read", ownerId: "alice", key: "note" })).toEqual({ value: "SELECTED_SYNTHETIC" });
   f.emit(alice.process, alice.params); f.emit(bob.process, bob.params); await Promise.all([alice.pending, bob.pending]);
+});
+
+test("verified autonomous memory uses exact work approval; stop intent rejects late approval without waiting for terminal", async () => {
+  const f = fixture(), alice = await f.start("alice", "autonomous-origin"), bob = await f.start("bob", "autonomous-reader");
+  f.emit(alice.process, alice.params); await alice.pending;
+  const h = (await f.host.runtime.owner(alice.threadId))!;
+  const execution = { sessionId: `native-${alice.threadId}`, runId: alice.params.runId, attemptId: "verified-memory-continuation" };
+  const raw = (params: unknown) => alice.process.configuration.workerTool!("worker.memory", params, new AbortController().signal);
+  const call = (request: unknown, currency = execution) => raw({ execution: currency, request });
+  const note = { action: "write", key: "note", body: "AUTONOMOUS_PRIVATE_SYNTHETIC", operationId: "autonomous-write" };
+  await expect(call(note)).rejects.toThrow("active execution");
+  for (const listener of alice.process.listeners) listener({ protocolVersion: 1, eventId: "continuation-start", conversationId: alice.threadId,
+    runId: execution.runId, attemptId: execution.attemptId, kind: "turn.started", data: { continuation: true, originRunId: execution.runId } });
+  await expect(raw(note)).rejects.toThrow("provenance");
+  for (const field of ["sessionId", "runId", "attemptId"]) await expect(call(note, { ...execution, [field]: "wrong" })).rejects.toThrow("active execution");
+  await expect(alice.call(note)).rejects.toThrow("active execution");
+  await expect(call(note)).resolves.toEqual({ ok: true });
+  const grant = call({ action: "grant", toAgentId: "bob", key: "note", operationId: "autonomous-grant" }), card = f.action();
+  await f.answer(card, "autonomous-allow", "allow-once"); await grant;
+  expect(await bob.call({ action: "read", ownerId: "alice", key: "note" })).toEqual({ value: note.body });
+  await call({ action: "revoke", toAgentId: "bob", key: "note", operationId: "autonomous-revoke" });
+  const lateGrant = call({ action: "grant", toAgentId: "bob", key: "note", operationId: "autonomous-late-grant" });
+  const rejected = expect(lateGrant).rejects.toThrow("cancelled"), lateCard = f.action();
+  // Hold the native stop receipt and terminal: local intent alone must cancel the grant.
+  let receipt!: (value: any) => void;
+  vi.spyOn(alice.process, "request").mockImplementationOnce(() => new Promise(resolve => { receipt = resolve; }));
+  const stopping = h.stop("autonomous-stop"); await rejected;
+  expect(h.ledger.state.autonomous[execution.attemptId].state).toBe("running");
+  await f.answer(lateCard, "late-autonomous-allow", "allow-once");
+  await expect(bob.call({ action: "read", ownerId: "alice", key: "note" })).rejects.toThrow();
+  await expect(call({ ...note, operationId: "stopped-write" })).rejects.toThrow("active execution");
+  receipt({ status: "requested" }); await stopping;
+  f.emit(alice.process, { ...alice.params, attemptId: execution.attemptId }, "stopped");
+  const next = await f.start("alice", "autonomous-next");
+  await expect(call(note)).rejects.toThrow("active execution");
+  f.emit(next.process, next.params); f.emit(bob.process, bob.params); await Promise.all([next.pending, bob.pending]);
 });
