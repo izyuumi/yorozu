@@ -116,3 +116,23 @@ test("migration-held native settings receive a durable typed rejection instead o
   expect(transport.options.personAgentRegistry().lastControlResult).toEqual(after.lastControlResult);
   expect(f.forbidden).not.toHaveBeenCalled();
 });
+
+test("304 retirement gate: packaged workers cannot resume retained legacy tasks through either runner", async () => {
+  const f = fixture(); history(f.dir);
+  const ids = ["secretary-task-" + "a".repeat(64), "harness-task-" + "b".repeat(64)];
+  for (const id of ids) {
+    createThread("Retained legacy task", f.dir, id, { agent: "codex", cwd: f.dir });
+    appendThreadEvent({ id: `history-${id}`, threadId: id, ts: 1, agentId: "main", kind: "message",
+      data: { role: "agent", text: "Synthetic historical task", done: true } }, f.dir);
+  }
+  const before = ids.map(id => readThreadEvents(id, f.dir)); f.start();
+  expect(transport.options.secretaryCoordinator).toBe(false);
+  for (const [index, id] of ids.entries()) {
+    for (const runner of [transport.runners.codex, transport.runners.harness])
+      expect(await runner.run({ threadId: id, text: "Resume this old task" })).toMatchObject({ failed: true, cessation: "not-submitted" });
+    expect(transport.options.secretaryThreadSummary(id)).toMatchObject({ canResume: false, canRewind: false, needsAttention: true });
+    expect(await transport.options.secretaryTaskStop({ threadId: id })).toBe(false);
+    expect(readThreadEvents(id, f.dir)).toEqual(before[index]);
+  }
+  expect(transport.ordinary).not.toHaveBeenCalled(); expect(f.forbidden).not.toHaveBeenCalled();
+});

@@ -3,8 +3,9 @@
 This map adapts the useful navigation from PR #295 to the minimal-worker candidate. It does not
 select a backend, authorize a release, or certify unfinished integration. Start with
 [the minimal-worker contract](minimal-workers.md), then inspect the exact source you are changing.
-The first candidate's packaged entry was not selected; consult the final integration's source and
-receipts rather than assuming that a documented option is the shipped default.
+The integrated internal packaged entry now selects workers through the existing protected account
+owner. Unsettled legacy state is visibly held without planner fallback. Consult the exact source and
+receipts; local gateway fixtures are not provider/device acceptance.
 
 ## Find the owning boundary
 
