@@ -288,14 +288,36 @@ fi
 # vendored `claude` is a Bun-built Mach-O with a JIT of its own, so it takes the same
 # entitlements as node; every other nested binary gets none. The loop body is a subshell:
 # `|| exit 1` makes a failed codesign end the pipeline, and set -e the script.
-find "$APP/Contents" -depth \( -type f -o -type d \) -print | while IFS= read -r code; do
+# One pass classifies Mach-O files by magic (thin and fat, both byte orders); the
+# sealed runtimes hold ~200k files, so a `file` process per entry is impractical.
+macho_files() {
+  python3 - "$1" <<'PY'
+import os, sys
+MAGIC = {b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xfe\xed\xfa\xce", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
+for base, dirs, files in os.walk(sys.argv[1]):
+    for name in files:
+        path = os.path.join(base, name)
+        if os.path.islink(path):
+            continue
+        try:
+            with open(path, "rb") as stream:
+                head = stream.read(4)
+        except OSError:
+            continue
+        if head in MAGIC:
+            print(path)
+PY
+}
+MACHO_LIST=$(mktemp "${TMPDIR:-/tmp}/yorozu-macho.XXXXXX")
+macho_files "$APP/Contents" > "$MACHO_LIST"
+find "$APP/Contents" -depth \( -type f -o -type d \) -print | awk -v list="$MACHO_LIST" '
+  BEGIN { while ((getline line < list) > 0) macho[line] = 1 }
+  ($0 in macho) || /\.(framework|app|xpc)$/ { print }' | while IFS= read -r code; do
   case "$code" in
     "$ACCOUNTS_HELPER"|"$ACCOUNTS_HELPER/"*) continue ;;
     "$APP/Contents/Resources/node"|"$APP/Contents/MacOS/yorozu-native"|"$APP/Contents/MacOS/Yorozu") continue ;;
   esac
-  if [ -f "$code" ]; then
-    case "$(file -b "$code")" in *Mach-O*) ;; *) continue ;; esac
-  else
+  if [ ! -f "$code" ]; then
     case "$code" in *.framework|*.app|*.xpc) ;; *) continue ;; esac
   fi
   case "$code" in
@@ -314,10 +336,8 @@ done
 # resealing; the helper alone cannot distinguish arbitrary native byte edits from
 # signature-only changes. The outer app signature then seals the JSON resources.
 if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
-  find "$APP/Contents/Resources/agent-runtimes/hermes" -type f -print | while IFS= read -r code; do
-    case "$(file -b "$code")" in
-      *Mach-O*) codesign --verify --strict "$code" || exit 1 ;;
-    esac
+  macho_files "$APP/Contents/Resources/agent-runtimes/hermes" | while IFS= read -r code; do
+    codesign --verify --strict "$code" || exit 1
   done
   python3 scripts/package-hermes-runtime.py reseal-after-nested-signing \
     --artifact "$APP/Contents/Resources/agent-runtimes/hermes"
@@ -337,10 +357,8 @@ source.harnessPlugins.hermes={...source.harnessPlugins.hermes,bundledRuntime:tru
 writeFileSync(path,JSON.stringify(source,null,2)+'\n');
 JS
   if [ -n "${YOROZU_OPENCLAW_RUNTIME_ARTIFACT:-}" ]; then
-    find "$APP/Contents/Resources/agent-runtimes/openclaw" -type f -print | while IFS= read -r code; do
-      case "$(file -b "$code")" in
-        *Mach-O*) codesign --verify --strict "$code" || exit 1 ;;
-      esac
+    macho_files "$APP/Contents/Resources/agent-runtimes/openclaw" | while IFS= read -r code; do
+      codesign --verify --strict "$code" || exit 1
     done
     python3 scripts/package-openclaw-runtime.py --reseal-after-nested-signing "$APP/Contents/Resources/agent-runtimes/openclaw"
     "$APP/Contents/Resources/node" --input-type=module - "$APP/Contents/Resources" "$DIST/openclaw-unsigned-manifest.json" <<'JS'
@@ -374,6 +392,7 @@ codesign --force --options runtime --timestamp \
 codesign --force --options runtime --timestamp \
   --entitlements apps/mac/Yorozu.entitlements --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict "$APP"
+rm -f "$MACHO_LIST"
 
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
