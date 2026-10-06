@@ -14,6 +14,8 @@ import { WorkerMemory } from "./worker-memory.js";
 export interface PersonAgentPlatform {
   /** Trusted composition only; devices cannot switch persistence or execution code. */
   workerMemory?: true;
+  /** Trusted startup hold; controls persist a typed rejection without applying a mutation. */
+  assertControlsAllowed?(): void;
   createFactory(store: PersonAgentStore): PersonAgentRuntimeFactory;
   /** Previously selected resources, supplied only by trusted host configuration. */
   resourceRoots?: DirectoryGrant[];
@@ -47,7 +49,7 @@ export class PersonAgentHost {
     } catch (error) { this.memory?.close(); throw error; }
     let controls: PersonAgentControls | undefined;
     try {
-      this.controls = controls = new PersonAgentControls(dir, this.store, this.runtime, { assertIdle: () => this.runtime.assertControlsIdle() });
+      this.controls = controls = new PersonAgentControls(dir, this.store, this.runtime, { assertIdle: () => { platform.assertControlsAllowed?.(); this.runtime.assertControlsIdle(); } });
       if (platform.initialAgent && !this.store.list().agents.length) this.store.create(platform.initialAgent, 0);
       if (platform.secretaryAgentId) this.runtime.bindSecretary(platform.secretaryAgentId);
     } catch (error) { void controls?.close(); void this.runtime.close().finally(() => this.memory?.close()); throw error; }

@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { serveSecretary } from "../dist/secretary-serve.js";
 
 const f = vi.hoisted(() => ({
-  migrationBlocked: false, bindSecretary: vi.fn(), personStop: vi.fn(async () => true), options: {} as any, registered: {} as any, mainPerson: false, selectedHarness: false, packaged: false,
+  controlGate: undefined as undefined | (() => void), migrationBlocked: false, bindSecretary: vi.fn(), personStop: vi.fn(async () => true), options: {} as any, registered: {} as any, mainPerson: false, selectedHarness: false, packaged: false,
   ordinary: vi.fn(async () => ({ text: "ordinary" })),
   person: vi.fn(async () => ({ text: "person" })),
   planner: vi.fn(async () => ({ text: "legacy" })),
@@ -26,6 +26,7 @@ vi.mock("../dist/secretary-coordinator.js", () => ({ secretaryCoordinator: (_dir
     bind() {}, observe() {}, reconcile: f.reconcile };
 } }));
 vi.mock("../dist/person-agent-host.js", () => ({ PersonAgentHost: class {
+  constructor(_dir: string, platform: any) { f.controlGate = platform.assertControlsAllowed; }
   runner = { run: f.person };
   owns(id: string) { return ["person-chat", "person-task"].includes(id) || f.mainPerson && id === "yorozu-secretary-v1"; }
   ownsTask(id: string) { return id === "person-task"; }
@@ -118,7 +119,7 @@ for (const blocked of [false, true]) test(`packaged account composition selects 
   if (blocked) {
     expect(await f.registered.harness.run({ threadId: "person-chat" })).toMatchObject({ cessation: "not-submitted" });
     await expect(f.options.personAgentCreate({})).rejects.toThrow("reconciliation");
-    await expect(f.options.personAgentControl({})).rejects.toThrow("reconciliation");
+    expect(() => f.controlGate?.()).toThrow("reconciliation"); // Real controls persist this as a typed rejection; worker-packaged tests the journal.
     await expect(f.options.harnessAction({})).rejects.toThrow("reconciliation");
     expect(f.person).not.toHaveBeenCalled();
     expect(f.personBind).not.toHaveBeenCalled(); // bind can deliver durable peer messages

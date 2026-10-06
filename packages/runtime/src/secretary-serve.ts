@@ -42,8 +42,9 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   // A refused migration is a visible admission hold, not a legacy planner fallback
   // and not a fatal service startup. Never retry it automatically in this process.
   const workersSelected = platform?.workerMemory === true;
-  const people = platform ? new PersonAgentHost(dir, workersSelected ? { ...platform, secretaryAgentId: undefined } : platform) : undefined;
   let migrationHold: string | undefined;
+  const people = platform ? new PersonAgentHost(dir, workersSelected ? { ...platform, secretaryAgentId: undefined,
+    assertControlsAllowed: () => { platform.assertControlsAllowed?.(); if (migrationHold) throw new Error(migrationHold); } } : platform) : undefined;
   if (workersSelected && people) {
     try {
       if (!platform?.secretaryAgentId) throw new Error("Missing secretary identity");
@@ -76,7 +77,7 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
     secretaryTaskStop: (event: Parameters<SecretaryHarness["taskStop"]>[0]) => held(event.threadId) ? Promise.resolve(false) : people?.ownsTask(event.threadId)
       ? people.runtime.taskStop(event) : harness?.taskStop(event) ?? Promise.resolve(false),
     personAgentRegistry: people ? () => people.registry() : undefined,
-    personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => { if (migrationHold) return Promise.reject(new Error(migrationHold)); return people.control(event); } : undefined,
+    personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => people.control(event) : undefined,
     personAgentCreate: people ? (event: Parameters<PersonAgentHost["create"]>[0]) => { if (migrationHold) return Promise.reject(new Error(migrationHold)); return people.create(event); } : undefined,
     harnessAction: people ? (event: Parameters<PersonAgentHost["action"]>[0]) => { if (migrationHold) return Promise.reject(new Error(migrationHold)); return people.action(event); } : undefined,
     siwcAccountStatus: accounts?.provisioned ? () => accounts.status() : undefined,

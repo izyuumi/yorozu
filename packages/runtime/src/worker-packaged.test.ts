@@ -97,3 +97,22 @@ test("quiescent legacy history receives an execution overlay, not a destructive 
   expect(listThreads(f.dir)).toEqual(before); expect(readThreadEvents(main, f.dir)).toEqual(events);
   expect(f.forbidden).not.toHaveBeenCalled();
 });
+
+
+test("migration-held native settings receive a durable typed rejection instead of remaining stuck waiting", async () => {
+  const f = fixture(); history(f.dir);
+  writeFileSync(join(f.dir, "native-turn-queue.json"), JSON.stringify([{ id: "unsettled" }]));
+  f.start(); const before = transport.options.personAgentRegistry();
+  const event = { id: "held-create", threadId: main, ts: Date.now(), agentId: "phone", kind: "person_agent_control",
+    data: { version: 1, expectedRevision: before.revision, action: "create", agent: {
+      id: "bob", name: "Bob", role: "Notes", pluginId: "hermes", allowedTools: ["memory"],
+    } } };
+  await transport.options.personAgentControl(event);
+  const after = transport.options.personAgentRegistry();
+  expect(after.agents).toEqual(before.agents);
+  expect(after.lastControlResult).toMatchObject({ operationId: "held-create", status: "rejected", revision: before.revision });
+  expect(after.lastControlResult.reason).toContain("reconciliation");
+  await transport.options.personAgentControl(event);
+  expect(transport.options.personAgentRegistry().lastControlResult).toEqual(after.lastControlResult);
+  expect(f.forbidden).not.toHaveBeenCalled();
+});
