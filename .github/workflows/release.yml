@@ -25,8 +25,9 @@ on:
         description: 'Internal only: exact SHA that passed Opus 5.5 review and native QA'
         required: false
         type: string
+      # Compatibility input name; internal publication now emits alpha tags/titles/channel.
       publish_mac_beta:
-        description: 'After internal availability: publish an immutable Mac beta download; no feeds or external testers'
+        description: 'After internal availability: publish an immutable Mac alpha download; no feeds or external testers'
         default: false
         required: false
         type: boolean
@@ -67,7 +68,7 @@ jobs:
           set -eu
           python3 - <<'PY_SOURCE'
           import os, re
-          assert os.environ["PUBLISH_MAC_BETA"] != "true" or os.environ["INTERNAL_ONLY"] == "true", "Mac beta publication requires the internal-only lane"
+          assert os.environ["PUBLISH_MAC_BETA"] != "true" or os.environ["INTERNAL_ONLY"] == "true", "Mac alpha publication requires the internal-only lane"
           if os.environ["INTERNAL_ONLY"] == "true":
               branch = os.environ["SOURCE_BRANCH"]
               assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch) and ".." not in branch, "invalid internal source branch"
@@ -455,15 +456,15 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: node scripts/asc-internal.mjs verify dist/internal/ios.json dist/internal/fresh-availability.json
-      - name: Publish exact Mac packages as a non-stable beta
+      - name: Publish exact Mac packages as a non-stable alpha
         run: |
           set -eu
           python3 scripts/publish-internal-beta.py --dist dist/internal \
             --source "$SOURCE_SHA" --run-id "$GITHUB_RUN_ID" \
             --availability dist/internal/fresh-availability.json > dist/internal/beta-availability.json
           cat dist/internal/beta-availability.json
-          printf 'Mac beta: %s\n' "$(jq -r .url dist/internal/beta-availability.json)" >> "$GITHUB_STEP_SUMMARY"
-      - name: Retain beta verification receipt
+          printf 'Mac alpha: %s\n' "$(jq -r .url dist/internal/beta-availability.json)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain alpha verification receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

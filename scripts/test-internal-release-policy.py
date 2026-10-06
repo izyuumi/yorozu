@@ -73,6 +73,32 @@ class InternalReleasePolicyTests(unittest.TestCase):
         self.assertLess(internal.index("Record internal artifact provenance"),
                         internal.index("Retain verified internal Mac packages"))
 
+    def test_alpha_compatibility_and_fresh_allocation_remain_wired(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        internal = workflow.split("\n  internal:\n", 1)[1].split("\n  internal-beta:\n", 1)[0]
+        self.assertIn("BUILD=$((10000 + GITHUB_RUN_NUMBER))", internal)
+        self.assertIn('IOS_BUILD=$(node scripts/asc-candidate.mjs next-build "$VERSION")', internal)
+        self.assertIn("group: candidate", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+        self.assertIn("inputs.internal_only && inputs.publish_mac_beta", workflow)
+        self.assertIn("immutable Mac alpha download", workflow)
+        self.assertIn("Mac alpha: %s", workflow)
+        # Exercise the actual allocation expression with inert, synthetic run IDs.
+        import subprocess
+        line = next(line.strip() for line in internal.splitlines()
+                    if line.strip().startswith("BUILD=$(("))
+        builds = []
+        for run in (9001, 9007):
+            result = subprocess.run(["sh", "-eu", "-c", line + '; printf "%s" "$BUILD"'],
+                                    env={"GITHUB_RUN_NUMBER": str(run)},
+                                    capture_output=True, text=True, check=True)
+            builds.append(result.stdout)
+        self.assertEqual(builds, ["19001", "19007"])
+        doc = (ROOT / "docs/internal-testflight.md").read_text()
+        self.assertIn("schemaVersion 1", doc)
+        self.assertIn("`channel` is now `alpha`", doc)
+        self.assertIn("historical `v0.6.0-beta.10267`", doc)
+
     def test_internal_shell_scripts_are_linted(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         line = next(line for line in workflow.splitlines() if line.strip().startswith("shellcheck scripts/"))

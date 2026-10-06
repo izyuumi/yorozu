@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish verified internal Mac artifacts as an immutable beta, never a feed/stable/IPA."""
+"""Publish verified internal Mac artifacts as an immutable alpha, never a feed/stable/IPA."""
 import argparse
 from datetime import datetime, timezone
 import importlib.util
@@ -23,7 +23,7 @@ INTERNAL_BRANCHES = {"harness-plugins", "integration-0.6-worker", "v0.6.0-alpha"
 
 
 def check_source(gh, source, branch, run_id=None):
-    """Read-only gate shared by pre-signing checks and beta publication."""
+    """Read-only gate shared by pre-signing checks and alpha publication."""
     require(gh.repo == REPOSITORY, "Wrong internal source repository")
     require(re.fullmatch(r"[0-9a-f]{40}", source or ""), "Exact internal source SHA is required")
     require(branch in INTERNAL_BRANCHES, "Source branch must run the isolated internal CI lane")
@@ -45,17 +45,17 @@ def check_source(gh, source, branch, run_id=None):
 
 
 def publish(gh, root, expected_source, expected_run, availability, now=None):
-    require(gh.repo == REPOSITORY, "Beta target must be the existing Yorozu repository")
+    require(gh.repo == REPOSITORY, "Alpha target must be the existing Yorozu repository")
     require(os.environ.get("GITHUB_RUN_ATTEMPT", "1") == "1", "Use a fresh release run, not a partial rerun")
     require(re.fullmatch(r"[0-9a-f]{40}", expected_source or ""), "Expected exact source SHA is required")
     require(re.fullmatch(r"[1-9]\d*", str(expected_run)), "Expected workflow run is required")
     root = Path(root).resolve(strict=True)
     data = json.loads((root / "provenance.json").read_text())
     require(data.get("source_sha") == expected_source and str(data.get("workflow_run_id")) == str(expected_run), "Artifacts belong to another source or workflow run")
-    require(data.get("version") == "0.6.0" and data.get("internal_only") is True, "Only the internal 0.6 candidate can use this beta lane")
+    require(data.get("version") == "0.6.0" and data.get("internal_only") is True, "Only the internal 0.6 candidate can use this alpha lane")
     branch = data.get("source_branch", "")
     require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch) and ".." not in branch
-            and branch != "main" and not branch.startswith("release/"), "Beta source must be the isolated reviewed branch")
+            and branch != "main" and not branch.startswith("release/"), "Alpha source must be the isolated reviewed branch")
     build = str(data.get("mac_build", ""))
     require(re.fullmatch(r"[1-9]\d*", build) and int(build) > 10000, "Invalid global Mac build number")
     ios = json.loads(Path(availability).read_text())
@@ -66,7 +66,7 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
     require(all(ios.get(k) == previous.get(k) for k in ("build_id", "build", "uploaded_date", "app_id", "group_id", "version")), "TestFlight receipt does not identify this candidate")
     verified = datetime.fromisoformat(ios["verified_at"].replace("Z", "+00:00"))
     now = now or datetime.now(timezone.utc)
-    require(0 <= (now - verified).total_seconds() <= 600, "Reverify TestFlight availability immediately before beta publication")
+    require(0 <= (now - verified).total_seconds() <= 600, "Reverify TestFlight availability immediately before alpha publication")
     required = {"Yorozu.app.zip", "mac/Yorozu.dmg"}
     rows = data.get("artifacts", [])
     paths = {}
@@ -84,9 +84,9 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
     intake = data.get("runtime_intake", {})
     require(all(re.fullmatch(r"[0-9a-f]{64}", str(intake.get(k, ""))) for k in
                 ("receiptSha256", "archiveSha256", "unsignedInventorySha256", "signedInventorySha256", "archiveProvenanceSha256")), "Runtime intake binding is missing")
-    tag = "v0.6.0-beta." + build
+    tag = "v0.6.0-alpha." + build
     # Public metadata deliberately excludes Apple recipient/account IDs and the IPA.
-    metadata = {"schemaVersion": 1, "channel": "beta", "tag": tag, "version": "0.6.0", "macBuild": build,
+    metadata = {"schemaVersion": 1, "channel": "alpha", "tag": tag, "version": "0.6.0", "macBuild": build,
                 "sourceSha": expected_source, "ciRunId": ci, "releaseRunId": str(expected_run),
                 "internalTestFlightVerified": True, "iosBuild": ios["build"],
                 "sparkleFeedChanged": False, "installationPerformed": False, "runtimeIntake": intake,
@@ -96,45 +96,46 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
              "This release does not update the stable or beta Sparkle feeds and does not install over an existing Mac app. "
              "Preserve your existing installation and data/rollback path. Unsupported OpenClaw features remain disabled; "
              "live two-harness messaging and account onboarding are not claimed as proven. "
-             "This beta does not supply the required accounts-helper provisioning profile: "
+             "This alpha does not supply the required accounts-helper provisioning profile: "
              "SIWC account-helper capability and person-agent SIWC inference are unavailable. "
              "Packaging the helper is not account activation; enabling it requires separately authorized provisioning and native verification.\n\n"
              f"Source: {expected_source}\nCI: https://github.com/{REPOSITORY}/actions/runs/{ci}\n"
              f"Release: https://github.com/{REPOSITORY}/actions/runs/{expected_run}\n")
-    with tempfile.TemporaryDirectory(prefix="yorozu-beta-metadata-") as directory:
+    with tempfile.TemporaryDirectory(prefix="yorozu-alpha-metadata-") as directory:
+        # Legacy asset filename/schema retained; consumers must read channel, not infer it.
         manifest = Path(directory) / "beta.json"
         manifest.write_text(json.dumps(metadata, indent=2) + "\n")
         assets = [paths["mac/Yorozu.dmg"], paths["Yorozu.app.zip"], manifest]
-        title = f"Yorozu 0.6.0 Beta (Mac {build})"
+        title = f"Yorozu 0.6.0 Alpha (Mac {build})"
         remote = gh.release(tag)
         if remote is None:
             gh.create(tag, expected_source, True, notes, title)
             remote = gh.release(tag)
-        require(remote is not None and remote["isPrerelease"] and remote["name"] == title, "Wrong existing beta identity")
+        require(remote is not None and remote["isPrerelease"] and remote["name"] == title, "Wrong existing alpha identity")
         ref = gh.tag_sha(tag)
-        require(ref == expected_source or (ref is None and remote["isDraft"] and remote.get("targetCommitish") == expected_source), "Wrong existing beta source")
+        require(ref == expected_source or (ref is None and remote["isDraft"] and remote.get("targetCommitish") == expected_source), "Wrong existing alpha source")
         expected_names = {p.name for p in assets}
         existing_names = {a["name"] for a in remote["assets"]}
-        require(existing_names <= expected_names, "Unexpected existing beta assets")
+        require(existing_names <= expected_names, "Unexpected existing alpha assets")
         for asset in assets:
             if asset.name not in existing_names:
-                require(remote["isDraft"], "Published beta is incomplete")
+                require(remote["isDraft"], "Published alpha is incomplete")
                 gh.upload(tag, asset)
         remote = gh.release(tag)
-        require({a["name"] for a in remote["assets"]} == expected_names, "Unexpected beta asset set")
-        with tempfile.TemporaryDirectory(prefix="yorozu-beta-prepublish-") as verify_dir:
+        require({a["name"] for a in remote["assets"]} == expected_names, "Unexpected alpha asset set")
+        with tempfile.TemporaryDirectory(prefix="yorozu-alpha-prepublish-") as verify_dir:
             for asset in assets:
-                require(release.sha256(gh.download(tag, asset.name, verify_dir)) == release.sha256(asset), "Uploaded beta bytes differ before publication")
+                require(release.sha256(gh.download(tag, asset.name, verify_dir)) == release.sha256(asset), "Uploaded alpha bytes differ before publication")
         if remote["isDraft"]:
             gh.publish(tag, True, latest=False)
-        require(gh.tag_sha(tag) == expected_source, "Published beta source differs")
+        require(gh.tag_sha(tag) == expected_source, "Published alpha source differs")
         remote = gh.release(tag)
-        require(remote is not None and remote["isPrerelease"] and not remote["isDraft"], "Beta is not published")
-        require({a["name"] for a in remote["assets"]} == expected_names, "Unexpected published beta asset set")
-        with tempfile.TemporaryDirectory(prefix="yorozu-beta-verify-") as verify_dir:
+        require(remote is not None and remote["isPrerelease"] and not remote["isDraft"], "Alpha is not published")
+        require({a["name"] for a in remote["assets"]} == expected_names, "Unexpected published alpha asset set")
+        with tempfile.TemporaryDirectory(prefix="yorozu-alpha-verify-") as verify_dir:
             for asset in assets:
                 actual = gh.download(tag, asset.name, verify_dir)
-                require(release.sha256(actual) == release.sha256(asset), "Published beta artifact verification failed")
+                require(release.sha256(actual) == release.sha256(asset), "Published alpha artifact verification failed")
     return {"available": True, "tag": tag, "url": f"https://github.com/{REPOSITORY}/releases/tag/{tag}",
             "sourceSha": expected_source, "macBuild": build, "iosBuild": ios["build"], "stableChanged": False}
 

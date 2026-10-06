@@ -52,14 +52,14 @@ class BetaTests(unittest.TestCase):
                     "build_id": "fixture-ios-build", "uploaded_date": "2026-10-05T23:00:00Z", "internal_only": True,
                     "available": True, "internal_state": "IN_BETA_TESTING", "verified_at": NOW.isoformat()}
         self.data = {"source_sha": SHA, "source_branch": "harness-plugins", "workflow_run_id": "8", "ci_run_id": "7",
-                     "version": "0.6.0", "internal_only": True, "mac_build": "10267", "ios": dict(self.ios),
+                     "version": "0.6.0", "internal_only": True, "mac_build": "19001", "ios": dict(self.ios),
                      "artifacts": [{"path": n, "sha256": beta.release.sha256(self.root / n), "size": (self.root / n).stat().st_size}
                                    for n in ("mac/Yorozu.dmg", "Yorozu.app.zip")]}
         self.data["runtime_intake"] = {k: "a" * 64 for k in ("receiptSha256", "archiveSha256", "unsignedInventorySha256", "signedInventorySha256", "archiveProvenanceSha256")}
         self.gh = InternalGitHub()
         self.gh.repo = beta.REPOSITORY
         self.gh.runs["7"].update(head_branch="harness-plugins", head_repository={"full_name": beta.REPOSITORY})
-        self.tag = "v0.6.0-beta.10267"
+        self.tag = "v0.6.0-alpha.19001"
         self.environment = patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "1"})
         self.environment.start()
 
@@ -86,6 +86,13 @@ class BetaTests(unittest.TestCase):
         self.assertFalse(any("--latest=true" in event for event in self.gh.events))
         self.assertGreaterEqual(sum(event[:2] == ("release", "download") for event in self.gh.events), 3)
         metadata = json.loads(remote["files"]["beta.json"])
+        self.assertEqual(result["tag"], "v0.6.0-alpha.19001")
+        self.assertEqual(remote["name"], "Yorozu 0.6.0 Alpha (Mac 19001)")
+        self.assertEqual(metadata["schemaVersion"], 1)
+        self.assertEqual(metadata["channel"], "alpha")
+        self.assertEqual(metadata["tag"], result["tag"])
+        self.assertEqual(metadata["macBuild"], "19001")
+        self.assertEqual(metadata["version"], "0.6.0")
         self.assertNotIn("group_id", metadata)
         self.assertFalse(metadata["sparkleFeedChanged"])
         self.assertFalse(metadata["installationPerformed"])
@@ -95,6 +102,32 @@ class BetaTests(unittest.TestCase):
         self.gh.events.clear()
         self.publish()
         self.assertFalse(any(event[:2] in [("release", "create"), ("release", "upload"), ("release", "edit"), ("release", "delete")] for event in self.gh.events))
+
+    def test_historical_beta_is_untouched_and_allocated_build_names_alpha(self):
+        historical = "v0.6.0-beta.10267"
+        self.gh.add_release(historical, {"beta.json": b"historical", "Yorozu.dmg": b"original"},
+                            prerelease=True, name="Yorozu 0.6.0 Beta (Mac 10267)")
+        import copy
+        before = copy.deepcopy(self.gh.releases[historical])
+        # Synthetic allocator output, not a prediction of the next production build.
+        self.data["mac_build"] = "19007"
+        result = self.publish()
+        self.assertEqual(result["tag"], "v0.6.0-alpha.19007")
+        self.assertEqual(self.gh.releases[historical], before)
+
+    def test_existing_published_bytes_cannot_be_replaced(self):
+        self.publish()
+        before = dict(self.gh.releases[self.tag]["files"])
+        self.gh.events.clear()
+        path = self.root / "mac/Yorozu.dmg"
+        path.write_bytes(b"replacement signed fixture")
+        row = next(r for r in self.data["artifacts"] if r["path"] == "mac/Yorozu.dmg")
+        row.update(size=path.stat().st_size, sha256=beta.release.sha256(path))
+        with self.assertRaisesRegex(ValueError, "bytes differ"):
+            self.publish()
+        self.assertEqual(self.gh.releases[self.tag]["files"], before)
+        self.assertFalse(any(e[:2] in [("release", "upload"), ("release", "delete"),
+                                     ("release", "edit")] for e in self.gh.events))
 
     def test_stale_or_wrong_internal_availability_blocks_all_publication(self):
         for key, value in [("group_id", "other"), ("internal_only", False), ("available", False),
@@ -170,8 +203,8 @@ class BetaTests(unittest.TestCase):
 
     def test_extra_draft_ipa_is_never_published(self):
         self.gh.add_release(self.tag, {"x.ipa": b"not public"}, draft=True, prerelease=True,
-                            name="Yorozu 0.6.0 Beta (Mac 10267)")
-        with self.assertRaisesRegex(ValueError, "Unexpected existing beta assets"):
+                            name="Yorozu 0.6.0 Alpha (Mac 19001)")
+        with self.assertRaisesRegex(ValueError, "Unexpected existing alpha assets"):
             self.publish()
         self.assertTrue(self.gh.releases[self.tag]["isDraft"])
         self.assertFalse(any(event[:2] == ("release", "edit") for event in self.gh.events))
@@ -192,7 +225,7 @@ class BetaTests(unittest.TestCase):
             publish(tag, prerelease, latest=latest)
             self.gh.releases[tag]["files"]["extra"] = b"unexpected"
         with patch.object(self.gh, "publish", side_effect=extra):
-            with self.assertRaisesRegex(ValueError, "Unexpected published beta asset set"):
+            with self.assertRaisesRegex(ValueError, "Unexpected published alpha asset set"):
                 self.publish()
 
     def test_non_successful_ci_cannot_publish(self):

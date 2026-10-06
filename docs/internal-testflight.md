@@ -2,8 +2,8 @@
 
 This lane is only for the approved internal 0.6 evaluation. By default it does not
 create a GitHub Release. The explicit `publish_mac_beta=true` option, authorized
-for the October 5 release, publishes the exact signed Mac packages as an immutable
-`v0.6.0-beta.<Mac build>` prerelease only after internal TestFlight availability.
+for the internal lane, publishes the exact signed Mac packages as an immutable
+`v0.6.0-alpha.<fresh allocated Mac build>` prerelease only after internal TestFlight availability.
 It never updates a Mac feed, publishes stable 0.5, uploads a public IPA, submits
 Beta App Review, or changes the Public TestFlight group. The installed Mac app is
 not replaced. Normal `main`/`release/*` candidate behavior is unchanged.
@@ -13,6 +13,26 @@ reviewed alternate-branch revision with `--ref`; a new workflow filename would
 need default-branch registration for manual dispatch. Both the workflow revision
 and source branch must resolve to the supplied reviewed SHA. Do not merge this
 work into `main` simply to make internal distribution possible.
+
+## Alpha naming policy (October 6 onward)
+
+Owner direction is to always release this internal 0.6 lane as **Alpha**. The
+historical `v0.6.0-beta.10267` release and its original assets remain untouched.
+The local menu-bar rebuild carrying 10267 is not the original published artifact
+and must not be redistributed under that identity. The next full release must
+include both menu-bar and iOS clipping fixes, the alpha policy, exact-source
+review/CI, and newly allocated Mac and iOS builds. Never guess the next number.
+
+For compatibility, `publish_mac_beta`, job `internal-beta`, the publisher script
+name, evidence filenames, and the `beta.json` asset name remain internal API
+identifiers. `beta.json` retains schemaVersion 1 and existing fields; its
+`channel` is now `alpha`, its tag is `v0.6.0-alpha.<allocated Mac build>`, and the
+release title is `Yorozu 0.6.0 Alpha (Mac <allocated Mac build>)`. Consumers must
+read `channel`/`tag`, not infer beta from a filename. Existing beta metadata is
+not migrated. This policy does not rename the immutable runtime-input tag or
+change its hashes, audience, stable/public candidate lane, feeds, or authority.
+Publication is not installation; replacing the normal Mac app remains a separate
+parent-controlled verification/install step.
 
 ## Prerequisites
 
@@ -62,12 +82,12 @@ symlinks. It never starts the downloaded runtime. Controlled build verification,
 nested signing and resealing remain separate subsequent steps.
 
 Each signing/upload job independently rejects `GITHUB_RUN_ATTEMPT != 1`, including
-partial reruns whose successful source job would otherwise be reused. The beta
+partial reruns whose successful source job would otherwise be reused. The alpha
 job also refuses reruns, reads only this workflow's signed artifacts, rechecks
 Apple availability without writes, verifies artifact hashes, and publishes only
-the Mac DMG, app ZIP and non-secret beta metadata. It reads published assets back
+the Mac DMG, app ZIP and non-secret alpha metadata. It reads published assets back
 and verifies their hashes. Existing tags/assets are never deleted or overwritten.
-A published beta download is not an app installation or a Sparkle feed update.
+A published alpha download is not an app installation or a Sparkle feed update.
 
 ## Build and recipient identity
 
@@ -137,11 +157,11 @@ storage and are deleted; they are never included in artifact paths.
 The current release workflow does not supply `YOROZU_ACCOUNTS_PROFILE` or its
 required app-identifier prefix. The packaged account helper therefore records
 `provisioning:"absent"` and `productionReady:false`; SIWC account-helper capability
-and person-agent SIWC inference are unavailable in this beta. A bundled helper
+and person-agent SIWC inference are unavailable in this alpha. A bundled helper
 is not an activated account integration. Supplying a profile/entitlements and
 proving native Keychain/signature acceptance require separate authorization and
 verification; neither is silently enabled by these tests or release notes.
-This limitation must remain explicit in public beta notes.
+This limitation must remain explicit in public alpha notes.
 
 The internal lane emits exact-source `internal-host.json` and
 `internal-swift.json` only after each gate passes; CI retains those JSON receipts.
