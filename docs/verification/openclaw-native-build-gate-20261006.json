@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "kind": "openclaw-native-offline-partial-gate",
+  "sourceSha": "53a867bc2a342ed563aea53400b7f9f976c119ed",
+  "curatedSource": "9bbdbaec153dd28fb452e6652c3dcacd829cb00f",
+  "productionReady": false,
+  "uniformMemoryRegistered": false,
+  "nativeOverallAccepted": false,
+  "build": {
+    "exit": 0,
+    "networkDenied": true,
+    "dependencyFetches": 0,
+    "supportedRoute": "OPENCLAW_BUILD_ALL_NO_PNPM=1 sourcePerformance",
+    "elapsedSeconds": 40.2,
+    "entrySha256": "e273a71f493f04cd7b6ca67f86954e05bacc0f9ba77e93eebf1d1939f693a9ad"
+  },
+  "native": {
+    "actualKernel": {
+      "allowedConnect": true,
+      "deniedConnect": true,
+      "deniedListen": true,
+      "peerDenied": true,
+      "inheritedPeerDenied": true,
+      "inheritedAddress": "127.0.0.1",
+      "inheritedPort": 64370
+    },
+    "gatewayReady": true,
+    "sessionCreated": true,
+    "historyIdentityObserved": true,
+    "cleanNativeShutdown": true,
+    "providerRequests": 0,
+    "blockedRequest": {
+      "method": "chat.send",
+      "code": "INVALID_REQUEST",
+      "message": "system provenance fields require admin scope"
+    },
+    "nativeMemorySuppressed": false,
+    "mixedHarnessAcceptance": false
+  },
+  "tests": {
+    "adapterFixtures": {
+      "passed": 40,
+      "failed": 0,
+      "skipped": 0
+    },
+    "focusedRuntime": {
+      "passed": 29,
+      "failed": 0,
+      "skipped": 1
+    },
+    "kernelSubset": {
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "fileSha256": {
+    "packages/runtime/src/agent-isolation.ts": "41e7f5cceffb70ad54fd6be3d8c1e7143728d2f85f1112fc3223c31b6ce50ab8",
+    "packages/runtime/src/agent-isolation.test.ts": "34effd9be9e6c50a8ddc3df8380f42b2dab2f009564b1b6acb2eaef2f9192c0b",
+    "packages/harness-plugins/openclaw/adapter.mjs": "473a42dad64aa065d1a4b2e6dea4c4e4aecc45acc0e14304b743f8063766d9af",
+    "packages/harness-plugins/openclaw/adapter.test.mjs": "0c5873d121f026e44566d58d99ebdfe6ece766946ee6dcd96a771cf8c51aeb49",
+    "packages/harness-plugins/openclaw/native-proof.mjs": "07329c1c12789f0626a312e3b4d183d0f251a833de6c1c9559f5fad20c8bfcb8"
+  },
+  "privateEvidenceRoot": "/private/tmp/yorozu-openclaw-memory-20261006",
+  "exportPolicy": "No raw profiles, credentials, native logs, conversation bodies, or provider requests included."
+}

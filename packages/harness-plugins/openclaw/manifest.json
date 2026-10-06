@@ -33,7 +33,7 @@
     "nativeComputerUse": false
   },
   "authentication": {
-    "gateway": "adapter-generated-local-token; no-device-pairing",
+    "gateway": "adapter-generated-local-token; isolated-ed25519-device; native-pairing-policy; read-write-scopes-only",
     "subscriptionAccess": "unsupported-pending-fresh-onboarding",
     "ambientCredentials": false,
     "billedFallback": false,

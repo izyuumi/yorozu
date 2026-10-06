@@ -1,4 +1,6 @@
-# Second real uniform-memory adapter: bounded feasibility result
+# Second real uniform-memory adapter: initial feasibility result (superseded)
+
+**October 6 continuation:** the build/no-install scope interpretation below was corrected. Ordinary isolated development preparation is authorized; the exact native runtime successfully built offline using its supported Node-only route with network denied. Actual native startup and session evidence now replaces the initial input blocker. The current gate is the pinned Gateway's admin-only command-suppression API, not a missing build or owner confirmation for dependencies. See [current native build/gate report](openclaw-native-build-gate-20261006.md). The following preserves the initial inspection history.
 
 As inspected 2026-10-06, base `b4748d07d6764220188d95e491a67b33c640981c`.
 Work performed in detached worktree `/Users/yumi/Projects/yorozu-wt/openclaw-memory-20261006`; no new branch, production OpenClaw change, Hermes change, install, account access, provider call, or external publication.
