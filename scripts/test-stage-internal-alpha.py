@@ -26,13 +26,13 @@ class StageTests(unittest.TestCase):
         self.put("pnpm-lock.yaml", "baseline-locked-bytes\n")
         self.put("packages/runtime/src/serve.ts", "baseline\n")
         self.put("packages/runtime/src/threads.ts", "threads\n")
-        for directory in ("apps/mac", "packages/shared-swift", "packages/harness-plugins"):
+        for directory in ("apps/mac", "apps/ios", "packages/shared-swift", "packages/harness-plugins"):
             self.put(directory + "/removed.txt", "must not return\n")
         self.put("packages/runtime/src/secretary-old.test.ts", "deleted test\n")
         self.put("packages/shared/src/siwc-old.test.ts", "deleted shared test\n")
         self.commit("baseline")
         self.baseline = self.git("rev-parse", "HEAD").strip()
-        for directory in ("apps/mac", "packages/shared-swift", "packages/harness-plugins"):
+        for directory in ("apps/mac", "apps/ios", "packages/shared-swift", "packages/harness-plugins"):
             (self.repo / directory / "removed.txt").unlink()
             self.put(directory + "/current.txt", "reviewed\n")
         (self.repo / "packages/runtime/src/secretary-old.test.ts").unlink()
@@ -42,7 +42,7 @@ class StageTests(unittest.TestCase):
         self.commit("reviewed overlay")
         self.source = self.git("rev-parse", "HEAD").strip()
         self.patches = patch.multiple(stage, ROOT=self.repo, BASELINE=self.baseline,
-            OVERLAYS=["apps/mac", "packages/shared-swift", "packages/harness-plugins", "scripts/secretary-production.patch"])
+            OVERLAYS=["apps/mac", "apps/ios", "packages/shared-swift", "packages/harness-plugins", "scripts/secretary-production.patch"])
         self.patches.start()
 
     def tearDown(self):
@@ -64,7 +64,7 @@ class StageTests(unittest.TestCase):
     def test_deleted_overlay_files_do_not_return_and_lock_stays_baseline(self):
         out = self.root / "staged"
         stage.stage(out)
-        for directory in ("apps/mac", "packages/shared-swift", "packages/harness-plugins"):
+        for directory in ("apps/mac", "apps/ios", "packages/shared-swift", "packages/harness-plugins"):
             self.assertFalse((out / directory / "removed.txt").exists())
             self.assertEqual((out / directory / "current.txt").read_text(), "reviewed\n")
         self.assertEqual((out / "packages/runtime/src/serve.ts").read_text(), "patched\n")
