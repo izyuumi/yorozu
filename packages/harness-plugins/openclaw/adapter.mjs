@@ -199,7 +199,9 @@ export function validateSourceIntegrity(value) {
 }
 export async function prepareRuntime(params) {
   if (validateLifecycle(params).mode !== 'managed') throw invalid('connected lifecycle must use the connection launcher');
-  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle', 'git', 'workerMemory', 'nodeIntegrity', 'sourceIntegrity'], 'initialize');
+  only(params, ['protocolVersion', 'upstreamVersion', 'source', 'node', 'workspace', 'profileDir', 'agentId', 'scope', 'isolation', 'providerConfigPath', 'platform', 'gatewayPort', 'gatewayListener', 'lifecycle', 'git', 'workerMemory', 'nodeIntegrity', 'sourceIntegrity', 'model'], 'initialize');
+  // The host names the agent's selected model; the explicit loopback broker bootstrap decides what runs.
+  if (params.model !== undefined && (typeof params.model !== 'string' || !/^[a-zA-Z0-9_.:-]{1,128}$/.test(params.model))) throw invalid('model must be a bounded identifier');
   const nodeIntegrity = validateNodeIntegrity(params.nodeIntegrity);
   const sourceIntegrity = validateSourceIntegrity(params.sourceIntegrity);
   if (sourceIntegrity && params.git !== undefined) throw invalid('a sealed source integrity record and a git verifier are mutually exclusive');
@@ -278,6 +280,7 @@ export async function prepareRuntime(params) {
     if (!contains(scoped.profileDir, file) || await realpath(file) !== file) throw invalid('proof provider must be in this explicit private profile');
     await regular(file, 4096);
     provider = parseProviderBootstrap(await readFile(file, 'utf8'));
+    if (params.model !== undefined && params.model !== provider.model) throw invalid('host-selected model differs from the explicit loopback broker bootstrap');
   }
   return { ...scoped, ...memory, source, node, home, state, temporary, provider, gatewayPort: params.gatewayPort, authAvailable: Boolean(provider), journalPath: join(scoped.profileDir, 'adapter-journal-v1.json') };
 }
@@ -703,7 +706,7 @@ export function createAdapter({ launch = launchRuntime, emit = () => {}, callHos
         revokeAll(); runtime.memory?.bridge.close();
         await runtime.gateway.shutdown(); await writing; return { stopped: runtime.gateway.closed };
       }
-      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'profileDir', 'source', 'node', 'nodeIntegrity', 'sourceIntegrity', 'providerConfigPath', 'lifecycle', 'connection', 'git'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
+      if (['workerMemory', 'agentId', 'scope', 'isolation', 'platform', 'workspace', 'profileDir', 'source', 'node', 'nodeIntegrity', 'sourceIntegrity', 'providerConfigPath', 'lifecycle', 'connection', 'git', 'model'].some(key => params[key] !== undefined)) throw invalid('agent authority and runtime paths are immutable after initialize');
       if (['message.deliver', 'message.receipt', 'action.answer'].includes(method)) return { status: 'unsupported', handoff: 'not-submitted', reason: 'no verified native peer-inbox or action mapping exists for this OpenClaw pin' };
       if (method === 'session.open') {
         required(params.conversationId, 'conversationId'); required(params.bindingId, 'bindingId');

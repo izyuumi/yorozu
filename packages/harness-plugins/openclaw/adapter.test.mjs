@@ -771,3 +771,18 @@ test('sealed source integrity is an exact host record for this adapter pin; it n
   const f = await memoryFixture();
   await assert.rejects(f.adapter.handle('turn.submit', { ...turn, sourceIntegrity: exact }), /immutable after initialize/);
 });
+test('host-selected model is accepted as a bounded identifier and must match the explicit broker bootstrap', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'yorozu-openclaw-model-')));
+  try {
+    const { prepareRuntime } = await import('./adapter.mjs');
+    const profileDir = join(root, 'runtime'); const workspace = join(profileDir, 'scratch'); await mkdir(workspace, { recursive: true });
+    const base = { protocolVersion: 1, upstreamVersion: UPSTREAM.version, source: root, node: process.execPath, profileDir, workspace, agentId: 'secretary', gatewayPort: 32146,
+      gatewayListener: { transport: CURATED_RUNTIME.transport, fd: 3, host: '127.0.0.1', port: 32146 }, scope: { allowedTools: [], directories: [], workspace: join(root, 'user'), memoryDir: join(root, 'memory'), deniedRoots: [] },
+      isolation: { backend: 'macos-seatbelt-v1', agentId: 'secretary', policyDigest: 'a'.repeat(64) } };
+    // Field validation precedes any source inspection: a malformed model is refused first.
+    await assert.rejects(prepareRuntime({ ...base, model: 'bad model!' }), /bounded identifier/);
+    await assert.rejects(prepareRuntime({ ...base, model: 'synthetic', unknownField: 1 }), /unsupported fields/);
+    const f = await memoryFixture();
+    await assert.rejects(f.adapter.handle('turn.submit', { ...turn, model: 'synthetic' }), /immutable after initialize/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
