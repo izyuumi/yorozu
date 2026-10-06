@@ -55,7 +55,8 @@ Native seams: `tui_gateway/contracts/{sessions,prompt_voice,server_requests,even
 ### Uniform worker memory (host-only opt-in)
 
 `initialize.workerMemory === true` replaces the native `memory` toolset with the
-single `yorozu_memory` / `worker_memory` platform tool. Native memory is explicitly
+single `yorozu_memory` / `worker_memory` platform tool when `memory` is in the
+owned tool scope. Without that grant neither memory toolset is exposed. Native memory is explicitly
 disabled, not copied, imported, or shared. The host must provide owned product
 scope and `createAdapter({ callHost })`; unsupported activation fails before
 launch. The host, never a model-provided sender, determines the owning worker.
@@ -63,14 +64,17 @@ launch. The host, never a model-provided sender, determines the owning worker.
 retain the native-memory path.
 
 The native request `yorozu.worker_memory` must match an owned live/stored session
-and an unclaimed `tool.start` for `worker_memory`. Only the exact action arguments
+and an unclaimed `tool.start` for `worker_memory` in the same current, non-stopped attempt. Only the exact action arguments
 are forwarded to `callHost('worker.memory', args)`: read/search name `ownerId`,
 write names key/body/operationId, and explicit grant/revoke name
 `toAgentId`/key/operationId. No automatic grants or sender/actor arguments exist.
 The private stdio server supports correlated host replies with at most 32 pending
 memory calls and a 30-second timeout. Unknown outcomes are never retried. Strings
-are bounded (128-byte identifiers/keys, 4 KiB query, 32 KiB body), results and the
-256 KiB transport frame remain bounded, and search returns at most 64 entries.
+are bounded (128-byte operation IDs/keys, 256-byte query, 16 KiB body); the host
+also validates registered agent IDs. The 256 KiB transport frame remains bounded.
+Search returns at most 16 snippets of 2,048 characters; use read for a full note.
+The host anchors access to a current foreground turn and routes each grant through
+an exact owner approval; autonomous-only memory calls remain unavailable in this slice.
 
 The synthetic tests exercise actual adapter gateway handling and the bidirectional
 `serve` stream path, not a live provider or OS isolation. Optional pinned-native

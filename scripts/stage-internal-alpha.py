@@ -54,6 +54,7 @@ OVERLAYS = [
     "scripts/harness-proof.mjs",
     "scripts/harness-host-proof.mjs", "docs/harness-host-proof.md",
     "docs/harness-proof.md", "docs/harness-contract.md", "docs/minimal-workers.md",
+    "docs/verification/minimal-workers-20261006.json",
     "docs/siwc-inference-broker.md", "scripts/capture-hermes-siwc-shape.py",
     "docs/siwc-account-lifecycle.md",
     "docs/siwc-id-token-verifier.md",

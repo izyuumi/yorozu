@@ -122,6 +122,13 @@ reconciliation UX, real provider/device acceptance, and eventual supervisor/lega
 
 ## Evidence boundaries
 
+The October 6 local run is recorded in [verification/minimal-workers-20261006.json](verification/minimal-workers-20261006.json).
+It tested code source `e3282e5` through the clean production assembly: 526 runtime tests passed
+(6 optional skips), 84 adapter tests passed (6 optional native skips), 10 shared protocol tests,
+22 exact isolated Rust cases, 9 staging tests and the explicit kernel file-isolation probe passed.
+This includes the encrypted two-agent slice and the actual Hermes adapter/host-pipe bridge, not
+live native/provider acceptance.
+
 Run `worker-*` plus retained harness/person/registry/isolation tests against the **staged production
 source**; raw checkout `serve.ts` does not contain the production decorator. `stage-internal-alpha.py`
 and the internal gate explicitly include the new files and tests. Protocol peers and deterministic

@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-06",
+  "reviewedBase": "be87a28fc75f1a8a0124a8ce3557f85de6ad2b2c",
+  "codeSourceSha": "e3282e543d17daeeb66456b6c90517478d98878a",
+  "productionBaselineSha": "5be369c8d50833a626c8c0ca3e8fc262c150e8de",
+  "scope": "First integrated opt-in composition/memory slice; retained execution supervisors, not whole rewrite completion",
+  "productionReady": false,
+  "defaultEnabled": false,
+  "releaseHold": true,
+  "environment": {
+    "platform": "macOS",
+    "buildAndTestNode": "26.10.0",
+    "vitest": "4.1.11",
+    "dependencyInstall": "locked offline cache; ignore-scripts; no downloads"
+  },
+  "builds": {
+    "stagedSharedTypeScript": "passed",
+    "stagedRuntimeTypeScript": "passed",
+    "stagedRelayTypeScript": "passed",
+    "rawRuntimeNoEmit": "passed"
+  },
+  "tests": {
+    "stagedRuntime": {
+      "files": 39,
+      "passed": 526,
+      "skipped": 6,
+      "failed": 0,
+      "selectors": [
+        "worker-",
+        "harness",
+        "agent-",
+        "person-agent-",
+        "curated-agent-",
+        "packaged-agent-",
+        "siwc-",
+        "native-account-",
+        "secretary-"
+      ]
+    },
+    "adapters": {
+      "passed": 84,
+      "skipped": 6,
+      "failed": 0,
+      "files": [
+        "hermes/adapter.test.mjs",
+        "openclaw/adapter.test.mjs"
+      ]
+    },
+    "shared": {
+      "files": 3,
+      "passed": 10,
+      "failed": 0,
+      "selectors": [
+        "person-agents",
+        "peer-info"
+      ]
+    },
+    "isolatedRustGate": {
+      "groups": 6,
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0,
+      "scope": "Only scripts/check-internal-host.py exact reviewed cases; no aggregate recovery/interposer/FIFO run"
+    },
+    "staging": {
+      "passed": 9,
+      "failed": 0
+    },
+    "explicitKernelFileProbe": {
+      "passed": 1,
+      "otherTestsDeselected": 5,
+      "failed": 0
+    }
+  },
+  "proofs": [
+    "Actual paired encrypted loopback relay -> staged serveSecretary -> registry with Alice and Bob -> mandatory Seatbelt child -> process-bound SQL tools -> encrypted result/actions",
+    "Unnegotiated registry hidden; no legacy planner or native provider fallback used in selected mode",
+    "Two independent namespaces; denied cross-agent read/search and foreign write identity; exact device denial/approval; pending grant inaccessible; selected-note sharing; revocation; conflicting mutation IDs rejected",
+    "Confined peer cannot directly read the existing canonical SQL database (requires EPERM/EACCES, not missing-file denial)",
+    "Actual Hermes adapter serve() process and host HarnessProcess round-trip generated memory RPC to canonical SQL against deterministic native gateway",
+    "Exact foreground stop/attempt fencing; changed-note known rejection; cancellation persistence failure settles; post-commit receipt loss retains unknown fence",
+    "Uniform/native profile separation and quiescent rollback preserve both independent sources without import; SQL restart retains notes/grants/receipts"
+  ],
+  "correctedDuringValidation": [
+    "Approval initially lacked exact originating attempt currency",
+    "Known precommit rejection initially reused unknown-mutation status",
+    "Cancellation persistence exception could leave tool promise unsettled",
+    "Existing production phone projection dropped personAgents registry",
+    "Existing closed controls blocked shutdown registry projection",
+    "Hermes-generated host-memory request IDs used colon rejected by host grammar",
+    "Initial Homebrew Node 26.5 kernel fixture lacked libnode file grant; rerun passed with existing standalone pinned Node 26.10, without broadening sandbox permissions"
+  ],
+  "limitations": [
+    "Native gateway/protocol peers are deterministic fixtures, not live Python/harness/provider/subscription proof",
+    "Six optional native/source adapter checks were not run; runtime optional environment checks remain as reported, with one kernel file test separately executed",
+    "Only Hermes has a uniform-memory native bridge; OpenClaw/connected and arbitrary plugin identifiers need subsequent implementation and acceptance",
+    "Autonomous-only memory calls refused pending exact native work-provenance contract",
+    "No production data or credential imports, account access, deployment, installed app changes or physical-device acceptance",
+    "No runtime-artifact regeneration or app packaging; existing adapter artifacts must not be shipped with changed source without their separate verification",
+    "No push, release, tag, PR close or branch cleanup; legacy retirement and migration UX remain follow-ups"
+  ],
+  "logSha256": {
+    "runtime": "38786f3f1d17e42f5fee199edade7bdb0e4a662301dc0d4e7d0229ec514aa85c",
+    "adapters": "d80984122079837a558fa1c583cef245dfe011b5f53a46263da4ae96d819dce2",
+    "shared": "fe04d6d96200e507ff4d61bcee9b216b0bb165cd9a01154eb46695a291ee1888",
+    "rust": "524ff7607f219f70a266e0292ab8b6a96ab1dd5c4ef844469408ffd07078b05f",
+    "kernel": "48cd0ef1229d284c5b8238967ce614aaccaf1d6fa4f06cfb1387de4c6f760b71",
+    "staging": "2db7c916dfbcbf13fa20d44f61533501ef316cdaaf831efd18156de1ec3ba108"
+  },
+  "finalDocumentationAssembly": {
+    "executableAndTestSourceFilesCompared": 196,
+    "matchesTestedCodeSource": true,
+    "delta": "Documentation, evidence record and its explicit staging inclusion only"
+  }
+}
