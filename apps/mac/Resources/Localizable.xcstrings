@@ -2,6 +2,16 @@
   "sourceLanguage": "en",
   "version": "1.0",
   "strings": {
+    "Starts in the menu bar. Open Yorozu, Quick Chat and Settings remain available there.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メニューバーで起動します。メニューからYorozu、クイックチャット、設定を開けます。"
+          }
+        }
+      }
+    },
     "Memory is private to this agent. Ask it in its conversation to save, share or revoke a note. Sharing requires your confirmation in a harness request card.": {
       "localizations": {
         "ja": {
