@@ -6,7 +6,15 @@ ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 : "${YOROZU_REVIEWED_REPO:?required reviewed repository}"
 : "${YOROZU_REVIEWED_SHA:?required reviewed revision}"
 # Execute the reviewed test/adapter bytes, not a mixed working-tree harness.
-git -C "$ROOT" diff --exit-code "$YOROZU_REVIEWED_SHA" --   packages/harness-plugins/hermes/adapter.mjs packages/harness-plugins/hermes/adapter.test.mjs   packages/harness-plugins/hermes/bootstrap.py packages/harness-plugins/hermes/platform
+python3 - "$ROOT" "$YOROZU_REVIEWED_REPO" "$YOROZU_REVIEWED_SHA" <<'PYVERIFY'
+import pathlib, subprocess, sys
+root, repo, revision = sys.argv[1:]
+for name in ('adapter.mjs', 'adapter.test.mjs', 'bootstrap.py', 'platform/__init__.py', 'platform/plugin.yaml'):
+    relative = 'packages/harness-plugins/hermes/' + name
+    expected = subprocess.check_output(['git', '-C', repo, 'show', revision + ':' + relative])
+    if (pathlib.Path(root) / relative).read_bytes() != expected:
+        raise SystemExit('Native memory gate differs from reviewed source: ' + relative)
+PYVERIFY
 python3 "$ROOT/scripts/hermes-release-provenance.py" \
   --artifact "$YOROZU_HERMES_RUNTIME_ARTIFACT" \
   --reviewed-repo "$YOROZU_REVIEWED_REPO" --reviewed-revision "$YOROZU_REVIEWED_SHA"
