@@ -247,56 +247,61 @@
                 monitor = nil
                 guard window != nil else { return }
                 monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                    // Only this window's field: every open chat has its own monitor.
-                    guard let self, self.isActive, event.window === self.window else { return event }
-                    let composing = (self.window?.firstResponder as? NSTextView)?.hasMarkedText() == true
-                    if let onPickerKey = self.onPickerKey,
-                        let key = skillPickerKey(
-                            keyCode: event.keyCode, flags: event.modifierFlags, composing: composing)
-                    {
-                        onPickerKey(key)
-                        return nil
-                    }
-                    if let key = skillPickerKey(
-                        keyCode: event.keyCode, flags: event.modifierFlags, composing: composing),
-                        key == .up || key == .down, self.onPromptHistory(key == .up)
-                    {
-                        return nil
-                    }
-                    if !composing,
-                        event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                            .subtracting([.numericPad, .function]).isEmpty,
-                        let characters = event.characters, characters.count == 1,
-                        let number = Int(characters), (1...9).contains(number),
-                        self.onQuestionOption(number)
-                    {
-                        return nil
-                    }
-                    switch composerSendAction(keyCode: event.keyCode, flags: event.modifierFlags,
-                        sendModifiers: self.sendModifiers, composing: composing) {
-                    case .sendNextQueued: if self.onSendNextQueued() { return nil }
-                    case .send(let alternate): if self.onSend(alternate) { return nil }
-                    case nil: break
-                    }
-                    // SwiftUI's submit action has already ended editing and lost the caret.
-                    // Insert through the native editor before that happens; it updates the binding.
-                    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                        .subtracting([.numericPad, .function])
-                    if !composing, event.keyCode == 36 || event.keyCode == 76,
-                        modifiers.isEmpty || modifiers == .shift,
-                        let editor = self.window?.firstResponder as? NSTextView {
-                        editor.insertNewlineIgnoringFieldEditor(nil)
-                        return nil
-                    }
-                    if let onPaste = self.onPaste,
-                        event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-                        event.charactersIgnoringModifiers == "v", pasteboardHasImages()
-                    {
-                        onPaste()
-                        return nil
-                    }
-                    return event
+                    guard let self else { return event }
+                    return self.handleKeyDown(event)
                 }
+            }
+
+            func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+                // Only this window's field: every open chat has its own monitor.
+                guard self.isActive, event.window === self.window else { return event }
+                let composing = (self.window?.firstResponder as? NSTextView)?.hasMarkedText() == true
+                if let onPickerKey = self.onPickerKey,
+                    let key = skillPickerKey(
+                        keyCode: event.keyCode, flags: event.modifierFlags, composing: composing)
+                {
+                    onPickerKey(key)
+                    return nil
+                }
+                if let key = skillPickerKey(
+                    keyCode: event.keyCode, flags: event.modifierFlags, composing: composing),
+                    key == .up || key == .down, self.onPromptHistory(key == .up)
+                {
+                    return nil
+                }
+                if !composing,
+                    event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                        .subtracting([.numericPad, .function]).isEmpty,
+                    let characters = event.characters, characters.count == 1,
+                    let number = Int(characters), (1...9).contains(number),
+                    self.onQuestionOption(number)
+                {
+                    return nil
+                }
+                switch composerSendAction(keyCode: event.keyCode, flags: event.modifierFlags,
+                    sendModifiers: self.sendModifiers, composing: composing) {
+                case .sendNextQueued: if self.onSendNextQueued() { return nil }
+                case .send(let alternate): if self.onSend(alternate) { return nil }
+                case nil: break
+                }
+                // SwiftUI's submit action has already ended editing and lost the caret.
+                // Insert through the native editor before that happens; it updates the binding.
+                let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                    .subtracting([.numericPad, .function])
+                if !composing, event.keyCode == 36 || event.keyCode == 76,
+                    modifiers.isEmpty || modifiers == .shift,
+                    let editor = self.window?.firstResponder as? NSTextView {
+                    editor.insertNewlineIgnoringFieldEditor(nil)
+                    return nil
+                }
+                if let onPaste = self.onPaste,
+                    event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                    event.charactersIgnoringModifiers == "v", pasteboardHasImages()
+                {
+                    onPaste()
+                    return nil
+                }
+                return event
             }
 
             override func hitTest(_ point: NSPoint) -> NSView? { nil }
