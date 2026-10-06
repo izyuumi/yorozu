@@ -193,6 +193,9 @@ export function mergeNativeConfiguration(previousConfig, config, agent) {
       enabled: [...new Set([...nativePlugins, 'yorozu-platform'])],
       entries: { ...previousConfig.plugins?.entries, ...config.plugins.entries } };
   }
+  // Uniform memory has one authority even after native config/profile edits.
+  // Preserve tuning fields, but never reactivate disk injection or a provider.
+  if (config.memory) merged.memory = { ...previousConfig.memory, ...config.memory };
   return merged;
 }
 
@@ -288,7 +291,10 @@ export async function prepareRuntime(params) {
   };
   if (agent) {
     config.agent.disabled_toolsets = [...RESOURCE_TOOLS.filter(name => !agent.scope.allowedTools.includes(name)), 'cronjob', 'computer_use'];
-    if (params.workerMemory === true) config.agent.disabled_toolsets.push('memory');
+    if (params.workerMemory === true) {
+      config.agent.disabled_toolsets.push('memory');
+      config.memory = { memory_enabled: false, user_profile_enabled: false, provider: 'builtin' };
+    }
     config.platform_toolsets = { cli: nativeTools(agent.scope.allowedTools, params.workerMemory === true) };
     config.plugins = { enabled: ['yorozu-platform'], entries: { 'yorozu-platform': { settings: { team: agent.platform.team, peers: agent.platform.peers, workerMemory: params.workerMemory === true && agent.scope.allowedTools.includes('memory') } } } };
     const pluginsRoot = join(hermesHome, 'plugins'), pluginRoot = join(pluginsRoot, 'yorozu-platform');

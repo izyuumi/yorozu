@@ -212,7 +212,7 @@ if [ "${YOROZU_SECRETARY_ENABLED:-0}" = 1 ]; then
   python3 scripts/hermes-release-provenance.py --artifact "$YOROZU_HERMES_RUNTIME_ARTIFACT" \
     --reviewed-repo "$YOROZU_REVIEWED_REPO" --reviewed-revision "$YOROZU_REVIEWED_SHA"
   cp "$YOROZU_HERMES_RUNTIME_ARTIFACT/runtime-artifact.json" "$DIST/hermes-unsigned-manifest.json"
-  python3 scripts/package-hermes-runtime.py verify --artifact "$YOROZU_HERMES_RUNTIME_ARTIFACT"
+  sh scripts/check-hermes-native-memory.sh
   mkdir -p "$APP/Contents/Resources/agent-runtimes"
   cp -R "$YOROZU_HERMES_RUNTIME_ARTIFACT" "$APP/Contents/Resources/agent-runtimes/hermes"
 fi

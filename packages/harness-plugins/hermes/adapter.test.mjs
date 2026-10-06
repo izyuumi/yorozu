@@ -7,7 +7,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { createAdapter, NativeGateway, prepareRuntime, validateAgentScope, UPSTREAM, mergeNativeConfiguration } from './adapter.mjs';
+import { createAdapter, NativeGateway, prepareRuntime, validateAgentScope, UPSTREAM, mergeNativeConfiguration, SEALED_HERMES_SOURCE_SHA256 } from './adapter.mjs';
 const exec = promisify(execFile);
 
 // Recorded native shapes are from pinned contracts/sessions.py,
@@ -67,6 +67,7 @@ async function scopeFixture(t, allowedTools = ['file', 'team']) {
   await mkdir(workspace); await mkdir(memoryDir);
   const params = { protocolVersion: 1, upstreamVersion: UPSTREAM.version, profileRoot: join(directory, 'profile'),
     workspace, python: '/usr/bin/python3', sourcePath: process.env.YOROZU_HERMES_TEST_SOURCE,
+    ...(process.env.YOROZU_HERMES_TEST_SEALED === '1' ? { sourceIntegrity: { kind: 'sealed-inventory-v1', sourceSha: UPSTREAM.commit, inventorySha256: SEALED_HERMES_SOURCE_SHA256 } } : {}),
     agentId: 'agent-a', scope: { allowedTools, directories: [{ path: workspace, access: 'write' }, ...(allowedTools.includes('memory') ? [{ path: memoryDir, access: 'write' }] : [])], workspace, memoryDir },
     isolation: { backend: 'macos-seatbelt-v1', agentId: 'agent-a', policyDigest: 'a'.repeat(64) },
     platform: { team: allowedTools.includes('team'), computer: false, peers: allowedTools.includes('team') ? [{ agentId: 'agent-b', name: 'B', pluginId: 'hermes' }] : [] } };
@@ -967,23 +968,46 @@ test('uniform memory rejects malformed host receipts without successful native r
 });
 
 test('native uniform memory discovery replaces vendor memory and preserves messaging checks', {
-  skip: !process.env.YOROZU_HERMES_TEST_SOURCE || !process.env.YOROZU_HERMES_TEST_PYTHON,
+  skip: process.env.YOROZU_REQUIRE_NATIVE_MEMORY !== '1' && (!process.env.YOROZU_HERMES_TEST_SOURCE || !process.env.YOROZU_HERMES_TEST_PYTHON),
 }, async t => {
-  for (const allowed of [['memory'], ['memory', 'team']]) {
+  assert.ok(process.env.YOROZU_HERMES_TEST_SOURCE && process.env.YOROZU_HERMES_TEST_PYTHON, 'required pinned native runtime missing');
+  for (const allowed of [[], ['memory'], ['memory', 'team']]) {
     const { params } = await scopeFixture(t, allowed);
     params.python = process.env.YOROZU_HERMES_TEST_PYTHON; params.workerMemory = true;
     const runtime = await prepareRuntime(params);
     const config = JSON.parse(await readFile(join(runtime.env.HERMES_HOME, 'config.yaml'), 'utf8'));
     assert.ok(config.agent.disabled_toolsets.includes('memory'));
-    assert.equal(config.plugins.entries['yorozu-platform'].settings.workerMemory, true);
-    const bootstrap = new URL('./bootstrap.py', import.meta.url).pathname;
-    const verified = JSON.parse((await exec(params.python, [bootstrap, '--verify'], { cwd: runtime.sourcePath, env: runtime.env, maxBuffer: 64 * 1024 })).stdout);
-    assert.ok(verified.toolsets.includes('yorozu_memory')); assert.equal(verified.toolsets.includes('memory'), false);
-    assert.ok(verified.tools.includes('worker_memory')); assert.equal(verified.tools.includes('memory'), false);
-    assert.equal(verified.tools.includes('send_agent_message'), allowed.includes('team'));
-    const proof = JSON.parse((await exec(params.python, ['-c', `
-import runpy, sys, json
-runpy.run_path(sys.argv[1])["verify"]()
+    assert.equal(config.plugins.entries['yorozu-platform'].settings.workerMemory, allowed.includes('memory'));
+    assert.deepEqual(config.memory, { memory_enabled: false, user_profile_enabled: false, provider: 'builtin' });
+    // Simulate an old native profile and a restart, including external-provider opt-in.
+    await mkdir(join(runtime.env.HERMES_HOME, 'memories'), { recursive: true });
+    for (const name of ['MEMORY.md', 'USER.md']) await writeFile(join(runtime.env.HERMES_HOME, 'memories', name), 'SYNTHETIC_OLD_NATIVE_NOTE');
+    for (const restart of [false, true]) {
+      if (restart) {
+        config.memory = { memory_enabled: true, user_profile_enabled: true, provider: 'honcho', memory_char_limit: 4321 };
+        config.personality = 'preserve synthetic preference';
+        await writeFile(join(runtime.env.HERMES_HOME, 'config.yaml'), JSON.stringify(config));
+        await prepareRuntime(params);
+      }
+      const restarted = JSON.parse(await readFile(join(runtime.env.HERMES_HOME, 'config.yaml'), 'utf8'));
+      assert.deepEqual(restarted.memory, { memory_enabled: false, user_profile_enabled: false, provider: 'builtin', ...(restart ? { memory_char_limit: 4321 } : {}) });
+      if (restart) assert.equal(restarted.personality, config.personality);
+      assert.deepEqual(restarted.fallback_model, []);
+      const bootstrap = new URL('./bootstrap.py', import.meta.url).pathname;
+      const verified = JSON.parse((await exec(params.python, [bootstrap, '--verify'], { cwd: runtime.sourcePath, env: runtime.env, maxBuffer: 64 * 1024 })).stdout);
+      assert.equal(verified.toolsets.includes('yorozu_memory'), allowed.includes('memory')); assert.equal(verified.toolsets.includes('memory'), false);
+      assert.equal(verified.tools.includes('worker_memory'), allowed.includes('memory')); assert.equal(verified.tools.includes('memory'), false);
+      assert.equal(verified.tools.includes('send_agent_message'), allowed.includes('team'));
+      const proof = JSON.parse((await exec(params.python, ['-c', `
+import runpy, sys, json, socket
+# No model, external provider, download, or paid fallback can hide in this proof.
+network_attempts=[]
+def no_network(*args, **kwargs):
+    network_attempts.append(True)
+    raise AssertionError("offline native regression attempted network")
+socket.socket.connect = no_network
+socket.create_connection = no_network
+native=runpy.run_path(sys.argv[1])["verify"]()
 from gateway.session_context import set_session_vars
 from tui_gateway import server_requests
 from tools.registry import registry
@@ -992,7 +1016,7 @@ from agent.agent_init import _init_memory
 from hermes_cli.config import load_config_readonly
 from types import SimpleNamespace
 cfg=load_config_readonly()
-agent=SimpleNamespace(enabled_toolsets=["yorozu_memory","delegation","yorozu_empty"],disabled_toolsets=cfg["agent"]["disabled_toolsets"],tools=[])
+agent=SimpleNamespace(enabled_toolsets=native["toolsets"],disabled_toolsets=cfg["agent"]["disabled_toolsets"],tools=[])
 _init_memory(agent,cfg,False,"yorozu")
 captured=[]
 def fake_send(method, sid, params, *, timeout):
@@ -1004,13 +1028,20 @@ set_current_observability_context(tool_call_id="native-call-proof",session_id="d
 args={"action":"write","key":"note","body":"fixture","operationId":"operation-proof"}
 completed=json.loads(registry.dispatch("worker_memory",args,session_id="durable-proof"))
 invalid=json.loads(registry.dispatch("worker_memory",{**args,"actorId":"forged"},session_id="durable-proof"))
-print(json.dumps({"captured":captured,"completed":completed,"invalid":invalid,"memoryEnabled":agent._memory_enabled,"userEnabled":agent._user_profile_enabled}))
+print(json.dumps({"networkAttempts":network_attempts,"captured":captured,"completed":completed,"invalid":invalid,"memoryEnabled":agent._memory_enabled,"userEnabled":agent._user_profile_enabled,"storeAbsent":agent._memory_store is None,"managerAbsent":agent._memory_manager is None,"syntheticMarkerLoaded":"SYNTHETIC_OLD_NATIVE_NOTE" in str(vars(agent))}))
 `, bootstrap], { cwd: runtime.sourcePath, env: runtime.env, maxBuffer: 64 * 1024 })).stdout);
-    assert.equal(proof.memoryEnabled, false); assert.equal(proof.userEnabled, false);
-    assert.equal(proof.captured.length, 1); assert.equal(proof.captured[0].method, 'yorozu.worker_memory');
-    assert.equal(proof.captured[0].params.agent_session_id, 'durable-proof');
-    assert.equal(proof.captured[0].params.tool_call_id, 'native-call-proof');
-    assert.deepEqual(proof.completed, { ok: true }); assert.match(proof.invalid.error, /not submitted/);
+      assert.equal(proof.memoryEnabled, false); assert.equal(proof.userEnabled, false);
+      assert.deepEqual(proof.networkAttempts, []);
+      assert.equal(proof.storeAbsent, true); assert.equal(proof.managerAbsent, true); assert.equal(proof.syntheticMarkerLoaded, false);
+      for (const name of ['MEMORY.md', 'USER.md']) assert.equal(await readFile(join(runtime.env.HERMES_HOME, 'memories', name), 'utf8'), 'SYNTHETIC_OLD_NATIVE_NOTE');
+      if (!allowed.includes('memory')) {
+        assert.equal(proof.captured.length, 0); assert.ok(proof.completed.error); continue;
+      }
+      assert.equal(proof.captured.length, 1); assert.equal(proof.captured[0].method, 'yorozu.worker_memory');
+      assert.equal(proof.captured[0].params.agent_session_id, 'durable-proof');
+      assert.equal(proof.captured[0].params.tool_call_id, 'native-call-proof');
+      assert.deepEqual(proof.completed, { ok: true }); assert.match(proof.invalid.error, /not submitted/);
+    }
   }
 });
 
@@ -1087,4 +1118,15 @@ test('unverified initial continuation tool and request are refused, not guessed 
   gateway.request('late-unverified-memory', 'yorozu.worker_memory', { agent_session_id: 'durable-1', tool_call_id: 'unverified-memory', action: 'write', key: 'note', body: 'never written', operationId: 'unverified-write' });
   await flush(); assert.equal(calls.length, 0);
   assert.equal(gateway.calls.filter(call => call.method === 'prompt.submit').length, 1);
+});
+
+test('uniform memory merge pins only native authority and leaves nonuniform memory untouched', () => {
+  const previous = { memory: { provider: 'honcho', memory_enabled: true, user_profile_enabled: true, nudge_interval: 27 },
+    agent: { max_turns: 12 }, personality: 'synthetic preference' };
+  const ordinary = { agent: { disabled_toolsets: [] } };
+  assert.deepEqual(mergeNativeConfiguration(previous, ordinary).memory, previous.memory);
+  const uniform = { ...ordinary, memory: { provider: 'builtin', memory_enabled: false, user_profile_enabled: false } };
+  const merged = mergeNativeConfiguration(previous, uniform);
+  assert.deepEqual(merged.memory, { ...previous.memory, ...uniform.memory });
+  assert.equal(merged.agent.max_turns, 12); assert.equal(merged.personality, previous.personality);
 });

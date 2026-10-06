@@ -323,6 +323,10 @@ jobs:
             --destination "$RUNNER_TEMP/hermes-intake"
           printf 'YOROZU_HERMES_RUNTIME_ARTIFACT=%s\n' "$RUNNER_TEMP/hermes-intake/hermes" >> "$GITHUB_ENV"
           cp "$RUNNER_TEMP/hermes-intake/intake-receipt.json" dist/internal/runtime-intake.json
+      - name: Required offline native Hermes memory regression
+        run: |
+          YOROZU_REVIEWED_REPO="$GITHUB_WORKSPACE" YOROZU_REVIEWED_SHA="$GITHUB_SHA" \
+            sh scripts/check-hermes-native-memory.sh
       - name: Prepare existing signing credentials
         env:
           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
