@@ -116,5 +116,50 @@
     "commitGuards": "4022c4e442bd19d72077500f0e7479b69bea29f602d1cfae3673c5749193074d",
     "nativeSelector": "c5c1634603f92628fdac8402aac8ac6847ea323f8558458736d7dbc32e471903",
     "staging": "d66c37178fdf578877abafdf65497489969984242716b63819dbb16ad2863380"
+  },
+  "finalQualityProof": {
+    "priority": "Owner17:30 quality first, speed second",
+    "sourceSha": "fb4d2e6746202d7809f0ff49dfb64895ffab3cc6",
+    "assembly": "/private/tmp/yorozu-final-quality-20261006",
+    "runtime": {
+      "files": 40,
+      "passed": 548,
+      "skipped": 6,
+      "failed": 0
+    },
+    "native": {
+      "groups": 11,
+      "passed": 98,
+      "skipped": 0,
+      "failed": 0
+    },
+    "adapters": {
+      "passed": 86,
+      "skipped": 6,
+      "failed": 0
+    },
+    "shared": {
+      "passed": 10,
+      "failed": 0
+    },
+    "isolatedRust": {
+      "passed": 22,
+      "failed": 0
+    },
+    "explicitKernelProbe": {
+      "passed": 1,
+      "otherCasesDeselected": 5,
+      "failed": 0
+    },
+    "builds": "staged shared/runtime/relay TypeScript and native Swift targets passed",
+    "logSha256": {
+      "runtime": "65c71aa0fdadf425c72e7862f09c88419b42f445ca330f0e29c00c41d0560704",
+      "native": "277be8bc31566fc83ef7f8f16942db897116b0e0d380fc1b9799161c2007607f",
+      "adapters": "d425e9ddb0710bb427b0602026d68d3e076d719e2e53ac364e87027bbf3bfe1f",
+      "shared": "75acb395a441559239234ac46167e1020a003eba3b83b95116b63be49205b45f",
+      "rust": "58af98c413b1a40dfcdf587f71aeaaeaac926fae2da998716503305cf349dddc",
+      "kernel": "a54ec04ef9a4a3430953ceef90dd74cc2f081f0f3418740724007fb42f24baaa"
+    },
+    "limit": "Full integrated local fixtures, not a signed runtime artifact, live native/provider or physical-device acceptance"
   }
 }

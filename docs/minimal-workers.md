@@ -133,6 +133,8 @@ defaults to menu-bar-only, while deliberate Open Yorozu/Settings and onboarding 
 
 ## Evidence boundaries
 
+The final quality-first integrated run at signed `fb4d2e6` passed548 runtime tests (6 optional skips),98 native tests (zero skips),86 adapter tests (6 optional native skips),10 shared protocol tests,22 isolated Rust cases and the explicit kernel probe. Exact SHA-bound receipts and limitations are recorded in the integrated evidence JSON and handoff; this supersedes reliance on incremental/source-equivalence receipts.
+
 The current source integration is recorded in [verification/minimal-workers-integrated-20261006.json](verification/minimal-workers-integrated-20261006.json) and `../HANDOFF.md`. It includes actual packaged selection/account composition, verified-continuation memory, native menu-bar/default policy, native memory settings and the four prepared patches. Local receipts:547 runtime passes (6 optional skips),86 adapter passes (6 optional native skips),10 shared,97 native plus the separately executed exact composer regression,22 final packaged/admission checks,9 staging and16 native-selector checks. The earlier isolated Rust22-pass receipt is retained with unchanged Rust sources. These are source/fixture proofs, not live native/provider/device acceptance. The first-slice `minimal-workers-20261006.json` remains historical.
 
 Run `worker-*` plus retained harness/person/registry/isolation tests against the **staged production

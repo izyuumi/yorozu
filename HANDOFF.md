@@ -40,6 +40,10 @@ There is a separate active canonical-branch cleanup/PR review. No branch refs ar
 
 ## Final integrated receipts
 
+**Quality-first final-source run completed:** exact signed source `fb4d2e6746202d7809f0ff49dfb64895ffab3cc6`, assembled at `/private/tmp/yorozu-final-quality-20261006`, passed **548 runtime tests** (6 optional skips), **98 native tests** (zero skips, including the composer and host-launch cases), **86 adapter tests** (6 optional native skips), **10 shared protocol tests**, **22 isolated Rust cases** and the explicit **kernel file-isolation probe**. Staged shared/runtime/relay TypeScript and native Swift compilation passed. `internal-swift.json` and `internal-host.json` in that assembly bind receipts to this exact SHA. The final handoff update after that SHA changes only this documentation/evidence, not application, test, workflow or staging code. Actual release gates below remain unchanged.
+
+### Earlier incremental receipts (preserved, not substituted for the final run)
+
 Current record: `docs/verification/minimal-workers-integrated-20261006.json`.
 
 - Runtime: **547 passed / 6 optional skipped**, 40 files, at `9147d80`; 105 runtime/shared-TS/adapter executable files were byte-identical through final integration, so the unchanged full suite was not repeated.
@@ -92,6 +96,8 @@ git rev-parse HEAD
 git log be87a28..HEAD --format='%H %G? %s'
 git diff --check be87a28..HEAD
 git diff --stat be87a28..HEAD
+python3 scripts/test-stage-internal-alpha.py  # run in the Git source checkout
+python3 scripts/test-commit-msg.py            # likewise: requires the source Git history
 # Inspect each intended source delta, not merely this report.
 git diff be87a28..HEAD -- packages/runtime packages/harness-plugins packages/shared-swift apps/mac apps/ios scripts
 
@@ -116,7 +122,6 @@ export TMPDIR=/private/tmp
 "$NODE26" packages/shared/node_modules/vitest/vitest.mjs run \
   packages/shared/src/person-agents packages/shared/src/peer-info --maxWorkers=2
 CARGO_NET_OFFLINE=true python3 scripts/check-internal-host.py --receipt "$CHECK/internal-host.json"
-python3 scripts/test-stage-internal-alpha.py
 "$NODE26" scripts/check-localizations.mjs
 # Shared Swift package has no remote package dependencies. No UI is launched.
 env -u SDKROOT swift test --package-path packages/shared-swift --filter \
