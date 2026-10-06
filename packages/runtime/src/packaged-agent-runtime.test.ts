@@ -14,7 +14,7 @@ const roots: string[] = [], owners: PersonAgentHost[] = [];
 afterEach(async () => { for (const owner of owners.splice(0)) await owner.close(); vi.restoreAllMocks(); vi.unstubAllEnvs(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 
-test("only the fixed packaged entry with its explicit build marker activates person screens without auth or migration", () => {
+test("only the fixed packaged entry with its explicit build marker activates person screens without auth", () => {
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "yorozu-packaged-entry-"))); roots.push(root);
   const resources = join(root, "Resources"); fs.mkdirSync(resources);
   const entry = pathToFileURL(join(resources, "runtime/dist/secretary-serve.js"));
@@ -26,7 +26,7 @@ test("only the fixed packaged entry with its explicit build marker activates per
     personAgentPlatform: { kind: "packaged-hermes-v1", productionReady: false } };
   fs.writeFileSync(join(resources, "internal-source.json"), JSON.stringify(marker));
   const platform = packagedPersonAgentPlatformFromEntry(entry)!;
-  expect(platform.initialAgent?.id).toBe("yorozu"); expect(platform.secretaryAgentId).toBeUndefined();
+  expect(platform.initialAgent?.id).toBe("yorozu"); expect(platform.secretaryAgentId).toBe("yorozu"); expect(platform.workerMemory).toBe(true);
   marker.personAgentPlatform.productionReady = true;
   fs.writeFileSync(join(resources, "internal-source.json"), JSON.stringify(marker));
   expect(() => packagedPersonAgentPlatformFromEntry(entry)).toThrow(curated.CuratedRuntimeUnavailable);
@@ -57,12 +57,12 @@ function fixture() {
   return { root, resources, runtime, manifest, save, reseal };
 }
 
-test("trusted platform startup publishes a private fresh secretary even with no usable runtime/auth; no migration", async () => {
+test("trusted platform startup publishes a private fresh secretary even with no usable runtime/auth; uniform worker selection", async () => {
   const f = fixture(); fs.rmSync(join(f.resources, "agent-runtimes"), { recursive: true });
   const selectBroker = vi.fn(() => undefined), platform = packagedPersonAgentPlatform(f.resources, { selectBroker });
   const host = new PersonAgentHost(join(f.root, "state"), platform); owners.push(host);
   expect(host.registry()).toMatchObject({ version: 1, defaultAgentId: "yorozu", agents: [{ id: "yorozu", name: "Yorozu", pluginId: "hermes", allowedTools: ["delegation", "file", "memory"], directories: [] }] });
-  expect(host.owns("yorozu-secretary-v1")).toBe(false); expect(platform.secretaryAgentId).toBeUndefined(); expect(selectBroker).not.toHaveBeenCalled();
+  expect(host.owns("yorozu-secretary-v1")).toBe(true); expect(platform.secretaryAgentId).toBe("yorozu"); expect(platform.workerMemory).toBe(true); expect(selectBroker).not.toHaveBeenCalled();
   const factory = platform.createFactory(host.store), agent = host.store.list().agents[0];
   await expect(factory(agent, host.store.resolveScope(agent.id), {} as any)).rejects.toMatchObject({ status: "unsupported", capability: "runtime" });
   expect(selectBroker).not.toHaveBeenCalled();
@@ -88,7 +88,7 @@ test("factory delegates only fixed packaged paths after validation and ignores e
       python: { executable: join(f.runtime, "python/bin/python3.13"), canonicalExecutable: join(f.runtime, "python/bin/python3.13"), version: "3.13.16", libraryRoots: [join(f.runtime, "python/lib"), join(f.runtime, "python/share")] } }, selectBroker });
   const args = [{ pluginId: "hermes" }, {}, {}] as any;
   await expect(factory(...args)).rejects.toMatchObject({ capability: "auth" }); expect(run).toHaveBeenCalledTimes(1);
-  await expect(factory({ pluginId: "openclaw" } as any, {} as any, {} as any)).rejects.toMatchObject({ capability: "runtime" }); expect(run).toHaveBeenCalledTimes(1);
+  expect(() => factory({ pluginId: "openclaw" } as any, {} as any, {} as any)).toThrow("unregistered worker harness"); expect(run).toHaveBeenCalledTimes(1);
   fs.writeFileSync(join(f.runtime, "plugin/bootstrap.py"), "Changed after first preparation");
   await expect(factory(...args)).rejects.toMatchObject({ capability: "runtime" }); expect(run).toHaveBeenCalledTimes(1);
 });

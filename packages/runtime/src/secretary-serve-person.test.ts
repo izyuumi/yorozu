@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { serveSecretary } from "../dist/secretary-serve.js";
 
 const f = vi.hoisted(() => ({
-  options: {} as any, registered: {} as any, mainPerson: false, selectedHarness: false, packaged: false,
+  migrationBlocked: false, bindSecretary: vi.fn(), options: {} as any, registered: {} as any, mainPerson: false, selectedHarness: false, packaged: false,
   ordinary: vi.fn(async () => ({ text: "ordinary" })),
   person: vi.fn(async () => ({ text: "person" })),
   planner: vi.fn(async () => ({ text: "legacy" })),
@@ -32,9 +32,9 @@ vi.mock("../dist/person-agent-host.js", () => ({ PersonAgentHost: class {
   registry() { return { version: 1, revision: 0, agents: [] }; }
   workspace() { return undefined; } summary() { return undefined; }
   control() {} create() {} bind = f.personBind; close = f.personClose;
-  runtime = { taskStop: async () => false };
+  runtime = { bindSecretary(id: string) { f.bindSecretary(id); if (f.migrationBlocked) throw new Error("unsettled"); f.mainPerson = true; }, taskStop: async () => false };
 } }));
-beforeEach(() => { vi.clearAllMocks(); f.mainPerson = false; f.selectedHarness = false; f.packaged = false; f.unavailable = undefined; });
+beforeEach(() => { vi.clearAllMocks(); f.migrationBlocked = false; f.mainPerson = false; f.selectedHarness = false; f.packaged = false; f.unavailable = undefined; });
 
 test("person chats preserve legacy main/tasks and ordinary chats with per-thread harness routing", async () => {
   const sidecar = serveSecretary({ stateDir: "/unused-person-serve-fixture", personAgentPlatform: { createFactory: () => { throw new Error(); } } });
@@ -91,4 +91,38 @@ test("unprovisioned native account host does not advertise or expose sign-in con
   expect(f.options.siwcAccountStatus).toBeUndefined(); expect(f.options.siwcAccountControl).toBeUndefined();
   expect(accounts.control).not.toHaveBeenCalled();
   await sidecar.close();
+});
+
+for (const blocked of [false, true]) test(`packaged account composition selects workers with migration hold=${blocked}`, async () => {
+  f.migrationBlocked = blocked; f.selectedHarness = true;
+  const accounts = { provisioned: true, platform: { workerMemory: true, secretaryAgentId: "yorozu" },
+    bindPeople: vi.fn(), bindChanged: vi.fn(), close: vi.fn(async () => {}), status: vi.fn(), control: vi.fn() };
+  const sidecar = serveSecretary({ stateDir: "/unused-packaged-workers", nativeAccountHost: accounts as any });
+  expect(f.bindSecretary).toHaveBeenCalledExactlyOnceWith("yorozu");
+  expect(accounts.bindPeople).toHaveBeenCalledOnce();
+  expect(f.options.secretaryCoordinator).toBe(false);
+  expect(f.options.personAgentRegistry()).toMatchObject({ version: 1 });
+  for (const threadId of ["yorozu-secretary-v1", "person-chat"]) {
+    const result = await f.registered.codex.run({ threadId });
+    if (blocked) {
+      expect(result).toMatchObject({ failed: true, cessation: "not-submitted" });
+      expect(f.options.secretaryUnavailable(threadId)).toContain("reconciliation");
+      expect(f.options.secretaryThreadSummary(threadId)).toMatchObject({ needsAttention: true, canResume: false });
+    } else expect(result).toEqual({ text: "person" });
+  }
+  for (const prefix of ["secretary", "harness"]) {
+    const threadId = `${prefix}-task-${"a".repeat(64)}`;
+    expect(await f.registered.codex.run({ threadId })).toMatchObject({ cessation: "not-submitted" });
+    expect(f.options.secretaryOwnsTask(threadId)).toBe(true);
+  }
+  if (blocked) {
+    expect(await f.registered.harness.run({ threadId: "person-chat" })).toMatchObject({ cessation: "not-submitted" });
+    await expect(f.options.personAgentCreate({})).rejects.toThrow("reconciliation");
+    await expect(f.options.personAgentControl({})).rejects.toThrow("reconciliation");
+    await expect(f.options.harnessAction({})).rejects.toThrow("reconciliation");
+    expect(f.person).not.toHaveBeenCalled();
+  }
+  expect(await f.registered.codex.run({ threadId: "ordinary" })).toEqual({ text: "ordinary" });
+  expect(f.planner).not.toHaveBeenCalled(); expect(f.reconcile).not.toHaveBeenCalled(); expect(f.selected).not.toHaveBeenCalled();
+  await sidecar.close(); expect(accounts.close).toHaveBeenCalledOnce();
 });

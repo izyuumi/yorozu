@@ -38,27 +38,47 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   if (options.minimalWorkers && (accounts || options.personAgentPlatform)) throw new Error("Select one worker platform owner");
   const platform = options.minimalWorkers ? createMinimalWorkerPlatform(options.minimalWorkers) : accounts?.platform ?? options.personAgentPlatform;
   if (accounts && options.personAgentPlatform && options.personAgentPlatform !== accounts.platform) throw new Error("Native account platform owner mismatch");
-  const people = platform ? new PersonAgentHost(dir, platform) : undefined;
+  // Construct the registry/account screens before attempting the gated overlay.
+  // A refused migration is a visible admission hold, not a legacy planner fallback
+  // and not a fatal service startup. Never retry it automatically in this process.
+  const workersSelected = platform?.workerMemory === true;
+  const people = platform ? new PersonAgentHost(dir, workersSelected ? { ...platform, secretaryAgentId: undefined } : platform) : undefined;
+  let migrationHold: string | undefined;
+  if (workersSelected && people) {
+    try {
+      if (!platform?.secretaryAgentId) throw new Error("Missing secretary identity");
+      people.runtime.bindSecretary(platform.secretaryAgentId);
+    } catch {
+      migrationHold = "Worker activation is on hold. Previous work requires explicit reconciliation; history is retained and no work will be replayed. Restart after reconciliation to activate workers.";
+    }
+  }
+  const retiredTask = (id: string): boolean => workersSelected && /^(secretary|harness)-task-[a-f0-9]{64}$/.test(id) && !people?.ownsTask(id);
+  const held = (id: string): boolean => retiredTask(id) || !!migrationHold && (id === "yorozu-secretary-v1" || !!people?.owns(id));
+  const holdReason = () => migrationHold ?? "This legacy task is retained in History. It cannot be resumed by the selected worker backend.";
+  const workerRunner: NativeAgentRunner | undefined = people && { ...people.runner, run: turn => held(turn.threadId)
+    ? Promise.resolve({ text: holdReason(), failed: true, cessation: "not-submitted" }) : people.runner.run(turn) };
   if (people && accounts) accounts.bindPeople(people);
-  const configuration = people?.owns("yorozu-secretary-v1") || packagedResourcesFromEntry(new URL(import.meta.url)) ? undefined : harnessConfiguration(dir);
-  const legacySecretary = !configuration && !people?.owns("yorozu-secretary-v1");
+  const configuration = workersSelected || people?.owns("yorozu-secretary-v1") || packagedResourcesFromEntry(new URL(import.meta.url)) ? undefined : harnessConfiguration(dir);
+  const legacySecretary = !workersSelected && !configuration && !people?.owns("yorozu-secretary-v1");
   // A local variable also type-checks against the unpatched development ServeOptions.
   const decoratedOptions = { ...options, stateDir: dir,
-    secretaryUnavailable: (id?: string) => id && people?.owns(id) ? undefined : unavailable,
+    secretaryUnavailable: (id?: string) => id && held(id) ? holdReason() : id && people?.owns(id) ? undefined : unavailable,
     secretaryCoordinator: legacySecretary,
     secretaryHarness: !!configuration || !!people,
-    secretaryHarnessOwns: people ? (id: string) => people.owns(id) || !!configuration && (id === "yorozu-secretary-v1" || !!harness?.owns(id)) : undefined,
-    secretaryOwnsConversation: (id: string) => people?.owns(id) ?? false,
-    secretaryOwnsTask: (id: string) => people?.ownsTask(id) || (configuration ? id !== "yorozu-secretary-v1" && (harness?.owns(id) ?? false) : coordinator?.owns(id) ?? false),
+    secretaryHarnessOwns: people ? (id: string) => held(id) || people.owns(id) || !!configuration && (id === "yorozu-secretary-v1" || !!harness?.owns(id)) : undefined,
+    secretaryOwnsConversation: (id: string) => held(id) || (people?.owns(id) ?? false),
+    secretaryOwnsTask: (id: string) => retiredTask(id) || people?.ownsTask(id) || (configuration ? id !== "yorozu-secretary-v1" && (harness?.owns(id) ?? false) : coordinator?.owns(id) ?? false),
     secretaryTask: (id: string) => coordinator?.task(id),
-    secretaryThreadSummary: (id: string) => people?.summary(id) ?? harness?.summary(id),
+    secretaryThreadSummary: (id: string) => held(id)
+      ? { ...people?.summary(id), canResume: false, canRewind: false, needsAttention: true, lastMessage: holdReason() }
+      : people?.summary(id) ?? harness?.summary(id),
     secretaryThreadWorkspace: (id: string) => people?.workspace(id),
     secretaryTaskStop: (event: Parameters<SecretaryHarness["taskStop"]>[0]) => people?.ownsTask(event.threadId)
       ? people.runtime.taskStop(event) : harness?.taskStop(event) ?? Promise.resolve(false),
     personAgentRegistry: people ? () => people.registry() : undefined,
-    personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => people.control(event) : undefined,
-    personAgentCreate: people ? (event: Parameters<PersonAgentHost["create"]>[0]) => people.create(event) : undefined,
-    harnessAction: people ? (event: Parameters<PersonAgentHost["action"]>[0]) => people.action(event) : undefined,
+    personAgentControl: people ? (event: Parameters<PersonAgentHost["control"]>[0]) => { if (migrationHold) return Promise.reject(new Error(migrationHold)); return people.control(event); } : undefined,
+    personAgentCreate: people ? (event: Parameters<PersonAgentHost["create"]>[0]) => { if (migrationHold) return Promise.reject(new Error(migrationHold)); return people.create(event); } : undefined,
+    harnessAction: people ? (event: Parameters<PersonAgentHost["action"]>[0]) => { if (migrationHold) return Promise.reject(new Error(migrationHold)); return people.action(event); } : undefined,
     siwcAccountStatus: accounts?.provisioned ? () => accounts.status() : undefined,
     siwcAccountControl: accounts?.provisioned ? (event: Parameters<NonNullable<typeof accounts>["control"]>[0], sender: NativeAccountSender) => accounts.control(event, sender) : undefined,
     secretaryObserve: (event: Parameters<ReturnType<typeof secretaryCoordinator>["observe"]>[0]) => coordinator?.observe(event),
@@ -74,8 +94,8 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
           coordinator.bind(host);
         }
         harnessHost = host; decorated = true;
-        return { ...runners, harness: people.runner, codex: { ...runners.codex,
-          run: (turn: NativeTurn) => people.owns(turn.threadId) ? people.runner.run(turn)
+        return { ...runners, harness: workerRunner!, codex: { ...runners.codex,
+          run: (turn: NativeTurn) => held(turn.threadId) || people.owns(turn.threadId) ? workerRunner!.run(turn)
             : configuration && (turn.threadId === "yorozu-secretary-v1" || harness?.owns(turn.threadId))
               ? harness?.runner.run(turn) ?? Promise.resolve({ text: unavailable ?? "Harness unavailable", failed: true })
             : (legacySecretary && (turn.threadId === "yorozu-secretary-v1" || coordinator?.owns(turn.threadId))
@@ -111,7 +131,9 @@ export function serveSecretary(options: SecretaryServeOptions = {}): Sidecar {
   }
   if (people && harnessHost) {
     const host = harnessHost;
-    people.bind({ emit: host.emit, changed: () => host.publishThreads?.() });
+    // Binding may deliver durable peer inbox entries. A migration hold must not
+    // activate those continuations either; read-only registry/history still work.
+    if (!migrationHold) people.bind({ emit: host.emit, changed: () => host.publishThreads?.() });
     accounts?.bindChanged(() => host.publishThreads?.());
   }
   if (harness && harnessHost) {

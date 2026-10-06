@@ -132,3 +132,12 @@ test("an unprovisioned helper refuses sign-in before native, browser or account-
   expect(f.protectedStore.activate).not.toHaveBeenCalled(); expect(f.protectedStore.openBrowser).not.toHaveBeenCalled();
   expect(f.request).not.toHaveBeenCalled(); expect(f.acquire).not.toHaveBeenCalled();
 });
+
+test("native account owner selects the uniform packaged registry without activating accounts", async () => {
+  const f = fixture();
+  expect(f.host.platform.workerMemory).toBe(true);
+  expect(f.host.platform.secretaryAgentId).toBe("yorozu");
+  expect(f.host.platform.catalog!().harnesses).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: "hermes", capabilities: expect.arrayContaining(["worker-memory-v1"]) }),
+  ]));
+});

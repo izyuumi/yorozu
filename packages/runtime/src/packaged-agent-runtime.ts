@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathWithin, safeAgentPath } from "./agent-scope.js";
 import { createCuratedAgentRuntimeFactory, CuratedRuntimeUnavailable, HERMES_RUNTIME_PIN, type CuratedAgentRuntimeConfiguration } from "./curated-agent-runtime.js";
+import { createMinimalWorkerPlatform } from "./worker-platform.js";
 import type { PersonAgentPlatform } from "./person-agent-host.js";
 
 const PIN = Object.freeze({ sourceTree: "5849eacde63aaea608ca418821cc84771fce3bec", uvLockSha256: "5b3798f326209475abca8ef7cbf7c9406f12e687c28c0b540dfe597466f48590",
@@ -186,7 +187,7 @@ export async function verifyPackagedHermesArtifact(resourcesRoot: string): Promi
 
 /** Only trusted application startup calls this. Runtime validation is deferred to
  * preparation, so registry/screens remain available without usable code or account.
- * No automatic secretary migration and no client/environment path overrides exist.
+ * The packaged application selects uniform workers; no client/environment overrides exist.
  */
 export function packagedPersonAgentPlatform(resourcesRoot: string, services: PackagedRuntimeServices): PersonAgentPlatform {
   if (typeof resourcesRoot !== "string" || resourcesRoot.length > 4096 || !isAbsolute(resourcesRoot) || resolve(resourcesRoot) !== resourcesRoot || /[\0\r\n]/.test(resourcesRoot)
@@ -195,7 +196,7 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
     || services.bindStore !== undefined && typeof services.bindStore !== "function")
     throw new CuratedRuntimeUnavailable("runtime", "Explicit trusted packaged resources and broker selector are required.");
   const selected = services.selectBroker, root = join(resourcesRoot, "agent-runtimes", "hermes");
-  return { initialAgent: { id: "yorozu", name: "Yorozu", role: "Secretary", pluginId: "hermes", allowedTools: ["file", "memory", "delegation"], directories: [] },
+  const packaged: PersonAgentPlatform = { initialAgent: { id: "yorozu", name: "Yorozu", role: "Secretary", pluginId: "hermes", allowedTools: ["file", "memory", "delegation"], directories: [] },
     catalog: () => ({ ...(existsSync(root) ? { defaultHarnessId: "hermes" as const } : {}), harnesses: [
       { id: "hermes", label: "Hermes", available: existsSync(root), modes: ["managed"], capabilities: ["agent-messaging-v1"],
         ...(!existsSync(root) ? { unavailableReason: "The packaged Hermes runtime is unavailable." } : {}) },
@@ -227,6 +228,17 @@ export function packagedPersonAgentPlatform(resourcesRoot: string, services: Pac
         }
       };
     } };
+  const workers = createMinimalWorkerPlatform({
+    adapters: [{ id: "hermes", label: "Hermes", memory: "worker-memory-v1", createFactory: packaged.createFactory }],
+    initialAgent: packaged.initialAgent, secretaryAgentId: "yorozu", protectedRoots: packaged.protectedRoots,
+  });
+  // Availability remains deferred and fail-closed, while adapter dispatch and memory
+  // ownership come from the same central registry as explicit host selections.
+  return { ...workers, catalog: () => {
+    const catalog = packaged.catalog!();
+    return { ...catalog, harnesses: catalog.harnesses?.map(h => ({ ...h,
+      capabilities: h.id === "hermes" ? [...h.capabilities, "worker-memory-v1"] : h.capabilities })) };
+  } };
 }
 
 /** Fixed shipping entry and signed build marker only. Developer CLI invocations and
