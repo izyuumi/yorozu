@@ -2,7 +2,8 @@
 
 The explicit `minimalWorkers` composition adds a uniform host-owned memory/tool slice through
 these retained boundaries. See [minimal-workers.md](minimal-workers.md) for selection, security,
-rollback and remaining scope. It is off by default and does not authorize a release.
+rollback and remaining scope. The internal packaged entry selects it through the protected native account owner; publication
+and installation still require the parent-owned artifact/acceptance gates.
 
 This opt-in development path retains native SwiftUI, encrypted device connections,
 visible history and ordinary coding sessions. Hermes owns the secretary loop,

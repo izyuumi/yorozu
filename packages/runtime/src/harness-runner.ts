@@ -470,7 +470,7 @@ export class SecretaryHarness {
       record.state = receipt.status; record.reason = receipt.reason; this.ledger.save(); this.services?.changed(); return receipt;
     } catch { record.state = "unknown"; this.ledger.save(); this.services?.changed(); return { status: "unknown", reason: "Control delivery is unconfirmed. It will not be sent again automatically." }; }
   }
-  private stopRun(run: HarnessRun, operationId: string, attemptId = run.attemptId): Promise<any> {
+  private invalidateRunAuthority(run: HarnessRun, attemptId: string): void {
     const key = JSON.stringify([run.runId, attemptId]); this.stopped.add(key);
     this.continuations.get(attemptId)?.abort.abort();
     this.workerScopes.get(key)?.abort(); this.workerScopes.delete(key);
@@ -478,6 +478,9 @@ export class SecretaryHarness {
     for (const [id, pending] of this.platformActions) if (pending.runId === run.runId && pending.attemptId === attemptId) {
       this.services?.cancelAction?.(pending.origin, id); this.platformActions.delete(id);
     }
+  }
+  private stopRun(run: HarnessRun, operationId: string, attemptId = run.attemptId): Promise<any> {
+    this.invalidateRunAuthority(run, attemptId);
     return this.controlRun("run.stop", run, operationId, undefined, undefined, attemptId);
   }
   canHandoff(identity: HarnessHandoffIdentity): boolean {
@@ -536,10 +539,11 @@ export class SecretaryHarness {
   }
   async stop(operationId: string): Promise<void> {
     // Invalidate every owned capability synchronously, before awaiting any native receipt.
-    const stopping: Promise<unknown>[] = [];
-    if (this.live) stopping.push(this.stopRun(this.live.run, operationId));
-    for (const [attemptId, continuation] of this.continuations) stopping.push(this.stopRun(continuation.run, `${operationId}-${attemptId}`, attemptId));
-    await Promise.all(stopping);
+    // Keep transport handoffs serialized: many continuations must not overflow the bounded RPC window.
+    const targets = [...(this.live ? [{ run: this.live.run, attemptId: this.live.run.attemptId, operationId }] : []),
+      ...[...this.continuations].map(([attemptId, continuation]) => ({ run: continuation.run, attemptId, operationId: `${operationId}-${attemptId}` }))];
+    for (const target of targets) this.invalidateRunAuthority(target.run, target.attemptId);
+    for (const target of targets) await this.controlRun("run.stop", target.run, target.operationId, undefined, undefined, target.attemptId);
   }
   async taskStop(event: YorozuEvent): Promise<boolean> {
     const task = this.taskForThread(event.threadId); if (!task || event.kind !== "interrupt") return false;

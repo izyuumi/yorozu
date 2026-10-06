@@ -1,6 +1,6 @@
-# Minimal workers: first integrated replacement slice
+# Minimal worker platform and packaged activation
 
-Status: **opt-in source candidate, not a complete worker rewrite or release authorization**.
+Status: **packaged source candidate; native/provider/device acceptance and release artifact gates remain**.
 Base: reviewed `be87a28`. No installed profile, credential, account, app or relay deployment is changed.
 
 ## Design and ownership
@@ -20,9 +20,8 @@ planner above the selected harness and no new agent SDK.
 | Memory and sharing | New uniform host-owned SQL source for every selected agent, behind bound capabilities | `worker-memory.ts`, `worker-tools.ts` |
 | Native tool adaptation | Hermes tool calls are forwarded over the existing private child pipe, not interpreted as user prompts | `packages/harness-plugins/hermes` |
 
-The retained supervisor is deliberately **not yet rewritten**. This slice replaces composition and
-memory/tool ownership through that boundary, rather than replacing proven cancellation/recovery
-with an untested new loop. The old coordinator remains only in the unselected legacy composition for rollback; selecting the
+The platform replaces composition and memory/tool ownership while retaining the proven
+cancellation/recovery supervisor boundary rather than introducing an untested execution loop. The old coordinator remains only in the unselected legacy composition for rollback; selecting the
 minimal composition requires an explicit secretary identity and has no planner fallback.
 
 ## Explicit selection
@@ -35,7 +34,12 @@ wrap `createCuratedAgentRuntimeFactory(store, explicitlySelectedCuratedConfigura
 is still host-owned, and absence of an exact broker remains unavailable rather than an auth fallback.
 
 `minimalWorkers` cannot be combined with a different `personAgentPlatform` or `nativeAccountHost`.
-The regular packaged entry does **not** select it. No environment flag, relay message, model output,
+The internal packaged entry **does** select it through `packagedPersonAgentPlatform()` and the
+existing native account host; there is one protected account/broker owner. Fresh/quiescent state
+binds secretary identity `yorozu`. Unsettled legacy state receives a visible reconciliation hold
+without service startup failure, history loss or legacy planner fallback. Controls receive durable
+typed rejection receipts during that hold. The developer/older unselected composition remains
+separate; no ambient flag chooses the packaged backend. No environment flag, relay message, model output,
 registry patch or client-supplied command can activate this composition. The selected secretary
 identity is mandatory and requires the existing quiescent migration check. In this composition the
 legacy secretary coordinator is not started. Ordinary coding conversations retain their existing
@@ -78,9 +82,12 @@ content. It does not offer wildcard grants or cross-agent writes.
 
 The harness cannot select its actor identity: the host binds the memory capability to the registered
 agent and owning confined process. Tool calls revalidate registration, memory-tool selection and current
-scope. This first pipe contract additionally requires a current foreground attempt; calls after stop,
-from an idle session, or from an autonomous-only continuation are refused rather than guessed onto a
-new turn. Autonomous memory calls need a later explicit native work-provenance envelope.
+scope. The private pipe requires `{execution:{sessionId,runId,attemptId},request:{...}}`, stamped
+by the adapter from owned native tool calls, never from model arguments. The host accepts a current
+foreground attempt or a verified harness-owned continuation. Continuation tool starts and requests
+wait for the existing native identity probe. Plain envelopes, idle/unknown currency, wrong sessions
+or attempts, and calls after Stop fail closed; no synthetic user turn or guessed foreground owner
+is introduced.
 Native tool/session ownership is also checked in the adapter. Team membership alone does not
 share memory. Harness changes do not change SQL ownership.
 
@@ -103,8 +110,9 @@ ledgers still block activation. Restart recovers memory and receipts but never r
 
 ## Migration, rollback and retirement
 
-1. Keep this source candidate off by default. Validate fresh temporary profiles through the assembled
-   production entry and reviewed adapter. No production data or credential migration is part of the test.
+1. The internal packaged composition selects the new backend. Validate fresh temporary profiles
+   through the actual assembled entry and reviewed adapter before any distribution or normal-profile
+   adoption. No production data or credential migration is part of source testing.
 2. Before any later adoption, verify no active/unknown turns, children, controls, continuations, queue
    entries or unreconciled legacy worker records. Explicitly select the host composition and agent binding.
 3. Keep old registry/history/native profiles/receipts. New SQL state is additive; a new profile epoch
@@ -115,10 +123,13 @@ ledgers still block activation. Restart recovers memory and receipts but never r
    history/recovery projection and rollback checkpoint before deleting old execution code. No deletion
    is included here.
 
-Remaining product work includes native work-provenance for autonomous memory calls, a second real
-uniform-memory adapter, connected-harness policy,
-native account-host composition, longer approval UX/note viewer, production migration and recovery
-reconciliation UX, real provider/device acceptance, and eventual supervisor/legacy-path retirement.
+Remaining product work includes a second real uniform-memory adapter/connected-harness policy,
+longer approval UX/note viewer, production migration/reconciliation acceptance, actual native
+provider/device proof, and eventual physical deletion of legacy code after rollback custody is settled.
+Packaged account-host composition and verified-continuation memory provenance are now wired.
+The native client exposes Memory access only for the advertised managed capability; sharing and
+revocation use its existing conversation and exact harness-action cards. A configured Mac host
+defaults to menu-bar-only, while deliberate Open Yorozu/Settings and onboarding remain native.
 
 ## Evidence boundaries
 
@@ -135,5 +146,9 @@ and the internal gate explicitly include the new files and tests. Protocol peers
 adapter gateways are synthetic. Real pipes, SQL, kernel isolation and encrypted loopback relay tests
 are local implementation proof, not live subscription, deployed relay or physical-device proof.
 
-No release, tag, push, PR closure, deployment, installed-app replacement or branch cleanup is authorized
-by this document. The prior release hold remains in force; separately blocked branch cleanup stays separate.
+The owner has conditionally authorized eventual internal TestFlight, GitHub alpha and normal-app
+replacement; the parent owns those commit points. This document grants none independently. The
+earlier artifact remains ineligible until final source review/CI, canonical-branch custody, regenerated
+runtime provenance, real native/provider checks and native-client acceptance are verified. See
+`../HANDOFF.md` for the acceptance matrix, exact local commands and bounded remaining test plan.
+No push, release, install or branch-ref change is performed by this implementation worker.

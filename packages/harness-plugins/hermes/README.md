@@ -65,7 +65,9 @@ retain the native-memory path.
 
 The native request `yorozu.worker_memory` must match an owned live/stored session
 and an unclaimed `tool.start` for `worker_memory` in the same current, non-stopped attempt. Only the exact action arguments
-are forwarded to `callHost('worker.memory', args)`: read/search name `ownerId`,
+are forwarded inside `callHost('worker.memory', { execution, request: args })`: adapter-owned
+`execution` contains the exact stored session, host run and attempt IDs; model arguments cannot set it.
+The action fields are: read/search name `ownerId`,
 write names key/body/operationId, and explicit grant/revoke name
 `toAgentId`/key/operationId. No automatic grants or sender/actor arguments exist.
 The private stdio server supports correlated host replies with at most 32 pending
@@ -73,8 +75,8 @@ memory calls and a 30-second timeout. Unknown outcomes are never retried. String
 are bounded (128-byte operation IDs/keys, 256-byte query, 16 KiB body); the host
 also validates registered agent IDs. The 256 KiB transport frame remains bounded.
 Search returns at most 16 snippets of 2,048 characters; use read for a full note.
-The host anchors access to a current foreground turn and routes each grant through
-an exact owner approval; autonomous-only memory calls remain unavailable in this slice.
+The host anchors access to a current foreground turn or a verified harness-owned continuation
+and routes each grant through an exact owner approval. Unverified background currency is refused.
 
 The synthetic tests exercise actual adapter gateway handling and the bidirectional
 `serve` stream path, not a live provider or OS isolation. Optional pinned-native
