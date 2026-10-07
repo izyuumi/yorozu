@@ -333,6 +333,8 @@ jobs:
             --destination "$RUNNER_TEMP/openclaw-intake"
           printf 'YOROZU_OPENCLAW_RUNTIME_ARTIFACT=%s\n' "$RUNNER_TEMP/openclaw-intake/openclaw" >> "$GITHUB_ENV"
           cp "$RUNNER_TEMP/openclaw-intake/intake-receipt.json" dist/internal/openclaw-runtime-intake.json
+          # The verified extraction is all the build needs; free the 1.4 GB archive.
+          rm -rf "$RUNNER_TEMP/openclaw-download"
       - name: Required offline native Hermes memory regression
         run: |
           YOROZU_REVIEWED_REPO="$GITHUB_WORKSPACE" YOROZU_REVIEWED_SHA="$GITHUB_SHA" \
