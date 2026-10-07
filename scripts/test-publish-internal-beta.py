@@ -56,6 +56,7 @@ class BetaTests(unittest.TestCase):
                      "artifacts": [{"path": n, "sha256": beta.release.sha256(self.root / n), "size": (self.root / n).stat().st_size}
                                    for n in ("mac/Yorozu.dmg", "Yorozu.app.zip")]}
         self.data["runtime_intake"] = {k: "a" * 64 for k in ("receiptSha256", "archiveSha256", "unsignedInventorySha256", "signedInventorySha256", "archiveProvenanceSha256")}
+        self.data["openclaw_runtime_intake"] = {k: "b" * 64 for k in beta.OPENCLAW_INTAKE_DIGESTS}
         self.gh = InternalGitHub()
         self.gh.repo = beta.REPOSITORY
         self.gh.runs["7"].update(head_branch="harness-plugins", head_repository={"full_name": beta.REPOSITORY})
@@ -93,6 +94,7 @@ class BetaTests(unittest.TestCase):
         self.assertEqual(metadata["tag"], result["tag"])
         self.assertEqual(metadata["macBuild"], "19001")
         self.assertEqual(metadata["version"], "0.6.0")
+        self.assertEqual(metadata["openclawRuntimeIntake"], self.data["openclaw_runtime_intake"])
         self.assertNotIn("group_id", metadata)
         self.assertFalse(metadata["sparkleFeedChanged"])
         self.assertFalse(metadata["installationPerformed"])
@@ -147,6 +149,17 @@ class BetaTests(unittest.TestCase):
         self.data["source_sha"] = "b" * 40
         with self.assertRaisesRegex(ValueError, "another source"):
             self.publish()
+
+    def test_missing_openclaw_intake_binding_refuses_publication(self):
+        bound = self.data.pop("openclaw_runtime_intake")
+        with self.assertRaisesRegex(ValueError, "OpenClaw runtime intake binding is missing"):
+            self.publish()
+        for key in beta.OPENCLAW_INTAKE_DIGESTS:
+            with self.subTest(key=key):
+                self.data["openclaw_runtime_intake"] = {**bound, key: "not-a-digest"}
+                with self.assertRaisesRegex(ValueError, "OpenClaw runtime intake binding is missing"):
+                    self.publish()
+        self.assertFalse(self.gh.releases)
 
     def test_partial_rerun_is_refused(self):
         with patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "2"}):

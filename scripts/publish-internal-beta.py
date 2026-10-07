@@ -20,6 +20,7 @@ APP = "6811274963"
 
 # These are the branches for which ci.yml runs the assembled internal lane.
 INTERNAL_BRANCHES = {"harness-plugins", "integration-0.6-worker", "v0.6.0-alpha"}
+OPENCLAW_INTAKE_DIGESTS = ("unsignedInventorySha256", "unsignedManifestSha256", "signedInventorySha256")
 
 
 def check_source(gh, source, branch, run_id=None):
@@ -84,13 +85,16 @@ def publish(gh, root, expected_source, expected_run, availability, now=None):
     intake = data.get("runtime_intake", {})
     require(all(re.fullmatch(r"[0-9a-f]{64}", str(intake.get(k, ""))) for k in
                 ("receiptSha256", "archiveSha256", "unsignedInventorySha256", "signedInventorySha256", "archiveProvenanceSha256")), "Runtime intake binding is missing")
+    openclaw_intake = data.get("openclaw_runtime_intake")
+    require(isinstance(openclaw_intake, dict) and all(re.fullmatch(r"[0-9a-f]{64}", str(openclaw_intake.get(k, ""))) for k in
+                OPENCLAW_INTAKE_DIGESTS), "OpenClaw runtime intake binding is missing")
     tag = "v0.6.0-alpha." + build
     # Public metadata deliberately excludes Apple recipient/account IDs and the IPA.
     metadata = {"schemaVersion": 1, "channel": "alpha", "tag": tag, "version": "0.6.0", "macBuild": build,
                 "sourceSha": expected_source, "ciRunId": ci, "releaseRunId": str(expected_run),
                 "internalTestFlightVerified": True, "iosBuild": ios["build"],
                 "sparkleFeedChanged": False, "installationPerformed": False, "runtimeIntake": intake,
-                "openclawRuntimeIntake": data.get("openclaw_runtime_intake", {}),
+                "openclawRuntimeIntake": openclaw_intake,
                 "artifacts": [{"name": path.name, "sha256": release.sha256(path), "size": path.stat().st_size}
                               for _, path in sorted(paths.items())]}
     notes = ("Non-stable Yorozu 0.6 evaluation build. Mac download only; iOS is available through the existing internal TestFlight group.\n\n"
