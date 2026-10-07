@@ -49,6 +49,7 @@ import ProjectXCore
                 default: harness = OfflineHarness()
                 }
                 let engine = Engine(store: store,memory: memory,harness: harness); self.engine = engine
+                await engine.resume()
                 notice = runtimeMode == .live ? "OpenClaw Gateway · projectx" : harness.name; ready = true
                 while !Task.isCancelled { snapshot = try await engine.snapshot(); try await Task.sleep(for: .milliseconds(350)) }
             } catch is CancellationError { }
@@ -174,6 +175,7 @@ struct ContentView: View {
                     .help("Topic sub-chats (inspect only)")
                     .popover(isPresented: $showSubChats,arrowEdge: .bottom) { SubChats(model: model) }
             }
+            if model.snapshot.work.contains(where: { $0.active }) { ToolbarItem { ProgressView().controlSize(.small).help("Working on it") } }
             if model.nativeSelected && model.runtimeMode == .live { ToolbarItem { Button("Connect native device") { model.showEnrollment = true } } }
         }
             .sheet(isPresented: $model.showEnrollment,onDismiss: { model.bootstrapSecret = "" }) {

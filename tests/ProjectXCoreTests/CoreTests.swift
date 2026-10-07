@@ -78,10 +78,23 @@ final class StoreTests: XCTestCase {
     func testRestartUncertainNoReplay() async throws {
         let root = try testRoot(); let store = try Store(root: root,exclusive: false)
         let topic = try await store.topic(label: "Topic"); let m = try await store.message(role: "user",body: "work",topic: topic.id)
-        try await store.insertWork(work(topic,m,state: "working"))
+        var running = work(topic,m,state: "working"); running.runID = "dispatched-run"; try await store.insertWork(running)
         let reopened = try Store(root: root,exclusive: false); let snapshot = try await reopened.snapshot()
-        XCTAssertEqual(snapshot.work[0].state,"uncertain")
-        XCTAssertEqual(snapshot.messages.filter { $0.kind == "failure" }.count,1)
+        XCTAssertEqual(snapshot.work[0].state,"uncertain") // dispatched: never replayed; Engine.resume() re-attaches
+        let harness = ControlledHarness([]); await harness.setStatus(.stopped)
+        let engine = Engine(store: reopened,memory: try MemoryStore(dataRoot: root),harness: harness); await engine.resume()
+        try await eventually { try await reopened.snapshot().messages.contains { $0.kind == "failure" } }
+        let captures = await harness.captures; XCTAssertTrue(captures.isEmpty)
+    }
+    func testResumeDeliversRunThatFinishedDuringRestart() async throws {
+        let root = try testRoot(); let store = try Store(root: root,exclusive: false)
+        let topic = try await store.topic(label: "Topic"); let m = try await store.message(role: "user",body: "work",topic: topic.id)
+        var running = work(topic,m,state: "working"); running.runID = "dispatched-run"; try await store.insertWork(running)
+        let reopened = try Store(root: root,exclusive: false)
+        let harness = ControlledHarness([]); await harness.setStatus(.completed(WorkerOutput(text: "Finished meanwhile")))
+        let engine = Engine(store: reopened,memory: try MemoryStore(dataRoot: root),harness: harness); await engine.resume()
+        try await eventually { try await reopened.snapshot().messages.contains { $0.kind == "result" && $0.body.contains("Finished meanwhile") } }
+        let captures = await harness.captures; XCTAssertTrue(captures.isEmpty)
     }
     func testOneActiveTaskPerTopicAndSuppressedCompletion() async throws {
         let store = try Store(root: testRoot()); let topic = try await store.topic(label: "Topic")
@@ -239,13 +252,13 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(final.work.count,1); XCTAssertEqual(final.work[0].state,"done"); XCTAssertEqual(captures.count,2); XCTAssertEqual(captures[1].work.id,id)
         XCTAssertTrue(final.messages.first { $0.kind == "result" }!.body.contains("Amendment 1: Blue"))
     }
-    func testRetryOfNeverDispatchedRestartedWorkDelegatesAgain() async throws {
+    func testNeverDispatchedRestartedWorkRunsAgainOnResume() async throws {
         let root = try testRoot(); let store = try Store(root: root,exclusive: false); let topic = try await store.topic(label: "Topic")
         let m = try await store.message(role: "user",body: "Queued",topic: topic.id); let queued = work(topic,m); try await store.insertWork(queued)
-        let reopened = try Store(root: root,exclusive: false); let restarted = try await reopened.work(queued.id); XCTAssertEqual(restarted.state,"uncertain")
-        let harness = ControlledHarness([Decision(action: "retry",topicID: topic.id,taskID: queued.id)]); await harness.release()
+        let reopened = try Store(root: root,exclusive: false); let restarted = try await reopened.work(queued.id); XCTAssertEqual(restarted.state,"queued")
+        let harness = ControlledHarness([]); await harness.release()
         let engine = Engine(store: reopened,memory: try MemoryStore(dataRoot: root),harness: harness)
-        try await engine.send("retry"); await engine.waitForIdle()
+        await engine.resume(); await engine.waitForIdle() // never dispatched, so it simply runs
         let captures = await harness.captures; XCTAssertEqual(captures.count,1); XCTAssertEqual(captures[0].topic.sessionKey,topic.sessionKey)
         let after = try await engine.snapshot(); XCTAssertEqual(after.work.filter { $0.state == "done" }.count,1)
     }

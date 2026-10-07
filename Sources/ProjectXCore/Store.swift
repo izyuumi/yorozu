@@ -32,9 +32,11 @@ public actor Store {
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
             let interrupted = try Work.fetchAll(db, sql: "SELECT * FROM work WHERE state IN ('working','queued','amendment_pending','cancellation_requested')")
+            // Never dispatched (no run ID): safe to queue again. Dispatched: Engine.resume() re-attaches and reports.
             for var item in interrupted {
-                item.state = "uncertain"; item.error = "App stopped before confirmation; reconcile before retry."; try item.update(db)
-                try Message(id: identifier(), role: "assistant", body: "Work was interrupted. Its history is preserved; ask to retry when ready. I must check its run first.", topicID: item.topicID, taskID: item.id, replyTo: item.messageID, kind: "failure", created: Date().timeIntervalSince1970).insert(db)
+                if item.runID == nil { item.state = item.suppressed ? "cancelled" : "queued" }
+                else { item.state = "uncertain"; item.error = "App restarted while this was running." }
+                try item.update(db)
             }
         }
     }
@@ -175,7 +177,7 @@ public actor Store {
         guard output.appliedRevision >= steered, pending == 0 else { w.state = "amendment_pending"; w.error = "Result retained in sub-chat; latest amendment not confirmed."; try w.update(db)
             let kind = "amendment_unconfirmed_" + String(w.revision)
             if try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind=?",arguments: [task,kind]) == 0 {
-                try Message(id: identifier(),role: "assistant",body: "The worker finished, but its answer does not yet confirm your latest change. The result is retained in the sub-chat; no replacement work was started.",topicID: w.topicID,taskID: task,replyTo: w.messageID,kind: kind,created: Date().timeIntervalSince1970).insert(db)
+                try Message(id: identifier(),role: "assistant",body: "The task finished without confirming your latest change. Its answer is in the sub-chat.",topicID: w.topicID,taskID: task,replyTo: w.messageID,kind: kind,created: Date().timeIntervalSince1970).insert(db)
             }; return nil }
         w.state = "done"; w.error = nil; try w.update(db)
         try db.execute(sql: "UPDATE amendments SET state='applied' WHERE taskID=?", arguments: [task])
