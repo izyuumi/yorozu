@@ -139,6 +139,16 @@ class IntakeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pins differ"):
             self.run_intake()
 
+    def test_node_bytes_off_the_reviewed_pin_are_rejected_even_with_matching_pins(self):
+        self.write("node", b"substituted node, never executed", 0o755)
+        self.manifest["files"] = self.rows()
+        self.manifest["inventorySha256"] = digest(packager.encoded(self.manifest["files"]))
+        self.write_manifest()
+        packager.archive(self.artifact, self.archive)
+        self.pin = self.make_pin()
+        with self.assertRaisesRegex(ValueError, "Sealed Node differs"):
+            self.run_intake()
+
     def test_manifest_identity_and_evidence_are_required(self):
         for key, value, reason in [("kind", "yorozu-hermes-runtime", "identity"), ("productionReady", True, "identity"),
                                    ("dependencyEvidence", {"kind": "reused-local-bytes-inventory-only"}, "evidence")]:
