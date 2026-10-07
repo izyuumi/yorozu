@@ -53,11 +53,17 @@ public func sensitive(_ text: String) -> Bool {
 public actor MemoryStore {
     public let root: URL
     private let index: DatabaseQueue
+    /// Explicit data roots and tests keep the Markdown and its index together.
     public init(dataRoot: URL) throws {
-        root = dataRoot.appendingPathComponent("memory", isDirectory: true)
+        try self.init(root: dataRoot.appendingPathComponent("memory", isDirectory: true),index: dataRoot.appendingPathComponent("memory-index.sqlite"))
+    }
+    /// `root` holds the user-owned Markdown; `index` is the disposable discovery database (rebuilt every launch).
+    public init(root: URL, index indexURL: URL) throws {
+        self.root = root
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard try root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw ProjectError.blocked("Memory root cannot be a symlink.") }
-        index = try DatabaseQueue(path: dataRoot.appendingPathComponent("memory-index.sqlite").path)
+        try FileManager.default.createDirectory(at: indexURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        index = try DatabaseQueue(path: indexURL.path)
         try index.write { db in
             try db.execute(sql: "CREATE TABLE IF NOT EXISTS discovery(id TEXT PRIMARY KEY,title TEXT NOT NULL,summary TEXT NOT NULL,path TEXT UNIQUE NOT NULL); CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(id UNINDEXED,title,summary)")
         }

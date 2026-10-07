@@ -23,9 +23,16 @@ import ProjectXCore
         observation = Task {
             do {
                 let env = ProcessInfo.processInfo.environment
-                let root = env["PROJECTX_DATA"].map { URL(fileURLWithPath: $0,isDirectory: true) } ?? Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent(env["PROJECTX_MODE"] == "fixture" ? "PROJECTX-fixture-data" : "PROJECTX-data",isDirectory: true)
+                // Private app state: ~/Library/Application Support/<bundle id>; rebuildable index: ~/Library/Caches/<bundle id>.
+                // User-owned Markdown memory: visible ~/Yorozu/memory (owner decision). Fixtures and PROJECTX_DATA keep all in one root.
+                let fm = FileManager.default; let bundleID = Bundle.main.bundleIdentifier ?? "local.projectx.native.r1"
+                let explicit = env["PROJECTX_DATA"].map { URL(fileURLWithPath: $0,isDirectory: true) }
+                let support = try fm.url(for: .applicationSupportDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID,isDirectory: true)
+                let root = explicit ?? (runtimeMode == .fixture ? support.appendingPathComponent("Fixture",isDirectory: true) : support)
                 let store = try Store(root: root)
-                let memory = try MemoryStore(dataRoot: root)
+                let memory = explicit != nil || runtimeMode == .fixture ? try MemoryStore(dataRoot: root) : try MemoryStore(
+                    root: fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/memory",isDirectory: true),
+                    index: try fm.url(for: .cachesDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID + "/memory-index.sqlite"))
                 try await memory.rebuild()
                 let harness: any Harness
                 switch runtimeMode.rawValue {
