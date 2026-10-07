@@ -8,3 +8,4 @@ xcuserdata/
 *.xcodeproj/
 *.xcworkspace/
 apps/mac/Derived/
+.project-map/
