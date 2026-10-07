@@ -17,6 +17,10 @@ import ProjectXCore
     private var nativeClient: NativeGatewayClient?
     private var engine: Engine?
     private var observation: Task<Void,Never>?
+    /// The phone's way in (iOS 0.6.0): live mode only, and nil when it could not start.
+    private(set) var relay: RelayHost?
+    private var bridge: EngineBridge?
+    @Published var relayStatus = RelayStatus()
     func start() {
         guard observation == nil else { return }
         observation = Task {
@@ -50,13 +54,29 @@ import ProjectXCore
                 }
                 let engine = Engine(store: store,memory: memory,harness: harness); self.engine = engine
                 await engine.resume()
+                // Keys and device counters live as long as each other, so the device file stays in the support root whatever PROJECTX_DATA says.
+                if runtimeMode == .live { await startRelay(engine,url: env["PROJECTX_RELAY_URL"] ?? "wss://relay.yumi.to",devices: support.appendingPathComponent("relay-devices.json")) }
                 notice = runtimeMode == .live ? "OpenClaw Gateway · projectx" : harness.name; ready = true
-                while !Task.isCancelled { snapshot = try await engine.snapshot(); try await Task.sleep(for: .milliseconds(350)) }
+                while !Task.isCancelled {
+                    snapshot = try await engine.snapshot()
+                    if let relay, let bridge { await bridge.publish(snapshot,to: relay) }
+                    try await Task.sleep(for: .milliseconds(350))
+                }
             } catch is CancellationError { }
             catch { notice = error.localizedDescription; ready = false }
         }
     }
-    func stop() { observation?.cancel(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } } }
+    /// A relay that cannot start (Keychain, unreadable device file) leaves the Mac app running and says why in the pair sheet.
+    private func startRelay(_ engine: Engine,url: String,devices: URL) async {
+        do {
+            let bridge = EngineBridge(engine: engine,mode: runtimeMode)
+            let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devices)
+            self.bridge = bridge; relay = host
+            Task { for await status in host.status { relayStatus = status } }
+            await host.start()
+        } catch { relayStatus.state = error.localizedDescription }
+    }
+    func stop() { observation?.cancel(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
     func enroll() async {
         guard let nativeClient, !connecting else { return }
         connecting = true; let secret = bootstrapSecret; bootstrapSecret = ""
@@ -170,6 +190,7 @@ struct SubChats: View {
 struct ContentView: View {
     @ObservedObject var model: AppModel
     @State private var showSubChats = false
+    @State private var showPairing = false
     var body: some View {
         MainChat(model: model).safeAreaInset(edge: .top) { if model.runtimeMode != .live {
             VStack(alignment: .leading,spacing: 6) {
@@ -190,9 +211,15 @@ struct ContentView: View {
                     .help("Topic sub-chats (inspect only)")
                     .popover(isPresented: $showSubChats,arrowEdge: .bottom) { SubChats(model: model) }
             }
+            if model.runtimeMode == .live {
+                ToolbarItem {
+                    Button { showPairing = true } label: { Label("Pair iPhone",systemImage: "iphone") }.help("Pair an iPhone with this Mac")
+                }
+            }
             if model.snapshot.work.contains(where: { $0.active }) { ToolbarItem { ProgressView().controlSize(.small).help("Working on it") } }
             if model.nativeSelected && model.runtimeMode == .live { ToolbarItem { Button("Connect native device") { model.showEnrollment = true } } }
         }
+            .sheet(isPresented: $showPairing) { PairPhoneView(model: model) }
             .sheet(isPresented: $model.showEnrollment,onDismiss: { model.bootstrapSecret = "" }) {
                 VStack(alignment: .leading,spacing: 16) {
                     Text("Enroll Yorozu with the local Gateway").font(.headline)

@@ -14,7 +14,7 @@ let version: String = {
 
 let project = Project(
     name: "Yorozu",
-    packages: [.package(path: "../..")],
+    packages: [.package(path: "../.."), .package(path: "../../packages/YorozuWire")],
     targets: [
         .target(
             name: "Yorozu",
@@ -32,7 +32,7 @@ let project = Project(
             sources: ["../../Sources/ProjectXApp/**"],
             resources: ["Resources/Yorozu.icns", "Resources/Accent.xcassets"],
             entitlements: "Yorozu.entitlements",
-            dependencies: [.package(product: "ProjectXCore")],
+            dependencies: [.package(product: "ProjectXCore"), .package(product: "YorozuWire")],
             settings: .settings(base: [
                 "DEVELOPMENT_TEAM": "AN5KM8QGEF",
                 "CODE_SIGN_STYLE": "Manual",
