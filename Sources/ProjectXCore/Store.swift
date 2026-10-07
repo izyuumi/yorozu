@@ -57,8 +57,8 @@ public actor Store {
         let id = identifier(); let t = Topic(id: id, label: label, sessionKey: "agent:\(agent):projectx:\(id)", created: Date().timeIntervalSince1970)
         try db.write { try t.insert($0) }; return t
     }
-    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation") throws -> Message {
-        let m = Message(id: identifier(), role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970)
+    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation", id: String = identifier()) throws -> Message {
+        let m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970)
         try db.write { try m.insert($0) }; return m
     }
     /// Assign only the newly received, previously unrouted message. Never migrate an old exchange.
