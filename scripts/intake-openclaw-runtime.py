@@ -65,7 +65,7 @@ def extract(archive, pin, destination, source):
     destination.mkdir(mode=0o700)
     root = destination / "openclaw"
     root.mkdir(mode=0o755)
-    seen, links, total = set(), {}, 0
+    seen, links, directories, total = set(), {}, set(), 0
     # Members are written under a tree that holds no symlink: link targets are checked as
     # they are read, no member may sit under a link, and links are created last.
     with tarfile.open(archive, mode="r|gz") as stream:
@@ -80,6 +80,7 @@ def extract(archive, pin, destination, source):
             if entry.isdir():
                 require(entry.mode == 0o755 and entry.size == 0, "Unexpected runtime directory metadata")
                 target.mkdir(mode=0o755, parents=True, exist_ok=True)
+                directories.add(name)
             elif entry.isfile():
                 limit = MAX_MANIFEST if name == MANIFEST else MAX_MEMBER
                 require(0 <= entry.size <= limit and entry.mode in (0o644, 0o755), "Unsafe runtime member size/mode")
@@ -133,6 +134,9 @@ def extract(archive, pin, destination, source):
     # and must reproduce the reviewed rows exactly (the manifest row is the only extra).
     actual = [row for row in packager.inventory(root) if row["path"] != MANIFEST]
     require(actual == sorted(rows, key=lambda row: row["path"]), "Archive content differs from reviewed inventory")
+    # The inventory lists no directories; only parents of reviewed rows may appear.
+    expected_dirs = {str(parent) for row in rows for parent in PurePosixPath(row["path"]).parents if str(parent) != "."}
+    require(directories <= expected_dirs, "Unexpected runtime directories")
     by_path = {row["path"]: row for row in rows}
     require(by_path.get("node", {}).get("sha256") == packager.PIN["nodeSha256"], "Sealed Node differs from the reviewed pin")
     plugin = source / "packages/harness-plugins/openclaw"

@@ -125,6 +125,13 @@ class IntakeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unexpected plugin payload"):
             self.run_intake()
 
+    def test_unreviewed_empty_directory_is_rejected(self):
+        (self.artifact / "plugin/unreviewed").mkdir(mode=0o755)
+        packager.archive(self.artifact, self.archive)
+        self.pin = self.make_pin()
+        with self.assertRaisesRegex(ValueError, "Unexpected runtime directories"):
+            self.run_intake()
+
     def test_unpinned_node_is_rejected(self):
         self.patch.stop()
         self.patch = mock.patch.dict(packager.PIN, {**self.pins, "nodeSha256": "0" * 64})
