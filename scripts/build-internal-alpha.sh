@@ -45,8 +45,18 @@ if os.environ.get('YOROZU_OPENCLAW_RUNTIME_ARTIFACT'):
     assert sealed['hashStage'] == 'after-nested-signing-before-outer-bundle-signing'
     assert sealed['reseal']['unsignedInventorySha256'] == unsigned['inventorySha256'] == manifest['harnessPlugins']['openclaw']['unsignedInventorySha256']
     assert sealed['productionReady'] is False and manifest['harnessPlugins']['openclaw']['productionReady'] is False
-    manifest['openclawRuntimeIntake'] = {'unsignedInventorySha256': unsigned['inventorySha256'], 'unsignedManifestSha256': hashlib.sha256((root / 'openclaw-unsigned-manifest.json').read_bytes()).hexdigest(),
+    unsigned_sha = hashlib.sha256((root / 'openclaw-unsigned-manifest.json').read_bytes()).hexdigest()
+    manifest['openclawRuntimeIntake'] = {'unsignedInventorySha256': unsigned['inventorySha256'], 'unsignedManifestSha256': unsigned_sha,
         'signedInventorySha256': sealed['inventorySha256'], 'dependencyEvidence': sealed['dependencyEvidence'], 'pins': sealed['pins']}
+    # A local development override has no intake receipt; the Release job always does,
+    # and publication refuses an intake without the receipt and archive digests.
+    openclaw_intake = Path(os.environ['YOROZU_OPENCLAW_RUNTIME_ARTIFACT']).parent / 'intake-receipt.json'
+    if openclaw_intake.is_file():
+        openclaw_receipt = json.loads(openclaw_intake.read_text())
+        assert openclaw_receipt['inventorySha256'] == unsigned['inventorySha256']
+        assert openclaw_receipt['manifestSha256'] == unsigned_sha
+        manifest['openclawRuntimeIntake'].update(receiptSha256=hashlib.sha256(openclaw_intake.read_bytes()).hexdigest(),
+                                                 archiveSha256=openclaw_receipt['archiveSha256'])
 else:
     assert not openclaw.exists() and manifest['harnessPlugins']['openclaw']['bundledRuntime'] is False
 manifest['runtimeIntake'] = {'receiptSha256': hashlib.sha256(intake.read_bytes()).hexdigest(),

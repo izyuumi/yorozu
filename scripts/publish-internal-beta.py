@@ -20,7 +20,7 @@ APP = "6811274963"
 
 # These are the branches for which ci.yml runs the assembled internal lane.
 INTERNAL_BRANCHES = {"harness-plugins", "integration-0.6-worker", "v0.6.0-alpha"}
-OPENCLAW_INTAKE_DIGESTS = ("unsignedInventorySha256", "unsignedManifestSha256", "signedInventorySha256")
+OPENCLAW_INTAKE_DIGESTS = ("receiptSha256", "archiveSha256", "unsignedInventorySha256", "unsignedManifestSha256", "signedInventorySha256")
 
 
 def check_source(gh, source, branch, run_id=None):
