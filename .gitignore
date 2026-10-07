@@ -1,6 +1,4 @@
 .data/
-__pycache__/
-*.pyc
 
 # Native generated artifacts/data; source and pinned dependency lock remain visible.
 .build/
