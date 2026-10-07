@@ -2,7 +2,7 @@
 # Archives the iOS app and uploads it to TestFlight (internal testing only, see apps/ios/ExportOptions.plist).
 #   scripts/upload_ios.sh --confirm
 # The build number stays low (owner, 2026-10-08): the highest iOS build App Store Connect already has for THIS version,
-# plus one, and never below 4. Apple wants ascending build numbers within a version and allows reuse across versions
+# plus one, starting at 1. Apple wants ascending build numbers within a version and allows reuse across versions
 # (TN2420). BUILD=<n> overrides it. An upload uses that number up for good, hence --confirm.
 # Needs ASC_KEY_ID and ASC_ISSUER_ID, and ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8 (or ASC_KEY_PATH).
 # Uses only sh, openssl, curl, jq and Xcode. Prints no key or token.
@@ -42,7 +42,7 @@ asc_get() {
 
 if [ -z "${BUILD:-}" ]; then
     url="$API/v1/builds?filter%5Bapp%5D=$APP_ID&filter%5BpreReleaseVersion.platform%5D=IOS&filter%5BpreReleaseVersion.version%5D=$VERSION&fields%5Bbuilds%5D=version&limit=200"
-    max=3
+    max=0
     while [ -n "$url" ]; do
         page=$(asc_get "$url")
         top=$(printf '%s' "$page" | jq -er '[.data[].attributes.version | tonumber] | max // 0')
