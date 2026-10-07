@@ -1,8 +1,9 @@
 #!/bin/sh
 # Archives the iOS app and uploads it to TestFlight (internal testing only, see apps/ios/ExportOptions.plist).
 #   scripts/upload_ios.sh --confirm
-# The build number is the highest iOS build App Store Connect has for app 6811274963, of any version, plus one
-# (BUILD=<n> overrides it). An upload uses that number up for good, hence --confirm.
+# The build number stays low (owner, 2026-10-08): the highest iOS build App Store Connect already has for THIS version,
+# plus one, and never below 4. Apple wants ascending build numbers within a version and allows reuse across versions
+# (TN2420). BUILD=<n> overrides it. An upload uses that number up for good, hence --confirm.
 # Needs ASC_KEY_ID and ASC_ISSUER_ID, and ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8 (or ASC_KEY_PATH).
 # Uses only sh, openssl, curl, jq and Xcode. Prints no key or token.
 set -eu
@@ -40,8 +41,8 @@ asc_get() {
 }
 
 if [ -z "${BUILD:-}" ]; then
-    url="$API/v1/builds?filter%5Bapp%5D=$APP_ID&filter%5BpreReleaseVersion.platform%5D=IOS&fields%5Bbuilds%5D=version&limit=200"
-    max=0
+    url="$API/v1/builds?filter%5Bapp%5D=$APP_ID&filter%5BpreReleaseVersion.platform%5D=IOS&filter%5BpreReleaseVersion.version%5D=$VERSION&fields%5Bbuilds%5D=version&limit=200"
+    max=3
     while [ -n "$url" ]; do
         page=$(asc_get "$url")
         top=$(printf '%s' "$page" | jq -er '[.data[].attributes.version | tonumber] | max // 0')
@@ -49,6 +50,11 @@ if [ -z "${BUILD:-}" ]; then
         url=$(printf '%s' "$page" | jq -r '.links.next // empty')
     done
     BUILD=$((max + 1))
+    # Builds stay low: a version that already holds a high build can't go back down, so bump version.txt instead.
+    if [ "$BUILD" -ge 10000 ]; then
+        echo "Version $VERSION already has build $max; builds must ascend within a version. Bump version.txt to keep builds low." >&2
+        exit 65
+    fi
 fi
 echo "Uploading Yorozu iOS $VERSION ($BUILD)"
 
