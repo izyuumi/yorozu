@@ -83,11 +83,25 @@ import ProjectXCore
 }
 struct MessageCard: View {
     let message: Message
+    @State private var copied: Bool?
     var body: some View {
         VStack(alignment: .leading,spacing: 6) {
-            Text(message.role == "user" ? "You" : "Yorozu").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text(message.role == "user" ? "You" : "Yorozu").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(action: copy) {
+                    Label(copied == nil ? "Copy" : copied! ? "Copied" : "Copy failed",systemImage: copied == nil ? "doc.on.doc" : copied! ? "checkmark" : "exclamationmark.triangle")
+                }.buttonStyle(.borderless).font(.caption).foregroundStyle(copied == false ? Color.orange : Color.secondary)
+                    .help("Copy message text").accessibilityLabel(copied == nil ? "Copy message" : copied! ? "Message copied" : "Copy failed")
+            }
             Text(message.body).textSelection(.enabled).frame(maxWidth: .infinity,alignment: .leading)
         }.padding(12).background(message.role == "user" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+    private func copy() {
+        let board = NSPasteboard.general; board.clearContents()
+        let ok = board.setString(message.body,forType: .string); copied = ok
+        NSAccessibility.post(element: NSApp as Any,notification: .announcementRequested,userInfo: [.announcement: ok ? "Message copied" : "Copy failed",.priority: NSAccessibilityPriorityLevel.high.rawValue])
+        Task { try? await Task.sleep(for: .seconds(2)); if copied == ok { copied = nil } }
     }
 }
 struct MainChat: View {
