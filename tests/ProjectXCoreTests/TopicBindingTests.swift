@@ -66,7 +66,11 @@ final class TopicBindingTests: XCTestCase {
         _ = try await adapter.run(input, update: { await log.append($0) }, memory: { _ in "{}" })
         let methods = await fixture.methods
         let params = await fixture.params
-        XCTAssertFalse(methods.contains("sessions.create"))
+        // A fresh adapter re-ensures the SAME topic session (permission upgrade), never a new sub-chat.
+        let creates = try zip(methods, params).filter { $0.0 == "sessions.create" }.map {
+            try JSONSerialization.jsonObject(with: Data($0.1.utf8)) as! [String: Any]
+        }
+        XCTAssertTrue(creates.allSatisfy { [topic.sessionKey, "agent:projectx:projectx-control:\(topic.id)"].contains($0["key"] as? String ?? "") })
         let runs = try zip(methods, params).filter { $0.0 == "agent" }.map {
             try JSONSerialization.jsonObject(with: Data($0.1.utf8)) as! [String: Any]
         }

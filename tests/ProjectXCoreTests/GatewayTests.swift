@@ -56,7 +56,7 @@ final class GatewayTests: XCTestCase {
         XCTAssertEqual(runs[0]["bootstrapContextMode"] as? String,"lightweight"); XCTAssertEqual(runs[0]["deliver"] as? Bool,false)
         XCTAssertFalse(methods.contains("chat.send"))
         let creates = try zip(methods,params).filter { $0.0 == "sessions.create" }.map { try JSONSerialization.jsonObject(with: Data($0.1.utf8)) as! [String:Any] }
-        XCTAssertTrue(creates.contains { $0["permissionMode"] as? String == "read-only" })
+        XCTAssertTrue(creates.contains { $0["permissionMode"] as? String == "full" })
         // Shared-token CLI callers have no principal/device identity; Gateway rejects idempotent sessions.create for them.
         XCTAssertTrue(creates.allSatisfy { $0["idempotencyKey"] == nil })
     }

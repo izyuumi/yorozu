@@ -213,13 +213,15 @@ public struct OpenClawHarness: Harness {
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput {
         guard agent == "projectx", input.topic.sessionKey.hasPrefix("agent:projectx:projectx:") else { throw ProjectError.blocked("R1 workers must use app-owned sessions on the dedicated projectx agent. No private session import.") }
         let key = input.topic.sessionKey; let controller = "agent:\(agent):projectx-control:\(input.topic.id)"
-        if !input.work.sessionReady {
-            for (session,permission) in [(controller,"guarded"),(key,"read-only")] {
+        // Workers run at full permission with the agent's default tools (owner, 2026-10-07). Ensured once per topic per
+        // app run, which also upgrades topic sessions created read-only before that. The CLI requests admin scope for "full".
+        try await sessions.ensure(key) { [rpc, agent, workerModel] in
+            for (session,permission) in [(controller,"guarded"),(key,"full")] {
                 let created = try await rpc.call("sessions.create",["key":session,"agentId":agent,"model":workerModel,"permissionMode":permission])
                 guard created["ok"] as? Bool == true, created["key"] as? String == session else { throw ProjectError.uncertain("Exact project session creation unconfirmed.") }
             }
         }
-        let contract = "You are a knowledge worker. Emit only public progress, no hidden reasoning. Final ONLY JSON {\"text\":string,\"appliedRevision\":integer}. Echo the highest applied amendment revision. Only supplied context and growing session, no private sessions/native tools/external actions. You may instead return {\"memoryCall\":{\"tool\":\"memory.search|memory.read|memory.write\",\"path\":relative UUID.md,\"query\":optional,\"markdown\":complete canonical Markdown,\"expectedSHA256\":read hash or null for create}}. Only app-mediated scoped memory writes. Read before edits, reconcile conflicts, retain attribution. Never claim a failed write succeeded. Markdown first line is JSON metadata (id,title,topicID,sources,evidence,knowledgeType,attribution,epistemicStatus,created,updated,lineage), then blank line/body. Generated notes must remain assistant/generated_analysis/unverified. Six operations maximum."
+        let contract = "You are a knowledge worker. Emit only public progress, no hidden reasoning. Final ONLY JSON {\"text\":string,\"appliedRevision\":integer}. Echo the highest applied amendment revision. Use your tools (shell, files, web) as the task needs. Never read or message other agents' sessions. You may instead return {\"memoryCall\":{\"tool\":\"memory.search|memory.read|memory.write\",\"path\":relative UUID.md,\"query\":optional,\"markdown\":complete canonical Markdown,\"expectedSHA256\":read hash or null for create}}. Only app-mediated scoped memory writes. Read before edits, reconcile conflicts, retain attribution. Never claim a failed write succeeded. Markdown first line is JSON metadata (id,title,topicID,sources,evidence,knowledgeType,attribution,epistemicStatus,created,updated,lineage), then blank line/body. Generated notes must remain assistant/generated_analysis/unverified. Six operations maximum."
         var wire = try encoded(input) + "\n" + contract
         for step in 0...6 {
             let runID = "projectx-run-" + identifier()
@@ -274,10 +276,11 @@ public struct OpenClawHarness: Harness {
         // History caps text at 8000 chars unless maxChars is raised; worker answers may reach 64000 bytes.
         let messages = try await rpc.call("chat.history",["sessionKey":topic.sessionKey,"limit":10,"maxChars":64000])["messages"] as? [[String:Any]] ?? []
         if let reply = messages.last(where: { $0["role"] as? String == "assistant" && ($0["__openclaw"] as? [String:Any])?["runId"] as? String == run }) {
-            // Tools are denied, so a committed assistant message ends the run; an aborted or non-final one is stopped.
             let text = (reply["content"] as? [[String:Any]])?.last(where: { $0["type"] as? String == "text" })?["text"] as? String
             if let text, text.utf8.count <= 64000, let final = try? JSONDecoder().decode(WorkerOutput.self,from: Data(text.utf8)), !final.text.isEmpty, final.appliedRevision >= 0 { return .completed(final) }
-            return .stopped
+            // Tool-using runs commit tool-call messages mid-run. Only a non-tool stop, a known end or 15 min of silence settles it.
+            guard ["toolUse","tool_use"].contains(reply["stopReason"] as? String ?? ""), !ended else { return .stopped }
+            return Date().timeIntervalSince1970 - (reply["timestamp"] as? Double ?? 0) / 1000 > 900 ? .stopped : .unknown
         }
         if ended { return .stopped }
         // No reply. Never admitted => no "<run>:user" turn. Admitted but silent for 15 min => gone (worker timeout is 240 s).
