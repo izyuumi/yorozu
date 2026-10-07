@@ -145,27 +145,36 @@ class IntakeTests(unittest.TestCase):
                     self.run_intake(destination="out-" + key)
                 self.manifest[key] = saved
 
-    def test_traversal_hardlinks_and_devices_are_rejected(self):
-        for kind in ("traversal", "absolute-link", "hardlink", "device"):
+    def tar_with(self, *entries):
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+            info = tarfile.TarInfo("node")
+            info.size, info.mode = len(self.node), 0o755
+            tar.addfile(info, io.BytesIO(self.node))
+            for name, kind, linkname in entries:
+                info = tarfile.TarInfo(name)
+                info.type, info.linkname, info.mode = kind, linkname, 0o777 if kind == tarfile.SYMTYPE else 0o644
+                tar.addfile(info)
+        self.archive.write_bytes(buffer.getvalue())
+        self.pin = self.make_pin()
+
+    def test_traversal_links_hardlinks_and_devices_are_rejected_by_their_own_check(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        cases = {"traversal": ([("../escape", tarfile.REGTYPE, "")], "unsafe relative path"),
+                 "absolute-link": ([("source/link", tarfile.SYMTYPE, "/etc/passwd")], "Invalid runtime symlink"),
+                 "escaping-link": ([("source/link", tarfile.SYMTYPE, "../../outside")], "escapes artifact"),
+                 "link-parent": ([("a", tarfile.SYMTYPE, "source"), ("a/b", tarfile.SYMTYPE, "x")], "symlink parent"),
+                 "hardlink": ([("source/hard", tarfile.LNKTYPE, "node")], "Hardlinks"),
+                 "device": ([("source/dev", tarfile.CHRTYPE, "")], "special runtime entries")}
+        for kind, (entries, reason) in cases.items():
             with self.subTest(kind=kind):
-                buffer = io.BytesIO()
-                with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-                    info = tarfile.TarInfo("node")
-                    info.size, info.mode = len(self.node), 0o755
-                    tar.addfile(info, io.BytesIO(self.node))
-                    if kind == "traversal":
-                        info = tarfile.TarInfo("../escape"); info.size = 0
-                    elif kind == "absolute-link":
-                        info = tarfile.TarInfo("source/link"); info.type, info.linkname, info.mode = tarfile.SYMTYPE, "/etc/passwd", 0o777
-                    elif kind == "hardlink":
-                        info = tarfile.TarInfo("source/hard"); info.type, info.linkname = tarfile.LNKTYPE, "node"
-                    else:
-                        info = tarfile.TarInfo("source/dev"); info.type = tarfile.CHRTYPE
-                    tar.addfile(info)
-                self.archive.write_bytes(buffer.getvalue())
-                self.pin = self.make_pin()
-                with self.assertRaises(ValueError):
+                self.tar_with(*entries)
+                with self.assertRaisesRegex(ValueError, reason):
                     self.run_intake(destination="out-" + kind)
+                links = [p for p in (self.root / ("out-" + kind)).rglob("*") if p.is_symlink()]
+                self.assertEqual(links, [])
+        self.assertEqual(list(outside.iterdir()), [])
 
     def test_pin_requires_content_addressed_tag_and_reviewed_source(self):
         for overrides, reason in [({"tag": "runtime-input-0.6.0-latest"}, "content-addressed"),
