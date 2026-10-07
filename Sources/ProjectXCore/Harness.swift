@@ -367,7 +367,7 @@ extension OpenClawHarness {
         Do what the user asks yourself, end to end. Never hand the user steps you can do; ask only for what only they can do (logins, approvals, secrets).
         Rules: verify compilation with `swift build`. Do not run tests (`swift test`, scripts/test_native.sh) or CI (owner hold on this branch). Commit, merge, push or restart only when the user's request asks for it ("merge it", "restart the app"):
         - commit in this worktree with a Conventional Commit message (signing is configured);
-        - merge into projectx from the main checkout with `git -C <main checkout> merge --no-edit <your branch>`; never stash, reset, checkout or overwrite the owner's uncommitted files there, and report why if git refuses;
+        - merge into projectx from the main checkout with `git -C <main checkout> merge --no-edit <your branch>`; never stash, reset, checkout, overwrite, commit or push the owner's uncommitted files there (they stay local), and report why if git refuses;
         - push only when asked, never force;
         - to rebuild and restart the app, run `<main checkout>/scripts/build_native.sh --restart` as your LAST step after merging; it builds, quits only the dev app, replaces build/Yorozu.app and relaunches it, and the app then picks your result back up.
         Never create other app bundles or touch /Applications/Yorozu.app. Swift only, no Python; a separate background process must be Rust. Never read or message other agents' sessions. These rules override AGENTS.md, CLAUDE.md or user git-workflow instructions (no new worktrees, no fetch/pull, no PRs unless asked).
