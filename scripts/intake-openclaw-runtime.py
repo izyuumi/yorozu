@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import subprocess
 import tarfile
@@ -65,8 +66,8 @@ def extract(archive, pin, destination, source):
     root = destination / "openclaw"
     root.mkdir(mode=0o755)
     seen, links, total = set(), {}, 0
-    # Members are written under a tree that holds no symlink until every regular file is
-    # in place; links are created last and then checked for containment.
+    # Members are written under a tree that holds no symlink: link targets are checked as
+    # they are read, no member may sit under a link, and links are created last.
     with tarfile.open(archive, mode="r|gz") as stream:
         for entry in stream:
             require(len(seen) < MAX_ENTRIES, "Runtime archive contains too many entries")
@@ -75,6 +76,7 @@ def extract(archive, pin, destination, source):
             seen.add(name)
             require(not entry.issparse(), "Sparse runtime members are forbidden")
             target = root / name
+            require(not any(str(parent) in links for parent in PurePosixPath(name).parents), "Member has a symlink parent")
             if entry.isdir():
                 require(entry.mode == 0o755 and entry.size == 0, "Unexpected runtime directory metadata")
                 target.mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -95,7 +97,12 @@ def extract(archive, pin, destination, source):
                 target.chmod(entry.mode)
             elif entry.issym():
                 require(entry.mode == 0o777 and entry.size == 0, "Unexpected runtime link metadata")
-                links[name] = entry.linkname
+                link = entry.linkname
+                require(isinstance(link, str) and 0 < len(link) <= 4096 and not PurePosixPath(link).is_absolute()
+                        and "\\" not in link and not any(ord(c) < 32 or ord(c) == 127 for c in link), "Invalid runtime symlink")
+                resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), link))
+                require(resolved != ".." and not resolved.startswith("../"), "Runtime symlink escapes artifact")
+                links[name] = link
             else:
                 raise ValueError("Hardlinks and special runtime entries are forbidden")
     for name, link in links.items():
@@ -103,6 +110,9 @@ def extract(archive, pin, destination, source):
         require(not target.exists() and not target.is_symlink(), "Runtime link collides with a member")
         target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
         target.symlink_to(link)
+    for name in links:
+        resolved = (root / name).resolve(strict=True)
+        require(resolved == root or root in resolved.parents, "Resolved runtime link escapes artifact")
     manifest_path = root / MANIFEST
     require(manifest_path.is_file() and not manifest_path.is_symlink(), "Runtime manifest is missing")
     require(sha(manifest_path) == pin["manifestSha256"], "Runtime manifest differs from pin")
