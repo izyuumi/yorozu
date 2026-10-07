@@ -12,11 +12,12 @@ public actor Engine {
     public func snapshot() async throws -> Snapshot { try await store.snapshot() }
     public var mode: String { harness.name }
     /// Persist before returning; routing and workers never hold the main composer hostage.
-    @discardableResult public func send(_ body: String) async throws -> String {
+    /// `id` lets a remote client (the phone) keep the id of the bubble it already shows.
+    @discardableResult public func send(_ body: String, id: String = identifier()) async throws -> String {
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, body.utf8.count <= 6000 else { throw ProjectError.invalid("Message must be 1–6000 UTF-8 bytes.") }
         guard routingCount + pending.count + running.count < 32 else { throw ProjectError.blocked("32 requests pending; wait for work to finish.") }
         try await store.bindRuntime(harness.name)
-        let m = try await store.message(role: "user",body: body)
+        let m = try await store.message(role: "user",body: body,id: id)
         routingCount += 1
         let prior = routingTail
         routingTail = Task { if let prior { await prior.value }; await self.route(m) }
