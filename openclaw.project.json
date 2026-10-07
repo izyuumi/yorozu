@@ -1,0 +1,5 @@
+{
+  "agents": {"defaults": {"models": {"openai/*": {"agentRuntime": {"id": "openclaw"}}}}},
+  "tools": {"deny": ["*"]},
+  "plugins": {"enabled": false}
+}

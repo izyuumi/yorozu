@@ -44,7 +44,8 @@ public struct MemoryProposal: Codable, Sendable {
 }
 public func digest(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
 public func sensitive(_ text: String) -> Bool {
-    text.range(of: #"(?i)(-----BEGIN .*PRIVATE KEY|\b(?:sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{12,}|\b(?:password|api.?key|access.?token|recovery.?code|otp)\s*[:=]\s*\S+)"#, options: .regularExpression) != nil
+    // Also env-style (FOO_TOKEN=), JSON keys ("token": "..."), bearer headers and AWS keys: coding output tails are stored.
+    text.range(of: #"(?i)(-----BEGIN .*PRIVATE KEY|\b(?:sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{12,}|\b(?:password|api.?key|access.?token|recovery.?code|otp)\s*[:=]\s*\S+|(?<![A-Za-z0-9])(?:passwd|secret|token|api.?key|authorization)["\x27]?\s*[:=]\s*["\x27]?(?:bearer\s+)?[A-Za-z0-9._~+/=-]{8,}|\bbearer\s+[A-Za-z0-9._~+/=-]{16,}|\bAKIA[0-9A-Z]{16})"#, options: .regularExpression) != nil
 }
 
 /// Only relative UUID Markdown paths are accepted. Filesystem descriptors prevent symlink traversal.

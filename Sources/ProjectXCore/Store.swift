@@ -27,6 +27,7 @@ public actor Store {
             CREATE TABLE memoryJobs(messageID TEXT PRIMARY KEY, state TEXT NOT NULL);
             """)
         }
+        migration.registerMigration("r2-executor") { db in try db.execute(sql: "ALTER TABLE work ADD COLUMN executor TEXT") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -64,7 +65,8 @@ public actor Store {
     }
     public func insertWork(_ work: Work) throws {
         try db.write { db in
-            guard try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM work WHERE topicID=? AND (state IN ('queued','working','amendment_pending','cancellation_requested','uncertain'))", arguments: [work.topicID]) == 0 else { throw ProjectError.blocked("This topic already has active or uncertain work. Steer it or reconcile before retrying.") }
+            // One active task per (topic, worker kind): a long coding run never blocks thinking work in the same topic.
+            guard try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM work WHERE topicID=? AND executor IS ? AND (state IN ('queued','working','amendment_pending','cancellation_requested','uncertain'))", arguments: [work.topicID,work.executor]) == 0 else { throw ProjectError.blocked("This topic already has active or uncertain work. Steer it or reconcile before retrying.") }
             try work.insert(db)
         }
     }
@@ -154,8 +156,9 @@ public actor Store {
                     for var a in open { w.instruction += "\nAmendment \(a.revision): " + a.instruction; a.state = "queued_input"; try a.update(db) }
                     // Keep the superseded answer inspectable in the sub-chat; it is not delivered as the result.
                     try WorkerEvent(id: task + ":superseded:" + identifier(),taskID: task,kind: "superseded_result",body: output.text,created: Date().timeIntervalSince1970).insert(db)
-                    // Queued work must have no run ID, or a later steer would treat it as live.
-                    w.state = requeue ? "queued" : "working"; if requeue { w.runID = nil }
+                    // A follow-up has no run until setHandle stamps one: a stale ID would let retry reconcile the superseded
+                    // run, and queued work with a run ID would make a later steer treat it as live.
+                    w.state = requeue ? "queued" : "working"; w.runID = nil
                     try w.update(db); return (nil,w)
                 }
             }

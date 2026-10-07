@@ -16,6 +16,8 @@ public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, S
     public var state: String; public var revision: Int; public var runID: String?; public var controllerKey: String?
     public var sessionReady: Bool; public var suppressed: Bool; public var result: String?; public var error: String?
     public var outputRevision: Int?; public var created: Double
+    /// nil = thinking worker; "claude" (Claude Code) or "codex" = coding worker in its own managed worktree.
+    public var executor: String? = nil
     public var active: Bool { ["queued", "working", "amendment_pending", "cancellation_requested"].contains(state) }
 }
 public struct WorkerEvent: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable {
@@ -41,9 +43,9 @@ public enum ProjectError: Error, LocalizedError, Sendable {
 }
 public struct Decision: Codable, Sendable {
     public var action: String; public var topicID: String?; public var newTopic: String?; public var taskID: String?
-    public var instruction: String?; public var reply: String?; public var memoryID: String?
-    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil) {
-        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID
+    public var instruction: String?; public var reply: String?; public var memoryID: String?; public var executor: String?
+    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, executor: String? = nil) {
+        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.executor = executor
     }
 }
 public struct RoutingInput: Codable, Sendable {

@@ -98,7 +98,7 @@ public actor NativeGatewayClient {
         guard let hello = response["payload"] as? [String:Any], hello["type"] as? String == "hello-ok", hello["protocol"] as? Int == 4, let auth = hello["auth"] as? [String:Any], auth["role"] as? String == "operator", let scopes = auth["scopes"] as? [String], Set(NativeGatewayProtocol.scopes).isSubset(of:Set(scopes)), let features = hello["features"] as? [String:Any], let advertised = features["methods"] as? [String], let policy = hello["policy"] as? [String:Any], let limit = policy["maxPayload"] as? Int, limit > 0 else { throw ProjectError.blocked("Gateway handshake lacks required protocol, read/write grant or method/size contract.") }
         if let issued = auth["deviceToken"] as? String, !issued.isEmpty, record.token != issued { record.token = issued; record.scopes = scopes; try vault.save(record) }
         guard record.token != nil else { throw ProjectError.blocked("Gateway did not issue a reusable PROJECTX device token. Review pairing; bootstrap secret was not saved.") }
-        maxPayload = min(limit,2_000_000); methods = Set(advertised); ready = true; sequence = nil
+        maxPayload = min(limit,8_000_000); methods = Set(advertised); ready = true; sequence = nil
         reader = Task { await self.readLoop(ws) }
     }
     public func call(_ method: String,json: String,final: Bool) async throws -> String {
