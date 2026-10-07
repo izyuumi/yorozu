@@ -19,6 +19,8 @@ Native SwiftUI personal assistant for macOS, backed by an OpenClaw Gateway.
 
 ## Build and run
 
+The first build resolves Swift packages and can take a few minutes.
+
 ```sh
 swift build                          # compile check
 scripts/build_native.sh              # tuist generate + xcodebuild → build/Yorozu.app
