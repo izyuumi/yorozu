@@ -95,7 +95,8 @@ struct MessageCard: View {
                 }.buttonStyle(.borderless).font(.caption).foregroundStyle(copied == false ? Color.orange : Color.secondary)
                     .help("Copy message text").accessibilityLabel(copied == nil ? "Copy message" : copied! ? "Message copied" : "Copy failed")
             }
-            Text(message.body).textSelection(.enabled).frame(maxWidth: .infinity,alignment: .leading)
+            // Assistant Markdown renders natively in one Text, so a drag still selects the whole message; user text stays verbatim.
+            Text(message.role == "user" ? AttributedString(message.body) : AttributedString(chatMarkdown: message.body)).textSelection(.enabled).frame(maxWidth: .infinity,alignment: .leading)
         }.padding(12).background(message.role == "user" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 10))
     }
     private func copy() {
@@ -145,7 +146,7 @@ struct InspectionPane: View {
                                 Text(event.body).font(["command","output","error","diff"].contains(event.kind) ? .system(.callout,design: .monospaced) : .body).textSelection(.enabled) }
                         }
                         if let error = work.error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
-                        if let result = work.result { Text(work.suppressed ? "Retained result (superseded)" : "Retained result").font(.caption).foregroundStyle(.secondary); Text(result).textSelection(.enabled) }
+                        if let result = work.result { Text(work.suppressed ? "Retained result (superseded)" : "Retained result").font(.caption).foregroundStyle(.secondary); Text(AttributedString(chatMarkdown: result)).textSelection(.enabled) }
                     }.frame(maxWidth: .infinity,alignment: .leading) }
                 }
             }.padding() }
