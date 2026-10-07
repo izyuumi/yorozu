@@ -11,6 +11,8 @@ final class PhoneModel {
     struct Bubble: Identifiable, Equatable {
         let id: String
         let user: Bool
+        /// Epoch ms: the Mac's `created` once stored, the phone's clock until then. Orders the list.
+        let ts: Int
         var text: String
         var failed = false
         /// Why the Mac refused a message, shown under it as is.
@@ -216,7 +218,7 @@ final class PhoneModel {
             return
         }
         sendError = nil
-        merge(Bubble(id: event.id, user: true, text: text))
+        merge(Bubble(id: event.id, user: true, ts: event.ts, text: text))
         if draft == text { draft = "" }
     }
 
@@ -233,7 +235,7 @@ final class PhoneModel {
         case .syncDelta(let delta):
             for event in delta.events {
                 guard case .message(let message) = event.payload else { continue }
-                merge(Bubble(id: event.id, user: message.role == .user, text: message.text, failed: message.failed == true))
+                merge(Bubble(id: event.id, user: message.role == .user, ts: event.ts, text: message.text, failed: message.failed == true))
             }
             working = delta.workingThreadIds?.contains("main") == true
             let last = delta.events.last?.syncCursor
@@ -255,13 +257,11 @@ final class PhoneModel {
         }
     }
 
-    /// v2 messages never change once stored, so the stored copy replaces the sent bubble in place.
+    /// v2 messages never change once stored, so the stored copy replaces the sent bubble. Placed by
+    /// `ts`, ties in arrival order: pages, live updates and sends can interleave out of Mac order.
     private func merge(_ bubble: Bubble) {
-        if let index = bubbles.firstIndex(where: { $0.id == bubble.id }) {
-            bubbles[index] = bubble
-        } else {
-            bubbles.append(bubble)
-        }
+        bubbles.removeAll { $0.id == bubble.id }
+        bubbles.insert(bubble, at: bubbles.lastIndex { $0.ts <= bubble.ts }.map { $0 + 1 } ?? 0)
     }
 
     private func syncRequest() -> YorozuEvent {

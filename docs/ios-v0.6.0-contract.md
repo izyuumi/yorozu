@@ -174,8 +174,11 @@ Two flavours, told apart by `threadId`:
 
 Phone rules:
 
-1. A message whose `id` the phone already holds replaces that entry in place; otherwise it is
-   added. v2 messages never change after insert, so nothing else is needed.
+1. A message whose `id` the phone already holds replaces that entry; otherwise it is added.
+   Either way it goes after the last held message whose `ts` is not later than its own (a sent
+   bubble holds the phone's `ts` until its stored copy replaces it), since pages, live updates
+   and sends can arrive out of Mac order. v2 messages never change after insert, so nothing
+   else is needed.
 2. On every `.paired`, set `catchingUp = true` and send `sync_request`.
 3. On a reply page: merge; if it has events, set `cursor` to the last event's `syncCursor`;
    if `more == true` send the next `sync_request` with that cursor, else `catchingUp = false`.
