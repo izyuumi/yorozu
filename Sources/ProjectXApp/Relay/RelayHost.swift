@@ -148,6 +148,7 @@ actor RelayHost {
             registered = true; retry = 2
             announce()
             if pairing { send(["type": "mint"]) }
+            rehandshake()
             state = "Connected"; publish()
         case "token":
             guard pairing, let token = message.token else { return }
@@ -218,6 +219,18 @@ actor RelayHost {
         publish()
         // The first sealed event; the phone answers it with its peer-info claim.
         deliver([(pub, .control(.threadList(ThreadListData(threads: [main], peerInfoSupported: true))))])
+    }
+
+    /// When the relay replaces a stale socket of ours it tells no phone we were gone, so a phone can
+    /// still be `.paired` with live updates lost (or, after a restart, unserved) and never say hello
+    /// again. The step-1 list once more restarts its exchange, and its next `.paired` catches up from
+    /// before the gap. Sealed without peer info, the only list that restarts a ready `RelayClient`;
+    /// a phone already served stays served, so the frames the relay replays now still land.
+    private func rehandshake() {
+        let served = peers.mapValues(\.compatibility)
+        for pub in peers.keys { peers[pub]?.compatibility = nil }
+        deliver(peers.keys.map { ($0, .control(.threadList(ThreadListData(threads: [main], peerInfoSupported: true)))) })
+        for (pub, compatibility) in served { peers[pub]?.compatibility = compatibility }
     }
 
     private func received(_ event: YorozuEvent, from pub: String) {

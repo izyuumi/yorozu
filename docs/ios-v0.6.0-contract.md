@@ -59,6 +59,11 @@ After step 2, every `thread_list` the host seals to that device carries
 required" on a later `thread_list` that has neither, and restarts the exchange on one that has
 only `peerInfoSupported`.
 
+The one exception: after every relay `registered`, the host seals the step-1 list to every paired
+device again. A relay that replaces a stale Mac socket tells no phone the Mac was gone, so a
+phone can still be `.paired` while live updates were lost; this restarts its exchange, and its
+next `.paired` catches up. A device that had finished the exchange stays served meanwhile.
+
 The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15 s deadline,
 `RelayClient.swift`). Both ends advertise `PeerInfoData.local`:
 capabilities `["peer-info","host-name","channel-sequence","yorozu-v2"]`, required
