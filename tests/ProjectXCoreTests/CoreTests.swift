@@ -439,7 +439,7 @@ final class RuntimeDisclosureTests: XCTestCase {
     func testFixtureCannotAcceptInputWithoutExplicitAcknowledgment() {
         let mode = RuntimeMode.from(["PROJECTX_MODE":"fixture","OPENCLAW_SHELL":"exec"])
         XCTAssertEqual(mode,.fixture); XCTAssertFalse(mode.permitsInput(fixtureAcknowledged: false)); XCTAssertTrue(mode.permitsInput(fixtureAcknowledged: true))
-        XCTAssertEqual(mode.windowTitle,"PROJECTX — TEST FIXTURE (no AI)")
+        XCTAssertEqual(mode.windowTitle,"Yorozu — TEST FIXTURE (no AI)")
         XCTAssertTrue(mode.bannerTitle.contains("NO LLM")); XCTAssertTrue(mode.explanation.contains("scripted")); XCTAssertEqual(mode.sendLabel,"Send test message")
         // Acknowledgment enables synthetic input only, never changes the adapter mode.
         XCTAssertEqual(mode,.fixture)

@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 import Security
 
-// Only PROJECTX-generated identity and PROJECTX-issued token; no OpenClaw credential files.
+// Only Yorozu-generated identity and Yorozu-issued token; no OpenClaw credential files.
 struct NativeDeviceRecord: Codable, Sendable {
     var privateKey: Data
     var token: String?
@@ -10,12 +10,12 @@ struct NativeDeviceRecord: Codable, Sendable {
 }
 struct NativeDeviceVault: Sendable {
     let account: String
-    private var query: [String:Any] { [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:"app.projectx.gateway.v1",kSecAttrAccount as String:account] }
+    private var query: [String:Any] { [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:"to.yumi.yorozu.gateway",kSecAttrAccount as String:account] }
     func load() throws -> NativeDeviceRecord? {
         var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?; let status = SecItemCopyMatching(q as CFDictionary,&result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else { throw ProjectError.blocked("PROJECTX Keychain access failed. Unlock the login Keychain and retry.") }
+        guard status == errSecSuccess, let data = result as? Data else { throw ProjectError.blocked("Yorozu Keychain access failed. Unlock the login Keychain and retry.") }
         return try JSONDecoder().decode(NativeDeviceRecord.self,from:data)
     }
     func save(_ record: NativeDeviceRecord) throws {
@@ -25,7 +25,7 @@ struct NativeDeviceVault: Sendable {
             var q = query; q[kSecValueData as String] = data; q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             status = SecItemAdd(q as CFDictionary,nil)
         }
-        guard status == errSecSuccess else { throw ProjectError.blocked("Could not save PROJECTX device enrollment in Keychain. Connection stopped; do not copy credentials into project files.") }
+        guard status == errSecSuccess else { throw ProjectError.blocked("Could not save Yorozu device enrollment in Keychain. Connection stopped; do not copy credentials into project files.") }
     }
 }
 public enum NativeGatewayProtocol {
@@ -47,11 +47,11 @@ public enum NativeGatewayProtocol {
         let code = details["code"] as? String ?? error["code"] as? String ?? ""
         if code == "PAIRING_REQUIRED" {
             let raw = details["requestId"] as? String ?? ""
-            let id = raw.range(of:"^[a-zA-Z0-9-]{1,100}$",options:.regularExpression) != nil ? raw : "(review pending PROJECTX device)"
-            return .blocked("PROJECTX device pairing pending. Review openclaw devices list on the Gateway host, then approve this exact PROJECTX request: \(id). Retry Connect after approval. Do not put credentials in chat.")
+            let id = raw.range(of:"^[a-zA-Z0-9-]{1,100}$",options:.regularExpression) != nil ? raw : "(review pending Yorozu device)"
+            return .blocked("Yorozu device pairing pending. Review openclaw devices list on the Gateway host, then approve this exact Yorozu request: \(id). Retry Connect after approval. Do not put credentials in chat.")
         }
-        if code == "AUTH_SCOPE_MISMATCH" { return .blocked("PROJECTX device recognized, but approved scope grant does not cover this connection. Review pairing; no automatic scope expansion.") }
-        if code.hasPrefix("AUTH_") { return .blocked("PROJECTX native device authentication was not accepted. Existing model authentication is not disproven. Enroll this separate app privately, or use the configured-credential transport.") }
+        if code == "AUTH_SCOPE_MISMATCH" { return .blocked("Yorozu device recognized, but approved scope grant does not cover this connection. Review pairing; no automatic scope expansion.") }
+        if code.hasPrefix("AUTH_") { return .blocked("Yorozu native device authentication was not accepted. Existing model authentication is not disproven. Enroll this separate app privately, or use the configured-credential transport.") }
         return .uncertain("Gateway rejected the request. No automatic replay or workaround; reconcile any active run before retry.")
     }
 }
@@ -82,7 +82,7 @@ public actor NativeGatewayClient {
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation:record.privateKey)
         try vault.save(record) // Same identity across pending-pairing attempts.
         let bootstrap = bootstrapSecret.flatMap { $0.isEmpty ? nil : $0 }
-        guard let token = bootstrap ?? record.token, !token.isEmpty else { throw ProjectError.blocked("Separate PROJECTX native device not enrolled. Enter the Gateway bootstrap secret privately in Connect, or use the already-authenticated configured transport. No existing credentials were extracted.") }
+        guard let token = bootstrap ?? record.token, !token.isEmpty else { throw ProjectError.blocked("Separate Yorozu native device not enrolled. Enter the Gateway bootstrap secret privately in Connect, or use the already-authenticated configured transport. No existing credentials were extracted.") }
         let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 120; config.httpShouldSetCookies = false; config.urlCache = nil
         let session = URLSession(configuration:config); self.session = session
         let ws = session.webSocketTask(with:url); ws.maximumMessageSize = maxPayload; socket = ws; ws.resume()
@@ -90,14 +90,14 @@ public actor NativeGatewayClient {
         let challenge = try await receive(ws)
         guard challenge["type"] as? String == "event", challenge["event"] as? String == "connect.challenge", let payload = challenge["payload"] as? [String:Any], let nonce = payload["nonce"] as? String, let number = payload["ts"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue >= 0, number.doubleValue.rounded() == number.doubleValue, number.doubleValue < Double(Int64.max) else { throw ProjectError.invalid("Gateway did not supply a valid protocol-4 challenge.") }
         let id = identifier()
-        let params: [String:Any] = ["minProtocol":4,"maxProtocol":4,"client":["id":NativeGatewayProtocol.clientID,"displayName":"PROJECTX","version":"R1","platform":"macos","deviceFamily":"mac","mode":"ui"],"role":"operator","scopes":record.scopes,"caps":["tool-events"],"auth":["token":token],"device":try NativeGatewayProtocol.proof(key:key,token:token,scopes:record.scopes,nonce:nonce,timestamp:number.int64Value)]
+        let params: [String:Any] = ["minProtocol":4,"maxProtocol":4,"client":["id":NativeGatewayProtocol.clientID,"displayName":"Yorozu","version":"R1","platform":"macos","deviceFamily":"mac","mode":"ui"],"role":"operator","scopes":record.scopes,"caps":["tool-events"],"auth":["token":token],"device":try NativeGatewayProtocol.proof(key:key,token:token,scopes:record.scopes,nonce:nonce,timestamp:number.int64Value)]
         try await send(["type":"req","id":id,"method":"connect","params":params],on:ws)
         let response = try await receive(ws)
         guard response["type"] as? String == "res", response["id"] as? String == id else { throw ProjectError.invalid("Unexpected Gateway handshake frame.") }
         guard response["ok"] as? Bool == true else { throw NativeGatewayProtocol.refusal(response) }
         guard let hello = response["payload"] as? [String:Any], hello["type"] as? String == "hello-ok", hello["protocol"] as? Int == 4, let auth = hello["auth"] as? [String:Any], auth["role"] as? String == "operator", let scopes = auth["scopes"] as? [String], Set(NativeGatewayProtocol.scopes).isSubset(of:Set(scopes)), let features = hello["features"] as? [String:Any], let advertised = features["methods"] as? [String], let policy = hello["policy"] as? [String:Any], let limit = policy["maxPayload"] as? Int, limit > 0 else { throw ProjectError.blocked("Gateway handshake lacks required protocol, read/write grant or method/size contract.") }
         if let issued = auth["deviceToken"] as? String, !issued.isEmpty, record.token != issued { record.token = issued; record.scopes = scopes; try vault.save(record) }
-        guard record.token != nil else { throw ProjectError.blocked("Gateway did not issue a reusable PROJECTX device token. Review pairing; bootstrap secret was not saved.") }
+        guard record.token != nil else { throw ProjectError.blocked("Gateway did not issue a reusable Yorozu device token. Review pairing; bootstrap secret was not saved.") }
         maxPayload = min(limit,8_000_000); methods = Set(advertised); ready = true; sequence = nil
         reader = Task { await self.readLoop(ws) }
     }

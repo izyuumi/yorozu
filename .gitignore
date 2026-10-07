@@ -4,3 +4,7 @@
 .build/
 build/
 .swiftpm/
+xcuserdata/
+*.xcodeproj/
+*.xcworkspace/
+apps/mac/Derived/

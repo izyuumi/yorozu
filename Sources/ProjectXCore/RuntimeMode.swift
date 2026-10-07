@@ -8,9 +8,9 @@ public enum RuntimeMode: String, Sendable {
     }
     public var windowTitle: String {
         switch self {
-        case .fixture: return "PROJECTX — TEST FIXTURE (no AI)"
-        case .offline: return "PROJECTX — OFFLINE (no AI)"
-        case .live: return "PROJECTX"
+        case .fixture: return "Yorozu — TEST FIXTURE (no AI)"
+        case .offline: return "Yorozu — OFFLINE (no AI)"
+        case .live: return "Yorozu"
         }
     }
     public var bannerTitle: String {
