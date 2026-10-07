@@ -5,32 +5,25 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path, PurePosixPath
-import posixpath
 import re
-import subprocess
-import tarfile
 
-spec = importlib.util.spec_from_file_location("packager", Path(__file__).with_name("package-openclaw-runtime.py"))
-packager = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(packager)
 
-REPOSITORY = "izyuumi/yorozu"
+def load(name, filename):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(filename))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+packager = load("packager", "package-openclaw-runtime.py")
+common = load("runtime_intake", "runtime-intake-common.py")
+REPOSITORY, require, sha, download = common.REPOSITORY, common.require, common.sha, common.download
 MAX_ARCHIVE = 2 * 1024 * 1024 * 1024
 MAX_TOTAL = 6 * 1024 * 1024 * 1024
 MAX_MEMBER = 512 * 1024 * 1024
 MAX_MANIFEST = 64 * 1024 * 1024
 MAX_ENTRIES = 250_000
 MANIFEST = "runtime-artifact.json"
-
-
-def require(value, reason):
-    if not value:
-        raise ValueError(reason)
-
-
-def sha(path):
-    with Path(path).open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def load_pin(path):
@@ -46,69 +39,15 @@ def load_pin(path):
     return pin
 
 
-def download(pin, directory):
-    directory.mkdir(mode=0o700, parents=True, exist_ok=False)
-    subprocess.run(["gh", "release", "download", pin["tag"], "--repo", REPOSITORY,
-                    "--pattern", pin["asset"], "--dir", str(directory)], check=True)
-    return directory / pin["asset"]
-
-
 def extract(archive, pin, destination, source):
-    archive = Path(archive)
-    require(archive.is_file() and not archive.is_symlink(), "Archive must be a regular file")
-    require(archive.stat().st_size == pin["archiveBytes"], "Runtime archive size differs from pin")
-    require(sha(archive) == pin["archiveSha256"], "Runtime archive hash differs from pin")
-    destination = Path(destination).absolute()
-    require(not destination.exists() and not destination.is_symlink(), "Use a fresh task-owned extraction destination")
-    destination = destination.parent.resolve() / destination.name
-    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    destination.mkdir(mode=0o700)
+    archive = common.verify_archive(archive, pin, MAX_ARCHIVE)
+    destination = common.fresh_destination(destination)
     root = destination / "openclaw"
     root.mkdir(mode=0o755)
-    seen, files, links, directories, total = set(), {}, {}, set(), 0
-    # Members are written under a tree that holds no symlink: link targets are checked as
-    # they are read, no member may sit under a link, and links are created only after the
-    # archive matches the reviewed inventory.
-    with tarfile.open(archive, mode="r|gz") as stream:
-        for entry in stream:
-            require(len(seen) < MAX_ENTRIES, "Runtime archive contains too many entries")
-            name = packager.safe_relative(entry.name.rstrip("/") if entry.isdir() else entry.name)
-            require(name not in seen, "Duplicate runtime archive entry")
-            seen.add(name)
-            require(not entry.issparse(), "Sparse runtime members are forbidden")
-            target = root / name
-            require(not any(str(parent) in links for parent in PurePosixPath(name).parents), "Member has a symlink parent")
-            if entry.isdir():
-                require(entry.mode == 0o755 and entry.size == 0, "Unexpected runtime directory metadata")
-                target.mkdir(mode=0o755, parents=True, exist_ok=True)
-                directories.add(name)
-            elif entry.isfile():
-                limit = MAX_MANIFEST if name == MANIFEST else MAX_MEMBER
-                require(0 <= entry.size <= limit and entry.mode in (0o644, 0o755), "Unsafe runtime member size/mode")
-                total += entry.size
-                require(total <= MAX_TOTAL, "Runtime archive exceeds uncompressed bound")
-                target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-                member = stream.extractfile(entry)
-                digest, size = hashlib.sha256(), 0
-                with target.open("xb") as output:
-                    while data := member.read(1024 * 1024):
-                        size += len(data)
-                        require(size <= entry.size, "Runtime member exceeded declared size")
-                        digest.update(data)
-                        output.write(data)
-                require(size == entry.size, "Truncated runtime member")
-                target.chmod(entry.mode)
-                files[name] = {"path": name, "sha256": digest.hexdigest(), "bytes": size, "mode": entry.mode}
-            elif entry.issym():
-                require(entry.mode == 0o777 and entry.size == 0, "Unexpected runtime link metadata")
-                link = entry.linkname
-                require(isinstance(link, str) and 0 < len(link) <= 4096 and not PurePosixPath(link).is_absolute()
-                        and "\\" not in link and not any(ord(c) < 32 or ord(c) == 127 for c in link), "Invalid runtime symlink")
-                resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), link))
-                require(resolved != ".." and not resolved.startswith("../"), "Runtime symlink escapes artifact")
-                links[name] = link
-            else:
-                raise ValueError("Hardlinks and special runtime entries are forbidden")
+    files, links, directories = common.stream_members(
+        archive, root, canonical=packager.safe_relative, contained=lambda name: name != ".." and not name.startswith("../"),
+        unexpected_root="Runtime member escapes artifact", manifest=MANIFEST,
+        max_entries=MAX_ENTRIES, max_total=MAX_TOTAL, max_member=MAX_MEMBER, max_manifest=MAX_MANIFEST)
     manifest_path = root / MANIFEST
     require(MANIFEST in files, "Runtime manifest is missing")
     require(files[MANIFEST]["sha256"] == pin["manifestSha256"], "Runtime manifest differs from pin")
@@ -128,20 +67,13 @@ def extract(archive, pin, destination, source):
             "Runtime inventory is not the reviewed inventory")
     # Digests were taken while extracting; the archive must reproduce the reviewed rows
     # exactly (the manifest row is the only extra) before any link is created.
-    actual = [row for name, row in files.items() if name != MANIFEST] + [{"path": name, "link": link} for name, link in links.items()]
+    actual = [{"path": name, **row} for name, row in files.items() if name != MANIFEST] + [{"path": name, "link": link} for name, link in links.items()]
     require(sorted(actual, key=lambda row: row["path"]) == sorted(rows, key=lambda row: row["path"]),
             "Archive content differs from reviewed inventory")
     # The inventory lists no directories; only parents of reviewed rows may appear.
     expected_dirs = {str(parent) for row in rows for parent in PurePosixPath(row["path"]).parents if str(parent) != "."}
     require(directories <= expected_dirs, "Unexpected runtime directories")
-    for name, link in links.items():
-        target = root / name
-        require(not target.exists() and not target.is_symlink(), "Runtime link collides with a member")
-        target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-        target.symlink_to(link)
-    for name in links:
-        resolved = (root / name).resolve(strict=True)
-        require(resolved == root or root in resolved.parents, "Resolved runtime link escapes artifact")
+    common.create_links(root, root, links)
     by_path = {row["path"]: row for row in rows}
     require(by_path.get("node", {}).get("sha256") == packager.PIN["nodeSha256"], "Sealed Node differs from the reviewed pin")
     plugin = source / "packages/harness-plugins/openclaw"
