@@ -59,7 +59,7 @@ public struct RoutingInput: Codable, Sendable {
     public var policy: String = ""; public var message: String; public var recent: [MessageView]; public var topics: [TopicView]
     public var work: [WorkView]; public var latestTopic: String?; public var memory: [MemoryView]
     public var sourceMessageID: String? = nil
-    /// "N older interrupted tasks omitted" once the routing trim compacts blocking work.
+    /// "N older interrupted tasks and M less active topics omitted" once the routing trim drops blocking work or topics.
     public var omitted: String? = nil
     enum CodingKeys: String, CodingKey { case message, recent, topics, work, latestTopic, memory, sourceMessageID, omitted }
 }
