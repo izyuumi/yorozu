@@ -69,7 +69,7 @@ actor EngineBridge: RelayBackend {
     }
 
     /// Only after a failed send. A snapshot until the core has a keyed message lookup (#313).
-    private func exists(_ id: String) async -> Bool { (try? await engine.snapshot().messages.contains { $0.id == id }) ?? false }
+    private func exists(_ id: String) async -> Bool { ((try? await engine.store.message(id: id)) ?? nil) != nil }
 
     /// A reply page: the messages after `cursor` (all of them when it is absent or unknown), at most 200
     /// events and 512 KB, at least one when any remain.
