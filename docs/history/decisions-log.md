@@ -455,3 +455,53 @@ Added in implementation:
 - The serving-model check is an exact match of `runtime.provider` and `runtime.model` against the pair requested.
 - `GET /api/model/options` carries prices but no context window or input kinds, so Hermes models have no window for the automatic choice and the compaction threshold falls back to 129,200 tokens.
 - The data folder is bound to the run mode (live, fixture) instead of the harness's display name; the old OpenClaw and fixture names read as their mode, so existing data opens without a migration.
+
+## 2026-10-09 — Scheduled jobs run by Yorozu
+Source: owner decisions recorded in issue #319 ("projectx: Cron jobs run by Yorozu (jobs.toml, one topic per job, scripts and AI steps)"), Decisions section.
+
+- Runner: Yorozu is the runner, with its own scheduler in the Mac app. Work runs through whichever harness is active. Users create, edit, customize and remove jobs in natural language.
+- Storage: job definitions are data in `jobs.toml`, next to `config.toml`. The file can be edited by hand, by a worker, or through Settings and the UI. The app watches the file and validates it.
+- One topic per job: each job has its own topic, a sub-chat plus a persistent worker session, so runs build on each other. When the user talks about a job in the main chat, the message is routed to that job's agent.
+- Schedules are time-based: intervals, calendar rules and one-shots. A one-shot retires after it runs. All are stored as cron expressions and evaluated by Yorozu's own scheduler, never by the system `cron`. The time zone follows the Mac. Condition watchers come later.
+- Always running: the Mac app is assumed always running. There is no missed-run handling.
+- Posting: the user decides per job whether results always go to the main timeline or only when they are notable; if the user did not say so when creating the job, the job's agent asks. The full output of every run stays in the job's sub-chat.
+- Three forms: a pure script (no AI), an AI task, or a script whose output goes to an AI step (for example only when the output changed or matches a condition). AI is always optional.
+- Scripts: Yorozu runs them itself as child processes, like cron, as the user's account, in `~/Yorozu/jobs/<job>/`, with a timeout, their output captured to the sub-chat. Script runs do not depend on the harness. A new or changed script needs the user's yes in chat, even in YOLO mode.
+- Jobs list: the phone and Mac Settings each get one. Each row shows the name, the schedule in plain words, the next run and the last result, with Pause/Resume, Run now and Delete. Tapping a job opens its sub-chat.
+- Spec and summary: each job has an exact spec in `jobs.toml` (schedule, script, instruction, posting mode); a user-facing summary is generated from it and kept in sync.
+- Job input: each job's screen has an input that talks directly to that job's agent, with no secretary routing; the conversation stays in the job's sub-chat. Sub-chats of other topics stay inspect-only. This is an exception to "one main timeline is the only place to type".
+- Defaults (accepted): AI runs use the job topic's thinking worker on the worker model, and a job can be told to use another model or executor. Runs never overlap: while the previous run is still going, the next slot is skipped and a note is added. Failed runs count as notable. The script timeout is 10 minutes by default and can be changed per job.
+- OpenClaw automations (`openclaw automations` / `cron`) are reference material only; Yorozu does not use them.
+
+## 2026-10-09 — Jobs phase A: implementer readings (not owner decisions)
+Source: the plan comment on issue #319, which builds phase A (core, scheduler and app wiring) on branch `jobs` now, because it does not need contract 0.7: the job wire events (`job_list`, `job_control`, a message to a job) follow #329, and the Jobs list and job screens on the Mac and the phone follow the #311 design approval. It takes the issue's open questions 1–16 at their proposed defaults. The owner has not answered them; [status.md](../status.md#open-items) keeps them as open items, marked as defaults taken.
+
+1. A yes to a script is recorded by Yorozu against the script's SHA-256 in its own database, never by a worker. The request is a message in the main timeline and the job's sub-chat; pending approvals go to the secretary as data; the secretary action `approve` (with the approval id) counts only for a user message sent after the request and only for that exact hash. In a job's own input, one raw secretary-model check runs while an approval for that job is pending.
+2. A new job's topic: the secretary delegates "create a job" with `newTopic` set to the job's name, and the worker writes `topic = "<its topic id>"` into the new entry. An entry without `topic` gets a new topic named after the job. The binding lives in Yorozu's database.
+3. Notable without AI: a script-only run is notable when it failed (non-zero exit, timeout, launch error) or its output differs from the previous run's. An AI run is notable when its answer says so (it is asked to mark answers that ask the user something or report a failure), or when it failed.
+4. The gate before an AI step: `ai_when` is `always`, `changed` or a regular expression the output must match; closed, the run ends after the script.
+5. Posting before the user answers: `always`.
+6. Script environment: `HOME`, `USER`, `LANG`, `TZ`, `YOROZU_JOB`, `YOROZU_JOB_DIR` and `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`; never `PROJECTX_*` or app secrets.
+7. Intervals one cron line cannot express: `schedule` is a list of cron expressions, and a slot fires when any matches.
+8. Late slots: a slot reached more than 60 s late is skipped silently and the next one is computed from now. A local time a daylight-saving change skips is skipped; one that repeats runs once.
+9. A run left `uncertain` by a restart blocks later slots, which are skipped with a note until the user retries or stops it; the Jobs list will show "Needs attention".
+10. Work the user sends goes ahead of queued job runs in the lanes. Job runs do not count toward the 32-item send cap and do not turn on the main working indicator.
+11. Only job results posted to the main timeline go through memory extraction.
+12. A message typed in the job input while the job's AI run is active waits, then runs as the next turn in the same session.
+13. Delete removes the entry from `jobs.toml`; the topic, its history and the job folder stay. The confirmation belongs to the UI (not yet built).
+14. The job sub-chat on the Mac will be the detail pane of a Settings › Jobs tab, with the job input (UI not yet built).
+15. The summary lives in Yorozu's database, keyed by the spec's hash; a changed spec gets one raw run on the secretary model. "Next run" is computed exactly.
+16. The scheduler runs in live and fixture mode, each on its own data root; fixture AI steps get scripted replies; offline mode lists jobs and runs none.
+
+Added in implementation:
+- A message typed in a job's input is stored as kind `job_input`, not `conversation`, so the main timeline, phones, the secretary's context, `latestTopic` and memory extraction never see it; the job's worker gets it in its history like a conversation message. Its answer is a `job_result` that stays in the sub-chat.
+- The hidden kinds `job_run`, `job_input`, `job_result` and `job_note` are filtered out where the main timeline is built: the Mac's main chat and every snapshot `EngineBridge` sends to phones. Skipped-slot notes and a `jobs.toml` problem that one job's entry causes are `job_note`s in that job's sub-chat.
+- The working indicator (Mac spinner, menu-bar icon, the phones' working flag) leaves out work in job topics, recognised by the topic ids bound in the `jobs` table, deleted jobs included; phones get no job-topic work.
+- Scripts run with `/bin/zsh -f`, so `~/.zshenv` cannot add to the environment of open question 6.
+- `model` is parsed and validated but not yet applied to the AI step, which runs on the worker model; per-job models are a TODO. A job's `executor` is used when the active harness offers it ready.
+- Approval requests are their own message kind, `approval_request`, filed in the job's topic and shown in the main timeline.
+- A one-shot retires only once a run actually starts; a slot skipped for approval or overlap leaves it armed.
+- The skipped-slot note is posted once per streak with the same reason, so a job skipped every minute does not flood its sub-chat.
+- The output hash is the SHA-256 of the two streams' own hashes, so stdout and stderr interleaving never makes a run look changed.
+- At quit, running scripts get SIGTERM and 2 s before SIGKILL (the timeout and Stop keep 5 s), so the app can exit promptly.
+- A queued script step found at launch is failed, not started; a stamped one becomes `uncertain`, is never re-run and gets a `job_interrupted` notice. Retrying it starts a new run of its job.
