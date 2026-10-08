@@ -386,7 +386,7 @@ public struct HermesHarness: Harness {
         switch run.status {
         case "completed":
             guard (try? Self.verify(run)) != nil, let text = run.output, !text.isEmpty else { return .stopped }
-            if work.executor != nil { return .completed(Self.applied(WorkerOutput(text: text, appliedRevision: work.revision), pendingSteer: run.pendingSteer, dispatched: work.revision)) }
+            if work.executor != nil { return .completed(Self.applied(WorkerOutput(coded: text, appliedRevision: work.revision), pendingSteer: run.pendingSteer, dispatched: work.revision)) }
             guard let output = try? JSONDecoder().decode(WorkerOutput.self, from: Data(text.utf8)), !output.text.isEmpty, output.appliedRevision >= 0 else { return .stopped }
             return .completed(Self.applied(output, pendingSteer: run.pendingSteer, dispatched: work.revision))
         case "cancelled", "interrupted", "failed": return .stopped
@@ -411,7 +411,7 @@ public struct HermesHarness: Harness {
         let end = try await step(input, session: session, runID: runID, text: Prompts.codingTask(input, runID: runID), instructions: contract, model: model, update: update)
         // No diffstat under Hermes (open question 8).
         let text = end.output.flatMap { $0.isEmpty ? nil : $0 } ?? executor.name + " finished without a summary."
-        return Self.applied(WorkerOutput(text: text, appliedRevision: input.work.revision), pendingSteer: end.pendingSteer, dispatched: input.work.revision)
+        return Self.applied(WorkerOutput(coded: text, appliedRevision: input.work.revision), pendingSteer: end.pendingSteer, dispatched: input.work.revision)
     }
 }
 

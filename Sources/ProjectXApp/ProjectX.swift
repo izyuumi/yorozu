@@ -60,7 +60,18 @@ import ProjectXCore
     /// The next start of a relay host that failed to start.
     private var relayRetry: Task<Void,Never>?
     var awake: NSObjectProtocol?
-    var working: Bool { snapshot.work.contains { $0.active } }
+    // Jobs (#319), in JobsWiring.swift.
+    var jobRunner: ScriptRunner?
+    var jobScheduler: JobScheduler?
+    var jobsWatcher: JobsWatcher?
+    var jobsConsumer: Task<Void,Never>?
+    var jobObservers: [(NotificationCenter, NSObjectProtocol)] = []
+    var lastJobsError: ConfigError?
+    /// Topics bound to jobs, deleted ones included: their work never turns on the working indicator (open question 10).
+    @Published var jobTopics = Set<String>()
+    var working: Bool { snapshot.work.contains { $0.active && !jobTopics.contains($0.topicID) } }
+    /// The main chat: everything but the messages that stay in a job's sub-chat.
+    var timeline: [Message] { snapshot.messages.filter(\.onMainTimeline) }
     func start() {
         guard observation == nil else { return }
         observation = Task {
@@ -99,6 +110,7 @@ import ProjectXCore
                 self.harness = harness; await refreshModels().value(upTo: .seconds(10))
                 let engine = Engine(store: store,memory: memory,harness: harness,settings: { box.value }); self.engine = engine
                 await engine.resume()
+                await startJobs(engine,root: root,scripts: explicit != nil || runtimeMode == .fixture ? root.appendingPathComponent("jobs",isDirectory: true) : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/jobs",isDirectory: true))
                 // Keys and device counters live as long as each other, so the device file stays in the support root whatever PROJECTX_DATA says.
                 devicesFile = support.appendingPathComponent("relay-devices.json")
                 if runtimeMode == .live { await startRelay(engine,url: resolved.config.relay.url) }
@@ -113,7 +125,7 @@ import ProjectXCore
                     do {
                         let next = try await engine.snapshot()
                         if notice != nil { if status == notice { status = nil }; notice = nil; failures = 0 }
-                        if next != snapshot { snapshot = next }
+                        if next != snapshot { snapshot = next; let topics = Set(((try? await store.jobRecords()) ?? []).map(\.topicID)); if topics != jobTopics { jobTopics = topics } }
                         if next != relayed, let relay, let bridge { relayed = next; await bridge.publish(next,to: relay) }
                     } catch {
                         failures += 1; notice = "Couldn't read the chat, retrying: \(error.localizedDescription)"; status = notice
@@ -211,7 +223,7 @@ import ProjectXCore
         }
         relayRestart = task; await task.value
     }
-    func stop() { observation?.cancel(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
+    func stop() { observation?.cancel(); stopJobs(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
     func enroll() async {
         guard let nativeClient, !connecting else { return }
         connecting = true; let secret = bootstrapSecret; bootstrapSecret = ""
@@ -268,13 +280,14 @@ struct MessageCard: View {
 struct MainChat: View {
     @ObservedObject var model: AppModel
     var body: some View {
+        let timeline = model.timeline
         VStack(spacing: 0) {
             ScrollViewReader { reader in
                 ScrollView { LazyVStack(alignment: .leading,spacing: 14) {
-                    if model.snapshot.messages.isEmpty { Text("One conversation. Background thinking in topic sub-chats.").foregroundStyle(.secondary).padding(.vertical,30) }
-                    ForEach(model.snapshot.messages) { MessageCard(message: $0,text: model.text($0)).id($0.id) }
+                    if timeline.isEmpty { Text("One conversation. Background thinking in topic sub-chats.").foregroundStyle(.secondary).padding(.vertical,30) }
+                    ForEach(timeline) { MessageCard(message: $0,text: model.text($0)).id($0.id) }
                 }.padding() }
-                .onChange(of: model.snapshot.messages.count) { _,_ in if let last = model.snapshot.messages.last { reader.scrollTo(last.id,anchor: .bottom) } }
+                .onChange(of: timeline.count) { _,_ in if let last = timeline.last { reader.scrollTo(last.id,anchor: .bottom) } }
             }
             Divider()
             HStack(alignment: .bottom) {

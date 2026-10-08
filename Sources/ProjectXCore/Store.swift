@@ -67,6 +67,16 @@ public actor Store {
             }
             try db.execute(sql: sql)
         }
+        // #319. New tables only: a job topic is a topic bound in `jobs`; job messages and work use the existing tables.
+        migration.registerMigration("jobs-r1") { db in try db.execute(sql: """
+            CREATE TABLE jobs(id TEXT PRIMARY KEY, topicID TEXT NOT NULL REFERENCES topics(id), specSHA TEXT, summary TEXT, approvedScriptSHA TEXT, pendingApprovalID TEXT);
+            CREATE TABLE jobApprovals(id TEXT PRIMARY KEY, jobID TEXT NOT NULL, scriptSHA TEXT NOT NULL, requested DOUBLE NOT NULL, state TEXT NOT NULL, approved DOUBLE, messageID TEXT);
+            CREATE TABLE jobRuns(id TEXT PRIMARY KEY, jobID TEXT NOT NULL, slot DOUBLE NOT NULL, started DOUBLE NOT NULL, finished DOUBLE, state TEXT NOT NULL, exitCode INTEGER, outputSHA TEXT, notable BOOLEAN, posted BOOLEAN NOT NULL DEFAULT 0, scriptWorkID TEXT, aiWorkID TEXT);
+            CREATE INDEX jobRuns_job ON jobRuns(jobID,started);
+            """) }
+        // One topic per job. Duplicates are not expected; any are dropped but the oldest binding, so the others get a new
+        // topic and ask for approval again.
+        migration.registerMigration("jobs-topic-unique") { db in try db.execute(sql: "DELETE FROM jobs WHERE rowid NOT IN (SELECT MIN(rowid) FROM jobs GROUP BY topicID); CREATE UNIQUE INDEX jobs_topic ON jobs(topicID)") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -301,7 +311,9 @@ public actor Store {
     /// session, atomically with completion. Returns the work to run again, or the delivered result.
     /// `requeue` hands the follow-up to the worker queue (retry of a reconciled run) instead of the running executor.
     /// `from`: deliver only if the work is still in that state and unsuppressed, else nothing (a concurrent reconcile won).
-    public func finish(task: String, output: WorkerOutput, requeue: Bool = false, from state: String? = nil) throws -> (reply: Message?, followUp: Work?) {
+    /// `delivery`: a job topic's result kind (`result` in the main timeline, `job_result` in the sub-chat only) and the
+    /// job name for its header; nil is an ordinary `result`.
+    public func finish(task: String, output: WorkerOutput, requeue: Bool = false, from state: String? = nil, delivery: (kind: String, header: String)? = nil) throws -> (reply: Message?, followUp: Work?) {
         try db.write { db in
             if let state { guard let w = try Work.fetchOne(db,key: task), w.state == state, !w.suppressed else { return (nil,nil) } }
             if var w = try Work.fetchOne(db,key: task), !w.suppressed {
@@ -316,10 +328,10 @@ public actor Store {
                     try w.update(db); return (nil,w)
                 }
             }
-            return (try Self.complete(db,task: task,output: output),nil)
+            return (try Self.complete(db,task: task,output: output,delivery: delivery),nil)
         }
     }
-    private static func complete(_ db: Database, task: String, output: WorkerOutput) throws -> Message? {
+    private static func complete(_ db: Database, task: String, output: WorkerOutput, delivery: (kind: String, header: String)? = nil) throws -> Message? {
         guard var w = try Work.fetchOne(db, key: task) else { throw ProjectError.invalid("Unknown task.") }
         w.result = output.text; w.outputRevision = output.appliedRevision
         let pending = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM amendments WHERE taskID=? AND state NOT IN ('accepted','applied','queued_input')", arguments: [task]) ?? 0
@@ -333,11 +345,88 @@ public actor Store {
             }; return nil }
         w.state = "done"; w.error = nil; try w.update(db)
         try db.execute(sql: "UPDATE amendments SET state='applied' WHERE taskID=?", arguments: [task])
-        if try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind='result'", arguments: [task]) ?? 0 > 0 { return nil }
+        if try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind IN ('result','job_result')", arguments: [task]) ?? 0 > 0 { return nil }
         let source = try Message.fetchOne(db, key: w.messageID)
-        let text = "Regarding “\(String((source?.body ?? w.instruction).prefix(100)))”:\n\n\(output.text)"
-        let m = Message(id: identifier(), role: "assistant", body: text, topicID: w.topicID, taskID: task, replyTo: w.messageID, kind: "result", created: Date().timeIntervalSince1970)
+        let text = "Regarding “\(delivery?.header ?? String((source?.body ?? w.instruction).prefix(100)))”:\n\n\(output.text)"
+        let m = Message(id: identifier(), role: "assistant", body: text, topicID: w.topicID, taskID: task, replyTo: w.messageID, kind: delivery?.kind ?? "result", created: Date().timeIntervalSince1970)
         try m.insert(db); return m
+    }
+    // MARK: Jobs (#319)
+
+    public func job(_ id: String) throws -> JobRecord? { try db.read { try JobRecord.fetchOne($0,key: id) } }
+    public func jobRecords() throws -> [JobRecord] { try db.read { try JobRecord.fetchAll($0) } }
+    /// Creates or moves the job's topic binding (open question 2); approvals, summary and runs stay. Nil, and nothing
+    /// changes, when another job holds that topic.
+    @discardableResult public func bindJob(_ id: String, topic: String) throws -> JobRecord? {
+        try db.write { db in
+            if try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM jobs WHERE topicID=? AND id<>?",arguments: [topic,id]) ?? 0 > 0 { return nil }
+            var r = try JobRecord.fetchOne(db,key: id) ?? JobRecord(id: id,topicID: topic)
+            r.topicID = topic; try r.save(db); return r
+        }
+    }
+    public func setJobSummary(_ id: String, specSHA: String, summary: String) throws {
+        try db.write { try $0.execute(sql: "UPDATE jobs SET specSHA=?,summary=? WHERE id=?",arguments: [specSHA,summary,id]) }
+    }
+    /// The approval the job's script needs: nil when `sha` is already approved (or there is no script, `sha` nil, which
+    /// also supersedes a pending request); otherwise the pending request for exactly `sha`, `new` when made just now.
+    public func requireApproval(job: String, scriptSHA sha: String?) throws -> (approval: JobApproval, new: Bool)? {
+        try db.write { db in
+            guard var r = try JobRecord.fetchOne(db,key: job) else { throw ProjectError.invalid("Unknown job.") }
+            let pending = try r.pendingApprovalID.flatMap { try JobApproval.fetchOne(db,key: $0) }
+            if let pending, pending.state == "pending", pending.scriptSHA == sha, sha != r.approvedScriptSHA { return (pending,false) }
+            if var pending, pending.state == "pending" { pending.state = "superseded"; try pending.update(db) }
+            r.pendingApprovalID = nil
+            guard let sha, sha != r.approvedScriptSHA else { try r.update(db); return nil }
+            let a = JobApproval(id: identifier(),jobID: job,scriptSHA: sha,requested: Date().timeIntervalSince1970,state: "pending")
+            try a.insert(db); r.pendingApprovalID = a.id; try r.update(db); return (a,true)
+        }
+    }
+    public func pendingApprovals() throws -> [JobApproval] {
+        try db.read { try JobApproval.fetchAll($0,sql: "SELECT a.* FROM jobApprovals a JOIN jobs j ON j.pendingApprovalID=a.id WHERE a.state='pending' ORDER BY a.requested") }
+    }
+    /// Records the user's yes (never a worker's): only a user message created after the request, and only while the job's
+    /// current script still has the requested hash (`currentSHA`).
+    public func approve(_ approvalID: String, message: String, currentSHA: String?) throws -> JobApproval {
+        try db.write { db in
+            guard var a = try JobApproval.fetchOne(db,key: approvalID), a.state == "pending", var r = try JobRecord.fetchOne(db,key: a.jobID), r.pendingApprovalID == a.id else { throw ProjectError.invalid("No such pending approval.") }
+            guard let m = try Message.fetchOne(db,key: message), m.role == "user", m.created > a.requested else { throw ProjectError.invalid("Only a message sent after the approval request can approve it.") }
+            guard currentSHA == a.scriptSHA else { throw NoticeError(.jobApprovalStale,"That script changed after the request, so it was not approved. A new request shows the current script.") }
+            a.state = "approved"; a.approved = Date().timeIntervalSince1970; a.messageID = message; try a.update(db)
+            r.approvedScriptSHA = a.scriptSHA; r.pendingApprovalID = nil; try r.update(db); return a
+        }
+    }
+    public func insertJobRun(_ run: JobRun) throws { try db.write { try run.insert($0) } }
+    @discardableResult public func updateJobRun(_ id: String, _ change: (inout JobRun) -> Void) throws -> JobRun? {
+        try db.write { db in guard var r = try JobRun.fetchOne(db,key: id) else { return nil }; change(&r); try r.update(db); return r }
+    }
+    public func jobRun(_ id: String) throws -> JobRun? { try db.read { try JobRun.fetchOne($0,key: id) } }
+    /// The run a script or AI step belongs to.
+    public func jobRun(work: String) throws -> JobRun? { try db.read { try JobRun.fetchOne($0,sql: "SELECT * FROM jobRuns WHERE scriptWorkID=? OR aiWorkID=?",arguments: [work,work]) } }
+    /// Newest first.
+    public func jobRuns(job: String, limit: Int = 20) throws -> [JobRun] { try db.read { try JobRun.fetchAll($0,sql: "SELECT * FROM jobRuns WHERE jobID=? ORDER BY started DESC,rowid DESC LIMIT ?",arguments: [job,limit]) } }
+    public func jobRuns(state: String) throws -> [JobRun] { try db.read { try JobRun.fetchAll($0,sql: "SELECT * FROM jobRuns WHERE state=? ORDER BY started",arguments: [state]) } }
+    /// The output hash of the job's newest run with one, before `run`.
+    public func previousOutputSHA(job: String, before run: String) throws -> String? {
+        try db.read { try String.fetchOne($0,sql: "SELECT outputSHA FROM jobRuns WHERE jobID=? AND id<>? AND outputSHA IS NOT NULL ORDER BY started DESC,rowid DESC LIMIT 1",arguments: [job,run]) }
+    }
+    /// Active or uncertain work in a topic, without a full snapshot.
+    public func openWork(topic: String) throws -> [Work] {
+        try db.read { try Work.fetchAll($0,sql: "SELECT * FROM work WHERE topicID=? AND state IN ('queued','working','amendment_pending','cancellation_requested','uncertain') ORDER BY created,rowid",arguments: [topic]) }
+    }
+    public func lastMessage(topic: String) throws -> Message? {
+        try db.read { try Message.fetchOne($0,sql: "SELECT * FROM messages WHERE topicID=? ORDER BY created DESC,rowid DESC LIMIT 1",arguments: [topic]) }
+    }
+    /// Messages typed in a job's own input that no work answers yet and no reply refused, oldest first.
+    public func undelegatedJobInput(topic: String) throws -> [Message] {
+        try db.read { try Message.fetchAll($0,sql: "SELECT * FROM messages m WHERE topicID=? AND kind='job_input' AND NOT EXISTS (SELECT 1 FROM work w WHERE w.messageID=m.id) AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.replyTo=m.id) ORDER BY created,rowid",arguments: [topic]) }
+    }
+    /// Ends a `script` step the Engine ran itself: done or failed, or cancelled when a stop suppressed it meanwhile.
+    @discardableResult public func endScript(_ id: String, ok: Bool, summary: String) throws -> Work? {
+        try db.write { db in
+            guard var w = try Work.fetchOne(db,key: id), w.active || w.state == "uncertain" else { return nil }
+            if w.suppressed { w.state = "cancelled" } else if ok { w.state = "done"; w.result = summary; w.error = nil } else { w.state = "failed"; w.error = summary }
+            try w.update(db); return w
+        }
     }
     public func memoryProcessed(_ id: String) throws -> Bool { try db.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM memoryJobs WHERE messageID=?", arguments: [id]) ?? 0 > 0 } }
     /// `reason`: why an `error_no_replay` job failed, already bounded and screened by the caller.

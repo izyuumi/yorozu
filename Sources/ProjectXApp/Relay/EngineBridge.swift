@@ -5,7 +5,8 @@ import YorozuWire
 
 /// The v2 Engine behind the relay (docs/ios-relay-contract.md): phone `message`, `sync_request` and
 /// `thread_list` in; `receipt`, `admission_status` and `sync_delta` out. One thread, `main`, holding
-/// every v2 message, as the Mac's main chat shows them.
+/// every message of the Mac's main chat, which leaves out the kinds that stay in a job's sub-chat (#319). The
+/// working flag ignores work in job topics (open question 10).
 actor EngineBridge: RelayBackend {
     private let engine: Engine
     private let mode: RuntimeMode
@@ -22,7 +23,7 @@ actor EngineBridge: RelayBackend {
         switch e.payload {
         case .message(let m): return [await admit(m, id: e.id)]
         case .syncRequest(let r):
-            do { return [Self.page(try await engine.snapshot(), after: r.lastSeen["main"])] }
+            do { return [Self.page(try await mainTimeline(engine.snapshot()), after: r.lastSeen["main"])] }
             catch {
                 Logger(subsystem: "to.yumi.yorozu", category: "relay").error("sync_request unanswerable: \(error.localizedDescription, privacy: .public)")
                 // 0.6 has no error page. No reply keeps the phone catching up, so live updates cannot move
@@ -30,7 +31,7 @@ actor EngineBridge: RelayBackend {
                 return []
             }
         case .threadList:
-            guard let s = try? await engine.snapshot() else { return [] }
+            guard let s = try? await mainTimeline(engine.snapshot()) else { return [] }
             return [.control(.threadList(ThreadListData(threads: [Self.main(s)])))]
         default: return []
         }
@@ -39,6 +40,7 @@ actor EngineBridge: RelayBackend {
     /// The live update for the poll loop's snapshot: messages the last one lacked, and the working flag
     /// when it changed. Messages are only ever inserted, so ids are all a diff needs.
     func publish(_ s: Snapshot, to host: RelayHost) async {
+        let s = await mainTimeline(s)
         let ids = Set(s.messages.map(\.id)), working = s.work.contains { $0.active }
         let previous = seen, wasWorking = self.working
         seen = ids; self.working = working
@@ -67,6 +69,13 @@ actor EngineBridge: RelayBackend {
         // Text and id only: no model may learn which device a message came from (#313).
         do { try await engine.send(m.text, id: id); return receipt }
         catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
+    }
+
+    /// The snapshot as phones see it: main-timeline messages only, and no work of job topics (deleted jobs' included).
+    private func mainTimeline(_ s: Snapshot) async -> Snapshot {
+        let jobs = Set(((try? await engine.store.jobRecords()) ?? []).map(\.topicID))
+        var s = s; s.messages.removeAll { !$0.onMainTimeline }; s.work.removeAll { jobs.contains($0.topicID) }
+        return s
     }
 
     /// Only after a failed send: a keyed lookup of the id.

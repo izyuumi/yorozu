@@ -81,7 +81,53 @@ public struct Notice: Codable, Sendable, Equatable {
         case configInvalid = "config_invalid", settingsChanged = "settings_changed" // config.toml (#312): params file/line/key/reason; keys
         // Typed harness failures (#318, `HarnessError`); params error.
         case harnessBusy = "harness_busy", runInterrupted = "run_interrupted", approvalRequested = "approval_requested", modelMismatch = "model_mismatch", harnessNotReady = "harness_not_ready"
+        // Jobs (#319); params job (id), name, and as noted.
+        case jobApprovalRequested = "job_approval_requested" // kind approval_request; params approvalID
+        case jobApproved = "job_approved", jobApprovalStale = "job_approval_stale" // acknowledgment; failure: the script changed again
+        case jobSkipped = "job_skipped" // kind job_note; params reason (overlap|uncertain), slot (ISO 8601)
+        case jobFailed = "job_failed" // kind failure; params reason (exit|timeout|launch), error
+        case jobInterrupted = "job_interrupted" // kind failure: a script run a quit or crash cut short
     }
+}
+/// Job tables (#319). `jobs` binds a job id to its topic and keeps what Yorozu, never a worker, decides about it.
+public struct JobRecord: Codable, FetchableRecord, PersistableRecord, Sendable, Equatable {
+    public static let databaseTableName = "jobs"
+    public var id: String; public var topicID: String
+    /// The summary is valid while `specSHA` matches the current spec's hash (open question 15).
+    public var specSHA: String?; public var summary: String?
+    public var approvedScriptSHA: String?; public var pendingApprovalID: String?
+}
+/// An approval request for one exact script hash (open question 1). state: pending|approved|superseded.
+public struct JobApproval: Codable, FetchableRecord, PersistableRecord, Sendable, Equatable {
+    public static let databaseTableName = "jobApprovals"
+    public var id: String; public var jobID: String; public var scriptSHA: String; public var requested: Double
+    public var state: String; public var approved: Double? = nil
+    /// The user message that approved it.
+    public var messageID: String? = nil
+}
+/// One run of a job. state: running|done|failed|stopped|uncertain. `slot` is the schedule slot (now for Run now).
+public struct JobRun: Codable, FetchableRecord, PersistableRecord, Sendable, Equatable {
+    public static let databaseTableName = "jobRuns"
+    public var id: String; public var jobID: String; public var slot: Double; public var started: Double; public var finished: Double? = nil
+    public var state: String; public var exitCode: Int? = nil; public var outputSHA: String? = nil
+    public var notable: Bool? = nil; public var posted = false
+    public var scriptWorkID: String? = nil; public var aiWorkID: String? = nil
+}
+/// What `Engine.runJob` did with a slot.
+public enum JobRunOutcome: Sendable, Equatable {
+    public enum Skip: String, Sendable { case overlap, uncertain, needsApproval, paused, unavailable }
+    case started(runID: String), skipped(Skip)
+}
+/// One row of the Jobs list (#319). `nextRun` comes from the scheduler.
+public struct JobStatus: Sendable, Equatable {
+    public enum State: String, Sendable { case running, paused, needsApproval, needsAttention, idle }
+    public var id: String; public var name: String; public var topicID: String?; public var summary: String?
+    public var nextRun: Date?; public var lastRun: Date?
+    /// The last finished run's state (done|failed|stopped|uncertain) and whether it was notable.
+    public var lastResult: String?; public var lastNotable: Bool?
+    public var state: State
+    /// Set while the job waits for the user's yes to its script.
+    public var pendingApprovalID: String?
 }
 /// A harness failure with its own notice code. Context overflow stays `ProjectError.overflow` (`task_overflow`) and a
 /// failed compaction a `compaction_failed` notice. Each reports how the run ended, so the work fails rather than going uncertain.
@@ -111,8 +157,10 @@ public struct NoticeError: LocalizedError, Sendable {
 public struct Decision: Codable, Sendable {
     public var action: String; public var topicID: String?; public var newTopic: String?; public var taskID: String?
     public var instruction: String?; public var reply: String?; public var memoryID: String?; public var executor: String?
-    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, executor: String? = nil) {
-        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.executor = executor
+    /// `approve` only: a pending job approval from `RoutingInput.approvals` (#319 open question 1).
+    public var approvalID: String?
+    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, executor: String? = nil, approvalID: String? = nil) {
+        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.executor = executor; self.approvalID = approvalID
     }
 }
 /// The secretary's slim view: only the fields routing needs, never database records. Long text is excerpted by bytes.
@@ -121,6 +169,11 @@ public struct RoutingInput: Codable, Sendable {
     public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String }
     public struct WorkView: Codable, Sendable { public var id: String; public var topicID: String; public var state: String; public var executor: String?; public var instruction: String; public var error: String? }
     public struct MemoryView: Codable, Sendable { public var id: String; public var title: String; public var excerpt: String }
+    /// A scheduled job: its topic, name and the first line of its summary (#319).
+    public struct JobView: Codable, Sendable { public var topicID: String; public var name: String; public var summary: String }
+    /// A script waiting for the user's yes.
+    public struct ApprovalView: Codable, Sendable { public var approvalID: String; public var topicID: String; public var job: String }
+    public var jobs: [JobView] = []; public var approvals: [ApprovalView] = []
     /// Instructions, printed once above the context data and never encoded into it.
     /// The offered coding executor ids, printed in the contract and never encoded.
     public var executors: [String] = []
@@ -129,7 +182,14 @@ public struct RoutingInput: Codable, Sendable {
     public var sourceMessageID: String? = nil
     /// "N older interrupted tasks and M less active topics omitted" once the routing trim drops blocking work or topics.
     public var omitted: String? = nil
-    enum CodingKeys: String, CodingKey { case message, recent, topics, work, latestTopic, memory, sourceMessageID, omitted }
+    enum CodingKeys: String, CodingKey { case message, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
+    /// Empty job lists are left out, so a workspace without jobs sends the pre-#319 context unchanged.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(message,forKey: .message); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
+        try c.encodeIfPresent(latestTopic,forKey: .latestTopic); try c.encode(memory,forKey: .memory); try c.encodeIfPresent(sourceMessageID,forKey: .sourceMessageID); try c.encodeIfPresent(omitted,forKey: .omitted)
+        if !jobs.isEmpty { try c.encode(jobs,forKey: .jobs) }; if !approvals.isEmpty { try c.encode(approvals,forKey: .approvals) }
+    }
 }
 /// `history`: only topic conversation the worker's session has not seen. `followUp`: the amendments a follow-up turn adds;
 /// the thinking session already holds the earlier turn, so it gets only these.
@@ -147,7 +207,11 @@ public struct WorkerInput: Codable, Sendable {
 }
 public struct WorkerOutput: Codable, Sendable {
     public var text: String; public var appliedRevision: Int
-    public init(text: String, appliedRevision: Int = 0) { self.text = text; self.appliedRevision = appliedRevision }
+    /// Scheduled job runs only (#319): whether the answer needs the user's attention.
+    public var notable: Bool? = nil
+    public init(text: String, appliedRevision: Int = 0, notable: Bool? = nil) { self.text = text; self.appliedRevision = appliedRevision; self.notable = notable }
+    /// A coding executor's free-text answer: notable when it carries `"notable": true` (in its final JSON or inline).
+    public init(coded text: String, appliedRevision: Int) { self.init(text: text,appliedRevision: appliedRevision,notable: text.range(of: #""notable"\s*:\s*true\b"#,options: .regularExpression) != nil) }
 }
 public struct RunHandle: Codable, Sendable {
     public var sessionKey: String; public var controllerKey: String; public var runID: String

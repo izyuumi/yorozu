@@ -85,6 +85,7 @@ public actor FixtureHarness: Harness {
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision {
         let text = input.message.trimmingCharacters(in: .whitespacesAndNewlines)
         let latest = input.latestTopic ?? input.topics.last?.id
+        if let a = input.approvals.first, text.lowercased() == "yes" { return Decision(action: "approve",approvalID: a.approvalID) } // #319 fixture checks
         if text.lowercased() == "retry" { return Decision(action: "retry",topicID: latest,taskID: input.work.last(where: { ["failed","uncertain"].contains($0.state) })?.id,instruction: "Continue the failed request") }
         if text.lowercased().hasPrefix("new topic:") { return Decision(action: "delegate",newTopic: String(text.dropFirst(10)).trimmingCharacters(in: .whitespaces),instruction: text) }
         if text.lowercased().hasPrefix("i meant "), let target = input.topics.first(where: { text.lowercased().contains($0.label.lowercased()) }), let prior = input.work.last(where: { $0.topicID != target.id }) {
@@ -614,7 +615,7 @@ extension OpenClawHarness {
             try? await update(.event(WorkerEvent(id: input.work.id + ":" + runID + ":diff",taskID: input.work.id,kind: "diff",body: ([line] + files.prefix(20)).joined(separator: "\n"),created: Date().timeIntervalSince1970)))
             text += "\n\n" + line
         }
-        return WorkerOutput(text: text,appliedRevision: input.work.revision)
+        return WorkerOutput(coded: text,appliedRevision: input.work.revision)
     }
     /// Anchored to this run's own user turn (claude-cli transcripts carry no runId, and agent.wait forgets runs after
     /// ~10 min), so a run that finished while the app was closed is delivered instead of re-run.
@@ -632,7 +633,7 @@ extension OpenClawHarness {
         // Only a final turn (not a crashed run's mid-step narration) counts as this run's answer.
         guard let last = after.last(where: { $0["role"] as? String == "assistant" }), !["toolUse","tool_use"].contains(last["stopReason"] as? String ?? ""),
               let text = try await finalText(["messages":after],key: key,skip: []) else { return .stopped }
-        return .completed(WorkerOutput(text: text,appliedRevision: revision))
+        return .completed(WorkerOutput(coded: text,appliedRevision: revision))
     }
     static func messageIDs(_ history: [String:Any]) -> [String] { (history["messages"] as? [[String:Any]] ?? []).compactMap(messageID) }
     static func messageID(_ m: [String:Any]) -> String? {
