@@ -19,9 +19,8 @@ public struct ModelChoices: Sendable, Equatable {
 
 /// Smart model defaults (#312): pure, recomputed at launch and on every config reload. Explicit choices always win.
 public enum ModelDefaults {
-    /// Coding executor → the agent runtime it runs on (`agentRuntime` in sessions.create).
-    public static let codingRuntimes = ["claude": "claude-cli", "codex": "codex"]
-    public static func resolve(_ models: [ModelInfo], primary: String?, explicit: Config.Models, runtimes: [String:String] = codingRuntimes) -> ModelChoices {
+    /// `runtimes`: coding executor id → the model runtime it runs on (`Executor.runtime`), from the harness.
+    public static func resolve(_ models: [ModelInfo], primary: String?, explicit: Config.Models, runtimes: [String:String] = [:]) -> ModelChoices {
         let rules = explicit.rules, priced = models.filter { $0.price != nil }
         let k = { (n: Int) in n % 1000 == 0 ? "\(n / 1000)k" : "\(n)" }
         /// Most expensive; a model with no output cap is left out (open question 3).

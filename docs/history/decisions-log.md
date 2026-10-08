@@ -416,3 +416,42 @@ Added in implementation:
 - A failed Stop or Retry control that has no notice code of its own posts `task_control_failed` with the raw error in `params.error`.
 - The 0.6 wire has no error page, so a `sync_request` the Mac cannot answer gets an empty final page: the phone's catch-up ends, its cursor stays, and its next `.paired` asks again.
 - A failed snapshot read no longer ends the poll loop: the status line says so and the poll backs off from 0.7 s, doubling to 30 s, until a read succeeds.
+
+## 2026-10-09 — Hermes Agent harness and harness-provided coding executors
+Source: owner decisions recorded in issue #318 ("projectx: Hermes Agent harness adapter and harness-provided coding executors"), Decisions section.
+
+- Stack (H1): Hermes Agent (Nous Research, MIT, Python) is allowed as an external, separately installed harness, like OpenClaw (Node). The adapter is Swift inside Yorozu and talks HTTP: no Python in the repo, no Rust and no separate Yorozu process. The stack decision is reworded to "a Swift client that drives separately installed harnesses (OpenClaw, Hermes Agent)". Yorozu still never becomes an agent harness: it never runs MCP servers or tool calls itself.
+- One main harness (H2): one at a time, detected and chosen in onboarding (#317) and switchable in Settings. Switching keeps Yorozu's data; topic workers start fresh on the other harness. Several harnesses at once is future work (#322), linked to multiple threads, where a thread is bound to a harness.
+- Interface (H3): Hermes's gateway HTTP API (`127.0.0.1:8642`, an API key of at least 16 characters, `/api/sessions`, `/v1/runs` with stop, steer and approval, SSE events, idempotency keys). Runs survive Yorozu restarts and are reconciled. ACP is a candidate for a future generic adapter. Each harness and each integration declares its own detection. Remote harnesses (e.g. over SSH) are future work.
+- Coding executors (H4): each harness decides how coding is done and its adapter advertises its coding executors: Claude Code and Codex for OpenClaw, whatever Hermes is configured to do for Hermes. The secretary's policy is built from that list, so "use Codex" works only if Codex is offered. Harness-specific rules move into the adapters: "coding that needs an app goes to Codex" becomes an OpenClaw-adapter rule, because OpenClaw does not pass Yorozu's MCP servers to Claude Code. The coding contract stays Yorozu's. The `claude`/`codex` values baked into Engine, Store and UI become names the harness provides.
+- Profiles (H5): Yorozu owns two dedicated Hermes profiles and writes only their config: `yorozu-worker` (default tools, Yorozu's MCP servers, a working folder) and `yorozu-roles` (secretary and extraction, no tools). Hermes's own memory, background self-review, skill creation and cron are off in both. The user's own profiles stay untouched; the user installs Hermes and configures providers.
+- Defaults (H6, accepted):
+  1. Roles run in `yorozu-roles` as fresh one-shot runs. The routing replay (21 real messages) is redone on Hermes before Hermes can be main. The serving model is verified on every run, and a fallback model fails closed.
+  2. One session per topic (`yorozu-<topic id>`). Runs are keyed by Yorozu run ids. Live progress comes from SSE, and steering is live.
+  3. Workers run at full permission. Hermes's per-step approvals are off in `yorozu-worker`. The "ask first" rules and YOLO mode stay in Yorozu's prompts.
+  4. Providers and keys are configured in Hermes. The gateway API key is generated at setup, written to Yorozu's profile config and kept in the Keychain.
+  5. Integrations' MCP servers are written into the `yorozu-worker` config.
+  6. #310 compaction maps onto Hermes's compaction at the same threshold, and the same session id continues.
+  7. OpenClaw and Hermes may both be installed. Yorozu records the Hermes versions it was tested with and warns on untested ones. Yorozu never updates Hermes.
+- Binding from related issues: the harness choice and the MCP list live in `config.toml`; changing the harness is security-relevant, so a worker asks for the user's yes first; role models get smart defaults from harness metadata (#312). Assisted setup writes only Yorozu's own entries; installs and logins stay manual (#317). Yorozu sets no output caps of its own (#311). Yorozu runs scheduled jobs itself, through the active harness (#319).
+
+## 2026-10-09 — Hermes adapter: implementer readings (not owner decisions)
+Source: the plan comment on issue #318, which builds the harness seam, the Hermes adapter and the profile writer on branch `hermes-adapter`, against Hermes's documented API at v0.21.6, verified by compiling only because Hermes is not installed on the host. It takes the issue's open questions 1–9 at their proposed defaults. The owner has not answered them; [status.md](../status.md#open-items) keeps them as open items, marked as defaults taken.
+
+1. Serving the profiles: Yorozu's profiles are served under multiplexing at `/p/yorozu-worker/` and `/p/yorozu-roles/`, which needs the default profile's API server on. Setup checks this read-only and shows the exact commands; Yorozu never edits the default profile.
+2. Coding on Hermes: one executor, `hermes` ("Hermes"), Hermes's own agent loop in `yorozu-worker`. With no per-session working folder, the coding contract has the worker create its own worktree and branch from the dev repo's base branch and work only there. Claude Code and Codex are not offered through Hermes's bundled skills or its Codex runtime.
+3. `terminal.cwd` of `yorozu-worker` is `dev_repo` when set, otherwise the home folder.
+4. Profile keys are written with Hermes's own `hermes -p <profile> config set`; `SOUL.md` and `.env` are written directly. No YAML library.
+5. Both profiles get `auth.adopt_external_logins: false`; no MCP server is marked `trust: untrusted`; the setup docs recommend installing Hermes with `--skip-computer-use`.
+6. An unexpected `approval.request` is answered `deny`, the run is stopped and the step fails with a plain error.
+7. A crash between `POST /v1/runs` and its response stores no body: the work becomes `uncertain` and the watch and reconcile path takes over.
+8. No coding diffstat under Hermes.
+9. A harness switch applies only when no work is active or uncertain; until then the app stays on the previous harness and says so. Switching back to a harness used before resumes its earlier topic sessions.
+
+Added in implementation:
+- A Hermes run's controller key is `hermes:<Yorozu run id>:<server run id>` once Hermes answers, or `hermes:<Yorozu run id>:refused` when Hermes refused the run outright, so nothing ran and reconcile reports it stopped. Yorozu's run id is the `Idempotency-Key`.
+- The `skills` toolset is disabled in both profiles together with `cronjob`, because Hermes 0.21.6 has no separate switch for skill writes; the curator is off too.
+- Sessions are created with `source: "yorozu"`, which Hermes 0.21.6 stores as `api_server`, since it keeps only its own source names.
+- The serving-model check is an exact match of `runtime.provider` and `runtime.model` against the pair requested.
+- `GET /api/model/options` carries prices but no context window or input kinds, so Hermes models have no window for the automatic choice and the compaction threshold falls back to 129,200 tokens.
+- The data folder is bound to the run mode (live, fixture) instead of the harness's display name; the old OpenClaw and fixture names read as their mode, so existing data opens without a migration.
