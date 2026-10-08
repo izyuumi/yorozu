@@ -49,9 +49,11 @@ public struct Decision: Codable, Sendable {
     }
 }
 public struct RoutingInput: Codable, Sendable {
-    public var policy: String; public var message: String; public var recent: [Message]; public var topics: [Topic]
+    /// Instructions, printed once above the context data and never encoded into it.
+    public var policy: String = ""; public var message: String; public var recent: [Message]; public var topics: [Topic]
     public var work: [Work]; public var latestTopic: String?; public var memory: [MemoryHit]
     public var sourceMessageID: String? = nil
+    enum CodingKeys: String, CodingKey { case message, recent, topics, work, latestTopic, memory, sourceMessageID }
 }
 public struct WorkerInput: Codable, Sendable {
     public var policy: String; public var topic: Topic; public var work: Work; public var current: Message

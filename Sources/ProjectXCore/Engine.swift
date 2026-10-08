@@ -93,7 +93,14 @@ public actor Engine {
             let memories = try await memory.search(message.body)
             var input = RoutingInput(policy: routingPolicy,message: message.body,recent: recent,topics: topics,work: work,latestTopic: latest,memory: boundedMemory(memories,bytes: 2200))
             input.sourceMessageID = message.id
-            while try encoded(input).utf8.count > 15000 && !input.work.isEmpty { input.work.remove(at: input.work.firstIndex(where: { !($0.active || $0.state == "uncertain") }) ?? 0) }
+            // Policy plus context data stay within 15000 bytes, so the raw-run prompt (template included) stays under the
+            // harness's 20000-byte cap. Drop finished work first, then other work, the oldest recent messages, low-ranked memory.
+            while try encoded(input).utf8.count + input.policy.utf8.count > 15000 {
+                if !input.work.isEmpty { input.work.remove(at: input.work.firstIndex(where: { !($0.active || $0.state == "uncertain") }) ?? 0) }
+                else if !input.recent.isEmpty { input.recent.removeFirst() }
+                else if !input.memory.isEmpty { input.memory.removeLast() }
+                else { break }
+            }
             var decision = try await harness.route(input,stronger: false)
             try validate(decision,input: input)
             try await store.receipt(kind: "routing",body: try encoded(decision))

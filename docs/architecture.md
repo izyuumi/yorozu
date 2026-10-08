@@ -48,7 +48,7 @@ The first message sent binds the data directory to its harness mode (receipt id 
    - The last 6 `conversation`/`result` messages, each cut to 350 characters. Acknowledgments and failures are left out.
    - The last 12 work items plus every active or uncertain one, instructions cut to 300 characters, results removed.
    - Memory hits up to 2200 bytes.
-   - The whole input stays at or under 15000 bytes; finished work is dropped first.
+   - The routing policy plus this context data stay at or under 15000 bytes: finished work is dropped first, then other work, the oldest recent messages and the lowest-ranked memory hits. The policy is printed once, above the data, so the whole prompt stays well under the 20000-byte cap on raw runs.
 3. The secretary (a raw model run on the secretary model) returns a `Decision`: `action` (`reply`, `delegate`, `steer`, `clarify`, `correct`, `retry`, `forget`, `stop`) plus `topicID`, `newTopic`, `taskID`, `instruction`, `reply`, `memoryID`, `executor`.
 4. The Engine validates it: known action, `executor` is `claude`, `codex` or absent, IDs only from the input, `instruction` ≤ 2000 bytes, `reply` ≤ 5000 bytes, `newTopic` ≤ 80 characters, plus the per-action required fields. It is saved as a `routing` receipt. A `clarify` gets one review on the worker model (`routing_escalation` receipt); if that review fails, the clarification stands.
 5. For `delegate`, the topic is `topicID`; without one, `latestTopic` when there is no `newTopic`. A `newTopic` reuses an existing topic with the same label (case-insensitive) or creates one with session key `agent:projectx:projectx:<topicID>`. `Store.insertWork` allows one active or uncertain work item per (topic, executor). No acknowledgment is posted.
