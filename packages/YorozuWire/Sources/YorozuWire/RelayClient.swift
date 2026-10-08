@@ -96,7 +96,7 @@ public actor RelayClient: ChatTransport {
     private var channelFormat: ChannelFormat?
     public private(set) var compatibility: PeerCompatibility = .legacy
     public private(set) var peerInfo: PeerInfoData?
-    private let localPeer = PeerInfoData.local
+    private let localPeer: PeerInfoData
     private(set) var peerInfoRequestID: String?
     private var ready = false
     private var incompatible = false
@@ -175,6 +175,7 @@ public actor RelayClient: ChatTransport {
         session: URLSession = .shared,
         counters: (any ChannelCounterStorage)? = nil,
         directSuite: String? = nil,
+        deviceName: String? = nil,
         onPaired: (@Sendable () -> Void)? = nil
     ) throws {
         guard let url = URL(string: pairing.relayUrl), url.scheme?.hasPrefix("ws") == true else {
@@ -203,6 +204,11 @@ public actor RelayClient: ChatTransport {
         self.dial = dial
         self.paired = paired
         self.onPaired = onPaired
+        // The phone's model name rides in the claim's `computerName`; one that would fail validation is left out.
+        var peer = PeerInfoData.local
+        peer.computerName = deviceName
+        if !peer.isValid { peer.computerName = nil }
+        self.localPeer = peer
         self.channelKeys = try YorozuCrypto.deriveChannelKeys(
             myPriv: identity.sessionPrivateKey,
             theirPub: macPub,

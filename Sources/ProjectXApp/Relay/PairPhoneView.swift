@@ -6,7 +6,7 @@ import SwiftUI
 struct PairPhoneView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var removing: RelayDevice?
+    @State private var removing: RelayDeviceStatus?
     /// A code is minted only on request: each stays valid until a phone pairs, so opening Settings must not make one.
     @State private var pairing = false
     /// The QR's side, the one size this sheet owns.
@@ -32,10 +32,10 @@ struct PairPhoneView: View {
                 Divider()
                 ForEach(model.relayStatus.devices) { device in
                     HStack {
-                        Label("iPhone · \(device.pub.prefix(8))", systemImage: "iphone")
+                        Label(device.displayName, systemImage: "iphone")
                         Spacer()
-                        Text("Paired \(device.pairedAt.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
-                        Button("Remove…", role: .destructive) { removing = device }.accessibilityLabel("Remove iPhone \(device.pub.prefix(8))")
+                        Text(device.online ? "Online" : "Paired \(device.pairedAt.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
+                        Button("Remove…", role: .destructive) { removing = device }.accessibilityLabel("Remove \(device.displayName)")
                     }
                 }
             }

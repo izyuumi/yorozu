@@ -34,7 +34,26 @@ struct RelayDevice: Codable, Sendable, Identifiable {
     var signingPub: String
     var pairedAt: Date
     var counter = ChannelCounter()
+    /// The phone's model ("iPhone 17 Pro"), from the `computerName` of its peer-info claim.
+    var name: String?
+    /// What the user renamed it to on this Mac; wins over `name`.
+    var label: String?
+    /// When its last authenticated frame arrived.
+    var lastSeen: Date?
     var id: String { pub }
+}
+
+/// One paired phone as Settings shows it.
+struct RelayDeviceStatus: Sendable, Identifiable, Equatable {
+    var pub: String
+    var name: String?
+    var label: String?
+    var pairedAt: Date
+    /// Has an authenticated session on the host's current relay connection.
+    var online: Bool
+    var lastSeen: Date?
+    var id: String { pub }
+    var displayName: String { label ?? name ?? "iPhone" }
 }
 
 /// `relay-devices.json`: written 0600 to a temp file, flushed, then renamed over the old one (v1's
