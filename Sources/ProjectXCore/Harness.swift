@@ -85,6 +85,7 @@ public actor FixtureHarness: Harness {
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision {
         let text = input.message.trimmingCharacters(in: .whitespacesAndNewlines)
         let latest = input.latestTopic ?? input.topics.last?.id
+        if let a = input.approvals.first, text.lowercased() == "yes" { return Decision(action: "approve",approvalID: a.approvalID) } // #319 fixture checks
         if text.lowercased() == "retry" { return Decision(action: "retry",topicID: latest,taskID: input.work.last(where: { ["failed","uncertain"].contains($0.state) })?.id,instruction: "Continue the failed request") }
         if text.lowercased().hasPrefix("new topic:") { return Decision(action: "delegate",newTopic: String(text.dropFirst(10)).trimmingCharacters(in: .whitespaces),instruction: text) }
         if text.lowercased().hasPrefix("i meant "), let target = input.topics.first(where: { text.lowercased().contains($0.label.lowercased()) }), let prior = input.work.last(where: { $0.topicID != target.id }) {
