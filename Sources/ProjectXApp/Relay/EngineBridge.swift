@@ -64,11 +64,12 @@ actor EngineBridge: RelayBackend {
         // last poll has not seen yet makes `send` throw on the duplicate key, and the check below answers it.
         if seen?.contains(id) == true { return receipt }
         await prepare()
+        // Text and id only: no model may learn which device a message came from (#313).
         do { try await engine.send(m.text, id: id); return receipt }
         catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
     }
 
-    /// Only after a failed send. A snapshot until the core has a keyed message lookup (#313).
+    /// Only after a failed send: a keyed lookup of the id.
     private func exists(_ id: String) async -> Bool { ((try? await engine.store.message(id: id)) ?? nil) != nil }
 
     /// A reply page: the messages after `cursor` (all of them when it is absent or unknown), at most 200
