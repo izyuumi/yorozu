@@ -11,6 +11,7 @@ What a Mac needs to build and run Yorozu v2, and where the app keeps its data an
 | GRDB | locked in `Package.resolved` | SwiftPM dependency of `ProjectXCore`. |
 | OpenClaw | the running Gateway's build | `openclaw` CLI on `PATH`; the app also searches `/opt/homebrew/bin` and `/usr/local/bin`. Source of the running build: `~/openclaw`. |
 | Upload tools | system | `upload_ios.sh` also uses `openssl`, `curl`, `jq`, `awk` and `xxd`. |
+| CuaDriver | 0.28.2 checked | `/Applications/CuaDriver.app`, installed separately ([cua-integration.md](cua-integration.md)). Not needed to build or run the app; workers need it to operate the Mac. |
 
 Deployment targets are in `Package.swift` and the Tuist manifests. `ProjectXCore` declares an older macOS than the Mac app, so macOS APIs newer than its own target need availability checks there.
 
@@ -37,6 +38,20 @@ The app talks only to agent `projectx`. Its entry in `~/.openclaw/openclaw.json`
 ```
 
 `agents.defaults.modelPolicy.allow` must list every model in the next table.
+
+### MCP servers
+
+Yorozu keeps the list of MCP servers its workers may use in `mcp-servers.json` ([Where data lives](#where-data-lives)). A missing file is created with the default below; edit it by hand, then relaunch the app (it is read once per run).
+
+```json
+{
+  "mcpServers": {
+    "cua-driver": { "args": ["mcp"], "command": "/Applications/CuaDriver.app/Contents/MacOS/cua-driver" }
+  }
+}
+```
+
+Each server is stdio: `command` is an absolute path, `args` is optional, and a name is 1–23 letters, digits, `-` or `_`. `env` is refused for now: a removed value would linger in OpenClaw's merge-patched config, and values would travel in command-line arguments. The app mirrors the list into OpenClaw itself ([openclaw-integration.md](openclaw-integration.md#mcp-servers)); nothing needs registering by hand. The cua-driver entry needs CuaDriver.app with Accessibility and Screen Recording granted to it (`cua-driver permissions grant`, run by the owner); its `mcp` proxy launches the CuaDriver daemon when it is not running.
 
 ## Models
 
@@ -78,6 +93,7 @@ The Mac items are `WhenUnlockedThisDeviceOnly`; the phone item is `AfterFirstUnl
 | Markdown memory | `~/Yorozu/memory/` (notes, `knowledge/`, `.writer.lock`) | `<dir>/memory/` | `…/Fixture/memory/` |
 | Memory index | `~/Library/Caches/<bundle id>/memory-index.sqlite` | `<dir>/memory-index.sqlite` | `…/Fixture/memory-index.sqlite` |
 | Paired phones (`relay-devices.json`, mode 600) | `~/Library/Application Support/<bundle id>/` | same as live | none (no relay) |
+| MCP server list (`mcp-servers.json`) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | not used |
 
 `<bundle id>` is the Mac bundle id from [Signing](#signing), also when `Bundle.main` has none. Directories are created 0700. `app.lock` is held with an exclusive lock, so only one process opens a data directory. The app has no migration code. OpenClaw keeps session transcripts and worktrees on its side.
 

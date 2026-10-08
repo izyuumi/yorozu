@@ -32,6 +32,8 @@ When the owner makes or changes a decision, rewrite the line here so no two line
 - One persistent sub-chat per topic, reused for later requests. Its worker session keeps growing; how to compact it is to be discussed later. (2026-10-07)
 - Topic workers run at full permission with OpenClaw's default tools. (2026-10-07)
 - Workers carry a request through end to end, including commit, merge, push, rebuild and restart when the chat asks for it, and ask only for what only the owner can do (logins, approvals, secrets). They take no unrequested destructive or outward-facing action and leave the owner's uncommitted files untouched. (2026-10-08)
+- Workers operate the Mac through cua: approach A first, with the computer-use rules in the thinking and coding worker prompts and no separate executor until collisions or timeouts call for one. (2026-10-08)
+- Yorozu keeps the list of MCP servers its workers may use, so switching harness does not move tool registrations. The list is data only: harness adapters apply it, and Yorozu never starts servers or runs tool calls. Both thinking and coding workers get it. (2026-10-08)
 
 ## Memory
 
@@ -49,6 +51,7 @@ When the owner makes or changes a decision, rewrite the line here so no two line
 - iPhones are clients of the host Mac through v1's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service, with v1's chat input UI. New client and host code stays Swift. The relay may be changed when that is the better design. (2026-10-08)
 - iOS ships to internal TestFlight only. Build numbers are per version, start at 1 and ascend. (2026-10-08)
 - The app icon is v1's Icon Composer mark (blob-identical to 1e2f1fba). (2026-10-08)
+- CuaDriver stays a separately installed app. Yorozu does not bundle it or keep its daemon running; `cua-driver mcp` starts the daemon itself. (2026-10-08)
 
 ## Engineering
 

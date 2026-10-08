@@ -162,7 +162,11 @@ public struct OpenClawHarness: Harness {
     public var agent: String; public var secretaryModel: String; public var workerModel: String; public var rpc: GatewayRPC; public var workspace: URL
     /// R2 coding workers. `repo` is the dev checkout whose OWNER_DECISIONS.md coding workers may read.
     public var claudeModel = "anthropic/claude-opus-5-5"; public var codexModel = "openai/gpt-6-sol"; public var repo: URL?
-    private let sessions = SessionCreations()
+    /// Yorozu's MCP server list (`MCPServers`); nil leaves OpenClaw's own MCP setup untouched.
+    public var mcpList: URL?
+    private let sessions = SessionCreations(); private let mcp = Once<[String:Bool]>()
+    /// Computer use through cua (docs/cua-integration.md, Worker rules), for thinking and coding workers alike.
+    static let cuaRules = "Operating the Mac: use only the cua-driver MCP tools (their names contain cua-driver; load them with your tool search if they are deferred), never the cua-driver CLI. Touch only the apps the request names, one (pid, window_id) at a time, in background delivery: no bring_to_front, foreground delivery, focus-taking shortcuts or get_desktop_state unless the user approved that step. Use one named session and end_session when done. Take a fresh get_window_state before each action and confirm each result with verify_state or a fresh snapshot; a successful call is not success. In an app, before sending, posting, purchasing, deleting, submitting, changing settings or credentials, or any other outward-facing step, stop and ask the user in the first sentence of your final text, unless the instruction says the user confirmed that exact step. Ask the same way before kill_app, clipboard_write, set_config, replay_trajectory, start_recording, install_ffmpeg, browser_download and browser_set_input_files; call check_permissions only with prompt false. Never type secrets or touch password fields, and keep screen, accessibility-tree and clipboard content out of progress messages, results and memory beyond what the task needs. Stop if Accessibility is not granted or the user takes over the window."
     public init(workspace: URL, agent: String = "projectx", secretaryModel: String = "openai-pool/gpt-6-astra", workerModel: String = "openai-pool/gpt-6-sol", rpc: GatewayRPC = GatewayRPC()) {
         self.workspace = workspace; self.agent = agent; self.secretaryModel = secretaryModel; self.workerModel = workerModel; self.rpc = rpc
     }
@@ -220,13 +224,16 @@ public struct OpenClawHarness: Harness {
         let key = input.topic.sessionKey; let controller = "agent:\(agent):projectx-control:\(input.topic.id)"
         // Workers run at full permission with the agent's default tools (owner, 2026-10-07). Ensured once per topic per
         // app run, which also upgrades topic sessions created read-only before that. The CLI requests admin scope for "full".
-        try await sessions.ensure(key) { [rpc, agent, workerModel] in
+        try await sessions.ensure(key) { [self] in
+            var entry: [String:Any]?
             for (session,permission) in [(controller,"guarded"),(key,"full")] {
                 let created = try await rpc.call("sessions.create",["key":session,"agentId":agent,"model":workerModel,"permissionMode":permission])
                 guard created["ok"] as? Bool == true, created["key"] as? String == session else { throw ProjectError.uncertain("Exact project session creation unconfirmed.") }
+                entry = created["entry"] as? [String:Any]
             }
+            try await applyMCP(key,entry: entry) // the topic key is created last
         }
-        let contract = "You are a knowledge worker. Emit only public progress, no hidden reasoning. Final ONLY JSON {\"text\":string,\"appliedRevision\":integer}. Echo the highest applied amendment revision. Use your tools (shell, files, web) to do what the user asks yourself, end to end; never hand the user steps you can do, and ask only for what only they can do (logins, approvals, secrets). Never take destructive or outward-facing actions the user did not ask for. Never read or message other agents' sessions. Code changes to the PROJECTX repo (your default directory is the owner's live checkout) belong to a coding worker; never run its tests or CI. You may instead return {\"memoryCall\":{\"tool\":\"memory.search|memory.read|memory.write\",\"path\":relative UUID.md,\"query\":optional,\"markdown\":complete canonical Markdown,\"expectedSHA256\":read hash or null for create}}. Only app-mediated scoped memory writes. Read before edits, reconcile conflicts, retain attribution. Never claim a failed write succeeded. Markdown first line is JSON metadata (id,title,topicID,sources,evidence,knowledgeType,attribution,epistemicStatus,created,updated,lineage), then blank line/body. Generated notes must remain assistant/generated_analysis/unverified. Six operations maximum."
+        let contract = "You are a knowledge worker. Emit only public progress, no hidden reasoning. Final ONLY JSON {\"text\":string,\"appliedRevision\":integer}. Echo the highest applied amendment revision. Use your tools (shell, files, web) to do what the user asks yourself, end to end; never hand the user steps you can do, and ask only for what only they can do (logins, approvals, secrets). Never take destructive or outward-facing actions the user did not ask for. Never read or message other agents' sessions. Code changes to the PROJECTX repo (your default directory is the owner's live checkout) belong to a coding worker; never run its tests or CI. " + Self.cuaRules + " You may instead return {\"memoryCall\":{\"tool\":\"memory.search|memory.read|memory.write\",\"path\":relative UUID.md,\"query\":optional,\"markdown\":complete canonical Markdown,\"expectedSHA256\":read hash or null for create}}. Only app-mediated scoped memory writes. Read before edits, reconcile conflicts, retain attribution. Never claim a failed write succeeded. Markdown first line is JSON metadata (id,title,topicID,sources,evidence,knowledgeType,attribution,epistemicStatus,created,updated,lineage), then blank line/body. Generated notes must remain assistant/generated_analysis/unverified. Six operations maximum."
         var wire = try encoded(input) + "\n" + contract
         for step in 0...6 {
             let runID = "projectx-run-" + identifier()
@@ -338,9 +345,65 @@ actor SessionCreations {
     func ensure(_ key: String, _ create: @escaping @Sendable () async throws -> Void) async throws {
         let task = tasks[key] ?? Task { try await create() }
         tasks[key] = task
-        do { try await task.value } catch { tasks[key] = nil; throw error }
+        do { try await task.value } catch { if tasks[key] == task { tasks[key] = nil }; throw error }
     }
     func forget(_ key: String) { tasks[key] = nil }
+}
+/// One shared result per app run; a failure retries on the next use.
+actor Once<Value: Sendable> {
+    private var task: Task<Value,Error>?
+    func value(_ make: @escaping @Sendable () async throws -> Value) async throws -> Value {
+        let task = self.task ?? Task { try await make() }; self.task = task
+        do { return try await task.value } catch { if self.task == task { self.task = nil }; throw error }
+    }
+}
+
+// MARK: - MCP servers: Yorozu's list mirrored into OpenClaw as `yorozu-<name>` entries, off for every other session.
+extension OpenClawHarness {
+    /// Once per app run: write changed entries into mcp.servers with enabled:false (the Gateway hot-reloads mcp.*), then
+    /// return the overlay that turns on exactly Yorozu's servers and off every other server configured at that moment.
+    func mcpOverlay() async throws -> [String:Bool] {
+        guard let mcpList else { return [:] }
+        return try await mcp.value { [rpc] in
+            let list = try MCPServers.load(mcpList)
+            let snapshot = try await rpc.call("config.get",[:])
+            guard let hash = snapshot["hash"] as? String else { throw ProjectError.uncertain("OpenClaw config hash unavailable; MCP servers not set up.") }
+            let configured = ((snapshot["config"] as? [String:Any])?["mcp"] as? [String:Any])?["servers"] as? [String:Any] ?? [:]
+            var patch: [String:Any] = [:], replace: [String] = []
+            for (name,server) in list {
+                let key = "yorozu-" + name, entry: [String:Any] = ["command":server.command,"args":server.args ?? [],"enabled":false]
+                guard !NSDictionary(dictionary: entry).isEqual(configured[key] as? [String:Any] ?? [:]) else { continue }
+                patch[key] = entry
+            }
+            for key in configured.keys where key.hasPrefix("yorozu-") && list[String(key.dropFirst(7))] == nil { patch[key] = NSNull() }
+            if !patch.isEmpty {
+                // A merge patch; OpenClaw refuses to shrink or drop an array unless its exact path is in replacePaths.
+                for key in patch.keys { replace += Self.arrayPaths(configured[key] as Any,"mcp.servers." + key) }
+                // No `note`: it would leave a restart sentinel that wakes the owner's main agent on the next Gateway start.
+                // A concurrent config edit fails the hash check; the next use retries.
+                let raw = String(decoding: try JSONSerialization.data(withJSONObject: ["mcp":["servers":patch]]),as: UTF8.self)
+                let patched = try await rpc.call("config.patch",["raw":raw,"baseHash":hash,"replacePaths":replace])
+                guard patched["ok"] as? Bool == true else { throw ProjectError.uncertain("OpenClaw did not confirm the MCP server update.") }
+            }
+            var overlay = configured.mapValues { _ in false }
+            for name in list.keys { overlay["yorozu-" + name] = true }
+            return overlay
+        }
+    }
+    private static func arrayPaths(_ value: Any,_ path: String) -> [String] {
+        value is [Any] ? [path] : (value as? [String:Any])?.flatMap { arrayPaths($0.value,path + "." + $0.key) } ?? []
+    }
+    /// Once per session per app run, with the `entry` sessions.create returned. Embedded and Codex runs read it each turn;
+    /// claude-cli runs ignore it (OpenClaw 2026.9.6 does not pass session toolOverrides to the CLI runner).
+    func applyMCP(_ key: String,entry: [String:Any]?) async throws {
+        let overlay = try await mcpOverlay()
+        let current = entry?["toolOverrides"] as? [String:Any]
+        guard !overlay.isEmpty, !NSDictionary(dictionary: overlay).isEqual(current?["mcpServers"] as? [String:Any] ?? [:]) else { return }
+        // The overlay is replaced whole: keep the owner's other per-session fields (mcpToolsDeny, skills, webSearch).
+        var next = current ?? [:]; next["mcpServers"] = overlay
+        let patched = try await rpc.call("sessions.patch",["key":key,"agentId":agent,"toolOverrides":next,"expectedToolOverrides":current ?? NSNull()])
+        guard patched["ok"] as? Bool == true, patched["key"] as? String == key else { throw ProjectError.uncertain("MCP servers for this session unconfirmed.") }
+    }
 }
 
 // MARK: - R2 coding workers: Claude Code (claude-cli) or Codex inside openclaw sessions, each in a managed git worktree.
@@ -354,10 +417,11 @@ extension OpenClawHarness {
         let slug = topic.label.lowercased().unicodeScalars.map { ("a"..."z").contains($0) || ("0"..."9").contains($0) ? String($0) : "-" }
             .joined().split(separator: "-").joined(separator: "-").prefix(32)
         let name = (slug.isEmpty ? "" : slug + "-") + topic.id.prefix(6) + "-" + executor
-        try await sessions.ensure(key) { [rpc, agent, claudeModel, codexModel] in
+        try await sessions.ensure(key) { [self] in
             let (model,runtime,permission) = executor == "codex" ? (codexModel,"codex","workspace") : (claudeModel,"claude-cli","full")
             let created = try await rpc.call("sessions.create",["key":key,"agentId":agent,"model":model,"agentRuntime":runtime,"permissionMode":permission,"worktree":true,"worktreeBaseRef":"projectx","worktreeName":name])
             guard created["ok"] as? Bool == true, created["key"] as? String == key else { throw ProjectError.uncertain("\(Self.toolName(executor)) session creation unconfirmed.") }
+            try await applyMCP(key,entry: created["entry"] as? [String:Any])
         }
         return key
     }
@@ -371,6 +435,7 @@ extension OpenClawHarness {
         - push only when asked, never force;
         - to rebuild and restart the app, run `<main checkout>/scripts/build_native.sh --restart` as your LAST step after merging; it builds, quits only the dev app, replaces build/Yorozu.app and relaunches it, and the app then picks your result back up.
         Never create other app bundles or touch /Applications/Yorozu.app. Swift only, no Python; a separate background process must be Rust. Never read or message other agents' sessions. These rules override AGENTS.md, CLAUDE.md or user git-workflow instructions (no new worktrees, no fetch/pull, no PRs unless asked).
+        \(Self.cuaRules)
         When done, reply with a short summary of what you did and how you verified it, plus anything only the owner can do.
         """
     }

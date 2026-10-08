@@ -33,7 +33,7 @@ All sessions belong to agent `projectx`; the harness refuses any other agent and
 | Controller | `agent:projectx:projectx-control:<topicID>` | worker model, `permissionMode: "guarded"` | Only the `tools.invoke` steer call |
 | Coding session | `<topic key>-claude` or `<topic key>-codex` | `agentRuntime: "claude-cli"` + `permissionMode: "full"`, or `"codex"` + `"workspace"`; `worktree: true`, `worktreeBaseRef: "projectx"`, `worktreeName: "<label slug ≤ 32>-<topicID first 6>-<executor>"` | One async run: `deliver: false`, `timeout: 7200`, `idempotencyKey: "projectx-code-<uuid>"`, no `--expect-final` |
 
-- Each key gets `sessions.create` once per app run (concurrent first uses share the call; a failure retries next time). The directory `<data root>/harness-workspaces` only feeds the hash and is never created.
+- Each key gets `sessions.create` once per app run (concurrent first uses share the call; a failure retries next time). Topic and coding sessions then get `sessions.patch` with the MCP overlay in the same step ([MCP servers](#mcp-servers)). The directory `<data root>/harness-workspaces` only feeds the hash and is never created.
 - OpenClaw names a coding worktree's branch `openclaw/<worktreeName>`. Claude Code needs `full` because its guarded modes need an approval client the app does not have; Codex `workspace` is sandboxed to the worktree.
 - Before every thinking step and every coding poll the work's run ID is stamped in the Store; that write fails once the work is suppressed, which is how a stop reaches a running loop.
 
@@ -48,6 +48,26 @@ All sessions belong to agent `projectx`; the harness refuses any other agent and
 | `chat.abort` | Stop | `{sessionKey, agentId, runId, preserveSideRuns: true}`, with the coding key for coding work. Confirmed when `runIds` contains the run, or `aborted: false` (nothing with that ID is active, queued or pending). |
 | `tools.invoke` | Live steer of a thinking step | `sessions_send` with `mode: "steer"` through the controller session, `idempotencyKey: "<work>-revision-<n>"`. Admitted only on `status: "accepted"` and `targetDisposition: "steered"` for the topic key. OpenClaw lists `sessions_send` in `DEFAULT_GATEWAY_HTTP_TOOL_DENY` (`src/security/dangerous-tools.ts`), so today it is refused and the change runs as a follow-up turn. |
 | `sessions.diff` | Coding result | `scope: "uncommitted"` (the default compares to `origin/main`). Counts only what the worker left uncommitted, so it reads 0 files after the worker commits. |
+| `config.get` | MCP mirror | Read once per app run for `hash` and the names under `config.mcp.servers`. |
+| `config.patch` | MCP mirror | `{raw: "{\"mcp\":{\"servers\":{…}}}", baseHash, replacePaths, note}`, a JSON merge patch (`null` deletes). Needs operator.admin, which the CLI requests. `baseHash` must match `config.get`; `replacePaths` lets an `args` array shrink. Sent only when a `yorozu-*` entry differs. |
+| `sessions.patch` | MCP overlay | `{key, agentId, toolOverrides, expectedToolOverrides}`. `toolOverrides` replaces the session's whole overlay, so the app sends the current one (from the `sessions.create` entry) with only `mcpServers` changed, and `expectedToolOverrides` fails the call if it changed meanwhile. Skipped when `mcpServers` already matches. Needs operator.admin. |
+
+## MCP servers
+
+Yorozu owns the list of MCP servers its workers may use (`mcp-servers.json`, [setup.md](setup.md#mcp-servers)); OpenClaw only holds a mirror of it. OpenClaw cannot take a server definition per session (`toolOverrides.mcpServers` only switches configured servers on or off), so the mirror has two parts (`OpenClawHarness.mcpOverlay` and `applyMCP` in `Harness.swift`):
+
+1. Once per app run, before the first topic or coding session is set up: `config.get`, then a `config.patch` that writes each listed server as `mcp.servers.yorozu-<name>` with `enabled: false` and deletes `yorozu-*` entries no longer listed. Nothing is written when the entries already match. The patch lists every array inside a changed or deleted entry in `replacePaths` and carries no `note`: a note leaves a restart sentinel that wakes the owner's main agent on the next Gateway start. `enabled: false` keeps them away from every other agent and session. The Gateway hot-reloads `mcp.*` with no restart (`src/gateway/config-reload-plan.ts`); the reload restarts live MCP runtimes in every session, which is why unchanged entries are not rewritten.
+2. For every topic and coding session, once per app run: `sessions.patch` with `toolOverrides.mcpServers` set to `true` for each `yorozu-*` server and `false` for every other server configured when step 1 ran. A server the owner adds to OpenClaw while the app runs reaches Yorozu sessions until the next launch. A session override wins over `enabled` in both directions (`src/agents/bundle-mcp-config.ts`). Role sessions run raw (no tools) and the controller session runs no turns, so they get no overlay.
+
+What each runtime sees:
+
+- Embedded runs (thinking workers) and Codex read the overlay on every turn. Tools are deferred behind `tool_search`, named `<server>__<tool>` (for example `yorozu-cua-driver__type_text`) with catalog id `mcp:<server>:<name>`. Search queries must be English, and one batch may request at most 50 results.
+- Claude Code (`claude-cli`) ignores the overlay: OpenClaw 2026.9.6 does not pass session `toolOverrides` to its CLI runner (`src/agents/command/attempt-execution.ts`, the `runCliAgent` call), so Claude Code sees only globally enabled servers and never Yorozu's.
+- MCP calls on the embedded runtime have no approval step; `before_tool_call` plugin hooks still run.
+- Plugin-bundled MCP servers that are not in `mcp.servers` are not covered by the overlay.
+- A Codex session whose server set changes starts a new Codex thread ("MCP config changed; starting a new thread"). Re-sending an identical overlay changes nothing, so this happens once for sessions that existed before the mirror, then only when the list or OpenClaw's other servers change.
+- Each session keeps its own stdio child per server (`cua-driver mcp` is a small proxy to the shared daemon) until the session is reset or deleted; `mcp.sessionIdleTtlMs` is unset.
+- `openclaw mcp probe` refuses disabled servers, so it cannot health-check `yorozu-*` entries.
 
 ## Request receipts
 
@@ -61,7 +81,8 @@ Every `agent` call writes a `gateway-request` receipt before dispatch; if that w
 - Workers inherit the global tool profile (full: shell, files, web). `subagents.allowAgents` is empty and `tools.agentToAgent.allow` does not list `projectx`.
 - A global plugin on the host replaces the system prompt of non-raw runs with the owner's PAIOS bridge (a `before_prompt_build` hook). Raw runs (`modelRun: true`) have no tools and skip prompt-build hooks, so the secretary and extractor can read no files, calendars or PAIOS and must delegate questions about them. Thinking workers get the bridge. Whether coding runs (`claude-cli`, `codex`) get it depends on patched OpenClaw runtime modules that an OpenClaw update can overwrite; re-check after upgrading OpenClaw.
 - Coding sessions load the owner's own Claude Code and Codex configuration; whether that stays is an [open item](status.md#open-items).
-- The OpenClaw config also registers MCP servers used for R3 planning ([cua-integration.md](cua-integration.md)) and still enables v1's `yorozu` channel plugin, which v2 does not use.
+- Thinking and Codex sessions see exactly Yorozu's MCP servers, behind OpenClaw's `tool_search` / `tool_call` ([MCP servers](#mcp-servers)). OpenClaw never passes an MCP server's own instructions to the model, so worker prompts carry the cua rules.
+- The OpenClaw config still enables v1's `yorozu` channel plugin, which v2 does not use.
 
 ## Native transport
 
@@ -76,4 +97,4 @@ Opt-in with `PROJECTX_TRANSPORT=native`. The toolbar gains "Connect native devic
 
 - Use `openclaw gateway call <method> --json --expect-url ws://127.0.0.1:18789 --params '<json>'` from a shell without the OpenClaw exec markers ([Launch environment](#launch-environment)).
 - Use only `agentId: "projectx"` and throwaway session keys, and delete them afterwards with `sessions.delete {key, agentId, deleteTranscript: true}`.
-- Leave other agents' sessions and the OpenClaw config alone: no reading, messaging or editing.
+- Leave other agents' sessions and the OpenClaw config alone: no reading, messaging or editing. The app itself writes only `mcp.servers.yorozu-*`.

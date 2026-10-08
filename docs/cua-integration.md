@@ -1,10 +1,17 @@
-# cua integration (R3 design)
+# cua integration (R3)
 
-Design for R3, not implemented: nothing on `projectx` calls cua yet. R3 is cua (https://cua.ai) integration so Yorozu can operate the user's computer ([OWNER_DECISIONS.md](../OWNER_DECISIONS.md#roadmap)). The route below is a recommendation; choosing it is an open item in [status.md](status.md#open-items).
+R3 is cua (https://cua.ai) integration so Yorozu can operate the user's computer ([OWNER_DECISIONS.md](../OWNER_DECISIONS.md#workers)). Progress is in [status.md](status.md).
 
-## Recommendation
+## Route
 
-Topic workers operate the Mac through the **cua-driver MCP server**, which OpenClaw already registers. Yorozu adds no process and no Swift dependency for the first step. The `cua` CLI and the cua SDK manage sandboxes, Spaces and VMs; use them for isolated computers, not for driving the host desktop.
+Workers operate the Mac through the **cua-driver MCP server**, under rules in their prompts (owner decisions, 2026-10-08):
+
+- **CuaDriver is a separate install** (`/Applications/CuaDriver.app`). Yorozu neither bundles it nor starts its daemon: `cua-driver mcp` is a proxy that launches the daemon through LaunchServices (`open -n -g -a CuaDriver --args serve`) when the socket is not answering, so the TCC grants stay with `com.trycua.driver`. The installer registers no MCP client; its `~/.local/bin/cua-driver` link is optional.
+- **Yorozu lists it as an MCP server** in its own `mcp-servers.json`, which the harness adapter mirrors into OpenClaw as `yorozu-cua-driver` ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). Yorozu adds no process and no Swift dependency.
+- **Routing**: "operate my Mac / use app X" goes to a thinking worker (no executor), and a coding request that needs an app stays with its coding worker. Thinking and Codex workers get the tools; Claude Code does not yet (OpenClaw gap, [status.md](status.md#open-items)).
+- **Rules** live in `OpenClawHarness.cuaRules` (`Harness.swift`), included in both worker contracts. They follow [Worker rules](#worker-rules) below. There is no separate executor or lane, so two computer-use tasks can run at once.
+
+The `cua` CLI and the cua SDK manage sandboxes, Spaces and VMs; use them for isolated computers, not for driving the host desktop.
 
 ## Host check (2026-10-08, read-only)
 
@@ -16,7 +23,7 @@ Topic workers operate the Mac through the **cua-driver MCP server**, which OpenC
 | TCC | Accessibility and Screen Recording granted to the daemon. Tahoe direct-capture consent not checked (the status command is read-only) |
 | Config | `agent_cursor.enabled: true`, `max_image_dimension: 1568`, `experimental_pip: false` |
 | Tools | 56 MCP tools (`cua-driver list-tools`); the ones workers need are under [Targeting one window](#targeting-one-window) |
-| OpenClaw | MCP servers `cua-driver` (`cua-driver mcp`, working), `cua` (points at a missing `~/Applications/Cua Spaces.app`, broken) and `computer-use` (another vendor's client, not used here) |
+| OpenClaw | MCP servers `cua-driver` (`cua-driver mcp`, working), `cua` (points at a missing `~/Applications/Cua Spaces.app`, broken) and `computer-use` (another vendor's client, not used here). These are the owner's entries; Yorozu sessions switch all of them off and use their own `yorozu-cua-driver` ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). |
 | Skill pack | The cua-driver skill pack is not linked into OpenClaw |
 | `cua` CLI | Not on `PATH` |
 
@@ -74,9 +81,12 @@ Not yet run. The owner opens TextEdit with a new empty document and keeps anothe
 
 Pass: the worker reports a verified match, the frontmost app never changed, and the document contains the text.
 
+## Live checks
+
+- 2026-10-08, before the MCP list existed: a throwaway `projectx` session created like a topic session (`openai-pool/gpt-6-sol`, `permissionMode: "full"`, `promptMode: "minimal"`) did not list any cua tool directly but found them with `tool_search`, and `tool_call` ran `get_screen_size` and `check_permissions {prompt: false}` through the daemon (attribution `driver-daemon`, Accessibility and Screen Recording granted, direct capture `not_checked`). No approval step ran.
+
 ## Unverified
 
-- Whether `projectx` worker sessions can see the cua-driver tools (the agent inherits the full tool profile; MCP exposure to its sessions was not checked).
 - Tahoe direct-capture consent.
 - Every upstream "supported" claim above, on this host.
 

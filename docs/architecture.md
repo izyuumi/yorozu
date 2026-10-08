@@ -25,6 +25,7 @@ How Yorozu v2 is put together and how a message moves through it. Gateway call d
 | Wire package | `packages/YorozuWire` | v1's relay wire vendored: events, crypto, channel, `RelayClient`. Used by the Mac host and the iOS app. |
 | iOS app | `apps/ios/Sources/YorozuIOS` | Pairing flow, then one chat screen over `RelayClient`. See [iOS app](#ios-app). |
 | Markdown rendering | `Sources/ProjectXApp/ChatMarkdown.swift` | Shared by Mac and iOS. See [Markdown rendering](#markdown-rendering). |
+| MCP server list | `Sources/ProjectXCore/MCPServers.swift` | The MCP servers workers may use, as data. Harness adapters apply it; see [MCP servers and computer use](#mcp-servers-and-computer-use). |
 
 ### Run modes
 
@@ -74,6 +75,7 @@ The secretary's policy is the `routingPolicy` string in `Engine.swift`. Bullets 
 - Greetings, thanks and small talk get a reply and no topic. Other replies and clarifications carry a topic; a `newTopic` on a reply opens or reuses one.
 - Substantive thinking, analysis, research, tool use and code are delegated without being asked. Questions about PAIOS (the owner's personal knowledge system, outside the repo), files or calendars, and recall of anything not in the supplied messages or memory, go to a worker ([why](openclaw-integration.md#what-the-agent-sees)).
 - Coding work, docs in a repo included, is delegated with executor `claude` (Claude Code), or `codex` when the user names Codex. Commit, merge, push, rebuild or restart requests are coding work in the same topic with the executor of the work they continue. Quick shell questions are delegated without an executor (thinking workers have a shell). Coding instructions never ask for tests or CI.
+- Operating the Mac or an app on it ("use app X") is delegated without an executor, and the instruction names the apps. The user's answer to a question a result asked ("yes, send it") is delegated in that result's topic with the same executor, restating the request as confirmed.
 - Topics are broad subjects of one to three words. PROJECTX is this app; the user's own life and preferences go to one separate personal topic.
 - **(code)** A message identical to the previous user message, sent while that message's work is still active, is filed under that work's topic with no reply and no action (`Engine.route`).
 - **(code)** `steer` or `retry` aimed at a finished task becomes a new `delegate` in the same topic with the same executor. A retry restates the original instruction followed by "The user now says: …" (`Engine.apply`).
@@ -91,6 +93,7 @@ The secretary's policy is the `routingPolicy` string in `Engine.swift`. Bullets 
 | Result | JSON `{text, appliedRevision}`; or `{memoryCall}`, which the app runs and answers in the next step (at most 6 memory operations) | The last assistant text (≤ 60000 characters) plus a diffstat line of the worktree's uncommitted changes |
 | Sub-chat progress | The run's public messages and tool names, copied after each step | Assistant text, `$ commands`, tool names with paths, and output or error tails, written while polling |
 | Memory tools | `memory.search`, `memory.read`, `memory.write` | None |
+| MCP servers | Yorozu's list | Yorozu's list (Codex); globally enabled OpenClaw servers only (Claude Code, an OpenClaw gap) |
 | Changes to running work | Tries a live steer, else a follow-up turn after the step | Always a follow-up turn after the run |
 
 Models per role are in [setup.md](setup.md#models). Thinking and coding work in the same topic can run side by side.
@@ -98,6 +101,12 @@ Models per role are in [setup.md](setup.md#models). Thinking and coding work in 
 The coding prompt (`contract()` in `Harness.swift`) tells the worker: work in its worktree; check compilation with `swift build`; run no tests or CI; commit, merge, push or restart only when the request asks, committing in the worktree (Conventional Commits, signed), merging into `projectx` with `git -C <main checkout> merge --no-edit <branch>`, never force-pushing, and running `<main checkout>/scripts/build_native.sh --restart` as the last step; leave the owner's uncommitted files alone; treat `OWNER_DECISIONS.md` as read-only. It states that it overrides AGENTS.md and CLAUDE.md: no new worktrees, no fetch or pull, no pull requests unless asked. The prompt also carries the task revision, the run marker `[run projectx-code-<uuid>]` and the last 6 topic messages.
 
 The coding poll gives up as `uncertain` after about 10 minutes of Gateway failures, 15 unreadable histories in a row, or 3 polls that find no active run.
+
+## MCP servers and computer use
+
+Yorozu declares which MCP servers its workers may use; the harness starts, connects and calls them, and Yorozu never runs a server or a tool call itself. `MCPServers.load` reads `mcp-servers.json` from the data root once per app run, creating it with the cua-driver default ([setup.md](setup.md#mcp-servers)). `OpenClawHarness` mirrors it into OpenClaw as `yorozu-<name>` servers that only Yorozu's sessions switch on ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). A list that cannot be read or mirrored fails each worker run with the reason until the next attempt succeeds.
+
+Computer use goes through the cua-driver server ([cua-integration.md](cua-integration.md)). Its rules are prompt policy: `OpenClawHarness.cuaRules` sits in both the thinking and the coding contract (only the named apps, one window at a time, background delivery, fresh snapshot then verify, ask before outward-facing steps and the listed risky tools, no secrets). Nothing in code enforces them.
 
 ## Steer, stop, retry, correct, forget
 
