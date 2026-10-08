@@ -48,7 +48,7 @@ import ProjectXCore
                 try await memory.rebuild()
                 // Bad note files are skipped, not fatal; say which, once per launch.
                 let skipped = await memory.skipped
-                if !skipped.isEmpty { _ = try await store.message(role: "assistant",body: "Memory skipped \(skipped.count) oversized or unreadable note file(s): " + skipped.prefix(10).joined(separator: ", "),kind: "failure") }
+                if !skipped.isEmpty { let files = skipped.prefix(10).joined(separator: ", "); _ = try await store.message(role: "assistant",body: "Memory skipped \(skipped.count) oversized or unreadable note file(s): " + files,kind: "failure",notice: Notice(.memorySkipped,["count": "\(skipped.count)","files": files])) }
                 let harness: any Harness
                 switch runtimeMode.rawValue {
                 case "fixture": harness = FixtureHarness()
@@ -86,7 +86,9 @@ import ProjectXCore
     private func connectNative(_ target: String) async -> NativeGatewayClient? {
         do {
             let client = try NativeGatewayClient(target: target); nativeClient = client
-            try await client.connect()
+            // Unenrolled: connecting would store a fresh key and fail. Unreachable: give up after 3 s, not the 15 s handshake.
+            guard client.isEnrolled else { throw ProjectError.blocked("This Mac is not enrolled with the Gateway yet.") }
+            do { try await client.connect(timeout: .seconds(3)) } catch { await client.close(); throw error }
             return client
         } catch {
             nativeNotice = "Native Gateway not connected · using the CLI this launch"; nativeNoticeDetail = error.localizedDescription
