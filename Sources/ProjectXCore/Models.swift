@@ -49,12 +49,19 @@ public struct Decision: Codable, Sendable {
         self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.executor = executor
     }
 }
+/// The secretary's slim view: only the fields routing needs, never database records. Long text is excerpted by bytes.
 public struct RoutingInput: Codable, Sendable {
+    public struct TopicView: Codable, Sendable { public var id: String; public var label: String }
+    public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String }
+    public struct WorkView: Codable, Sendable { public var id: String; public var topicID: String; public var state: String; public var executor: String?; public var instruction: String; public var error: String? }
+    public struct MemoryView: Codable, Sendable { public var id: String; public var title: String; public var excerpt: String }
     /// Instructions, printed once above the context data and never encoded into it.
-    public var policy: String = ""; public var message: String; public var recent: [Message]; public var topics: [Topic]
-    public var work: [Work]; public var latestTopic: String?; public var memory: [MemoryHit]
+    public var policy: String = ""; public var message: String; public var recent: [MessageView]; public var topics: [TopicView]
+    public var work: [WorkView]; public var latestTopic: String?; public var memory: [MemoryView]
     public var sourceMessageID: String? = nil
-    enum CodingKeys: String, CodingKey { case message, recent, topics, work, latestTopic, memory, sourceMessageID }
+    /// "N older interrupted tasks omitted" once the routing trim compacts blocking work.
+    public var omitted: String? = nil
+    enum CodingKeys: String, CodingKey { case message, recent, topics, work, latestTopic, memory, sourceMessageID, omitted }
 }
 public struct WorkerInput: Codable, Sendable {
     public var policy: String; public var topic: Topic; public var work: Work; public var current: Message
