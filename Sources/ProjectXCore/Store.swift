@@ -208,7 +208,7 @@ public actor Store {
     }
     public func insertWork(_ work: Work) throws {
         try db.write { db in
-            // One active task per (topic, worker kind): a long coding run never blocks thinking work in the same topic.
+            // One active task per (topic, executor id; NULL = thinking): a long coding run never blocks thinking work in the same topic.
             guard try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM work WHERE topicID=? AND executor IS ? AND (state IN ('queued','working','amendment_pending','cancellation_requested','uncertain'))", arguments: [work.topicID,work.executor]) == 0 else { throw ProjectError.blocked("This topic already has active or uncertain work. Steer it or reconcile before retrying.") }
             try work.insert(db)
         }
@@ -253,17 +253,20 @@ public actor Store {
             w.suppressed = true; w.state = "failed"; try w.update(db)
         }
     }
-    public func bindRuntime(_ name: String) throws {
-        if name == "Offline · no model calls" { return }
+    /// Binds the data directory to its run mode on the first send, so live harnesses can be switched over the same data
+    /// (#318). Bodies written before #318 hold the harness's display name; they read as their mode. Offline never binds.
+    public func bindRuntime(_ mode: RuntimeMode) throws {
+        guard mode != .offline else { return }
+        let legacy = ["Configured OpenClaw · live acceptance unverified": RuntimeMode.live.rawValue, "Synthetic fixture · NOT a live model": RuntimeMode.fixture.rawValue]
         try db.write { db in
-            if let old = try String.fetchOne(db,sql: "SELECT body FROM receipts WHERE id='runtime-binding'"), old != name { throw ProjectError.blocked("This workspace belongs to a different harness mode. Use a separate data directory; fixture sessions are not live sessions.") }
-            try db.execute(sql: "INSERT OR IGNORE INTO receipts VALUES ('runtime-binding','runtime',?,?)",arguments: [name,Date().timeIntervalSince1970])
+            if let old = try String.fetchOne(db,sql: "SELECT body FROM receipts WHERE id='runtime-binding'"), (legacy[old] ?? old) != mode.rawValue { throw ProjectError.blocked("This workspace belongs to a different harness mode. Use a separate data directory; fixture sessions are not live sessions.") }
+            try db.execute(sql: "INSERT OR IGNORE INTO receipts VALUES ('runtime-binding','runtime',?,?)",arguments: [mode.rawValue,Date().timeIntervalSince1970])
         }
     }
     public func updateWork(_ value: Work) throws { try db.write { try value.update($0) } }
     public func work(_ id: String) throws -> Work { try db.read { db in guard let w = try Work.fetchOne(db, key: id) else { throw ProjectError.invalid("Unknown work.") }; return w } }
     public func event(_ event: WorkerEvent) throws { try db.write { try event.insert($0, onConflict: .ignore) } }
-    public func gatewayReceipt(_ value: GatewayRequestReceipt) throws { try receipt(kind: "gateway-request",body: encoded(value)) }
+    public func requestReceipt(_ value: RequestReceipt) throws { try receipt(kind: "request",body: encoded(value)) }
     public func receipt(kind: String, body: String) throws { try db.write { try $0.execute(sql: "INSERT INTO receipts VALUES (?,?,?,?)", arguments: [identifier(),kind,body,Date().timeIntervalSince1970]) } }
     public func amend(task: String, message: String, instruction: String) throws -> Amendment {
         try db.write { db in

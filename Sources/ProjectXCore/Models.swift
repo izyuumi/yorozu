@@ -20,7 +20,7 @@ public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, S
     public var state: String; public var revision: Int; public var runID: String?; public var controllerKey: String?
     public var sessionReady: Bool; public var suppressed: Bool; public var result: String?; public var error: String?
     public var outputRevision: Int?; public var created: Double
-    /// nil = thinking worker; "claude" (Claude Code) or "codex" = coding worker in its own managed worktree.
+    /// nil = thinking worker; otherwise the id of a coding executor the harness advertises (`Harness.executors`).
     public var executor: String? = nil
     public var active: Bool { ["queued", "working", "amendment_pending", "cancellation_requested"].contains(state) }
 }
@@ -79,6 +79,28 @@ public struct Notice: Codable, Sendable, Equatable {
         case memoryForgotten = "memory_forgotten", amendmentUnconfirmed = "amendment_unconfirmed"
         case closedTooLong = "closed_too_long", taskControlFailed = "task_control_failed" // unrouted > 24 h at launch; Stop/Retry control error (params error)
         case configInvalid = "config_invalid", settingsChanged = "settings_changed" // config.toml (#312): params file/line/key/reason; keys
+        // Typed harness failures (#318, `HarnessError`); params error.
+        case harnessBusy = "harness_busy", runInterrupted = "run_interrupted", approvalRequested = "approval_requested", modelMismatch = "model_mismatch", harnessNotReady = "harness_not_ready"
+    }
+}
+/// A harness failure with its own notice code. Context overflow stays `ProjectError.overflow` (`task_overflow`) and a
+/// failed compaction a `compaction_failed` notice. Each reports how the run ended, so the work fails rather than going uncertain.
+public enum HarnessError: Error, LocalizedError, Sendable {
+    /// The harness refused the run for load (e.g. HTTP 429); nothing ran.
+    case busy(String)
+    /// The run ended without an answer, e.g. a harness restart.
+    case interrupted(String)
+    /// The harness asked for a per-step approval Yorozu does not give; the step was denied.
+    case approvalRequested(String)
+    /// The harness served another model than the one set; its output was not used.
+    case modelMismatch(String)
+    /// The harness or the executor cannot run this yet (not installed, not set up, not offered).
+    case notReady(String)
+    public var errorDescription: String? {
+        switch self { case .busy(let s), .interrupted(let s), .approvalRequested(let s), .modelMismatch(let s), .notReady(let s): return s }
+    }
+    public var code: Notice.Code {
+        switch self { case .busy: .harnessBusy; case .interrupted: .runInterrupted; case .approvalRequested: .approvalRequested; case .modelMismatch: .modelMismatch; case .notReady: .harnessNotReady }
     }
 }
 /// An error that is posted as a coded notice (kind `failure`, or `question` when the secretary must ask the user).
@@ -114,7 +136,8 @@ public struct WorkerInput: Codable, Sendable {
     public struct Note: Codable, Sendable { public var path: String; public var title: String; public var attribution: String; public var epistemicStatus: String; public var body: String }
     public var policy: String; public var topic: Topic; public var work: Work; public var current: Message
     public var history: [Turn]; public var memory: [Note]; public var followUp: String? = nil
-    /// What a thinking session is sent: slim views, never database records. The history bound measures this.
+    /// What a thinking session is sent: slim views, never database records or harness session/controller keys (the topic
+    /// is only `{id, label}`). The history bound measures this.
     public var wire: String { get throws {
         struct Wire: Encodable { var policy: String; var topic: [String:String]; var revision: Int; var instruction: String; var current: [String:String]; var history: [Turn]; var memory: [Note] }
         return try encoded(Wire(policy: policy,topic: ["id": topic.id,"label": topic.label],revision: work.revision,instruction: work.instruction,current: ["id": current.id,"body": current.body],history: history,memory: memory))

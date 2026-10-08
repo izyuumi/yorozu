@@ -93,7 +93,7 @@ import ProjectXCore
                     guard h.agent == "projectx" else { throw ProjectError.blocked("\(resolved.environment["harness.agent"] ?? "[harness] agent in config.toml") is \"\(h.agent)\"; this build runs only on the dedicated projectx agent, never personal agents. Set it to \"projectx\".") }
                     nativeSelected = h.transport == .native
                     let native = nativeSelected ? await connectNative(h.gatewayURL) : nil
-                    harness = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: h.agent,rpc: GatewayRPC(native: native,audit: { try await store.gatewayReceipt($0) },target: h.gatewayURL),settings: { box.value })
+                    harness = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: h.agent,rpc: GatewayRPC(native: native,audit: { try await store.requestReceipt($0) },target: h.gatewayURL),settings: { box.value })
                 default: harness = OfflineHarness()
                 }
                 // Queued work resumes with the automatic models, unless the first metadata read takes more than 10 s.
