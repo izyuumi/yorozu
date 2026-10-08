@@ -187,7 +187,7 @@ public struct OpenClawHarness: Harness {
     }
     private func model(_ prompt: String, model: String, sourceMessageID: String? = nil) async throws -> String {
         guard agent == "projectx" else { throw ProjectError.blocked("Live R1 requires the dedicated projectx agent; personal agents are not an app backend.") }
-        guard prompt.utf8.count <= 20000 else { throw ProjectError.invalid("Model input exceeds bounded context.") }
+        guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Model input exceeds bounded context.") }
         // Public CLI `agent` connects with operator.write; per-turn model overrides require admin.
         // Select the role model through supported session creation, then run without an override.
         let selection = SHA256.hash(data: Data((workspace.path + "|" + model).utf8)).map { String(format: "%02x",$0) }.joined()

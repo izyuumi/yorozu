@@ -35,9 +35,10 @@ public struct Snapshot: Sendable {
     public init() {}
 }
 public enum ProjectError: Error, LocalizedError, Sendable {
-    case invalid(String), blocked(String), conflict(String), uncertain(String), offline
+    /// `overflow`: the model's context window was exceeded; retrying unchanged would fail the same way.
+    case invalid(String), blocked(String), conflict(String), uncertain(String), overflow(String), offline
     public var errorDescription: String? {
-        switch self { case .invalid(let s), .blocked(let s), .conflict(let s), .uncertain(let s): return s
+        switch self { case .invalid(let s), .blocked(let s), .conflict(let s), .uncertain(let s), .overflow(let s): return s
         case .offline: return "Offline mode: message saved; no model was called. Live Gateway integration has not been verified." }
     }
 }
@@ -68,6 +69,9 @@ public struct RunHandle: Codable, Sendable {
     public init(sessionKey: String, controllerKey: String, runID: String) { self.sessionKey = sessionKey; self.controllerKey = controllerKey; self.runID = runID }
 }
 public enum RunStatus: Sendable { case running, stopped, completed(WorkerOutput), unknown }
-public enum StreamUpdate: Sendable { case handle(RunHandle), event(WorkerEvent) }
+/// `notice`: a short failure note for the main timeline (e.g. a failed compaction), outside the task's result.
+public enum StreamUpdate: Sendable { case handle(RunHandle), event(WorkerEvent), notice(String) }
+/// The one cap on a raw model run's final prompt, in UTF-8 bytes. Every raw-run budget measures against it.
+public let rawPromptCap = 20_000
 public func identifier() -> String { UUID().uuidString.lowercased() }
 public func encoded<T: Encodable>(_ value: T) throws -> String { String(decoding: try JSONEncoder().encode(value), as: UTF8.self) }

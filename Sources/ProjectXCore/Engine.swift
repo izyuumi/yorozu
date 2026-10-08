@@ -317,6 +317,9 @@ public actor Engine {
                 guard event.taskID == id, !sensitive(event.body) else { return }
                 var kept = event; if kept.body.utf8.count > 16000 { kept.body = "…" + String(kept.body.suffix(8000)) } // Keep the tail of long output.
                 try await store.event(kept)
+            case .notice(let body):
+                let w = try await store.work(id)
+                _ = try await store.message(role: "assistant",body: body,topic: w.topicID,task: id,kind: "failure")
             }
         } catch { throw error }
     }
