@@ -57,6 +57,7 @@ public struct Notice: Codable, Sendable, Equatable {
         case changeQueued = "change_queued", changeSent = "change_sent", changeHeld = "change_held", changeAfterFinish = "change_after_finish"
         case notRunning = "not_running", stopped, stopping, moved, movedStopping = "moved_stopping", correctionSaved = "correction_saved", earlierRetired = "earlier_retired"
         case memoryForgotten = "memory_forgotten", amendmentUnconfirmed = "amendment_unconfirmed"
+        case configInvalid = "config_invalid", settingsChanged = "settings_changed" // config.toml (#312): params file/line/key/reason; keys
     }
 }
 /// An error that is posted as a coded notice (kind `failure`, or `question` when the secretary must ask the user).

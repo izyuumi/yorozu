@@ -157,6 +157,11 @@ public struct Config: Sendable, Equatable {
         if let (key,reason) = config.problem() { throw fail(key,reason) }
         return config
     }
+    /// Dotted keys of security-relevant settings that differ from `old`, for the "Settings changed" notice.
+    public func securityChanges(from old: Config) -> [String] {
+        Self.fields.filter { $0.note.hasSuffix(Self.security) && $0.get(self) != $0.get(old) }.map(\.key)
+            + (models.coding != old.models.coding ? ["models.coding"] : []) + (mcpServers != old.mcpServers ? ["mcp_servers"] : [])
+    }
     /// The first invalid value as (dotted key, reason).
     func problem() -> (String, String)? {
         let h = harness
