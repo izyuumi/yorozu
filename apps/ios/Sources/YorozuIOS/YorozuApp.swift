@@ -39,7 +39,7 @@ struct RootView: View {
             presenting: model.pendingPairing
         ) { pending in
             Button(pending.repair ? String(localized: "Repair connection") : String(localized: "Add host")) {
-                model.confirm(pending)
+                Task { await model.confirm(pending) }
                 repairing = false
             }
             Button("Cancel", role: .cancel) { model.pendingPairing = nil }
@@ -53,7 +53,7 @@ struct RootView: View {
         // that ran down while nothing was executing.
         .onChange(of: scenePhase, initial: true) { _, phase in
             switch phase {
-            case .background: model.suspend()
+            case .background: model.enterBackground()
             case .active: model.resume()
             default: break
             }
