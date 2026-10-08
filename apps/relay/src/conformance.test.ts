@@ -68,8 +68,11 @@ export function conformance(relay: Adapter) {
     return phone;
   }
 
-  async function frame(peer: Peer, payload: string, keys: Keys): Promise<void> {
-    peer.send({ type: "frame", payload, sig: await keys.sign(payload) });
+  /** Sends one signed frame and returns its signature, which a phone's `accepted` echoes. */
+  async function frame(peer: Peer, payload: string, keys: Keys): Promise<string> {
+    const sig = await keys.sign(payload);
+    peer.send({ type: "frame", payload, sig });
+    return sig;
   }
 
   /** A mac, a joined phone, and the room they share. */
@@ -87,6 +90,7 @@ export function conformance(relay: Adapter) {
 
     await frame(phone, "Y2lwaGVydGV4dC1mcm9tLXBob25l", keys);
     expect(await mac.next()).toMatchObject({ type: "frame", payload: "Y2lwaGVydGV4dC1mcm9tLXBob25l" });
+    expect(await phone.next()).toMatchObject({ type: "accepted" });
 
     await frame(mac, "Y2lwaGVydGV4dC1mcm9tLW1hYw", macKeys);
     expect(await phone.next()).toMatchObject({ type: "frame", payload: "Y2lwaGVydGV4dC1mcm9tLW1hYw" });
@@ -99,7 +103,10 @@ export function conformance(relay: Adapter) {
     expect(await phone.next()).toMatchObject({ type: "owner", online: false });
 
     const payloads = ["b25l", "dHdv", "dGhyZWU"];
-    for (const payload of payloads) await frame(phone, payload, keys);
+    for (const payload of payloads) {
+      await frame(phone, payload, keys);
+      expect(await phone.next()).toMatchObject({ type: "accepted", buffered: true });
+    }
 
     const reconnected = await connectMac(macKeys);
     let last = -1;
@@ -127,6 +134,23 @@ export function conformance(relay: Adapter) {
     let msg = await phone.next();
     while (msg.type === "owner") msg = await phone.next();
     expect(msg).toMatchObject({ type: "frame", payload: "bGF0ZXI" });
+  });
+
+  test("the phone hears each frame accepted, after it is forwarded or buffered", async () => {
+    const { macKeys, mac, phone, keys } = await paired();
+
+    // Forwarded to the online Mac: the reply names the frame by its signature.
+    const live = await frame(phone, "bGl2ZQ", keys);
+    expect(await mac.next()).toMatchObject({ type: "frame", payload: "bGl2ZQ" });
+    expect(await phone.next()).toEqual({ type: "accepted", sig: live, buffered: false });
+
+    // Mac away: the frame is buffered first, so a Mac registering after the reply replays it.
+    mac.close();
+    expect(await phone.next()).toMatchObject({ type: "owner", online: false });
+    const held = await frame(phone, "aGVsZA", keys);
+    expect(await phone.next()).toEqual({ type: "accepted", sig: held, buffered: true });
+    const back = await connectMac(macKeys);
+    expect(await back.next()).toMatchObject({ type: "frame", payload: "aGVsZA", seq: 0 });
   });
 
   test("frames are replayed in order and each is retained until acked", async () => {
@@ -286,6 +310,7 @@ export function conformance(relay: Adapter) {
     // Joining also costs a token, and real time may refill some of the burst. A marker from
     // the other phone bounds the forwarded messages without assuming an exact bucket balance.
     await frame(other.phone, "bWFya2Vy", other.keys);
+    expect(await other.phone.next()).toMatchObject({ type: "accepted", buffered: false });
     let forwarded = 0;
     for (let msg = await mac.next(); msg.payload !== "bWFya2Vy"; msg = await mac.next()) {
       expect(msg).toMatchObject({ type: "frame", payload });

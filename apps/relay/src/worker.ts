@@ -823,6 +823,9 @@ export class Room implements DurableObject {
           const mac = this.mac();
           if (mac) send(mac, raw);
           else await this.buffer(raw, now);
+          // Sent after the buffer write: the object holds outgoing messages until earlier
+          // writes are durable, so `buffered: true` means stored. A phone sends one frame.
+          ws.send(JSON.stringify({ type: "accepted", sig: frames[0]!.sig, buffered: !mac }));
         } else {
           // Not buffered: a phone that is away catches up by asking the Mac on its next join,
           // which holds the whole history. The relay is only ever the fast path down. A batch
