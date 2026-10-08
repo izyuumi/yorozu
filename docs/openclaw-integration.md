@@ -57,7 +57,7 @@ All sessions belong to agent `projectx`; the harness refuses any other agent and
 
 ## Reading final replies
 
-Yorozu sets no size limit on worker answers (owner decision, 2026-10-09). A thinking step's answer comes whole from the `agent` result. Where an answer is read from the transcript (thinking reconcile, coding result, coding reconcile), `chat.history` gives a preview and `OpenClawHarness.whole` fetches the message again with `chat.message.get` when the preview is marked truncated. Past that method's own limits the Gateway's marker shows as is.
+Yorozu sets no size limit on worker answers (owner decision, 2026-10-09). A thinking step's answer comes whole from the `agent` result. Where an answer is read from the transcript (thinking reconcile, coding result, coding reconcile), `chat.history` gives a preview and `OpenClawHarness.whole` fetches the message again with `chat.message.get` when the preview is marked truncated. Past that method's own limits the Gateway's marker shows as is. Any other failure of that fetch never passes the preview off as the answer: reconcile reports the run as unknown, and a coding result fails as uncertain so a later reconcile delivers it.
 
 The reads do not use `chat.history` at its 500,000 maximum: a message over 128 KiB is dropped from `chat.history` whatever `maxChars` is, and with large texts the 512 KiB response budget keeps fewer of the newest messages, so a reconcile could miss the run's own turn. Small previews keep the response small and `chat.message.get` returns the one message needed.
 

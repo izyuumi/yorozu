@@ -225,7 +225,7 @@ public actor MemoryStore {
         for run in runs {
             let c = Array(run.text)
             if !run.cjk { if c.count >= 3 { phrases.append(run.text.lowercased()) } }
-            else if c.count < 3 { if c.count == 2 || !hiragana(run.text) { short.append(run.text) } }
+            else if c.count < 3 { if !hiragana(run.text) { short.append(run.text) } } // hiragana-only 1–2 characters are grammar (の, から)
             else { phrases += (0...c.count - 3).map { String(c[$0..<$0 + 3]) }.filter { hiragana(run.text) || !hiragana($0) }
                 short += run.text.split(whereSeparator: { hiragana(String($0)) }).filter { $0.count == 2 }.map(String.init) }
         }

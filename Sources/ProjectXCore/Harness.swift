@@ -243,8 +243,8 @@ public struct OpenClawHarness: Harness {
         // A follow-up turn sends only its new amendments: the session holds the contract and the earlier turn.
         var wire = try input.followUp.map { "Follow-up turn of the same task, now revision \(input.work.revision). The user changed the request:\n" + $0.trimmingCharacters(in: .newlines) + "\nAnswer the whole task again with these changes; final text/appliedRevision JSON." } ?? (input.wire + "\n" + contract)
         for step in 0...6 {
-            // Checked before the run ID is stamped: an oversized wire never dispatches, so the work fails instead of turning uncertain.
-            guard wire.utf8.count <= 32000 else { throw ProjectError.invalid("Worker/tool context exceeds bound.") }
+            // Checked before the run ID is stamped: an oversized wire never dispatches; an overflow fails the work (also on later memory steps).
+            guard wire.utf8.count <= 32000 else { throw ProjectError.overflow("This step's input is too large to send (\(wire.utf8.count) bytes, limit 32000).") }
             let runID = "projectx-run-" + identifier()
             try await update(.handle(RunHandle(sessionKey: key,controllerKey: controller,runID: runID)))
             let listener = await rpc.native?.observe { raw in
@@ -303,7 +303,8 @@ public struct OpenClawHarness: Harness {
         // Previews only; the reply itself is read whole (`whole`).
         let messages = try await rpc.call("chat.history",["sessionKey":topic.sessionKey,"limit":10,"maxChars":2000])["messages"] as? [[String:Any]] ?? []
         if let reply = messages.last(where: { $0["role"] as? String == "assistant" && ($0["__openclaw"] as? [String:Any])?["runId"] as? String == run }) {
-            let text = (await whole(reply,key: topic.sessionKey)["content"] as? [[String:Any]])?.last(where: { $0["type"] as? String == "text" })?["text"] as? String
+            guard let full = try? await whole(reply,key: topic.sessionKey) else { return .unknown }
+            let text = (full["content"] as? [[String:Any]])?.last(where: { $0["type"] as? String == "text" })?["text"] as? String
             if let text, let final = try? JSONDecoder().decode(WorkerOutput.self,from: Data(text.utf8)), !final.text.isEmpty, final.appliedRevision >= 0 { return .completed(final) }
             // Tool-using runs commit tool-call messages mid-run. Only a non-tool stop, a known end or 15 min of silence settles it.
             guard ["toolUse","tool_use"].contains(reply["stopReason"] as? String ?? ""), !ended else { return .stopped }
@@ -564,7 +565,7 @@ extension OpenClawHarness {
             try? await update(.event(WorkerEvent(id: input.work.id + ":" + runID + ":compaction",taskID: input.work.id,kind: "compaction",body: "\(Self.toolName(executor)) compacted its session" + sizes,created: Date().timeIntervalSince1970)))
         }
         let full = (try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":2000])) ?? [:]
-        var text = await finalText(full,key: key,skip: earlier) ?? "\(Self.toolName(executor)) finished without a summary."
+        var text = try await finalText(full,key: key,skip: earlier) ?? "\(Self.toolName(executor)) finished without a summary."
         // Only what the worker left uncommitted (the default scope compares to origin/main); a committed change reads as 0 files.
         if let diff = try? await rpc.call("sessions.diff",["sessionKey":key,"agentId":agent,"scope":"uncommitted"]) {
             let files = (diff["files"] as? [[String:Any]] ?? []).compactMap { $0["path"] as? String }
@@ -589,7 +590,7 @@ extension OpenClawHarness {
         if (r["endedAt"] as? Double ?? 0) > 0, r["status"] as? String != "ok" { return .stopped }
         // Only a final turn (not a crashed run's mid-step narration) counts as this run's answer.
         guard let last = after.last(where: { $0["role"] as? String == "assistant" }), !["toolUse","tool_use"].contains(last["stopReason"] as? String ?? ""),
-              let text = await finalText(["messages":after],key: key,skip: []) else { return .stopped }
+              let text = try await finalText(["messages":after],key: key,skip: []) else { return .stopped }
         return .completed(WorkerOutput(text: text,appliedRevision: revision))
     }
     static func messageIDs(_ history: [String:Any]) -> [String] { (history["messages"] as? [[String:Any]] ?? []).compactMap(messageID) }
@@ -597,18 +598,22 @@ extension OpenClawHarness {
         (m["__openclaw"] as? [String:Any])?["id"] as? String ?? m["idempotencyKey"] as? String ?? (m["timestamp"] as? Double).map { "t\(Int($0))" }
     }
     /// The newest assistant reply with text, read whole: no Yorozu cut; past the Gateway's own caps its marker shows as is.
-    func finalText(_ history: [String:Any],key: String,skip: Set<String>) async -> String? {
+    func finalText(_ history: [String:Any],key: String,skip: Set<String>) async throws -> String? {
         let replyText = { (m: [String:Any]) in (m["content"] as? [[String:Any]] ?? []).filter { ($0["type"] as? String)?.lowercased() == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n") }
         guard let reply = (history["messages"] as? [[String:Any]] ?? []).last(where: { $0["role"] as? String == "assistant" && !skip.contains(Self.messageID($0) ?? "") && !replyText($0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return nil }
-        return replyText(await whole(reply,key: key))
+        return replyText(try await whole(reply,key: key))
     }
     /// chat.history marks a preview `__openclaw.truncated` (text past maxChars ends "…(truncated)…"; a message over 128 KiB
     /// becomes a placeholder); chat.message.get returns it whole, up to 1,000,000 chars per text field. Else the preview.
-    func whole(_ m: [String:Any],key: String) async -> [String:Any] {
+    /// A failed fetch throws (status unknown, reconcile later) rather than passing a preview off as the answer; only the
+    /// Gateway's own "oversized" refusal keeps the preview with its marker.
+    func whole(_ m: [String:Any],key: String) async throws -> [String:Any] {
         let meta = m["__openclaw"] as? [String:Any] ?? [:]
-        guard meta["truncated"] as? Bool == true, let id = meta["id"] as? String,
-              let r = try? await rpc.call("chat.message.get",["sessionKey":key,"agentId":agent,"messageId":id,"maxChars":1_000_000]), let message = r["message"] as? [String:Any] else { return m }
-        return message
+        guard meta["truncated"] as? Bool == true, let id = meta["id"] as? String else { return m }
+        let r = try await rpc.call("chat.message.get",["sessionKey":key,"agentId":agent,"messageId":id,"maxChars":1_000_000])
+        if let message = r["message"] as? [String:Any] { return message }
+        if r["unavailableReason"] as? String == "oversized" { return m }
+        throw ProjectError.uncertain("The full reply could not be read yet; its run finished. Reconcile before retry.")
     }
     /// Public progress only: assistant text, shell commands, tool names with paths, and output tails. Never reasoning.
     static func codingEvents(_ history: [String:Any],task: String,skip: Set<String>) -> [WorkerEvent] {

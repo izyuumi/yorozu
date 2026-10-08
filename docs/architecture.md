@@ -105,7 +105,7 @@ The coding prompt (`contract()` in `Harness.swift`) tells the worker: work in it
 
 A thinking session is sent `WorkerInput.wire`, slim views and never database records: `{policy, topic: {id, label}, revision, instruction, current: {id, body}, history: [{role, body}], memory: [{path, title, attribution, epistemicStatus, body}]}`, followed by the contract.
 
-- History: the topic's `conversation` messages after the request of the latest earlier task in the same topic with the same executor that has a result. Earlier ones are already in the session. Failed or uncertain tasks prove nothing about what the session saw, so their messages are sent again. Messages are added newest first while the whole wire stays within 13000 bytes.
+- History: the topic's `conversation` messages after the request of the latest earlier task in the same topic with the same executor that has a result. Earlier ones are already in the session. Failed or uncertain tasks prove nothing about what the session saw, so their messages are sent again. Messages are added newest first while the whole wire stays within 13000 bytes; older unseen ones that do not fit are replaced by a "[… N earlier message(s) cut]" turn, since the next cutoff passes them.
 - Memory: search hits on the request and the instruction, up to 3000 bytes.
 - The whole step message is checked against 32000 bytes before the run ID is stamped, so an oversized one fails the work rather than leaving it uncertain.
 - A follow-up turn of the same task sends only the new amendments, under "Follow-up turn of the same task, now revision N. The user changed the request:", and asks for the whole answer again.
