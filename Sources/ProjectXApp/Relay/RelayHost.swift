@@ -8,7 +8,7 @@ struct RelayStatus: Sendable {
     var state = "Connecting to the relay…"
     /// The pairing link (QR and copy), while the sheet has asked for one and the relay has minted it.
     var link: String?
-    var devices: [RelayDevice] = []
+    var devices: [RelayDeviceStatus] = []
 }
 
 /// The Mac half of the v1 relay (packages/runtime/src/serve.ts `connect()`), without legacy boxes, the
@@ -34,6 +34,9 @@ actor RelayHost {
     private let room: String
     private let file: URL
     private var peers: [String: Peer] = [:]
+    /// Phones whose sealed frame opened since this socket registered. The relay reports no presence,
+    /// so a phone stays online until this socket drops.
+    private var online: Set<String> = []
     private var main = ThreadSummary.main(0)
     private var state = RelayStatus().state
     private var link: String?
@@ -97,8 +100,18 @@ actor RelayHost {
     func removeDevice(_ pub: String) {
         guard let peer = peers.removeValue(forKey: pub) else { return }
         do { try persist() } catch { peers[pub] = peer; state = error.localizedDescription; return publish() }
+        online.remove(pub)
         announce()
         if registered { send(["type": "revoke", "pubkey": peer.record.signingPub]) }
+        publish()
+    }
+
+    /// Names a phone on this Mac; blank goes back to the name the phone sends.
+    func rename(_ pub: String, label: String?) {
+        guard let before = peers[pub] else { return }
+        let label = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        peers[pub]?.record.label = label?.isEmpty == false ? label : nil
+        do { try persist() } catch { peers[pub] = before; state = error.localizedDescription }
         publish()
     }
 
@@ -118,7 +131,7 @@ actor RelayHost {
                 while true { if case .string(let text) = try await ws.receive() { receive(text) } }
             } catch {}
             heartbeat.cancel(); ws.cancel()
-            socket = nil; registered = false
+            socket = nil; registered = false; online = []
             state = "Relay offline, retrying…"; publish()
             // Doubling until a registration lands, so a relay that keeps refusing is not hammered.
             try? await Task.sleep(for: .seconds(retry))
@@ -189,9 +202,12 @@ actor RelayHost {
             guard let plain = try? YorozuCrypto.open(key: peer.keys.recv, nonce: nonce, ciphertext: ciphertext) else { continue }
             // Malformed or replayed: dropped.
             guard let envelope = try? ChannelEnvelope.decode(plain), peer.record.counter.accept(envelope.seq) else { return }
+            // Rides on the counter's write, which every accepted frame makes anyway.
+            peer.record.lastSeen = Date()
             // Written before it is acted on, and acted on only if written.
             let before = peers[pub]; peers[pub] = peer
             do { try persist() } catch { peers[pub] = before; throw error }
+            if online.insert(pub).inserted { publish() }
             return received(envelope.event, from: pub)
         }
     }
@@ -253,6 +269,11 @@ actor RelayHost {
     private func claim(_ info: PeerInfoData?, id: String, from pub: String) {
         let result = PeerInfoData.local.compatibility(with: info)
         peers[pub]?.compatibility = result == .legacy ? .updateRequired("Invalid peer information.") : result
+        // The phone's model name; a phone that sends none keeps the one it had.
+        if case .compatible = result, let name = info?.computerName, let before = peers[pub], before.record.name != name {
+            peers[pub]?.record.name = name
+            do { try persist(); publish() } catch { peers[pub] = before }
+        }
         deliver([(pub, .control(.threadList(ThreadListData(threads: [main], peerInfoReplyTo: String(id.prefix(128))))))])
     }
 
@@ -308,7 +329,10 @@ actor RelayHost {
     private func persist() throws { try RelayDeviceFile.save(peers.values.map(\.record), to: file) }
 
     private func publish() {
-        statusOut.yield(RelayStatus(state: state, link: link, devices: peers.values.map(\.record).sorted { $0.pairedAt < $1.pairedAt }))
+        let devices = peers.values.map(\.record).sorted { $0.pairedAt < $1.pairedAt }.map {
+            RelayDeviceStatus(pub: $0.pub, name: $0.name, label: $0.label, pairedAt: $0.pairedAt, online: online.contains($0.pub), lastSeen: $0.lastSeen)
+        }
+        statusOut.yield(RelayStatus(state: state, link: link, devices: devices))
     }
 
     private func send(_ frames: [Frame]) { send(try? JSONEncoder().encode(Batch(frames: frames))) }
