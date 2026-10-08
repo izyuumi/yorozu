@@ -151,7 +151,7 @@ public struct GatewayRPC: Sendable {
                 return String(decoding: data,as: UTF8.self)
             }.value
         }
-        guard let obj = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String:Any], obj["ok"] as? Bool != false else { throw ProjectError.uncertain("Gateway refused or returned an invalid envelope; no automatic replay.") }
+        guard let obj = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String:Any], obj["ok"] as? Bool != false || method == "sessions.compact" else { throw ProjectError.uncertain("Gateway refused or returned an invalid envelope; no automatic replay.") }
         return obj
     }
 }
@@ -444,13 +444,14 @@ extension OpenClawHarness {
     /// sub-chat; a failure goes to the main timeline and the task continues. True when the session was compacted.
     func compactTopic(_ input: WorkerInput,force: Bool,update: @escaping @Sendable (StreamUpdate) async throws -> Void) async throws -> Bool {
         let key = input.topic.sessionKey; let before: Int?; let after: Int?
+        // An unreadable count is no reason to compact (or to post a notice) unless an overflow forces it.
+        let mark = try? await sessionMark(key)
+        guard force || mark.map({ ($0.tokens ?? 0) * 2 >= $0.window }) == true else { return false }
         do {
-            let mark = try await sessionMark(key)
-            guard force || (mark.tokens ?? 0) * 2 >= mark.window else { return false }
-            // perform() refuses a payload with ok:false, which also covers "nothing to compact".
+            // ok:false ("Nothing to compact", runner failures) comes back with its reason; see GatewayRPC.perform.
             let r = try await rpc.call("sessions.compact",["key":key,"agentId":agent])
             guard r["compacted"] as? Bool == true else { throw ProjectError.uncertain(r["reason"] as? String ?? "not compacted") }
-            before = ((r["result"] as? [String:Any])?["tokensBefore"] as? Int) ?? mark.tokens; after = (r["result"] as? [String:Any])?["tokensAfter"] as? Int
+            before = ((r["result"] as? [String:Any])?["tokensBefore"] as? Int) ?? mark?.tokens; after = (r["result"] as? [String:Any])?["tokensAfter"] as? Int
         } catch {
             try await update(.notice("Couldn't compact the session of topic “\(input.topic.label)”: \(utf8Prefix(error.localizedDescription,bytes: 300))"))
             return false
@@ -531,7 +532,7 @@ extension OpenClawHarness {
             for event in Self.codingEvents(fetched ?? [:],task: input.work.id,skip: earlier) { try? await update(.event(event)) }
             if (r["endedAt"] as? Double ?? 0) > 0 {
                 // agent.wait carries only the error text, no kind: match the Gateway's overflow wording (packages/ai/src/utils/overflow.ts).
-                if r["status"] as? String != "ok", let error = r["error"] as? String, error.range(of: "context.*overflow|context window|context.?length|prompt.*too (large|long)|maximum context|compaction fail",options: [.regularExpression,.caseInsensitive]) != nil {
+                if r["status"] as? String != "ok", let error = r["error"] as? String, error.range(of: "context.*overflow|context window.*(too (large|long)|exceed|over|limit|max)|context.?length|prompt.*too (large|long)|maximum context|compaction fail|request_too_large|too many tokens|token limit exceeded",options: [.regularExpression,.caseInsensitive]) != nil, error.range(of: "too small",options: .caseInsensitive) == nil {
                     throw ProjectError.overflow("\(Self.toolName(executor))'s session ran out of context. Changes so far stay uncommitted in its worktree; start a new topic for this work.")
                 }
                 guard r["status"] as? String == "ok" else { throw ProjectError.invalid("\(Self.toolName(executor)) run ended: \(r["status"] as? String ?? "unknown"). Changes so far stay uncommitted in its worktree.") }
