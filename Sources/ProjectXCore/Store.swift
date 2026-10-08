@@ -30,6 +30,16 @@ public actor Store {
         migration.registerMigration("r2-executor") { db in try db.execute(sql: "ALTER TABLE work ADD COLUMN executor TEXT") }
         // A separate table: older builds insert two values into memoryJobs and must keep working on this database.
         migration.registerMigration("memory-job-reasons") { db in try db.execute(sql: "CREATE TABLE memoryJobReasons(messageID TEXT PRIMARY KEY, reason TEXT NOT NULL)") }
+        // Nullable: older builds insert messages through GRDB records, which name their columns.
+        migration.registerMigration("message-notice") { db in try db.execute(sql: "ALTER TABLE messages ADD COLUMN notice TEXT") }
+        // External-content trigram index over bodies; triggers keep it in sync with every build's inserts.
+        migration.registerMigration("message-search") { db in try db.execute(sql: """
+            CREATE VIRTUAL TABLE messageSearch USING fts5(body, content='messages', content_rowid='rowid', tokenize='trigram');
+            CREATE TRIGGER messageSearch_ai AFTER INSERT ON messages BEGIN INSERT INTO messageSearch(rowid,body) VALUES (new.rowid,new.body); END;
+            CREATE TRIGGER messageSearch_ad AFTER DELETE ON messages BEGIN INSERT INTO messageSearch(messageSearch,rowid,body) VALUES ('delete',old.rowid,old.body); END;
+            CREATE TRIGGER messageSearch_au AFTER UPDATE OF body ON messages BEGIN INSERT INTO messageSearch(messageSearch,rowid,body) VALUES ('delete',old.rowid,old.body); INSERT INTO messageSearch(rowid,body) VALUES (new.rowid,new.body); END;
+            INSERT INTO messageSearch(messageSearch) VALUES ('rebuild');
+            """) }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -59,9 +69,32 @@ public actor Store {
         let id = identifier(); let t = Topic(id: id, label: label, sessionKey: "agent:\(agent):projectx:\(id)", created: Date().timeIntervalSince1970)
         try db.write { try t.insert($0) }; return t
     }
-    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation", id: String = identifier()) throws -> Message {
-        let m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970)
+    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation", id: String = identifier(), notice: Notice? = nil) throws -> Message {
+        let m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970, notice: notice)
         try db.write { try m.insert($0) }; return m
+    }
+    /// Newest first. Terms of 3+ characters match the trigram index (AND, each a quoted phrase); a shorter term
+    /// cannot match trigrams, so such a query scans bodies with LIKE. Snippets are plain text with "…" at cuts.
+    public func search(_ query: String, limit: Int) throws -> (hits: [(messageID: String, snippet: String)], total: Int) {
+        let terms = query.split(whereSeparator: \.isWhitespace).map(String.init).prefix(16)
+        guard !terms.isEmpty else { return ([],0) }
+        let limit = max(1,min(limit,500))
+        return try db.read { db in
+            if terms.allSatisfy({ $0.count >= 3 }) {
+                let match = terms.map { "\"" + $0.replacingOccurrences(of: "\"",with: "\"\"") + "\"" }.joined(separator: " ")
+                let rows = try Row.fetchAll(db,sql: "SELECT m.id,snippet(messageSearch,0,'','','…',48) AS s FROM messageSearch JOIN messages m ON m.rowid=messageSearch.rowid WHERE messageSearch MATCH ? ORDER BY m.created DESC,m.rowid DESC LIMIT ?",arguments: [match,limit])
+                return (rows.map { ($0["id"],$0["s"]) },try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messageSearch WHERE messageSearch MATCH ?",arguments: [match]) ?? 0)
+            }
+            let like = terms.map { "%" + $0.replacingOccurrences(of: "\\",with: "\\\\").replacingOccurrences(of: "%",with: "\\%").replacingOccurrences(of: "_",with: "\\_") + "%" }
+            let filter = Array(repeating: "body LIKE ? ESCAPE '\\'",count: like.count).joined(separator: " AND ")
+            let rows = try Row.fetchAll(db,sql: "SELECT id,body FROM messages WHERE \(filter) ORDER BY created DESC,rowid DESC LIMIT \(limit)",arguments: StatementArguments(like))
+            let hits = rows.map { row -> (messageID: String, snippet: String) in
+                let body: String = row["body"]; guard let r = body.range(of: terms[0],options: .caseInsensitive) else { return (row["id"],String(body.prefix(48))) }
+                let start = body.index(r.lowerBound,offsetBy: -12,limitedBy: body.startIndex) ?? body.startIndex, end = body.index(r.upperBound,offsetBy: 36,limitedBy: body.endIndex) ?? body.endIndex
+                return (row["id"],(start == body.startIndex ? "" : "…") + body[start..<end] + (end == body.endIndex ? "" : "…"))
+            }
+            return (hits,try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE \(filter)",arguments: StatementArguments(like)) ?? 0)
+        }
     }
     /// Assign only the newly received, previously unrouted message. Never migrate an old exchange.
     public func assign(message: String, topic: String) throws {
@@ -184,7 +217,7 @@ public actor Store {
         guard output.appliedRevision >= steered, pending == 0 else { w.state = "amendment_pending"; w.error = "Result retained in sub-chat; latest amendment not confirmed."; try w.update(db)
             let kind = "amendment_unconfirmed_" + String(w.revision)
             if try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind=?",arguments: [task,kind]) == 0 {
-                try Message(id: identifier(),role: "assistant",body: "The task finished without confirming your latest change. Its answer is in the sub-chat.",topicID: w.topicID,taskID: task,replyTo: w.messageID,kind: kind,created: Date().timeIntervalSince1970).insert(db)
+                try Message(id: identifier(),role: "assistant",body: "The task finished without confirming your latest change. Its answer is in the sub-chat.",topicID: w.topicID,taskID: task,replyTo: w.messageID,kind: kind,created: Date().timeIntervalSince1970,notice: Notice(.amendmentUnconfirmed)).insert(db)
             }; return nil }
         w.state = "done"; w.error = nil; try w.update(db)
         try db.execute(sql: "UPDATE amendments SET state='applied' WHERE taskID=?", arguments: [task])

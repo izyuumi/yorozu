@@ -345,7 +345,9 @@ public struct OpenClawHarness: Harness {
         if let key = p["sessionKey"] as? String, key != session { return nil }
         let body: String; let kind: String
         if p["stream"] as? String == "lifecycle", let phase = data["phase"] as? String, ["start","end","error"].contains(phase) { body = "Worker lifecycle: " + phase; kind = "lifecycle" }
-        else if p["stream"] as? String == "tool", let name = data["name"] as? String, let phase = data["phase"] as? String, ["start","update","result"].contains(phase), name.count <= 100, !sensitive(name) { body = "Tool " + phase + ": " + name; kind = "tool" }
+        // One row per call, from its start (only the start carries args). A call made through tool_call also arrives as its
+        // own event with parentToolCallId; the tool_call row already names it.
+        else if p["stream"] as? String == "tool", data["phase"] as? String == "start", data["parentToolCallId"] == nil, let name = data["name"] as? String, name.count <= 100, case let row = toolRow(name,args: data["args"]), !sensitive(row) { body = row; kind = "tool" }
         else { return nil }
         return WorkerEvent(id: task + ":" + run + ":event:\(seq)",taskID: task,kind: kind,body: body,created: (p["ts"] as? Double ?? 0) / 1000) // Gateway ts is epoch ms.
     }
@@ -361,7 +363,7 @@ public struct OpenClawHarness: Harness {
                     let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String:Any]
                     if object?["memoryCall"] == nil && object?["appliedRevision"] == nil { body = text }
                 }
-                if ["toolCall","tool_use"].contains(type), let name = block["name"] as? String { body = "Tool: " + String(name.prefix(100)); kind = "tool" }
+                if ["toolCall","tool_use"].contains(type), block["parentToolCallId"] == nil, let name = block["name"] as? String, name.count <= 100 { body = toolRow(name,args: block["arguments"] ?? block["input"]); kind = "tool" }
                 guard let text = body, !sensitive(text), text.utf8.count <= 16000 else { continue }
                 events.append(WorkerEvent(id: task + ":" + source + ":\(i)",taskID: task,kind: kind,body: text,created: (message["timestamp"] as? Double ?? 0) / 1000)) // epoch ms
             }
@@ -624,8 +626,8 @@ extension OpenClawHarness {
             for (i,block) in (message["content"] as? [[String:Any]] ?? []).enumerated() {
                 let type = (block["type"] as? String ?? "").lowercased(); var body: String?; var kind = "message"
                 if type == "text" { body = block["text"] as? String }
-                else if ["toolcall","tool_use"].contains(type) {
-                    let args = block["arguments"] as? [String:Any] ?? block["input"] as? [String:Any] ?? [:]; let name = String((block["name"] as? String ?? "tool").prefix(100))
+                else if ["toolcall","tool_use"].contains(type), block["parentToolCallId"] == nil {
+                    let args = block["arguments"] as? [String:Any] ?? block["input"] as? [String:Any] ?? [:]; let name = toolRow(String((block["name"] as? String ?? "tool").prefix(100)),args: args)
                     if let command = args["command"] as? String { body = "$ " + String(command.prefix(2000)); kind = "command" }
                     else { let path = (args["file_path"] ?? args["path"]) as? String; body = name + (path.map { " " + $0 } ?? ""); kind = "tool" }
                 } else if type == "tool_result" {

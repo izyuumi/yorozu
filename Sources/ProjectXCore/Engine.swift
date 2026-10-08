@@ -11,6 +11,8 @@ public actor Engine {
     public init(store: Store, memory: MemoryStore, harness: any Harness) { self.store = store; self.memory = memory; self.harness = harness }
     public func snapshot() async throws -> Snapshot { try await store.snapshot() }
     public var mode: String { harness.name }
+    /// Chat search over every message body (see `Store.search`).
+    public func search(_ query: String, limit: Int = 50) async throws -> (hits: [(messageID: String, snippet: String)], total: Int) { try await store.search(query,limit: limit) }
     /// Persist before returning; routing and workers never hold the main composer hostage.
     /// `id` lets a remote client (the phone) keep the id of the bubble it already shows.
     @discardableResult public func send(_ body: String, id: String = identifier()) async throws -> String {
@@ -46,7 +48,7 @@ public actor Engine {
             break
         }
         guard let current = try? await store.work(w.id), current.state == "uncertain", !current.suppressed else { return }
-        _ = try? await store.message(role: "assistant",body: "That task was interrupted by a restart. Say retry to continue.",topic: w.topicID,task: w.id,replyTo: w.messageID,kind: "failure")
+        _ = try? await store.message(role: "assistant",body: "That task was interrupted by a restart. Say retry to continue.",topic: w.topicID,task: w.id,replyTo: w.messageID,kind: "failure",notice: Notice(.interruptedByRestart))
     }
     public func waitForRouting() async { await routingTail?.value }
     public func waitForIdle() async {
@@ -85,7 +87,7 @@ public actor Engine {
             let topics = snapshot.topics.sorted { a,b in a.id == latest ? b.id != latest : b.id != latest && activity[a.id]! > activity[b.id]! }
             // Slim view, never DB records. App-generated acknowledgments/failures never reach the secretary (owner, 2026-10-08).
             // Last 4 across topics plus last 3 of the latest topic, chronological; results without Store's "Regarding" header.
-            let said = before.filter { $0.kind == "conversation" || $0.kind == "result" }
+            let said = before.filter { ["conversation","result","question"].contains($0.kind) } // a routing question the user may be answering
             let shown = Set(said.suffix(4).map(\.id) + said.filter { $0.topicID != nil && $0.topicID == latest }.suffix(3).map(\.id))
             let recent = said.filter { shown.contains($0.id) }.map { m in
                 var body = m.body
@@ -111,7 +113,8 @@ public actor Engine {
             }
             try await apply(decision,to: message,snapshot: snapshot,latest: latest,memories: memories)
         } catch {
-            _ = try? await store.message(role: "assistant",body: error.localizedDescription,replyTo: message.id,kind: "failure")
+            let coded = error as? NoticeError, offline = { if case ProjectError.offline = error { return true }; return false }()
+            _ = try? await store.message(role: "assistant",body: error.localizedDescription,replyTo: message.id,kind: coded?.kind ?? "failure",notice: coded?.notice ?? (offline ? Notice(.offline) : Notice(.routingFailed,["error": error.localizedDescription])))
         }
     }
     /// IDs are checked against the full snapshot, not the trimmed view; forget against every retrieved hit.
@@ -119,7 +122,7 @@ public actor Engine {
         guard ["reply","delegate","steer","clarify","correct","retry","forget","stop"].contains(d.action), ["claude","codex"].contains(d.executor ?? "claude"), (d.newTopic?.count ?? 0) <= 80, (d.instruction?.utf8.count ?? 0) <= 6000, (d.reply?.utf8.count ?? 0) <= 15000 else { throw ProjectError.invalid("Invalid secretary decision; no action taken.") }
         if let id = d.topicID, !snapshot.topics.contains(where: { $0.id == id }) { throw ProjectError.invalid("Unknown routing target.") }
         if let id = d.taskID, !snapshot.work.contains(where: { $0.id == id }) { throw ProjectError.invalid("Unknown task target.") }
-        if ["steer","correct","retry","stop"].contains(d.action), d.taskID == nil { throw ProjectError.invalid("Task target required; ask for clarification.") }
+        if ["steer","correct","retry","stop"].contains(d.action), d.taskID == nil { throw NoticeError(.questionTask,"Which task do you mean?",kind: "question") }
         if ["delegate","steer","correct"].contains(d.action), d.instruction?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false { throw ProjectError.invalid("Missing worker instruction.") }
         if ["reply","clarify"].contains(d.action), d.reply?.isEmpty != false { throw ProjectError.invalid("Missing secretary reply.") }
         if d.action == "correct", d.topicID == nil { throw ProjectError.invalid("Correction requires an intended existing topic.") }
@@ -151,7 +154,7 @@ public actor Engine {
     }
     private func resolveTopic(_ d: Decision,snapshot: Snapshot,latest: String?) async throws -> Topic {
         if let id = d.topicID ?? (d.newTopic == nil ? latest : nil), let topic = snapshot.topics.first(where: { $0.id == id }) { return topic }
-        guard let label = d.newTopic, !label.isEmpty else { throw ProjectError.invalid("Which subject should this belong to?") }
+        guard let label = d.newTopic, !label.isEmpty else { throw NoticeError(.questionTopic,"Which subject should this belong to?",kind: "question") }
         // Exact reuse is a last defense against needless duplicate broad topics.
         if let found = snapshot.topics.first(where: { $0.label.caseInsensitiveCompare(label) == .orderedSame }) { return found }
         return try await store.topic(label: label,agent: harness.agentID)
@@ -161,7 +164,7 @@ public actor Engine {
             var topic = d.topicID // Greetings/small talk stay untopiced; newTopic opens (or reuses) a topic.
             if topic == nil, d.newTopic != nil { topic = try await resolveTopic(d,snapshot: snapshot,latest: latest).id }
             if let topic { try await store.assign(message: message.id,topic: topic) }
-            let reply = try await store.message(role: "assistant",body: d.reply!,topic: topic,replyTo: message.id)
+            let reply = try await store.message(role: "assistant",body: d.reply!,topic: topic,replyTo: message.id,notice: d.action == "clarify" ? Notice(.question) : nil)
             enqueueExtraction(message); enqueueExtraction(reply); return
         }
         if d.action == "forget" {
@@ -169,7 +172,7 @@ public actor Engine {
             await extractionTail?.value // Fence already queued extraction, never replay old history after forget.
             try await memory.forget(id: hit.id,expectedSHA256: hit.sha256)
             try await store.markMemory(message.id,state: "forget_request_not_extracted")
-            _ = try await store.message(role: "assistant",body: "Removed that memory from Markdown and refreshed its index. Original chat history is unchanged.",topic: latest,replyTo: message.id,kind: "memory_receipt"); return
+            _ = try await store.message(role: "assistant",body: "Removed that memory from Markdown and refreshed its index. Original chat history is unchanged.",topic: latest,replyTo: message.id,kind: "memory_receipt",notice: Notice(.memoryForgotten)); return
         }
         if d.action == "steer" {
             let w = try await store.work(d.taskID!)
@@ -179,7 +182,7 @@ public actor Engine {
             if w.state == "done", !w.suppressed { try await delegate(message,topic: topic,instruction: d.instruction!,executor: w.executor); return }
             let amendment = try await store.amend(task: w.id,message: message.id,instruction: d.instruction!)
             if amendment.state == "queued_input" {
-                _ = try await store.message(role: "assistant",body: "Added that to the task before it starts.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment")
+                _ = try await store.message(role: "assistant",body: "Added that to the task before it starts.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(.changeQueued))
                 enqueueExtraction(message); return
             }
             var admitted = false
@@ -187,7 +190,7 @@ public actor Engine {
             // Unadmitted stays 'pending'; the running task picks it up as a follow-up turn of the same session.
             if admitted { try await store.amendmentState(id: amendment.id,state: "accepted") }
             let held = w.executor.map { ($0 == "codex" ? "Codex" : "Claude Code") + " can't take changes mid-run, so it gets this after its current run. Say stop to halt it now." } ?? "I'll apply that right after the current step."
-            _ = try await store.message(role: "assistant",body: admitted ? "Sent that change to the running task." : held,topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment")
+            _ = try await store.message(role: "assistant",body: admitted ? "Sent that change to the running task." : held,topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment",notice: admitted ? Notice(.changeSent) : Notice(.changeHeld,w.executor.map { ["executor": $0] } ?? [:]))
             enqueueExtraction(message); return
         }
         if d.action == "stop" {
@@ -196,10 +199,10 @@ public actor Engine {
             try await store.assign(message: message.id,topic: topic.id)
             // A repeated stop on still-unconfirmed suppressed work re-sends the abort instead of claiming it stopped.
             guard w.active || w.state == "uncertain" else {
-                _ = try await store.message(role: "assistant",body: "That isn't running.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment"); return
+                _ = try await store.message(role: "assistant",body: "That isn't running.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(.notRunning)); return
             }
             let confirmed = try await stop(w,topic: topic)
-            _ = try await store.message(role: "assistant",body: confirmed ? "Stopped." : "Stopping it; not confirmed yet.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment"); return
+            _ = try await store.message(role: "assistant",body: confirmed ? "Stopped." : "Stopping it; not confirmed yet.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(confirmed ? .stopped : .stopping)); return
         }
         if d.action == "retry" {
             let w = try await store.work(d.taskID!)
@@ -208,17 +211,17 @@ public actor Engine {
                 try await store.assign(message: message.id,topic: topic.id)
                 try await delegate(message,topic: topic,instruction: utf8Excerpt(w.instruction,bytes: 10_000) + "\nThe user now says: " + utf8Excerpt(message.body,bytes: 1500),executor: w.executor); return
             }
-            guard !w.suppressed, ["failed","uncertain"].contains(w.state), let topic = snapshot.topics.first(where: { $0.id == w.topicID }) else { throw ProjectError.blocked("Only failed/uncertain work can be retried. Active work is not duplicated.") }
+            guard !w.suppressed, ["failed","uncertain"].contains(w.state), let topic = snapshot.topics.first(where: { $0.id == w.topicID }) else { throw NoticeError(.retryNotAllowed,"Only failed/uncertain work can be retried. Active work is not duplicated.") }
             try await store.assign(message: message.id,topic: topic.id)
             // setHandle commits a run ID before every dispatch, so none means nothing was ever sent.
             let state: RunStatus = w.runID == nil ? .stopped : try await harness.reconcile(w,topic: topic)
             switch state {
-            case .unknown, .running: throw ProjectError.uncertain("The earlier run is active or its status is unknown. Retry has NOT started; reconcile it first to avoid duplicate work.")
+            case .unknown, .running: throw NoticeError(.retryRunning,"The earlier run is active or its status is unknown. Retry has NOT started; reconcile it first to avoid duplicate work.")
             case .completed(let output):
                 // Saved changes the finished run never saw go to the same task as a queued follow-up turn.
                 let (reply,next) = try await store.finish(task: w.id,output: output,requeue: true,from: w.state)
                 if next != nil {
-                    _ = try await store.message(role: "assistant",body: "The earlier run finished before your change, so I'm applying it now.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment")
+                    _ = try await store.message(role: "assistant",body: "The earlier run finished before your change, so I'm applying it now.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(.changeAfterFinish))
                     pending.append((w.id,w.executor != nil)); pump()
                 } else if let reply { enqueueExtraction(reply) }; return
             case .stopped:
@@ -239,15 +242,15 @@ public actor Engine {
             let wasActive = mistaken.active || mistaken.state == "uncertain"
             var cancelled = false
             if wasActive { cancelled = try await stop(mistaken,topic: oldTopic) } else { _ = try await store.suppress(mistaken.id) }
-            _ = try await store.message(role: "assistant",body: wasActive && !cancelled ? "Got it, moving that to the right topic. Stopping the earlier task (not confirmed yet)." : "Got it, moving that to the right topic.",topic: topic.id,replyTo: message.id,kind: "acknowledgment")
+            _ = try await store.message(role: "assistant",body: wasActive && !cancelled ? "Got it, moving that to the right topic. Stopping the earlier task (not confirmed yet)." : "Got it, moving that to the right topic.",topic: topic.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(wasActive && !cancelled ? .movedStopping : .moved))
             // Re-read after cancellation awaits: an intended worker may have changed state.
             await settleStops(topic)
             let current = try await store.snapshot()
             if let target = current.work.last(where: { $0.topicID == topic.id && $0.executor == executor && ($0.active || $0.state == "uncertain") }) {
-                guard !target.suppressed, target.state != "cancellation_requested" else { throw ProjectError.blocked("The intended topic is still stopping earlier work. Correction is preserved in its history; no duplicate was launched.") }
+                guard !target.suppressed, target.state != "cancellation_requested" else { throw NoticeError(.correctionBlocked,"The intended topic is still stopping earlier work. Correction is preserved in its history; no duplicate was launched.") }
                 if target.state == "uncertain" {
                     _ = try await store.deferCorrection(task: target.id,message: message.id,instruction: d.instruction!)
-                    _ = try await store.message(role: "assistant",body: "Saved that on the intended task, but its earlier run status is unknown. Say retry to check it and continue.",topic: topic.id,task: target.id,replyTo: message.id,kind: "acknowledgment")
+                    _ = try await store.message(role: "assistant",body: "Saved that on the intended task, but its earlier run status is unknown. Say retry to check it and continue.",topic: topic.id,task: target.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(.correctionSaved))
                     enqueueExtraction(message); return
                 }
                 // Common steering path handles active admission, queued input and receipt/output races.
@@ -294,10 +297,10 @@ public actor Engine {
             switch w.runID == nil ? .stopped : ((try? await harness.reconcile(w,topic: topic)) ?? .unknown) {
             case .stopped:
                 // A saved change on it must not vanish: retry folds it in, a new request would not.
-                if try await store.snapshot().amendments.contains(where: { $0.taskID == w.id && ["pending","pending_reconciliation"].contains($0.state) }) { throw ProjectError.blocked("An earlier task here stopped with a saved change that never ran. Say retry to apply it first, then send this again.") }
+                if try await store.snapshot().amendments.contains(where: { $0.taskID == w.id && ["pending","pending_reconciliation"].contains($0.state) }) { throw NoticeError(.earlierStoppedWithChange,"An earlier task here stopped with a saved change that never ran. Say retry to apply it first, then send this again.") }
                 // Re-checked in the transaction: a concurrent watch() may have settled it meanwhile.
                 guard (try? await store.retireForRetry(w.id)) != nil else { continue }
-                _ = try await store.message(role: "assistant",body: "The earlier task here stopped without finishing, so I closed it and started your new request. Its history stays in this topic.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment")
+                _ = try await store.message(role: "assistant",body: "The earlier task here stopped without finishing, so I closed it and started your new request. Its history stays in this topic.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(.earlierRetired))
             case .completed(let output):
                 // Nothing comes back when watch() already delivered it: the transaction re-checks the state.
                 let (reply,next) = try await store.finish(task: w.id,output: output,requeue: true,from: "uncertain")
@@ -305,9 +308,9 @@ public actor Engine {
                 guard next != nil else { continue }
                 // Saved amendments make the finished task active again; it runs first, the new request is not duplicated.
                 pending.append((w.id,w.executor != nil)); pump()
-                throw ProjectError.blocked("The earlier task here finished before your saved change, so I'm applying that change now. Send this again once it's done, or tell me to add it to that task.")
-            case .running: throw ProjectError.blocked("An earlier task here is still running, so I haven't started this to avoid running it twice. Say stop to end it, or send this again once it finishes.")
-            case .unknown: throw ProjectError.blocked("I can't confirm whether an earlier task here is still running, so I haven't started this to avoid running it twice. Say stop to end it, or try again in a few minutes.")
+                throw NoticeError(.earlierFinishedChange,"The earlier task here finished before your saved change, so I'm applying that change now. Send this again once it's done, or tell me to add it to that task.")
+            case .running: throw NoticeError(.earlierRunning,"An earlier task here is still running, so I haven't started this to avoid running it twice. Say stop to end it, or send this again once it finishes.")
+            case .unknown: throw NoticeError(.earlierUnknown,"I can't confirm whether an earlier task here is still running, so I haven't started this to avoid running it twice. Say stop to end it, or try again in a few minutes.")
             }
         }
     }
@@ -366,13 +369,13 @@ public actor Engine {
             if let w = try? await store.work(id), w.suppressed, let topic = try? await store.snapshot().topics.first(where: { $0.id == w.topicID }) {
                 if (try? await harness.cancel(w,topic: topic)) == true, w.state == "cancellation_requested" {
                     try? await store.cancellation(id,acknowledged: true)
-                    _ = try? await store.message(role: "assistant",body: "Stopped.",topic: w.topicID,task: id,replyTo: w.messageID,kind: "acknowledgment")
+                    _ = try? await store.message(role: "assistant",body: "Stopped.",topic: w.topicID,task: id,replyTo: w.messageID,kind: "acknowledgment",notice: Notice(.stopped))
                 }; return
             }
             guard let w = try? await store.failWork(id,error: error.localizedDescription,definite: { if case ProjectError.overflow = error { return true }; return false }()) else { return }
             // Overflow would fail the same way again, so it gets no retry offer.
-            var body = "That task failed: \(error.localizedDescription) Say retry to try again."; if case ProjectError.overflow(let text) = error { body = text }
-            _ = try? await store.message(role: "assistant",body: body,topic: w.topicID,task: id,replyTo: w.messageID,kind: "failure")
+            var body = "That task failed: \(error.localizedDescription) Say retry to try again.", code = Notice.Code.taskFailed; if case ProjectError.overflow(let text) = error { body = text; code = .taskOverflow }
+            _ = try? await store.message(role: "assistant",body: body,topic: w.topicID,task: id,replyTo: w.messageID,kind: "failure",notice: Notice(code,["error": error.localizedDescription]))
         }
     }
     private func update(_ id: String,_ value: StreamUpdate) async throws {
@@ -387,7 +390,7 @@ public actor Engine {
                 try await store.event(kept)
             case .notice(let body):
                 let w = try await store.work(id)
-                _ = try await store.message(role: "assistant",body: body,topic: w.topicID,task: id,kind: "failure")
+                _ = try await store.message(role: "assistant",body: body,topic: w.topicID,task: id,kind: "failure",notice: Notice(.compactionFailed,["error": body]))
             }
         } catch { throw error }
     }
