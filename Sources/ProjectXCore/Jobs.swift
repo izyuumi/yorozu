@@ -21,3 +21,10 @@ public struct JobSpec: Codable, Sendable, Equatable {
     public var topic: String?
     public init(id: String, name: String, schedule: [String]) { self.id = id; self.name = name; self.schedule = schedule }
 }
+
+extension Message {
+    /// Job-topic kinds that stay in the job's sub-chat: the run trigger, the job's own input, a run result kept off the
+    /// main timeline and skip notes (#319). The Mac's main chat and phones on 0.6 never show them.
+    public static let jobOnlyKinds: Set<String> = ["job_run","job_input","job_result","job_note"]
+    public var onMainTimeline: Bool { !Self.jobOnlyKinds.contains(kind) }
+}
