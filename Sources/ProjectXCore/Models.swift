@@ -59,13 +59,22 @@ public struct RoutingInput: Codable, Sendable {
     public var policy: String = ""; public var message: String; public var recent: [MessageView]; public var topics: [TopicView]
     public var work: [WorkView]; public var latestTopic: String?; public var memory: [MemoryView]
     public var sourceMessageID: String? = nil
-    /// "N older interrupted tasks omitted" once the routing trim compacts blocking work.
+    /// "N older interrupted tasks and M less active topics omitted" once the routing trim drops blocking work or topics.
     public var omitted: String? = nil
     enum CodingKeys: String, CodingKey { case message, recent, topics, work, latestTopic, memory, sourceMessageID, omitted }
 }
+/// `history`: only topic conversation the worker's session has not seen. `followUp`: the amendments a follow-up turn adds;
+/// the thinking session already holds the earlier turn, so it gets only these.
 public struct WorkerInput: Codable, Sendable {
+    public struct Turn: Codable, Sendable { public var role: String; public var body: String }
+    public struct Note: Codable, Sendable { public var path: String; public var title: String; public var attribution: String; public var epistemicStatus: String; public var body: String }
     public var policy: String; public var topic: Topic; public var work: Work; public var current: Message
-    public var history: [Message]; public var memory: [MemoryHit]
+    public var history: [Turn]; public var memory: [Note]; public var followUp: String? = nil
+    /// What a thinking session is sent: slim views, never database records. The history bound measures this.
+    public var wire: String { get throws {
+        struct Wire: Encodable { var policy: String; var topic: [String:String]; var revision: Int; var instruction: String; var current: [String:String]; var history: [Turn]; var memory: [Note] }
+        return try encoded(Wire(policy: policy,topic: ["id": topic.id,"label": topic.label],revision: work.revision,instruction: work.instruction,current: ["id": current.id,"body": current.body],history: history,memory: memory))
+    } }
 }
 public struct WorkerOutput: Codable, Sendable {
     public var text: String; public var appliedRevision: Int

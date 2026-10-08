@@ -68,7 +68,7 @@ public actor MemoryStore {
         try FileManager.default.createDirectory(at: indexURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         index = try DatabaseQueue(path: indexURL.path)
         try index.write { db in
-            try db.execute(sql: "CREATE TABLE IF NOT EXISTS discovery(id TEXT PRIMARY KEY,title TEXT NOT NULL,summary TEXT NOT NULL,path TEXT UNIQUE NOT NULL); CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(id UNINDEXED,title,summary)")
+            try db.execute(sql: "CREATE TABLE IF NOT EXISTS discovery(id TEXT PRIMARY KEY,title TEXT NOT NULL,summary TEXT NOT NULL,path TEXT UNIQUE NOT NULL); CREATE VIRTUAL TABLE IF NOT EXISTS search_trigram USING fts5(id UNINDEXED,title,summary,tokenize='trigram')") // `search` (pre-trigram) is left for older builds sharing this cache
         }
     }
     private func scoped<T>(_ body: (Int32) throws -> T) throws -> T {
@@ -185,19 +185,22 @@ public actor MemoryStore {
         }
         skipped = skip
         try index.write { db in
-            try db.execute(sql: "DELETE FROM discovery; DELETE FROM search")
+            try db.execute(sql: "DELETE FROM discovery; DELETE FROM search_trigram")
             for row in rows {
                 try db.execute(sql: "INSERT INTO discovery VALUES (?,?,?,?)", arguments: [row.0,row.1,row.2,row.3])
-                try db.execute(sql: "INSERT INTO search(id,title,summary) VALUES (?,?,?)", arguments: [row.0,row.1,row.2])
+                try db.execute(sql: "INSERT INTO search_trigram(id,title,summary) VALUES (?,?,?)", arguments: [row.0,row.1,row.2])
             }
         }; return rows.count
     }
     public func search(_ query: String, limit: Int = 8) throws -> [MemoryHit] {
-        let terms = query.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { $0.count >= 3 }.prefix(24)
+        let (phrases,short) = Self.terms(query); let limit = min(8,max(1,limit))
         let paths: [String] = try index.read { db in
-            if terms.isEmpty { return try String.fetchAll(db, sql: "SELECT path FROM discovery ORDER BY id LIMIT ?", arguments: [min(8,max(1,limit))]) }
-            let match = terms.map { "\"" + $0 + "\"" }.joined(separator: " OR ")
-            return try String.fetchAll(db, sql: "SELECT d.path FROM search s JOIN discovery d ON d.id=s.id WHERE search MATCH ? ORDER BY bm25(search),d.id LIMIT ?", arguments: [match,min(8,max(1,limit))])
+            var paths = phrases.isEmpty ? [] : try String.fetchAll(db, sql: "SELECT d.path FROM search_trigram s JOIN discovery d ON d.id=s.id WHERE search_trigram MATCH ? ORDER BY bm25(search_trigram),d.id LIMIT ?", arguments: [phrases.map { "\"" + $0 + "\"" }.joined(separator: " OR "),limit])
+            if !short.isEmpty, paths.count < limit { // trigram cannot match 1–2 characters: substring scan, ranked by terms matched
+                let rest = try String.fetchAll(db, sql: "SELECT path FROM (SELECT path,id,\(short.map { _ in "(title||' '||summary LIKE ?)" }.joined(separator: "+")) AS n FROM discovery) WHERE n>0 ORDER BY n DESC,id LIMIT ?", arguments: StatementArguments(short.map { "%" + $0 + "%" }) + [limit + paths.count])
+                paths += rest.filter { !paths.contains($0) }
+            }
+            return Array(paths.prefix(limit))
         }
         var hits: [MemoryHit] = []; var size = 0
         for path in paths {
@@ -205,6 +208,28 @@ public actor MemoryStore {
             guard size + value.markdown.utf8.count <= 10000 else { continue }; size += value.markdown.utf8.count
             hits.append(MemoryHit(id: doc.metadata.id,title: doc.metadata.title,path: path,sha256: value.sha256,document: doc))
         }; return hits
+    }
+    /// Words of 3+ letters or digits as they are; kana/kanji runs (unspaced) as overlapping 3-character windows, dropping all-hiragana
+    /// windows of mixed runs (mostly grammar); 1–2-character kana/kanji runs (a lone hiragana is a particle and dropped) and
+    /// 2-character kanji/katakana stretches between hiragana in longer runs (東京 in 東京で) go to `short`.
+    static func terms(_ query: String) -> (phrases: [String], short: [String]) {
+        var runs: [(text: String, cjk: Bool)] = []; var gap = true
+        for c in query {
+            guard c.isLetter || c.isNumber else { gap = true; continue }
+            let cjk = c.unicodeScalars.first.map { $0.properties.isIdeographic || (0x3040...0x30FF).contains($0.value) } ?? false
+            if !gap, runs.last?.cjk == cjk { runs[runs.count - 1].text.append(c) } else { runs.append((String(c),cjk)) }
+            gap = false
+        }
+        let hiragana = { (s: String) in s.unicodeScalars.allSatisfy { (0x3041...0x309F).contains($0.value) } }
+        var phrases: [String] = [], short: [String] = [], seen = Set<String>()
+        for run in runs {
+            let c = Array(run.text)
+            if !run.cjk { if c.count >= 3 { phrases.append(run.text.lowercased()) } }
+            else if c.count < 3 { if !hiragana(run.text) { short.append(run.text) } } // hiragana-only 1–2 characters are grammar (の, から)
+            else { phrases += (0...c.count - 3).map { String(c[$0..<$0 + 3]) }.filter { hiragana(run.text) || !hiragana($0) }
+                short += run.text.split(whereSeparator: { hiragana(String($0)) }).filter { $0.count == 2 }.map(String.init) }
+        }
+        return (Array(phrases.filter { seen.insert($0).inserted }.prefix(64)),Array(short.filter { seen.insert($0).inserted }.prefix(16)))
     }
     public func byID(_ id: String) throws -> MemoryRead {
         guard let path = try index.read({ try String.fetchOne($0, sql: "SELECT path FROM discovery WHERE id=?", arguments: [id]) }) else { throw ProjectError.invalid("Memory not found.") }
