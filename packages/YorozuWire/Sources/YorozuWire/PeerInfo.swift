@@ -23,8 +23,10 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
     public static var local: PeerInfoData {
         let version = Bundle.main.object(forInfoDictionaryKey: "YorozuVersionLabel") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        // Protocol 2 = contract 0.7: a 0.6.x peer (protocol 1) no longer overlaps. A feature added within 0.7
+        // adds a capability here; a breaking change raises the protocol (docs/ios-relay-contract.md, "Versioning").
         return PeerInfoData(appVersion: boundedText(version, maxBytes: 64) ? version : "unknown",
-            capabilities: ["peer-info", "host-name", "channel-sequence", "yorozu-v2"],
+            protocolMin: 2, protocolMax: 2, capabilities: ["peer-info", "host-name", "channel-sequence", "yorozu-v2"],
             requiredCapabilities: ["channel-sequence", "yorozu-v2"])
     }
 
@@ -65,7 +67,15 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
         guard isValid, peer.isValid else { return .updateRequired(String(localized: "Invalid peer information. Update Yorozu on this device and its host Mac.")) }
         let version = min(protocolMax, peer.protocolMax)
         guard version >= max(protocolMin, peer.protocolMin) else {
-            return .updateRequired(String(localized: "Update Yorozu on this device and its host Mac: protocol versions do not overlap."))
+            // Reasons are read on the phone: the Mac sends its own as `peerInfoError`.
+            #if os(macOS)
+            let phoneOutdated = peer.protocolMax < protocolMin
+            #else
+            let phoneOutdated = protocolMax < peer.protocolMin
+            #endif
+            return .updateRequired(phoneOutdated
+                ? String(localized: "Update Yorozu on this iPhone to talk to this Mac.")
+                : String(localized: "Update Yorozu on the Mac to talk to this iPhone."))
         }
         guard Set(requiredCapabilities).isSubset(of: Set(peer.capabilities)),
             Set(peer.requiredCapabilities).isSubset(of: Set(capabilities)) else {
