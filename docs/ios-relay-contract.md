@@ -220,19 +220,25 @@ kinds.
   implements it (kinds 1, 4, 6 in; 2, 3, 5 out).
 - Duplicate check (host check 4): an id in the last published snapshot gets its `receipt` with no
   send; after a failed send, `Store.message(id:)` tells a duplicate from a refusal.
-- `sync_request` is always answered. If the Engine cannot read its snapshot, the reply page is
-  empty and final (`events: []`, `threadId: "main"`, `more` unset, the current working flag):
-  the phone's catch-up ends, its cursor stays, and its next `.paired` asks again. The error is
-  logged (subsystem `to.yumi.yorozu`, category `relay`).
+- `sync_request`: if the Engine cannot read its snapshot, no page goes back and the error is
+  logged (subsystem `to.yumi.yorozu`, category `relay`). The phone stays catching up, so live
+  updates cannot move its cursor past the gap, and its next `.paired` asks again.
 - Acks for replayed frames: the ack is cumulative, so the host sends `ack{seq}` for a replayed
   frame only after the backend has handled it and every phone event before it, that is once the
   Engine stored or refused its message. A frame that can never be handled (not a frame, unknown
-  key, malformed, a replayed channel seq, a device that must update) is acked too. A frame whose
-  counter or device list could not be written, or a box from a device that has no peer-info
-  result yet (and is not its claim), stops acks on that socket from its seq on; the relay
-  replays them on the next registration. When the claim that serves such a device arrives, the
-  host drops the socket and redials, so the replay comes at once. Acks queued for an earlier
-  socket are never sent on a new one.
+  key, malformed, a replayed channel seq, a device that must update) is acked too. A `hello`
+  whose device list could not be written stops acks on that socket from its seq on; the relay
+  replays them on the next registration. Acks queued for an earlier socket are never sent on a
+  new one.
+- Held boxes: a box from a device that has no peer-info result yet (and is not its claim) is kept
+  in memory with its relay seq, at most 64 a device (later ones are dropped), unaccepted and
+  unacked; acks stop from its seq on. A compatible claim passes the held boxes to the backend in
+  order after the reply; any other result drops them. Either way acks then resume up to the
+  newest relay seq, behind the handled boxes. A new socket forgets held boxes; the relay replays
+  them.
+- Channel counter: a box is accepted in memory on arrival, for ordering, but its `recv` is
+  written to the device file only after the backend has handled it, so a quit in between makes
+  the replay acceptable again. The Engine answers a re-sent message id with its `receipt`.
 - Peer-info result on file: the last `.compatible` result is kept in the device's record as
   `compatible{version, capabilities, hostProtocol}`, where `hostProtocol` is
   `PeerInfoData.local.protocolMax` when it was computed. At launch a record whose `hostProtocol`
@@ -249,5 +255,5 @@ kinds.
 - A relay host that cannot start (Keychain, device file) is started again every 30 s.
 - Presence: the relay reports none. A device is online once one of its sealed frames opens on
   the current relay connection, and stays so until that socket drops. `lastSeen` is the time of
-  its last opened frame; it is written with the frame's counter, so it costs no extra write.
+  its last opened frame; it is written with the next counter or device-list write.
   `RelayStatus.devices` carries `{pub, name, label, pairedAt, online, lastSeen}` per device.

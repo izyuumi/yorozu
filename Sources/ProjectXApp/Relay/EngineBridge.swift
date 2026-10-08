@@ -25,9 +25,9 @@ actor EngineBridge: RelayBackend {
             do { return [Self.page(try await engine.snapshot(), after: r.lastSeen["main"])] }
             catch {
                 Logger(subsystem: "to.yumi.yorozu", category: "relay").error("sync_request unanswerable: \(error.localizedDescription, privacy: .public)")
-                // 0.6 has no error page. An empty final page ends the phone's catch-up instead of leaving it
-                // waiting; its cursor stays, so its next `.paired` asks again.
-                return [.control(.syncDelta(SyncDeltaData(events: [], threadId: "main", workingThreadIds: working ? ["main"] : [])))]
+                // 0.6 has no error page. No reply keeps the phone catching up, so live updates cannot move
+                // its cursor past the gap, and its next `.paired` asks again.
+                return []
             }
         case .threadList:
             guard let s = try? await engine.snapshot() else { return [] }
