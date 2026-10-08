@@ -41,14 +41,17 @@ messages a second per socket, and drops a phone socket with `1013 slow receiver`
 every Mac frame to every phone socket of the room, and a phone ignores boxes sealed for another
 phone. So every frame the Mac sends counts against every phone's 2 MiB window.
 
-- `RelayHost.deliver` batches at most 16 frames and about 900 KB a message.
+- `RelayHost.transmit` batches at most 16 frames and about 900 KB a message.
 - Catch-up is request-driven: the Mac sends a reply page only for a `sync_request`, so each
   phone has at most one page in flight.
 - The Mac keeps reply pages to at most 200 records and 256 KiB of encoded events, except that a
   page always holds at least one record when any remain (a bigger one is then
   [chunked](#chunking)).
 - Chunk sets go out paced: at most 1 MiB of sealed frames a second across all phones, and at
-  most 30 frames a second, leaving the rest of the frame budget for live updates.
+  most 30 frames a second, leaving the rest of the frame budget for live updates. Anything else
+  for a phone that still has frames waiting queues behind them, in order, at no cost to the pace.
+  Waiting frames are dropped when the relay socket drops or the phone is removed; the phone
+  catches up after it redials.
 - A phone the relay still drops redials, gets `.paired` again and asks from its cursor; the
   page that was cut off is sent again whole.
 
@@ -144,7 +147,7 @@ read cursors that belong to it. Older history is reached only through
 - A cursor is stale when it is greater than the Mac's latest sequence (another database) or lower
   than the smallest `seq` of any message in the window (every message the phone could hold
   changed since, so nothing is kept).
-- The phone trims its cache to the window by its own clock and count after applying pages.
+- The phone trims its cache to the window by its own clock and count when it loads and saves it.
 
 ## Change sequence
 
@@ -297,7 +300,11 @@ Three flavours:
 - **Page reply** (`requestId` set, answers a `page_request`): the messages around the asked-for
   message, inside or outside the window, in timeline order. `afterSeq`, `latestSeq` and `more`
   are unset and it never moves the cursor. An unknown message id gets no events and
-  `error: "Message not found."`.
+  `error: "Message not found."`; a page whose encoding would pass what 256 chunks carry gets
+  `error: "That part of the chat is too large to send."`.
+
+A `sync_request` or `page_request` for a thread the Mac does not have gets no events and
+`error: "Unknown thread."`.
 
 Phone rules:
 
@@ -308,8 +315,9 @@ Phone rules:
    `more == true` send the next `sync_request`, else `catchingUp = false`. On `error`, keep the
    cursor, show nothing new and ask again on the next `.paired` or deadline.
 4. On a live update: apply; set the cursor to `latestSeq` only when `!catchingUp` and its
-   `afterSeq` is not greater than the cursor (no live update was missed). Otherwise the next
-   catch-up fills the gap; re-applying is safe by rule 1.
+   `afterSeq` is not greater than the cursor (no live update was missed). A greater `afterSeq`
+   while not catching up starts a catch-up at once (`catchingUp = true`, `sync_request`); while
+   catching up, that catch-up fills the gap. Re-applying is safe by rule 1.
 5. On a page reply: apply its messages for display; keep the ones outside the window out of the
    cache.
 6. The flags are only true while `.paired`. While not paired the phone shows "status unknown"
@@ -318,7 +326,7 @@ Phone rules:
 ### Record kinds (inside `sync_delta.events`)
 
 All carry `threadId: "main"`, `agentId: "main"`, `id` = the record's id and `ts` = its `created`
-in ms (a `read_state` record: now).
+in ms (an `amendment` or `read_state` record, which has no `created`: now).
 
 **`message`** (`MessageData`, upsert):
 
@@ -422,8 +430,9 @@ Answered with a page reply (`sync_delta` with `requestId`, above): `Store.page(a
 .deviceRemove(DeviceRemoveData(pub: myBoxPub)) // the phone's own X25519 public key, base64url
 ```
 
-- Sent by Remove host and by Repair, over the current link, before the phone wipes its pairing
-  and cache. No reply; the phone does not wait.
+- Sent by Remove host and by confirming any new pairing (Repair, or a code for another Mac),
+  over the current link and only while `.paired`, before the phone wipes its pairing and cache.
+  No reply; the phone does not wait for one.
 - The Mac acts only when `pub` is the sender's own key: it drops that `RelayDevice`, revokes it
   at the relay and announces the device list (`RelayHost.removeDevice`). Any other `pub` is
   ignored; a phone can remove only itself.
@@ -445,7 +454,12 @@ runs `0..<count`, `count` is 2...256 and `data` is base64 of up to 192 KiB
 - Phone: feed every `chunk` to one `ChunkAssembler`; `add(_:)` returns the whole event after the
   last chunk, which is then handled as if it had arrived directly. A chunk that does not continue
   the current set drops the partial set; a dropped page is asked for again by the 15 s deadline.
-- A record too large for 256 chunks (48 MiB) cannot be sent; the Mac logs it and skips it.
+- Worker output has no size limit, so a record could pass what 256 chunks (48 MiB) carry. The
+  Mac caps every record at 256 chunks less 64 KiB for the page around it: a larger one keeps the
+  head of its long text fields (a message's `text`; a task's `instruction`, `result` and `error`;
+  an amendment's `instruction`; a worker event's `body`), each followed by
+  `"\n\n…(truncated; the full text is on the Mac)"`, and the Mac logs it. An event that still
+  cannot be chunked is logged and not sent.
 
 ## Notice codes
 

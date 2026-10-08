@@ -173,6 +173,16 @@ The Mac items are `WhenUnlockedThisDeviceOnly`; the phone item is `AfterFirstUnl
 
 Read app state without disturbing the running app with a read-only SQLite connection, for example `sqlite3 "file:$HOME/Library/Application Support/to.yumi.yorozu/operations.sqlite?mode=ro" "SELECT id,state FROM work ORDER BY created DESC LIMIT 5"`. User messages a quit left unrouted are `SELECT id,created FROM messages WHERE role='user' AND readAt IS NULL`.
 
+### On the phone
+
+| Data | Where | Protection |
+|---|---|---|
+| Pairing and identity | Keychain item `pairings-v2` ([Keychain items](#keychain-items)) | `AfterFirstUnlockThisDeviceOnly` |
+| History-window cache (`mirror.json`) | `Application Support/Mirror/` in the app's container | File protection `completeUntilFirstUserAuthentication` (encrypted at rest, unreadable until the first unlock after a restart, like the Keychain item); the `Mirror` folder is excluded from backup |
+| Last connection status (`lastConnectionStatus`) | `UserDefaults` | none; it holds only the status and when it was saved, no chat content |
+
+The cache is a cache: a file that does not decode, has another format version or belongs to another pairing (its `owner` is the pairing's session key) loads as nothing and catch-up refills it. Remove host and every new pairing delete the `Mirror` folder ([architecture.md](architecture.md#ios-app)).
+
 ## Environment variables
 
 | Variable | Read by | Meaning |
