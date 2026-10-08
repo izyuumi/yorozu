@@ -56,8 +56,33 @@ public enum NativeGatewayProtocol {
     }
 }
 
+/// Tool row text: "<server>: <tool>[ in <app>]", never arguments. `tool_call` (Tool Search) is named by its target, whose
+/// `id` is a catalog id `<source>:<server>:<name>` or a bare name; MCP names are `<server>__<tool>`. A server drops its
+/// `yorozu-` prefix and `-driver` suffix ("yorozu-cua-driver" → "cua"). The app comes only from a `pid` (or `target.pid`).
+func toolRow(_ name: String,args: Any?) -> String {
+    var name = name, args = args as? [String:Any] ?? [:]
+    if name == "tool_call", let id = (args["id"] ?? args["toolId"] ?? args["name"]) as? String { name = id; args = args["args"] as? [String:Any] ?? args["input"] as? [String:Any] ?? args }
+    var server: Substring?; var tool = Substring(name)
+    let parts = name.split(separator:":",maxSplits:2)
+    if parts.count == 3 { tool = parts[2]; if parts[0] == "mcp" { server = parts[1]; if tool.hasPrefix(parts[1] + "__") { tool = tool.dropFirst(parts[1].count + 2) } } }
+    else if let cut = name.range(of:"__") { server = name[..<cut.lowerBound]; tool = name[cut.upperBound...] }
+    if let s = server { var short = s.hasPrefix("yorozu-") ? s.dropFirst(7) : s; if short.hasSuffix("-driver") { short = short.dropLast(7) }; server = short.isEmpty ? s : short }
+    let pid = (args["pid"] ?? (args["target"] as? [String:Any])?["pid"]) as? Int
+    // The process's outermost .app bundle and its localized display name (AppKit's operators would slow this module's type checks).
+    var app: String?; var buffer = [CChar](repeating:0,count:4 * Int(MAXPATHLEN))
+    if let pid, pid > 0, pid <= Int(Int32.max), proc_pidpath(Int32(pid),&buffer,UInt32(buffer.count)) > 0 {
+        let path = String(cString:buffer)
+        if let end = path.range(of:".app/") {
+            let bundle = String(path[..<end.lowerBound]) + ".app", info = Bundle(path:bundle)
+            app = (info?.object(forInfoDictionaryKey:"CFBundleDisplayName") ?? info?.object(forInfoDictionaryKey:"CFBundleName")) as? String ?? String(path[..<end.lowerBound].split(separator:"/").last ?? "")
+        }
+    }
+    return String(((server.map { $0 + ": " } ?? "") + tool + (app.map { " in " + $0.prefix(60) } ?? "")).prefix(200))
+}
+
 /// Multiplexed protocol-4 socket. Every connect/call enforces inherited caller attribution before Keychain/network.
-/// Disconnects fail pending calls as uncertain; no automatic mutation replay or remote cancellation claim.
+/// Disconnects fail pending calls as uncertain; no automatic mutation replay or remote cancellation claim. After a drop
+/// or failed connect it redials in the background (1 s doubling to 60 s) until connected, refused (`blocked`) or `close()`d.
 public actor NativeGatewayClient {
     private let url: URL; private let vault: NativeDeviceVault
     private var socket: URLSessionWebSocketTask?; private var session: URLSession?
@@ -67,17 +92,32 @@ public actor NativeGatewayClient {
     private var timers: [String:Task<Void,Never>] = [:]
     private var listeners: [UUID:@Sendable (String) async -> Void] = [:]
     private var sequence: Int?
+    private var stopped = false; private var retry: Task<Void,Never>?; private var failures = 0
     public init(target: String = "ws://127.0.0.1:18789") throws {
         url = try NativeGatewayProtocol.target(target); vault = NativeDeviceVault(account:url.absoluteString + "|webchat|operator")
     }
+    /// A Yorozu device token is stored for this target (Keychain read; no network).
+    public nonisolated var isEnrolled: Bool { ((try? vault.load()) ?? nil)?.token?.isEmpty == false }
     // Bootstrap is supplied directly by owner SecureField, never persisted or read from existing credentials.
-    public func connect(bootstrapSecret: String? = nil) async throws {
+    // `timeout` bounds the handshake (a launch check passes a short one); calls reconnect with the default.
+    public func connect(bootstrapSecret: String? = nil,timeout: Duration = .seconds(15)) async throws {
         try GatewayRPC.enforceAttribution(ProcessInfo.processInfo.environment)
+        stopped = false
         if ready { return }; if let connecting { return try await connecting.value }
-        let task = Task { try await self.handshake(bootstrapSecret:bootstrapSecret) }; connecting = task
-        do { try await task.value; connecting = nil } catch { connecting = nil; close(); throw error }
+        let task = Task { try await self.handshake(bootstrapSecret:bootstrapSecret,timeout:timeout) }; connecting = task
+        do { try await task.value; connecting = nil; failures = 0 } catch {
+            connecting = nil; teardown()
+            if case ProjectError.blocked = error {} else { redial() }
+            throw error
+        }
     }
-    private func handshake(bootstrapSecret: String?) async throws {
+    private func redial() {
+        guard !stopped, retry == nil else { return }
+        let delay = min(60,1 << min(failures,6)); failures += 1
+        retry = Task { try? await Task.sleep(for:.seconds(delay)); if !Task.isCancelled { await self.redialed() } }
+    }
+    private func redialed() async { retry = nil; if !stopped { try? await connect() } }
+    private func handshake(bootstrapSecret: String?,timeout: Duration) async throws {
         var record = try vault.load() ?? NativeDeviceRecord(privateKey:Curve25519.Signing.PrivateKey().rawRepresentation)
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation:record.privateKey)
         try vault.save(record) // Same identity across pending-pairing attempts.
@@ -86,7 +126,7 @@ public actor NativeGatewayClient {
         let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 120; config.httpShouldSetCookies = false; config.urlCache = nil
         let session = URLSession(configuration:config); self.session = session
         let ws = session.webSocketTask(with:url); ws.maximumMessageSize = maxPayload; socket = ws; ws.resume()
-        let deadline = Task { try? await Task.sleep(for:.seconds(15)); if !Task.isCancelled { ws.cancel(with:.goingAway,reason:nil) } }; defer { deadline.cancel() }
+        let deadline = Task { try? await Task.sleep(for:timeout); if !Task.isCancelled { ws.cancel(with:.goingAway,reason:nil) } }; defer { deadline.cancel() }
         let challenge = try await receive(ws)
         guard challenge["type"] as? String == "event", challenge["event"] as? String == "connect.challenge", let payload = challenge["payload"] as? [String:Any], let nonce = payload["nonce"] as? String, let number = payload["ts"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue >= 0, number.doubleValue.rounded() == number.doubleValue, number.doubleValue < Double(Int64.max) else { throw ProjectError.invalid("Gateway did not supply a valid protocol-4 challenge.") }
         let id = identifier()
@@ -115,7 +155,9 @@ public actor NativeGatewayClient {
     }
     private func cancelPending(_ id: String) { fail(id,ProjectError.uncertain("Local observation cancelled; remote execution is not confirmed stopped.")) }
     private func fail(_ id: String,_ error: Error) { timers.removeValue(forKey:id)?.cancel(); pending.removeValue(forKey:id)?.1.resume(throwing:error) }
-    public func close() {
+    /// Disconnects and stops redialing until the next `connect`.
+    public func close() { stopped = true; retry?.cancel(); retry = nil; teardown() }
+    private func teardown() {
         ready = false; reader?.cancel(); reader = nil; socket?.cancel(with:.goingAway,reason:nil); socket = nil; session?.invalidateAndCancel(); session = nil
         for id in Array(pending.keys) { fail(id,ProjectError.uncertain("Gateway disconnected. Saved work retained; reconcile before retry.")) }; sequence = nil
     }
@@ -142,7 +184,7 @@ public actor NativeGatewayClient {
                     for handler in listeners.values { await handler(value) }
                 }
             }
-        } catch { if socket === ws { close() } }
+        } catch { if socket === ws { teardown(); redial() } }
     }
     private func receive(_ ws: URLSessionWebSocketTask) async throws -> [String:Any] {
         let message = try await ws.receive(); let data: Data
