@@ -37,6 +37,9 @@ import ProjectXCore
                     root: fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/memory",isDirectory: true),
                     index: try fm.url(for: .cachesDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID + "/memory-index.sqlite"))
                 try await memory.rebuild()
+                // Bad note files are skipped, not fatal; say which, once per launch.
+                let skipped = await memory.skipped
+                if !skipped.isEmpty { _ = try await store.message(role: "assistant",body: "Memory skipped \(skipped.count) oversized or unreadable note file(s): " + skipped.prefix(10).joined(separator: ", "),kind: "failure") }
                 let harness: any Harness
                 switch runtimeMode.rawValue {
                 case "fixture": harness = FixtureHarness()

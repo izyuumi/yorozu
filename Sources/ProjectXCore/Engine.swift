@@ -58,6 +58,7 @@ public actor Engine {
         routingTail?.cancel(); for task in running.values { task.cancel() }; for task in extraction.values { task.cancel() }
         // Persisted active states are reconciled, never replayed, by next startup.
     }
+    private static let forgetRequest = #"(?i)\b(forget|delete|remove)\b|忘れ|削除"#
     private let routingPolicy = """
     You decide how Yorozu handles each user message and write its short replies. Output ONLY JSON Decision fields: action(reply/delegate/steer/clarify/correct/retry/forget/stop), executor(delegate/correct only: claude|codex for coding work), topicID(optional existing ID), newTopic(optional <=80 label), taskID(optional existing work ID), instruction(worker text), reply(reply/clarify text), memoryID(forget only).
     Speak as one assistant: replies never mention routing, topics, workers, delegation, sub-chats, background work or that the user can keep talking. Reply yourself for greetings, thanks, small talk, a short conversational turn or one follow-up question, and recall of facts shown in recent messages or memory; recall of anything not shown there is delegate in its topic (that session holds older history), never "I don't know" or asking the user to repeat it. You cannot read files, the user's PAIOS (personal OS in their Obsidian vault), calendars or any other source yourself; any question about them is delegate (a worker can read them). Delegate substantive thinking, analysis, research, tool use or code without being asked. An instruction carries the context the worker needs and says to answer in the user's language; the worker also gets the user's message verbatim, so an instruction never copies it. Limits: instruction at most 600 characters, reply at most 1,500 characters.
@@ -85,15 +86,15 @@ public actor Engine {
                 return x == y ? a.created > b.created : x > y
             }
             // Slim view, never DB records. App-generated acknowledgments/failures never reach the secretary (owner, 2026-10-08).
-            let recent = before.filter { $0.kind == "conversation" || $0.kind == "result" }.suffix(6).map { RoutingInput.MessageView(role: $0.role,topicID: $0.topicID,taskID: $0.taskID,kind: $0.kind,body: excerpt($0.body,bytes: 1000)) }
+            let recent = before.filter { $0.kind == "conversation" || $0.kind == "result" }.suffix(6).map { RoutingInput.MessageView(role: $0.role,topicID: $0.topicID,taskID: $0.taskID,kind: $0.kind,body: utf8Excerpt($0.body,bytes: 1000)) }
             // Recent work plus anything still blocking (active/uncertain), so it can always be retried or stopped.
             let recentIDs = Set(snapshot.work.suffix(12).map(\.id)); let blocking = Set(snapshot.work.filter { $0.active || $0.state == "uncertain" }.map(\.id))
-            let work = snapshot.work.filter { recentIDs.contains($0.id) || (!$0.suppressed && blocking.contains($0.id)) }.map { RoutingInput.WorkView(id: $0.id,topicID: $0.topicID,state: $0.state,executor: $0.executor,instruction: excerpt($0.instruction,bytes: 900),error: $0.error.map { excerpt($0,bytes: 300) }) }
+            let work = snapshot.work.filter { recentIDs.contains($0.id) || (!$0.suppressed && blocking.contains($0.id)) }.map { RoutingInput.WorkView(id: $0.id,topicID: $0.topicID,state: $0.state,executor: $0.executor,instruction: utf8Excerpt($0.instruction,bytes: 900),error: $0.error.map { utf8Excerpt($0,bytes: 300) }) }
             let memories = try await memory.search(message.body)
-            let hits = boundedMemory(memories.map { RoutingInput.MemoryView(id: $0.id,title: excerpt($0.title,bytes: 200),excerpt: excerpt($0.document.body,bytes: 400)) },bytes: 2200)
+            let hits = boundedMemory(memories.map { RoutingInput.MemoryView(id: $0.id,title: utf8Excerpt($0.title,bytes: 200),excerpt: utf8Excerpt($0.document.body,bytes: 400)) },bytes: 2200)
             var input = RoutingInput(policy: routingPolicy,message: message.body,recent: recent,topics: topics.prefix(12).map { RoutingInput.TopicView(id: $0.id,label: $0.label) },work: work,latestTopic: latest,memory: hits)
             input.sourceMessageID = message.id
-            input = trimmed(input,blocking: blocking,forget: message.body.range(of: #"(?i)\b(forget|delete|remove)\b|忘れ|削除"#,options: .regularExpression) != nil)
+            input = trimmed(input,blocking: blocking,forget: message.body.range(of: Self.forgetRequest,options: .regularExpression) != nil)
             var decision = try await harness.route(input,stronger: false)
             try validate(decision,snapshot: snapshot,memories: memories)
             try await store.receipt(kind: "routing",body: try encoded(decision))
@@ -133,17 +134,6 @@ public actor Engine {
         }
         return input
     }
-    /// At most `bytes` UTF-8 bytes of `s`: head and tail joined by " … ", cut on character boundaries.
-    private func excerpt(_ s: String,bytes: Int) -> String {
-        guard s.utf8.count > bytes else { return s }
-        func cut(_ n: Int,tail: Bool) -> Substring {
-            var i = s.utf8.index(tail ? s.endIndex : s.startIndex,offsetBy: tail ? -n : n)
-            while i.samePosition(in: s) == nil { i = tail ? s.utf8.index(after: i) : s.utf8.index(before: i) }
-            return tail ? s[i...] : s[..<i]
-        }
-        let room = bytes - 5 // " … " is 5 bytes
-        return String(cut(room * 2 / 3,tail: false)) + " … " + cut(room - room * 2 / 3,tail: true)
-    }
     private func resolveTopic(_ d: Decision,snapshot: Snapshot,latest: String?) async throws -> Topic {
         if let id = d.topicID ?? (d.newTopic == nil ? latest : nil), let topic = snapshot.topics.first(where: { $0.id == id }) { return topic }
         guard let label = d.newTopic, !label.isEmpty else { throw ProjectError.invalid("Which subject should this belong to?") }
@@ -160,7 +150,7 @@ public actor Engine {
             enqueueExtraction(message); enqueueExtraction(reply); return
         }
         if d.action == "forget" {
-            guard message.body.range(of: #"(?i)\b(forget|delete|remove)\b|忘れ|削除"#,options: .regularExpression) != nil, let hit = memories.first(where: { $0.id == d.memoryID }) else { throw ProjectError.invalid("Explicit, unambiguous memory-only forget request required.") }
+            guard message.body.range(of: Self.forgetRequest,options: .regularExpression) != nil, let hit = memories.first(where: { $0.id == d.memoryID }) else { throw ProjectError.invalid("Explicit, unambiguous memory-only forget request required.") }
             await extractionTail?.value // Fence already queued extraction, never replay old history after forget.
             try await memory.forget(id: hit.id,expectedSHA256: hit.sha256)
             try await store.markMemory(message.id,state: "forget_request_not_extracted")
