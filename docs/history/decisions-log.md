@@ -379,3 +379,40 @@ Source: the plan comment on issue #312, which splits it into phase A (`config.to
 13. A phone is online while it has an authenticated session on the current relay connection; last seen is the time of its last authenticated frame.
 
 Added in implementation: a model whose cost is 0 for input and output, as a local proxy may declare, counts as unknown price, not free, so it never wins the cheapest pick by accident.
+
+## 2026-10-09 — Phone sync and control over contract 0.7
+Source: owner decisions recorded in issue #313 ("projectx: phone sync and control over the 0.7 relay contract"), Decisions section.
+
+- Fix both the reliability gaps and the missing capabilities, reliability first.
+- The phone is a mirror with control. The Mac is the only source of truth. The phone sees what the Mac knows (sub-chats, worker progress, topic status) and can control work.
+- Clean break to contract 0.7 for v2's own phones. The Mac speaks only 0.7; a 0.6.x phone gets a clear "Update Yorozu" through the peer-info handshake. New events travel inside the existing end-to-end-encrypted envelope, so the deployed relay does not change. Keep the thread id field and never hard-wire `"main"`, because multiple threads come later.
+- Encrypted phone cache of recent history: the last ~500 messages or 30 days, protected by iOS file protection. Catch-up continues from the cursor. Older history may load from the Mac on scroll later.
+- A newly paired phone gets the same recent window, not the whole history.
+- Sub-chats on the phone, like the Mac popover before #311: the topic list shows each topic's status, and each topic opens an inspect-only timeline (messages, each task's instruction, executor and state, amendments, worker events and results) with iPhone navigation and activity collapsible per task.
+- Per-task Stop (running) and Retry (failed or uncertain) buttons in the phone's sub-chat, acting directly through the Engine without the secretary. This amends "sub-chats are inspect-only" (2026-10-07), but there is still no typing in sub-chats. The Mac loses its sub-chats in #311, so the buttons exist only on the phone; on the Mac work is stopped by typing. The long-term goal is typed control reliable enough that the buttons become unnecessary.
+- "Thinking" indicator: a typing-style bubble in the main timeline while the secretary routes, on both devices. The global working spinner stays. Per-topic status lives in the sub-chat list. While disconnected, the phone shows "status unknown", never "idle".
+- Read state synced: one "last seen message" cursor held by the Mac, and an unread marker or divider. Reading on one device clears it on the other. The cursor also feeds a future push badge (#320).
+- Device management moves to the Settings issue (#312).
+- Workers always treat the Mac as unattended: they never take focus and never use foreground input, whichever device the request came from. No model ever learns which device a message came from: secretary and worker inputs carry no origin. This replaces the earlier worker prompt rule that allowed a focus-taking step the user approved.
+- The menu-bar host keeps running when its window closes. Start at login and keep-awake live in Settings (#311, #312).
+- Connection status: after a return from the background, and on a fresh launch, show the last known status for 3 seconds while reconnecting (relay or direct), then the real status. Message marks are never faked.
+- Must-fix bugs: (1) the Mac must keep and process relay-replayed frames that it acked but dropped; (2) messages stored but never routed before a quit are processed on the next launch, if they are less than 24 h old.
+- Decided in #312, built here: Remove host and Repair on the iPhone also remove the old record on the Mac.
+- Decided in #311, phone side built here: search everything on both devices; the phone searches the main timeline and sub-chats over the relay and the Mac runs the query over its full history. Notices render as system rows from a code and parameters in the user's language, and results get a reply header drawn from `replyTo`. The menu-bar dot follows the synced read cursor.
+
+## 2026-10-09 — Phone sync PR A: implementer readings (not owner decisions)
+Source: the plan comment on issue #313, which splits it by whether a change touches the wire, because a 0.7 Mac stops the owner's 0.6.1 phone: PR A (reliability and core, still on the 0.6 wire, branch `sync-reliability`), PR B (contract 0.7 and iOS, left open until the owner chooses when the Mac moves to 0.7) and PR C (the visual parts, after the owner approves the #311 mockups). It takes the issue's open questions 1–7 at their proposed defaults. The owner has not answered them; [status.md](../status.md#open-items) keeps them as open items, marked as defaults taken where PR A uses them.
+
+1. History window bound: the union, that is the newest 500 messages plus anything younger than 30 days (`Store.changes`).
+2. A stored, unrouted message older than 24 h at launch is not routed. It gets one short failure notice (`closed_too_long`) that replies to it and says Yorozu was closed for more than 24 hours, so the user should send it again if it still applies.
+3. A message whose routing started but did not finish before a quit is left alone; only never-started messages (`readAt` unset) are routed at launch.
+4. Stop and Retry controls post the same acknowledgments and failures a typed stop or retry produces, filed in the task's topic and replying to the task's original message. No user message is created. The phone's buttons work only while connected and their events are never queued or resent (PR B).
+5. What counts as seen: on the phone, the newest message on screen while the app is active and the chat is shown; on the Mac, the newest message shown while the popover is open. The user's own messages never count as unread, and the cursor only moves forward (`Store.markRead`; the devices' part is PR B and C).
+6. Loading older history on scroll is not in #313. A search hit outside the cache still loads its surrounding page (`Store.page(around:)`).
+7. Remove host or Repair while the phone cannot reach the relay: the phone removes its pairing anyway, and the Mac's record stays until it is removed in Mac Settings (#312).
+
+Added in implementation:
+- Messages from builds before `readAt` that already got a reply, a topic or work count as routed even when `readAt` is unset, so a downgrade and upgrade never routes them again.
+- A failed Stop or Retry control that has no notice code of its own posts `task_control_failed` with the raw error in `params.error`.
+- The 0.6 wire has no error page, so a `sync_request` the Mac cannot answer gets an empty final page: the phone's catch-up ends, its cursor stays, and its next `.paired` asks again.
+- A failed snapshot read no longer ends the poll loop: the status line says so and the poll backs off from 0.7 s, doubling to 30 s, until a read succeeds.

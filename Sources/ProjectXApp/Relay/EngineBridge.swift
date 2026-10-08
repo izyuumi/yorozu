@@ -1,4 +1,5 @@
 import Foundation
+import os
 import ProjectXCore
 import YorozuWire
 
@@ -21,8 +22,13 @@ actor EngineBridge: RelayBackend {
         switch e.payload {
         case .message(let m): return [await admit(m, id: e.id)]
         case .syncRequest(let r):
-            guard let s = try? await engine.snapshot() else { return [] }
-            return [Self.page(s, after: r.lastSeen["main"])]
+            do { return [Self.page(try await engine.snapshot(), after: r.lastSeen["main"])] }
+            catch {
+                Logger(subsystem: "to.yumi.yorozu", category: "relay").error("sync_request unanswerable: \(error.localizedDescription, privacy: .public)")
+                // 0.6 has no error page. No reply keeps the phone catching up, so live updates cannot move
+                // its cursor past the gap, and its next `.paired` asks again.
+                return []
+            }
         case .threadList:
             guard let s = try? await engine.snapshot() else { return [] }
             return [.control(.threadList(ThreadListData(threads: [Self.main(s)])))]
@@ -54,14 +60,17 @@ actor EngineBridge: RelayBackend {
         guard id.range(of: #"^[A-Za-z0-9-]{1,64}\z"#, options: .regularExpression) != nil else { return reject("Invalid message id.") }
         guard m.attachments.isEmpty else { return reject("Attachments aren't supported yet.") }
         guard mode.permitsInput(fixtureAcknowledged: false) else { return reject("This Mac is in fixture mode and doesn't take phone messages.") }
-        // A resend or a relay replay of something already stored: the receipt is all it needs.
-        if await exists(id) { return receipt }
+        // A resend or a relay replay of something already stored: the receipt is all it needs. An id the
+        // last poll has not seen yet makes `send` throw on the duplicate key, and the check below answers it.
+        if seen?.contains(id) == true { return receipt }
         await prepare()
+        // Text and id only: no model may learn which device a message came from (#313).
         do { try await engine.send(m.text, id: id); return receipt }
         catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
     }
 
-    private func exists(_ id: String) async -> Bool { (try? await engine.snapshot().messages.contains { $0.id == id }) ?? false }
+    /// Only after a failed send: a keyed lookup of the id.
+    private func exists(_ id: String) async -> Bool { ((try? await engine.store.message(id: id)) ?? nil) != nil }
 
     /// A reply page: the messages after `cursor` (all of them when it is absent or unknown), at most 200
     /// events and 512 KB, at least one when any remain.

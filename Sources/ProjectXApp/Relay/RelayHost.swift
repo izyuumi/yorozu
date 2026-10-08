@@ -21,9 +21,14 @@ actor RelayHost {
     private struct Inbound: Decodable { var type: String; var nonce, payload, token: String?; var seq: Int? }
     private struct Frame: Encodable { var payload, sig: String }
     private struct Batch: Encodable { var type = "frame"; var frames: [Frame] }
-    /// A paired phone on this run. `compatibility` is nil until its peer-info claim arrives, and only a
-    /// `.compatible` phone is served: every `hello` resets it, so every reconnect runs the exchange again.
-    private struct Peer { var record: RelayDevice; let keys: (send: SymmetricKey, recv: SymmetricKey); var compatibility: PeerCompatibility? }
+    /// A paired phone. `compatibility` starts from the result on file (`RelayDevice.served`) and each
+    /// claim replaces it; only a `.compatible` phone is served. A `hello` keeps a `.compatible` result
+    /// and runs the exchange again, so the boxes the relay replays after a buffered `hello` still land.
+    /// `accepted` is the channel seq accepted in memory, for ordering; `record.counter.recv` on file
+    /// moves only once a frame has been handled, so a frame lost to a quit is accepted again on replay.
+    private struct Peer { var record: RelayDevice; let keys: (send: SymmetricKey, recv: SymmetricKey); var compatibility: PeerCompatibility?; var accepted: Int }
+    /// A box from a phone with no result yet, with the relay seq it came with, if replayed.
+    private typealias Held = (relay: Int?, channel: Int, event: YorozuEvent)
 
     nonisolated let status: AsyncStream<RelayStatus>
     private let statusOut: AsyncStream<RelayStatus>.Continuation
@@ -45,9 +50,20 @@ actor RelayHost {
     private var secrets: [String] = []
     private var socket: URLSessionWebSocketTask?
     private var registered = false
-    /// Set once a replayed frame on this socket could not be recorded; nothing after it is acked, so the
-    /// relay brings it again.
-    private var ackBlocked = false
+    /// The first replayed seq on this socket that could not be recorded; the ack is cumulative, so
+    /// nothing from it on is acked and the relay brings it again on the next registration.
+    private var ackLimit: Int?
+    /// Boxes from phones with no peer-info result yet, in arrival order, at most 64 a phone: a
+    /// compatible claim passes them to the backend, any other result drops them. Unacked until then.
+    private var held: [String: [Held]] = [:]
+    /// The newest relay seq seen on this socket: what a release acks up to.
+    private var lastRelaySeq: Int?
+    /// Counts sockets, so an ack still queued for an old one is never sent on the next.
+    private var generation = 0
+    /// Phone events reach the backend one at a time in arrival order, off the receive path, and a
+    /// replayed frame's ack takes its turn behind them: it leaves only once the Engine has stored or
+    /// refused every replayed frame up to it.
+    private var tail: Task<Void, Never>?
     private var pongDue = false
     private var retry: Double = 2
     private var loop: Task<Void, Never>?
@@ -58,10 +74,13 @@ actor RelayHost {
         let (stream, continuation) = AsyncStream<RelayStatus>.makeStream(); status = stream; statusOut = continuation
         room = Data(SHA256.hash(data: identity.signingPublicKey)).base64URLEncodedString()
         // The relay remembers 16 devices a room, and the announce names every one of them.
-        for record in try RelayDeviceFile.load(devicesFile).prefix(16) {
+        for var record in try RelayDeviceFile.load(devicesFile).prefix(16) {
             guard let pub = Data(base64URLEncoded: record.pub),
                   let keys = try? YorozuCrypto.deriveChannelKeys(myPriv: identity.sessionPrivateKey, theirPub: pub, role: .mac) else { continue }
-            peers[record.pub] = Peer(record: record, keys: keys)
+            // A result for another host protocol is dropped; the phone's next claim decides.
+            let served = record.served
+            if served == nil { record.compatible = nil }
+            peers[record.pub] = Peer(record: record, keys: keys, compatibility: served, accepted: record.counter.recv)
         }
     }
 
@@ -101,6 +120,7 @@ actor RelayHost {
         guard let peer = peers.removeValue(forKey: pub) else { return }
         do { try persist() } catch { peers[pub] = peer; state = error.localizedDescription; return publish() }
         online.remove(pub)
+        release(pub, serve: false)
         announce()
         if registered { send(["type": "revoke", "pubkey": peer.record.signingPub]) }
         publish()
@@ -124,7 +144,8 @@ actor RelayHost {
         guard let url = dial.url else { state = "Bad relay URL: \(relayURL)"; return publish() }
         while !Task.isCancelled {
             let ws = URLSession.shared.webSocketTask(with: url)
-            socket = ws; ackBlocked = false; pongDue = false
+            // Held boxes went unacked and unaccepted, so the relay brings them again on this socket.
+            socket = ws; generation += 1; ackLimit = nil; held = [:]; lastRelaySeq = nil; pongDue = false
             ws.resume()
             let heartbeat = Task { await self.heartbeat(ws) }
             do {
@@ -169,16 +190,32 @@ actor RelayHost {
         case "pong":
             pongDue = false
         case "frame":
-            // A replayed frame carries the relay's buffer seq, and the ack is cumulative: acked only
-            // once handled. A body that is not a frame at all is acked too, or it would replay for ever.
+            // A replayed frame carries the relay's buffer seq, and the ack is cumulative: acked only once
+            // handled, after every frame before it. One that can never be handled (not a frame, unknown
+            // key, malformed, a replayed channel seq, a phone that must update) is acked too, or it would
+            // replay for ever. A held box holds back acks from its seq on until its phone's claim.
+            if let seq = message.seq { lastRelaySeq = seq }
             do {
                 if let raw = message.payload.flatMap(Data.init(base64URLEncoded:)),
-                   let body = try? JSONDecoder().decode(FrameBody.self, from: raw) { try frame(body) }
-            } catch { if message.seq != nil { ackBlocked = true } }
-            if let seq = message.seq, !ackBlocked { send(["type": "ack", "seq": seq]) }
+                   let body = try? JSONDecoder().decode(FrameBody.self, from: raw) { try frame(body, relay: message.seq) }
+            } catch {
+                if let seq = message.seq, ackLimit == nil { ackLimit = seq }
+            }
+            if let seq = message.seq { queueAck(seq) }
         default:
             break
         }
+    }
+
+    /// Behind every phone event already queued, so it leaves only once they are handled.
+    private func queueAck(_ seq: Int) {
+        let previous = tail, socket = generation
+        tail = Task { await previous?.value; self.ack(seq, socket: socket) }
+    }
+
+    private func ack(_ seq: Int, socket: Int) {
+        let limit = ([ackLimit] + held.values.joined().map(\.relay)).compactMap { $0 }.min()
+        if socket == generation, limit.map({ seq < $0 }) ?? true { send(["type": "ack", "seq": seq]) }
     }
 
     private func newCode(_ token: String) {
@@ -192,23 +229,27 @@ actor RelayHost {
 
     // MARK: Frames
 
-    /// Throws only when a counter or the device list could not be written, which holds back the ack.
-    private func frame(_ body: FrameBody) throws {
+    /// Throws when the device list could not be written for a `hello`; that holds back the ack.
+    private func frame(_ body: FrameBody, relay: Int?) throws {
         if body.t == "hello" { return try hello(body) }
         guard body.t == "box", let nonce = body.n.flatMap(Data.init(base64URLEncoded:)),
               let ciphertext = body.c.flatMap(Data.init(base64URLEncoded:)) else { return }
         // Frames carry no sender: whichever paired key opens one names its device.
-        for (pub, var peer) in peers {
+        for (pub, peer) in peers {
             guard let plain = try? YorozuCrypto.open(key: peer.keys.recv, nonce: nonce, ciphertext: ciphertext) else { continue }
             // Malformed or replayed: dropped.
-            guard let envelope = try? ChannelEnvelope.decode(plain), peer.record.counter.accept(envelope.seq) else { return }
-            // Rides on the counter's write, which every accepted frame makes anyway.
-            peer.record.lastSeen = Date()
-            // Written before it is acted on, and acted on only if written.
-            let before = peers[pub]; peers[pub] = peer
-            do { try persist() } catch { peers[pub] = before; throw error }
+            guard let envelope = try? ChannelEnvelope.decode(plain), envelope.seq > peer.accepted else { return }
+            // Written with the counter once the frame is handled.
+            peers[pub]?.record.lastSeen = Date()
             if online.insert(pub).inserted { publish() }
-            return received(envelope.event, from: pub)
+            // Before its claim, a phone with no result on file is not served yet: its box waits here,
+            // unaccepted. Past 64 boxes one is dropped.
+            if peer.compatibility == nil, !Self.isClaim(envelope.event) {
+                if held[pub, default: []].count < 64 { held[pub, default: []].append((relay, envelope.seq, envelope.event)) }
+                return
+            }
+            peers[pub]?.accepted = envelope.seq
+            return received(envelope.event, from: pub, channel: envelope.seq)
         }
     }
 
@@ -225,7 +266,10 @@ actor RelayHost {
         guard known != nil || peers.count < 16, let spub = proved ? body.spub : known?.record.signingPub else { return }
         var record = known?.record ?? RelayDevice(pub: pub, signingPub: spub, pairedAt: Date())
         record.signingPub = spub
-        peers[pub] = Peer(record: record, keys: keys)
+        // A `.compatible` phone stays served until its next claim says otherwise.
+        var served: PeerCompatibility?
+        if case .compatible? = known?.compatibility { served = known?.compatibility }
+        peers[pub] = Peer(record: record, keys: keys, compatibility: served, accepted: known?.accepted ?? record.counter.recv)
         if known?.record.signingPub != spub {
             do { try persist() } catch { peers[pub] = known; throw error }
             announce()
@@ -234,47 +278,90 @@ actor RelayHost {
         if proved { secrets = []; link = nil; if pairing { send(["type": "mint"]) } }
         publish()
         // The first sealed event; the phone answers it with its peer-info claim.
-        deliver([(pub, .control(.threadList(ThreadListData(threads: [main], peerInfoSupported: true))))])
+        restartExchange([pub])
     }
 
     /// When the relay replaces a stale socket of ours it tells no phone we were gone, so a phone can
     /// still be `.paired` with live updates lost (or, after a restart, unserved) and never say hello
     /// again. The step-1 list once more restarts its exchange, and its next `.paired` catches up from
-    /// before the gap. Sealed without peer info, the only list that restarts a ready `RelayClient`;
-    /// a phone already served stays served, so the frames the relay replays now still land.
-    private func rehandshake() {
-        let served = peers.mapValues(\.compatibility)
-        for pub in peers.keys { peers[pub]?.compatibility = nil }
-        deliver(peers.keys.map { ($0, .control(.threadList(ThreadListData(threads: [main], peerInfoSupported: true)))) })
+    /// before the gap.
+    private func rehandshake() { restartExchange(Array(peers.keys)) }
+
+    /// Seals the step-1 list without peer info, the only list that restarts a ready `RelayClient`; a
+    /// phone already served stays served, so the frames the relay replays meanwhile still land.
+    private func restartExchange(_ pubs: [String]) {
+        let served = pubs.map { ($0, peers[$0]?.compatibility) }
+        for pub in pubs { peers[pub]?.compatibility = nil }
+        deliver(pubs.map { ($0, .control(.threadList(ThreadListData(threads: [main], peerInfoSupported: true)))) })
         for (pub, compatibility) in served { peers[pub]?.compatibility = compatibility }
     }
 
-    private func received(_ event: YorozuEvent, from pub: String) {
+    private static func isClaim(_ event: YorozuEvent) -> Bool {
         switch event.payload {
-        case .threadList(let list) where list.peerInfo != nil || list.peerInfoSupported != nil || list.peerInfoError != nil || list.peerInfoReplyTo != nil:
-            let valid = (1...128).contains(event.id.utf8.count) && list.peerInfoError == nil && list.peerInfoReplyTo == nil
-            claim(valid ? list.peerInfo : nil, id: event.id, from: pub)
-        case .unknown("thread_list", _):
-            // A thread list that did not decode is a malformed claim.
-            claim(nil, id: event.id, from: pub)
-        default:
-            guard case .compatible = peers[pub]?.compatibility else { return }
-            // Off this actor's receive path: hellos and claims never queue behind the Engine.
-            Task { self.deliver(await self.backend.handle(event).map { (pub, $0) }) }
+        case .threadList(let list): list.peerInfo != nil || list.peerInfoSupported != nil || list.peerInfoError != nil || list.peerInfoReplyTo != nil
+        // A thread list that did not decode is a malformed claim.
+        case .unknown("thread_list", _): true
+        default: false
         }
+    }
+
+    private func received(_ event: YorozuEvent, from pub: String, channel: Int) {
+        var handled: YorozuEvent?
+        if Self.isClaim(event) {
+            if case .threadList(let list) = event.payload {
+                let valid = (1...128).contains(event.id.utf8.count) && list.peerInfoError == nil && list.peerInfoReplyTo == nil
+                claim(valid ? list.peerInfo : nil, id: event.id, from: pub)
+            } else {
+                claim(nil, id: event.id, from: pub)
+            }
+        } else if case .compatible = peers[pub]?.compatibility {
+            handled = event
+        }
+        // Off this actor's receive path, so hellos and claims never queue behind the Engine. The
+        // counter on file moves only after the Engine is done with the frame.
+        let previous = tail
+        tail = Task {
+            await previous?.value
+            if let handled { self.deliver(await self.backend.handle(handled).map { (pub, $0) }) }
+            self.commit(channel, for: pub)
+        }
+    }
+
+    private func commit(_ channel: Int, for pub: String) {
+        guard let recv = peers[pub]?.record.counter.recv, channel > recv else { return }
+        peers[pub]?.record.counter.recv = channel
+        // A failed write only means a replay of this frame is accepted again; the Engine drops duplicates.
+        try? persist()
+    }
+
+    /// Ends a phone's wait for its claim: its held boxes take the normal path (`serve`) or are dropped,
+    /// and acks go out again up to the newest relay seq once they are through.
+    private func release(_ pub: String, serve: Bool) {
+        guard let boxes = held.removeValue(forKey: pub) else { return }
+        if serve { for box in boxes { received(box.event, from: pub, channel: box.channel) } }
+        if let lastRelaySeq { queueAck(lastRelaySeq) }
     }
 
     /// Step 3 of the handshake: the reply names the claim it answers and carries this host's peer info,
     /// or `peerInfoError` for a phone that must update (and is served nothing else).
     private func claim(_ info: PeerInfoData?, id: String, from pub: String) {
+        guard let before = peers[pub] else { return }
         let result = PeerInfoData.local.compatibility(with: info)
         peers[pub]?.compatibility = result == .legacy ? .updateRequired("Invalid peer information.") : result
-        // The phone's model name; a phone that sends none keeps the one it had.
-        if case .compatible = result, let name = info?.computerName, let before = peers[pub], before.record.name != name {
-            peers[pub]?.record.name = name
-            do { try persist(); publish() } catch { peers[pub] = before }
+        // Kept on file with the phone's model name; a phone that sends none keeps the one it had.
+        if case .compatible(let version, let capabilities) = result {
+            peers[pub]?.record.compatible = .init(version: version, capabilities: capabilities, hostProtocol: PeerInfoData.local.protocolMax)
+            if let name = info?.computerName { peers[pub]?.record.name = name }
+        } else {
+            peers[pub]?.record.compatible = nil
+        }
+        // A failed write keeps the result for this run only.
+        if peers[pub]?.record != before.record {
+            do { try persist(); publish() } catch { peers[pub]?.record = before.record }
         }
         deliver([(pub, .control(.threadList(ThreadListData(threads: [main], peerInfoReplyTo: String(id.prefix(128))))))])
+        // Boxes held for this claim are served after the reply, or dropped for a phone that must update.
+        if case .compatible = result { release(pub, serve: true) } else { release(pub, serve: false) }
     }
 
     /// Seals each event for its phone and sends them as `frame` batches of at most 16 frames and about

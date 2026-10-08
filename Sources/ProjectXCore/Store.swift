@@ -40,6 +40,33 @@ public actor Store {
             CREATE TRIGGER messageSearch_au AFTER UPDATE OF body ON messages BEGIN INSERT INTO messageSearch(messageSearch,rowid,body) VALUES ('delete',old.rowid,old.body); INSERT INTO messageSearch(rowid,body) VALUES (new.rowid,new.body); END;
             INSERT INTO messageSearch(messageSearch) VALUES ('rebuild');
             """) }
+        // #313. Additive: older builds insert named columns (new ones are nullable or defaulted) and their writes fire the
+        // same triggers. Existing user messages count as routed, so history is never routed again.
+        // Change sequence: one global counter; every insert and update stamps the row with the next value, in the same
+        // statement. The update trigger skips its own stamp (only `seq` changed); nothing else ever writes `seq`.
+        migration.registerMigration("sync-r1") { db in
+            var sql = """
+            ALTER TABLE messages ADD COLUMN readAt DOUBLE; UPDATE messages SET readAt=created WHERE role='user';
+            CREATE TABLE changeSeq(id INTEGER PRIMARY KEY CHECK(id=1), value INTEGER NOT NULL); INSERT INTO changeSeq VALUES (1,0);
+            CREATE TABLE readCursor(threadID TEXT PRIMARY KEY, messageID TEXT NOT NULL, seq INTEGER NOT NULL DEFAULT 0);
+            CREATE VIRTUAL TABLE eventSearch USING fts5(body, content='events', content_rowid='rowid', tokenize='trigram');
+            CREATE TRIGGER eventSearch_ai AFTER INSERT ON events BEGIN INSERT INTO eventSearch(rowid,body) VALUES (new.rowid,new.body); END;
+            CREATE TRIGGER eventSearch_ad AFTER DELETE ON events BEGIN INSERT INTO eventSearch(eventSearch,rowid,body) VALUES ('delete',old.rowid,old.body); END;
+            CREATE TRIGGER eventSearch_au AFTER UPDATE OF body ON events BEGIN INSERT INTO eventSearch(eventSearch,rowid,body) VALUES ('delete',old.rowid,old.body); INSERT INTO eventSearch(rowid,body) VALUES (new.rowid,new.body); END;
+            INSERT INTO eventSearch(eventSearch) VALUES ('rebuild');
+            """
+            for t in Self.synced {
+                if t != "readCursor" { sql += "ALTER TABLE \(t) ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;" }
+                let stamp = "UPDATE changeSeq SET value=value+1; UPDATE \(t) SET seq=(SELECT value FROM changeSeq) WHERE rowid=new.rowid;"
+                // The final touch stamps existing rows with distinct values, so paging by seq never splits a tie.
+                sql += """
+                CREATE TRIGGER \(t)_seq_ai AFTER INSERT ON \(t) BEGIN \(stamp) END;
+                CREATE TRIGGER \(t)_seq_au AFTER UPDATE ON \(t) WHEN new.seq IS old.seq BEGIN \(stamp) END;
+                CREATE INDEX \(t)_seq ON \(t)(seq); UPDATE \(t) SET seq=0;
+                """
+            }
+            try db.execute(sql: sql)
+        }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -53,6 +80,7 @@ public actor Store {
         }
     }
     deinit { if lease >= 0 { flock(lease, LOCK_UN); close(lease) } }
+    static let synced = ["topics","messages","work","events","amendments","readCursor"]
     public func snapshot() throws -> Snapshot {
         try db.read { db in
             var s = Snapshot()
@@ -73,27 +101,105 @@ public actor Store {
         let m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970, notice: notice)
         try db.write { try m.insert($0) }; return m
     }
-    /// Newest first. Terms of 3+ characters match the trigram index (AND, each a quoted phrase); a shorter term
+    /// Newest first over message bodies and sub-chat worker event bodies (results are `result` messages; a superseded
+    /// answer is an event). Terms of 3+ characters match the trigram indexes (AND, each a quoted phrase); a shorter term
     /// cannot match trigrams, so such a query scans bodies with LIKE. Snippets are plain text with "…" at cuts.
-    public func search(_ query: String, limit: Int) throws -> (hits: [(messageID: String, snippet: String)], total: Int) {
+    public func search(_ query: String, limit: Int, offset: Int = 0) throws -> (hits: [SearchHit], total: Int) {
         let terms = query.split(whereSeparator: \.isWhitespace).map(String.init).prefix(16)
         guard !terms.isEmpty else { return ([],0) }
-        let limit = max(1,min(limit,500))
+        let limit = max(1,min(limit,500)), offset = max(0,min(offset,10_000))
+        let fts = terms.allSatisfy { $0.count >= 3 }
+        let match = terms.map { "\"" + $0.replacingOccurrences(of: "\"",with: "\"\"") + "\"" }.joined(separator: " ")
+        let like = terms.map { "%" + $0.replacingOccurrences(of: "\\",with: "\\\\").replacingOccurrences(of: "%",with: "\\%").replacingOccurrences(of: "_",with: "\\_") + "%" }
+        let filter = Array(repeating: "t.body LIKE ? ESCAPE '\\'",count: like.count).joined(separator: " AND ")
+        func cut(_ body: String) -> String {
+            guard let r = body.range(of: terms[0],options: .caseInsensitive) else { return String(body.prefix(48)) }
+            let start = body.index(r.lowerBound,offsetBy: -12,limitedBy: body.startIndex) ?? body.startIndex, end = body.index(r.upperBound,offsetBy: 36,limitedBy: body.endIndex) ?? body.endIndex
+            return (start == body.startIndex ? "" : "…") + body[start..<end] + (end == body.endIndex ? "" : "…")
+        }
         return try db.read { db in
-            if terms.allSatisfy({ $0.count >= 3 }) {
-                let match = terms.map { "\"" + $0.replacingOccurrences(of: "\"",with: "\"\"") + "\"" }.joined(separator: " ")
-                let rows = try Row.fetchAll(db,sql: "SELECT m.id,snippet(messageSearch,0,'','','…',48) AS s FROM messageSearch JOIN messages m ON m.rowid=messageSearch.rowid WHERE messageSearch MATCH ? ORDER BY m.created DESC,m.rowid DESC LIMIT ?",arguments: [match,limit])
-                return (rows.map { ($0["id"],$0["s"]) },try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messageSearch WHERE messageSearch MATCH ?",arguments: [match]) ?? 0)
+            var hits: [SearchHit] = []; var total = 0
+            for (table,index,columns) in [("messages","messageSearch","t.topicID AS topic,t.taskID AS task"),("events","eventSearch","(SELECT topicID FROM work WHERE id=t.taskID) AS topic,t.taskID AS task")] {
+                let (from,args): (String,StatementArguments) = fts ? ("\(index) JOIN \(table) t ON t.rowid=\(index).rowid WHERE \(index) MATCH ?",[match]) : ("\(table) t WHERE \(filter)",StatementArguments(like))
+                let rows = try Row.fetchAll(db,sql: "SELECT t.id,t.created,t.body,\(columns)\(fts ? ",snippet(\(index),0,'','','…',48) AS s" : "") FROM \(from) ORDER BY t.created DESC,t.rowid DESC LIMIT \(offset + limit)",arguments: args)
+                hits += rows.map { row in
+                    SearchHit(topicID: row["topic"],taskID: row["task"],messageID: table == "messages" ? row["id"] : nil,eventID: table == "events" ? row["id"] : nil,snippet: fts ? row["s"] : cut(row["body"]),created: row["created"])
+                }
+                total += try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM \(from)",arguments: args) ?? 0
             }
-            let like = terms.map { "%" + $0.replacingOccurrences(of: "\\",with: "\\\\").replacingOccurrences(of: "%",with: "\\%").replacingOccurrences(of: "_",with: "\\_") + "%" }
-            let filter = Array(repeating: "body LIKE ? ESCAPE '\\'",count: like.count).joined(separator: " AND ")
-            let rows = try Row.fetchAll(db,sql: "SELECT id,body FROM messages WHERE \(filter) ORDER BY created DESC,rowid DESC LIMIT \(limit)",arguments: StatementArguments(like))
-            let hits = rows.map { row -> (messageID: String, snippet: String) in
-                let body: String = row["body"]; guard let r = body.range(of: terms[0],options: .caseInsensitive) else { return (row["id"],String(body.prefix(48))) }
-                let start = body.index(r.lowerBound,offsetBy: -12,limitedBy: body.startIndex) ?? body.startIndex, end = body.index(r.upperBound,offsetBy: 36,limitedBy: body.endIndex) ?? body.endIndex
-                return (row["id"],(start == body.startIndex ? "" : "…") + body[start..<end] + (end == body.endIndex ? "" : "…"))
+            return (Array(hits.sorted { $0.created > $1.created }.dropFirst(offset).prefix(limit)),total)
+        }
+    }
+    public func message(id: String) throws -> Message? { try db.read { try Message.fetchOne($0,key: id) } }
+    public func topic(id: String) throws -> Topic? { try db.read { try Topic.fetchOne($0,key: id) } }
+    /// Stamps the start of routing once (`readAt`); false when it had already started or the message is unknown.
+    public func startRouting(_ id: String) throws -> Bool {
+        try db.write { db in try db.execute(sql: "UPDATE messages SET readAt=? WHERE id=? AND readAt IS NULL",arguments: [Date().timeIntervalSince1970,id]); return db.changesCount > 0 }
+    }
+    /// User messages whose routing never started, oldest first. Older builds never set `readAt`, so a message they
+    /// already answered, filed in a topic or delegated counts as routed.
+    public func unrouted() throws -> [Message] {
+        try db.read { try Message.fetchAll($0,sql: "SELECT * FROM messages m WHERE role='user' AND readAt IS NULL AND topicID IS NULL AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.replyTo=m.id) AND NOT EXISTS (SELECT 1 FROM work w WHERE w.messageID=m.id) ORDER BY created,rowid") }
+    }
+    /// Moves a thread's read cursor forward to `message` in timeline order; false when that is not newer or unknown.
+    public func markRead(thread: String, message: String) throws -> Bool {
+        try db.write { db in
+            guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE id=?",arguments: [message]) == 1,
+                  try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM readCursor c JOIN messages m ON m.id=c.messageID JOIN messages n ON n.id=? WHERE c.threadID=? AND (m.created,m.rowid)>=(n.created,n.rowid)",arguments: [message,thread]) == 0 else { return false }
+            try db.execute(sql: "INSERT INTO readCursor(threadID,messageID) VALUES (?,?) ON CONFLICT(threadID) DO UPDATE SET messageID=excluded.messageID",arguments: [thread,message]); return true
+        }
+    }
+    public func readCursor(thread: String) throws -> String? { try db.read { try String.fetchOne($0,sql: "SELECT messageID FROM readCursor WHERE threadID=?",arguments: [thread]) } }
+    /// History window (#313 open question 1, the union): the newest 500 messages plus every message of the last 30 days,
+    /// that is every message created at or after `start`. Work: created in it, the task of a windowed message, or
+    /// unsuppressed active or uncertain (so it can still be stopped or retried). Topics: created in it or used by
+    /// windowed messages or work. Events and amendments: those of windowed work. Read cursors: always.
+    private static func scope(_ table: String) -> String {
+        let s = "(SELECT s FROM w)"
+        let work = "(created>=\(s) OR id IN (SELECT taskID FROM messages WHERE created>=\(s)) OR (suppressed=0 AND state IN ('queued','working','amendment_pending','cancellation_requested','uncertain')))"
+        switch table {
+        case "messages": return "created>=\(s)"
+        case "work": return work
+        case "events", "amendments": return "taskID IN (SELECT id FROM work WHERE \(work))"
+        case "topics": return "(created>=\(s) OR id IN (SELECT topicID FROM messages WHERE created>=\(s)) OR id IN (SELECT topicID FROM work WHERE \(work)))"
+        default: return "1"
+        }
+    }
+    /// Rows of the window changed after `seq`, at most `limit` (1–1000), in sequence order.
+    public func changes(after seq: Int64, limit: Int = 200) throws -> ChangePage {
+        let limit = max(1,min(limit,1000)), now = Date().timeIntervalSince1970
+        return try db.read { db in
+            let nth = try Double.fetchOne(db,sql: "SELECT created FROM messages ORDER BY created DESC,rowid DESC LIMIT 1 OFFSET 499")
+            let start = min(now - 30 * 86400,nth ?? 0)
+            var all: [Change] = []
+            for t in Self.synced {
+                for row in try Row.fetchAll(db,sql: "WITH w(s) AS (SELECT ?) SELECT * FROM \(t) WHERE seq>? AND \(Self.scope(t)) ORDER BY seq LIMIT ?",arguments: [start,seq,limit + 1]) {
+                    all.append(Change(seq: row["seq"],record: try Self.record(t,row)))
+                }
             }
-            return (hits,try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE \(filter)",arguments: StatementArguments(like)) ?? 0)
+            all.sort { $0.seq < $1.seq }
+            return ChangePage(changes: Array(all.prefix(limit)),more: all.count > limit,latest: try Int64.fetchOne(db,sql: "SELECT value FROM changeSeq") ?? 0)
+        }
+    }
+    private static func record(_ table: String,_ row: Row) throws -> Change.Record {
+        switch table {
+        case "topics": return .topic(try Topic(row: row))
+        case "messages": return .message(try Message(row: row))
+        case "work": return .work(try Work(row: row))
+        case "events": return .event(try WorkerEvent(row: row))
+        case "amendments": return .amendment(try Amendment(row: row))
+        default: return .readCursor(try ReadCursor(row: row))
+        }
+    }
+    /// Up to `before` older and `after` newer messages (each ≤ 500) around one message, in timeline order, inside or
+    /// outside the window; nil for an unknown id.
+    public func page(around id: String, before: Int = 50, after: Int = 50) throws -> [Change]? {
+        try db.read { db in
+            guard let at = try Row.fetchOne(db,sql: "SELECT created,rowid FROM messages WHERE id=?",arguments: [id]) else { return nil }
+            let c: Double = at[0], r: Int64 = at[1]
+            let older = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE (created,rowid)<(?,?) ORDER BY created DESC,rowid DESC LIMIT ?",arguments: [c,r,max(0,min(before,500))])
+            let newer = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE (created,rowid)>=(?,?) ORDER BY created,rowid LIMIT ?",arguments: [c,r,max(0,min(after,500)) + 1])
+            return try (older.reversed() + newer).map { Change(seq: $0["seq"],record: try Self.record("messages",$0)) }
         }
     }
     /// Assign only the newly received, previously unrouted message. Never migrate an old exchange.

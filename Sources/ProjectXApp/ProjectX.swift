@@ -51,6 +51,8 @@ import ProjectXCore
     /// The launch text of config.toml, so the watcher reports an edit made during launch.
     var configText: Data?
     private var relayRestart: Task<Void,Never>?
+    /// The next start of a relay host that failed to start.
+    private var relayRetry: Task<Void,Never>?
     var awake: NSObjectProtocol?
     var working: Bool { snapshot.work.contains { $0.active } }
     func start() {
@@ -104,12 +106,19 @@ import ProjectXCore
                 status = nil; ready = true
                 applySystem(resolved.config.general)
                 watchConfig()
-                // Polls keep reading, but the UI and the relay hear only about a changed snapshot.
+                // Polls keep reading, but the UI and the relay hear only about a changed snapshot. A failed read says so
+                // in the status line and backs off (0.7 s doubling to 30 s) until one succeeds.
+                var failures = 0, notice: String?
                 while !Task.isCancelled {
-                    let next = try await engine.snapshot()
-                    if next != snapshot { snapshot = next }
-                    if next != relayed, let relay, let bridge { relayed = next; await bridge.publish(next,to: relay) }
-                    try await Task.sleep(for: .milliseconds(350))
+                    do {
+                        let next = try await engine.snapshot()
+                        if notice != nil { if status == notice { status = nil }; notice = nil; failures = 0 }
+                        if next != snapshot { snapshot = next }
+                        if next != relayed, let relay, let bridge { relayed = next; await bridge.publish(next,to: relay) }
+                    } catch {
+                        failures += 1; notice = "Couldn't read the chat, retrying: \(error.localizedDescription)"; status = notice
+                    }
+                    try await Task.sleep(for: .milliseconds(failures == 0 ? 350 : min(350 << min(failures,7),30_000)))
                 }
             } catch is CancellationError { }
             catch { status = error.localizedDescription; ready = false }
@@ -128,16 +137,25 @@ import ProjectXCore
             return nil
         }
     }
-    /// A relay that cannot start (Keychain, unreadable device file) leaves the Mac app running and says why in the pair sheet.
+    /// A relay that cannot start (Keychain, unreadable device file) leaves the Mac app running, says why in the pair sheet,
+    /// and tries again every 30 s on the relay URL in force then.
     func startRelay(_ engine: Engine,url: String) async {
         guard let devicesFile else { return }
+        relayRetry?.cancel(); relayRetry = nil
         do {
             let bridge = EngineBridge(engine: engine,mode: runtimeMode) { [weak self] in await self?.ensureModels() }
             let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile)
             self.bridge = bridge; relay = host; relayed = nil
             Task { for await status in host.status where relay === host { relayStatus = status } }
             await host.start()
-        } catch { relayStatus.state = error.localizedDescription }
+        } catch {
+            relayStatus.state = error.localizedDescription
+            relayRetry = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let self, relay == nil, let url = resolved?.config.relay.url else { return }
+                await startRelay(engine,url: url)
+            }
+        }
     }
     /// A new relay URL: the old host stops and a fresh one dials the new relay with the same keys and devices.
     /// Restarts run one after another, each dialing the relay URL in force once the old host has stopped, so quick edits leave one relay.
@@ -146,6 +164,7 @@ import ProjectXCore
         let task = Task {
             await previous?.value
             guard let engine else { return }
+            relayRetry?.cancel()
             let old = relay; relay = nil; bridge = nil
             await old?.stop()
             guard let url = resolved?.config.relay.url else { return }
@@ -153,7 +172,7 @@ import ProjectXCore
         }
         relayRestart = task; await task.value
     }
-    func stop() { observation?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
+    func stop() { observation?.cancel(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
     func enroll() async {
         guard let nativeClient, !connecting else { return }
         connecting = true; let secret = bootstrapSecret; bootstrapSecret = ""

@@ -17,7 +17,7 @@ enum RelayKeys {
         var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?; let status = SecItemCopyMatching(q as CFDictionary, &result)
         if status == errSecSuccess, let data = result as? Data { return try JSONDecoder().decode(PhoneIdentity.self, from: data) }
-        guard status == errSecItemNotFound else { throw ProjectError.blocked("Yorozu could not read its relay keys from the Keychain. Unlock the login Keychain and restart.") }
+        guard status == errSecItemNotFound else { throw ProjectError.blocked("Yorozu could not read its relay keys from the Keychain. Unlock the login Keychain; Yorozu tries again every 30 seconds.") }
         let keys = PhoneIdentity.generate()
         q = query; q[kSecValueData as String] = try JSONEncoder().encode(keys); q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw ProjectError.blocked("Yorozu could not save its relay keys in the Keychain.") }
@@ -27,7 +27,7 @@ enum RelayKeys {
 
 /// One paired phone, as `relay-devices.json` keeps it. The counter lives next to the keys it counts
 /// for: a device forgotten here takes its counter with it, and one kept keeps counting.
-struct RelayDevice: Codable, Sendable, Identifiable {
+struct RelayDevice: Codable, Sendable, Identifiable, Equatable {
     /// X25519, base64url: what its boxes are sealed for, and its identity here.
     var pub: String
     /// Ed25519, base64url: what the relay knows it by, and what `devices` and `revoke` name.
@@ -40,7 +40,23 @@ struct RelayDevice: Codable, Sendable, Identifiable {
     var label: String?
     /// When its last authenticated frame arrived.
     var lastSeen: Date?
+    /// Its last `.compatible` peer-info result, so a known phone is served from its first frame after a
+    /// relaunch or a `hello`, before it claims again. A new claim replaces it; nil when none is on file.
+    var compatible: Compatible?
     var id: String { pub }
+
+    struct Compatible: Codable, Sendable, Equatable {
+        var version: Int
+        var capabilities: [String]
+        /// `PeerInfoData.local.protocolMax` when it was computed; a host on another version ignores it.
+        var hostProtocol: Int
+    }
+
+    /// The stored result as the host serves it, or nil when there is none for this host's protocol.
+    var served: PeerCompatibility? {
+        guard let compatible, compatible.hostProtocol == PeerInfoData.local.protocolMax else { return nil }
+        return .compatible(version: compatible.version, capabilities: compatible.capabilities)
+    }
 }
 
 /// One paired phone as Settings shows it.

@@ -13,8 +13,10 @@ public actor Engine {
     public init(store: Store, memory: MemoryStore, harness: any Harness, settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) { self.store = store; self.memory = memory; self.harness = harness; self.settings = settings }
     public func snapshot() async throws -> Snapshot { try await store.snapshot() }
     public var mode: String { harness.name }
-    /// Chat search over every message body (see `Store.search`).
-    public func search(_ query: String, limit: Int = 50) async throws -> (hits: [(messageID: String, snippet: String)], total: Int) { try await store.search(query,limit: limit) }
+    /// True while the secretary routes a message (Send until its reply or delegation).
+    public var routing: Bool { routingCount > 0 }
+    /// Search over every message body and sub-chat worker event (see `Store.search`).
+    public func search(_ query: String, limit: Int = 50, offset: Int = 0) async throws -> (hits: [SearchHit], total: Int) { try await store.search(query,limit: limit,offset: offset) }
     /// Persist before returning; routing and workers never hold the main composer hostage.
     /// `id` lets a remote client (the phone) keep the id of the bubble it already shows.
     @discardableResult public func send(_ body: String, id: String = identifier()) async throws -> String {
@@ -22,14 +24,24 @@ public actor Engine {
         guard routingCount + pending.count + running.count < 32 else { throw ProjectError.blocked("32 requests pending; wait for work to finish.") }
         try await store.bindRuntime(harness.name)
         let m = try await store.message(role: "user",body: body,id: id)
+        enqueueRoute(m); return m.id
+    }
+    private func enqueueRoute(_ m: Message) {
         routingCount += 1
         let prior = routingTail
         routingTail = Task { if let prior { await prior.value }; await self.route(m) }
-        return m.id
     }
-    /// After launch: queue never-dispatched work again and re-attach to runs a restart interrupted. A run that
-    /// finished meanwhile is delivered; one still going is watched; only a stopped one asks the user to retry.
+    /// After launch: route user messages a quit left unrouted (under 24 h old, in order; older ones get one notice),
+    /// queue never-dispatched work again and re-attach to runs a restart interrupted. A run that finished meanwhile is
+    /// delivered; one still going is watched; only a stopped one asks the user to retry.
+    /// A message whose routing had started (`readAt` set) is left alone (#313 open question 3).
     public func resume() async {
+        let cutoff = Date().timeIntervalSince1970 - 86400
+        for m in (try? await store.unrouted()) ?? [] {
+            if m.created >= cutoff { enqueueRoute(m); continue }
+            guard (try? await store.startRouting(m.id)) == true else { continue } // marked first: never noticed twice
+            _ = try? await store.message(role: "assistant",body: "Yorozu was closed for more than 24 hours; send this again if it still applies.",replyTo: m.id,kind: "failure",notice: Notice(.closedTooLong))
+        }
         let work = (try? await store.snapshot().work) ?? []
         for w in work where w.state == "queued" && !w.suppressed { pending.append((w.id,w.executor != nil)) }
         pump()
@@ -77,6 +89,8 @@ public actor Engine {
 
     private func route(_ message: Message) async {
         defer { routingCount -= 1 }
+        // Before anything else: a quit from here on leaves the message alone at launch (open question 3).
+        guard !Task.isCancelled, (try? await store.startRouting(message.id)) == true else { return }
         do {
             try Task.checkCancellation()
             let snapshot = try await store.snapshot()
@@ -203,12 +217,7 @@ public actor Engine {
             let w = try await store.work(d.taskID!)
             guard let topic = snapshot.topics.first(where: { $0.id == w.topicID }) else { throw ProjectError.invalid("Unknown task topic.") }
             try await store.assign(message: message.id,topic: topic.id)
-            // A repeated stop on still-unconfirmed suppressed work re-sends the abort instead of claiming it stopped.
-            guard w.active || w.state == "uncertain" else {
-                _ = try await store.message(role: "assistant",body: "That isn't running.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(.notRunning)); return
-            }
-            let confirmed = try await stop(w,topic: topic)
-            _ = try await store.message(role: "assistant",body: confirmed ? "Stopped." : "Stopping it; not confirmed yet.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(confirmed ? .stopped : .stopping)); return
+            _ = try await halt(w,topic: topic,replyTo: message.id); return
         }
         if d.action == "retry" {
             let w = try await store.work(d.taskID!)
@@ -217,27 +226,8 @@ public actor Engine {
                 try await store.assign(message: message.id,topic: topic.id)
                 try await delegate(message,topic: topic,instruction: utf8Excerpt(w.instruction,bytes: 10_000) + "\nThe user now says: " + utf8Excerpt(message.body,bytes: 1500),executor: w.executor); return
             }
-            guard !w.suppressed, ["failed","uncertain"].contains(w.state), let topic = snapshot.topics.first(where: { $0.id == w.topicID }) else { throw NoticeError(.retryNotAllowed,"Only failed/uncertain work can be retried. Active work is not duplicated.") }
-            try await store.assign(message: message.id,topic: topic.id)
-            // setHandle commits a run ID before every dispatch, so none means nothing was ever sent.
-            let state: RunStatus = w.runID == nil ? .stopped : try await harness.reconcile(w,topic: topic)
-            switch state {
-            case .unknown, .running: throw NoticeError(.retryRunning,"The earlier run is active or its status is unknown. Retry has NOT started; reconcile it first to avoid duplicate work.")
-            case .completed(let output):
-                // Saved changes the finished run never saw go to the same task as a queued follow-up turn.
-                let (reply,next) = try await store.finish(task: w.id,output: output,requeue: true,from: w.state)
-                if next != nil {
-                    _ = try await store.message(role: "assistant",body: "The earlier run finished before your change, so I'm applying it now.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment",notice: Notice(.changeAfterFinish))
-                    pending.append((w.id,w.executor != nil)); pump()
-                } else if let reply { enqueueExtraction(reply) }; return
-            case .stopped:
-                try await store.retireForRetry(w.id)
-                // Queued-input amendments are already merged into the instruction ("Amendment N: …"); list only the rest.
-                let unmerged = try await store.snapshot().amendments.filter { $0.taskID == w.id && !["queued_input","applied"].contains($0.state) && !w.instruction.contains("\nAmendment \($0.revision): " + $0.instruction) }.sorted { $0.revision < $1.revision }
-                let saved = unmerged.map { "\nSaved amendment \($0.revision): " + $0.instruction }.joined()
-                // Head and tail keep the original request and the latest changes; bounded well under the 32,000-byte worker wire.
-                try await delegate(message,topic: topic,instruction: utf8Excerpt(w.instruction + saved,bytes: 10_000) + "\nUser requested retry: " + utf8Excerpt(message.body,bytes: 1500),executor: w.executor)
-            }; return
+            guard let topic = snapshot.topics.first(where: { $0.id == w.topicID }) else { throw Self.notRetryable }
+            _ = try await retry(w,topic: topic,request: message,note: "\nUser requested retry: " + utf8Excerpt(message.body,bytes: 1500),file: true); return
         }
         let topic = try await resolveTopic(d,snapshot: snapshot,latest: latest)
         try await store.assign(message: message.id,topic: topic.id)
@@ -266,6 +256,65 @@ public actor Engine {
             try await delegate(message,topic: topic,instruction: d.instruction!,executor: executor); return
         }
         try await delegate(message,topic: topic,instruction: d.instruction!,executor: d.executor)
+    }
+    /// Stop control (the phone's button): a typed stop's guards and acknowledgments with no secretary call and no user
+    /// message, filed in the task's topic and replying to the task's original message (#313 open question 4).
+    public func stopTask(id: String) async -> TaskOutcome { await control(id) { w,topic in try await self.halt(w,topic: topic,replyTo: w.messageID) } }
+    /// Retry control: a typed retry's guards and reconciliation; new work answers the task's original message with its
+    /// instruction plus saved amendments. Running or unknown status never starts a duplicate.
+    public func retryTask(id: String) async -> TaskOutcome {
+        await control(id) { w,topic in
+            guard let request = try await self.store.message(id: w.messageID) else { throw ProjectError.invalid("Missing task context.") }
+            return try await self.retry(w,topic: topic,request: request)
+        }
+    }
+    /// A refusal or error is posted like a typed one (its code, else `task_control_failed`), in the task's topic.
+    private func control(_ id: String,_ act: (Work,Topic) async throws -> TaskOutcome) async -> TaskOutcome {
+        guard let w = try? await store.work(id), let topic = try? await store.topic(id: w.topicID) else { return TaskOutcome(accepted: false,text: "Unknown task.",notice: nil,messageID: nil) }
+        do { return try await act(w,topic) } catch {
+            let coded = error as? NoticeError, notice = coded?.notice ?? Notice(.taskControlFailed,["error": error.localizedDescription])
+            let m = try? await store.message(role: "assistant",body: error.localizedDescription,topic: w.topicID,task: w.id,replyTo: w.messageID,kind: coded?.kind ?? "failure",notice: notice)
+            return TaskOutcome(accepted: false,text: error.localizedDescription,notice: notice,messageID: m?.id)
+        }
+    }
+    private func acknowledge(_ w: Work,replyTo: String,_ body: String,_ notice: Notice,accepted: Bool = true) async throws -> TaskOutcome {
+        let m = try await store.message(role: "assistant",body: body,topic: w.topicID,task: w.id,replyTo: replyTo,kind: "acknowledgment",notice: notice)
+        return TaskOutcome(accepted: accepted,text: body,notice: notice,messageID: m.id)
+    }
+    /// Typed stop and `stopTask`. A repeated stop on still-unconfirmed suppressed work re-sends the abort instead of claiming it stopped.
+    private func halt(_ w: Work,topic: Topic,replyTo: String) async throws -> TaskOutcome {
+        guard w.active || w.state == "uncertain" else { return try await acknowledge(w,replyTo: replyTo,"That isn't running.",Notice(.notRunning),accepted: false) }
+        let confirmed = try await stop(w,topic: topic)
+        return try await acknowledge(w,replyTo: replyTo,confirmed ? "Stopped." : "Stopping it; not confirmed yet.",Notice(confirmed ? .stopped : .stopping))
+    }
+    private static let notRetryable = NoticeError(.retryNotAllowed,"Only failed/uncertain work can be retried. Active work is not duplicated.")
+    /// Typed retry and `retryTask`: only failed or uncertain unsuppressed work, reconciled first. `request`: the message
+    /// new work answers and acknowledgments reply to; `file`: file it in the task's topic once the guard passes.
+    private func retry(_ w: Work,topic: Topic,request: Message,note: String = "",file: Bool = false) async throws -> TaskOutcome {
+        guard !w.suppressed, ["failed","uncertain"].contains(w.state) else { throw Self.notRetryable }
+        if file { try await store.assign(message: request.id,topic: topic.id) }
+        // setHandle commits a run ID before every dispatch, so none means nothing was ever sent.
+        let state: RunStatus = w.runID == nil ? .stopped : try await harness.reconcile(w,topic: topic)
+        switch state {
+        case .unknown, .running: throw NoticeError(.retryRunning,"The earlier run is active or its status is unknown. Retry has NOT started; reconcile it first to avoid duplicate work.")
+        case .completed(let output):
+            // Saved changes the finished run never saw go to the same task as a queued follow-up turn.
+            let (reply,next) = try await store.finish(task: w.id,output: output,requeue: true,from: w.state)
+            if next != nil {
+                let outcome = try await acknowledge(w,replyTo: request.id,"The earlier run finished before your change, so I'm applying it now.",Notice(.changeAfterFinish))
+                pending.append((w.id,w.executor != nil)); pump(); return outcome
+            }
+            if let reply { enqueueExtraction(reply) }
+            return TaskOutcome(accepted: reply != nil,text: reply != nil ? "The earlier run had finished; its result is in the chat." : "That task changed meanwhile; nothing was retried.",notice: nil,messageID: reply?.id)
+        case .stopped:
+            try await store.retireForRetry(w.id)
+            // Queued-input amendments are already merged into the instruction ("Amendment N: …"); list only the rest.
+            let unmerged = try await store.snapshot().amendments.filter { $0.taskID == w.id && !["queued_input","applied"].contains($0.state) && !w.instruction.contains("\nAmendment \($0.revision): " + $0.instruction) }.sorted { $0.revision < $1.revision }
+            let saved = unmerged.map { "\nSaved amendment \($0.revision): " + $0.instruction }.joined()
+            // Head and tail keep the original request and the latest changes; bounded well under the 32,000-byte worker wire.
+            try await delegate(request,topic: topic,instruction: utf8Excerpt(w.instruction + saved,bytes: 10_000) + note,executor: w.executor)
+            return TaskOutcome(accepted: true,text: "Retrying.",notice: nil,messageID: nil)
+        }
     }
     /// Suppress first (late output stays inspect-only), then request the stop. A local step may still be about to
     /// dispatch; then only that step's end settles it. Returns whether the stop is confirmed.
