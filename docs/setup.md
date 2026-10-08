@@ -39,6 +39,8 @@ The app talks only to agent `projectx`. Its entry in `~/.openclaw/openclaw.json`
 
 `agents.defaults.modelPolicy.allow` must list every model in the next table.
 
+The entries for `openai-pool/gpt-6-sol` and `openai-pool/gpt-6-astra` under `models.providers.openai-pool.models` must set `contextWindow: 272000`, the window those models really take (owner decision). Yorozu reads the window per session (`contextTokens` from `sessions.describe`) to decide when to compact a topic session, and never counts more than 258,400 tokens as usable ([openclaw-integration.md](openclaw-integration.md#compaction)).
+
 ### MCP servers
 
 Yorozu keeps the list of MCP servers its workers may use in `mcp-servers.json` ([Where data lives](#where-data-lives)). A missing file is created with the default below; edit it by hand, then relaunch the app (it is read once per run).
@@ -55,12 +57,13 @@ Each server is stdio: `command` is an absolute path, `args` is optional, and a n
 
 ## Models
 
-No model choice is an owner decision yet; these are the code defaults.
+These are the code defaults. The owner decided that roles will get defaults computed from the harness's model metadata, overridable in Settings ([OWNER_DECISIONS.md](../OWNER_DECISIONS.md#engineering)); until that lands, these ids stay.
 
 | Role | Default | Override |
 |---|---|---|
 | Secretary and memory extractor | `openai-pool/gpt-6-astra` | `PROJECTX_SECRETARY_MODEL` |
-| Thinking worker and the one stronger routing review | `openai-pool/gpt-6-sol` | `PROJECTX_MODEL` |
+| The one stronger routing review | `openai-pool/gpt-6-sol` | `PROJECTX_REVIEW_MODEL` |
+| Thinking worker | `openai-pool/gpt-6-sol` | `PROJECTX_MODEL` |
 | Coding worker, Claude Code | `anthropic/claude-opus-5-5` | `PROJECTX_CLAUDE_MODEL` |
 | Coding worker, Codex | `openai/gpt-6-sol` | `PROJECTX_CODEX_MODEL` |
 
@@ -90,7 +93,7 @@ The Mac items are `WhenUnlockedThisDeviceOnly`; the phone item is `AfterFirstUnl
 | Data | Live mode | `PROJECTX_DATA=<dir>` | Fixture mode |
 |---|---|---|---|
 | App state (`operations.sqlite`, `app.lock`) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `~/Library/Application Support/<bundle id>/Fixture/` |
-| Markdown memory | `~/Yorozu/memory/` (notes, `knowledge/`, `.writer.lock`) | `<dir>/memory/` | `…/Fixture/memory/` |
+| Markdown memory | `~/Yorozu/memory/` (notes, `knowledge/`, `history/`, `.writer.lock`) | `<dir>/memory/` | `…/Fixture/memory/` |
 | Memory index | `~/Library/Caches/<bundle id>/memory-index.sqlite` | `<dir>/memory-index.sqlite` | `…/Fixture/memory-index.sqlite` |
 | Paired phones (`relay-devices.json`, mode 600) | `~/Library/Application Support/<bundle id>/` | same as live | none (no relay) |
 | MCP server list (`mcp-servers.json`) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | not used |
@@ -108,7 +111,7 @@ Read app state without disturbing the running app with a read-only SQLite connec
 | `PROJECTX_TRANSPORT` | app | `native` selects the WebSocket Gateway client instead of the CLI |
 | `PROJECTX_GATEWAY_URL` | app | Gateway URL, loopback only; default `ws://127.0.0.1:18789` |
 | `PROJECTX_AGENT` | app | Must be unset or `projectx` |
-| `PROJECTX_SECRETARY_MODEL`, `PROJECTX_MODEL`, `PROJECTX_CLAUDE_MODEL`, `PROJECTX_CODEX_MODEL` | app | Model overrides ([Models](#models)) |
+| `PROJECTX_SECRETARY_MODEL`, `PROJECTX_REVIEW_MODEL`, `PROJECTX_MODEL`, `PROJECTX_CLAUDE_MODEL`, `PROJECTX_CODEX_MODEL` | app | Model overrides ([Models](#models)) |
 | `PROJECTX_DEV_REPO` | app | Main checkout named in the coding prompt; default `~/Projects/PROJECTX` |
 | `PROJECTX_RELAY_URL` | app | Relay URL; default `wss://relay.yumi.to` |
 | `BUILD` | both scripts | Build number; skips the App Store Connect lookup in `upload_ios.sh` |

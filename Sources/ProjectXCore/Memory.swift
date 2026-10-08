@@ -54,6 +54,8 @@ public func sensitive(_ text: String) -> Bool {
 public actor MemoryStore {
     public let root: URL
     private let index: DatabaseQueue
+    /// Relative paths of notes left out because they are oversized or unparseable: refreshed by every rebuild, extended by search.
+    public private(set) var skipped: [String] = []
     /// Explicit data roots and tests keep the Markdown and its index together.
     public init(dataRoot: URL) throws {
         try self.init(root: dataRoot.appendingPathComponent("memory", isDirectory: true),index: dataRoot.appendingPathComponent("memory-index.sqlite"))
@@ -89,14 +91,26 @@ public actor MemoryStore {
         }
         return try body(fd,name)
     }
-    private func bytes(_ parent: Int32, _ name: String) throws -> Data? {
+    private func bytes(_ parent: Int32, _ name: String, limit: Int = 12000) throws -> Data? {
         let fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         if fd < 0 && errno == ENOENT { return nil }
         guard fd >= 0 else { throw ProjectError.blocked("Unsafe memory file.") }; defer { close(fd) }
-        var st = stat(); guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_nlink == 1, st.st_size <= 12000 else { throw ProjectError.blocked("Unsafe or oversized memory file.") }
+        var st = stat(); guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_nlink == 1, st.st_size <= limit else { throw ProjectError.blocked("Unsafe or oversized memory file.") }
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
         let data = try h.readToEnd() ?? Data()
-        guard data.count <= 12000 else { throw ProjectError.invalid("Memory exceeds limit.") }; return data
+        guard data.count <= limit else { throw ProjectError.invalid("Memory exceeds limit.") }; return data
+    }
+    /// Temp file, fsync, `check`, `renameat`, fsync of the directory.
+    private func replace(_ dir: Int32, _ name: String, _ data: Data, check: () throws -> Void = {}) throws {
+        let temporary = ".projectx-" + identifier() + ".tmp"
+        let out = openat(dir,temporary,O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,0o600)
+        guard out >= 0 else { throw ProjectError.blocked("Cannot create memory temporary file.") }
+        defer { close(out); unlinkat(dir,temporary,0) }
+        try FileHandle(fileDescriptor: out,closeOnDealloc: false).write(contentsOf: data)
+        guard fsync(out) == 0 else { throw ProjectError.blocked("Memory sync failed before replacement.") }
+        try check()
+        guard renameat(dir,temporary,dir,name) == 0 else { throw ProjectError.blocked("Atomic memory replacement failed.") }
+        _ = fsync(dir)
     }
     public func read(path: String) throws -> MemoryRead {
         try scoped { fd in try parent(fd,path) { dir,name in
@@ -120,7 +134,8 @@ public actor MemoryStore {
         }
     }
     public func write(path: String, markdown: String, expectedSHA256: String?, sources: [Message] = []) throws -> MemoryWriteResult {
-        try scoped { fd in try parent(fd,path,create: true) { dir,name in
+        guard !path.lowercased().hasPrefix("history/") else { throw ProjectError.invalid("Note history is not writable.") }
+        return try scoped { fd in try parent(fd,path,create: true) { dir,name in
             let old = try bytes(dir,name)
             guard old.map(digest) == expectedSHA256 else { throw ProjectError.conflict("Memory changed. Read current Markdown and reconcile; nothing overwritten.") }
             var doc = try MemoryDocument.parse(markdown)
@@ -132,39 +147,43 @@ public actor MemoryStore {
                 doc.metadata.lineage = previous.metadata.lineage + [MemoryLineage(body: previous.body,sources: previous.metadata.sources,attribution: previous.metadata.attribution,epistemicStatus: previous.metadata.epistemicStatus,replaced: Date().timeIntervalSince1970)]
             } else { doc.metadata.lineage = [] }
             doc.metadata.updated = Date().timeIntervalSince1970
-            let data = Data(try doc.markdown.utf8); guard data.count <= 12000 else { throw ProjectError.invalid("Preserved lineage exceeds memory limit.") }
-            try rebuildLocked() // malformed unrelated files fail before mutation
+            var moved: [MemoryLineage] = [] // oldest versions leave the note only when it would exceed its cap
+            while try doc.markdown.utf8.count > 12000, !doc.metadata.lineage.isEmpty { moved.append(doc.metadata.lineage.removeFirst()) }
+            let data = Data(try doc.markdown.utf8); guard data.count <= 12000 else { throw ProjectError.invalid("Memory exceeds limit.") }
+            try rebuildLocked() // refreshes the id → path index for the ownership check
             if let existing = try index.read({ try String.fetchOne($0, sql: "SELECT path FROM discovery WHERE id=?", arguments: [doc.metadata.id]) }), existing != path { throw ProjectError.invalid("Memory ID belongs to another path.") }
-            let temporary = ".projectx-" + identifier() + ".tmp"
-            let out = openat(dir,temporary,O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,0o600)
-            guard out >= 0 else { throw ProjectError.blocked("Cannot create memory temporary file.") }
-            defer { close(out); unlinkat(dir,temporary,0) }
-            try FileHandle(fileDescriptor: out,closeOnDealloc: false).write(contentsOf: data)
-            guard fsync(out) == 0 else { throw ProjectError.blocked("Memory sync failed before replacement.") }
-            guard try bytes(dir,name).map(digest) == expectedSHA256 else { throw ProjectError.conflict("Memory changed during write; nothing overwritten.") }
-            guard renameat(dir,temporary,dir,name) == 0 else { throw ProjectError.blocked("Atomic memory replacement failed.") }
-            _ = fsync(dir)
+            // History lands before the note: a crash or conflict after this leaves a duplicate entry, never a lost version.
+            if !moved.isEmpty { try parent(fd,"history/" + doc.metadata.id + ".md",create: true) { hdir,hname in
+                let entries = moved.map { "## Replaced \(ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: $0.replaced)))\n\n- attribution: \($0.attribution)\n- epistemicStatus: \($0.epistemicStatus)\n- sources: \($0.sources.joined(separator: ", "))\n\n\($0.body)\n\n" }
+                try replace(hdir,hname,(try bytes(hdir,hname,limit: .max) ?? Data()) + Data(entries.joined().utf8))
+            } }
+            try replace(dir,name,data) { guard try bytes(dir,name).map(digest) == expectedSHA256 else { throw ProjectError.conflict("Memory changed during write; nothing overwritten.") } }
             do { try rebuildLocked(); return MemoryWriteResult(path: path,sha256: digest(data),indexed: true) }
             catch { return MemoryWriteResult(path: path,sha256: digest(data),indexed: false) } // never replay a real write
         } }
     }
     @discardableResult public func rebuild() throws -> Int { try scoped { _ in try rebuildLocked() } }
     @discardableResult private func rebuildLocked() throws -> Int {
-        var rows: [(String,String,String,String)] = []; var ids = Set<String>()
+        var rows: [(String,String,String,String)] = []; var ids = Set<String>(); var skip: [String] = []
         guard let enumeration = FileManager.default.enumerator(at: root,includingPropertiesForKeys: [.isSymbolicLinkKey,.isRegularFileKey]) else { throw ProjectError.blocked("Cannot enumerate memory.") }
         for case let url as URL in enumeration {
             let attributes = try url.resourceValues(forKeys: [.isSymbolicLinkKey,.isRegularFileKey])
             guard attributes.isSymbolicLink != true else { throw ProjectError.blocked("Memory symlink refused.") }
-            guard url.pathExtension == "md" else { continue }
             let relative = String(url.path.dropFirst(root.path.count + 1))
+            if relative.lowercased() == "history" { enumeration.skipDescendants(); continue } // past versions, never indexed
+            guard url.pathExtension == "md" else { continue }
             let fd = open(root.path,O_RDONLY | O_DIRECTORY | O_NOFOLLOW); guard fd >= 0 else { throw ProjectError.blocked("Memory root changed.") }; defer { close(fd) }
-            let data = try parent(fd,relative) { try bytes($0,$1) }
-            guard let data else { continue }
-            let doc = try MemoryDocument.parse(String(decoding: data,as: UTF8.self))
-            guard doc.metadata.id + ".md" == url.lastPathComponent, ids.insert(doc.metadata.id).inserted else { throw ProjectError.invalid("Duplicate or mismatched memory identity.") }
+            let doc: MemoryDocument
+            do {
+                guard let data = try parent(fd,relative,body: { try bytes($0,$1) }) else { continue }
+                doc = try MemoryDocument.parse(String(decoding: data,as: UTF8.self))
+                guard doc.metadata.id + ".md" == url.lastPathComponent else { throw ProjectError.invalid("Mismatched memory identity.") }
+            } catch { skip.append(relative); continue } // oversized, unparseable or misnamed: reported, not fatal
+            guard ids.insert(doc.metadata.id).inserted else { throw ProjectError.invalid("Duplicate memory identity.") }
             // Only discovery data lives in this disposable DB.
             rows.append((doc.metadata.id,doc.metadata.title,String(doc.body.prefix(200)),relative))
         }
+        skipped = skip
         try index.write { db in
             try db.execute(sql: "DELETE FROM discovery; DELETE FROM search")
             for row in rows {
@@ -182,8 +201,8 @@ public actor MemoryStore {
         }
         var hits: [MemoryHit] = []; var size = 0
         for path in paths {
-            let value = try read(path: path); let doc = try MemoryDocument.parse(value.markdown)
-            size += value.markdown.utf8.count; if size > 10000 { break }
+            guard let value = try? read(path: path), let doc = try? MemoryDocument.parse(value.markdown) else { if !skipped.contains(path) { skipped.append(path) }; continue }
+            guard size + value.markdown.utf8.count <= 10000 else { continue }; size += value.markdown.utf8.count
             hits.append(MemoryHit(id: doc.metadata.id,title: doc.metadata.title,path: path,sha256: value.sha256,document: doc))
         }; return hits
     }
@@ -198,6 +217,9 @@ public actor MemoryStore {
                 guard try bytes(dir,name).map(digest) == expectedSHA256 else { throw ProjectError.conflict("Memory changed before forget. Nothing deleted.") }
                 guard unlinkat(dir,name,0) == 0 else { throw ProjectError.blocked("Memory deletion failed.") }
             }
+            // Forget includes the note's past versions.
+            let history = openat(fd,"history",O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            if history >= 0 { _ = unlinkat(history,id + ".md",0); close(history) }
             try rebuildLocked()
         }
     }
