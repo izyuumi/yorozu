@@ -155,23 +155,23 @@ No model id is in the code. Each role uses its explicit choice (`[models]` in `c
 | `to.yumi.yorozu.gateway` | `<gateway URL>\|webchat\|operator` | The native transport's device key and Gateway-issued device token | Mac app, native enrollment only (Settings, Gateway tab); a launch without a token creates nothing |
 | `to.yumi.yorozu.ios` | `pairings-v2` | The phone's pairing and identity | iOS app, on the phone |
 
-The Mac items are `WhenUnlockedThisDeviceOnly`; the phone item is `AfterFirstUnlockThisDeviceOnly`. A Keychain the relay host cannot read stops the relay (not the app) rather than minting new keys.
+The Mac items are `WhenUnlockedThisDeviceOnly`; the phone item is `AfterFirstUnlockThisDeviceOnly`. A Keychain the relay host cannot read stops the relay (not the app) rather than minting new keys; the app tries to start the relay again every 30 s, so unlocking the login Keychain is enough.
 
 ## Where data lives
 
 | Data | Live mode | `PROJECTX_DATA=<dir>` | Fixture mode |
 |---|---|---|---|
 | App state (`operations.sqlite`, `app.lock`) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `~/Library/Application Support/<bundle id>/Fixture/` |
-| Chat search index (`messageSearch` table) | inside `operations.sqlite` | same | same |
+| Chat search indexes (`messageSearch` and `eventSearch` tables) | inside `operations.sqlite` | same | same |
 | Markdown memory | `~/Yorozu/memory/` (notes, `knowledge/`, `history/`, `.writer.lock`) | `<dir>/memory/` | `…/Fixture/memory/` |
 | Memory index (`discovery` and `search_trigram` tables) | `~/Library/Caches/<bundle id>/memory-index.sqlite` | `<dir>/memory-index.sqlite` | `…/Fixture/memory-index.sqlite` |
 | Paired phones (`relay-devices.json`, mode 600) | `~/Library/Application Support/<bundle id>/` | same as live | none (no relay) |
 | Settings (`config.toml`, mode 600) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
 | Retired MCP server list (`mcp-servers.json`) | imported once into a new `config.toml`, then unused ([MCP servers](#mcp-servers)) | same | same |
 
-`<bundle id>` is the Mac bundle id from [Signing](#signing), also when `Bundle.main` has none. Directories are created 0700. `app.lock` is held with an exclusive lock, so only one process opens a data directory. The app has no migration code; the memory index is a cache rebuilt at launch, which leaves the older `search` table in place for builds from before batch 2 of issue #310 that share the cache. The chat search index is different: it lives in `operations.sqlite` next to the messages, triggers keep it in sync on every insert, and it is built once by its migration, not at launch; `INSERT INTO messageSearch(messageSearch) VALUES ('rebuild')` rebuilds it from `messages` ([architecture.md](architecture.md#chat-search)). OpenClaw keeps session transcripts and worktrees on its side.
+`<bundle id>` is the Mac bundle id from [Signing](#signing), also when `Bundle.main` has none. Directories are created 0700. `app.lock` is held with an exclusive lock, so only one process opens a data directory. Schema changes to `operations.sqlite` are GRDB migrations that run at launch (`native-r1`, `r2-executor`, `memory-job-reasons`, `message-notice`, `message-search`, `sync-r1`) and only add tables, columns, indexes and triggers. Moving data between folders or machines stays manual. The memory index is a cache rebuilt at launch, which leaves the older `search` table in place for builds from before batch 2 of issue #310 that share the cache. The chat search indexes are different: they live in `operations.sqlite` next to the messages and events, triggers keep them in sync on every write, and each is built once by its migration, not at launch; `INSERT INTO messageSearch(messageSearch) VALUES ('rebuild')` (or `eventSearch`) rebuilds one from its table ([architecture.md](architecture.md#chat-search)). `sync-r1` (#313) also sets `readAt = created` on every existing user message, so history is never routed again, and adds the change sequence and read cursor ([architecture.md](architecture.md#change-sequence-and-history-window)). OpenClaw keeps session transcripts and worktrees on its side.
 
-Read app state without disturbing the running app with a read-only SQLite connection, for example `sqlite3 "file:$HOME/Library/Application Support/to.yumi.yorozu/operations.sqlite?mode=ro" "SELECT id,state FROM work ORDER BY created DESC LIMIT 5"`.
+Read app state without disturbing the running app with a read-only SQLite connection, for example `sqlite3 "file:$HOME/Library/Application Support/to.yumi.yorozu/operations.sqlite?mode=ro" "SELECT id,state FROM work ORDER BY created DESC LIMIT 5"`. User messages a quit left unrouted are `SELECT id,created FROM messages WHERE role='user' AND readAt IS NULL`.
 
 ## Environment variables
 

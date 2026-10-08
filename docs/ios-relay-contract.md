@@ -72,7 +72,8 @@ The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15
 `RelayClient.swift`). Both ends advertise `PeerInfoData.local`:
 capabilities `["peer-info","host-name","channel-sequence","yorozu-v2"]`, required
 `["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update required".
-Until a device's exchange succeeds, the host passes none of its other events to the backend.
+Until a device's exchange succeeds, the host passes none of its other events to the backend; a
+known device whose last result on file is compatible counts as succeeded (Mac-side seams below).
 
 `main` above is the one summary defined under `thread_list` below.
 
@@ -213,16 +214,39 @@ kinds.
 ## Mac-side seams
 
 - `RelayBackend` (`YorozuWire/RelayBackend.swift`): `func handle(_ e: YorozuEvent) async -> [YorozuEvent]`.
-  `RelayHost` passes it each decrypted phone event other than the peer-info `thread_list`, and
-  seals the returned events back to that same device only. `EngineBridge` implements it
-  (kinds 1, 4, 6 in; 2, 3, 5 out).
+  `RelayHost` passes it each decrypted phone event other than the peer-info `thread_list`, one at
+  a time in arrival order and off the receive path (so hellos and claims never wait on the
+  Engine), and seals the returned events back to that same device only. `EngineBridge`
+  implements it (kinds 1, 4, 6 in; 2, 3, 5 out).
+- Duplicate check (host check 4): an id in the last published snapshot gets its `receipt` with no
+  send; after a failed send, `Store.message(id:)` tells a duplicate from a refusal.
+- `sync_request` is always answered. If the Engine cannot read its snapshot, the reply page is
+  empty and final (`events: []`, `threadId: "main"`, `more` unset, the current working flag):
+  the phone's catch-up ends, its cursor stays, and its next `.paired` asks again. The error is
+  logged (subsystem `to.yumi.yorozu`, category `relay`).
+- Acks for replayed frames: the ack is cumulative, so the host sends `ack{seq}` for a replayed
+  frame only after the backend has handled it and every phone event before it, that is once the
+  Engine stored or refused its message. A frame that can never be handled (not a frame, unknown
+  key, malformed, a replayed channel seq, a device that must update) is acked too. A frame whose
+  counter or device list could not be written, or a box from a device that has no peer-info
+  result yet (and is not its claim), stops acks on that socket from its seq on; the relay
+  replays them on the next registration. When the claim that serves such a device arrives, the
+  host drops the socket and redials, so the replay comes at once. Acks queued for an earlier
+  socket are never sent on a new one.
+- Peer-info result on file: the last `.compatible` result is kept in the device's record as
+  `compatible{version, capabilities, hostProtocol}`, where `hostProtocol` is
+  `PeerInfoData.local.protocolMax` when it was computed. At launch a record whose `hostProtocol`
+  matches serves the device from its first frame; another protocol drops it and the next claim
+  decides. A `hello` from a known device keeps a `.compatible` result and restarts the exchange
+  (step 1); each claim replaces the result, and one that is not compatible clears it.
 - Live updates go out through `RelayHost.broadcast([YorozuEvent])` to every paired device.
 - `Engine.send(_:id:)` / `Store.message(..., id:)` keep the phone's `id` as the v2 `Message.id`,
   so the phone's bubble and the stored message are one entry.
 - Paired devices live in `relay-devices.json` (`RelayDevice`): keys, `pairedAt` and the channel
   counter, plus optional `name` (from the claim), `label` (renamed on the Mac with
-  `RelayHost.rename(_:label:)`; blank clears it) and `lastSeen`. Files without the optional
-  fields still load.
+  `RelayHost.rename(_:label:)`; blank clears it), `lastSeen` and `compatible` (above). Files
+  without the optional fields still load.
+- A relay host that cannot start (Keychain, device file) is started again every 30 s.
 - Presence: the relay reports none. A device is online once one of its sealed frames opens on
   the current relay connection, and stays so until that socket drops. `lastSeen` is the time of
   its last opened frame; it is written with the frame's counter, so it costs no extra write.
