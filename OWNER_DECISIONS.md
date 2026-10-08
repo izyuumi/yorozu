@@ -34,6 +34,8 @@ When the owner makes or changes a decision, rewrite the line here so no two line
 - Workers carry a request through end to end, including commit, merge, push, rebuild and restart when the chat asks for it, and ask only for what only the owner can do (logins, approvals, secrets). They take no unrequested destructive or outward-facing action and leave the owner's uncommitted files untouched. (2026-10-08)
 - Workers operate the Mac through cua: approach A first, with the computer-use rules in the thinking and coding worker prompts and no separate executor until collisions or timeouts call for one. (2026-10-08)
 - Yorozu keeps the list of MCP servers its workers may use, so switching harness does not move tool registrations. The list is data only: harness adapters apply it, and Yorozu never starts servers or runs tool calls. Both thinking and coding workers get it. (2026-10-08)
+- Computer-use concurrency stays in the prompts: each worker run uses its own cua session and never retries a timed-out action blindly. Across topics, two tasks may operate the same app at once until a code lane of one is added, which comes only if collisions or timeouts show up. (2026-10-08)
+- Claude Code coding workers go without Yorozu's MCP servers until OpenClaw passes session tool settings to them; new coding work that needs an app or a browser goes to Codex unless the user names Claude Code, and work that continues a coding task keeps its executor. (2026-10-08)
 
 ## Memory
 

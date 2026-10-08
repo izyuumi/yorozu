@@ -8,8 +8,8 @@ Workers operate the Mac through the **cua-driver MCP server**, under rules in th
 
 - **CuaDriver is a separate install** (`/Applications/CuaDriver.app`). Yorozu neither bundles it nor starts its daemon: `cua-driver mcp` is a proxy that launches the daemon through LaunchServices (`open -n -g -a CuaDriver --args serve`) when the socket is not answering, so the TCC grants stay with `com.trycua.driver`. The installer registers no MCP client; its `~/.local/bin/cua-driver` link is optional.
 - **Yorozu lists it as an MCP server** in its own `mcp-servers.json`, which the harness adapter mirrors into OpenClaw as `yorozu-cua-driver` ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). Yorozu adds no process and no Swift dependency.
-- **Routing**: "operate my Mac / use app X" goes to a thinking worker (no executor), and a coding request that needs an app stays with its coding worker. Thinking and Codex workers get the tools; Claude Code does not yet (OpenClaw gap, [status.md](status.md#open-items)).
-- **Rules** live in `OpenClawHarness.cuaRules` (`Harness.swift`), included in both worker contracts. They follow [Worker rules](#worker-rules) below. There is no separate executor or lane, so two computer-use tasks can run at once.
+- **Routing**: "operate my Mac / use app X" goes to a thinking worker (no executor), and new coding work that needs an app or a browser goes to Codex unless the user names Claude Code (continuing work keeps its executor). Thinking and Codex workers get the tools; Claude Code does not (an OpenClaw gap the owner left as is, [openclaw-integration.md](openclaw-integration.md#mcp-servers)).
+- **Rules** live in `OpenClawHarness.cuaRules(task)` (`Harness.swift`), included in both worker contracts. They follow [Worker rules](#worker-rules) below. There is no separate executor or lane, so tasks in different topics or with different executors can run at once, even on the same app; see [Concurrency](#concurrency).
 
 The `cua` CLI and the cua SDK manage sandboxes, Spaces and VMs; use them for isolated computers, not for driving the host desktop.
 
@@ -67,11 +67,24 @@ Limits, from upstream docs and `describe` output, not yet exercised on the host:
 ## Worker rules
 
 - Consent: a topic request authorizes reading and operating only the apps it names. Sending, purchasing, posting, deleting, submitting forms, changing settings or credentials, and any other outward-facing action need the user's confirmation in the chat first.
-- Scope: bind each step to one (pid, window_id). Use desktop-wide capture (`get_desktop_state`) only when the task needs it. Work in a named `session` and close it with `end_session`.
+- Scope: bind each step to one (pid, window_id). Use desktop-wide capture (`get_desktop_state`) only when the task needs it. Work in the run's own `session` (`yorozu-<8 random hex characters>`, fresh per run), pass it on every call that takes one, and close it with `end_session`; revive an ended one with `start_session`, and switch to `<label>-2` (then -3) if CuaDriver says the label is not available to this transport (a recycled proxy).
 - Sensitive data: screenshots, AX trees and `clipboard_read` can expose passwords, messages and tokens. Keep them out of memory, results and logs; skip password fields; type no secrets.
 - Approval per use: `kill_app`, `clipboard_write`, `set_config`, `replay_trajectory`, `start_recording`, browser downloads and file uploads. The owner alone runs `update --apply`, `permissions grant`, `skills install` and `stop`.
 - The user's input: use background delivery while the user is typing, announce any focus change before it happens, and stop if the user takes over the target window.
-- Verification: a successful transport call is not success; confirm with `verify_state` or a fresh snapshot.
+- Verification: a successful transport call is not success; confirm with `verify_state` or a fresh snapshot. After a timeout or a call that returned no result, check the effect with a fresh snapshot before retrying: the call may still run.
+
+## Concurrency
+
+CuaDriver has no job queue and no app or window reservation; read in the 0.28.2 source (`libs/cua-driver/rust/crates` at tag `cua-driver-rs-v0.28.2`):
+
+- **Physical input takes turns.** One process-wide lock in the daemon (`cua-driver-core/src/tool.rs`, the desktop action coordinator) admits click, double_click, right_click, scroll, drag, move_cursor, type_text, press_key, hotkey, set_value, bring_to_front and set_window_frame one call at a time, in arrival order, for every session and client on the Mac. A waiting call gets no error and no daemon timeout. The lock is released after each action, so two workers' steps interleave; the release's own docs say "Higher-level sequences can still interleave unless the host schedules them".
+- **Outside the lock:** reads (`get_window_state`, `verify_state`, `list_windows`, `zoom`), `invoke_menu`, `launch_app`, `kill_app`, clipboard tools and the legacy `page` tool run in parallel with anything.
+- **Same app:** a second `type_text` to a pid that already has one queued or running is refused with `input_busy`. Element tokens belong to the latest snapshot of a window, shared by all sessions, so another worker's `get_window_state` makes yours fail with `stale_element_token` rather than misclick.
+- **Sessions** track lifecycle only. A label belongs to the first proxy that uses it; another proxy using it is refused ("session is not available to this transport"), and a proxy that exits ends its sessions for good. OpenClaw recycles proxies when MCP config changes. Hence the per-run label and the `-2` fallback.
+- **Timeouts:** the `mcp` proxy gives up after 120 s, but the daemon still runs the call, so a blind retry can repeat an action.
+- **Other agents:** every cua client on the Mac (Claude Code, Codex, other OpenClaw agents) shares the same lock, cache and focus.
+
+Yorozu's answer is prompt-level: the per-run session label and no blind retries. Within one topic and executor the Engine already allows one active task. Across topics, two tasks can still drive the same app; a secretary rule to steer such requests into the running task was dropped, because steering cannot leave the target task's topic. A code lane of one waits until stale tokens, `input_busy` or timeouts show up in practice (owner decision, 2026-10-08).
 
 ## Smoke test
 
