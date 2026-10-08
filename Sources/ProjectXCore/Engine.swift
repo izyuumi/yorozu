@@ -11,6 +11,8 @@ public actor Engine {
     public init(store: Store, memory: MemoryStore, harness: any Harness) { self.store = store; self.memory = memory; self.harness = harness }
     public func snapshot() async throws -> Snapshot { try await store.snapshot() }
     public var mode: String { harness.name }
+    /// Chat search over every message body (see `Store.search`).
+    public func search(_ query: String, limit: Int = 50) async throws -> (hits: [(messageID: String, snippet: String)], total: Int) { try await store.search(query,limit: limit) }
     /// Persist before returning; routing and workers never hold the main composer hostage.
     /// `id` lets a remote client (the phone) keep the id of the bubble it already shows.
     @discardableResult public func send(_ body: String, id: String = identifier()) async throws -> String {
