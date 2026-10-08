@@ -1,8 +1,26 @@
 import Foundation
 import CryptoKit
 
+/// A coding executor a harness offers (#318 H4). `id` is stored in `work.executor`; an empty list means no coding.
+public struct Executor: Codable, Sendable, Equatable {
+    public var id: String, name: String
+    /// Gets Yorozu's MCP servers, so it can operate apps and browsers.
+    public var appAccess: Bool
+    /// Takes changes while a run is going; otherwise they wait for a follow-up turn.
+    public var liveSteer: Bool
+    /// Harness-specific routing guidance for the secretary policy.
+    public var routingNotes: String
+    /// Nil when ready; otherwise why not.
+    public var notReady: String?
+    public init(id: String, name: String, appAccess: Bool, liveSteer: Bool, routingNotes: String = "", notReady: String? = nil) { self.id = id; self.name = name; self.appAccess = appAccess; self.liveSteer = liveSteer; self.routingNotes = routingNotes; self.notReady = notReady }
+}
+
 public protocol Harness: Sendable {
     var name: String { get }
+    /// Stable harness id: openclaw, hermes, fixture, offline.
+    var id: String { get }
+    /// Coding executors this harness offers, in preference order.
+    var executors: [Executor] { get }
     var agentID: String { get }
     func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision
     func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput
@@ -15,6 +33,7 @@ public protocol Harness: Sendable {
 }
 public extension Harness {
     var agentID: String { "projectx" }
+    var executors: [Executor] { [] }
     func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal] { [] }
     func models() async throws -> (allowed: [ModelInfo], primary: String?) { ([],nil) }
 }
@@ -36,6 +55,7 @@ public struct HarnessSettings: Sendable {
     public init() {}
 }
 public struct OfflineHarness: Harness {
+    public let id = "offline"
     public let name = "Offline · no model calls"
     public init() {}
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision { throw ProjectError.offline }
@@ -47,6 +67,7 @@ public struct OfflineHarness: Harness {
 
 /// Opt-in synthetic fixture; no model, Gateway, accounts, private data or external tools.
 public actor FixtureHarness: Harness {
+    nonisolated public let id = "fixture"
     nonisolated public let name = "Synthetic fixture · NOT a live model"
     private var states: [String: RunStatus] = [:]; private var revisions: [String: Int] = [:]; private var cancelled = Set<String>()
     public init() {}
@@ -179,6 +200,7 @@ public struct GatewayRPC: Sendable {
 }
 
 public struct OpenClawHarness: Harness {
+    public let id = "openclaw"
     public let name = "Configured OpenClaw · live acceptance unverified"
     public var agentID: String { agent }
     public var agent: String; public var rpc: GatewayRPC; public var workspace: URL
