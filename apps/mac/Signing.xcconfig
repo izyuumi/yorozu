@@ -1,0 +1,7 @@
+// Mac app signing. Without a local override the app is signed ad hoc ("-"), which runs on this Mac only.
+// The release identity lives in Signing.local.xcconfig next to this file (gitignored, never committed):
+//   CODE_SIGN_IDENTITY = Developer ID Application: <name> (<team>)
+//   OTHER_CODE_SIGN_FLAGS = --timestamp
+CODE_SIGN_IDENTITY = -
+OTHER_CODE_SIGN_FLAGS =
+#include? "Signing.local.xcconfig"

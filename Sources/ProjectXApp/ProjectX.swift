@@ -18,8 +18,8 @@ import ProjectXCore
     @Published var submitting = false
     @Published var bootstrapSecret = ""
     @Published var connecting = false
-    /// `PROJECTX_TRANSPORT=cli` keeps the CLI transport; anything else selects the native WebSocket client.
-    let nativeSelected = ProcessInfo.processInfo.environment["PROJECTX_TRANSPORT"] != "cli"
+    /// `[harness] transport = "cli"` keeps the CLI transport; "native" selects the WebSocket client. Fixed for this launch.
+    @Published private(set) var nativeSelected = false
     private var nativeClient: NativeGatewayClient?
     private var engine: Engine?
     private var observation: Task<Void,Never>?
@@ -28,20 +28,51 @@ import ProjectXCore
     /// The phone's way in (iOS 0.6.0): live mode only, and nil when it could not start.
     private(set) var relay: RelayHost?
     private var bridge: EngineBridge?
+    /// The snapshot the relay last heard about; nil makes the poll loop publish to a new relay.
+    private var relayed: Snapshot?
     @Published var relayStatus = RelayStatus()
+    // config.toml (#312), applied in ConfigWiring.swift.
+    let environment = ProcessInfo.processInfo.environment
+    let settingsBox = SettingsBox()
+    var configFile: URL?
+    var resolved: ResolvedSettings?
+    /// Resolved at launch: transport, Gateway URL, agent and harness kind apply only from the next launch.
+    var launched: ResolvedSettings?
+    var fileConfig: Config?
+    var watcher: ConfigWatcher?
+    var store: Store?
+    var harness: (any Harness)?
+    var devicesFile: URL?
+    var lastConfigError: ConfigError?
+    var metadata: (allowed: [ModelInfo], primary: String?)?
+    var metadataTask: Task<Void,Never>?
+    /// When the model metadata was last asked for; with no metadata yet, a message asks again at most every 30 s.
+    var metadataAsked: Date?
+    /// The launch text of config.toml, so the watcher reports an edit made during launch.
+    var configText: Data?
+    private var relayRestart: Task<Void,Never>?
+    var awake: NSObjectProtocol?
     var working: Bool { snapshot.work.contains { $0.active } }
     func start() {
         guard observation == nil else { return }
         observation = Task {
             do {
-                let env = ProcessInfo.processInfo.environment
+                let env = environment
                 // Private app state: ~/Library/Application Support/<bundle id>; rebuildable index: ~/Library/Caches/<bundle id>.
                 // User-owned Markdown memory: visible ~/Yorozu/memory (owner decision). Fixtures and PROJECTX_DATA keep all in one root.
                 let fm = FileManager.default; let bundleID = Bundle.main.bundleIdentifier ?? "to.yumi.yorozu"
                 let explicit = env["PROJECTX_DATA"].map { URL(fileURLWithPath: $0,isDirectory: true) }
                 let support = try fm.url(for: .applicationSupportDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID,isDirectory: true)
                 let root = explicit ?? (runtimeMode == .fixture ? support.appendingPathComponent("Fixture",isDirectory: true) : support)
-                let store = try Store(root: root)
+                // An unreadable or invalid file runs this launch on the code defaults plus the environment and is left as it is;
+                // the watcher still starts, so fixing the file applies.
+                let configFile = Config.url(in: root); var text: Data?, file = Config()
+                do { let data = try Config.read(configFile); text = data; file = try Config.parse(String(decoding: data,as: UTF8.self),file: configFile) }
+                catch { lastConfigError = error as? ConfigError ?? ConfigError(file: configFile.path,reason: error.localizedDescription) }
+                let resolved = try ResolvedSettings(file,environment: env)
+                self.configFile = configFile; configText = text; fileConfig = file; self.resolved = resolved; launched = resolved
+                let store = try Store(root: root); self.store = store
+                if let problem = lastConfigError { await postInvalid(problem,body: "Settings not applied: \(problem.localizedDescription). Yorozu runs on its default settings until the file is fixed.") }
                 let memory = explicit != nil || runtimeMode == .fixture ? try MemoryStore(dataRoot: root) : try MemoryStore(
                     root: fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/memory",isDirectory: true),
                     index: try fm.url(for: .cachesDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID + "/memory-index.sqlite"))
@@ -49,29 +80,31 @@ import ProjectXCore
                 // Bad note files are skipped, not fatal; say which, once per launch.
                 let skipped = await memory.skipped
                 if !skipped.isEmpty { let files = skipped.prefix(10).joined(separator: ", "); _ = try await store.message(role: "assistant",body: "Memory skipped \(skipped.count) oversized or unreadable note file(s): " + files,kind: "failure",notice: Notice(.memorySkipped,["count": "\(skipped.count)","files": files])) }
+                let box = settingsBox; box.value = harnessSettings()
                 let harness: any Harness
                 switch runtimeMode.rawValue {
                 case "fixture": harness = FixtureHarness()
                 case "live":
                     // Native launch is NOT an escape from an inherited exec restriction.
                     try GatewayRPC.enforceAttribution(env)
-                    guard env["PROJECTX_AGENT"] == nil || env["PROJECTX_AGENT"] == "projectx" else { throw ProjectError.blocked("R1 uses only the dedicated projectx agent, never personal agents.") }
-                    let native = nativeSelected ? await connectNative(env["PROJECTX_GATEWAY_URL"] ?? "ws://127.0.0.1:18789") : nil
-                    var live = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: "projectx",secretaryModel: env["PROJECTX_SECRETARY_MODEL"] ?? "openai-pool/gpt-6-astra",workerModel: env["PROJECTX_MODEL"] ?? "openai-pool/gpt-6-sol",reviewModel: env["PROJECTX_REVIEW_MODEL"] ?? "openai-pool/gpt-6-sol",rpc: GatewayRPC(native: native,audit: { try await store.gatewayReceipt($0) }))
-                    // R2 coding workers (Claude Code / Codex). The dev repo holds the OWNER_DECISIONS.md they may read.
-                    live.claudeModel = env["PROJECTX_CLAUDE_MODEL"] ?? live.claudeModel; live.codexModel = env["PROJECTX_CODEX_MODEL"] ?? live.codexModel
-                    live.repo = URL(fileURLWithPath: env["PROJECTX_DEV_REPO"] ?? fm.homeDirectoryForCurrentUser.appendingPathComponent("Projects/PROJECTX").path,isDirectory: true)
-                    live.mcpList = root.appendingPathComponent("mcp-servers.json")
-                    harness = live
+                    let h = resolved.config.harness
+                    guard h.agent == "projectx" else { throw ProjectError.blocked("\(resolved.environment["harness.agent"] ?? "[harness] agent in config.toml") is \"\(h.agent)\"; this build runs only on the dedicated projectx agent, never personal agents. Set it to \"projectx\".") }
+                    nativeSelected = h.transport == .native
+                    let native = nativeSelected ? await connectNative(h.gatewayURL) : nil
+                    harness = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: h.agent,rpc: GatewayRPC(native: native,audit: { try await store.gatewayReceipt($0) },target: h.gatewayURL),settings: { box.value })
                 default: harness = OfflineHarness()
                 }
-                let engine = Engine(store: store,memory: memory,harness: harness); self.engine = engine
+                // Queued work resumes with the automatic models, unless the first metadata read takes more than 10 s.
+                self.harness = harness; await refreshModels().value(upTo: .seconds(10))
+                let engine = Engine(store: store,memory: memory,harness: harness,settings: { box.value }); self.engine = engine
                 await engine.resume()
                 // Keys and device counters live as long as each other, so the device file stays in the support root whatever PROJECTX_DATA says.
-                if runtimeMode == .live { await startRelay(engine,url: env["PROJECTX_RELAY_URL"] ?? "wss://relay.yumi.to",devices: support.appendingPathComponent("relay-devices.json")) }
+                devicesFile = support.appendingPathComponent("relay-devices.json")
+                if runtimeMode == .live { await startRelay(engine,url: resolved.config.relay.url) }
                 status = nil; ready = true
+                applySystem(resolved.config.general)
+                watchConfig()
                 // Polls keep reading, but the UI and the relay hear only about a changed snapshot.
-                var relayed: Snapshot?
                 while !Task.isCancelled {
                     let next = try await engine.snapshot()
                     if next != snapshot { snapshot = next }
@@ -96,16 +129,31 @@ import ProjectXCore
         }
     }
     /// A relay that cannot start (Keychain, unreadable device file) leaves the Mac app running and says why in the pair sheet.
-    private func startRelay(_ engine: Engine,url: String,devices: URL) async {
+    func startRelay(_ engine: Engine,url: String) async {
+        guard let devicesFile else { return }
         do {
-            let bridge = EngineBridge(engine: engine,mode: runtimeMode)
-            let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devices)
-            self.bridge = bridge; relay = host
-            Task { for await status in host.status { relayStatus = status } }
+            let bridge = EngineBridge(engine: engine,mode: runtimeMode) { [weak self] in await self?.ensureModels() }
+            let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile)
+            self.bridge = bridge; relay = host; relayed = nil
+            Task { for await status in host.status where relay === host { relayStatus = status } }
             await host.start()
         } catch { relayStatus.state = error.localizedDescription }
     }
-    func stop() { observation?.cancel(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
+    /// A new relay URL: the old host stops and a fresh one dials the new relay with the same keys and devices.
+    /// Restarts run one after another, each dialing the relay URL in force once the old host has stopped, so quick edits leave one relay.
+    func restartRelay() async {
+        let previous = relayRestart
+        let task = Task {
+            await previous?.value
+            guard let engine else { return }
+            let old = relay; relay = nil; bridge = nil
+            await old?.stop()
+            guard let url = resolved?.config.relay.url else { return }
+            await startRelay(engine,url: url)
+        }
+        relayRestart = task; await task.value
+    }
+    func stop() { observation?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
     func enroll() async {
         guard let nativeClient, !connecting else { return }
         connecting = true; let secret = bootstrapSecret; bootstrapSecret = ""
@@ -122,6 +170,7 @@ import ProjectXCore
         guard let engine, !submitting, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return }
         submitting = true; defer { submitting = false }
         let text = draft
+        await ensureModels()
         do { try await engine.send(text); if draft == text { draft = "" }; status = nil; snapshot = try await engine.snapshot() }
         catch { status = error.localizedDescription }
     }

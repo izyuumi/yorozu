@@ -111,7 +111,7 @@ final class PhoneModel {
         do {
             relay = try RelayClient(
                 pairing: stored.pairing, identity: stored.identity, paired: stored.paired == true,
-                counters: PairingCounterStorage(ownPublicKey: identity),
+                counters: PairingCounterStorage(ownPublicKey: identity), deviceName: DeviceModel.name,
                 onPaired: { PairingStore.markPaired(expectedIdentity: identity) })
         } catch {
             failure = error.localizedDescription

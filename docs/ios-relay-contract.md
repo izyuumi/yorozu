@@ -45,8 +45,12 @@ Handled by `RelayClient` on the phone and `RelayHost` on the Mac; `PhoneModel` a
 
 1. After a valid `hello`, the host's first sealed event is
    `.threadList(ThreadListData(threads: [main], peerInfoSupported: true))`.
-2. The phone answers `.threadList(ThreadListData(threads: [], peerInfo: PeerInfoData.local))`
-   with event id `R`.
+2. The phone answers `.threadList(ThreadListData(threads: [], peerInfo: claim))` with event id
+   `R`, where `claim` is `PeerInfoData.local` with `computerName` set to the phone's model name
+   ("iPhone 17 Pro"; `DeviceModel.swift` maps the hardware identifier, unknown ones send "iPhone"
+   or "iPad"). The field was already optional, so 0.6.x peers are unaffected. The host stores it
+   as the device's `name` in `relay-devices.json`; a claim without it keeps the stored name, and a
+   phone that never sent one is listed as "iPhone".
 3. The host checks `PeerInfoData.local.compatibility(with: claim)` and replies
    `.threadList(ThreadListData(threads: [main], peerInfoSupported: true, peerInfo: host,
    peerInfoReplyTo: R))`, where `host` is `PeerInfoData.local` with `computerName` set to the
@@ -215,3 +219,11 @@ kinds.
 - Live updates go out through `RelayHost.broadcast([YorozuEvent])` to every paired device.
 - `Engine.send(_:id:)` / `Store.message(..., id:)` keep the phone's `id` as the v2 `Message.id`,
   so the phone's bubble and the stored message are one entry.
+- Paired devices live in `relay-devices.json` (`RelayDevice`): keys, `pairedAt` and the channel
+  counter, plus optional `name` (from the claim), `label` (renamed on the Mac with
+  `RelayHost.rename(_:label:)`; blank clears it) and `lastSeen`. Files without the optional
+  fields still load.
+- Presence: the relay reports none. A device is online once one of its sealed frames opens on
+  the current relay connection, and stays so until that socket drops. `lastSeen` is the time of
+  its last opened frame; it is written with the frame's counter, so it costs no extra write.
+  `RelayStatus.devices` carries `{pub, name, label, pairedAt, online, lastSeen}` per device.

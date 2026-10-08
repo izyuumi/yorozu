@@ -4,6 +4,6 @@ import PackageDescription
 let package = Package(
     name: "PROJECTX", platforms: [.macOS(.v14)],
     products: [.library(name: "ProjectXCore", targets: ["ProjectXCore"])],
-    dependencies: [.package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.8.0")],
-    targets: [.target(name: "ProjectXCore", dependencies: [.product(name: "GRDB", package: "GRDB.swift")]),
+    dependencies: [.package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.8.0"), .package(url: "https://github.com/mattt/swift-toml.git", exact: "2.0.0")],
+    targets: [.target(name: "ProjectXCore", dependencies: [.product(name: "GRDB", package: "GRDB.swift"), .product(name: "TOML", package: "swift-toml")]),
               .testTarget(name: "ProjectXCoreTests", dependencies: ["ProjectXCore", .product(name: "GRDB", package: "GRDB.swift")])])

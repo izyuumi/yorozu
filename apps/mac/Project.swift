@@ -37,12 +37,15 @@ let project = Project(
             settings: .settings(base: [
                 "DEVELOPMENT_TEAM": "AN5KM8QGEF",
                 "CODE_SIGN_STYLE": "Manual",
-                "CODE_SIGN_IDENTITY": "Developer ID Application: Yumi Izumi (AN5KM8QGEF)",
                 "ENABLE_HARDENED_RUNTIME": "YES",
-                "OTHER_CODE_SIGN_FLAGS": "--timestamp",
                 "MARKETING_VERSION": .string(version),
                 "CURRENT_PROJECT_VERSION": "1",
-            ])
+            ], configurations: [
+                // Identity and timestamp flag: Signing.xcconfig, overridden by the gitignored Signing.local.xcconfig.
+                .debug(name: .debug, xcconfig: "Signing.xcconfig"),
+                .release(name: .release, xcconfig: "Signing.xcconfig"),
+            // Tuist's defaults would set the identity at target level, over the xcconfig.
+            ], defaultSettings: .recommended(excluding: ["CODE_SIGN_IDENTITY"]))
         ),
     ]
 )

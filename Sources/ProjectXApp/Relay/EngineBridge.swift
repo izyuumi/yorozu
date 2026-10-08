@@ -12,7 +12,10 @@ actor EngineBridge: RelayBackend {
     private var seen: Set<String>?
     private var working = false
 
-    init(engine: Engine, mode: RuntimeMode) { self.engine = engine; self.mode = mode }
+    /// Awaited before a phone message reaches the Engine (the model metadata retry, #312).
+    private let prepare: @Sendable () async -> Void
+
+    init(engine: Engine, mode: RuntimeMode, prepare: @escaping @Sendable () async -> Void = {}) { self.engine = engine; self.mode = mode; self.prepare = prepare }
 
     func handle(_ e: YorozuEvent) async -> [YorozuEvent] {
         switch e.payload {
@@ -53,6 +56,7 @@ actor EngineBridge: RelayBackend {
         guard mode.permitsInput(fixtureAcknowledged: false) else { return reject("This Mac is in fixture mode and doesn't take phone messages.") }
         // A resend or a relay replay of something already stored: the receipt is all it needs.
         if await exists(id) { return receipt }
+        await prepare()
         do { try await engine.send(m.text, id: id); return receipt }
         catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
     }

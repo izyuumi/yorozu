@@ -4,13 +4,13 @@ How the Mac app calls the local OpenClaw Gateway, and the Gateway behaviours the
 
 ## Transport
 
-Live mode uses the native WebSocket client by default ([Native transport](#native-transport)). The CLI transport runs when `PROJECTX_TRANSPORT=cli`, and for any launch whose native client is not enrolled or does not connect within 3 s. It runs the CLI once per call (`GatewayRPC.perform` in `Harness.swift`):
+Live mode uses the native WebSocket client by default ([Native transport](#native-transport)). The CLI transport runs when `[harness] transport = "cli"` ([setup.md](setup.md#settings-configtoml); `PROJECTX_TRANSPORT` overrides it), and for any launch whose native client is not enrolled or does not connect within 3 s. It runs the CLI once per call (`GatewayRPC.perform` in `Harness.swift`):
 
 ```sh
 /usr/bin/env openclaw gateway call <method> --json --expect-url <target> --timeout 260000 --params '<json>' [--expect-final]
 ```
 
-- `<target>` is `PROJECTX_GATEWAY_URL` or `ws://127.0.0.1:18789`; anything but a plain `ws`/`wss` URL on `127.0.0.1`, `::1` or `localhost` is refused. `--expect-url` pins the destination while the CLI keeps its own configured credentials.
+- `<target>` is `[harness] gateway_url` (default `ws://127.0.0.1:18789`), fixed at launch; anything but a plain `ws`/`wss` URL on `127.0.0.1`, `::1` or `localhost` is refused. `--expect-url` pins the destination while the CLI keeps its own configured credentials.
 - The child inherits the app's environment, with `/opt/homebrew/bin:/usr/local/bin` appended to `PATH` (a Finder launch's `PATH` lacks Homebrew).
 - The process is killed after 270 s. Stdout is capped at 2 MB, or 16 MB for `chat.history` and `chat.message.get`; a bigger response fails the call as uncertain.
 - Stderr is kept in memory (≤ 32 KB) only to pick a diagnostic category. A non-zero exit becomes `Gateway CLI failed [exit=<n>, category=<category>]: <code> <message>`, where code and message come from the JSON error envelope on stdout (the message is dropped if it looks like a secret). Categories: `model-override-not-authorized`, `caller-attribution-restriction`, `scope-denied`, `device-pairing-required`, `authentication-refused`, `request-schema`, `gateway-unreachable`, `gateway-target-mismatch`, `deadline-or-timeout`, `executable-or-runtime`, `unclassified-refusal-or-disconnect`. A CLI that cannot start reports `executable-unavailable`.
@@ -24,7 +24,7 @@ The transport is chosen once per launch: a launch that fell back to the CLI keep
 
 ## Sessions and runs
 
-All sessions belong to agent `projectx`; the harness refuses any other agent and any worker session key outside `agent:projectx:projectx:`.
+All sessions belong to agent `projectx`; the harness refuses any other agent and any worker session key outside `agent:projectx:projectx:`. The models below are the role models from [setup.md](setup.md#models).
 
 | Session | Key | `sessions.create` params | Runs in it |
 |---|---|---|---|
@@ -33,7 +33,9 @@ All sessions belong to agent `projectx`; the harness refuses any other agent and
 | Controller | `agent:projectx:projectx-control:<topicID>` | worker model, `permissionMode: "guarded"` | Only the `tools.invoke` steer call |
 | Coding session | `<topic key>-claude` or `<topic key>-codex` | `agentRuntime: "claude-cli"` + `permissionMode: "full"`, or `"codex"` + `"workspace"`; `worktree: true`, `worktreeBaseRef: "projectx"`, `worktreeName: "<label slug ≤ 32>-<topicID first 6>-<executor>"` | One async run: `deliver: false`, `timeout: 7200`, `idempotencyKey: "projectx-code-<uuid>"`, no `--expect-final` |
 
-- Each key gets `sessions.create` once per app run (concurrent first uses share the call; a failure retries next time). Topic and coding sessions then get `sessions.patch` with the MCP overlay in the same step ([MCP servers](#mcp-servers)). The directory `<data root>/harness-workspaces` only feeds the hash and is never created.
+- Topic, controller and coding sessions are prepared before each use (`OpenClawHarness.prepare`): `sessions.describe`, a `sessions.patch` when the session exists with another model ([Model changes](#model-changes)), `sessions.create` once per key per app run (concurrent first uses share the call; a failure retries next time), then, for topic and coding sessions, `sessions.patch` with the MCP overlay ([MCP servers](#mcp-servers)). Once a key has been brought to a model, runtime and overlay in this app run, preparing it again for the same ones makes no Gateway call.
+- A role session's key carries its model, so a changed role model simply uses another role session. An empty model (no explicit choice and no metadata) fails before any call: "No model is set for this role; choose one in Settings › Advanced."
+- The directory `<data root>/harness-workspaces` only feeds the hash and is never created.
 - OpenClaw names a coding worktree's branch `openclaw/<worktreeName>`. Claude Code needs `full` because its guarded modes need an approval client the app does not have; Codex `workspace` is sandboxed to the worktree.
 - Before every thinking step and every coding poll the work's run ID is stamped in the Store; that write fails once the work is suppressed, which is how a stop reaches a running loop.
 
@@ -44,16 +46,17 @@ All sessions belong to agent `projectx`; the harness refuses any other agent and
 | `sessions.create` | Every session above | Omit `idempotencyKey`: the Gateway accepts it only from a caller with a device identity or principal, and the CLI's shared-token connection has neither. Re-creating an existing key is already idempotent. |
 | `agent` | Raw runs, thinking steps, coding runs | No per-turn `model`: a model override needs admin scope, so the model is chosen by creating the session with it. Text comes from `result.payloads` (the last non-reasoning payload, any length); `terminalReply` (under `result` for session turns, `result.meta` for raw runs) is a 4096-character preview that only decides visibility. A raw run whose `result.meta.agentMeta` names another model gets its session re-created once, then fails. A coding start counts only when the response's `runId` matches. `result.meta.error.kind` `context_overflow` or `compaction_failure`, present on a failed run too, becomes an overflow error ([Compaction](#compaction)). |
 | `agent.wait` | Reconcile (`timeoutMs: 1`), coding poll (`timeoutMs: 20000`) | Forgets runs about 10 minutes after they end and on Gateway restart; unknown, rejected and evicted runs all look like a bare timeout. So reconcile also reads the transcript. Carries only the error text, no kind: a coding run that ends with an error matching OpenClaw's overflow wording (`packages/ai/src/utils/overflow.ts`) becomes an overflow error. |
-| `sessions.describe` | Compaction checks | `{key, agentId}`, operator.read. Reads `session.sessionId`, `totalTokens` (used only when `totalTokensFresh` is true) and `contextTokens`. |
+| `sessions.describe` | Compaction checks, session preparation | `{key, agentId}`, operator.read. Reads `session.sessionId`, `totalTokens` (used only when `totalTokensFresh` is true) and `contextTokens`; for preparation `modelProvider`, `model`, `agentRuntime.id` and `toolOverrides`. `session` is null for a key that does not exist yet. |
+| `models.list` | Model metadata | `{agentId, view: "configured", includeDetails: true}`, operator.read ([Model metadata](#model-metadata)). |
 | `sessions.compact` | Topic session compaction | `{key, agentId}`, operator.admin, which the CLI requests. Refused while the session has an active or queued run ("retry after it finishes"); answers `compacted: false` with a `reason` when there is nothing to compact, and `result.tokensBefore` / `tokensAfter` when it compacted. |
 | `chat.history` | Sub-chat progress, reconcile, coding results | `maxChars` 1–500,000, default 8000 (UTF-16 units per text field); a longer text ends in `\n...(truncated)...` and the message gets `__openclaw.truncated`. The response keeps the newest messages within 512 KiB, and a single message over 128 KiB is replaced by `[chat.history omitted: message too large]` (also marked truncated) at any `maxChars`. The app reads previews only: 2000 for the thinking reconcile, the coding poll and the coding result, 8000 for the coding reconcile (enough to keep the `[run …]` marker after the ~5 KB contract), and 200 for the message IDs before a coding run. A run's reply carries `__openclaw.runId`; the admitted user turn has `idempotencyKey: "<run>:user"`. `sessionInfo.activeRunIds` / `hasActiveRun` show live runs. Claude Code session history ignores `limit` and can reach several MB. |
 | `chat.message.get` | Whole final replies | `{sessionKey, agentId, messageId, maxChars: 1000000}`, operator.read, with `messageId` from the preview's `__openclaw.id`. Called only when the preview is marked `__openclaw.truncated`. Returns `message` with each text field up to 1,000,000 characters; a projected message over the 25 MiB payload limit answers `ok: false, unavailableReason: "oversized"`, and the app then keeps the preview. |
 | `chat.abort` | Stop | `{sessionKey, agentId, runId, preserveSideRuns: true}`, with the coding key for coding work. Confirmed when `runIds` contains the run, or `aborted: false` (nothing with that ID is active, queued or pending). |
 | `tools.invoke` | Live steer of a thinking step | `sessions_send` with `mode: "steer"` through the controller session, `idempotencyKey: "<work>-revision-<n>"`. Admitted only on `status: "accepted"` and `targetDisposition: "steered"` for the topic key. OpenClaw lists `sessions_send` in `DEFAULT_GATEWAY_HTTP_TOOL_DENY` (`src/security/dangerous-tools.ts`), so today it is refused and the change runs as a follow-up turn. |
 | `sessions.diff` | Coding result | `scope: "uncommitted"` (the default compares to `origin/main`). Counts only what the worker left uncommitted, so it reads 0 files after the worker commits. |
-| `config.get` | MCP mirror | Read once per app run for `hash` and the names under `config.mcp.servers`. |
+| `config.get` | MCP mirror, model metadata | operator.read. Read for `hash` and the names under `config.mcp.servers` whenever the MCP list is mirrored, and for prices and output caps under `config.models.providers` whenever metadata is read. |
 | `config.patch` | MCP mirror | `{raw: "{\"mcp\":{\"servers\":{…}}}", baseHash, replacePaths, note}`, a JSON merge patch (`null` deletes). Needs operator.admin, which the CLI requests. `baseHash` must match `config.get`; `replacePaths` lets an `args` array shrink. Sent only when a `yorozu-*` entry differs. |
-| `sessions.patch` | MCP overlay | `{key, agentId, toolOverrides, expectedToolOverrides}`. `toolOverrides` replaces the session's whole overlay, so the app sends the current one (from the `sessions.create` entry) with only `mcpServers` changed, and `expectedToolOverrides` fails the call if it changed meanwhile. Skipped when `mcpServers` already matches. Needs operator.admin. |
+| `sessions.patch` | MCP overlay, model changes | Overlay: `{key, agentId, toolOverrides, expectedToolOverrides}`. `toolOverrides` replaces the session's whole overlay, so the app sends the current one (from `sessions.describe`) with only `mcpServers` changed, and `expectedToolOverrides` fails the call if it changed meanwhile. Skipped when `mcpServers` already matches. Needs operator.admin. Model: `{key, agentId, model}`, plus `agentRuntime` for coding sessions, operator.write ([Model changes](#model-changes)). |
 
 ## Reading final replies
 
@@ -71,12 +74,32 @@ OpenClaw's own compaction, memory flush and `contextPruning` are off in the Gate
 - Thinking overflow: a step whose `agent` result has error kind `context_overflow` or `compaction_failure` triggers one forced compaction. The task fails with "…Yorozu compacted it, so asking again should now work." or, when that compaction fails too, "…Start a new topic for this request." Neither offers a retry.
 - Coding: Claude Code and Codex compact their own sessions. OpenClaw exposes no compaction count, so `sessions.describe` runs on the coding session before and after the run; a changed `sessionId`, or a fresh `totalTokens` lower than before, posts a `compaction` event ("Claude Code compacted its session: N → M tokens"). An overflow, matched from the `agent.wait` error text, fails the task with "<tool>'s session ran out of context… start a new topic for this work."
 
+## Model metadata
+
+`OpenClawHarness.models()` feeds the automatic role models ([setup.md](setup.md#models)). Both calls are operator.read.
+
+- `models.list {agentId, view: "configured", includeDetails: true}` gives the agent's allowed models. Each row has `provider` and `id` (Yorozu uses `<provider>/<id>`), `contextTokens` (else `contextWindow`), `input`, `agentRuntime`, `runtimeChoices` and `tags`. The row tagged `default` is the agent's primary model. Rows with `available: false` are left out.
+- `models.list` strips cost and route details from its rows, and bundled provider catalogs are not exposed over the Gateway. Price and output cap therefore come only from `config.get`, in `config.models.providers.<provider>.models[]`: `cost.input` + `cost.output` per million tokens, and `maxTokens` (else the provider's `maxTokens`). A model missing from there has no price and no cap. A cost of 0/0, as a local proxy may declare, counts as unknown price, not free.
+- Runtimes a model can run on: its own `agentRuntime` (default `openclaw`), each available `runtimeChoices` entry, plus `codex` for providers `openai` and `codex` and `claude-cli` for `anthropic` and `claude-cli` (OpenClaw's session-runtime compatibility). The coding executors map to runtimes `claude-cli` and `codex`.
+- The read runs at launch, after every `config.toml` reload, and, while no read has succeeded, before a message at most every 30 s; the launch waits up to 10 s for the first read before resuming queued work. A failed read keeps the last good result; offline and fixture harnesses report none.
+
+## Model changes
+
+A changed role model reaches existing topic, controller and coding sessions at their next use with `sessions.patch {key, agentId, model}`, never by re-creating them: `sessions.create` with another model on an existing key needs operator.admin, while a patch of `model` and `agentRuntime` stays within operator.write (`src/shared/session-method-scopes-base.ts`), which the native client holds.
+
+- `prepare` compares `sessions.describe`'s `modelProvider/model` (and, for coding sessions, `agentRuntime.id`) with the wanted ones and patches only on a difference.
+- Coding sessions send `agentRuntime` (`claude-cli` or `codex`) with the model: a model the runtime cannot run would otherwise silently drop the runtime, and with both sent the Gateway refuses it instead.
+- The patch counts only when the returned `entry` has `providerOverride/modelOverride` equal to the model (and `agentRuntimeOverride` equal to the runtime); otherwise the work fails with "Gateway did not confirm switching this session to <model>; nothing was run."
+- Not yet checked live on the owner's Gateway for a controller (`guarded`) and a Codex (`workspace`) session.
+
 ## MCP servers
 
-Yorozu owns the list of MCP servers its workers may use (`mcp-servers.json`, [setup.md](setup.md#mcp-servers)); OpenClaw only holds a mirror of it. OpenClaw cannot take a server definition per session (`toolOverrides.mcpServers` only switches configured servers on or off), so the mirror has two parts (`OpenClawHarness.mcpOverlay` and `applyMCP` in `Harness.swift`):
+Yorozu owns the list of MCP servers its workers may use (`[mcp_servers]` in `config.toml`, [setup.md](setup.md#mcp-servers)); OpenClaw only holds a mirror of it. OpenClaw cannot take a server definition per session (`toolOverrides.mcpServers` only switches configured servers on or off), so the mirror has two parts (`OpenClawHarness.mcpOverlay` and `prepare` in `Harness.swift`):
 
-1. Once per app run, before the first topic or coding session is set up: `config.get`, then a `config.patch` that writes each listed server as `mcp.servers.yorozu-<name>` with `enabled: false` and deletes `yorozu-*` entries no longer listed. Nothing is written when the entries already match. The patch lists every array inside a changed or deleted entry in `replacePaths` and carries no `note`: a note leaves a restart sentinel that wakes the owner's main agent on the next Gateway start. `enabled: false` keeps them away from every other agent and session. The Gateway hot-reloads `mcp.*` with no restart (`src/gateway/config-reload-plan.ts`); the reload restarts live MCP runtimes in every session, which is why unchanged entries are not rewritten.
-2. For every topic and coding session, once per app run: `sessions.patch` with `toolOverrides.mcpServers` set to `true` for each `yorozu-*` server and `false` for every other server configured when step 1 ran. A server the owner adds to OpenClaw while the app runs reaches Yorozu sessions until the next launch. A session override wins over `enabled` in both directions (`src/agents/bundle-mcp-config.ts`). Role sessions run raw (no tools) and the controller session runs no turns, so they get no overlay.
+1. Once per distinct list, before the next topic or coding session is prepared: `config.get`, then a `config.patch` that writes each listed server as `mcp.servers.yorozu-<name>` with `enabled: false` and deletes `yorozu-*` entries no longer listed. Nothing is written when the entries already match. The patch lists every array inside a changed or deleted entry in `replacePaths` and carries no `note`: a note leaves a restart sentinel that wakes the owner's main agent on the next Gateway start. `enabled: false` keeps them away from every other agent and session. The Gateway hot-reloads `mcp.*` with no restart (`src/gateway/config-reload-plan.ts`); the reload restarts live MCP runtimes in every session, which is why unchanged entries are not rewritten.
+2. For every topic and coding session, once per app run and again after the list changes: `sessions.patch` with `toolOverrides.mcpServers` set to `true` for each `yorozu-*` server and `false` for every other server configured when step 1 ran. A server the owner adds to OpenClaw while the app runs reaches Yorozu sessions until Yorozu's list changes or the app relaunches.
+
+A `config.toml` reload that changes `[mcp_servers]` makes the next prepared session run step 1 again, which also deletes the `yorozu-*` entries of removed servers; concurrent uses of one list share the call, and a failure retries on the next use. A session override wins over `enabled` in both directions (`src/agents/bundle-mcp-config.ts`). Role sessions run raw (no tools) and the controller session runs no turns, so they get no overlay.
 
 What each runtime sees:
 
@@ -105,7 +128,7 @@ Every `agent` call writes a `gateway-request` receipt before dispatch; if that w
 
 ## Native transport
 
-The default in live mode (`PROJECTX_TRANSPORT` unset or anything but `cli`; `AppModel.connectNative` in `ProjectX.swift`).
+The default in live mode (`[harness] transport = "native"`, the default; `AppModel.connectNative` in `ProjectX.swift`). It dials `[harness] gateway_url`.
 
 - At launch: with no stored device token (`NativeGatewayClient.isEnrolled`, a Keychain read), the client does not dial, since a connect would store a fresh key and fail. With a token it connects with a 3 s handshake deadline instead of the usual 15 s. Either failure makes that launch use the CLI, and the popover shows "Native Gateway not connected · using the CLI this launch" with the error as its tooltip and a "Connect…" link to Settings. The composer is never blocked for it.
 - Enrollment is the Gateway tab of the Settings window, shown in live mode while the native transport is selected. After a fallback launch a successful enrollment says "Yorozu uses it from the next launch".
