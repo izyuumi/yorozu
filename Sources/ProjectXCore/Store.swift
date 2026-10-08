@@ -167,10 +167,9 @@ public actor Store {
     }
     /// Rows of the window changed after `seq`, at most `limit` (1–1000), in sequence order.
     public func changes(after seq: Int64, limit: Int = 200) throws -> ChangePage {
-        let limit = max(1,min(limit,1000)), now = Date().timeIntervalSince1970
+        let limit = max(1,min(limit,1000))
         return try db.read { db in
-            let nth = try Double.fetchOne(db,sql: "SELECT created FROM messages ORDER BY created DESC,rowid DESC LIMIT 1 OFFSET 499")
-            let start = min(now - 30 * 86400,nth ?? 0)
+            let start = try Self.windowStart(db)
             var all: [Change] = []
             for t in Self.synced {
                 for row in try Row.fetchAll(db,sql: "WITH w(s) AS (SELECT ?) SELECT * FROM \(t) WHERE seq>? AND \(Self.scope(t)) ORDER BY seq LIMIT ?",arguments: [start,seq,limit + 1]) {
@@ -180,6 +179,19 @@ public actor Store {
             all.sort { $0.seq < $1.seq }
             return ChangePage(changes: Array(all.prefix(limit)),more: all.count > limit,latest: try Int64.fetchOne(db,sql: "SELECT value FROM changeSeq") ?? 0)
         }
+    }
+    /// The latest change sequence and the smallest `seq` of a message in the window (nil when it has none): a phone
+    /// cursor above the first or below the second is stale (docs/ios-relay-contract.md, "History window").
+    public func cursorBounds() throws -> (latest: Int64, floor: Int64?) {
+        try db.read { db in
+            (try Int64.fetchOne(db,sql: "SELECT value FROM changeSeq") ?? 0,
+             try Int64.fetchOne(db,sql: "SELECT MIN(seq) FROM messages WHERE created>=?",arguments: [try Self.windowStart(db)]))
+        }
+    }
+    /// Messages created at or after this belong to the window.
+    private static func windowStart(_ db: Database) throws -> Double {
+        let nth = try Double.fetchOne(db,sql: "SELECT created FROM messages ORDER BY created DESC,rowid DESC LIMIT 1 OFFSET 499")
+        return min(Date().timeIntervalSince1970 - 30 * 86400,nth ?? 0)
     }
     private static func record(_ table: String,_ row: Row) throws -> Change.Record {
         switch table {

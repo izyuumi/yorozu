@@ -25,11 +25,9 @@ import ProjectXCore
     private var observation: Task<Void,Never>?
     /// Assistant Markdown parsed once per message id; message bodies never change after insert.
     private var parsed: [String: AttributedString] = [:]
-    /// The phone's way in (iOS 0.6.0): live mode only, and nil when it could not start.
+    /// The phone's way in (iOS 0.7): live mode only, and nil when it could not start.
     private(set) var relay: RelayHost?
     private var bridge: EngineBridge?
-    /// The snapshot the relay last heard about; nil makes the poll loop publish to a new relay.
-    private var relayed: Snapshot?
     @Published var relayStatus = RelayStatus()
     // config.toml (#312), applied in ConfigWiring.swift.
     let environment = ProcessInfo.processInfo.environment
@@ -106,7 +104,8 @@ import ProjectXCore
                 status = nil; ready = true
                 applySystem(resolved.config.general)
                 watchConfig()
-                // Polls keep reading, but the UI and the relay hear only about a changed snapshot. A failed read says so
+                // Polls keep reading, but the UI hears only about a changed snapshot. The bridge hears every poll: it checks
+                // the change sequence and the working and routing flags itself (read cursors and routing are not in the snapshot). A failed read says so
                 // in the status line and backs off (0.7 s doubling to 30 s) until one succeeds.
                 var failures = 0, notice: String?
                 while !Task.isCancelled {
@@ -114,7 +113,7 @@ import ProjectXCore
                         let next = try await engine.snapshot()
                         if notice != nil { if status == notice { status = nil }; notice = nil; failures = 0 }
                         if next != snapshot { snapshot = next }
-                        if next != relayed, let relay, let bridge { relayed = next; await bridge.publish(next,to: relay) }
+                        if let relay, let bridge { await bridge.publish(next,to: relay) }
                     } catch {
                         failures += 1; notice = "Couldn't read the chat, retrying: \(error.localizedDescription)"; status = notice
                     }
@@ -145,7 +144,7 @@ import ProjectXCore
         do {
             let bridge = EngineBridge(engine: engine,mode: runtimeMode) { [weak self] in await self?.ensureModels() }
             let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile)
-            self.bridge = bridge; relay = host; relayed = nil
+            self.bridge = bridge; relay = host
             Task { for await status in host.status where relay === host { relayStatus = status } }
             await host.start()
         } catch {
