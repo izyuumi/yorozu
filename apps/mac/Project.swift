@@ -28,6 +28,7 @@ let project = Project(
                 "CFBundleIconFile": "Yorozu",
                 "NSAccentColorName": "AccentColor",
                 "LSApplicationCategoryType": "public.app-category.productivity",
+                "LSUIElement": true, // Menu-bar host: no Dock icon, no main window.
             ]),
             sources: ["../../Sources/ProjectXApp/**"],
             resources: ["Resources/Yorozu.icns", "Resources/Accent.xcassets"],
