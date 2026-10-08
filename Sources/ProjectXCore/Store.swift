@@ -266,6 +266,9 @@ public actor Store {
     public func updateWork(_ value: Work) throws { try db.write { try value.update($0) } }
     public func work(_ id: String) throws -> Work { try db.read { db in guard let w = try Work.fetchOne(db, key: id) else { throw ProjectError.invalid("Unknown work.") }; return w } }
     public func event(_ event: WorkerEvent) throws { try db.write { try event.insert($0, onConflict: .ignore) } }
+    /// The live harness id (`Harness.id`) this data folder last ran on; nil before #318, which means OpenClaw.
+    public func lastHarness() throws -> String? { try db.read { try String.fetchOne($0,sql: "SELECT body FROM receipts WHERE id='harness-kind'") } }
+    public func recordHarness(_ id: String) throws { try db.write { try $0.execute(sql: "INSERT OR REPLACE INTO receipts VALUES ('harness-kind','harness',?,?)",arguments: [id,Date().timeIntervalSince1970]) } }
     public func requestReceipt(_ value: RequestReceipt) throws { try receipt(kind: "request",body: encoded(value)) }
     public func receipt(kind: String, body: String) throws { try db.write { try $0.execute(sql: "INSERT INTO receipts VALUES (?,?,?,?)", arguments: [identifier(),kind,body,Date().timeIntervalSince1970]) } }
     public func amend(task: String, message: String, instruction: String) throws -> Amendment {

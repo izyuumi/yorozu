@@ -35,9 +35,7 @@ struct HermesClient: Sendable {
 
     /// Only credential-free loopback http(s) URLs with no path, query or fragment.
     init(_ url: String) throws {
-        guard let p = URLComponents(string: url), ["http", "https"].contains(p.scheme ?? ""), ["127.0.0.1", "localhost", "::1"].contains(p.host ?? ""),
-              p.user == nil, p.password == nil, p.query == nil, p.fragment == nil, ["", "/"].contains(p.path), let u = p.url
-        else { throw ProjectError.blocked("Only loopback Hermes URLs with no path are allowed, such as http://127.0.0.1:8642.") }
+        guard Config.isLoopbackHTTP(url), let u = URL(string: url) else { throw ProjectError.blocked("Only loopback Hermes URLs with no path are allowed, such as http://127.0.0.1:8642.") }
         root = u.absoluteString.hasSuffix("/") ? String(u.absoluteString.dropLast()) : u.absoluteString
     }
     func url(_ profile: String, _ path: String) -> URL { URL(string: root + "/p/" + profile + path)! }
@@ -47,7 +45,7 @@ struct HermesClient: Sendable {
         let q: [String:Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: keychainService, kSecAttrAccount as String: profile,
                                kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var result: CFTypeRef?; let status = SecItemCopyMatching(q as CFDictionary, &result)
-        if status == errSecItemNotFound { throw ProjectError.blocked("No Hermes API key for profile \(profile) in the Keychain. Run the Hermes setup step.") }
+        if status == errSecItemNotFound { throw HarnessError.notReady("No Hermes API key for profile \(profile) in the Keychain. Run the Hermes setup step.") }
         guard status == errSecSuccess, let data = result as? Data, let key = String(data: data, encoding: .utf8), !key.isEmpty
         else { throw ProjectError.blocked("Yorozu could not read the Hermes API key from the Keychain. Unlock the login Keychain and retry.") }
         return key
@@ -71,13 +69,12 @@ struct HermesClient: Sendable {
     }
     static func errorCode(_ json: [String:Any]) -> String? { (json["error"] as? [String:Any])?["code"] as? String }
     /// A refusal as a plain error: 401/403 and 429 get their own wording; the server's message only when not secret-shaped.
-    static func failure(_ status: Int, _ json: [String:Any], profile: String, doing: String) -> ProjectError {
-        // ERRORS: harness busy / not ready become typed harness errors at integration (#318 harness seam).
-        if status == 401 || status == 403 { return .blocked("Hermes refused Yorozu's API key for profile \(profile) (HTTP \(status)). Run the Hermes setup step again.") }
-        if status == 429 { return .blocked("Hermes is busy: it already runs its maximum number of runs at once. Nothing was started; try again shortly.") }
+    static func failure(_ status: Int, _ json: [String:Any], profile: String, doing: String) -> Error {
+        if status == 401 || status == 403 { return HarnessError.notReady("Hermes refused Yorozu's API key for profile \(profile) (HTTP \(status)). Run the Hermes setup step again.") }
+        if status == 429 { return HarnessError.busy("Hermes is busy: it already runs its maximum number of runs at once. Nothing was started; try again shortly.") }
         let e = json["error"] as? [String:Any], message = e?["message"] as? String ?? ""
         let detail = (errorCode(json).map { " " + $0 } ?? "") + (message.isEmpty || sensitive(message) ? "" : ": " + utf8Prefix(message, bytes: 300))
-        return .uncertain("Hermes could not \(doing) (HTTP \(status)\(detail)).")
+        return ProjectError.uncertain("Hermes could not \(doing) (HTTP \(status)\(detail)).")
     }
 
     /// `GET /v1/runs/{id}`; nil on 404 (unknown to this profile, or forgotten: terminal statuses are kept 1 h, 24 h durably).
@@ -114,7 +111,7 @@ struct HermesClient: Sendable {
                 }
                 // Closed without a terminal frame (slow-subscriber cut, or the run ended before we attached): check.
                 if let s = try await status(profile, run), s.terminal { return s }
-            } catch let e as ProjectError { throw e } catch is CancellationError { throw CancellationError() } catch {
+            } catch let e as ProjectError { throw e } catch let e as HarnessError { throw e } catch is CancellationError { throw CancellationError() } catch {
                 failures += 1; try await Task.sleep(for: .seconds(min(failures * 2, 15)))
             }
         }

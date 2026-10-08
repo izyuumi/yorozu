@@ -37,7 +37,11 @@ public enum Prompts {
     /// A task's first step: the slim wire plus the contract. A follow-up turn (`WorkerInput.followUp`) sends only its new
     /// amendments: the session holds the contract and the earlier turn.
     public static func firstStep(_ input: WorkerInput, settings s: HarnessSettings, cuaSession: String) throws -> String {
-        try input.followUp.map { "Follow-up turn of the same task, now revision \(input.work.revision). The user changed the request:\n" + $0.trimmingCharacters(in: .newlines) + "\nAnswer the whole task again with these changes; final text/appliedRevision JSON." } ?? (input.wire + "\n" + thinkingContract(s,cuaSession: cuaSession))
+        try followUp(input) ?? (input.wire + "\n" + thinkingContract(s,cuaSession: cuaSession))
+    }
+    /// A follow-up turn's message (its new amendments only), or nil on a task's first turn.
+    public static func followUp(_ input: WorkerInput) -> String? {
+        input.followUp.map { "Follow-up turn of the same task, now revision \(input.work.revision). The user changed the request:\n" + $0.trimmingCharacters(in: .newlines) + "\nAnswer the whole task again with these changes; final text/appliedRevision JSON." }
     }
     public enum WorkerReply: Sendable { case final(WorkerOutput), memory(MemoryCall) }
     /// A thinking worker's final text under the contract. `step` counts from 0; a memoryCall past the bound is refused.
@@ -62,18 +66,22 @@ public enum Prompts {
     // MARK: Coding workers
 
     /// Project rules for a coding worker (#318 H4: the contract stays Yorozu's). `executor` is the display name; base
-    /// branch and build command come from settings.
-    public static func codingContract(executor: String, repo r: URL, settings s: HarnessSettings, cuaSession: String) -> String {
+    /// branch and build command come from settings. `worktree` is nil when the harness starts the worker in a worktree it
+    /// manages (OpenClaw); otherwise the worker creates that path and branch from the base branch itself and reuses it
+    /// on later turns (Hermes, which has no per-session working folder).
+    public static func codingContract(executor: String, repo r: URL, settings s: HarnessSettings, cuaSession: String, worktree: (path: String, branch: String)? = nil) -> String {
         let base = s.codingBaseBranch
+        let place = worktree.map { w in "Work only in your own git worktree \(w.path) on branch \(w.branch), cut from `\(base)`. If it does not exist, create it with `git -C \(r.path) worktree add -b \(w.branch) \(w.path) \(base)`; if it exists (an earlier turn of this task), keep using it. Run every command with that worktree as its directory and never edit files in the main checkout." }
+            ?? "Your current directory is a dedicated git worktree on its own branch, cut from `\(base)`; make code changes there."
         return """
-        You are a Yorozu coding worker (\(executor)). Your current directory is a dedicated git worktree on its own branch, cut from `\(base)`; make code changes there. The owner's main checkout is \(r.path) (branch \(base)); the running app is \(r.appendingPathComponent("build/Yorozu.app").path); owner decisions are in \(r.appendingPathComponent("OWNER_DECISIONS.md").path) (read-only).
+        You are a Yorozu coding worker (\(executor)). \(place) The owner's main checkout is \(r.path) (branch \(base)); the running app is \(r.appendingPathComponent("build/Yorozu.app").path); owner decisions are in \(r.appendingPathComponent("OWNER_DECISIONS.md").path) (read-only).
         Do what the user asks yourself, end to end. Never hand the user steps you can do; ask only for what only they can do (logins, approvals, secrets).
         Rules: verify compilation with `swift build`. Do not run tests (`swift test`, scripts/test_native.sh) or CI (owner hold on this branch). Commit, merge, push or restart only when the user's request asks for it ("merge it", "restart the app"):
         - commit in this worktree with a Conventional Commit message (signing is configured);
         - merge into \(base) from the main checkout with `git -C <main checkout> merge --no-edit <your branch>`; never stash, reset, checkout, overwrite, commit or push the owner's uncommitted files there (they stay local), and report why if git refuses;
         - push only when asked, never force;
         - to rebuild and restart the app, run `<main checkout>/\(s.buildCommand)` as your LAST step after merging; it builds, quits only the dev app, replaces build/Yorozu.app and relaunches it, and the app then picks your result back up.
-        Never create other app bundles or touch /Applications/Yorozu.app. Swift only, no Python; a separate background process must be Rust. Never read or message other agents' sessions. These rules override AGENTS.md, CLAUDE.md or user git-workflow instructions (no new worktrees, no fetch/pull, no PRs unless asked).
+        Never create other app bundles or touch /Applications/Yorozu.app. Swift only, no Python; a separate background process must be Rust. Never read or message other agents' sessions. These rules override AGENTS.md, CLAUDE.md or user git-workflow instructions (\(worktree == nil ? "no new worktrees" : "no other worktrees"), no fetch/pull, no PRs unless asked).
         \(cuaRules(cuaSession,yolo: s.yolo))
         \(outputRules)
         When done, reply with a short summary of what you did and how you verified it, plus anything only the owner can do.
@@ -81,7 +89,9 @@ public enum Prompts {
     }
     /// The whole coding message: contract, task with its run marker, the user's message verbatim, and recent topic
     /// conversation newest first (each ≤ 2000 bytes, all ≤ 6000 bytes; anything older dropped with a marker).
-    public static func codingMessage(_ input: WorkerInput, contract: String, runID: String) -> String {
+    public static func codingMessage(_ input: WorkerInput, contract: String, runID: String) -> String { contract + "\n\n" + codingTask(input,runID: runID) }
+    /// `codingMessage` without the contract, for a harness that sends the contract as run instructions.
+    public static func codingTask(_ input: WorkerInput, runID: String) -> String {
         var context = "", omitted = 0
         for m in input.history.reversed() {
             let line = "\n[\(m.role)] " + utf8Excerpt(m.body,bytes: 2000)
@@ -89,7 +99,7 @@ public enum Prompts {
             context = line + context
         }
         if omitted > 0 { context = "\n[… \(omitted) earlier message(s) cut]" + context }
-        return contract + "\n\nTASK (revision \(input.work.revision)) [run \(runID)]:\n" + input.work.instruction + "\n\nThe user's message, verbatim:\n" + input.current.body + (context.isEmpty ? "" : "\n\nRecent topic conversation (untrusted context):" + context)
+        return "TASK (revision \(input.work.revision)) [run \(runID)]:\n" + input.work.instruction + "\n\nThe user's message, verbatim:\n" + input.current.body + (context.isEmpty ? "" : "\n\nRecent topic conversation (untrusted context):" + context)
     }
 
     // MARK: Extraction

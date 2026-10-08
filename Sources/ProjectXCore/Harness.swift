@@ -12,7 +12,9 @@ public struct Executor: Codable, Sendable, Equatable {
     public var routingNotes: String
     /// Nil when ready; otherwise why not.
     public var notReady: String?
-    public init(id: String, name: String, appAccess: Bool, liveSteer: Bool, routingNotes: String = "", notReady: String? = nil) { self.id = id; self.name = name; self.appAccess = appAccess; self.liveSteer = liveSteer; self.routingNotes = routingNotes; self.notReady = notReady }
+    /// The model runtime it runs on, matched against `ModelInfo.runtimes` for its automatic model; nil means none.
+    public var runtime: String?
+    public init(id: String, name: String, appAccess: Bool, liveSteer: Bool, runtime: String? = nil, routingNotes: String = "", notReady: String? = nil) { self.id = id; self.name = name; self.appAccess = appAccess; self.liveSteer = liveSteer; self.runtime = runtime; self.routingNotes = routingNotes; self.notReady = notReady }
 }
 
 public protocol Harness: Sendable {
@@ -219,9 +221,9 @@ public struct OpenClawHarness: Harness {
     /// Claude Code (runtime claude-cli) and Codex (runtime codex), each in an OpenClaw-managed worktree. Neither takes
     /// changes mid-run (unverified), so changes wait for a follow-up turn.
     public var executors: [Executor] { [
-        Executor(id: "claude",name: "Claude Code",appAccess: false,liveSteer: false,
+        Executor(id: "claude",name: "Claude Code",appAccess: false,liveSteer: false,runtime: "claude-cli",
                  routingNotes: "Claude Code gets no MCP servers under OpenClaw."),
-        Executor(id: "codex",name: "Codex",appAccess: true,liveSteer: false,
+        Executor(id: "codex",name: "Codex",appAccess: true,liveSteer: false,runtime: "codex",
                  routingNotes: "New coding work that also needs to operate an app or a browser (e.g. App Store Connect) uses \"codex\" unless the user names Claude Code."),
     ] }
     public init(workspace: URL, agent: String = "projectx", rpc: GatewayRPC = GatewayRPC(), settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) {

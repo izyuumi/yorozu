@@ -17,14 +17,14 @@ public enum RuntimeMode: String, Sendable {
         switch self {
         case .fixture: return "TEST FIXTURE — NO AI / NO LLM"
         case .offline: return "OFFLINE — NO AI CONNECTED"
-        case .live: return "LIVE — local OpenClaw Gateway, projectx agent"
+        case .live: return "LIVE — local agent harness"
         }
     }
     public var explanation: String {
         switch self {
         case .fixture: return "For synthetic workflow testing only. Replies are scripted test output, not AI answers. Do not use this window for real requests. Your fixture history is preserved separately."
         case .offline: return "This app is not connected to a model. Messages are saved locally only; it cannot answer or perform your requests. Offline mode was explicitly selected or the requested mode was invalid."
-        case .live: return "Replies come from real models through the local OpenClaw Gateway (openclaw CLI, dedicated projectx agent). Messages, results and memory are saved locally. Changes to running work apply right after its current step."
+        case .live: return "Replies come from real models through the main harness (OpenClaw or Hermes Agent, set in config.toml). Messages, results and memory are saved locally. Changes to running work apply right after its current step."
         }
     }
     public var sendLabel: String {
