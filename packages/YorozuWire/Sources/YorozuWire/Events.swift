@@ -1,6 +1,6 @@
 import Foundation
 
-/// Wire events exchanged between Mac, phone and relay. See docs/spec-v1.html sections 3, 7, 8.
+/// Wire events exchanged between Mac, phone and relay. See docs/spec-v1.html sections 3, 7, 8 on `main` (v1); the v2 subset is docs/ios-relay-contract.md.
 ///
 /// JSON shape is `{ id, threadId, ts, clientTs?, agentId, parentAgentId?, syncCursor?, kind, data }`, identical to
 /// `YorozuEvent` in packages/shared/src/events.ts.

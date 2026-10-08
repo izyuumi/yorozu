@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import YorozuWire
 
-/// The phone's half of docs/ios-v0.6.0-contract.md: the one pairing, the `RelayClient` it drives,
+/// The phone's half of docs/ios-relay-contract.md: the one pairing, the `RelayClient` it drives,
 /// and the one conversation (`main`) as bubbles. Sends `message` and `sync_request`; reads
 /// `receipt`, `admission_status` and `sync_delta`; ignores everything else.
 @MainActor

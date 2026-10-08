@@ -2,7 +2,7 @@ import Foundation
 import ProjectXCore
 import YorozuWire
 
-/// The v2 Engine behind the relay (docs/ios-v0.6.0-contract.md): phone `message`, `sync_request` and
+/// The v2 Engine behind the relay (docs/ios-relay-contract.md): phone `message`, `sync_request` and
 /// `thread_list` in; `receipt`, `admission_status` and `sync_delta` out. One thread, `main`, holding
 /// every v2 message, as the Mac's main chat shows them.
 actor EngineBridge: RelayBackend {

@@ -160,7 +160,7 @@ public struct OpenClawHarness: Harness {
     public let name = "Configured OpenClaw · live acceptance unverified"
     public var agentID: String { agent }
     public var agent: String; public var secretaryModel: String; public var workerModel: String; public var rpc: GatewayRPC; public var workspace: URL
-    /// R2 coding workers. `repo` is the dev checkout whose untracked OWNER_DECISIONS.md coding workers may read.
+    /// R2 coding workers. `repo` is the dev checkout whose OWNER_DECISIONS.md coding workers may read.
     public var claudeModel = "anthropic/claude-opus-5-5"; public var codexModel = "openai/gpt-6-sol"; public var repo: URL?
     private let sessions = SessionCreations()
     public init(workspace: URL, agent: String = "projectx", secretaryModel: String = "openai-pool/gpt-6-astra", workerModel: String = "openai-pool/gpt-6-sol", rpc: GatewayRPC = GatewayRPC()) {
@@ -420,7 +420,7 @@ extension OpenClawHarness {
         }
         let full = (try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":64000])) ?? [:]
         var text = Self.finalText(full,skip: earlier) ?? "\(Self.toolName(executor)) finished without a summary."
-        // Workers never commit, so the uncommitted diff is exactly their change (the default scope compares to origin/main).
+        // Only what the worker left uncommitted (the default scope compares to origin/main); a committed change reads as 0 files.
         if let diff = try? await rpc.call("sessions.diff",["sessionKey":key,"agentId":agent,"scope":"uncommitted"]) {
             let files = (diff["files"] as? [[String:Any]] ?? []).compactMap { $0["path"] as? String }
             let line = "Worktree \(diff["root"] as? String ?? "?") (branch \(diff["branch"] as? String ?? "?"), uncommitted) · \(files.count) file(s) · +\(diff["additions"] as? Int ?? 0) −\(diff["deletions"] as? Int ?? 0)" + (diff["truncated"] as? Bool == true ? " (truncated)" : "")

@@ -1,43 +1,32 @@
 # Yorozu v2
 
-Native SwiftUI personal assistant for macOS, backed by an OpenClaw Gateway.
+A native macOS personal assistant backed by a local OpenClaw Gateway, with an iPhone client.
 
-## Current
+- **One conversation.** A secretary model answers quick turns itself and hands substantive work to background workers. Each topic gets a sub-chat you can inspect while you keep talking.
+- **Workers.** Thinking work runs in OpenClaw sessions; coding work runs Claude Code or Codex in managed git worktrees.
+- **Memory you own.** Useful facts and knowledge are saved automatically as Markdown files in `~/Yorozu/memory`, with a rebuildable search index.
+- **iPhone.** Pair from the Mac's Pair iPhone sheet; messages travel through an end-to-end-encrypted relay.
 
-- **Native Mac app**: SwiftUI (macOS 15+) generated with [Tuist](https://tuist.dev) from
-  `apps/mac/Project.swift`. The UI is in `Sources/ProjectXApp` and the engine, store and harnesses are in `Sources/ProjectXCore`.
-- **Secretary and topic sub-chats**: one main conversation. A secretary model replies directly
-  or delegates substantive work to a topic. Each topic is a sub-chat with its own
-  persistent worker session, which you can steer, correct, retry or stop.
-- **OpenClaw workers**: thinking work runs in the topic's OpenClaw session. Coding work runs as
-  Claude Code or Codex inside OpenClaw. Each coding worker gets its own git worktree, cut
-  from `projectx`.
-- **Markdown memory**: user-owned Markdown files in `~/Yorozu/memory`, plus a rebuildable
-  SQLite index in `~/Library/Caches/<bundle id>`. Private app state lives in
-  `~/Library/Application Support/<bundle id>`.
-- **Signing**: Developer ID with hardened runtime, using the same bundle ID as v1, so it updates the existing app in place.
+This branch, `projectx`, is Yorozu v2. Yorozu v1 lives on `main`.
 
-## Build and run
-
-The first build resolves Swift packages and can take a few minutes.
+## Build
 
 ```sh
-swift build                          # compile check
-scripts/build_native.sh              # tuist generate + xcodebuild → build/Yorozu.app
-scripts/build_native.sh --restart    # also quits the running dev app, swaps the bundle, relaunches
+mise install                 # Tuist
+scripts/build_native.sh      # builds build/Yorozu.app
 ```
 
-The script only replaces `build/Yorozu.app` and never touches `/Applications/Yorozu.app`.
-`version.txt` sets the marketing version.
+Requirements: [docs/setup.md](docs/setup.md). Releases: [docs/release.md](docs/release.md).
 
-`PROJECTX_MODE` selects `live` (default), `fixture` or `offline`; invalid values fall back to offline. Live mode
-uses the dedicated `projectx` OpenClaw agent. Set `PROJECTX_TRANSPORT=native` to use the native
-Gateway client instead of the CLI transport.
+## Docs
 
-## Roadmap
-
-1. **v0.6.0: iOS relay client**: remote control from iOS through the end-to-end encrypted relay.
-2. **cua computer use**: let workers drive Mac apps.
+- [Status and roadmap](docs/status.md)
+- [Architecture](docs/architecture.md)
+- [OpenClaw integration](docs/openclaw-integration.md)
+- [iOS relay contract](docs/ios-relay-contract.md)
+- [cua integration (R3 design)](docs/cua-integration.md)
+- [Owner decisions](OWNER_DECISIONS.md)
+- [Working rules](AGENTS.md)
 
 ## License
 

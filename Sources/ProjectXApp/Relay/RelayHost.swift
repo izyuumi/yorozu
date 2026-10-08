@@ -14,7 +14,7 @@ struct RelayStatus: Sendable {
 /// The Mac half of the v1 relay (packages/runtime/src/serve.ts `connect()`), without legacy boxes, the
 /// direct path or notify; the phone half is `RelayClient`. Registers this Mac's room, mints pairing
 /// codes, admits a phone only with proof it read one, and exchanges sealed `ChannelEnvelope`s with each
-/// paired phone. The wire contract is docs/ios-v0.6.0-contract.md.
+/// paired phone. The wire contract is docs/ios-relay-contract.md.
 actor RelayHost {
     /// `FrameBody` and the relay envelope are private in RelayClient.swift; these are the same shapes.
     private struct FrameBody: Codable { var t: String; var pub, spub, proof, n, c: String? }

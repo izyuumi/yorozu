@@ -10,3 +10,13 @@ xcuserdata/
 apps/mac/Derived/
 apps/ios/Derived/
 .project-map/
+
+# OpenClaw agent-workspace files (this checkout is the projectx workspace). OpenClaw seeds and its memory
+# conventions fill them with personal directives and facts; only AGENTS.md is tracked.
+/USER.md
+/SOUL.md
+/IDENTITY.md
+/BOOTSTRAP.md
+/TOOLS.md
+/MEMORY.md
+/memory/

@@ -1,13 +1,13 @@
-# iOS 0.6.0 host <-> phone contract (frozen)
+# iOS 0.6.x host <-> phone relay contract (frozen)
 
 This is the wire contract between the Mac host (`RelayHost` + `EngineBridge` in the Mac app) and
-the iOS app (`PhoneModel` on top of `RelayClient`) for Yorozu v2 0.6.0. Both sides implement
+the iOS app (`PhoneModel` on top of `RelayClient`) for Yorozu v2 0.6.x. Both sides implement
 against this file. Change it only with a matching change on both sides.
 
 All types come from `packages/YorozuWire` (the v1 `YorozuShared` wire files, vendored). Build
 events with the Swift types named here, never with hand-written JSON.
 
-Out of scope for 0.6.0: APNs/`notify`, Stop, attachments, sub-chats, device management events.
+Out of scope for 0.6.x: APNs/`notify`, Stop, attachments, sub-chats, device management events.
 
 ## Transport (unchanged v1 relay)
 
@@ -114,7 +114,7 @@ YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
             payload: .admissionStatus(AdmissionStatusData(eventId: messageId, status: .rejected, reason: reason)))
 ```
 
-Only `status: .rejected` is sent in 0.6.0. `reason` is user-facing text the phone shows as is:
+Only `status: .rejected` is sent in 0.6.x. `reason` is user-facing text the phone shows as is:
 
 | Cause | `reason` |
 |---|---|
@@ -197,7 +197,7 @@ ThreadSummary(id: "main", title: "Yorozu", archived: false, lastActivity: newest
 - Peer-info use is in the handshake above (`RelayHost`).
 - A phone `thread_list` without `peerInfo` gets
   `.threadList(ThreadListData(threads: [main], peerInfoSupported: true, peerInfo: host))` back
-  (`RelayHost` adds the peer fields to whatever thread list the backend returns). The 0.6.0
+  (`RelayHost` adds the peer fields to whatever thread list the backend returns). The 0.6.x
   phone doesn't need to send one.
 
 ## Everything else
