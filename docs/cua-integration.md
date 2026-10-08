@@ -61,7 +61,7 @@ Limits, from upstream docs and `describe` output, not yet exercised on the host:
 - In web content (Chromium, WebKit, Electron), `type_text` returns `effect: "unverifiable"`: AXValue does not prove the DOM received the input.
 - Canvas, WebGL and video surfaces expose no AX elements; only pixel actions reach them.
 - Focus-meaning shortcuts such as ⌘L sent to a background browser pull focus, and `open` or LaunchServices activation brings the app forward.
-- `delivery_mode: "foreground"` and `bring_to_front` take focus; treat them as a separate step the user approves. Some apps accept only foreground input.
+- `delivery_mode: "foreground"` and `bring_to_front` take focus, so workers never use them (see [Worker rules](#worker-rules)). Some apps accept only foreground input; a worker reports those as not doable in the background.
 - The agent cursor overlay is visible on screen even though the user's pointer does not move.
 
 ## Worker rules
@@ -70,7 +70,7 @@ Limits, from upstream docs and `describe` output, not yet exercised on the host:
 - Scope: bind each step to one (pid, window_id). Use desktop-wide capture (`get_desktop_state`) only when the task needs it. Work in the run's own `session` (`yorozu-<8 random hex characters>`, fresh per run), pass it on every call that takes one, and close it with `end_session`; revive an ended one with `start_session`, and switch to `<label>-2` (then -3) if CuaDriver says the label is not available to this transport (a recycled proxy).
 - Sensitive data: screenshots, AX trees and `clipboard_read` can expose passwords, messages and tokens. Keep them out of memory, results and logs; skip password fields; type no secrets.
 - Approval per use: `kill_app`, `clipboard_write`, `set_config`, `replay_trajectory`, `start_recording`, `install_ffmpeg`, browser downloads and file uploads (lifted, with requested outward-facing steps, in [YOLO mode](#yolo-mode)). The owner alone runs `update --apply`, `permissions grant`, `skills install` and `stop`.
-- The user's input: use background delivery while the user is typing, announce any focus change before it happens, and stop if the user takes over the target window.
+- Focus (issue #313): workers treat the Mac as unattended, whichever device the request came from. They never take focus or use foreground input: no `bring_to_front`, foreground delivery, focus-taking shortcuts or `open` without `-g`, with the user's approval or without. When an app accepts only foreground input, the worker says it cannot be done in the background and stops. It stops if the user takes over the target window.
 - Verification: a successful transport call is not success; confirm with `verify_state` or a fresh snapshot. After a timeout or a call that returned no result, check the effect with a fresh snapshot before retrying: the call may still run.
 
 ### YOLO mode
@@ -79,7 +79,7 @@ Limits, from upstream docs and `describe` output, not yet exercised on the host:
 
 - Lifted: the ask-first rule for outward-facing steps the request asks for in an app (sending, posting, purchasing, deleting, submitting), and for the approval-per-use tools `kill_app`, `clipboard_write`, `set_config`, `replay_trajectory`, `start_recording`, `install_ffmpeg`, `browser_download` and `browser_set_input_files`. The worker does them when the task needs them.
 - Still asked: changing settings or credentials, and any step the request did not ask for.
-- Hard limits, YOLO or not: no secrets typed and no password fields; background delivery, so no `bring_to_front`, foreground delivery or focus-taking shortcuts without the user's approval of that step; never reading or messaging other agents' sessions. The owner-only commands above stay the owner's.
+- Hard limits, YOLO or not: no secrets typed and no password fields; never taking focus (no `bring_to_front`, foreground delivery, focus-taking shortcuts or `open` without `-g`; YOLO never lifts it); never reading or messaging other agents' sessions. The owner-only commands above stay the owner's.
 - `yolo` is a security-relevant key: a worker asks before turning it on, and a change posts "Settings changed: general.yolo".
 
 ## Concurrency
