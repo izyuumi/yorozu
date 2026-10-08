@@ -68,7 +68,7 @@ public actor MemoryStore {
         try FileManager.default.createDirectory(at: indexURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         index = try DatabaseQueue(path: indexURL.path)
         try index.write { db in
-            try db.execute(sql: "CREATE TABLE IF NOT EXISTS discovery(id TEXT PRIMARY KEY,title TEXT NOT NULL,summary TEXT NOT NULL,path TEXT UNIQUE NOT NULL); DROP TABLE IF EXISTS search; CREATE VIRTUAL TABLE IF NOT EXISTS search_trigram USING fts5(id UNINDEXED,title,summary,tokenize='trigram')") // `search` was the pre-trigram table
+            try db.execute(sql: "CREATE TABLE IF NOT EXISTS discovery(id TEXT PRIMARY KEY,title TEXT NOT NULL,summary TEXT NOT NULL,path TEXT UNIQUE NOT NULL); CREATE VIRTUAL TABLE IF NOT EXISTS search_trigram USING fts5(id UNINDEXED,title,summary,tokenize='trigram')") // `search` (pre-trigram) is left for older builds sharing this cache
         }
     }
     private func scoped<T>(_ body: (Int32) throws -> T) throws -> T {

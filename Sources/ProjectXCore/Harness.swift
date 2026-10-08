@@ -636,7 +636,7 @@ extension OpenClawHarness {
 }
 
 /// At most `bytes` UTF-8 bytes of `s`, cut on a Unicode scalar boundary.
-func utf8Prefix(_ s: String, bytes: Int) -> String {
+public func utf8Prefix(_ s: String, bytes: Int) -> String {
     guard s.utf8.count > bytes else { return s }
     var i = s.utf8.index(s.startIndex,offsetBy: max(bytes,0))
     while i.samePosition(in: s.unicodeScalars) == nil { i = s.utf8.index(before: i) }

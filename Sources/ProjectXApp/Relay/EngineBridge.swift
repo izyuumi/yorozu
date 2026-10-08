@@ -73,9 +73,14 @@ actor EngineBridge: RelayBackend {
         return .control(.syncDelta(SyncDeltaData(events: events, threadId: "main", workingThreadIds: s.work.contains { $0.active } ? ["main"] : [], more: more ? true : nil)))
     }
 
+    /// Worker output has no size limit, but one relay frame does (1 MiB, about 16/9 of the event once encrypted and
+    /// encoded). Until long results travel in chunks (#313), a phone gets the head of an oversized message.
+    private static func phoneText(_ body: String) -> String {
+        body.utf8.count <= 256_000 ? body : utf8Prefix(body, bytes: 256_000) + "\n\n…(truncated; full answer on the Mac)"
+    }
     private static func event(_ m: Message) -> YorozuEvent {
         YorozuEvent(id: m.id, threadId: "main", ts: Int(m.created * 1000), agentId: "main", syncCursor: m.id,
-                    payload: .message(MessageData(role: m.role == "user" ? .user : .agent, text: m.body, done: true, failed: m.kind == "failure" ? true : nil)))
+                    payload: .message(MessageData(role: m.role == "user" ? .user : .agent, text: Self.phoneText(m.body), done: true, failed: m.kind == "failure" ? true : nil)))
     }
 
     private static func main(_ s: Snapshot) -> ThreadSummary { .main((s.messages.last?.created ?? 0) * 1000) }
