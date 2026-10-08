@@ -57,8 +57,8 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `general.show_advanced` | `false` | Shows the Advanced tab |
 | `notifications.enabled` | `true` | |
 | `notifications.destination` | `"mac"` | `"mac"` or `"phones"` |
-| `routing.personal_knowledge` | `""` | The user's personal notes, named in the routing policy as a source only a worker can read; empty drops that clause |
-| `routing.self_topic` | `"Yorozu"` | The topic that holds work on Yorozu itself |
+| `routing.personal_knowledge` | `""` | The user's personal notes, named in the routing policy as a source only a worker can read; empty drops that clause; at most 200 bytes of UTF-8 |
+| `routing.self_topic` | `"Yorozu"` | The topic that holds work on Yorozu itself; at most 80 characters |
 | `relay.url` | `"wss://relay.yumi.to"` | Relay for the iPhone app, `ws://` or `wss://` with a host |
 | `harness.kind` | `"openclaw"` | The only harness today |
 | `harness.agent` | `"yorozu"` | Harness agent id, 1–64 letters, digits, `-` or `_` ([The `projectx` agent](#the-projectx-agent)) |
@@ -72,9 +72,9 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 
 `send_key`, `global_shortcut`, `appearance`, `show_advanced` and `notifications.*` are validated and kept, but nothing uses them until phase B.
 
-- **Format.** Yorozu writes the whole file in one canonical layout: known keys in a fixed order, each with Yorozu's own comment, absent model keys as commented examples, and unknown keys kept as data after them. Hand-written comments are not kept. Every write goes to a temporary file in the same folder, mode 0600, then is renamed over `config.toml`; a write that would be invalid is refused. Writes from Settings (phase B) are read-modify-write (`Config.update`), so a recent hand or worker edit survives. In phase A the app writes the file only to create it.
-- **Reload.** `ConfigWatcher` watches the folder with FSEvents, so in-place edits and atomic saves are both seen, and debounces for 300 ms: a saved change is applied within about a second. An unchanged file is ignored.
-- **Invalid edits.** A file that does not parse or validate, or is missing, leaves the last valid settings in force and posts one `failure` notice per distinct problem, code `config_invalid`, naming the file, the line when known, the key and the reason: "Settings not applied: config.toml line 12 (relay.url): expected a ws:// or wss:// address. The last valid settings stay in force." An invalid file at launch leaves the app open but not ready, with the error ("config.toml line 12 (relay.url): …") in the status line.
+- **Format.** Yorozu writes the whole file in one canonical layout: known keys in a fixed order, each with Yorozu's own comment, absent model keys as commented examples, and unknown keys kept as data after them. Hand-written comments are not kept. Every write goes to a temporary file in the same folder, mode 0600, flushed to disk, then is renamed over `config.toml`; a write that would be invalid is refused. Writes from Settings (phase B) are read-modify-write (`Config.update`), so a recent hand or worker edit survives. In phase A the app writes the file only to create it.
+- **Reload.** `ConfigWatcher` watches the folder with FSEvents, so in-place edits and atomic saves are both seen, and debounces for 300 ms: a saved change is applied within about a second. An unchanged file is ignored; the comparison starts from the file as read at launch, so an edit made while the app was starting is applied too.
+- **Invalid edits.** A file that does not parse or validate, or is missing, leaves the last valid settings in force and posts one `failure` notice per distinct problem, code `config_invalid`, naming the file, the line when known, the key and the reason: "Settings not applied: config.toml line 12 (relay.url): expected a ws:// or wss:// address. The last valid settings stay in force." An invalid or unreadable file at launch is left untouched: that run uses the code defaults plus the environment, posts the same notice ending "Yorozu runs on its default settings until the file is fixed.", and applies the file once it is fixed. In live mode the default agent `yorozu` still stops that launch unless `PROJECTX_AGENT=projectx` is set (until #317).
 - **Security-relevant keys.** `general.yolo`, `relay.url`, every `harness.*` key, every `models.*` role and `models.coding` key, and `mcp_servers`. Their comments say "Security-relevant: ask the user before changing it", and a worker asks for the user's yes in the chat before changing them. A reload that changes any of them posts an `acknowledgment` notice, code `settings_changed`: "Settings changed: relay.url". Direct connection joins the list with #315.
 - **When a change applies.** Models, YOLO, routing hints and `dev_repo` from the next route, task or extraction; automatic models after the model metadata is read again. MCP servers when the next worker session is prepared ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). `relay.url` restarts the relay host on the new relay with the same keys and devices; every phone must pair again, since its pairing names the old relay. `keep_mac_awake` and `start_at_login` at once. `harness.kind`, `agent`, `transport` and `gateway_url` only at the next launch; the status line says "Relaunch Yorozu to apply: …".
 
@@ -113,7 +113,8 @@ The list used to be `mcp-servers.json` in the data root. When `config.toml` is f
 
 ### Start at login and keep awake
 
-- `start_at_login` registers the running app bundle as a login item with `SMAppService.mainApp` (for the dev app, `build/Yorozu.app`), and `false` unregisters it. It is on by default. When macOS wants approval, the status line says "Start at login needs approval in System Settings › General › Login Items". Fixture and `PROJECTX_DATA` runs never touch the login item.
+- `start_at_login` registers the running app bundle as a login item with `SMAppService.mainApp` (for the dev app, `build/Yorozu.app`) and records that in `login-item-registered` in the data root; `false` unregisters the item only when that file exists, so an item this app did not register is never removed. It is on by default. When macOS wants approval, the status line says "Start at login needs approval in System Settings › General › Login Items". Fixture and `PROJECTX_DATA` runs never touch the login item.
+- Known limit: v1 shares the bundle id, and `SMAppService.mainApp` could act on its login item. While LaunchServices knows any other bundle with this id (`/Applications/Yorozu.app`, or another build copy), the app leaves login items alone and, with `start_at_login` on, the status line says "Start at login is off while another Yorozu with the same id is installed".
 - `keep_mac_awake` holds a `ProcessInfo` activity with `.idleSystemSleepDisabled` while the app runs (`pmset -g assertions` lists it). A closed lid still sleeps.
 
 ## Models
@@ -126,12 +127,12 @@ No model id is in the code. Each role uses its explicit choice (`[models]` in `c
 | Memory extraction | `models.extraction` | Same rule as the secretary |
 | The one stronger routing review | `models.review` | The most expensive priced allowed model other than the secretary's (the secretary's when it is the only one) |
 | Thinking worker | `models.worker` | The agent's primary model; without one, the most expensive priced allowed model |
-| Coding worker, Claude Code | `models.coding.claude` | Among allowed models its runtime (`claude-cli`) can run: the primary if it is one, else the most expensive priced one, else the first |
+| Coding worker, Claude Code | `models.coding.claude` | Among allowed models its runtime (`claude-cli`) can run: the primary if it is one, else the most expensive priced one with an output cap, else the one with the largest context |
 | Coding worker, Codex | `models.coding.codex` | The same among models the `codex` runtime can run |
 
-- Price is input plus output price per million tokens. A model without a price, or with a 0/0 cost (as a local proxy may declare), counts as unknown and is left out of the cheapest and most-expensive picks. When no allowed model has a price, the secretary, extraction, review and worker roles all use the agent's primary model.
+- Price is input plus output price per million tokens. A model without a price, or with a 0/0 cost (as a local proxy may declare), counts as unknown and is left out of the cheapest and most-expensive picks; a model with no output cap is left out of both too. When no allowed model has a price, the secretary, extraction, review and worker roles all use the agent's primary model.
 - An explicit choice the harness does not list is still used.
-- The metadata comes from the Gateway ([openclaw-integration.md](openclaw-integration.md#model-metadata)). It is read at launch and after each reload, and once more before the next message when the launch read failed; a failed read keeps the last good one. With no metadata and no explicit choice a role has no model, and its runs fail with "No model is set for this role; choose one in Settings › Advanced."
+- The metadata comes from the Gateway ([openclaw-integration.md](openclaw-integration.md#model-metadata)). It is read at launch, where queued work waits up to 10 s for it before resuming, and after each reload; while no read has succeeded, it is read again before a message at most every 30 s. A failed read keeps the last good one. With no metadata and no explicit choice a role has no model, and its runs fail with "No model is set for this role; choose one in Settings › Advanced."
 - A changed model reaches existing topic, controller and coding sessions at their next use ([openclaw-integration.md](openclaw-integration.md#model-changes)).
 - The owner's local `config.toml` sets the model ids in use before #312, so the owner's roles did not change; the computed values are an [open item](status.md#open-items).
 

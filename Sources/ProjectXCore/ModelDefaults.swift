@@ -24,12 +24,13 @@ public enum ModelDefaults {
     public static func resolve(_ models: [ModelInfo], primary: String?, explicit: Config.Models, runtimes: [String:String] = codingRuntimes) -> ModelChoices {
         let rules = explicit.rules, priced = models.filter { $0.price != nil }
         let k = { (n: Int) in n % 1000 == 0 ? "\(n / 1000)k" : "\(n)" }
-        func top(_ list: [ModelInfo]) -> ModelInfo? { list.max { ($0.price ?? 0, $0.contextTokens ?? 0, $1.id) < ($1.price ?? 0, $1.contextTokens ?? 0, $0.id) } }
+        /// Most expensive; a model with no output cap is left out (open question 3).
+        func top(_ list: [ModelInfo]) -> ModelInfo? { list.filter { $0.maxOutputTokens != nil }.max { ($0.price ?? 0, $0.contextTokens ?? 0, $1.id) < ($1.price ?? 0, $1.contextTokens ?? 0, $0.id) } }
         func pick(_ chosen: String?, _ auto: () -> ModelChoice) -> ModelChoice {
             guard let chosen else { return auto() }
             return ModelChoice(id: chosen, reason: "explicit choice", allowed: models.isEmpty || models.contains { $0.id == chosen }, explicit: true)
         }
-        let fallback = ModelChoice(id: primary, reason: primary == nil ? "no model metadata and no primary model" : "the agent's primary model (no allowed model reports a price)")
+        let fallback = ModelChoice(id: primary, reason: primary == nil ? "no model metadata and no primary model" : "the agent's primary model (no allowed model reports a price and an output cap)")
         func worker() -> ModelChoice {
             if let primary { return ModelChoice(id: primary, reason: "the agent's primary model") }
             return top(priced).map { ModelChoice(id: $0.id, reason: "most expensive allowed model") } ?? fallback
@@ -42,9 +43,9 @@ public enum ModelDefaults {
         }
         let secretary = pick(explicit.secretary, cheap)
         let review = pick(explicit.review) {
-            guard !priced.isEmpty else { return fallback }
+            guard let best = top(priced) else { return fallback }
             if let other = top(priced.filter { $0.id != secretary.id }) { return ModelChoice(id: other.id, reason: "most expensive allowed model other than the secretary's") }
-            return ModelChoice(id: top(priced)?.id, reason: "most expensive allowed model (no other priced model)")
+            return ModelChoice(id: best.id, reason: "most expensive allowed model (no other priced model)")
         }
         var coding: [String:ModelChoice] = [:]
         for executor in Set(runtimes.keys).union(explicit.coding.keys) {
@@ -53,7 +54,8 @@ public enum ModelDefaults {
                 let able = models.filter { $0.runtimes.contains(runtime) }
                 if let primary, able.contains(where: { $0.id == primary }) { return ModelChoice(id: primary, reason: "the agent's primary model") }
                 if let best = top(able.filter { $0.price != nil }) { return ModelChoice(id: best.id, reason: "most expensive allowed model that runs on \(runtime)") }
-                return ModelChoice(id: able.first?.id, reason: able.isEmpty ? "no allowed model runs on \(runtime)" : "first allowed model that runs on \(runtime) (no prices known)")
+                let widest = able.max { ($0.contextTokens ?? 0, $1.id) < ($1.contextTokens ?? 0, $0.id) }
+                return ModelChoice(id: widest?.id, reason: widest == nil ? "no allowed model runs on \(runtime)" : "allowed model with the largest context that runs on \(runtime) (no priced model with an output cap)")
             }
         }
         return ModelChoices(secretary: secretary, extraction: pick(explicit.extraction, cheap), worker: pick(explicit.worker, worker), review: review, coding: coding)

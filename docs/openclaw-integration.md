@@ -81,7 +81,7 @@ OpenClaw's own compaction, memory flush and `contextPruning` are off in the Gate
 - `models.list {agentId, view: "configured", includeDetails: true}` gives the agent's allowed models. Each row has `provider` and `id` (Yorozu uses `<provider>/<id>`), `contextTokens` (else `contextWindow`), `input`, `agentRuntime`, `runtimeChoices` and `tags`. The row tagged `default` is the agent's primary model. Rows with `available: false` are left out.
 - `models.list` strips cost and route details from its rows, and bundled provider catalogs are not exposed over the Gateway. Price and output cap therefore come only from `config.get`, in `config.models.providers.<provider>.models[]`: `cost.input` + `cost.output` per million tokens, and `maxTokens` (else the provider's `maxTokens`). A model missing from there has no price and no cap. A cost of 0/0, as a local proxy may declare, counts as unknown price, not free.
 - Runtimes a model can run on: its own `agentRuntime` (default `openclaw`), each available `runtimeChoices` entry, plus `codex` for providers `openai` and `codex` and `claude-cli` for `anthropic` and `claude-cli` (OpenClaw's session-runtime compatibility). The coding executors map to runtimes `claude-cli` and `codex`.
-- The read runs at launch, after every `config.toml` reload, and once more before the next message when the launch read failed. A failed read keeps the last good result; offline and fixture harnesses report none.
+- The read runs at launch, after every `config.toml` reload, and, while no read has succeeded, before a message at most every 30 s; the launch waits up to 10 s for the first read before resuming queued work. A failed read keeps the last good result; offline and fixture harnesses report none.
 
 ## Model changes
 

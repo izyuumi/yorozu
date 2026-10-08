@@ -46,7 +46,11 @@ import ProjectXCore
     var lastConfigError: ConfigError?
     var metadata: (allowed: [ModelInfo], primary: String?)?
     var metadataTask: Task<Void,Never>?
-    var metadataRetried = false
+    /// When the model metadata was last asked for; with no metadata yet, a message asks again at most every 30 s.
+    var metadataAsked: Date?
+    /// The launch text of config.toml, so the watcher reports an edit made during launch.
+    var configText: Data?
+    private var relayRestart: Task<Void,Never>?
     var awake: NSObjectProtocol?
     var working: Bool { snapshot.work.contains { $0.active } }
     func start() {
@@ -60,9 +64,15 @@ import ProjectXCore
                 let explicit = env["PROJECTX_DATA"].map { URL(fileURLWithPath: $0,isDirectory: true) }
                 let support = try fm.url(for: .applicationSupportDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID,isDirectory: true)
                 let root = explicit ?? (runtimeMode == .fixture ? support.appendingPathComponent("Fixture",isDirectory: true) : support)
-                let configFile = Config.url(in: root), file = try Config.load(configFile), resolved = try ResolvedSettings(file,environment: env)
-                self.configFile = configFile; fileConfig = file; self.resolved = resolved; launched = resolved
+                // An unreadable or invalid file runs this launch on the code defaults plus the environment and is left as it is;
+                // the watcher still starts, so fixing the file applies.
+                let configFile = Config.url(in: root); var text: Data?, file = Config()
+                do { let data = try Config.read(configFile); text = data; file = try Config.parse(String(decoding: data,as: UTF8.self),file: configFile) }
+                catch { lastConfigError = error as? ConfigError ?? ConfigError(file: configFile.path,reason: error.localizedDescription) }
+                let resolved = try ResolvedSettings(file,environment: env)
+                self.configFile = configFile; configText = text; fileConfig = file; self.resolved = resolved; launched = resolved
                 let store = try Store(root: root); self.store = store
+                if let problem = lastConfigError { await postInvalid(problem,body: "Settings not applied: \(problem.localizedDescription). Yorozu runs on its default settings until the file is fixed.") }
                 let memory = explicit != nil || runtimeMode == .fixture ? try MemoryStore(dataRoot: root) : try MemoryStore(
                     root: fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/memory",isDirectory: true),
                     index: try fm.url(for: .cachesDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID + "/memory-index.sqlite"))
@@ -84,7 +94,8 @@ import ProjectXCore
                     harness = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: h.agent,rpc: GatewayRPC(native: native,audit: { try await store.gatewayReceipt($0) },target: h.gatewayURL),settings: { box.value })
                 default: harness = OfflineHarness()
                 }
-                self.harness = harness; refreshModels()
+                // Queued work resumes with the automatic models, unless the first metadata read takes more than 10 s.
+                self.harness = harness; await refreshModels().value(upTo: .seconds(10))
                 let engine = Engine(store: store,memory: memory,harness: harness,settings: { box.value }); self.engine = engine
                 await engine.resume()
                 // Keys and device counters live as long as each other, so the device file stays in the support root whatever PROJECTX_DATA says.
@@ -129,11 +140,18 @@ import ProjectXCore
         } catch { relayStatus.state = error.localizedDescription }
     }
     /// A new relay URL: the old host stops and a fresh one dials the new relay with the same keys and devices.
-    func restartRelay(_ url: String) async {
-        guard let engine else { return }
-        let old = relay; relay = nil; bridge = nil
-        await old?.stop()
-        await startRelay(engine,url: url)
+    /// Restarts run one after another, each dialing the relay URL in force once the old host has stopped, so quick edits leave one relay.
+    func restartRelay() async {
+        let previous = relayRestart
+        let task = Task {
+            await previous?.value
+            guard let engine else { return }
+            let old = relay; relay = nil; bridge = nil
+            await old?.stop()
+            guard let url = resolved?.config.relay.url else { return }
+            await startRelay(engine,url: url)
+        }
+        relayRestart = task; await task.value
     }
     func stop() { observation?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
     func enroll() async {

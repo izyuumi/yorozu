@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import ProjectXCore
 import ServiceManagement
 
@@ -27,6 +27,7 @@ extension AppModel {
     }
     /// Reads the harness's model metadata, then recomputes the settings. A failed read keeps the last good metadata.
     @discardableResult func refreshModels() -> Task<Void,Never> {
+        metadataAsked = Date()
         let task = Task { [harness] in
             guard let harness else { return }
             if let read = try? await harness.models() { metadata = read }
@@ -34,15 +35,15 @@ extension AppModel {
         }
         metadataTask = task; return task
     }
-    /// Before a message: waits for the launch read and, when it failed, retries it once.
+    /// Before a message: waits for the read in flight and, while no read has succeeded, asks again at most every 30 s.
     func ensureModels() async {
         await metadataTask?.value
-        guard metadata == nil, !metadataRetried else { return }
-        metadataRetried = true; await refreshModels().value
+        guard metadata == nil, metadataAsked.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
+        await refreshModels().value
     }
     func watchConfig() {
         guard let configFile else { return }
-        let watcher = ConfigWatcher(file: configFile,current: fileConfig) { [weak self] result in Task { @MainActor in await self?.reload(result) } }
+        let watcher = ConfigWatcher(file: configFile,seen: configText) { [weak self] result in Task { @MainActor in await self?.reload(result) } }
         self.watcher = watcher; watcher.start()
     }
     private func reload(_ result: Result<Config,ConfigError>) async {
@@ -54,9 +55,7 @@ extension AppModel {
             let problem = error as? ConfigError ?? ConfigError(file: configFile.path,reason: error.localizedDescription)
             guard problem != lastConfigError else { return }
             lastConfigError = problem
-            var params = ["file": problem.file,"reason": problem.reason]; params["line"] = problem.line.map(String.init); params["key"] = problem.key
-            _ = try? await store?.message(role: "assistant",body: "Settings not applied: \(problem.localizedDescription). The last valid settings stay in force.",kind: "failure",notice: Notice(.configInvalid,params))
-            return
+            return await postInvalid(problem,body: "Settings not applied: \(problem.localizedDescription). The last valid settings stay in force.")
         }
         lastConfigError = nil
         let changed = fileConfig.map { file.securityChanges(from: $0) } ?? []
@@ -67,7 +66,7 @@ extension AppModel {
             let keys = changed.joined(separator: ", ")
             _ = try? await store?.message(role: "assistant",body: "Settings changed: \(keys)",kind: "acknowledgment",notice: Notice(.settingsChanged,["keys": keys]))
         }
-        if runtimeMode == .live, next.config.relay.url != old.config.relay.url { await restartRelay(next.config.relay.url) }
+        if runtimeMode == .live, next.config.relay.url != old.config.relay.url { await restartRelay() }
         applySystem(next.config.general)
         if let launched {
             let h = next.config.harness, l = launched.config.harness
@@ -75,19 +74,40 @@ extension AppModel {
             if !pending.isEmpty { status = "Relaunch Yorozu to apply: " + pending.joined(separator: ", ") }
         }
     }
-    /// Keep-awake and the login item. Fixture and PROJECTX_DATA runs never touch the login item.
+    /// A `config_invalid` failure notice naming the file, the line when known, the key and the reason.
+    func postInvalid(_ problem: ConfigError, body: String) async {
+        var params = ["file": problem.file,"reason": problem.reason]; params["line"] = problem.line.map(String.init); params["key"] = problem.key
+        _ = try? await store?.message(role: "assistant",body: body,kind: "failure",notice: Notice(.configInvalid,params))
+    }
+    /// Keep-awake and the login item. Fixture and PROJECTX_DATA runs never touch the login item, nor does any run while
+    /// another bundle with this bundle id (v1) is installed: `SMAppService.mainApp` could act on that bundle's item.
+    /// Only an item this app registered itself (the marker file in the data root) is ever unregistered.
     func applySystem(_ general: Config.General) {
         if general.keepMacAwake, awake == nil { awake = ProcessInfo.processInfo.beginActivity(options: .idleSystemSleepDisabled,reason: "Keep Mac awake (Yorozu setting)") }
         else if !general.keepMacAwake, let activity = awake { ProcessInfo.processInfo.endActivity(activity); awake = nil }
-        guard runtimeMode != .fixture, environment["PROJECTX_DATA"] == nil else { return }
-        let service = SMAppService.mainApp
+        guard runtimeMode != .fixture, environment["PROJECTX_DATA"] == nil, let marker = configFile?.deletingLastPathComponent().appendingPathComponent("login-item-registered") else { return }
+        let me = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
+        if let id = Bundle.main.bundleIdentifier, NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).contains(where: { $0.resolvingSymlinksInPath().standardizedFileURL.path != me }) {
+            if general.startAtLogin { status = "Start at login is off while another Yorozu with the same id is installed" }; return
+        }
+        let service = SMAppService.mainApp, fm = FileManager.default
         do {
             switch (general.startAtLogin,service.status) {
-            case (true,.notRegistered),(true,.notFound): try service.register()
-            case (false,.enabled),(false,.requiresApproval): try service.unregister()
+            case (true,.notRegistered),(true,.notFound): try service.register(); fm.createFile(atPath: marker.path,contents: nil)
+            case (false,.enabled),(false,.requiresApproval): if fm.fileExists(atPath: marker.path) { try service.unregister(); try? fm.removeItem(at: marker) }
             default: break
             }
             if general.startAtLogin, service.status == .requiresApproval { status = "Start at login needs approval in System Settings › General › Login Items" }
         } catch { status = "Start at login: \(error.localizedDescription)" }
+    }
+}
+extension Task where Success == Void, Failure == Never {
+    /// Waits for the task for at most `limit`; the task itself keeps running.
+    func value(upTo limit: Duration) async {
+        let (done,finish) = AsyncStream.makeStream(of: Void.self)
+        Task<Void,Never> { await self.value; finish.finish() }
+        let timer = Task<Void,Never> { try? await Task<Never,Never>.sleep(for: limit); finish.finish() }
+        for await _ in done {}
+        timer.cancel()
     }
 }

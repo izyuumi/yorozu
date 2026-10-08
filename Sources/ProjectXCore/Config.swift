@@ -39,13 +39,16 @@ public struct Config: Sendable, Equatable {
     /// The validated file. A missing file is written with the defaults, plus the entries of a retired
     /// `mcp-servers.json` in the same folder.
     public static func load(_ url: URL) throws -> Config {
+        try parse(String(decoding: try read(url),as: UTF8.self),file: url)
+    }
+    /// The file's bytes, first writing the defaults when it is missing (see `load`).
+    public static func read(_ url: URL) throws -> Data {
         if !FileManager.default.fileExists(atPath: url.path) {
             var fresh = Config()
             if let legacy = MCPServers.legacy(url.deletingLastPathComponent().appendingPathComponent("mcp-servers.json")) { fresh.mcpServers = legacy }
             try fresh.write(url,replace: false)
         }
-        do { return try parse(try String(contentsOf: url,encoding: .utf8),file: url) }
-        catch let error as ConfigError { throw error } catch { throw ConfigError(file: url.path,reason: error.localizedDescription) }
+        do { return try Data(contentsOf: url) } catch { throw ConfigError(file: url.path,reason: error.localizedDescription) }
     }
     /// Read-modify-write: reads the file fresh, so an edit made since the last load is kept.
     @discardableResult public static func update(_ url: URL, _ change: (inout Config) throws -> Void) throws -> Config {
@@ -53,12 +56,14 @@ public struct Config: Sendable, Equatable {
         var config = try load(url); try change(&config); try config.write(url); return try load(url)
     }
     private static let lock = NSLock()
-    /// Atomic (temporary file, then rename), mode 0600; refuses an invalid config.
+    /// Atomic (temporary file, fsync, then rename), mode 0600; refuses an invalid config.
     public func write(_ url: URL, replace: Bool = true) throws {
         if let (key,reason) = problem() { throw ConfigError(file: url.path,key: key,reason: reason) }
         let folder = url.deletingLastPathComponent(), temp = folder.appendingPathComponent(".config.toml." + UUID().uuidString)
         try FileManager.default.createDirectory(at: folder,withIntermediateDirectories: true)
         guard FileManager.default.createFile(atPath: temp.path,contents: Data(toml().utf8),attributes: [.posixPermissions: 0o600]) else { throw ConfigError(file: url.path,reason: "could not write \(temp.path)") }
+        do { let handle = try FileHandle(forWritingTo: temp); defer { try? handle.close() }; try handle.synchronize() }
+        catch { try? FileManager.default.removeItem(at: temp); throw ConfigError(file: url.path,reason: error.localizedDescription) }
         guard renamex_np(temp.path,url.path,replace ? 0 : UInt32(RENAME_EXCL)) == 0 else {
             let code = errno; try? FileManager.default.removeItem(at: temp)
             if code == EEXIST { return }; throw ConfigError(file: url.path,reason: String(cString: strerror(code)))
@@ -170,6 +175,8 @@ public struct Config: Sendable, Equatable {
         if !(h.devRepo.isEmpty || h.devRepo.hasPrefix("/") || h.devRepo.hasPrefix("~/")) { return ("harness.dev_repo","expected an absolute path, a ~/ path or \"\"") }
         if let url = URLComponents(string: relay.url), ["ws","wss"].contains(url.scheme ?? ""), !(url.host ?? "").isEmpty {} else { return ("relay.url","expected a ws:// or wss:// address") }
         for (key,model) in [("secretary",models.secretary),("extraction",models.extraction),("worker",models.worker),("review",models.review)] + models.coding.map({ ("coding.\($0.key)",$0.value) }) where model?.isEmpty == true { return ("models.\(key)","expected \"provider/model\"; leave the key out for automatic") }
+        if routing.selfTopic.count > 80 { return ("routing.self_topic","expected at most 80 characters") }
+        if routing.personalKnowledge.utf8.count > 200 { return ("routing.personal_knowledge","expected at most 200 bytes of UTF-8") }
         if models.rules.minContextTokens < 1 { return ("models.rules.min_context_tokens","expected a positive integer") }
         if models.rules.minOutputTokens < 1 { return ("models.rules.min_output_tokens","expected a positive integer") }
         if let name = MCPServers.invalid(mcpServers) { return ("mcp_servers.\(name)",MCPServers.rule) }
