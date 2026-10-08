@@ -11,6 +11,8 @@ public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable
     public var taskID: String?; public var replyTo: String?; public var kind: String; public var created: Double
     /// App-written notices: a stable code rendered at display time; `body` keeps the English text for 0.6 phones and older builds.
     public var notice: Notice? = nil
+    /// When routing of a user message started (`Engine.route`); nil = never started. Never sent to a model.
+    public var readAt: Double? = nil
 }
 public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "work"
@@ -30,6 +32,24 @@ public struct Amendment: Codable, FetchableRecord, PersistableRecord, Identifiab
     public static let databaseTableName = "amendments"
     public var id: String; public var taskID: String; public var messageID: String; public var revision: Int
     public var instruction: String; public var state: String
+}
+/// The last message seen in a thread; it only moves forward (`Store.markRead`).
+public struct ReadCursor: Codable, FetchableRecord, Sendable, Equatable { public var threadID: String; public var messageID: String }
+/// One row with the change sequence of its last insert or update (`changeSeq`, bumped by triggers).
+public struct Change: Sendable {
+    public enum Record: Sendable { case topic(Topic), message(Message), work(Work), event(WorkerEvent), amendment(Amendment), readCursor(ReadCursor) }
+    public var seq: Int64; public var record: Record
+}
+/// Changes in sequence order. Apply a prefix and continue after its last `seq`; with `more` false, `latest` is the next cursor.
+public struct ChangePage: Sendable { public var changes: [Change]; public var more: Bool; public var latest: Int64 }
+/// A message hit (`messageID`, `topicID` when filed in a topic) or a sub-chat worker event (`eventID`, `taskID`, `topicID`).
+public struct SearchHit: Sendable, Equatable {
+    public var threadID = "main"; public var topicID: String?; public var taskID: String?; public var messageID: String?; public var eventID: String?
+    public var snippet: String; public var created: Double
+}
+/// What a Stop or Retry control did; `text` is the posted acknowledgment or failure, or a short status when none was posted.
+public struct TaskOutcome: Sendable, Equatable {
+    public var accepted: Bool; public var text: String; public var notice: Notice?; public var messageID: String?
 }
 public struct Snapshot: Sendable, Equatable {
     public var topics: [Topic] = []; public var messages: [Message] = []; public var work: [Work] = []; public var events: [WorkerEvent] = []
@@ -57,6 +77,7 @@ public struct Notice: Codable, Sendable, Equatable {
         case changeQueued = "change_queued", changeSent = "change_sent", changeHeld = "change_held", changeAfterFinish = "change_after_finish"
         case notRunning = "not_running", stopped, stopping, moved, movedStopping = "moved_stopping", correctionSaved = "correction_saved", earlierRetired = "earlier_retired"
         case memoryForgotten = "memory_forgotten", amendmentUnconfirmed = "amendment_unconfirmed"
+        case closedTooLong = "closed_too_long", taskControlFailed = "task_control_failed" // unrouted > 24 h at launch; Stop/Retry control error (params error)
         case configInvalid = "config_invalid", settingsChanged = "settings_changed" // config.toml (#312): params file/line/key/reason; keys
     }
 }
