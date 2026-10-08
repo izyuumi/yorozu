@@ -9,6 +9,8 @@ public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable
     public static let databaseTableName = "messages"
     public var id: String; public var role: String; public var body: String; public var topicID: String?
     public var taskID: String?; public var replyTo: String?; public var kind: String; public var created: Double
+    /// App-written notices: a stable code rendered at display time; `body` keeps the English text for 0.6 phones and older builds.
+    public var notice: Notice? = nil
 }
 public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "work"
@@ -41,6 +43,26 @@ public enum ProjectError: Error, LocalizedError, Sendable {
         switch self { case .invalid(let s), .blocked(let s), .conflict(let s), .uncertain(let s), .overflow(let s): return s
         case .offline: return "Offline mode: message saved; no model was called. Live Gateway integration has not been verified." }
     }
+}
+/// Stored as JSON `{code, params}` in `messages.notice`. Raw error text goes only into `params["error"]`.
+public struct Notice: Codable, Sendable, Equatable {
+    public var code: String; public var params: [String:String]
+    public init(_ code: Code, _ params: [String:String] = [:]) { self.code = code.rawValue; self.params = params }
+    public enum Code: String, Sendable {
+        case question, questionTopic = "question_topic", questionTask = "question_task" // kind `conversation` (clarify) or `question`
+        case routingFailed = "routing_failed", offline, taskFailed = "task_failed", taskOverflow = "task_overflow"
+        case interruptedByRestart = "interrupted_by_restart", compactionFailed = "compaction_failed", memorySkipped = "memory_skipped"
+        case retryRunning = "retry_running", retryNotAllowed = "retry_not_allowed", correctionBlocked = "correction_blocked"
+        case earlierStoppedWithChange = "earlier_stopped_with_change", earlierFinishedChange = "earlier_finished_change", earlierRunning = "earlier_running", earlierUnknown = "earlier_unknown"
+        case changeQueued = "change_queued", changeSent = "change_sent", changeHeld = "change_held", changeAfterFinish = "change_after_finish"
+        case notRunning = "not_running", stopped, stopping, moved, movedStopping = "moved_stopping", correctionSaved = "correction_saved", earlierRetired = "earlier_retired"
+        case memoryForgotten = "memory_forgotten", amendmentUnconfirmed = "amendment_unconfirmed"
+    }
+}
+/// An error that is posted as a coded notice (kind `failure`, or `question` when the secretary must ask the user).
+public struct NoticeError: LocalizedError, Sendable {
+    public var notice: Notice; public var kind: String; public var errorDescription: String?
+    public init(_ code: Notice.Code, _ text: String, kind: String = "failure") { notice = Notice(code); self.kind = kind; errorDescription = text }
 }
 public struct Decision: Codable, Sendable {
     public var action: String; public var topicID: String?; public var newTopic: String?; public var taskID: String?
