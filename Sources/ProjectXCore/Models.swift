@@ -210,6 +210,8 @@ public struct WorkerOutput: Codable, Sendable {
     /// Scheduled job runs only (#319): whether the answer needs the user's attention.
     public var notable: Bool? = nil
     public init(text: String, appliedRevision: Int = 0, notable: Bool? = nil) { self.text = text; self.appliedRevision = appliedRevision; self.notable = notable }
+    /// A coding executor's free-text answer: notable when it carries `"notable": true` (in its final JSON or inline).
+    public init(coded text: String, appliedRevision: Int) { self.init(text: text,appliedRevision: appliedRevision,notable: text.range(of: #""notable"\s*:\s*true\b"#,options: .regularExpression) != nil) }
 }
 public struct RunHandle: Codable, Sendable {
     public var sessionKey: String; public var controllerKey: String; public var runID: String

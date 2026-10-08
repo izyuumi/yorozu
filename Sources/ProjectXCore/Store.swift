@@ -74,6 +74,9 @@ public actor Store {
             CREATE TABLE jobRuns(id TEXT PRIMARY KEY, jobID TEXT NOT NULL, slot DOUBLE NOT NULL, started DOUBLE NOT NULL, finished DOUBLE, state TEXT NOT NULL, exitCode INTEGER, outputSHA TEXT, notable BOOLEAN, posted BOOLEAN NOT NULL DEFAULT 0, scriptWorkID TEXT, aiWorkID TEXT);
             CREATE INDEX jobRuns_job ON jobRuns(jobID,started);
             """) }
+        // One topic per job. Duplicates are not expected; any are dropped but the oldest binding, so the others get a new
+        // topic and ask for approval again.
+        migration.registerMigration("jobs-topic-unique") { db in try db.execute(sql: "DELETE FROM jobs WHERE rowid NOT IN (SELECT MIN(rowid) FROM jobs GROUP BY topicID); CREATE UNIQUE INDEX jobs_topic ON jobs(topicID)") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -352,9 +355,11 @@ public actor Store {
 
     public func job(_ id: String) throws -> JobRecord? { try db.read { try JobRecord.fetchOne($0,key: id) } }
     public func jobRecords() throws -> [JobRecord] { try db.read { try JobRecord.fetchAll($0) } }
-    /// Creates or moves the job's topic binding (open question 2); approvals, summary and runs stay.
-    @discardableResult public func bindJob(_ id: String, topic: String) throws -> JobRecord {
+    /// Creates or moves the job's topic binding (open question 2); approvals, summary and runs stay. Nil, and nothing
+    /// changes, when another job holds that topic.
+    @discardableResult public func bindJob(_ id: String, topic: String) throws -> JobRecord? {
         try db.write { db in
+            if try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM jobs WHERE topicID=? AND id<>?",arguments: [topic,id]) ?? 0 > 0 { return nil }
             var r = try JobRecord.fetchOne(db,key: id) ?? JobRecord(id: id,topicID: topic)
             r.topicID = topic; try r.save(db); return r
         }

@@ -504,4 +504,10 @@ Added in implementation:
 - The skipped-slot note is posted once per streak with the same reason, so a job skipped every minute does not flood its sub-chat.
 - The output hash is the SHA-256 of the two streams' own hashes, so stdout and stderr interleaving never makes a run look changed.
 - At quit, running scripts get SIGTERM and 2 s before SIGKILL (the timeout and Stop keep 5 s), so the app can exit promptly.
+- A script still running when the app quits ends as interrupted, never failed: its work and run are left for the next launch.
+- A script run ends when its leader process exits, not when its output pipes close; the rest of its group is then killed, and a child that left the group is abandoned after 2 s. A timeout counts only when it fired before the leader exited.
+- The sub-chat gets the first 2 MB of a run's output; the log keeps all of it.
+- One topic per job: an entry's `topic` already bound to another job is ignored.
+- A slot runs the Engine's current definition of the job; a scheduler copy that differs from it skips the slot.
+- A coding executor's answer is notable only when it carries `"notable": true`.
 - A queued script step found at launch is failed, not started; a stamped one becomes `uncertain`, is never re-run and gets a `job_interrupted` notice. Retrying it starts a new run of its job.

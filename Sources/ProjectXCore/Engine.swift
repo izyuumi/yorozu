@@ -37,7 +37,7 @@ public actor Engine {
         // Job runs do not count (open question 10).
         let jobs = pending.filter { jobWork.contains($0.id) }.count + running.keys.filter { jobWork.contains($0) }.count
         guard routingCount + pending.count + running.count - jobs < 32 else { throw ProjectError.blocked("32 requests pending; wait for work to finish.") }
-        try await store.bindRuntime(["fixture": .fixture, "offline": .offline][harness.id] ?? .live)
+        try await bindRuntime()
         let m = try await store.message(role: "user",body: body,id: id)
         enqueueRoute(m); return m.id
     }
@@ -75,6 +75,7 @@ public actor Engine {
             }
         }
         for run in (try? await store.jobRuns(state: "running")) ?? [] { await syncJobRun(run) }
+        await drainAllJobInput()
     }
     private func watch(_ w: Work) async {
         defer { Task { await self.syncJobRun(work: w.id) } }
@@ -407,7 +408,7 @@ public actor Engine {
     /// A job script is stopped and reconciled locally: its process group is ended, or nothing of it is left running.
     private func cancelRun(_ w: Work,topic: Topic) async throws -> Bool {
         guard w.executor == Self.scriptExecutor else { return try await harness.cancel(w,topic: topic) }
-        scripts?.stop(work: w.id); return true
+        return await scripts?.stop(work: w.id) ?? true
     }
     private func reconcileRun(_ w: Work,topic: Topic) async throws -> RunStatus {
         guard w.runID != nil else { return .stopped } // setHandle commits a run ID before every dispatch
@@ -609,17 +610,23 @@ extension Engine {
             if !spec.retired { _ = try? await requestApproval(spec,topic: topic) }
             refreshSummary(spec)
         }
+        await drainAllJobInput()
     }
+    /// Job input left waiting (a quit, or a run that ended without draining): once per job topic.
+    func drainAllJobInput() async { for topic in Set(jobTopics.values) { await drainJobInput(topic: topic) } }
 
     /// One slot of a job (the scheduler), Run now (`manual`, also for a paused job) or a retried script. Never overlaps:
     /// a running run, or one a restart left uncertain (open question 9), skips the slot with a note in the job's sub-chat.
     /// A script runs only under an approval of its exact hash; YOLO never lifts that.
-    public func runJob(_ spec: JobSpec, slot: Date, manual: Bool = false) async -> JobRunOutcome {
+    /// The Engine's current definition runs; a caller's copy that differs from it (an older set) skips the slot.
+    public func runJob(_ caller: JobSpec, slot: Date, manual: Bool = false) async -> JobRunOutcome {
         guard harness.id != "offline" else { return .skipped(.unavailable) } // open question 16: offline lists, never runs
+        guard let spec = specs.first(where: { $0.id == caller.id }), spec == caller else { return .skipped(.unavailable) }
         guard manual || !(spec.paused || spec.retired) else { return .skipped(.paused) }
         guard !starting.contains(spec.id) else { return .skipped(.overlap) }
         starting.insert(spec.id); defer { starting.remove(spec.id) }
         do {
+            try await bindRuntime()
             let topic = try await bindTopic(spec)
             let runs = try await store.jobRuns(job: spec.id), open = try await store.openWork(topic: topic.id)
             let blocked: JobRunOutcome.Skip? = runs.contains(where: { $0.state == "uncertain" }) || open.contains(where: { $0.state == "uncertain" && $0.executor == Self.scriptExecutor }) ? .uncertain
@@ -643,6 +650,7 @@ extension Engine {
     @discardableResult public func sendToJob(jobID: String, body: String, id: String = identifier()) async throws -> String {
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, body.utf8.count <= 6000 else { throw ProjectError.invalid("Message must be 1–6000 UTF-8 bytes.") }
         guard let spec = specs.first(where: { $0.id == jobID }) else { throw ProjectError.invalid("Unknown job.") }
+        try await bindRuntime()
         let topic = try await bindTopic(spec)
         let m = try await store.message(role: "user",body: body,topic: topic.id,kind: "job_input",id: id)
         Task { await self.jobInput(m,spec: spec,topic: topic) }
@@ -698,7 +706,9 @@ extension Engine {
                 // Stamped just before the spawn: a quit from here on leaves it uncertain, never queued again.
                 result = try await scripts.run(work: w.id,job: spec.id,script: script,timeout: spec.timeout,
                                                started: { try await self.store.setHandle(w.id,handle: RunHandle(sessionKey: "",controllerKey: "",runID: "script-" + identifier())) },
-                                               output: { kind,text in await self.scriptEvent(w.id,kind,text) })
+                                               output: { kind,text,prior in await self.scriptEvent(w.id,kind,text,prior: prior) })
+            } catch is CancellationError {
+                return // app quit: the work stays stamped; the next launch marks it uncertain and reports it interrupted
             } catch {
                 let ended = try? await store.endScript(w.id,ok: false,summary: error.localizedDescription)
                 if ended == nil || ended?.state == "cancelled" { await finishRun(run.id,state: "stopped",notable: false,posted: false); return }
@@ -727,7 +737,7 @@ extension Engine {
         // The AI step: the job topic's session on the thinking worker, or the job's executor when offered and ready.
         let executor = aiExecutor(spec)
         var text = instruction + "\n\n\(manual ? "Run now" : "Scheduled run") for \(Self.iso(Date(timeIntervalSince1970: run.slot)))."
-        if let log { text += "\n\nThe script's full output is in \(log.path). Excerpt (stdout and stderr):\n" + Self.excerpt(log,bytes: 6000) }
+        if let log { let excerpt = Self.excerpt(log,bytes: 6000); text += "\n\nThe script's full output is in \(log.path)." + (sensitive(excerpt) ? " Its excerpt looks like it holds a secret, so it is left out here." : " Excerpt (stdout and stderr):\n" + excerpt) }
         do {
             let existing = try await store.snapshot().work.filter { $0.topicID == topic.id && $0.executor == executor }
             let w = Work(id: identifier(),topicID: topic.id,messageID: trigger.id,instruction: utf8Excerpt(text,bytes: 10_000),state: "queued",revision: 0,runID: nil,controllerKey: existing.last(where: { $0.sessionReady })?.controllerKey,sessionReady: existing.contains(where: { $0.sessionReady }),suppressed: false,result: nil,error: nil,outputRevision: nil,created: Date().timeIntervalSince1970,executor: executor)
@@ -736,8 +746,9 @@ extension Engine {
         } catch { await jobFailed(spec,run: run.id,topic: topic.id,trigger: trigger.id,task: scriptWork,reason: "ai",error.localizedDescription) }
     }
     private func jobTaskDone(_ id: String,topic: String) async { jobTasks.removeValue(forKey: id); await drainJobInput(topic: topic) }
-    private func scriptEvent(_ work: String,_ kind: String,_ text: String) async {
-        let body = sensitive(text) ? "[Output withheld from the chat: it looks like a secret. The run log has it.]" : text
+    /// `prior`: the stream's preceding text, so a secret split across chunks is still caught.
+    private func scriptEvent(_ work: String,_ kind: String,_ text: String,prior: String) async {
+        let body = sensitive(prior + text) ? "[Output withheld from the chat: it looks like a secret. The run log has it.]" : text
         try? await store.event(WorkerEvent(id: work + ":" + kind + ":" + identifier(),taskID: work,kind: kind,body: body,created: Date().timeIntervalSince1970))
     }
     /// A failed run is notable and posted in both modes as a plain notice.
@@ -828,7 +839,9 @@ extension Engine {
         guard let (a,new) = try await store.requireApproval(job: spec.id,scriptSHA: spec.script.map(sha256Hex)) else { return nil }
         if new, let script = spec.script {
             let shown = utf8Excerpt(script,bytes: 3000)
-            _ = try await store.message(role: "assistant",body: "“\(spec.name)” has \(changed ? "a changed" : "a new") script that needs your yes before it runs; YOLO doesn't lift this.\n\n```sh\n\(shown)\n```\n\(shown == script ? "" : "(The full script is in jobs.toml.)\n")\nSay yes to approve this exact script.",topic: topic.id,kind: "approval_request",notice: Notice(.jobApprovalRequested,["job": spec.id,"name": spec.name,"approvalID": a.id]))
+            // A fence longer than any backtick run in the script, so the script can't close it.
+            let fence = String(repeating: "`",count: max(3,(script.split(whereSeparator: { $0 != "`" }).map(\.count).max() ?? 0) + 1))
+            _ = try await store.message(role: "assistant",body: "“\(spec.name)” has \(changed ? "a changed" : "a new") script that needs your yes before it runs; YOLO doesn't lift this.\n\n\(fence)sh\n\(shown)\n\(fence)\n\(shown == script ? "" : "(The full script is in jobs.toml.)\n")\nSay yes to approve this exact script.",topic: topic.id,kind: "approval_request",notice: Notice(.jobApprovalRequested,["job": spec.id,"name": spec.name,"approvalID": a.id]))
         }
         return a
     }
@@ -862,10 +875,12 @@ extension Engine {
 
     // MARK: Helpers
 
+    private func bindRuntime() async throws { try await store.bindRuntime(["fixture": .fixture, "offline": .offline][harness.id] ?? .live) }
     @discardableResult private func bindTopic(_ spec: JobSpec) async throws -> Topic {
         let record = try await store.job(spec.id)
         var topic: Topic?
-        if let id = spec.topic, id != record?.topicID, let t = try await store.topic(id: id) { try await store.bindJob(spec.id,topic: t.id); topic = t }
+        // An entry's topic already bound to another job is ignored: one topic per job.
+        if let id = spec.topic, id != record?.topicID, let t = try await store.topic(id: id), try await store.bindJob(spec.id,topic: t.id) != nil { topic = t }
         else if let record { topic = try await store.topic(id: record.topicID) }
         if topic == nil {
             let name = spec.name.trimmingCharacters(in: .whitespacesAndNewlines)
