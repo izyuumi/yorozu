@@ -315,3 +315,28 @@ Source: the batch 2 plan comment on issue #310, taking the three open questions 
 - Final answers are read whole, but not by raising `chat.history` `maxChars` to its 500,000 maximum as the update's checklist says. The Gateway drops a message over 128 KiB from `chat.history` whatever `maxChars` is, and keeps only the newest messages within 512 KiB per response, so a 500,000 read can lose exactly the long answers this decision is about. Yorozu reads small previews and fetches a truncated reply whole with `chat.message.get` (up to 1,000,000 characters per text field). Past that method's own limits the Gateway's marker shows as is, which is the proposed default's intent.
 
 With batch 2 the "no Yorozu-level size limit on worker output" decision is implemented: the 64,000-byte answer checks and the 60,000-character coding cut are gone.
+
+## 2026-10-09 — UI: menu-bar host and the UI pass
+Source: owner decisions recorded in issue #311 ("projectx: UI — menu-bar host, Claude Design pass, …"), Decisions section.
+
+- Host: the Mac app is menu-bar-only. Its icon opens a compact popover with the main timeline and the composer; the Mac has no sub-chats. The iPhone is the main full client (sub-chats, controls, jobs). The Mac stays the single source of truth, is assumed always running and keeps running when its UI closes. Settings is a standard macOS Settings window (SwiftUI `Settings` scene, ⌘, and the menu-bar menu); its contents are #312. This supersedes the 2026-10-07 window layout with a toolbar sub-chat popup, and the 2026-10-08 toolbar progress indicator moves to the menu-bar icon and the popover header.
+- Look: the system look on both apps (native backgrounds, Liquid Glass bars, the vermilion accent, bubbles in system materials), designed in Claude Design, mockups first, before UI code.
+- Results: stored without the `Regarding “…”:` prefix; a quoted, tappable reply header is drawn from `replyTo` at display time; Copy copies only the answer; old results keep their prefix. This replaces "names the request it answers" from 2026-10-07.
+- Notices: compact system rows with an icon, visibly distinct from answers; failures in plain language with a Details disclosure (also in Copy diagnostics, #312); new notices stored as a code plus parameters and rendered in the user's language.
+- Time: day separators, the exact time on hover (Mac) or long-press (phone), and "sent … · delivered …" on delayed messages.
+- Search everything on both devices: ⌘F in the popover, a search field on the phone; the Mac searches its full history with an SQLite FTS index and the phone sends queries over the relay; a hit jumps to the message in context.
+- Scrolling: the view stays put while reading, a "↓ N new" pill appears, and sending jumps to the bottom.
+- Length: no size limit on worker output, rendered in full with code blocks (horizontal scroll, Copy), real tables, rules and inline images, no "Show more", lazy layout for very long text; long results travel to the phone in chunks; the secretary and extraction keep excerpts. This reverses the #310 batch-2 items "output caps stated to workers" and "coding results cut by bytes".
+- Live progress: the native WebSocket transport becomes the default, with a one-time device enrollment during onboarding (#317). Tool rows show the real tool behind `tool_call` (tool id and target, never arguments), for example "cua: type_text in TextEdit".
+- Mac attention: a menu-bar dot plus macOS notifications for results, failures and questions; a tap opens the popover at that message; both can be switched off in Settings; a destination setting chooses this Mac, phones, or later a Mac client.
+- Global shortcut: opens the popover, preset ⌥Space, off by default, set in Settings › General.
+- Phone: a long-press menu with Copy, Share and Show details; a draft over 6,000 bytes shows a hint and offers "Send as text file" (also on the Mac); an empty state with an example; Send always works (outbox).
+- Smart Enter is the default: Enter sends a single-line draft; with more than one line Enter adds a newline and ⌘Enter sends; a "⌘Enter to send" setting makes Enter always add a newline. Mac popover and hardware keyboards on iPhone and iPad; the on-screen keyboard keeps its Send button.
+- Languages: interface text in English and Japanese on both apps; the Mac gets a string catalog.
+
+## 2026-10-09 — UI phase A: implementer readings (not owner decisions)
+Source: the plan comment on issue #311, taking three of its open questions at their proposed defaults. The owner has not answered them; [status.md](../status.md#open-items) keeps them as open items, marked as defaults taken.
+
+- Sub-chat gap (open question 1): the Mac sub-chat UI is removed now, although phone sub-chats arrive only with #313; the data stays in the store.
+- Native transport not enrolled or not reachable (open question 2): that launch falls back to the CLI transport with a one-line notice and "Connect…"; the composer is never blocked for it.
+- What counts as a question (open question 5): routing questions are stored as kind `question` with a question notice code instead of `failure`; the secretary's `clarify` replies stay `conversation` with notice code `question`.

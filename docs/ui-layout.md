@@ -43,3 +43,8 @@ the platform withholds the width, use the platform view that has it (the system 
 - The Mac's Pair iPhone sheet draws its QR code from one constant, `qrSide` in
   `Sources/ProjectXApp/Relay/PairPhoneView.swift`, which sizes both the code and its
   placeholder: a custom component owning its geometry.
+- The Mac's chat popover is 420×640 points from one constant, `MenuBarHost.popoverSize` in
+  `Sources/ProjectXApp/MenuBarHost.swift`: nothing proposes a size to an `NSPopover`, so the
+  host that owns it sets it. Everything inside sizes from it; the composer takes a fifth of
+  the height through `containerRelativeFrame(.vertical)` rather than a fixed `minHeight`.
+  The Settings window's width is likewise one constant in `SettingsView`.

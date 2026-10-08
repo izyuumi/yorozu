@@ -83,7 +83,7 @@ These are the code defaults. The owner decided that roles will get defaults comp
 | Service | Account | Holds | Created by |
 |---|---|---|---|
 | `to.yumi.yorozu.relay` | `host` | The Mac's relay identity (Ed25519 and X25519 keys). Losing it means a new relay room, so every phone must pair again. | Mac app, first live launch |
-| `to.yumi.yorozu.gateway` | `<gateway URL>\|webchat\|operator` | The native transport's device key and Gateway-issued device token | Mac app, native enrollment only |
+| `to.yumi.yorozu.gateway` | `<gateway URL>\|webchat\|operator` | The native transport's device key and Gateway-issued device token | Mac app, native enrollment only (Settings, Gateway tab); a launch without a token creates nothing |
 | `to.yumi.yorozu.ios` | `pairings-v2` | The phone's pairing and identity | iOS app, on the phone |
 
 The Mac items are `WhenUnlockedThisDeviceOnly`; the phone item is `AfterFirstUnlockThisDeviceOnly`. A Keychain the relay host cannot read stops the relay (not the app) rather than minting new keys.
@@ -93,12 +93,13 @@ The Mac items are `WhenUnlockedThisDeviceOnly`; the phone item is `AfterFirstUnl
 | Data | Live mode | `PROJECTX_DATA=<dir>` | Fixture mode |
 |---|---|---|---|
 | App state (`operations.sqlite`, `app.lock`) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `~/Library/Application Support/<bundle id>/Fixture/` |
+| Chat search index (`messageSearch` table) | inside `operations.sqlite` | same | same |
 | Markdown memory | `~/Yorozu/memory/` (notes, `knowledge/`, `history/`, `.writer.lock`) | `<dir>/memory/` | `…/Fixture/memory/` |
 | Memory index (`discovery` and `search_trigram` tables) | `~/Library/Caches/<bundle id>/memory-index.sqlite` | `<dir>/memory-index.sqlite` | `…/Fixture/memory-index.sqlite` |
 | Paired phones (`relay-devices.json`, mode 600) | `~/Library/Application Support/<bundle id>/` | same as live | none (no relay) |
 | MCP server list (`mcp-servers.json`) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | not used |
 
-`<bundle id>` is the Mac bundle id from [Signing](#signing), also when `Bundle.main` has none. Directories are created 0700. `app.lock` is held with an exclusive lock, so only one process opens a data directory. The app has no migration code; the memory index is a cache rebuilt at launch, which leaves the older `search` table in place for builds from before batch 2 of issue #310 that share the cache. OpenClaw keeps session transcripts and worktrees on its side.
+`<bundle id>` is the Mac bundle id from [Signing](#signing), also when `Bundle.main` has none. Directories are created 0700. `app.lock` is held with an exclusive lock, so only one process opens a data directory. The app has no migration code; the memory index is a cache rebuilt at launch, which leaves the older `search` table in place for builds from before batch 2 of issue #310 that share the cache. The chat search index is different: it lives in `operations.sqlite` next to the messages, triggers keep it in sync on every insert, and it is built once by its migration, not at launch; `INSERT INTO messageSearch(messageSearch) VALUES ('rebuild')` rebuilds it from `messages` ([architecture.md](architecture.md#chat-search)). OpenClaw keeps session transcripts and worktrees on its side.
 
 Read app state without disturbing the running app with a read-only SQLite connection, for example `sqlite3 "file:$HOME/Library/Application Support/to.yumi.yorozu/operations.sqlite?mode=ro" "SELECT id,state FROM work ORDER BY created DESC LIMIT 5"`.
 
@@ -108,7 +109,7 @@ Read app state without disturbing the running app with a read-only SQLite connec
 |---|---|---|
 | `PROJECTX_MODE` | app | `live` (default), `fixture` or `offline`; anything else means `offline` |
 | `PROJECTX_DATA` | app | Puts app state, memory and index in one directory (see above) |
-| `PROJECTX_TRANSPORT` | app | `native` selects the WebSocket Gateway client instead of the CLI |
+| `PROJECTX_TRANSPORT` | app | Live mode only. Unset or any value but `cli` selects the native WebSocket Gateway client; `cli` keeps the CLI. Without a stored device token, or with no connection within 3 s, that launch uses the CLI and the popover says so ([openclaw-integration.md](openclaw-integration.md#native-transport)) |
 | `PROJECTX_GATEWAY_URL` | app | Gateway URL, loopback only; default `ws://127.0.0.1:18789` |
 | `PROJECTX_AGENT` | app | Must be unset or `projectx` |
 | `PROJECTX_SECRETARY_MODEL`, `PROJECTX_REVIEW_MODEL`, `PROJECTX_MODEL`, `PROJECTX_CLAUDE_MODEL`, `PROJECTX_CODEX_MODEL` | app | Model overrides ([Models](#models)) |
