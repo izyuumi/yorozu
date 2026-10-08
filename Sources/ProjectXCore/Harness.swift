@@ -212,7 +212,8 @@ public struct OpenClawHarness: Harness {
             let runtimes = [runtimeID(m["agentRuntime"]) ?? "openclaw"] + (m["runtimeChoices"] as? [[String:Any]] ?? []).filter { $0["available"] as? Bool == true }.compactMap { runtimeID($0["agentRuntime"]) }
                 + (["openai","codex"].contains(provider) ? ["codex"] : []) + (["anthropic","claude-cli"].contains(provider) ? ["claude-cli"] : [])
             allowed.append(ModelInfo(id: provider + "/" + id,contextTokens: m["contextTokens"] as? Int ?? m["contextWindow"] as? Int,maxOutputTokens: definition?["maxTokens"] as? Int ?? p?["maxTokens"] as? Int,
-                                     price: (cost?["input"] as? Double).flatMap { i in (cost?["output"] as? Double).map { i + $0 } },inputs: m["input"] as? [String] ?? [],runtimes: Array(Set(runtimes)).sorted()))
+                                     price: (cost?["input"] as? Double).flatMap { i in (cost?["output"] as? Double).map { i + $0 } }.flatMap { $0 > 0 ? $0 : nil }, // a 0/0 cost (e.g. a local proxy) is unknown, not free
+                                    inputs: m["input"] as? [String] ?? [],runtimes: Array(Set(runtimes)).sorted()))
         }
         return (allowed,primary)
     }
@@ -721,10 +722,4 @@ func utf8Excerpt(_ s: String, bytes: Int) -> String {
     var i = s.utf8.index(s.endIndex,offsetBy: -half)
     while i.samePosition(in: s.unicodeScalars) == nil { i = s.utf8.index(after: i) }
     return utf8Prefix(s,bytes: half) + marker + String(s.unicodeScalars[i...])
-}
-
-// TEMP: moves to ModelDefaults.swift on integration
-public struct ModelInfo: Sendable, Equatable {
-    public var id: String, contextTokens: Int?, maxOutputTokens: Int?, price: Double?, inputs: [String], runtimes: [String]
-    public init(id: String, contextTokens: Int?, maxOutputTokens: Int?, price: Double?, inputs: [String], runtimes: [String]) { self.id = id; self.contextTokens = contextTokens; self.maxOutputTokens = maxOutputTokens; self.price = price; self.inputs = inputs; self.runtimes = runtimes }
 }
