@@ -7,6 +7,8 @@ struct PairPhoneView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var removing: RelayDevice?
+    /// A code is minted only on request: each stays valid until a phone pairs, so opening Settings must not make one.
+    @State private var pairing = false
     /// The QR's side, the one size this sheet owns.
     private let qrSide: CGFloat = 220
 
@@ -18,6 +20,8 @@ struct PairPhoneView: View {
                     .accessibilityLabel("Pairing QR code")
                 Text("Scan with Yorozu on your iPhone. Each code works once.").font(.caption).foregroundStyle(.secondary)
                 Button("Copy link") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(link, forType: .string) }
+            } else if !pairing {
+                Button("Show pairing code") { pairing = true }.disabled(model.relay == nil).frame(height: qrSide)
             } else {
                 VStack(spacing: 8) {
                     if model.relay != nil { ProgressView() }
@@ -39,7 +43,7 @@ struct PairPhoneView: View {
         }
         .padding()
         // Keyed on the host so a sheet opened while the app is still starting asks once it exists.
-        .task(id: model.relay != nil) { await model.relay?.mintPairing() }
+        .task(id: pairing && model.relay != nil) { if pairing { await model.relay?.mintPairing() } }
         .onDisappear { Task { await model.relay?.endPairing() } }
         .confirmationDialog("Remove this iPhone?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { device in
             Button("Remove", role: .destructive) { Task { await model.relay?.removeDevice(device.pub) } }

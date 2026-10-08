@@ -87,7 +87,7 @@ public actor Engine {
             let topics = snapshot.topics.sorted { a,b in a.id == latest ? b.id != latest : b.id != latest && activity[a.id]! > activity[b.id]! }
             // Slim view, never DB records. App-generated acknowledgments/failures never reach the secretary (owner, 2026-10-08).
             // Last 4 across topics plus last 3 of the latest topic, chronological; results without Store's "Regarding" header.
-            let said = before.filter { $0.kind == "conversation" || $0.kind == "result" }
+            let said = before.filter { ["conversation","result","question"].contains($0.kind) } // a routing question the user may be answering
             let shown = Set(said.suffix(4).map(\.id) + said.filter { $0.topicID != nil && $0.topicID == latest }.suffix(3).map(\.id))
             let recent = said.filter { shown.contains($0.id) }.map { m in
                 var body = m.body
@@ -122,7 +122,7 @@ public actor Engine {
         guard ["reply","delegate","steer","clarify","correct","retry","forget","stop"].contains(d.action), ["claude","codex"].contains(d.executor ?? "claude"), (d.newTopic?.count ?? 0) <= 80, (d.instruction?.utf8.count ?? 0) <= 6000, (d.reply?.utf8.count ?? 0) <= 15000 else { throw ProjectError.invalid("Invalid secretary decision; no action taken.") }
         if let id = d.topicID, !snapshot.topics.contains(where: { $0.id == id }) { throw ProjectError.invalid("Unknown routing target.") }
         if let id = d.taskID, !snapshot.work.contains(where: { $0.id == id }) { throw ProjectError.invalid("Unknown task target.") }
-        if ["steer","correct","retry","stop"].contains(d.action), d.taskID == nil { throw NoticeError(.questionTask,"Task target required; ask for clarification.",kind: "question") }
+        if ["steer","correct","retry","stop"].contains(d.action), d.taskID == nil { throw NoticeError(.questionTask,"Which task do you mean?",kind: "question") }
         if ["delegate","steer","correct"].contains(d.action), d.instruction?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false { throw ProjectError.invalid("Missing worker instruction.") }
         if ["reply","clarify"].contains(d.action), d.reply?.isEmpty != false { throw ProjectError.invalid("Missing secretary reply.") }
         if d.action == "correct", d.topicID == nil { throw ProjectError.invalid("Correction requires an intended existing topic.") }

@@ -114,7 +114,8 @@ import ProjectXCore
             try await nativeClient.connect(bootstrapSecret: secret.isEmpty ? nil : secret)
             // The harness took its transport at launch, so a fallback launch keeps the CLI until the next one.
             enrollmentNotice = nativeNotice == nil ? "Native Gateway connected · model response not yet verified" : "Native Gateway connected · Yorozu uses it from the next launch"
-            nativeNotice = nil
+            // A fallback launch stays on the CLI: say so, and don't keep an unused client redialing.
+            if nativeNotice != nil { nativeNotice = "Native Gateway enrolled · quit and reopen Yorozu to use it"; await nativeClient.close() }
         } catch { enrollmentNotice = error.localizedDescription }
     }
     func send() async {
