@@ -134,7 +134,7 @@ public actor MemoryStore {
         }
     }
     public func write(path: String, markdown: String, expectedSHA256: String?, sources: [Message] = []) throws -> MemoryWriteResult {
-        guard !path.hasPrefix("history/") else { throw ProjectError.invalid("Note history is not writable.") }
+        guard !path.lowercased().hasPrefix("history/") else { throw ProjectError.invalid("Note history is not writable.") }
         return try scoped { fd in try parent(fd,path,create: true) { dir,name in
             let old = try bytes(dir,name)
             guard old.map(digest) == expectedSHA256 else { throw ProjectError.conflict("Memory changed. Read current Markdown and reconcile; nothing overwritten.") }
@@ -170,7 +170,7 @@ public actor MemoryStore {
             let attributes = try url.resourceValues(forKeys: [.isSymbolicLinkKey,.isRegularFileKey])
             guard attributes.isSymbolicLink != true else { throw ProjectError.blocked("Memory symlink refused.") }
             let relative = String(url.path.dropFirst(root.path.count + 1))
-            if relative == "history" { enumeration.skipDescendants(); continue } // past versions, never indexed
+            if relative.lowercased() == "history" { enumeration.skipDescendants(); continue } // past versions, never indexed
             guard url.pathExtension == "md" else { continue }
             let fd = open(root.path,O_RDONLY | O_DIRECTORY | O_NOFOLLOW); guard fd >= 0 else { throw ProjectError.blocked("Memory root changed.") }; defer { close(fd) }
             let doc: MemoryDocument
@@ -217,6 +217,9 @@ public actor MemoryStore {
                 guard try bytes(dir,name).map(digest) == expectedSHA256 else { throw ProjectError.conflict("Memory changed before forget. Nothing deleted.") }
                 guard unlinkat(dir,name,0) == 0 else { throw ProjectError.blocked("Memory deletion failed.") }
             }
+            // Forget includes the note's past versions.
+            let history = openat(fd,"history",O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            if history >= 0 { _ = unlinkat(history,id + ".md",0); close(history) }
             try rebuildLocked()
         }
     }

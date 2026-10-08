@@ -28,7 +28,8 @@ public actor Store {
             """)
         }
         migration.registerMigration("r2-executor") { db in try db.execute(sql: "ALTER TABLE work ADD COLUMN executor TEXT") }
-        migration.registerMigration("memory-job-reason") { db in try db.execute(sql: "ALTER TABLE memoryJobs ADD COLUMN reason TEXT") }
+        // A separate table: older builds insert two values into memoryJobs and must keep working on this database.
+        migration.registerMigration("memory-job-reasons") { db in try db.execute(sql: "CREATE TABLE memoryJobReasons(messageID TEXT PRIMARY KEY, reason TEXT NOT NULL)") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -98,12 +99,13 @@ public actor Store {
         guard acknowledged else { return }
         try db.write { try $0.execute(sql: "UPDATE work SET state='cancelled' WHERE id=? AND suppressed=1 AND state IN ('cancellation_requested','uncertain')",arguments: [id]) }
     }
-    public func failWork(_ id: String,error: String) throws -> Work? {
+    /// `definite`: the Gateway reported how the run ended (e.g. an overflow), so it is failed, not uncertain.
+    public func failWork(_ id: String,error: String,definite: Bool = false) throws -> Work? {
         try db.write { db in
             guard var w = try Work.fetchOne(db,key: id), !w.suppressed else { return nil }
             // Bounded to 1,000 UTF-8 bytes on a character boundary: an uncertain row may outlive many routing turns.
             var bounded = error.prefix(1000); while bounded.utf8.count > 1000 { bounded.removeLast() }
-            w.state = w.runID == nil ? "failed" : "uncertain"; w.error = String(bounded); try w.update(db); return w
+            w.state = w.runID == nil || definite ? "failed" : "uncertain"; w.error = String(bounded); try w.update(db); return w
         }
     }
     public func retireForRetry(_ id: String) throws {
@@ -194,5 +196,10 @@ public actor Store {
     }
     public func memoryProcessed(_ id: String) throws -> Bool { try db.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM memoryJobs WHERE messageID=?", arguments: [id]) ?? 0 > 0 } }
     /// `reason`: why an `error_no_replay` job failed, already bounded and screened by the caller.
-    public func markMemory(_ id: String, state: String, reason: String? = nil) throws { try db.write { try $0.execute(sql: "INSERT OR REPLACE INTO memoryJobs(messageID,state,reason) VALUES (?,?,?)", arguments: [id,state,reason]) } }
+    public func markMemory(_ id: String, state: String, reason: String? = nil) throws {
+        try db.write { db in
+            try db.execute(sql: "INSERT OR REPLACE INTO memoryJobs VALUES (?,?)", arguments: [id,state])
+            if let reason { try db.execute(sql: "INSERT OR REPLACE INTO memoryJobReasons VALUES (?,?)", arguments: [id,reason]) }
+        }
+    }
 }

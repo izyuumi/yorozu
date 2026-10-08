@@ -89,7 +89,7 @@ public actor Engine {
             let recent = before.filter { $0.kind == "conversation" || $0.kind == "result" }.suffix(6).map { RoutingInput.MessageView(role: $0.role,topicID: $0.topicID,taskID: $0.taskID,kind: $0.kind,body: utf8Excerpt($0.body,bytes: 1000)) }
             // Recent work plus anything still blocking (active/uncertain), so it can always be retried or stopped.
             let recentIDs = Set(snapshot.work.suffix(12).map(\.id)); let blocking = Set(snapshot.work.filter { $0.active || $0.state == "uncertain" }.map(\.id))
-            let work = snapshot.work.filter { recentIDs.contains($0.id) || (!$0.suppressed && blocking.contains($0.id)) }.map { RoutingInput.WorkView(id: $0.id,topicID: $0.topicID,state: $0.state,executor: $0.executor,instruction: utf8Excerpt($0.instruction,bytes: 900),error: $0.error.map { utf8Excerpt($0,bytes: 300) }) }
+            let work = snapshot.work.filter { recentIDs.contains($0.id) || (!$0.suppressed && blocking.contains($0.id)) }.map { RoutingInput.WorkView(id: $0.id,topicID: $0.topicID,state: $0.suppressed && !($0.active || $0.state == "uncertain") ? "retired" : $0.state,executor: $0.executor,instruction: utf8Excerpt($0.instruction,bytes: 900),error: $0.error.map { utf8Excerpt($0,bytes: 300) }) }
             let memories = try await memory.search(message.body)
             let hits = boundedMemory(memories.map { RoutingInput.MemoryView(id: $0.id,title: utf8Excerpt($0.title,bytes: 200),excerpt: utf8Excerpt($0.document.body,bytes: 400)) },bytes: 2200)
             var input = RoutingInput(policy: routingPolicy,message: message.body,recent: recent,topics: topics.prefix(12).map { RoutingInput.TopicView(id: $0.id,label: $0.label) },work: work,latestTopic: latest,memory: hits)
@@ -201,7 +201,7 @@ public actor Engine {
             case .unknown, .running: throw ProjectError.uncertain("The earlier run is active or its status is unknown. Retry has NOT started; reconcile it first to avoid duplicate work.")
             case .completed(let output):
                 // Saved changes the finished run never saw go to the same task as a queued follow-up turn.
-                let (reply,next) = try await store.finish(task: w.id,output: output,requeue: true)
+                let (reply,next) = try await store.finish(task: w.id,output: output,requeue: true,from: w.state)
                 if next != nil {
                     _ = try await store.message(role: "assistant",body: "The earlier run finished before your change, so I'm applying it now.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment")
                     pending.append((w.id,w.executor != nil)); pump()
@@ -276,6 +276,8 @@ public actor Engine {
             // No run ID means it was never dispatched.
             switch w.runID == nil ? .stopped : ((try? await harness.reconcile(w,topic: topic)) ?? .unknown) {
             case .stopped:
+                // A saved change on it must not vanish: retry folds it in, a new request would not.
+                if try await store.snapshot().amendments.contains(where: { $0.taskID == w.id && ["pending","pending_reconciliation"].contains($0.state) }) { throw ProjectError.blocked("An earlier task here stopped with a saved change that never ran. Say retry to apply it first, then send this again.") }
                 // Re-checked in the transaction: a concurrent watch() may have settled it meanwhile.
                 guard (try? await store.retireForRetry(w.id)) != nil else { continue }
                 _ = try await store.message(role: "assistant",body: "The earlier task here stopped without finishing, so I closed it and started your new request. Its history stays in this topic.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment")
@@ -339,7 +341,7 @@ public actor Engine {
                     _ = try? await store.message(role: "assistant",body: "Stopped.",topic: w.topicID,task: id,replyTo: w.messageID,kind: "acknowledgment")
                 }; return
             }
-            guard let w = try? await store.failWork(id,error: error.localizedDescription) else { return }
+            guard let w = try? await store.failWork(id,error: error.localizedDescription,definite: { if case ProjectError.overflow = error { return true }; return false }()) else { return }
             // Overflow would fail the same way again, so it gets no retry offer.
             var body = "That task failed: \(error.localizedDescription) Say retry to try again."; if case ProjectError.overflow(let text) = error { body = text }
             _ = try? await store.message(role: "assistant",body: body,topic: w.topicID,task: id,replyTo: w.messageID,kind: "failure")
