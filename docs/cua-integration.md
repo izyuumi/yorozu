@@ -96,6 +96,8 @@ Pass: the worker reports a verified match, the frontmost app never changed, and 
 
 Result: the secretary delegated it with no executor; the worker reported pid and window_id (matching `list_windows`) and `verify_state` satisfied over 2 samples. An independent `verify_state` read the text area as `yorozu cua smoke`, and the frontmost app, sampled every second, stayed Yorozu for the whole run. The run took under a minute.
 
+A second run after 67f6cce (a new empty document, the worker also asked for its cua session label) passed the same way: the worker used `yorozu-35ae7811`, an independent `verify_state` read `yorozu cua smoke 2`, and Yorozu stayed frontmost.
+
 ## Live checks
 
 - 2026-10-08, before the MCP list existed: a throwaway `projectx` session created like a topic session (`openai-pool/gpt-6-sol`, `permissionMode: "full"`, `promptMode: "minimal"`) did not list any cua tool directly but found them with `tool_search`, and `tool_call` ran `get_screen_size` and `check_permissions {prompt: false}` through the daemon (attribution `driver-daemon`, Accessibility and Screen Recording granted, direct capture `not_checked`). No approval step ran.

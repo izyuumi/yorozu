@@ -1,6 +1,6 @@
 # Status
 
-As of 2026-10-08, `projectx` at 7f2e2f0. Update this file when a part changes state; keep only the current picture. Past decisions are in [history/decisions-log.md](history/decisions-log.md).
+As of 2026-10-08, `projectx` at 67f6cce. Update this file when a part changes state; keep only the current picture. Past decisions are in [history/decisions-log.md](history/decisions-log.md).
 
 ## Parts
 
@@ -12,7 +12,7 @@ As of 2026-10-08, `projectx` at 7f2e2f0. Update this file when a part changes st
 | Markdown memory | Done; quality unmeasured | Automatic extraction writes `~/Yorozu/memory/knowledge/*.md`; index in Caches (12e0c4f). Extraction quality has not been evaluated. |
 | Coding workers (R2) | Done | Verified live 2026-10-08 from the chat: Claude Code rewrote the README (d7e0b1d) and Codex added a note (bfb15d7); each committed, merged into `projectx`, ran `build_native.sh --restart`, and the relaunched app delivered the result. |
 | iOS client and relay (0.6.x) | Shipped to internal TestFlight; device check pending | Latest upload 0.6.1 (5) after the icon commit; 0.6.1 (4) came before it, and 0.6.0 (10127) is expired. Live 2026-10-08: the Mac registered on the default relay ([setup.md](setup.md#environment-variables)), and a headless phone built on the app's `RelayClient` paired, passed the `yorozu-v2` check, received history, sent a message and got the receipt and the reply. On 2026-10-08 App Store Connect showed 0.6.1 (5) in beta testing for the Internal group. Nobody has tapped through the iOS UI on a device yet. |
-| R3 computer use via cua | Done for thinking workers; Claude Code blocked by an OpenClaw gap | 7f2e2f0: Yorozu owns the MCP server list (`mcp-servers.json`, default cua-driver) and mirrors it into OpenClaw per session; "operate my Mac / use app X" is delegated; both worker contracts carry the cua rules. Verified live 2026-10-08: the TextEdit smoke test passed from the chat with TextEdit kept in the background, and an owner request drove Safari in the background ([cua-integration.md](cua-integration.md#smoke-test)). Codex coding workers get the tools but were not exercised; Claude Code coding workers do not get them ([known limits](#known-limits)). |
+| R3 computer use via cua | Done for thinking workers; Claude Code left without Yorozu's MCP servers (owner decision) | 7f2e2f0, 67f6cce: Yorozu owns the MCP server list (`mcp-servers.json`, default cua-driver) and mirrors it into OpenClaw per session; "operate my Mac / use app X" is delegated; both worker contracts carry the cua rules. Verified live 2026-10-08: the TextEdit smoke test passed from the chat with TextEdit kept in the background, and an owner request drove Safari in the background ([cua-integration.md](cua-integration.md#smoke-test)). After 67f6cce a second smoke run passed with a per-run cua session label. Codex coding workers get the tools but were not exercised; Claude Code coding workers do not get them ([known limits](#known-limits)). |
 
 ## Roadmap
 
