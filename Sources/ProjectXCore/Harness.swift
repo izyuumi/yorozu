@@ -10,10 +10,30 @@ public protocol Harness: Sendable {
     func cancel(_ work: Work, topic: Topic) async throws -> Bool
     func reconcile(_ work: Work, topic: Topic) async throws -> RunStatus
     func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal]
+    /// The models the harness's agent may use, and its primary model, for the smart role defaults (#312).
+    func models() async throws -> (allowed: [ModelInfo], primary: String?)
 }
 public extension Harness {
     var agentID: String { "projectx" }
     func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal] { [] }
+    func models() async throws -> (allowed: [ModelInfo], primary: String?) { ([],nil) }
+}
+/// Settings the app can change while it runs (#312). The harness and the Engine read them through a closure at the start
+/// of each route, task or extraction, so a change applies from the next one without rebuilding either.
+public struct HarnessSettings: Sendable {
+    /// Role models as "<provider>/<model>"; `codingModels` is keyed by executor ("claude", "codex"). Empty means none set.
+    public var secretaryModel = "", extractionModel = "", workerModel = "", reviewModel = "", codingModels: [String:String] = [:]
+    /// Yorozu's MCP servers; nil leaves OpenClaw's own MCP setup untouched.
+    public var mcpServers: [String:MCPServer]?
+    /// Lifts the ask-first rules for requested outward-facing steps and the risky cua tools (owner, 2026-10-09).
+    public var yolo = false
+    /// The dev checkout coding workers merge into; nil refuses coding work.
+    public var devRepo: URL?
+    /// `config.toml`, named in the thinking contract so a worker can change settings when asked.
+    public var configFile: URL?
+    /// Routing hints: the user's knowledge source the secretary cannot read ("" drops it), and the topic for this app.
+    public var personalKnowledge = "", selfTopic = "Yorozu"
+    public init() {}
 }
 public struct OfflineHarness: Harness {
     public let name = "Offline · no model calls"
@@ -63,7 +83,9 @@ public struct GatewayRPC: Sendable {
     private let fixture: RPCCall?
     public let native: NativeGatewayClient?
     private let audit: GatewayAudit?
-    public init(fixture: RPCCall? = nil, native: NativeGatewayClient? = nil, audit: GatewayAudit? = nil) { self.fixture = fixture; self.native = native; self.audit = audit }
+    /// The CLI transport's Gateway; only plain loopback `ws`/`wss` URLs are used.
+    private let target: String
+    public init(fixture: RPCCall? = nil, native: NativeGatewayClient? = nil, audit: GatewayAudit? = nil, target: String = "ws://127.0.0.1:18789") { self.fixture = fixture; self.native = native; self.audit = audit; self.target = target }
     public static func enforceAttribution(_ environment: [String:String]) throws {
         if environment["OPENCLAW_SHELL"] == "exec" || environment["OPENCLAW_SUBAGENT_EXEC"] != nil {
             throw ProjectError.blocked("Gateway agent-exec caller-attribution prohibition: no Gateway subprocess launched. No marker removal, native-launch workaround or new authentication is permitted/required.")
@@ -109,7 +131,7 @@ public struct GatewayRPC: Sendable {
         else {
             let env = ProcessInfo.processInfo.environment
             try Self.enforceAttribution(env)
-            let target = env["PROJECTX_GATEWAY_URL"] ?? "ws://127.0.0.1:18789"
+            let target = target
             guard let url = URLComponents(string: target), ["ws","wss"].contains(url.scheme ?? ""), ["127.0.0.1","::1","localhost"].contains(url.host ?? ""), url.user == nil, url.password == nil, url.query == nil, url.fragment == nil, ["", "/"].contains(url.path) else { throw ProjectError.blocked("Only loopback Gateway targets are allowed.") }
             text = try await Task.detached(priority: .utility) {
                 let process = Process(); let pipe = Pipe(); let errors = Pipe()
@@ -159,19 +181,40 @@ public struct GatewayRPC: Sendable {
 public struct OpenClawHarness: Harness {
     public let name = "Configured OpenClaw · live acceptance unverified"
     public var agentID: String { agent }
-    public var agent: String; public var secretaryModel: String; public var workerModel: String; public var reviewModel: String; public var rpc: GatewayRPC; public var workspace: URL
-    /// R2 coding workers. `repo` is the dev checkout whose OWNER_DECISIONS.md coding workers may read.
-    public var claudeModel = "anthropic/claude-opus-5-5"; public var codexModel = "openai/gpt-6-sol"; public var repo: URL?
-    /// Yorozu's MCP server list (`MCPServers`); nil leaves OpenClaw's own MCP setup untouched.
-    public var mcpList: URL?
-    private let sessions = SessionCreations(); private let mcp = Once<[String:Bool]>()
+    public var agent: String; public var rpc: GatewayRPC; public var workspace: URL
+    /// Models, MCP servers, YOLO, dev repo and config path, read at the start of each route, task or extraction.
+    public var settings: @Sendable () -> HarnessSettings
+    private let sessions = SessionCreations(); private let mcp = MCPMirror()
     /// Computer use through cua (docs/cua-integration.md, Worker rules), for thinking and coding workers alike. The
     /// cua session label is fresh per run: CuaDriver ties a label to the proxy that first used it, and proxies get recycled.
     /// Tool output stays short so a persistent session grows slowly (#310). Both worker contracts carry it.
     static let outputRules = "Keep tool output short: read files with an offset and limit, pipe long command output through head, tail or grep, and for an app prefer list_windows and get_window_state on the named app over whole-desktop views."
-    static func cuaRules(_ session: String) -> String { "Operating the Mac: use only the cua-driver MCP tools (their names contain cua-driver; load them with your tool search if they are deferred), never the cua-driver CLI. Touch only the apps the request names, one (pid, window_id) at a time, in background delivery: no bring_to_front, foreground delivery, focus-taking shortcuts or get_desktop_state unless the user approved that step. Pass session \"\(session)\" on every call that takes one and end_session it when done; if a call says a session has ended, call start_session with the id it names, then retry; if it says a session is not available to this transport, use \"\(session)-2\" (then -3, and so on) from then on. Take a fresh get_window_state before each action and confirm each result with verify_state or a fresh snapshot; a successful call is not success. If a call times out or fails without a result, take a fresh get_window_state and check its effect before retrying: CuaDriver may still run the timed-out call, so never retry blindly. In an app, before sending, posting, purchasing, deleting, submitting, changing settings or credentials, or any other outward-facing step, stop and ask the user in the first sentence of your final text, unless the instruction says the user confirmed that exact step. Ask the same way before kill_app, clipboard_write, set_config, replay_trajectory, start_recording, install_ffmpeg, browser_download and browser_set_input_files; call check_permissions only with prompt false. Never type secrets or touch password fields, and keep screen, accessibility-tree and clipboard content out of progress messages, results and memory beyond what the task needs. Stop if Accessibility is not granted or the user takes over the window." }
-    public init(workspace: URL, agent: String = "projectx", secretaryModel: String = "openai-pool/gpt-6-astra", workerModel: String = "openai-pool/gpt-6-sol", reviewModel: String = "openai-pool/gpt-6-sol", rpc: GatewayRPC = GatewayRPC()) {
-        self.workspace = workspace; self.agent = agent; self.secretaryModel = secretaryModel; self.workerModel = workerModel; self.reviewModel = reviewModel; self.rpc = rpc
+    static func cuaRules(_ session: String,yolo: Bool) -> String { "Operating the Mac: use only the cua-driver MCP tools (their names contain cua-driver; load them with your tool search if they are deferred), never the cua-driver CLI. Touch only the apps the request names, one (pid, window_id) at a time, in background delivery: no bring_to_front, foreground delivery, focus-taking shortcuts or get_desktop_state unless the user approved that step. Pass session \"\(session)\" on every call that takes one and end_session it when done; if a call says a session has ended, call start_session with the id it names, then retry; if it says a session is not available to this transport, use \"\(session)-2\" (then -3, and so on) from then on. Take a fresh get_window_state before each action and confirm each result with verify_state or a fresh snapshot; a successful call is not success. If a call times out or fails without a result, take a fresh get_window_state and check its effect before retrying: CuaDriver may still run the timed-out call, so never retry blindly. " + (yolo ? "YOLO mode is on: do the outward-facing steps the request asks for in an app (sending, posting, purchasing, deleting, submitting) and use kill_app, clipboard_write, set_config, replay_trajectory, start_recording, install_ffmpeg, browser_download and browser_set_input_files when the task needs them, without asking first. Still stop and ask the user in the first sentence of your final text before changing settings or credentials or any step the request did not ask for" : "In an app, before sending, posting, purchasing, deleting, submitting, changing settings or credentials, or any other outward-facing step, stop and ask the user in the first sentence of your final text, unless the instruction says the user confirmed that exact step. Ask the same way before kill_app, clipboard_write, set_config, replay_trajectory, start_recording, install_ffmpeg, browser_download and browser_set_input_files") + "; call check_permissions only with prompt false. Never type secrets or touch password fields, and keep screen, accessibility-tree and clipboard content out of progress messages, results and memory beyond what the task needs. Stop if Accessibility is not granted or the user takes over the window." }
+    public init(workspace: URL, agent: String = "projectx", rpc: GatewayRPC = GatewayRPC(), settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) {
+        self.workspace = workspace; self.agent = agent; self.rpc = rpc; self.settings = settings
+    }
+    /// `models.list` (operator.read, view "configured" with details): the agent's allowed models, its primary (tag
+    /// "default"), context, inputs and runtime. Price and output cap only from `config.get` (operator.read), in
+    /// `models.providers.<provider>.models[]`; models.list strips cost, and bundled provider catalogs are not exposed.
+    public func models() async throws -> (allowed: [ModelInfo], primary: String?) {
+        let rows = try await rpc.call("models.list",["agentId":agent,"view":"configured","includeDetails":true])["models"] as? [[String:Any]] ?? []
+        let providers = (((try? await rpc.call("config.get",[:]))?["config"] as? [String:Any])?["models"] as? [String:Any])?["providers"] as? [String:Any] ?? [:]
+        var primary: String?, allowed: [ModelInfo] = []
+        for m in rows {
+            guard let id = m["id"] as? String, let provider = m["provider"] as? String else { continue }
+            if (m["tags"] as? [String] ?? []).contains("default") { primary = provider + "/" + id }
+            guard m["available"] as? Bool != false else { continue }
+            let p = providers[provider] as? [String:Any], definition = (p?["models"] as? [[String:Any]])?.first { $0["id"] as? String == id }
+            let cost = definition?["cost"] as? [String:Any]
+            // Runtimes: the model's own, available picker alternatives, and what OpenClaw's session-runtime-compat allows
+            // (codex for providers openai and codex; claude-cli through the anthropic plugin's CLI backend).
+            let runtimeID = { (r: Any?) in (r as? [String:Any])?["id"] as? String }
+            let runtimes = [runtimeID(m["agentRuntime"]) ?? "openclaw"] + (m["runtimeChoices"] as? [[String:Any]] ?? []).filter { $0["available"] as? Bool == true }.compactMap { runtimeID($0["agentRuntime"]) }
+                + (["openai","codex"].contains(provider) ? ["codex"] : []) + (["anthropic","claude-cli"].contains(provider) ? ["claude-cli"] : [])
+            allowed.append(ModelInfo(id: provider + "/" + id,contextTokens: m["contextTokens"] as? Int ?? m["contextWindow"] as? Int,maxOutputTokens: definition?["maxTokens"] as? Int ?? p?["maxTokens"] as? Int,
+                                     price: (cost?["input"] as? Double).flatMap { i in (cost?["output"] as? Double).map { i + $0 } },inputs: m["input"] as? [String] ?? [],runtimes: Array(Set(runtimes)).sorted()))
+        }
+        return (allowed,primary)
     }
     private func text(_ envelope: [String:Any]) throws -> String {
         let meta = (envelope["result"] as? [String:Any])?["meta"] as? [String:Any] ?? [:]
@@ -192,6 +235,7 @@ public struct OpenClawHarness: Harness {
     private func model(_ prompt: String, model: String, sourceMessageID: String? = nil) async throws -> String {
         guard agent == "projectx" else { throw ProjectError.blocked("Live R1 requires the dedicated projectx agent; personal agents are not an app backend.") }
         guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Model input exceeds bounded context.") }
+        guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this role; choose one in Settings › Advanced.") }
         // Public CLI `agent` connects with operator.write; per-turn model overrides require admin.
         // Select the role model through supported session creation, then run without an override.
         let selection = SHA256.hash(data: Data((workspace.path + "|" + model).utf8)).map { String(format: "%02x",$0) }.joined()
@@ -211,7 +255,7 @@ public struct OpenClawHarness: Harness {
     }
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision {
         let prompt = Self.routingPrompt(input,stronger: stronger)
-        return try JSONDecoder().decode(Decision.self,from: Data(try await model(prompt,model: stronger ? reviewModel : secretaryModel,sourceMessageID: input.sourceMessageID).utf8))
+        return try JSONDecoder().decode(Decision.self,from: Data(try await model(prompt,model: stronger ? settings().reviewModel : settings().secretaryModel,sourceMessageID: input.sourceMessageID).utf8))
     }
     public static func routingPrompt(_ input: RoutingInput, stronger: Bool) -> String {
         """
@@ -225,21 +269,17 @@ public struct OpenClawHarness: Harness {
     }
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput {
         guard agent == "projectx", input.topic.sessionKey.hasPrefix("agent:projectx:projectx:") else { throw ProjectError.blocked("R1 workers must use app-owned sessions on the dedicated projectx agent. No private session import.") }
-        if let executor = input.work.executor { return try await code(input,executor: executor,update: update) }
+        let s = settings()
+        if let executor = input.work.executor { return try await code(input,executor: executor,settings: s,update: update) }
         let key = input.topic.sessionKey; let controller = "agent:\(agent):projectx-control:\(input.topic.id)"
-        // Workers run at full permission with the agent's default tools (owner, 2026-10-07). Ensured once per topic per
-        // app run, which also upgrades topic sessions created read-only before that. The CLI requests admin scope for "full".
-        try await sessions.ensure(key) { [self] in
-            var entry: [String:Any]?
-            for (session,permission) in [(controller,"guarded"),(key,"full")] {
-                let created = try await rpc.call("sessions.create",["key":session,"agentId":agent,"model":workerModel,"permissionMode":permission])
-                guard created["ok"] as? Bool == true, created["key"] as? String == session else { throw ProjectError.uncertain("Exact project session creation unconfirmed.") }
-                entry = created["entry"] as? [String:Any]
-            }
-            try await applyMCP(key,entry: entry) // the topic key is created last
-        }
+        // Workers run at full permission with the agent's default tools (owner, 2026-10-07). Creating once per topic per
+        // app run also upgrades topic sessions created read-only before that. The CLI requests admin scope for "full".
+        try await prepare(controller,model: s.workerModel,create: ["permissionMode":"guarded"],mcp: false)
+        try await prepare(key,model: s.workerModel,create: ["permissionMode":"full"],mcp: true)
         _ = try await compactTopic(input,force: false,update: update)
-        let contract = "You are a knowledge worker. Emit only public progress, no hidden reasoning. Final ONLY JSON {\"text\":string,\"appliedRevision\":integer}. Echo the highest applied amendment revision. Use your tools (shell, files, web) to do what the user asks yourself, end to end; never hand the user steps you can do, and ask only for what only they can do (logins, approvals, secrets). Never take destructive or outward-facing actions the user did not ask for. Never read or message other agents' sessions. Code changes to the PROJECTX repo (your default directory is the owner's live checkout) belong to a coding worker; never run its tests or CI. " + Self.outputRules + " " + Self.cuaRules("yorozu-" + identifier().prefix(8)) + " You may instead return {\"memoryCall\":{\"tool\":\"memory.search|memory.read|memory.write\",\"path\":relative UUID.md,\"query\":optional,\"markdown\":complete canonical Markdown,\"expectedSHA256\":read hash or null for create}}. Only app-mediated scoped memory writes. Read before edits, reconcile conflicts, retain attribution. Never claim a failed write succeeded. Markdown first line is JSON metadata (id,title,topicID,sources,evidence,knowledgeType,attribution,epistemicStatus,created,updated,lineage), then blank line/body. Generated notes must remain assistant/generated_analysis/unverified. Six operations maximum."
+        let repo = s.devRepo.map { "Code changes to the repo at \($0.path) (the user's live checkout) belong to a coding worker; never run its tests or CI. " } ?? ""
+        let config = s.configFile.map { "Yorozu's settings are in \($0.path), which documents its keys; edit it when the user asks to change a setting, but change MCP servers, the relay URL, direct connection, the harness, Advanced items or yolo only after the user's explicit yes in this chat. " } ?? ""
+        let contract = "You are a knowledge worker. Emit only public progress, no hidden reasoning. Final ONLY JSON {\"text\":string,\"appliedRevision\":integer}. Echo the highest applied amendment revision. Use your tools (shell, files, web) to do what the user asks yourself, end to end; never hand the user steps you can do, and ask only for what only they can do (logins, approvals, secrets). Never take destructive or outward-facing actions the user did not ask for. Never read or message other agents' sessions. " + repo + config + Self.outputRules + " " + Self.cuaRules("yorozu-" + identifier().prefix(8),yolo: s.yolo) + " You may instead return {\"memoryCall\":{\"tool\":\"memory.search|memory.read|memory.write\",\"path\":relative UUID.md,\"query\":optional,\"markdown\":complete canonical Markdown,\"expectedSHA256\":read hash or null for create}}. Only app-mediated scoped memory writes. Read before edits, reconcile conflicts, retain attribution. Never claim a failed write succeeded. Markdown first line is JSON metadata (id,title,topicID,sources,evidence,knowledgeType,attribution,epistemicStatus,created,updated,lineage), then blank line/body. Generated notes must remain assistant/generated_analysis/unverified. Six operations maximum."
         // A follow-up turn sends only its new amendments: the session holds the contract and the earlier turn.
         var wire = try input.followUp.map { "Follow-up turn of the same task, now revision \(input.work.revision). The user changed the request:\n" + $0.trimmingCharacters(in: .newlines) + "\nAnswer the whole task again with these changes; final text/appliedRevision JSON." } ?? (input.wire + "\n" + contract)
         for step in 0...6 {
@@ -335,7 +375,7 @@ public struct OpenClawHarness: Harness {
             guard budget > 200 else { break }
         }
         guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Extraction prompt is \(prompt.utf8.count) bytes even with the message excerpted; the cap is \(rawPromptCap).") }
-        let reply = try await model(prompt,model: secretaryModel,sourceMessageID: message.id)
+        let reply = try await model(prompt,model: settings().extractionModel,sourceMessageID: message.id)
         do { return try JSONDecoder().decode([MemoryProposal].self,from: Data(reply.utf8)) }
         catch { throw ProjectError.invalid("Extraction reply is not a valid proposal array (\(reply.utf8.count) bytes): \(utf8Prefix(String(describing: error),bytes: 300))") }
     }
@@ -379,24 +419,28 @@ actor SessionCreations {
         do { try await task.value } catch { if tasks[key] == task { tasks[key] = nil }; throw error }
     }
     func forget(_ key: String) { tasks[key] = nil }
+    /// What `prepare` last applied to a session this app run (model, runtime, MCP overlay).
+    private var applied: [String:String] = [:]
+    func applied(_ key: String) -> String? { applied[key] }
+    func setApplied(_ key: String,_ value: String) { applied[key] = value }
 }
-/// One shared result per app run; a failure retries on the next use.
-actor Once<Value: Sendable> {
-    private var task: Task<Value,Error>?
-    func value(_ make: @escaping @Sendable () async throws -> Value) async throws -> Value {
-        let task = self.task ?? Task { try await make() }; self.task = task
-        do { return try await task.value } catch { if self.task == task { self.task = nil }; throw error }
+/// The overlay of the last mirrored MCP list, shared by concurrent uses; a changed list mirrors again, a failure retries.
+actor MCPMirror {
+    private var last: (list: [String:MCPServer], task: Task<[String:Bool],Error>)?
+    func overlay(_ list: [String:MCPServer],_ make: @escaping @Sendable () async throws -> [String:Bool]) async throws -> [String:Bool] {
+        let task = last.flatMap { $0.list == list ? $0.task : nil } ?? Task { try await make() }
+        last = (list,task)
+        do { return try await task.value } catch { if last?.task == task { last = nil }; throw error }
     }
 }
 
 // MARK: - MCP servers: Yorozu's list mirrored into OpenClaw as `yorozu-<name>` entries, off for every other session.
 extension OpenClawHarness {
-    /// Once per app run: write changed entries into mcp.servers with enabled:false (the Gateway hot-reloads mcp.*), then
-    /// return the overlay that turns on exactly Yorozu's servers and off every other server configured at that moment.
+    /// Once per distinct list: write changed entries into mcp.servers with enabled:false (the Gateway hot-reloads mcp.*),
+    /// then return the overlay that turns on exactly Yorozu's servers and off every other server configured at that moment.
     func mcpOverlay() async throws -> [String:Bool] {
-        guard let mcpList else { return [:] }
-        return try await mcp.value { [rpc] in
-            let list = try MCPServers.load(mcpList)
+        guard let list = settings().mcpServers else { return [:] }
+        return try await mcp.overlay(list) { [rpc] in
             let snapshot = try await rpc.call("config.get",[:])
             guard let hash = snapshot["hash"] as? String else { throw ProjectError.uncertain("OpenClaw config hash unavailable; MCP servers not set up.") }
             let configured = ((snapshot["config"] as? [String:Any])?["mcp"] as? [String:Any])?["servers"] as? [String:Any] ?? [:]
@@ -424,16 +468,37 @@ extension OpenClawHarness {
     private static func arrayPaths(_ value: Any,_ path: String) -> [String] {
         value is [Any] ? [path] : (value as? [String:Any])?.flatMap { arrayPaths($0.value,path + "." + $0.key) } ?? []
     }
-    /// Once per session per app run, with the `entry` sessions.create returned. Embedded and Codex runs read it each turn;
-    /// claude-cli runs ignore it (OpenClaw 2026.9.6 does not pass session toolOverrides to the CLI runner).
-    func applyMCP(_ key: String,entry: [String:Any]?) async throws {
-        let overlay = try await mcpOverlay()
-        let current = entry?["toolOverrides"] as? [String:Any]
-        guard !overlay.isEmpty, !NSDictionary(dictionary: overlay).isEqual(current?["mcpServers"] as? [String:Any] ?? [:]) else { return }
-        // The overlay is replaced whole: keep the owner's other per-session fields (mcpToolsDeny, skills, webSearch).
-        var next = current ?? [:]; next["mcpServers"] = overlay
-        let patched = try await rpc.call("sessions.patch",["key":key,"agentId":agent,"toolOverrides":next,"expectedToolOverrides":current ?? NSNull()])
-        guard patched["ok"] as? Bool == true, patched["key"] as? String == key else { throw ProjectError.uncertain("MCP servers for this session unconfirmed.") }
+    /// Before each use of a topic, controller or coding session: bring it to `model` (and `runtime`) with sessions.patch
+    /// (operator.write), never by re-creating it, since sessions.create with another model on an existing key needs
+    /// operator.admin; create it once per app run; then apply the MCP overlay. Embedded and Codex runs read the overlay each
+    /// turn; claude-cli runs ignore it (OpenClaw 2026.9.6 does not pass session toolOverrides to the CLI runner). Gateway
+    /// calls happen only when the wanted state differs from what this app run last applied to the key.
+    func prepare(_ key: String,model: String,runtime: String? = nil,create: [String:any Sendable],mcp: Bool) async throws {
+        guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this work; choose one in Settings › Advanced.") }
+        let overlay = mcp ? try await mcpOverlay() : [:]
+        let wanted = "\(model)|\(runtime ?? "")|" + overlay.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+        guard await sessions.applied(key) != wanted else { return }
+        // session is null for a key that does not exist yet.
+        let row = try await rpc.call("sessions.describe",["key":key,"agentId":agent])["session"] as? [String:Any]
+        if let row, "\(row["modelProvider"] as? String ?? "")/\(row["model"] as? String ?? "")" != model || (runtime != nil && (row["agentRuntime"] as? [String:Any])?["id"] as? String != runtime) {
+            // A model its runtime cannot run silently drops the runtime unless both are sent (then the Gateway refuses it).
+            var patch: [String:Any] = ["key":key,"agentId":agent,"model":model]; if let runtime { patch["agentRuntime"] = runtime }
+            let r = try await rpc.call("sessions.patch",patch); let e = r["entry"] as? [String:Any] ?? [:]
+            guard r["ok"] as? Bool == true, "\(e["providerOverride"] as? String ?? "")/\(e["modelOverride"] as? String ?? "")" == model, runtime == nil || e["agentRuntimeOverride"] as? String == runtime else { throw ProjectError.uncertain("Gateway did not confirm switching this session to \(model); nothing was run.") }
+        }
+        try await sessions.ensure(key) { [rpc, agent] in
+            var params: [String:Any] = create.merging(["key":key,"agentId":agent,"model":model]) { $1 }; if let runtime { params["agentRuntime"] = runtime }
+            let created = try await rpc.call("sessions.create",params)
+            guard created["ok"] as? Bool == true, created["key"] as? String == key else { throw ProjectError.uncertain("Gateway did not confirm creating session \(key).") }
+        }
+        let current = row?["toolOverrides"] as? [String:Any] // none on a session created just now
+        if !overlay.isEmpty, !NSDictionary(dictionary: overlay).isEqual(current?["mcpServers"] as? [String:Any] ?? [:]) {
+            // The overlay is replaced whole: keep the owner's other per-session fields (mcpToolsDeny, skills, webSearch).
+            var next = current ?? [:]; next["mcpServers"] = overlay
+            let patched = try await rpc.call("sessions.patch",["key":key,"agentId":agent,"toolOverrides":next,"expectedToolOverrides":current ?? NSNull()])
+            guard patched["ok"] as? Bool == true, patched["key"] as? String == key else { throw ProjectError.uncertain("MCP servers for this session unconfirmed.") }
+        }
+        await sessions.setApplied(key,wanted)
     }
 }
 
@@ -475,22 +540,18 @@ extension OpenClawHarness {
     private static func toolName(_ executor: String) -> String { executor == "codex" ? "Codex" : "Claude Code" }
     /// Once per app run per topic and tool. Claude Code needs "full" (its guarded modes need an approval client PROJECTX
     /// lacks); Codex "workspace" is seatbelt-confined to the worktree. Branch: openclaw/<label>-<id>-<tool>, from projectx.
-    private func codingSession(_ topic: Topic,_ executor: String) async throws -> String {
+    private func codingSession(_ topic: Topic,_ executor: String,model: String) async throws -> String {
         let key = codingKey(topic,executor)
         let slug = topic.label.lowercased().unicodeScalars.map { ("a"..."z").contains($0) || ("0"..."9").contains($0) ? String($0) : "-" }
             .joined().split(separator: "-").joined(separator: "-").prefix(32)
         let name = (slug.isEmpty ? "" : slug + "-") + topic.id.prefix(6) + "-" + executor
-        try await sessions.ensure(key) { [self] in
-            let (model,runtime,permission) = executor == "codex" ? (codexModel,"codex","workspace") : (claudeModel,"claude-cli","full")
-            let created = try await rpc.call("sessions.create",["key":key,"agentId":agent,"model":model,"agentRuntime":runtime,"permissionMode":permission,"worktree":true,"worktreeBaseRef":"projectx","worktreeName":name])
-            guard created["ok"] as? Bool == true, created["key"] as? String == key else { throw ProjectError.uncertain("\(Self.toolName(executor)) session creation unconfirmed.") }
-            try await applyMCP(key,entry: created["entry"] as? [String:Any])
-        }
+        let (runtime,permission) = executor == "codex" ? ("codex","workspace") : ("claude-cli","full")
+        try await prepare(key,model: model,runtime: runtime,create: ["permissionMode":permission,"worktree":true,"worktreeBaseRef":"projectx","worktreeName":name],mcp: true)
         return key
     }
-    private func contract(_ executor: String,cuaSession: String) -> String {
+    private func contract(_ executor: String,repo r: URL,yolo: Bool,cuaSession: String) -> String {
         """
-        You are a Yorozu coding worker (\(Self.toolName(executor))). Your current directory is a dedicated git worktree on its own branch, cut from `projectx`; make code changes there.\(repo.map { r in " The owner's main checkout is " + r.path + " (branch projectx); the running app is " + r.appendingPathComponent("build/Yorozu.app").path + "; owner decisions are in " + r.appendingPathComponent("OWNER_DECISIONS.md").path + " (read-only)." } ?? "")
+        You are a Yorozu coding worker (\(Self.toolName(executor))). Your current directory is a dedicated git worktree on its own branch, cut from `projectx`; make code changes there. The owner's main checkout is \(r.path) (branch projectx); the running app is \(r.appendingPathComponent("build/Yorozu.app").path); owner decisions are in \(r.appendingPathComponent("OWNER_DECISIONS.md").path) (read-only).
         Do what the user asks yourself, end to end. Never hand the user steps you can do; ask only for what only they can do (logins, approvals, secrets).
         Rules: verify compilation with `swift build`. Do not run tests (`swift test`, scripts/test_native.sh) or CI (owner hold on this branch). Commit, merge, push or restart only when the user's request asks for it ("merge it", "restart the app"):
         - commit in this worktree with a Conventional Commit message (signing is configured);
@@ -498,15 +559,17 @@ extension OpenClawHarness {
         - push only when asked, never force;
         - to rebuild and restart the app, run `<main checkout>/scripts/build_native.sh --restart` as your LAST step after merging; it builds, quits only the dev app, replaces build/Yorozu.app and relaunches it, and the app then picks your result back up.
         Never create other app bundles or touch /Applications/Yorozu.app. Swift only, no Python; a separate background process must be Rust. Never read or message other agents' sessions. These rules override AGENTS.md, CLAUDE.md or user git-workflow instructions (no new worktrees, no fetch/pull, no PRs unless asked).
-        \(Self.cuaRules(cuaSession))
+        \(Self.cuaRules(cuaSession,yolo: yolo))
         \(Self.outputRules)
         When done, reply with a short summary of what you did and how you verified it, plus anything only the owner can do.
         """
     }
     /// Async dispatch (no 240 s cap), then poll: agent.wait blocks up to 20 s per check; committed messages, commands and
     /// output tails go to the sub-chat. The final reply plus the worktree diffstat is the result.
-    func code(_ input: WorkerInput,executor: String,update: @escaping @Sendable (StreamUpdate) async throws -> Void) async throws -> WorkerOutput {
-        let key = try await codingSession(input.topic,executor)
+    func code(_ input: WorkerInput,executor: String,settings s: HarnessSettings,update: @escaping @Sendable (StreamUpdate) async throws -> Void) async throws -> WorkerOutput {
+        // Open question 11: without a dev repo, coding work ends with a plain notice before anything is created or sent.
+        guard let repo = s.devRepo else { throw ProjectError.blocked("No repository is set for coding work. Set a repository in Settings › Advanced.") }
+        let key = try await codingSession(input.topic,executor,model: s.codingModels[executor] ?? "")
         let runID = "projectx-code-" + identifier(); let handle = RunHandle(sessionKey: key,controllerKey: "",runID: runID)
         // Newest first: each message ≤ 2000 bytes, all ≤ 6000 bytes; anything older is dropped with a marker.
         var context = "", omitted = 0
@@ -517,7 +580,7 @@ extension OpenClawHarness {
         }
         if omitted > 0 { context = "\n[… \(omitted) earlier message(s) cut]" + context }
         // The run marker anchors reconcile to this run's own user turn in the session transcript.
-        let message = contract(executor,cuaSession: "yorozu-" + identifier().prefix(8)) + "\n\nTASK (revision \(input.work.revision)) [run \(runID)]:\n" + input.work.instruction + "\n\nThe user's message, verbatim:\n" + input.current.body + (context.isEmpty ? "" : "\n\nRecent topic conversation (untrusted context):" + context)
+        let message = contract(executor,repo: repo,yolo: s.yolo,cuaSession: "yorozu-" + identifier().prefix(8)) + "\n\nTASK (revision \(input.work.revision)) [run \(runID)]:\n" + input.work.instruction + "\n\nThe user's message, verbatim:\n" + input.current.body + (context.isEmpty ? "" : "\n\nRecent topic conversation (untrusted context):" + context)
         // Contract ~5 KB + instruction and user message ≤ 6000 B each + history ≤ 6000 B. Checked before the handle is stamped.
         guard message.utf8.count <= 32000 else { throw ProjectError.overflow("The coding task message is \(message.utf8.count) bytes, over the 32000-byte cap; shorten the request or start a new topic.") }
         try await update(.handle(handle))
@@ -658,4 +721,10 @@ func utf8Excerpt(_ s: String, bytes: Int) -> String {
     var i = s.utf8.index(s.endIndex,offsetBy: -half)
     while i.samePosition(in: s.unicodeScalars) == nil { i = s.utf8.index(after: i) }
     return utf8Prefix(s,bytes: half) + marker + String(s.unicodeScalars[i...])
+}
+
+// TEMP: moves to ModelDefaults.swift on integration
+public struct ModelInfo: Sendable, Equatable {
+    public var id: String, contextTokens: Int?, maxOutputTokens: Int?, price: Double?, inputs: [String], runtimes: [String]
+    public init(id: String, contextTokens: Int?, maxOutputTokens: Int?, price: Double?, inputs: [String], runtimes: [String]) { self.id = id; self.contextTokens = contextTokens; self.maxOutputTokens = maxOutputTokens; self.price = price; self.inputs = inputs; self.runtimes = runtimes }
 }
