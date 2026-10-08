@@ -93,7 +93,9 @@ public enum HermesProfiles {
                 try await run(launcher, ["-p",p,"config","set"] + (force ? ["--force"] : []) + [key,value], home)
             case .writeAPIKey(let p):
                 let env = dir.appendingPathComponent(".env")
-                let existing = (try? String(contentsOf: try regularFile(env), encoding: .utf8)) ?? ""
+                // Only a missing file starts empty; any other read error would drop the profile's other settings.
+                let existing: String
+                do { existing = try String(contentsOf: try regularFile(env), encoding: .utf8) } catch let e as CocoaError where e.code == .fileReadNoSuchFile { existing = "" }
                 var lines = existing.isEmpty ? [] : existing.components(separatedBy: "\n")
                 if lines.last == "" { lines.removeLast() }
                 let old = lines.compactMap(apiKeyValue).last
@@ -126,21 +128,20 @@ public enum HermesProfiles {
         }.sorted()
     }
 
-    /// Open question 1, read-only: Hermes serves `/p/<profile>/` only when the default profile's API server is on.
+    /// Open question 1, read-only: Hermes serves `/p/<profile>/` only when the default profile's API server is on. v0.21.6
+    /// turns it on from a usable `API_SERVER_KEY` (16+ characters) alone and ignores `API_SERVER_ENABLED` (gateway/config_env.py).
     /// Returns nil when it is on, else the step for the user. Never edits the default profile.
     public static func defaultProfileAPIServerStep(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> String? {
         let root = home.appendingPathComponent(".hermes")
         let env = (try? String(contentsOf: root.appendingPathComponent(".env"), encoding: .utf8)) ?? ""
         let yaml = (try? String(contentsOf: root.appendingPathComponent("config.yaml"), encoding: .utf8)) ?? ""
-        let envEnabled = env.components(separatedBy: .newlines).compactMap { envValue($0, "API_SERVER_ENABLED") }.last
-        let enabled = envEnabled.map(truthy) ?? yamlAPIServer(yaml, "enabled").map(truthy) ?? false
         let hasKey = env.components(separatedBy: .newlines).contains { (envValue($0, "API_SERVER_KEY") ?? "").count >= 16 } || (yamlAPIServer(yaml, "key") ?? "").count >= 16
-        if enabled && hasKey { return nil }
+        if hasKey { return nil }
         return """
         Turn on the API server in your default Hermes profile, so Hermes can serve Yorozu's profiles. Run in Terminal:
 
-        hermes config set API_SERVER_ENABLED true
-        \(hasKey ? "" : "hermes config set API_SERVER_KEY \"$(openssl rand -hex 32)\"\n")hermes gateway restart
+        hermes -p default config set API_SERVER_KEY "$(openssl rand -hex 32)"
+        hermes -p default gateway restart
 
         Yorozu does not change your default profile itself.
         """
@@ -161,11 +162,14 @@ public enum HermesProfiles {
         if isSymlink(url) { throw ProjectError.blocked("\(url.path) is a symbolic link; Yorozu does not write through it.") }
         return url
     }
-    /// Atomic replace: a temp file with `mode` in the same folder, then rename.
+    /// Atomic replace: a new temp file created with `mode` (never wider, even briefly) in the same folder, then rename.
     static func write(_ text: String, to url: URL, mode: Int) throws {
         _ = try regularFile(url)
         let temp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).yorozu-\(UUID().uuidString)")
-        guard FileManager.default.createFile(atPath: temp.path, contents: Data(text.utf8), attributes: [.posixPermissions: mode]) else { throw ProjectError.blocked("Could not write \(url.path).") }
+        let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(mode))
+        guard fd >= 0 else { throw ProjectError.blocked("Could not write \(url.path) (errno \(errno)).") }
+        do { let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true); try handle.write(contentsOf: Data(text.utf8)); try handle.close() }
+        catch { try? FileManager.default.removeItem(at: temp); throw ProjectError.blocked("Could not write \(url.path).") }
         guard rename(temp.path, url.path) == 0 else { try? FileManager.default.removeItem(at: temp); throw ProjectError.blocked("Could not replace \(url.path) (errno \(errno)).") }
     }
 
@@ -183,7 +187,6 @@ public enum HermesProfiles {
         if value.count >= 2, let f = value.first, f == "\"" || f == "'", value.last == f { return String(value.dropFirst().dropLast()) }
         return value.components(separatedBy: " #").first!.trimmingCharacters(in: .whitespaces)
     }
-    static func truthy(_ value: String) -> Bool { ["true","yes","on","1"].contains(value.lowercased()) }
     /// `field` of an `api_server:` block under `gateway:`, `gateway.platforms:` or top-level `platforms:` (block style only).
     static func yamlAPIServer(_ yaml: String, _ field: String) -> String? {
         var stack: [(indent: Int, key: String)] = [], found: String?
@@ -239,7 +242,8 @@ public enum HermesProfiles {
             let process = Process(), output = Pipe()
             process.executableURL = launcher; process.arguments = args
             var env = ProcessInfo.processInfo.environment
-            env["HERMES_HOME"] = nil // `-p` resolves profiles under HERMES_HOME when it is set; pin ~/.hermes.
+            // `-p` resolves profiles under HERMES_HOME (plus HERMES_DATA_DIR_SUFFIX) when set; pin ~/.hermes.
+            env["HERMES_HOME"] = nil; env["HERMES_DATA_DIR_SUFFIX"] = nil
             env["HOME"] = home.path
             env["PATH"] = (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin") + ":/opt/homebrew/bin:/usr/local/bin"
             process.environment = env

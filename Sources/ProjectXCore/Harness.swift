@@ -221,10 +221,9 @@ public struct OpenClawHarness: Harness {
     /// Claude Code (runtime claude-cli) and Codex (runtime codex), each in an OpenClaw-managed worktree. Neither takes
     /// changes mid-run (unverified), so changes wait for a follow-up turn.
     public var executors: [Executor] { [
-        Executor(id: "claude",name: "Claude Code",appAccess: false,liveSteer: false,runtime: "claude-cli",
-                 routingNotes: "Claude Code gets no MCP servers under OpenClaw."),
+        Executor(id: "claude",name: "Claude Code",appAccess: false,liveSteer: false,runtime: "claude-cli"),
         Executor(id: "codex",name: "Codex",appAccess: true,liveSteer: false,runtime: "codex",
-                 routingNotes: "New coding work that also needs to operate an app or a browser (e.g. App Store Connect) uses \"codex\" unless the user names Claude Code."),
+                 routingNotes: "New coding work that also needs to operate an app or a browser (e.g. App Store Connect) uses executor \"codex\" unless the user names Claude Code."),
     ] }
     public init(workspace: URL, agent: String = "projectx", rpc: GatewayRPC = GatewayRPC(), settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) {
         self.workspace = workspace; self.agent = agent; self.rpc = rpc; self.settings = settings
@@ -341,6 +340,7 @@ public struct OpenClawHarness: Harness {
     }
     public func cancel(_ work: Work, topic: Topic) async throws -> Bool {
         guard let run = work.runID else { return true } // Never dispatched; setHandle refuses suppressed work.
+        guard run.hasPrefix("projectx-") else { return true } // Another harness's run (a harness switch): nothing here to stop.
         let key = work.executor.map { codingKey(topic,$0) } ?? topic.sessionKey
         let r = try await rpc.call("chat.abort",["sessionKey":key,"agentId":agent,"runId":run,"preserveSideRuns":true])
         // aborted:false means no active, queued or pending run has this ID: nothing is left running.
@@ -348,6 +348,7 @@ public struct OpenClawHarness: Harness {
     }
     public func reconcile(_ work: Work, topic: Topic) async throws -> RunStatus {
         guard let run = work.runID else { return .unknown }
+        guard run.hasPrefix("projectx-") else { return .stopped } // Another harness's run: not reachable from here.
         if let executor = work.executor { return try await reconcileCode(run,key: codingKey(topic,executor),revision: work.revision) }
         let r = try await rpc.call("agent.wait",["runId":run,"timeoutMs":1])
         guard r["runId"] as? String == run else { return .unknown }

@@ -41,7 +41,7 @@ public struct HermesHarness: Harness {
 
     public var executors: [Executor] {
         [Executor(id: "hermes", name: "Hermes", appAccess: true, liveSteer: true, runtime: "hermes",
-                  routingNotes: "Coding work goes to executor \"hermes\": Hermes's own agent loop. It has Yorozu's MCP servers, so it can operate apps and browsers, takes changes mid-run, and works in its own git worktree of the dev repo. Claude Code and Codex are not available under Hermes.",
+                  routingNotes: "Hermes runs its own agent loop with Yorozu's MCP servers, so it can operate apps and browsers, takes changes mid-run, and works in its own git worktree of the dev repo. Claude Code and Codex are not available under Hermes.",
                   notReady: settings().devRepo == nil ? "No repository is set for coding work." : nil)]
     }
 
@@ -83,7 +83,7 @@ public struct HermesHarness: Harness {
     public func models() async throws -> (allowed: [ModelInfo], primary: String?) {
         var lists: [[ModelInfo]] = [], primary: String?
         for p in [Self.workerProfile, Self.rolesProfile] {
-            let (code, json) = try await client.call(p, "GET", "/api/model/options")
+            let (code, json) = try await client.call(p, "GET", "/api/model/options?include_unconfigured=false")
             guard code == 200 else { throw HermesClient.failure(code, json, profile: p, doing: "list its models") }
             if p == Self.workerProfile, let provider = json["provider"] as? String, let model = json["model"] as? String, !provider.isEmpty, !model.isEmpty { primary = provider + "/" + model }
             let price = { (s: Any?) in (s as? String).flatMap { $0.hasPrefix("$") ? Double($0.dropFirst()) : nil } }
@@ -108,9 +108,12 @@ public struct HermesHarness: Harness {
         return (String(model[..<cut]), String(model[model.index(after: cut)...]))
     }
     /// Fails closed unless the run was served by exactly the requested pair (H6.1: a fallback model is a mismatch).
+    /// Providers compare as Hermes resolves them: lowercased, and `openai` served as `custom` (runtime_provider.py,
+    /// runtime_provider_custom.py); the request side is the run's `runtime.requested` when present.
     static func verify(_ run: HermesRun, provider: String? = nil, model: String? = nil) throws {
-        let wanted = (provider ?? run.requestedProvider, model ?? run.requestedModel)
-        guard wanted.0 != nil, run.provider == wanted.0, run.model == wanted.1 else {
+        let resolved = { (p: String?) in p.map { $0.lowercased() == "openai" ? "custom" : $0.lowercased() } }
+        let wanted = (resolved(run.requestedProvider ?? provider), run.requestedModel ?? model)
+        guard wanted.0 != nil, resolved(run.provider) == wanted.0, run.model == wanted.1, provider.map({ resolved($0) == wanted.0 }) ?? true, model.map({ $0 == wanted.1 }) ?? true else {
             throw HarnessError.modelMismatch("Hermes served this run with \(run.provider ?? "?")/\(run.model ?? "?") instead of \(wanted.0 ?? "?")/\(wanted.1 ?? "?"); its output was not used.")
         }
     }
@@ -125,7 +128,9 @@ public struct HermesHarness: Harness {
         // The shared cap covers instructions plus input; `rawPromptCap` leaves room for the framing.
         guard input.utf8.count + instructions.utf8.count <= rawPromptCap + Self.roleOverhead else { throw ProjectError.invalid("Model input exceeds bounded context.") }
         let (provider, name) = try Self.split(model), p = Self.rolesProfile
-        let run = try await submit(p, body: ["input": input, "instructions": instructions, "provider": provider, "model": name], key: "yorozu-role-" + identifier(), source: source)
+        let run: String
+        do { run = try await submit(p, body: ["input": input, "instructions": instructions, "provider": provider, "model": name], key: "yorozu-role-" + identifier(), source: source) }
+        catch let r as Refused { throw r.error }
         let client = client
         let end: HermesRun
         do {
@@ -165,10 +170,13 @@ public struct HermesHarness: Harness {
     /// `POST /v1/runs` with the Yorozu run id as `Idempotency-Key`. A dropped connection is retried with the identical
     /// body, which Hermes answers with the original run (202, `Idempotency-Replayed`). A request receipt (correlation
     /// only: request id, session, source message) is saved before the first attempt and again with how it ended.
-    func submit(_ profile: String, body: [String:Any], key: String, source: String?) async throws -> String {
+    /// `stamp` records the run id once the receipt is saved, before anything is sent. Whatever fails before a request
+    /// left (the receipt, the Keychain key) is `Refused`: nothing ran.
+    func submit(_ profile: String, body: [String:Any], key: String, source: String?, stamp: (() async throws -> Void)? = nil) async throws -> String {
         var receipt = RequestReceipt(requestID: key, harness: id, sessionKey: body["session_id"] as? String, sourceMessageID: source, rawModelRun: body["session_id"] == nil, state: "submitted")
-        try await audit?(receipt) // Durable before dispatch; fail closed if saving correlation fails.
+        do { try await audit?(receipt) } catch { throw Refused(error: error) } // Durable before dispatch; fail closed if saving correlation fails.
         let settle = { [audit] (state: String) async in receipt.state = state; receipt.created = Date().timeIntervalSince1970; try? await audit?(receipt) }
+        do { try await stamp?() } catch { await settle("not-sent"); throw error }
         for attempt in 1...3 {
             do {
                 let (code, json) = try await client.call(profile, "POST", "/v1/runs", body: body, headers: ["Idempotency-Key": key])
@@ -181,8 +189,10 @@ public struct HermesHarness: Harness {
                 if attempt == 3 { await settle("uncertain"); throw ProjectError.uncertain(e.localizedDescription + " The run may have started; reconcile before retry. Request ID: " + key) }
                 try await Task.sleep(for: .seconds(2))
             } catch {
-                // A typed error comes before any request left (e.g. no API key in the Keychain): nothing was sent.
-                await settle(error is ProjectError || error is HarnessError ? "not-sent" : "uncertain"); throw error
+                // A typed error comes before any request left (e.g. no API key in the Keychain): nothing was sent, unless
+                // an earlier attempt may have reached Hermes.
+                let notSent = attempt == 1 && (error is ProjectError || error is HarnessError)
+                await settle(notSent ? "not-sent" : "uncertain"); throw notSent ? Refused(error: error) : error
             }
         }
         throw ProjectError.uncertain("unreachable")
@@ -251,9 +261,12 @@ public struct HermesHarness: Harness {
         guard size <= workerGuard else { throw ProjectError.overflow("This step's input is too large to send (\(size) bytes, limit \(workerGuard)).") }
         let (provider, name) = try Self.split(model), p = Self.workerProfile, task = input.work.id
         if await state.effective[session] == nil, let now = await effective(session) { await state.setEffective(session, now) }
-        try await update(.handle(RunHandle(sessionKey: session, controllerKey: "", runID: runID)))
         let server: String
-        do { server = try await submit(p, body: ["session_id": session, "input": text, "instructions": instructions, "provider": provider, "model": name], key: runID, source: input.work.messageID) }
+        do {
+            server = try await submit(p, body: ["session_id": session, "input": text, "instructions": instructions, "provider": provider, "model": name], key: runID, source: input.work.messageID) {
+                try await update(.handle(RunHandle(sessionKey: session, controllerKey: "", runID: runID)))
+            }
+        }
         catch let r as Refused {
             // Never admitted: say so durably, so reconcile reports it stopped and the task stays retryable.
             try? await update(.handle(RunHandle(sessionKey: session, controllerKey: Self.controllerKey(runID, "refused"), runID: runID)))
@@ -346,10 +359,14 @@ public struct HermesHarness: Harness {
     }
 
     public func cancel(_ work: Work, topic: Topic) async throws -> Bool {
-        guard work.runID != nil else { return true }
-        guard let server = await server(work) else { return false } // Admission unknown (open question 7).
+        // Never dispatched, or another harness's run (a harness switch): nothing here to stop.
+        guard work.runID?.hasPrefix("yorozu-") ?? false else { return true }
+        guard let server = await server(work) else { return Self.forgotten(work) } // Admission unknown (open question 7).
         return server == "refused" ? true : await stop(Self.workerProfile, server)
     }
+    /// A run whose server id was never recorded is taken as gone once Hermes has forgotten its idempotency key (24 h),
+    /// counted from when the work was created (no later than its run's stamp).
+    static func forgotten(_ work: Work) -> Bool { Date().timeIntervalSince1970 - work.created > 86400 }
     /// `/stop`, then poll until the run settles (about 30 s); true once it is terminal or Hermes no longer knows it.
     func stop(_ p: String, _ server: String) async -> Bool {
         _ = try? await client.call(p, "POST", "/v1/runs/\(server)/stop")
@@ -361,7 +378,9 @@ public struct HermesHarness: Harness {
     }
 
     public func reconcile(_ work: Work, topic: Topic) async throws -> RunStatus {
-        guard let server = await server(work) else { return .unknown }
+        guard let id = work.runID else { return .unknown }
+        guard id.hasPrefix("yorozu-") else { return .stopped } // Another harness's run: not reachable from here.
+        guard let server = await server(work) else { return Self.forgotten(work) ? .stopped : .unknown }
         if server == "refused" { return .stopped }
         guard let run = try await client.status(Self.workerProfile, server) else { return .unknown }
         switch run.status {

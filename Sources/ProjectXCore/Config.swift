@@ -186,13 +186,16 @@ public struct Config: Sendable, Equatable {
     }
     /// The Gateway URL rule the CLI transport enforces: loopback host, ws or wss, no credentials, path, query or fragment.
     public static func isLoopbackGateway(_ target: String) -> Bool {
-        guard let url = URLComponents(string: target) else { return false }
-        return ["ws","wss"].contains(url.scheme ?? "") && ["127.0.0.1","::1","localhost"].contains(url.host ?? "") && url.user == nil && url.password == nil && url.query == nil && url.fragment == nil && ["","/"].contains(url.path)
+        isLoopback(target,schemes: ["ws","wss"])
     }
     /// The Hermes URL rule: loopback host, http or https, no credentials, path, query or fragment.
     public static func isLoopbackHTTP(_ target: String) -> Bool {
+        isLoopback(target,schemes: ["http","https"])
+    }
+    /// IPv6 loopback may come back bracketed ("[::1]") from `URLComponents.host`; port 0 is never a listening port.
+    static func isLoopback(_ target: String,schemes: Set<String>) -> Bool {
         guard let url = URLComponents(string: target) else { return false }
-        return ["http","https"].contains(url.scheme ?? "") && ["127.0.0.1","::1","localhost"].contains(url.host ?? "") && url.user == nil && url.password == nil && url.query == nil && url.fragment == nil && ["","/"].contains(url.path)
+        return schemes.contains(url.scheme ?? "") && ["127.0.0.1","::1","[::1]","localhost"].contains(url.host ?? "") && url.port != 0 && url.user == nil && url.password == nil && url.query == nil && url.fragment == nil && ["","/"].contains(url.path)
     }
     /// Best effort: the line that sets `key` (or its table header).
     static func line(of key: String, in text: String) -> Int? {

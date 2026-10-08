@@ -89,7 +89,15 @@ struct HermesClient: Sendable {
     /// then returns the run's terminal status. Frames are `id: <seq>` + `data: <json>` (the event name is the payload's
     /// `event`, its sequence `seq`); `:` lines (`: open`, `: keepalive`, `: stream closed`) are skipped. Once the server has
     /// dropped the buffer (404, 300 s after the last subscriber left) or the stream keeps failing, it polls the status.
+    /// A key refused (401/403) after the run started stops the run first; if even the stop is refused, the run may go on
+    /// unwatched, so the work ends uncertain rather than failed.
     func follow(_ profile: String, run: String, onEvent: ([String:Any]) async throws -> Void) async throws -> HermesRun {
+        do { return try await stream(profile, run: run, onEvent: onEvent) } catch HarnessError.notReady(let text) {
+            if (try? await call(profile, "POST", "/v1/runs/\(run)/stop"))?.status == 200 { throw HarnessError.notReady(text) }
+            throw ProjectError.uncertain(text + " Run \(run) may still be going; reconcile before retry.")
+        }
+    }
+    private func stream(_ profile: String, run: String, onEvent: ([String:Any]) async throws -> Void) async throws -> HermesRun {
         var last: Int?, failures = 0
         streaming: while failures < 10 {
             try Task.checkCancellation()

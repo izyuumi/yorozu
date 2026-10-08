@@ -122,6 +122,8 @@ public struct RoutingInput: Codable, Sendable {
     public struct WorkView: Codable, Sendable { public var id: String; public var topicID: String; public var state: String; public var executor: String?; public var instruction: String; public var error: String? }
     public struct MemoryView: Codable, Sendable { public var id: String; public var title: String; public var excerpt: String }
     /// Instructions, printed once above the context data and never encoded into it.
+    /// The offered coding executor ids, printed in the contract and never encoded.
+    public var executors: [String] = []
     public var policy: String = ""; public var message: String; public var recent: [MessageView]; public var topics: [TopicView]
     public var work: [WorkView]; public var latestTopic: String?; public var memory: [MemoryView]
     public var sourceMessageID: String? = nil

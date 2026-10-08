@@ -130,7 +130,7 @@ import ProjectXCore
         let h = resolved.config.harness, box = settingsBox
         let previous = try await store.lastHarness().flatMap(Config.HarnessKind.init(rawValue:)) ?? .openclaw
         var kind = h.kind
-        if kind != previous, try await store.snapshot().work.contains(where: { !$0.suppressed && ($0.active || $0.state == "uncertain") }) {
+        if kind != previous, try await store.snapshot().work.contains(where: { $0.active || $0.state == "uncertain" }) { // suppressed too, until its stop is confirmed
             kind = previous
             switchNotice = "Still on \(previous.rawValue): work started there is running. Relaunch Yorozu once it finishes to switch to \(h.kind.rawValue)."
         }
