@@ -340,3 +340,42 @@ Source: the plan comment on issue #311, taking three of its open questions at th
 - Sub-chat gap (open question 1): the Mac sub-chat UI is removed now, although phone sub-chats arrive only with #313; the data stays in the store.
 - Native transport not enrolled or not reachable (open question 2): that launch falls back to the CLI transport with a one-line notice and "Connect…"; the composer is never blocked for it.
 - What counts as a question (open question 5): routing questions are stored as kind `question` with a question notice code instead of `failure`; the secretary's `clarify` replies stay `conversation` with notice code `question`.
+
+## 2026-10-09 — Settings window and config.toml
+Source: owner decisions recorded in issue #312 ("projectx: Settings window and config.toml …"), Decisions section.
+
+- Layered settings: sections for everyone, plus an Advanced section behind a toggle.
+- Settings file: settings live in `config.toml` in Yorozu's data folder (Application Support), which keeps them separate from v1 by construction. Environment variables still override for development. TOML comes from a small SwiftPM dependency (the default) or a minimal parser.
+- MCP servers: the list moves into `config.toml` as `[mcp_servers.<name>]` tables (`command`, `args`) and replaces `mcp-servers.json`.
+- Models per role: editable in Settings › Advanced, with pickers filled from the harness's allowed models. Smart defaults are computed from harness metadata with no hard-coded model ids: secretary and extraction take the cheapest allowed model with enough window and output cap; workers take the harness agent's primary model, else the most capable (highest-priced) one; the stronger review takes the most expensive allowed model that differs from the secretary's. Defaults are recomputed at launch when there is no explicit choice; the rule inputs are configurable in `config.toml`, and explicit choices always win. This supersedes the fixed role assignment in #310 decision 4; that issue's `contextWindow: 272000` change stays.
+- Self-configuration by chat: workers edit `config.toml` directly and the app watches and reloads it. An invalid edit keeps the last valid config and posts a notice. Security-relevant settings need the user's yes in the chat first (a prompt rule): the MCP servers, relay URL, direct connection, harness choice and Advanced items.
+- Storage section: the memory folder and the files folder, with Show in Finder and sizes. No in-app memory view.
+- Settings window: a standard macOS Settings window (SwiftUI `Settings` scene), opened with ⌘, and from the menu-bar menu, with tabs General (start at login, keep Mac awake, notifications, appearance, YOLO, send key, global shortcut), Devices (paired phones with names, online or last seen, remove; Pair iPhone lives here and mints a code only when pressed), Connection (relay status, relay URL, direct-path diagnostics), Storage and Advanced.
+- Relay URL: editable in Settings › Connection, with a warning that all phones must pair again.
+- Advanced: transport, Gateway URL (loopback only) and dev repo path are editable; run mode, data folder and agent id are read-only; native-transport enrollment lives here.
+- YOLO mode: off by default, offered during onboarding and switchable in General. It lifts the "ask first" rules for outward-facing steps the user requested in apps and for the risky cua tools. Settings changes and unrequested actions still need the user's word. Hard limits always hold: no secrets, never take focus, never touch other agents' sessions.
+- iPhone Settings gains a Connection section: Direct connection toggle, diagnostics (path, last error), relay host, Mac key fingerprint, paired since, Mac and phone versions, and Copy diagnostics. Remove host and Repair also remove the old record on the Mac.
+- Owner-specific values move into `config.toml` with generic defaults in code: the routing hints (`personal_knowledge`, `self_topic`), the dev repo path and the relay URL. This generalizes the 2026-10-07 rule that the app's own work stays under one PROJECTX topic to the topic `self_topic` names. The Mac signing identity becomes a local, gitignored build setting; git history is left as it is.
+- Start at login is on by default, and onboarding says so.
+- Notification destination: the user chooses where notifications appear: this Mac, phones, or later a Mac client.
+- Phone names (default): phones are named by model ("iPhone 17 Pro") and can be renamed on the Mac; iOS hides the user-assigned device name without a special entitlement.
+- Ownership of later pieces: the YOLO choice and start at login are onboarding steps in #317. Device management is #312's, not #313's.
+
+## 2026-10-09 — Settings phase A: implementer readings (not owner decisions)
+Source: the plan comment on issue #312, which splits it into phase A (`config.toml`, core, harness, app wiring, signing and the devices backend) and phase B (the Settings tabs, the iPhone Settings › Connection section and Copy diagnostics, after the owner approves the Claude Design mockups), and takes the issue's open questions 1–13 at their proposed defaults. The owner has not answered them; [status.md](../status.md#open-items) keeps the ones that matter as open items, marked as defaults taken.
+
+1. `config.toml` sits in the data root in use, so fixture and `PROJECTX_DATA` runs get their own file.
+2. Yorozu rewrites the whole file in a canonical layout with its own comment per key; hand-written comments are not kept, unknown keys are kept as data, and Settings writes are read-modify-write.
+3. A model without a price or output cap is left out of the cheapest and most-expensive picks; with no priced model every role falls back to the agent's primary model. Price and output cap come from the read-only `config.get` (`models.providers.<provider>.models[]`), because `models.list` carries neither.
+4. Rule inputs: `min_context_tokens = 32000` and `min_output_tokens = 16000`; a model's price is input plus output price per million tokens.
+5. Each coding executor's automatic model follows the worker rule among allowed models its runtime can run.
+6. A changed model reaches existing topic, controller and coding sessions at their next use through `sessions.patch`, never by re-creating them.
+7. The worker default on the owner's machine would move to the agent's primary model; the owner checks the computed values. Meanwhile the owner's local `config.toml` sets the model ids in use before #312.
+8. `yolo` counts as security-relevant, and every security-relevant change written to `config.toml` posts "Settings changed: <keys>".
+9. The Advanced tab appears only while "Show Advanced settings" is on, and shows the MCP list read-only with Show `config.toml` in Finder (phase B).
+10. Generic routing defaults: `personal_knowledge = ""`, which drops the clause, and `self_topic = "Yorozu"`; the relay URL default stays the hosted relay.
+11. An empty `dev_repo` ends coding work with a plain notice ("Set a repository in Settings › Advanced"); the owner's local file sets it.
+12. The phone sends its model name in the existing optional `computerName` of its peer-info claim, so 0.6.x stays wire-compatible and old phones show as "iPhone".
+13. A phone is online while it has an authenticated session on the current relay connection; last seen is the time of its last authenticated frame.
+
+Added in implementation: a model whose cost is 0 for input and output, as a local proxy may declare, counts as unknown price, not free, so it never wins the cheapest pick by accident.

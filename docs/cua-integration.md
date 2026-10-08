@@ -7,9 +7,9 @@ R3 is cua (https://cua.ai) integration so Yorozu can operate the user's computer
 Workers operate the Mac through the **cua-driver MCP server**, under rules in their prompts (owner decisions, 2026-10-08):
 
 - **CuaDriver is a separate install** (`/Applications/CuaDriver.app`). Yorozu neither bundles it nor starts its daemon: `cua-driver mcp` is a proxy that launches the daemon through LaunchServices (`open -n -g -a CuaDriver --args serve`) when the socket is not answering, so the TCC grants stay with `com.trycua.driver`. The installer registers no MCP client; its `~/.local/bin/cua-driver` link is optional.
-- **Yorozu lists it as an MCP server** in its own `mcp-servers.json`, which the harness adapter mirrors into OpenClaw as `yorozu-cua-driver` ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). Yorozu adds no process and no Swift dependency.
+- **Yorozu lists it as an MCP server** in its own list (`[mcp_servers]` in `config.toml`, [setup.md](setup.md#mcp-servers)), which the harness adapter mirrors into OpenClaw as `yorozu-cua-driver` ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). Yorozu adds no process and no Swift dependency.
 - **Routing**: "operate my Mac / use app X" goes to a thinking worker (no executor), and new coding work that needs an app or a browser goes to Codex unless the user names Claude Code (continuing work keeps its executor). Thinking and Codex workers get the tools; Claude Code does not (an OpenClaw gap the owner left as is, [openclaw-integration.md](openclaw-integration.md#mcp-servers)).
-- **Rules** live in `OpenClawHarness.cuaRules(task)` (`Harness.swift`), included in both worker contracts. They follow [Worker rules](#worker-rules) below. There is no separate executor or lane, so tasks in different topics or with different executors can run at once, even on the same app; see [Concurrency](#concurrency).
+- **Rules** live in `OpenClawHarness.cuaRules(task, yolo:)` (`Harness.swift`), included in both worker contracts. They follow [Worker rules](#worker-rules) below, with the [YOLO](#yolo-mode) variant when `general.yolo` is on. There is no separate executor or lane, so tasks in different topics or with different executors can run at once, even on the same app; see [Concurrency](#concurrency).
 
 The `cua` CLI and the cua SDK manage sandboxes, Spaces and VMs; use them for isolated computers, not for driving the host desktop.
 
@@ -69,9 +69,18 @@ Limits, from upstream docs and `describe` output, not yet exercised on the host:
 - Consent: a topic request authorizes reading and operating only the apps it names. Sending, purchasing, posting, deleting, submitting forms, changing settings or credentials, and any other outward-facing action need the user's confirmation in the chat first.
 - Scope: bind each step to one (pid, window_id). Use desktop-wide capture (`get_desktop_state`) only when the task needs it. Work in the run's own `session` (`yorozu-<8 random hex characters>`, fresh per run), pass it on every call that takes one, and close it with `end_session`; revive an ended one with `start_session`, and switch to `<label>-2` (then -3) if CuaDriver says the label is not available to this transport (a recycled proxy).
 - Sensitive data: screenshots, AX trees and `clipboard_read` can expose passwords, messages and tokens. Keep them out of memory, results and logs; skip password fields; type no secrets.
-- Approval per use: `kill_app`, `clipboard_write`, `set_config`, `replay_trajectory`, `start_recording`, browser downloads and file uploads. The owner alone runs `update --apply`, `permissions grant`, `skills install` and `stop`.
+- Approval per use: `kill_app`, `clipboard_write`, `set_config`, `replay_trajectory`, `start_recording`, `install_ffmpeg`, browser downloads and file uploads (lifted, with requested outward-facing steps, in [YOLO mode](#yolo-mode)). The owner alone runs `update --apply`, `permissions grant`, `skills install` and `stop`.
 - The user's input: use background delivery while the user is typing, announce any focus change before it happens, and stop if the user takes over the target window.
 - Verification: a successful transport call is not success; confirm with `verify_state` or a fresh snapshot. After a timeout or a call that returned no result, check the effect with a fresh snapshot before retrying: the call may still run.
+
+### YOLO mode
+
+`general.yolo` in `config.toml` (owner decision, 2026-10-09; off by default, offered during onboarding with #317 and switchable in Settings › General with phase B of #312). With it on, from the next task:
+
+- Lifted: the ask-first rule for outward-facing steps the request asks for in an app (sending, posting, purchasing, deleting, submitting), and for the approval-per-use tools `kill_app`, `clipboard_write`, `set_config`, `replay_trajectory`, `start_recording`, `install_ffmpeg`, `browser_download` and `browser_set_input_files`. The worker does them when the task needs them.
+- Still asked: changing settings or credentials, and any step the request did not ask for.
+- Hard limits, YOLO or not: no secrets typed and no password fields; background delivery, so no `bring_to_front`, foreground delivery or focus-taking shortcuts without the user's approval of that step; never reading or messaging other agents' sessions. The owner-only commands above stay the owner's.
+- `yolo` is a security-relevant key: a worker asks before turning it on, and a change posts "Settings changed: general.yolo".
 
 ## Concurrency
 
