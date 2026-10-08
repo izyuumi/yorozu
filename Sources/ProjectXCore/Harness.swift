@@ -159,7 +159,7 @@ public struct GatewayRPC: Sendable {
 public struct OpenClawHarness: Harness {
     public let name = "Configured OpenClaw · live acceptance unverified"
     public var agentID: String { agent }
-    public var agent: String; public var secretaryModel: String; public var workerModel: String; public var rpc: GatewayRPC; public var workspace: URL
+    public var agent: String; public var secretaryModel: String; public var workerModel: String; public var reviewModel: String; public var rpc: GatewayRPC; public var workspace: URL
     /// R2 coding workers. `repo` is the dev checkout whose OWNER_DECISIONS.md coding workers may read.
     public var claudeModel = "anthropic/claude-opus-5-5"; public var codexModel = "openai/gpt-6-sol"; public var repo: URL?
     /// Yorozu's MCP server list (`MCPServers`); nil leaves OpenClaw's own MCP setup untouched.
@@ -168,12 +168,14 @@ public struct OpenClawHarness: Harness {
     /// Computer use through cua (docs/cua-integration.md, Worker rules), for thinking and coding workers alike. The
     /// cua session label is fresh per run: CuaDriver ties a label to the proxy that first used it, and proxies get recycled.
     static func cuaRules(_ session: String) -> String { "Operating the Mac: use only the cua-driver MCP tools (their names contain cua-driver; load them with your tool search if they are deferred), never the cua-driver CLI. Touch only the apps the request names, one (pid, window_id) at a time, in background delivery: no bring_to_front, foreground delivery, focus-taking shortcuts or get_desktop_state unless the user approved that step. Pass session \"\(session)\" on every call that takes one and end_session it when done; if a call says a session has ended, call start_session with the id it names, then retry; if it says a session is not available to this transport, use \"\(session)-2\" (then -3, and so on) from then on. Take a fresh get_window_state before each action and confirm each result with verify_state or a fresh snapshot; a successful call is not success. If a call times out or fails without a result, take a fresh get_window_state and check its effect before retrying: CuaDriver may still run the timed-out call, so never retry blindly. In an app, before sending, posting, purchasing, deleting, submitting, changing settings or credentials, or any other outward-facing step, stop and ask the user in the first sentence of your final text, unless the instruction says the user confirmed that exact step. Ask the same way before kill_app, clipboard_write, set_config, replay_trajectory, start_recording, install_ffmpeg, browser_download and browser_set_input_files; call check_permissions only with prompt false. Never type secrets or touch password fields, and keep screen, accessibility-tree and clipboard content out of progress messages, results and memory beyond what the task needs. Stop if Accessibility is not granted or the user takes over the window." }
-    public init(workspace: URL, agent: String = "projectx", secretaryModel: String = "openai-pool/gpt-6-astra", workerModel: String = "openai-pool/gpt-6-sol", rpc: GatewayRPC = GatewayRPC()) {
-        self.workspace = workspace; self.agent = agent; self.secretaryModel = secretaryModel; self.workerModel = workerModel; self.rpc = rpc
+    public init(workspace: URL, agent: String = "projectx", secretaryModel: String = "openai-pool/gpt-6-astra", workerModel: String = "openai-pool/gpt-6-sol", reviewModel: String = "openai-pool/gpt-6-sol", rpc: GatewayRPC = GatewayRPC()) {
+        self.workspace = workspace; self.agent = agent; self.secretaryModel = secretaryModel; self.workerModel = workerModel; self.reviewModel = reviewModel; self.rpc = rpc
     }
     private func text(_ envelope: [String:Any]) throws -> String {
+        let meta = (envelope["result"] as? [String:Any])?["meta"] as? [String:Any] ?? [:]
+        // A failed run still carries result.meta.error (status "error"); these two kinds repeat on a plain retry.
+        if let kind = (meta["error"] as? [String:Any])?["kind"] as? String, ["context_overflow","compaction_failure"].contains(kind) { throw ProjectError.overflow("The model's context window was exceeded (\(kind)).") }
         guard envelope["status"] as? String == "ok", let result = envelope["result"] as? [String:Any] else { throw ProjectError.uncertain("Gateway did not confirm successful completion.") }
-        let meta = result["meta"] as? [String:Any] ?? [:]
         guard meta["error"] == nil, meta["aborted"] as? Bool != true, result["aborted"] as? Bool != true else { throw ProjectError.invalid("Gateway reported model error/abort.") }
         let payloads = result["payloads"] as? [[String:Any]] ?? []
         guard !payloads.contains(where: { $0["isError"] as? Bool == true }) else { throw ProjectError.invalid("Gateway error payload.") }
@@ -207,7 +209,7 @@ public struct OpenClawHarness: Harness {
     }
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision {
         let prompt = Self.routingPrompt(input,stronger: stronger)
-        return try JSONDecoder().decode(Decision.self,from: Data(try await model(prompt,model: stronger ? workerModel : secretaryModel,sourceMessageID: input.sourceMessageID).utf8))
+        return try JSONDecoder().decode(Decision.self,from: Data(try await model(prompt,model: stronger ? reviewModel : secretaryModel,sourceMessageID: input.sourceMessageID).utf8))
     }
     public static func routingPrompt(_ input: RoutingInput, stronger: Bool) -> String {
         """
@@ -234,6 +236,7 @@ public struct OpenClawHarness: Harness {
             }
             try await applyMCP(key,entry: entry) // the topic key is created last
         }
+        _ = try await compactTopic(input,force: false,update: update)
         let contract = "You are a knowledge worker. Emit only public progress, no hidden reasoning. Final ONLY JSON {\"text\":string,\"appliedRevision\":integer}. Echo the highest applied amendment revision. Use your tools (shell, files, web) to do what the user asks yourself, end to end; never hand the user steps you can do, and ask only for what only they can do (logins, approvals, secrets). Never take destructive or outward-facing actions the user did not ask for. Never read or message other agents' sessions. Code changes to the PROJECTX repo (your default directory is the owner's live checkout) belong to a coding worker; never run its tests or CI. " + Self.cuaRules("yorozu-" + identifier().prefix(8)) + " You may instead return {\"memoryCall\":{\"tool\":\"memory.search|memory.read|memory.write\",\"path\":relative UUID.md,\"query\":optional,\"markdown\":complete canonical Markdown,\"expectedSHA256\":read hash or null for create}}. Only app-mediated scoped memory writes. Read before edits, reconcile conflicts, retain attribution. Never claim a failed write succeeded. Markdown first line is JSON metadata (id,title,topicID,sources,evidence,knowledgeType,attribution,epistemicStatus,created,updated,lineage), then blank line/body. Generated notes must remain assistant/generated_analysis/unverified. Six operations maximum."
         var wire = try encoded(input) + "\n" + contract
         for step in 0...6 {
@@ -251,7 +254,10 @@ public struct OpenClawHarness: Harness {
             if let history = try? await rpc.call("chat.history",["sessionKey":key,"limit":10,"maxChars":64000]) {
                 for event in Self.visibleEvents(history,task: input.work.id,run: runID) { try? await update(.event(event)) }
             }
-            let answer = try text(result)
+            let answer: String
+            do { answer = try text(result) } catch ProjectError.overflow {
+                throw ProjectError.overflow(try await compactTopic(input,force: true,update: update) ? "This topic's session ran out of context. Yorozu compacted it, so asking again should now work." : "This topic's session is too long for the model and could not be compacted. Start a new topic for this request.")
+            }
             if let object = try JSONSerialization.jsonObject(with: Data(answer.utf8)) as? [String:Any], let request = object["memoryCall"] {
                 guard object.count == 1, step < 6 else { throw ProjectError.invalid("Memory operation bound reached; prior writes retained.") }
                 let call = try JSONDecoder().decode(MemoryCall.self,from: JSONSerialization.data(withJSONObject: request))
@@ -307,9 +313,26 @@ public struct OpenClawHarness: Harness {
     public func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal] {
         if sensitive(message.body) { return [] }
         let policy = "Automatically retain useful personal facts/preferences/decisions AND useful topic knowledge. ONLY JSON array of proposals: sourceID,quote(exact substring),title,body,knowledgeType(user_fact/user_preference/user_decision/user_belief/source_claim/generated_analysis/topic_synthesis/tentative_hypothesis),attribution(user/assistant/quoted_source),epistemicStatus(user_stated/unverified/tentative),replacesID(optional ONLY explicit same-type same-attribution correction). Source claims and assistant analysis are not user beliefs or verified facts. Useful hypotheses stay tentative. Never store credentials. No useful knowledge => []. Max 4 proposals."
-        var bounded = message; if bounded.body.count > 5000 { bounded.body = String(bounded.body.prefix(2500)) + "\n[excerpt gap]\n" + String(bounded.body.suffix(2500)) }
-        let prompt = policy + "\nSource:" + (try encoded(bounded)) + "\nExisting relevant memory:" + (try encoded(existing))
-        return try JSONDecoder().decode([MemoryProposal].self,from: Data(try await model(prompt,model: secretaryModel,sourceMessageID: message.id).utf8))
+        let encoder = JSONEncoder(); encoder.outputFormatting = .withoutEscapingSlashes
+        // Existing memory as slim items within 4500 bytes, then the body excerpted (head and tail) to what is left of rawPromptCap.
+        var slim: [[String:String]] = []
+        for hit in existing {
+            let next = slim + [["id":hit.id,"title":hit.title,"excerpt":utf8Excerpt(hit.document.body,bytes: 600)]]
+            if try encoder.encode(next).count > 4500 { break }; slim = next
+        }
+        let memory = String(decoding: try encoder.encode(slim),as: UTF8.self)
+        var budget = message.body.utf8.count, prompt = ""
+        for _ in 0..<4 { // JSON escaping can grow the body; shrink by the measured excess.
+            var bounded = message; bounded.body = utf8Excerpt(message.body,bytes: budget)
+            prompt = policy + "\nSource:" + String(decoding: try encoder.encode(bounded),as: UTF8.self) + "\nExisting relevant memory:" + memory
+            let excess = prompt.utf8.count - rawPromptCap
+            if excess <= 0 { break }; budget -= excess
+            guard budget > 200 else { break }
+        }
+        guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Extraction prompt is \(prompt.utf8.count) bytes even with the message excerpted; the cap is \(rawPromptCap).") }
+        let reply = try await model(prompt,model: secretaryModel,sourceMessageID: message.id)
+        do { return try JSONDecoder().decode([MemoryProposal].self,from: Data(reply.utf8)) }
+        catch { throw ProjectError.invalid("Extraction reply is not a valid proposal array (\(reply.utf8.count) bytes): \(utf8Prefix(String(describing: error),bytes: 300))") }
     }
     /// Only actual public lifecycle/tool-name facts for the exact locally owned run. No text deltas, reasoning or arguments.
     public static func publicEvent(_ raw: String, session: String, run: String, task: String) -> WorkerEvent? {
@@ -407,6 +430,37 @@ extension OpenClawHarness {
     }
 }
 
+// MARK: - Context budgets: compaction of thinking topic sessions (owner decisions 1–2, 5).
+extension OpenClawHarness {
+    /// Usable window: the session's configured `contextTokens`, at most the 258,400 tokens the pool models really take.
+    static let usableWindow = 258_400
+    /// `sessions.describe`: the session's transcript id and last-turn token count (nil unless the Gateway marks it fresh).
+    func sessionMark(_ key: String) async throws -> (id: String?, tokens: Int?, window: Int) {
+        let s = try await rpc.call("sessions.describe",["key":key,"agentId":agent])["session"] as? [String:Any] ?? [:]
+        return (s["sessionId"] as? String, s["totalTokensFresh"] as? Bool == true ? s["totalTokens"] as? Int : nil, min(s["contextTokens"] as? Int ?? Self.usableWindow,Self.usableWindow))
+    }
+    /// At half the usable window (or when `force`d after an overflow), `sessions.compact` as its own call, never inside the
+    /// 240 s run. The Gateway refuses it while the session has an active or queued run. A compaction is noted in the
+    /// sub-chat; a failure goes to the main timeline and the task continues. True when the session was compacted.
+    func compactTopic(_ input: WorkerInput,force: Bool,update: @escaping @Sendable (StreamUpdate) async throws -> Void) async throws -> Bool {
+        let key = input.topic.sessionKey; let before: Int?; let after: Int?
+        do {
+            let mark = try await sessionMark(key)
+            guard force || (mark.tokens ?? 0) * 2 >= mark.window else { return false }
+            // perform() refuses a payload with ok:false, which also covers "nothing to compact".
+            let r = try await rpc.call("sessions.compact",["key":key,"agentId":agent])
+            guard r["compacted"] as? Bool == true else { throw ProjectError.uncertain(r["reason"] as? String ?? "not compacted") }
+            before = ((r["result"] as? [String:Any])?["tokensBefore"] as? Int) ?? mark.tokens; after = (r["result"] as? [String:Any])?["tokensAfter"] as? Int
+        } catch {
+            try await update(.notice("Couldn't compact the session of topic “\(input.topic.label)”: \(utf8Prefix(error.localizedDescription,bytes: 300))"))
+            return false
+        }
+        let sizes = before.map { b in after.map { "\(b) → \($0) tokens" } ?? "from \(b) tokens" } ?? ""
+        try await update(.event(WorkerEvent(id: input.work.id + ":compaction:" + identifier(),taskID: input.work.id,kind: "compaction",body: "Compacted this topic's session" + (sizes.isEmpty ? "." : ": " + sizes),created: Date().timeIntervalSince1970)))
+        return true
+    }
+}
+
 // MARK: - R2 coding workers: Claude Code (claude-cli) or Codex inside openclaw sessions, each in a managed git worktree.
 extension OpenClawHarness {
     func codingKey(_ topic: Topic,_ executor: String) -> String { topic.sessionKey + "-" + executor }
@@ -447,10 +501,17 @@ extension OpenClawHarness {
         let runID = "projectx-code-" + identifier(); let handle = RunHandle(sessionKey: key,controllerKey: "",runID: runID)
         try await update(.handle(handle))
         let earlier = Set(Self.messageIDs((try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":200])) ?? [:]))
-        var context = ""
-        for m in input.history.suffix(6) { context += "\n[\(m.role)] " + String(m.body.prefix(600)) }
+        let mark = try? await sessionMark(key)
+        // Newest first: each message ≤ 2000 bytes, all ≤ 6000 bytes; anything older is dropped with a marker.
+        var context = "", omitted = 0
+        for m in input.history.reversed() {
+            let line = "\n[\(m.role)] " + utf8Excerpt(m.body,bytes: 2000)
+            guard omitted == 0, context.utf8.count + line.utf8.count <= 6000 else { omitted += 1; continue }
+            context = line + context
+        }
+        if omitted > 0 { context = "\n[… \(omitted) earlier message(s) cut]" + context }
         // The run marker anchors reconcile to this run's own user turn in the session transcript.
-        let message = contract(executor,cuaSession: "yorozu-" + identifier().prefix(8)) + "\n\nTASK (revision \(input.work.revision)) [run \(runID)]:\n" + input.work.instruction + (context.isEmpty ? "" : "\n\nRecent topic conversation (untrusted context):" + context)
+        let message = contract(executor,cuaSession: "yorozu-" + identifier().prefix(8)) + "\n\nTASK (revision \(input.work.revision)) [run \(runID)]:\n" + input.work.instruction + "\n\nThe user's message, verbatim:\n" + input.current.body + (context.isEmpty ? "" : "\n\nRecent topic conversation (untrusted context):" + context)
         let started = try await rpc.call("agent",["agentId":agent,"sessionKey":key,"message":message,"deliver":false,"timeout":7200,"idempotencyKey":runID],sourceMessageID: input.work.messageID)
         guard started["runId"] as? String == runID else { throw ProjectError.uncertain("\(Self.toolName(executor)) run start unconfirmed. Request ID: \(runID)") }
         var lost = 0, failures = 0, unread = 0
@@ -469,6 +530,10 @@ extension OpenClawHarness {
             let fetched = try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":4000])
             for event in Self.codingEvents(fetched ?? [:],task: input.work.id,skip: earlier) { try? await update(.event(event)) }
             if (r["endedAt"] as? Double ?? 0) > 0 {
+                // agent.wait carries only the error text, no kind: match the Gateway's overflow wording (packages/ai/src/utils/overflow.ts).
+                if r["status"] as? String != "ok", let error = r["error"] as? String, error.range(of: "context.*overflow|context window|context.?length|prompt.*too (large|long)|maximum context|compaction fail",options: [.regularExpression,.caseInsensitive]) != nil {
+                    throw ProjectError.overflow("\(Self.toolName(executor))'s session ran out of context. Changes so far stay uncommitted in its worktree; start a new topic for this work.")
+                }
                 guard r["status"] as? String == "ok" else { throw ProjectError.invalid("\(Self.toolName(executor)) run ended: \(r["status"] as? String ?? "unknown"). Changes so far stay uncommitted in its worktree.") }
                 break
             }
@@ -483,6 +548,12 @@ extension OpenClawHarness {
             let active = r["status"] as? String == "pending" || (info["activeRunIds"] as? [String] ?? []).contains(runID) || info["hasActiveRun"] as? Bool == true
             lost = active ? 0 : lost + 1
             if lost >= 3 { throw ProjectError.uncertain("\(Self.toolName(executor)) run is no longer tracked by the Gateway. Its worktree keeps any uncommitted changes; ask to retry.") }
+        }
+        // Decision 5: the tool compacts its own session. OpenClaw exposes no compaction count, so a new transcript id or
+        // a smaller fresh token count than before the run is taken as one.
+        if let mark, let now = try? await sessionMark(key), (mark.id != nil && now.id != nil && now.id != mark.id) || (now.tokens ?? .max) < (mark.tokens ?? 0) {
+            let sizes = mark.tokens.flatMap { b in now.tokens.map { ": \(b) → \($0) tokens" } } ?? "."
+            try? await update(.event(WorkerEvent(id: input.work.id + ":" + runID + ":compaction",taskID: input.work.id,kind: "compaction",body: "\(Self.toolName(executor)) compacted its session" + sizes,created: Date().timeIntervalSince1970)))
         }
         let full = (try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":64000])) ?? [:]
         var text = Self.finalText(full,skip: earlier) ?? "\(Self.toolName(executor)) finished without a summary."
@@ -547,4 +618,22 @@ extension OpenClawHarness {
         }
         return events
     }
+}
+
+/// At most `bytes` UTF-8 bytes of `s`, cut on a Unicode scalar boundary.
+func utf8Prefix(_ s: String, bytes: Int) -> String {
+    guard s.utf8.count > bytes else { return s }
+    var i = s.utf8.index(s.startIndex,offsetBy: max(bytes,0))
+    while i.samePosition(in: s.unicodeScalars) == nil { i = s.utf8.index(before: i) }
+    return String(s.unicodeScalars[..<i])
+}
+/// At most `bytes` UTF-8 bytes of `s`: head and tail on scalar boundaries around a visible "[… cut]" marker.
+func utf8Excerpt(_ s: String, bytes: Int) -> String {
+    let marker = "\n[… cut]\n"
+    guard s.utf8.count > bytes else { return s }
+    guard bytes > marker.utf8.count * 2 else { return utf8Prefix(s,bytes: bytes) }
+    let half = (bytes - marker.utf8.count) / 2
+    var i = s.utf8.index(s.endIndex,offsetBy: -half)
+    while i.samePosition(in: s.unicodeScalars) == nil { i = s.utf8.index(after: i) }
+    return utf8Prefix(s,bytes: half) + marker + String(s.unicodeScalars[i...])
 }

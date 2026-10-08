@@ -45,7 +45,7 @@ import ProjectXCore
                     try GatewayRPC.enforceAttribution(env)
                     guard env["PROJECTX_AGENT"] == nil || env["PROJECTX_AGENT"] == "projectx" else { throw ProjectError.blocked("R1 uses only the dedicated projectx agent, never personal agents.") }
                     if nativeSelected { nativeClient = try NativeGatewayClient(target: env["PROJECTX_GATEWAY_URL"] ?? "ws://127.0.0.1:18789") }
-                    var live = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: "projectx",secretaryModel: env["PROJECTX_SECRETARY_MODEL"] ?? "openai-pool/gpt-6-astra",workerModel: env["PROJECTX_MODEL"] ?? "openai-pool/gpt-6-sol",rpc: GatewayRPC(native: nativeClient,audit: { try await store.gatewayReceipt($0) }))
+                    var live = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: "projectx",secretaryModel: env["PROJECTX_SECRETARY_MODEL"] ?? "openai-pool/gpt-6-astra",workerModel: env["PROJECTX_MODEL"] ?? "openai-pool/gpt-6-sol",reviewModel: env["PROJECTX_REVIEW_MODEL"] ?? "openai-pool/gpt-6-sol",rpc: GatewayRPC(native: nativeClient,audit: { try await store.gatewayReceipt($0) }))
                     // R2 coding workers (Claude Code / Codex). The dev repo holds the OWNER_DECISIONS.md they may read.
                     live.claudeModel = env["PROJECTX_CLAUDE_MODEL"] ?? live.claudeModel; live.codexModel = env["PROJECTX_CODEX_MODEL"] ?? live.codexModel
                     live.repo = URL(fileURLWithPath: env["PROJECTX_DEV_REPO"] ?? fm.homeDirectoryForCurrentUser.appendingPathComponent("Projects/PROJECTX").path,isDirectory: true)
