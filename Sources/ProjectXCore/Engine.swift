@@ -36,8 +36,7 @@ public actor Engine {
             guard let topic = try? await store.snapshot().topics.first(where: { $0.id == w.topicID }) else { return }
             switch (try? await harness.reconcile(w,topic: topic)) ?? .unknown {
             case .completed(let output):
-                guard let current = try? await store.work(w.id), current.state == "uncertain", !current.suppressed,
-                      let (reply,next) = try? await store.finish(task: w.id,output: output,requeue: true) else { return }
+                guard let (reply,next) = try? await store.finish(task: w.id,output: output,requeue: true,from: "uncertain") else { return }
                 if next != nil { pending.append((w.id,w.executor != nil)); pump() } else if let reply { enqueueExtraction(reply) }
                 return
             case .stopped: break
@@ -250,11 +249,38 @@ public actor Engine {
     }
     private func delegate(_ message: Message,topic: Topic,instruction: String,executor: String? = nil) async throws {
         await settleStops(topic)
+        try await clearUncertain(topic,executor: executor,for: message)
         let existing = try await store.snapshot().work.filter { $0.topicID == topic.id }
         let w = Work(id: identifier(),topicID: topic.id,messageID: message.id,instruction: instruction,state: "queued",revision: 0,runID: nil,controllerKey: existing.last(where: { $0.sessionReady })?.controllerKey,sessionReady: existing.contains(where: { $0.sessionReady }),suppressed: false,result: nil,error: nil,outputRevision: nil,created: Date().timeIntervalSince1970,executor: executor)
         try await store.insertWork(w)
         // No acknowledgment message (owner, 2026-10-08): the toolbar shows running work; the result arrives in the timeline.
         enqueueExtraction(message); pending.append((w.id,executor != nil)); pump()
+    }
+    /// Decision 7: an uncertain run that blocks new work of its executor is reconciled first. Stopped is retired with a
+    /// notice, completed is delivered; running or unknown keeps blocking with a reason, never a duplicate run.
+    /// Active or suppressed blockers keep today's refusal in `insertWork`.
+    private func clearUncertain(_ topic: Topic,executor: String?,for message: Message) async throws {
+        let blockers = try await store.snapshot().work.filter { $0.topicID == topic.id && $0.executor == executor && ($0.active || $0.state == "uncertain") }
+        guard !blockers.contains(where: { $0.active || $0.suppressed }) else { return }
+        for w in blockers {
+            // No run ID means it was never dispatched.
+            switch w.runID == nil ? .stopped : ((try? await harness.reconcile(w,topic: topic)) ?? .unknown) {
+            case .stopped:
+                // Re-checked in the transaction: a concurrent watch() may have settled it meanwhile.
+                guard (try? await store.retireForRetry(w.id)) != nil else { continue }
+                _ = try await store.message(role: "assistant",body: "The earlier task here stopped without finishing, so I closed it and started your new request. Its history stays in this topic.",topic: topic.id,task: w.id,replyTo: message.id,kind: "acknowledgment")
+            case .completed(let output):
+                // Nothing comes back when watch() already delivered it: the transaction re-checks the state.
+                let (reply,next) = try await store.finish(task: w.id,output: output,requeue: true,from: "uncertain")
+                if let reply { enqueueExtraction(reply) }
+                guard next != nil else { continue }
+                // Saved amendments make the finished task active again; it runs first, the new request is not duplicated.
+                pending.append((w.id,w.executor != nil)); pump()
+                throw ProjectError.blocked("The earlier task here finished before your saved change, so I'm applying that change now. Send this again once it's done, or tell me to add it to that task.")
+            case .running: throw ProjectError.blocked("An earlier task here is still running, so I haven't started this to avoid running it twice. Say stop to end it, or send this again once it finishes.")
+            case .unknown: throw ProjectError.blocked("I can't confirm whether an earlier task here is still running, so I haven't started this to avoid running it twice. Say stop to end it, or try again in a few minutes.")
+            }
+        }
     }
     /// Two thinking lanes plus one coding lane, so a long coding run never blocks thinking work.
     private func pump() {
@@ -304,7 +330,9 @@ public actor Engine {
                 }; return
             }
             guard let w = try? await store.failWork(id,error: error.localizedDescription) else { return }
-            _ = try? await store.message(role: "assistant",body: "That task failed: \(error.localizedDescription) Say retry to try again.",topic: w.topicID,task: id,replyTo: w.messageID,kind: "failure")
+            // Overflow would fail the same way again, so it gets no retry offer.
+            var body = "That task failed: \(error.localizedDescription) Say retry to try again."; if case ProjectError.overflow(let text) = error { body = text }
+            _ = try? await store.message(role: "assistant",body: body,topic: w.topicID,task: id,replyTo: w.messageID,kind: "failure")
         }
     }
     private func update(_ id: String,_ value: StreamUpdate) async throws {
@@ -350,6 +378,10 @@ public actor Engine {
                 _ = try await memory.write(path: path,markdown: MemoryDocument(metadata: meta,body: p.body).markdown,expectedSHA256: expected,sources: snapshot.messages)
             }
             try await store.markMemory(source.id,state: proposals.isEmpty ? "no_knowledge" : "saved")
-        } catch { try? await store.markMemory(initial.id,state: "error_no_replay") }
+        } catch {
+            // Bounded reason for diagnosis; dropped if it looks like a secret.
+            let reason = String(error.localizedDescription.prefix(500))
+            try? await store.markMemory(initial.id,state: "error_no_replay",reason: sensitive(reason) ? nil : reason)
+        }
     }
 }

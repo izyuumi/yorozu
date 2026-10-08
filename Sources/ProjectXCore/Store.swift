@@ -28,6 +28,7 @@ public actor Store {
             """)
         }
         migration.registerMigration("r2-executor") { db in try db.execute(sql: "ALTER TABLE work ADD COLUMN executor TEXT") }
+        migration.registerMigration("memory-job-reason") { db in try db.execute(sql: "ALTER TABLE memoryJobs ADD COLUMN reason TEXT") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -100,7 +101,9 @@ public actor Store {
     public func failWork(_ id: String,error: String) throws -> Work? {
         try db.write { db in
             guard var w = try Work.fetchOne(db,key: id), !w.suppressed else { return nil }
-            w.state = w.runID == nil ? "failed" : "uncertain"; w.error = error; try w.update(db); return w
+            // Bounded to 1,000 UTF-8 bytes on a character boundary: an uncertain row may outlive many routing turns.
+            var bounded = error.prefix(1000); while bounded.utf8.count > 1000 { bounded.removeLast() }
+            w.state = w.runID == nil ? "failed" : "uncertain"; w.error = String(bounded); try w.update(db); return w
         }
     }
     public func retireForRetry(_ id: String) throws {
@@ -150,8 +153,10 @@ public actor Store {
     /// Amendments live steering did not admit (or did not confirm) become a follow-up turn of the SAME task and
     /// session, atomically with completion. Returns the work to run again, or the delivered result.
     /// `requeue` hands the follow-up to the worker queue (retry of a reconciled run) instead of the running executor.
-    public func finish(task: String, output: WorkerOutput, requeue: Bool = false) throws -> (reply: Message?, followUp: Work?) {
+    /// `from`: deliver only if the work is still in that state and unsuppressed, else nothing (a concurrent reconcile won).
+    public func finish(task: String, output: WorkerOutput, requeue: Bool = false, from state: String? = nil) throws -> (reply: Message?, followUp: Work?) {
         try db.write { db in
+            if let state { guard let w = try Work.fetchOne(db,key: task), w.state == state, !w.suppressed else { return (nil,nil) } }
             if var w = try Work.fetchOne(db,key: task), !w.suppressed {
                 let open = try Amendment.fetchAll(db,sql: "SELECT * FROM amendments WHERE taskID=? AND (state IN ('pending','pending_reconciliation') OR (state='accepted' AND revision>?)) ORDER BY revision",arguments: [task,output.appliedRevision])
                 if !open.isEmpty {
@@ -188,5 +193,6 @@ public actor Store {
         try m.insert(db); return m
     }
     public func memoryProcessed(_ id: String) throws -> Bool { try db.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM memoryJobs WHERE messageID=?", arguments: [id]) ?? 0 > 0 } }
-    public func markMemory(_ id: String, state: String) throws { try db.write { try $0.execute(sql: "INSERT OR REPLACE INTO memoryJobs VALUES (?,?)", arguments: [id,state]) } }
+    /// `reason`: why an `error_no_replay` job failed, already bounded and screened by the caller.
+    public func markMemory(_ id: String, state: String, reason: String? = nil) throws { try db.write { try $0.execute(sql: "INSERT OR REPLACE INTO memoryJobs(messageID,state,reason) VALUES (?,?,?)", arguments: [id,state,reason]) } }
 }
