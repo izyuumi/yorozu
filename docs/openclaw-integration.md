@@ -4,7 +4,7 @@ How the Mac app calls the local OpenClaw Gateway, and the Gateway behaviours the
 
 ## Transport
 
-The default transport runs the CLI once per call (`GatewayRPC.perform` in `Harness.swift`):
+Live mode uses the native WebSocket client by default ([Native transport](#native-transport)). The CLI transport runs when `PROJECTX_TRANSPORT=cli`, and for any launch whose native client is not enrolled or does not connect within 3 s. It runs the CLI once per call (`GatewayRPC.perform` in `Harness.swift`):
 
 ```sh
 /usr/bin/env openclaw gateway call <method> --json --expect-url <target> --timeout 260000 --params '<json>' [--expect-final]
@@ -16,7 +16,7 @@ The default transport runs the CLI once per call (`GatewayRPC.perform` in `Harne
 - Stderr is kept in memory (≤ 32 KB) only to pick a diagnostic category. A non-zero exit becomes `Gateway CLI failed [exit=<n>, category=<category>]: <code> <message>`, where code and message come from the JSON error envelope on stdout (the message is dropped if it looks like a secret). Categories: `model-override-not-authorized`, `caller-attribution-restriction`, `scope-denied`, `device-pairing-required`, `authentication-refused`, `request-schema`, `gateway-unreachable`, `gateway-target-mismatch`, `deadline-or-timeout`, `executable-or-runtime`, `unclassified-refusal-or-disconnect`. A CLI that cannot start reports `executable-unavailable`.
 - Nothing streams over this transport: results and sub-chat progress arrive when a call returns.
 
-`PROJECTX_TRANSPORT=native` switches to the WebSocket client in `NativeGateway.swift`; see [Native transport](#native-transport).
+The transport is chosen once per launch: a launch that fell back to the CLI keeps it until the next launch, even after a later enrollment.
 
 ### Launch environment
 
@@ -105,12 +105,26 @@ Every `agent` call writes a `gateway-request` receipt before dispatch; if that w
 
 ## Native transport
 
-Opt-in with `PROJECTX_TRANSPORT=native`. The toolbar gains "Connect native device", which opens an enrollment sheet.
+The default in live mode (`PROJECTX_TRANSPORT` unset or anything but `cli`; `AppModel.connectNative` in `ProjectX.swift`).
 
+- At launch: with no stored device token (`NativeGatewayClient.isEnrolled`, a Keychain read), the client does not dial, since a connect would store a fresh key and fail. With a token it connects with a 3 s handshake deadline instead of the usual 15 s. Either failure makes that launch use the CLI, and the popover shows "Native Gateway not connected · using the CLI this launch" with the error as its tooltip and a "Connect…" link to Settings. The composer is never blocked for it.
+- Enrollment is the Gateway tab of the Settings window, shown in live mode while the native transport is selected. After a fallback launch a successful enrollment says "Yorozu uses it from the next launch".
+- Redial: after a drop, or a failed connect other than a refusal (`ProjectError.blocked`), the client redials in the background, 1 s doubling to 60 s, until it connects, is refused or `close()` stops it. A call made while disconnected connects first. The fallback path closes the client, so a CLI launch does not redial.
 - Protocol-4 WebSocket client registered as client id `webchat`, mode `ui`, role `operator`, scopes `operator.read` and `operator.write`, with its own Ed25519 key and a v3 signed device proof over the Gateway's challenge.
 - Bootstrap: the Gateway's shared token or password is typed into a `SecureField`, used once and never stored. The Gateway may answer `PAIRING_REQUIRED`; approve that exact request on the host (`openclaw devices list`), then connect again. Only the app's key and the issued device token are kept ([Keychain items](setup.md#keychain-items)).
 - It calls only methods the Gateway advertises, with a 270 s deadline per call. A disconnect fails pending calls as uncertain; nothing is replayed.
-- Only this transport delivers live `agent` lifecycle and tool events, which the thinking worker projects into the sub-chat as they happen (tool names only, never arguments or text deltas).
+- Only this transport delivers live `agent` lifecycle and tool events, which the thinking worker projects into the sub-chat as they happen ([Tool rows](#tool-rows); never arguments or text deltas).
+
+## Tool rows
+
+A sub-chat tool row reads `<server>: <tool>[ in <app>]` and never carries arguments (`toolRow` in `NativeGateway.swift`). It is built from live `tool` events, from `toolCall` / `tool_use` blocks in a thinking step's transcript (`visibleEvents`), and from the coding poll, which still appends a file path.
+
+- Live events: only `phase: "start"` makes a row, since only the start carries `args`; `update` and `result` make none.
+- `tool_call`, Tool Search's call tool, is named by its target: `args.id` (or `toolId`, `name`), with that call's own `args` (or `input`) for the target. The id is a catalog id `<source>:<server>:<name>` (`src/agents/tool-search-catalog.ts`) or a bare name.
+- MCP tool names are `<server>__<tool>` (`src/agents/agent-bundle-mcp-names.ts`); in an `mcp:` catalog id the `<server>__` prefix of the name is dropped. The server loses a `yorozu-` prefix and a `-driver` suffix, so `yorozu-cua-driver` reads `cua`.
+- The app comes only from a `pid` (or `target.pid`) argument: the display name of the outermost `.app` bundle of that process. No other argument is read.
+- A nested call carries `parentToolCallId` and is skipped, in events and in transcript blocks: the `tool_call` row already names it.
+- A row is cut to 200 characters (the app name to 60), and one that looks like a secret is dropped.
 
 ## Probing the Gateway by hand
 
