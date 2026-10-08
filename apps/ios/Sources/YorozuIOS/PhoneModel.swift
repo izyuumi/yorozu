@@ -166,7 +166,9 @@ final class PhoneModel {
     }
 
     /// Tells the old host to forget this phone, then replaces the pairing with a fresh identity for
-    /// the confirmed code, wipes the cache and dials.
+    /// the confirmed code, wipes the cache and dials. `device_remove` must go first: `RelayClient`
+    /// records its channel counter in the pairing's Keychain item before sealing, which fails once
+    /// that pairing is replaced.
     func confirm(_ pending: PendingPairing) async {
         pendingPairing = nil
         await sendDeviceRemove()
@@ -181,6 +183,7 @@ final class PhoneModel {
     }
 
     /// Tells the host to forget this phone (when the link is up; offline it wipes anyway), then wipes.
+    /// The send goes first for the same reason as in `confirm`.
     func remove() async {
         await sendDeviceRemove()
         do { try PairingStore.remove() } catch {
@@ -265,12 +268,12 @@ final class PhoneModel {
         suspend()
     }
 
-    /// Back in the foreground: show the saved status for up to 3 s, and dial (or redial now
-    /// instead of waiting out a backoff) unless the link is already up.
+    /// Back in the foreground: show the saved status (if under 10 minutes old) for up to 3 s, and dial
+    /// (or redial now instead of waiting out a backoff) unless the link is already up.
     func resume() {
         if let saved = savedStatus {
             savedStatus = nil
-            hold(saved.status)
+            if Date().timeIntervalSince(saved.time) < 600 { hold(saved.status) }
         }
         guard state != .paired else { return }
         guard listener != nil else { return start() }
@@ -345,18 +348,22 @@ final class PhoneModel {
         }
     }
 
-    /// Asks for the changes after the cursor, and again every 15 s until a reply page arrives.
+    /// Asks for the changes after the cursor, and again after 15 s with neither a reply page nor a chunk.
     private func requestSync() {
         requestedAfter = cursor ?? 0
         let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: Self.now, agentId: "device",
                                 payload: .syncRequest(SyncRequestData(threadId: "main", afterSeq: cursor)))
+        armDeadline()
+        Task { [relay] in try? await relay?.send(event) }
+    }
+
+    private func armDeadline() {
         pageDeadline?.cancel()
         pageDeadline = Task { [weak self] in
             try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled, let self, self.state == .paired else { return }
             self.requestSync()
         }
-        Task { [relay] in try? await relay?.send(event) }
     }
 
     // MARK: Sending
@@ -370,15 +377,17 @@ final class PhoneModel {
         let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: Self.now, agentId: "device",
                                 payload: .message(MessageData(role: .user, text: text)))
         unreceipted.append(event)
+        // Before the await, so a stored copy arriving meanwhile is never overwritten by this one.
+        merge(Bubble(id: event.id, user: true, ts: event.ts, text: text))
         do {
             try await relay.send(event)
         } catch {
             unreceipted.removeAll { $0.id == event.id }
+            bubbles.removeAll { $0.id == event.id && $0.seq == nil }
             sendError = error.localizedDescription
             return
         }
         sendError = nil
-        merge(Bubble(id: event.id, user: true, ts: event.ts, text: text))
         if draft == text { draft = "" }
     }
 
@@ -433,6 +442,8 @@ final class PhoneModel {
     private func receive(_ event: YorozuEvent) {
         switch event.payload {
         case .chunk(let chunk):
+            // A long set is progress: the reply deadline restarts with each chunk.
+            if requestedAfter != nil { armDeadline() }
             if let whole = chunks.add(chunk) { receive(whole) }
         case .receipt(let receipt):
             unreceipted.removeAll { $0.id == receipt.eventId }
@@ -592,7 +603,8 @@ final class PhoneModel {
     }
 
     /// The history window by the phone's clock and count: the newest 500 stored messages plus every
-    /// one younger than 30 days, and the topics, tasks, amendments and worker events they reach.
+    /// one younger than 30 days, and the topics, tasks, amendments and worker events they reach, plus
+    /// unsuppressed active or uncertain tasks (the Mac's work scope).
     private func trim() {
         let cutoff = Self.now - Self.windowDays * 86_400_000
         let stored = bubbles.filter { $0.seq != nil }
@@ -600,7 +612,10 @@ final class PhoneModel {
         bubbles.removeAll { $0.seq != nil && $0.ts < cutoff && !newest.contains($0.id) }
         let kept = Set(bubbles.map(\.id))
         let keptTasks = Set(bubbles.compactMap(\.taskId))
-        tasks = tasks.filter { kept.contains($0.value.messageId) || keptTasks.contains($0.key) || $0.value.created >= cutoff }
+        tasks = tasks.filter {
+            kept.contains($0.value.messageId) || keptTasks.contains($0.key) || $0.value.created >= cutoff
+                || (!$0.value.suppressed && Self.liveStates.contains($0.value.state))
+        }
         let topicIds = Set(bubbles.compactMap(\.topicId)).union(tasks.values.map(\.topicId))
         topics = topics.filter { topicIds.contains($0.key) || $0.value.created >= cutoff }
         amendments = amendments.filter { tasks[$0.value.taskId] != nil }
@@ -609,6 +624,7 @@ final class PhoneModel {
 
     private static let windowCount = 500
     private static let windowDays = 30
+    private static let liveStates: Set = ["queued", "working", "amendment_pending", "cancellation_requested", "uncertain"]
     private static var now: Int { Int(Date().timeIntervalSince1970 * 1000) }
 }
 

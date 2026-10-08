@@ -67,6 +67,17 @@ public actor Store {
             }
             try db.execute(sql: sql)
         }
+        // A message or work row that starts using a topic re-stamps it (`topics_seq_au` fires on any update), so an old
+        // topic re-entering the window reaches phones with a `seq` past their cursor.
+        migration.registerMigration("sync-topic-touch") { db in
+            let touch = "UPDATE topics SET label=label WHERE id=new.topicID;"
+            try db.execute(sql: """
+            CREATE TRIGGER messages_topic_ai AFTER INSERT ON messages WHEN new.topicID IS NOT NULL BEGIN \(touch) END;
+            CREATE TRIGGER messages_topic_au AFTER UPDATE OF topicID ON messages WHEN new.topicID IS NOT old.topicID AND new.topicID IS NOT NULL BEGIN \(touch) END;
+            CREATE TRIGGER work_topic_ai AFTER INSERT ON work BEGIN \(touch) END;
+            CREATE TRIGGER work_topic_au AFTER UPDATE OF topicID ON work WHEN new.topicID IS NOT old.topicID BEGIN \(touch) END;
+            """)
+        }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -153,7 +164,8 @@ public actor Store {
     /// History window (#313 open question 1, the union): the newest 500 messages plus every message of the last 30 days,
     /// that is every message created at or after `start`. Work: created in it, the task of a windowed message, or
     /// unsuppressed active or uncertain (so it can still be stopped or retried). Topics: created in it or used by
-    /// windowed messages or work. Events and amendments: those of windowed work. Read cursors: always.
+    /// windowed messages or work (re-stamped when one starts using it, `sync-topic-touch`). Events and amendments:
+    /// those of windowed work. Read cursors: always.
     private static func scope(_ table: String) -> String {
         let s = "(SELECT s FROM w)"
         let work = "(created>=\(s) OR id IN (SELECT taskID FROM messages WHERE created>=\(s)) OR (suppressed=0 AND state IN ('queued','working','amendment_pending','cancellation_requested','uncertain')))"

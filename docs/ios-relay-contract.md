@@ -47,11 +47,14 @@ phone. So every frame the Mac sends counts against every phone's 2 MiB window.
 - The Mac keeps reply pages to at most 200 records and 256 KiB of encoded events, except that a
   page always holds at least one record when any remain (a bigger one is then
   [chunked](#chunking)).
-- Chunk sets go out paced: at most 1 MiB of sealed frames a second across all phones, and at
-  most 30 frames a second, leaving the rest of the frame budget for live updates. Anything else
-  for a phone that still has frames waiting queues behind them, in order, at no cost to the pace.
-  Waiting frames are dropped when the relay socket drops or the phone is removed; the phone
-  catches up after it redials.
+- Every sealed frame is charged once against one token bucket across all phones: 512 KiB and
+  30 frames a second, starting and capped at 512 KiB and 30 frames. A frame leaves only when the
+  bucket covers it, else it waits; anything else for a phone that still has frames waiting
+  queues behind them, in order. Handshake thread lists (steps 1 and 3) leave at once, ahead of
+  waiting frames, and are charged even past zero; frames are sealed only as they leave, so
+  sealing order is still wire order. Waiting frames are dropped when the relay socket drops, the
+  phone is removed or says `hello`; its waiting chunk frames are also dropped when it sends a new
+  `sync_request`. The phone catches up from its cursor.
 - A phone the relay still drops redials, gets `.paired` again and asks from its cursor; the
   page that was cut off is sent again whole.
 
@@ -147,7 +150,10 @@ read cursors that belong to it. Older history is reached only through
 - A cursor is stale when it is greater than the Mac's latest sequence (another database) or lower
   than the smallest `seq` of any message in the window (every message the phone could hold
   changed since, so nothing is kept).
-- The phone trims its cache to the window by its own clock and count when it loads and saves it.
+- The phone trims its cache to the window by its own clock and count when it loads and saves it,
+  keeping unsuppressed active or uncertain tasks as the Mac does.
+- A topic that a new message or task starts using is re-stamped, so an old topic re-entering the
+  window reaches the phone.
 
 ## Change sequence
 
@@ -254,8 +260,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device
             payload: .syncRequest(SyncRequestData(threadId: "main", afterSeq: cursor)))
 ```
 
-- Sent on every `.paired`, again whenever a reply page has `more == true`, and again when no
-  reply page arrived within 15 s.
+- Sent on every `.paired`, again whenever a reply page has `more == true`, and again when
+  neither a reply page nor a `chunk` arrived within 15 s (each chunk restarts the deadline).
 - `afterSeq` is the phone's cursor; nil or 0 when it has no cache.
 - `lastSeen` is `[:]` (encoded as `{}`, still required by the decoder); `focusThreadId` and
   `includeCurrent` are unset and ignored.
@@ -394,8 +400,9 @@ YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
 - The phone sends one `task_control` per tap, only while `.paired`, and keeps that button
   disabled until the result or a change to that task arrives. It is never queued or resent.
 - `text` is user-facing; `notice` lets the phone render it in its own language.
-- A replayed `task_control` (same `requestId`) runs again; the Engine's guards make that a no-op
-  with `accepted: false`.
+- A replayed `task_control` (same `requestId`, among the Mac's last 64) gets its first result
+  again and does not run again (`EngineBridge`); an older one runs again, and the Engine's guards
+  make that a no-op with `accepted: false`.
 
 ### `search_request` / `search_result`: search
 
@@ -453,7 +460,8 @@ runs `0..<count`, `count` is 2...256 and `data` is base64 of up to 192 KiB
   unchanged.
 - Phone: feed every `chunk` to one `ChunkAssembler`; `add(_:)` returns the whole event after the
   last chunk, which is then handled as if it had arrived directly. A chunk that does not continue
-  the current set drops the partial set; a dropped page is asked for again by the 15 s deadline.
+  the current set drops the partial set; a dropped page is asked for again by the 15 s deadline,
+  which each chunk restarts.
 - Worker output has no size limit, so a record could pass what 256 chunks (48 MiB) carry. The
   Mac caps every record at 256 chunks less 64 KiB for the page around it: a larger one keeps the
   head of its long text fields (a message's `text`; a task's `instruction`, `result` and `error`;

@@ -17,6 +17,8 @@ actor EngineBridge: RelayBackend {
     private var published: Int64?
     private var working = false, routing = false
     private var main = ThreadSummary.main(0)
+    /// The last 64 `task_control` results, oldest first, for replays of the same `requestId`.
+    private var controlled: [TaskControlResultData] = []
 
     /// Awaited before a phone message reaches the Engine (the model metadata retry, #312).
     private let prepare: @Sendable () async -> Void
@@ -32,9 +34,13 @@ actor EngineBridge: RelayBackend {
             if Self.threads.contains(r.threadId) { _ = try? await engine.store.markRead(thread: r.threadId, message: r.messageId) }
             return []
         case .taskControl(let c):
+            // A replayed request gets its first result again, never a second run.
+            if let done = controlled.last(where: { $0.requestId == c.requestId }) { return [.control(.taskControlResult(done))] }
             let o = await (c.action == .stop ? engine.stopTask(id: c.taskId) : engine.retryTask(id: c.taskId))
-            return [.control(.taskControlResult(TaskControlResultData(requestId: c.requestId, taskId: c.taskId, accepted: o.accepted, text: o.text,
-                                                                      notice: o.notice.map(Self.notice), messageId: o.messageID)))]
+            let result = TaskControlResultData(requestId: c.requestId, taskId: c.taskId, accepted: o.accepted, text: o.text,
+                                               notice: o.notice.map(Self.notice), messageId: o.messageID)
+            controlled = Array((controlled + [result]).suffix(64))
+            return [.control(.taskControlResult(result))]
         case .searchRequest(let r): return [await search(r)]
         case .pageRequest(let r): return [await page(r)]
         case .threadList: return [.control(.threadList(ThreadListData(threads: [main])))]
