@@ -283,3 +283,26 @@ Yorozu keeps the list as data and harness adapters apply it; Yorozu must not bec
 Source: direct owner answers in Claude Code session: "1: Ok 2: ok 3: ok", clarified as "1+2 now, 3 later", and "(a) Leave it" for Claude Code.
 
 CuaDriver serializes physical input one call at a time but not whole sequences, and has no app or window reservation. Workers therefore get a per-run cua session label and a rule to check the effect before retrying a timed-out call. The approved secretary rule (steer a request for an app that running work already operates into that work) was dropped after review: the Engine only steers within the target task's topic, so across topics it fails or files the request in the wrong topic, and within one topic and executor the code already allows one active task. Cross-topic collisions wait for a Yorozu code lane of one, added only if collisions or timeouts show up. Claude Code coding workers stay without Yorozu's MCP servers (OpenClaw does not pass session tool settings to Claude Code runs); new coding work that needs an app or a browser goes to Codex unless the user names Claude Code, and continuing work keeps its executor.
+
+## 2026-10-08 — Context budgets
+Source: owner decisions recorded in issue #310 ("projectx: context budgets — topic-session compaction, prompt caps and memory limits"), Decisions section.
+
+1. Compaction of thinking topic sessions. Before each thinking task Yorozu reads the session's token count (`sessions.describe`, `totalTokens`). At about 50% of the usable window (about 129k of 258.4k), it calls `sessions.compact` as its own step, outside the 240 s task. This replaces the earlier "compaction later" decision.
+2. Notices. A compaction is noted in that topic's sub-chat. A failed compaction posts a short failure notice in the main timeline.
+3. Model window. Set `contextWindow: 272000` for `openai-pool/gpt-6-sol` and `openai-pool/gpt-6-astra` in the OpenClaw config (the owner's global file, approved).
+4. Model roles. The secretary and memory extraction move to `gpt-6-sol`. Thinking workers stay on `gpt-6-sol`. The one stronger routing review moves to `gpt-6-astra`. This closes the "model per role" open item.
+5. Coding sessions. Claude Code and Codex keep compacting their own sessions. Yorozu detects a compaction (the session id changes), notes it in the sub-chat, and gives overflow failures a clear error.
+6. Note history. Past versions stay in the note until it would exceed its cap. Then the oldest move to a per-note history file (`<memory root>/history/<id>.md`) that search and rebuild skip. Nothing is lost.
+7. Stale uncertain tasks. When a new request is blocked by an uncertain task, Yorozu reconciles its run. A run confirmed stopped is retired with a notice and the new work starts. A completed run delivers its result. A run that is still running or unknown keeps blocking, and the user is told why, so no run is duplicated. A dismiss action is for the UI work.
+8. Message cap. It stays at 6,000 bytes. Long text is handled with attachments.
+9. Untouched. OpenClaw's global `contextPruning` stays off.
+
+Decision 1 supersedes the 2026-10-07 choice to keep growing sub-chat sessions and discuss compaction later.
+
+## 2026-10-09 — Context budgets update
+Source: owner comment on issue #310, 2026-10-09 (update from the owner's design session).
+
+- No Yorozu-level size limit on worker output. Yorozu no longer caps or cuts what thinking and coding workers return. The UI renders any length, and long results travel to the phone in chunks. The secretary and memory extraction still get excerpts of results, sized by their own budgets. Removing the existing caps is batch 2 of issue #310, or the UI issue if batch 2 has not landed by then.
+- Model roles get smart defaults, computed from the harness's model metadata with no hard-coded model ids, each overridable in Settings › Advanced: secretary and extraction take the cheapest allowed model with enough window and output cap; workers take the harness agent's primary model, else the most capable (highest-priced) one; the stronger review takes the most expensive allowed model that differs from the secretary's. This supersedes the fixed assignment in decision 4. Decision 3 stays. For batch 1, the stronger routing review gets its own model setting and today's default ids stay.
+- Coding executors come from the harness. Where decision 5 and the coding items say Claude Code and Codex, read "the coding executors the active harness offers". The Hermes adapter issue renames the hard-coded executor values and applies decision 1's compaction to Hermes's own compaction, at the same threshold.
+- The dismiss action for stale uncertain tasks (decision 7) is tracked in the future-topics issue, not in the UI work.
