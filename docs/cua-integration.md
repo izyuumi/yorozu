@@ -75,19 +75,23 @@ Limits, from upstream docs and `describe` output, not yet exercised on the host:
 
 ## Smoke test
 
-Not yet run. The owner opens TextEdit with a new empty document and keeps another app in front, then sends a topic worker:
+Passed on 2026-10-08 (dev build with 7f2e2f0). TextEdit had an empty document open in the background (`open -g -a TextEdit <empty file>`), and this message went into the Yorozu chat:
 
 > Using the cua-driver MCP tools only, find TextEdit's front document window, type `yorozu cua smoke` into it with `type_text` in background mode, then confirm the text with `verify_state` from a fresh `get_window_state`. Don't bring TextEdit to the front, and report the pid, the window_id and the verify result.
 
 Pass: the worker reports a verified match, the frontmost app never changed, and the document contains the text.
 
+Result: the secretary delegated it with no executor; the worker reported pid and window_id (matching `list_windows`) and `verify_state` satisfied over 2 samples. An independent `verify_state` read the text area as `yorozu cua smoke`, and the frontmost app, sampled every second, stayed Yorozu for the whole run. The run took under a minute.
+
 ## Live checks
 
 - 2026-10-08, before the MCP list existed: a throwaway `projectx` session created like a topic session (`openai-pool/gpt-6-sol`, `permissionMode: "full"`, `promptMode: "minimal"`) did not list any cua tool directly but found them with `tool_search`, and `tool_call` ran `get_screen_size` and `check_permissions {prompt: false}` through the daemon (attribution `driver-daemon`, Accessibility and Screen Recording granted, direct capture `not_checked`). No approval step ran.
+- 2026-10-08, with the MCP list: the first worker session after the rebuild wrote `mcp.servers.yorozu-cua-driver` (`enabled: false`; the Gateway hot-reloaded only that path) and patched its session to `{yorozu-cua-driver: true, cua-driver: false, cua: false, computer-use: false}`. That run, an owner request, opened a website in a background Safari window. The sub-chat shows such calls only as `Tool: tool_call` and `Tool: tool_describe`, without the cua tool name.
 
 ## Unverified
 
 - Tahoe direct-capture consent.
+- Computer use from a Codex coding worker, and browser work in Chrome (`browser_input_trust_unavailable` upstream).
 - Every upstream "supported" claim above, on this host.
 
 ## Sources

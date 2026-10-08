@@ -1,6 +1,6 @@
 # Status
 
-As of 2026-10-08, `projectx` at f154d58. Update this file when a part changes state; keep only the current picture. Past decisions are in [history/decisions-log.md](history/decisions-log.md).
+As of 2026-10-08, `projectx` at 7f2e2f0. Update this file when a part changes state; keep only the current picture. Past decisions are in [history/decisions-log.md](history/decisions-log.md).
 
 ## Parts
 
@@ -12,14 +12,14 @@ As of 2026-10-08, `projectx` at f154d58. Update this file when a part changes st
 | Markdown memory | Done; quality unmeasured | Automatic extraction writes `~/Yorozu/memory/knowledge/*.md`; index in Caches (12e0c4f). Extraction quality has not been evaluated. |
 | Coding workers (R2) | Done | Verified live 2026-10-08 from the chat: Claude Code rewrote the README (d7e0b1d) and Codex added a note (bfb15d7); each committed, merged into `projectx`, ran `build_native.sh --restart`, and the relaunched app delivered the result. |
 | iOS client and relay (0.6.x) | Shipped to internal TestFlight; device check pending | Latest upload 0.6.1 (5) after the icon commit; 0.6.1 (4) came before it, and 0.6.0 (10127) is expired. Live 2026-10-08: the Mac registered on the default relay ([setup.md](setup.md#environment-variables)), and a headless phone built on the app's `RelayClient` paired, passed the `yorozu-v2` check, received history, sent a message and got the receipt and the reply. On 2026-10-08 App Store Connect showed 0.6.1 (5) in beta testing for the Internal group. Nobody has tapped through the iOS UI on a device yet. |
-| R3 computer use via cua | Not started | Design only: [cua-integration.md](cua-integration.md). No code on `projectx`. |
+| R3 computer use via cua | Done for thinking workers; Claude Code blocked by an OpenClaw gap | 7f2e2f0: Yorozu owns the MCP server list (`mcp-servers.json`, default cua-driver) and mirrors it into OpenClaw per session; "operate my Mac / use app X" is delegated; both worker contracts carry the cua rules. Verified live 2026-10-08: the TextEdit smoke test passed from the chat with TextEdit kept in the background, and an owner request drove Safari in the background ([cua-integration.md](cua-integration.md#smoke-test)). Codex coding workers get the tools but were not exercised; Claude Code coding workers do not get them ([open items](#open-items)). |
 
 ## Roadmap
 
 1. R1, native thinking workspace: done.
 2. R2, coding workers that develop Yorozu itself: done.
 3. iOS client 0.6.x over the relay on internal TestFlight: shipped; the owner's on-device check is pending.
-4. R3, cua integration so Yorozu operates the user's computer: next. Steps: choose how workers call cua; a worker operates an app on the Mac through cua; a live check from the chat.
+4. R3, cua integration so Yorozu operates the user's computer: first step done (thinking workers, verified from the chat). Next: Claude Code coding workers once OpenClaw passes session tool settings to them; a dedicated computer executor only if collisions or timeouts show up.
 5. Later, unscheduled: iOS push notifications, Stop, attachments and sub-chats (iOS 0.6.x has one thread and none of these); Mac distribution (notarization, an update feed); chat compaction; document import; vector retrieval; automatic topic merge and split.
 
 ## Open items
@@ -30,8 +30,9 @@ Each item has a default that holds until the owner answers.
 |---|---|
 | Install 0.6.1 (5) from TestFlight, pair it from the Mac's Pair iPhone sheet and send one message. | 0.6.x counts as shipped; a device bug becomes a 0.6.x fix. |
 | When the iOS features in roadmap item 5 arrive. | After R3. |
-| How R3 workers call cua. | The cua-driver MCP server, as [cua-integration.md](cua-integration.md) recommends. |
-| The `cua` MCP entry in the OpenClaw config points at a missing app. | Leave it; R3 uses `cua-driver`. The owner fixes or removes it. |
+| Claude Code coding workers do not get Yorozu's MCP servers: OpenClaw 2026.9.6 does not pass session `toolOverrides` to its CLI runner ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). Options: leave it, report it upstream (a one-line fix in `attempt-execution.ts`), or patch the local `~/openclaw`. | Leave it; app and browser work goes to thinking or Codex workers. |
+| The owner's own OpenClaw MCP entries (`cua-driver`, the broken `cua`, `computer-use`) stay global for other agents; Yorozu sessions switch them off. | Leave them; the owner fixes or removes `cua`. |
+| An OpenClaw workspace plugin of the owner's gates cua-driver browser and input calls on browser pids for every agent, and its `/Arc/` pattern also matches non-browser apps such as Archive Utility. | Leave the plugin as is. |
 | Model per role is not owner-decided. | Keep the code defaults listed in [setup.md](setup.md#models). |
 | Replace the installed v1 `/Applications/Yorozu.app` with v2. | Leave v1 installed; the owner decides. |
 | Commit f710949 published R1-era docs and OpenClaw template files (local paths, no personal facts); they are gone from the tree but remain in history. | No history rewrite. |
@@ -50,4 +51,6 @@ Each limit is described where its mechanism is documented.
 - Memory write rules bind thinking workers by prompt, not by sandbox ([architecture.md](architecture.md#memory), Worker access).
 - A run interrupted by an app restart is watched for about 2 hours, then the user is asked to retry ([architecture.md](architecture.md#restart-and-resume)).
 - Compaction, Mac distribution and the missing iOS features are roadmap item 5.
+- Computer-use rules are prompt policy, not code, and two computer-use tasks can run at once ([cua-integration.md](cua-integration.md#route)).
+- Yorozu's MCP list is read once per app run; a server added to OpenClaw while the app runs reaches Yorozu sessions until the next launch ([openclaw-integration.md](openclaw-integration.md#mcp-servers)).
 - The host Mac has no Simulator.app, so the iOS UI cannot be tapped through on it. `simctl` and iOS 27 runtimes are installed, so headless boot and screenshots work; full UI checks need a device.
