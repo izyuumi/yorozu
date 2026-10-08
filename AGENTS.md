@@ -31,6 +31,7 @@ App code (`Sources/ProjectXApp`) compiles only through `build_native.sh`; iOS co
 - Status: [docs/status.md](docs/status.md) has what is done, in progress or stuck, the roadmap, and open items with their defaults. Read when choosing or scoping work.
 - Architecture: [docs/architecture.md](docs/architecture.md) covers components, message flows, routing, workers, memory and state names. Read before changing `Sources/`.
 - Gateway: [docs/openclaw-integration.md](docs/openclaw-integration.md) covers calls, session keys, timeouts and gotchas. Read before touching `Harness.swift` or `NativeGateway.swift`, or before probing the Gateway.
+- Hermes: [docs/hermes-integration.md](docs/hermes-integration.md) covers calls, profiles, session and run ids, limits and the OpenClaw migration hazards. Read before touching `Hermes*.swift` or before probing Hermes.
 - Relay wire: [docs/ios-relay-contract.md](docs/ios-relay-contract.md) is the Mac ⇄ phone contract. Read before changing `Sources/ProjectXApp/Relay`, `apps/ios` or `packages/YorozuWire`.
 - Setup: [docs/setup.md](docs/setup.md) covers tools, the OpenClaw agent entry, models, signing, credentials, Keychain items, data paths and environment variables. Read when a path, variable or machine requirement is in question.
 - Release: [docs/release.md](docs/release.md) covers versions, Mac rebuilds, TestFlight uploads, build numbers and the iOS compile check. Read before bumping a version or uploading.
