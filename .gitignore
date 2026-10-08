@@ -9,6 +9,8 @@ xcuserdata/
 *.xcworkspace/
 apps/mac/Derived/
 apps/ios/Derived/
+# The owner's signing identity (apps/mac/Signing.xcconfig includes it).
+*.local.xcconfig
 
 # OpenClaw agent-workspace files (this checkout is the projectx workspace). OpenClaw seeds and its memory
 # conventions fill them with personal directives and facts; only AGENTS.md is tracked.
