@@ -1,16 +1,16 @@
 import Foundation
 import GRDB
 
-public struct Topic: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable {
+public struct Topic: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "topics"
     public var id: String; public var label: String; public var sessionKey: String; public var created: Double
 }
-public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable {
+public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "messages"
     public var id: String; public var role: String; public var body: String; public var topicID: String?
     public var taskID: String?; public var replyTo: String?; public var kind: String; public var created: Double
 }
-public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable {
+public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "work"
     public var id: String; public var topicID: String; public var messageID: String; public var instruction: String
     public var state: String; public var revision: Int; public var runID: String?; public var controllerKey: String?
@@ -20,16 +20,16 @@ public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, S
     public var executor: String? = nil
     public var active: Bool { ["queued", "working", "amendment_pending", "cancellation_requested"].contains(state) }
 }
-public struct WorkerEvent: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable {
+public struct WorkerEvent: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "events"
     public var id: String; public var taskID: String; public var kind: String; public var body: String; public var created: Double
 }
-public struct Amendment: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable {
+public struct Amendment: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "amendments"
     public var id: String; public var taskID: String; public var messageID: String; public var revision: Int
     public var instruction: String; public var state: String
 }
-public struct Snapshot: Sendable {
+public struct Snapshot: Sendable, Equatable {
     public var topics: [Topic] = []; public var messages: [Message] = []; public var work: [Work] = []; public var events: [WorkerEvent] = []
     public var amendments: [Amendment] = []
     public init() {}
