@@ -177,8 +177,8 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `general.global_shortcut` | `""` (off) | Shortcut that toggles the popover: modifiers and one key joined by `+`, such as `"option+space"`, `"cmd+shift+y"` or `"ctrl+f5"`; a key other than F1–F12 needs a modifier ([architecture.md](architecture.md#mac-ui)) |
 | `general.appearance` | `"system"` | `"system"`, `"light"` or `"dark"` |
 | `general.show_advanced` | `false` | Shows the Advanced tab |
-| `notifications.enabled` | `true` | macOS notifications for results, failures and questions; the menu-bar dot shows either way |
-| `notifications.destination` | `"mac"` | `"mac"` or `"phones"`; with `"phones"` the Mac posts none, and phone push comes with #320 |
+| `notifications.enabled` | `true` | Notifications for results, failures and questions; the menu-bar dot shows either way |
+| `notifications.destination` | `"mac"` | `"mac"` (macOS notifications) or `"phones"` (push to paired phones, [Push notifications](#push-notifications)); with `"phones"` the Mac posts none |
 | `routing.personal_knowledge` | `""` | The user's personal notes, named in the routing policy as a source only a worker can read; empty drops that clause; at most 200 bytes of UTF-8 |
 | `routing.self_topic` | `"Yorozu"` | The topic that holds work on Yorozu itself; at most 80 characters |
 | `relay.url` | `"wss://relay.yumi.to"` | Relay for the iPhone app, `ws://` or `wss://` with a host |
@@ -315,7 +315,23 @@ No model id is in the code. Each role uses its explicit choice (`[models]` in `c
 | App | Bundle id | Signing |
 |---|---|---|
 | Mac | `to.yumi.yorozu` (v1's) | Team `AN5KM8QGEF`, manual signing, hardened runtime. The identity comes from `apps/mac/Signing.xcconfig`, which includes the gitignored `apps/mac/Signing.local.xcconfig` (`*.local.xcconfig`) when it exists. That local file sets `CODE_SIGN_IDENTITY` to the Developer ID Application identity for the team in the login keychain and `OTHER_CODE_SIGN_FLAGS = --timestamp`; the comment in `Signing.xcconfig` shows the shape. Without it the app is signed ad hoc (`-`), which runs only on the Mac that built it. Entitlements match v1 (`apps/mac/Yorozu.entitlements`); no app sandbox. |
-| iOS | `to.yumi.yorozu.ios` | Team `AN5KM8QGEF`, automatic signing. Xcode issues the distribution certificate and profile itself during `upload_ios.sh`, using the App Store Connect key. |
+| iOS | `to.yumi.yorozu.ios` | Team `AN5KM8QGEF`, automatic signing. Xcode issues the distribution certificate and profile itself during `upload_ios.sh`, using the App Store Connect key. Entitlements in `apps/ios/Project.swift`: `aps-environment: production` ([Push notifications](#push-notifications)) and `applinks:yorozu.yumi.to`. |
+
+## Push notifications
+
+Phones are woken through the relay's APNs path (#320; flow in [architecture.md](architecture.md#push-notifications), wire in [ios-relay-contract.md](ios-relay-contract.md#push)).
+
+- iOS app (`apps/ios/Project.swift`): the entitlement `aps-environment: production`, since TestFlight builds use production APNs (as on v1), and `UIBackgroundModes: ["remote-notification"]` for the silent catch-up. No notification service extension and no app group. v1 ships push on the same bundle id, so the App ID already has the capability; if automatic signing reports that it lacks push, enable it in the Apple Developer portal.
+- Permission: the phone asks once (alerts, sounds and badges) at launch when paired, and at #314's moments ([On the phone](#on-the-phone)). Denied, alerts and the badge stay off; the Notifications row in iPhone Settings offers Open Settings.
+- Mac: Settings › General › Notifications on and "Notify on" Phones (`[notifications] enabled = true`, `destination = "phones"`).
+- Relay: APNs needs three Worker secrets on the relay, by name `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_KEY_P8` (`apps/relay/src/apns.ts` on `main`). A relay without them, a self-hosted one included, forwards frames but wakes nobody. Check the names only with `wrangler secret list` (and the deployed version with `wrangler deployments list`) in `apps/relay` on `main`; the values never go in the repo.
+- Check the Mac side (acceptance criterion 10 of #320): the Mac logs each `notify` whole, since it holds only the class and two 8-character refs, and logs the relay's `notify rate limit` state.
+
+  ```sh
+  log stream --level debug --predicate 'subsystem == "to.yumi.yorozu" AND category == "relay"'
+  ```
+
+  Each line reads `notify {"class":"reply","eventRef":"…","threadRef":"…","type":"notify"}` with exactly those four keys, and the relay connection never drops with "bad notify".
 
 ## App Store Connect credentials
 
@@ -341,6 +357,7 @@ The relay and Gateway items are `WhenUnlockedThisDeviceOnly`; the phone item is 
 | Markdown memory | `~/Yorozu/memory/` (notes, `knowledge/`, `history/`, `.writer.lock`) | `<dir>/memory/` | `…/Fixture/memory/` |
 | Memory index (`discovery` and `search_trigram` tables) | `~/Library/Caches/<bundle id>/memory-index.sqlite` | `<dir>/memory-index.sqlite` | `…/Fixture/memory-index.sqlite` |
 | Paired phones (`relay-devices.json`, mode 600) | `~/Library/Application Support/<bundle id>/` | same as live | none (no relay) |
+| Last time online at the relay (`relay-online.json`: `seen` and the last back-online push, `notified`; [architecture.md](architecture.md#push-notifications)) | beside `relay-devices.json` | same as live | none (no relay) |
 | Settings (`config.toml`, mode 600) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
 | Yorozu's OpenClaw agent workspace while `dev_repo` is empty (`openclaw-workspace/`, mode 700, created by the assisted setup write) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
 | Scheduled jobs (`jobs.toml`, mode 600) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
@@ -370,10 +387,11 @@ Jobs (#319): `jobs.toml` is created by the first write (a worker creating a job,
 | Composer drafts (picked files staged before Send, one folder each) | `tmp/Drafts/` in the app's container | none; deleted at launch and when sent or removed |
 | Last connection status (`lastConnectionStatus`) | `UserDefaults` | none; it holds only the status and when it was saved, no chat content |
 | Direct connection setting (`directPathEnabledV2`) | `UserDefaults` | none; a Boolean, off by default |
+| The APNs token the relay last heard, per pairing (`pushTokenOnRelayV2.<session key>`) | `UserDefaults` | none; the device token only, so a direct session skips the one-off relay join for a token the relay has |
 
 The cache is a cache: a file that does not decode, has another format version or belongs to another pairing (its `owner` is the pairing's session key) loads as nothing and catch-up refills it. The outbox is not a cache: it holds messages that exist nowhere else until the Mac stores them. It is keyed to the pairing the same way, so a file from another pairing is never read. Remove host and every new pairing delete the `Mirror`, `Outbox`, `Uploads` and `Files` folders ([architecture.md](architecture.md#ios-app)).
 
-Notifications: the phone asks for notification permission (alerts, sounds and badges) the first time a message has to wait for a connection. It posts only local notifications, "N messages waiting to send" and "A message to your Mac expired without being read.", never with message content; push comes with #320. Denying permission changes nothing else: messages still queue and send.
+Notifications: the phone asks for notification permission (alerts, sounds and badges) at launch once paired, and the first time a message has to wait for a connection; iOS shows the prompt once. Its local notifications are "N messages waiting to send" and "A message to your Mac expired without being read."; pushes carry fixed text ([Push notifications](#push-notifications)); none carries message content. Denying permission changes nothing else: messages still queue and send, and the chat still catches up when opened.
 
 ## Environment variables
 
