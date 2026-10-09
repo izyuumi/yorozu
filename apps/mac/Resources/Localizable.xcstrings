@@ -1,6 +1,76 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "OpenClaw doesn’t allow %@ for Yorozu." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw は Yorozu に %@ の使用を許可していません。"
+          }
+        }
+      }
+    },
+    "OpenClaw or Node.js isn’t installed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw または Node.js がインストールされていません。"
+          }
+        }
+      }
+    },
+    "The OpenClaw Gateway isn’t running. Start it with `openclaw gateway run`." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw Gateway が起動していません。`openclaw gateway run` で起動してください。"
+          }
+        }
+      }
+    },
+    "Yorozu is already running." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu はすでに起動しています。"
+          }
+        }
+      }
+    },
+    "Yorozu was started from an agent’s shell; open it from Finder." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu がエージェントのシェルから起動されました。Finder から開いてください。"
+          }
+        }
+      }
+    },
+    "Yorozu’s agent isn’t set up in OpenClaw." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のエージェントが OpenClaw に設定されていません。"
+          }
+        }
+      }
+    },
+    "Yorozu’s memory can’t load %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のメモリが %@ を読み込めません。"
+          }
+        }
+      }
+    },
     "Off" : {
       "localizations" : {
         "ja" : {
@@ -2529,12 +2599,12 @@
         }
       }
     },
-    "Not set: coding work ends with a notice." : {
+    "Not set: coding work is off." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未設定: コーディング作業はお知らせを出して終了します。"
+            "value" : "未設定: コーディング作業はオフです。"
           }
         }
       }

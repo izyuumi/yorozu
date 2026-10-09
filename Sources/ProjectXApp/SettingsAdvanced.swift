@@ -92,7 +92,7 @@ struct AdvancedSettings: View {
                     if !config.harness.devRepo.isEmpty { Button("Clear") { model.writeSettings { $0.harness.devRepo = "" } } }
                 } label: {
                     Text("Repository")
-                    Text(config.harness.devRepo.isEmpty ? String(localized: "Not set: coding work ends with a notice.") : config.harness.devRepo).monospaced().textSelection(.enabled)
+                    Text(config.harness.devRepo.isEmpty ? String(localized: "Not set: coding work is off.") : config.harness.devRepo).monospaced().textSelection(.enabled)
                     if let note = overrideNote(model.override("harness.dev_repo")) { note }
                 }.disabled(model.override("harness.dev_repo") != nil)
                 ForEach(model.harness?.executors ?? [], id: \.id) { executor in

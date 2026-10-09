@@ -22,7 +22,7 @@ extension AppModel {
         var s = HarnessSettings()
         s.secretaryModel = m.secretary.id ?? ""; s.extractionModel = m.extraction.id ?? ""; s.workerModel = m.worker.id ?? ""; s.reviewModel = m.review.id ?? ""
         s.codingModels = m.coding.compactMapValues(\.id)
-        s.mcpServers = c.mcpServers; s.yolo = c.general.yolo; s.devRepo = c.harness.devRepoURL; s.configFile = configFile
+        s.mcpServers = c.mcpServers; s.yolo = c.general.yolo; s.devRepo = c.harness.devRepoURL; s.codingBaseBranch = c.harness.devBase; s.configFile = configFile
         s.personalKnowledge = c.routing.personalKnowledge; s.selfTopic = c.routing.selfTopic
         s.filesRoot = filesRoot
         return s

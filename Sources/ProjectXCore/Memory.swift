@@ -48,6 +48,12 @@ public func sensitive(_ text: String) -> Bool {
     text.range(of: #"(?i)(-----BEGIN .*PRIVATE KEY|\b(?:sk-|ghp_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{12,}|\b(?:password|api.?key|access.?token|recovery.?code|otp)\s*[:=]\s*\S+|(?<![A-Za-z0-9])(?:passwd|secret|token|api.?key|authorization)["\x27]?\s*[:=]\s*["\x27]?(?:bearer\s+)?[A-Za-z0-9._~+/=-]{8,}|\bbearer\s+[A-Za-z0-9._~+/=-]{16,}|\bAKIA[0-9A-Z]{16})"#, options: .regularExpression) != nil
 }
 
+/// A memory file or folder that stops startup or a rebuild, named so the user can fix it (#317, `PlainError`).
+public struct MemoryFileError: LocalizedError, Sendable {
+    public var file: String, reason: String
+    public var errorDescription: String? { reason + ": " + file }
+}
+
 /// Only relative UUID Markdown paths are accepted. Filesystem descriptors prevent symlink traversal.
 /// Advisory flock serializes app writers; CAS detects stale reads. External editors must cooperate
 /// for a formal no-race guarantee (no filesystem CAS exists for uncooperative replacements).
@@ -64,7 +70,7 @@ public actor MemoryStore {
     public init(root: URL, index indexURL: URL) throws {
         self.root = root
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        guard try root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw ProjectError.blocked("Memory root cannot be a symlink.") }
+        guard try root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw MemoryFileError(file: root.path, reason: "Memory root cannot be a symlink") }
         try FileManager.default.createDirectory(at: indexURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         index = try DatabaseQueue(path: indexURL.path)
         try index.write { db in
@@ -168,7 +174,7 @@ public actor MemoryStore {
         guard let enumeration = FileManager.default.enumerator(at: root,includingPropertiesForKeys: [.isSymbolicLinkKey,.isRegularFileKey]) else { throw ProjectError.blocked("Cannot enumerate memory.") }
         for case let url as URL in enumeration {
             let attributes = try url.resourceValues(forKeys: [.isSymbolicLinkKey,.isRegularFileKey])
-            guard attributes.isSymbolicLink != true else { throw ProjectError.blocked("Memory symlink refused.") }
+            guard attributes.isSymbolicLink != true else { throw MemoryFileError(file: url.path, reason: "Memory symlink refused") }
             let relative = String(url.path.dropFirst(root.path.count + 1))
             if relative.lowercased() == "history" { enumeration.skipDescendants(); continue } // past versions, never indexed
             guard url.pathExtension == "md" else { continue }
@@ -179,7 +185,7 @@ public actor MemoryStore {
                 doc = try MemoryDocument.parse(String(decoding: data,as: UTF8.self))
                 guard doc.metadata.id + ".md" == url.lastPathComponent else { throw ProjectError.invalid("Mismatched memory identity.") }
             } catch { skip.append(relative); continue } // oversized, unparseable or misnamed: reported, not fatal
-            guard ids.insert(doc.metadata.id).inserted else { throw ProjectError.invalid("Duplicate memory identity.") }
+            guard ids.insert(doc.metadata.id).inserted else { throw MemoryFileError(file: url.path, reason: "Duplicate memory identity") }
             // Only discovery data lives in this disposable DB.
             rows.append((doc.metadata.id,doc.metadata.title,String(doc.body.prefix(200)),relative))
         }

@@ -133,11 +133,13 @@ public actor Engine {
     /// `files`: the latest or a recent message has attached files, so their lines join the policy (#316).
     static func routingPolicy(_ s: HarnessSettings, executors all: [Executor], jobs: Bool = false, delayed: Bool = false, files: Bool = false) -> String {
         let source = s.personalKnowledge.isEmpty ? "" : "the user's \(s.personalKnowledge), ", own = s.selfTopic
-        let executors = all.filter { $0.notReady == nil }
+        let executors = s.devRepo == nil ? [] : all.filter { $0.notReady == nil }
         // OpenClaw's claude/codex pair yields exactly the pre-#318 text; notes lose their final period to join with "; ".
         let coding = executors.first.map { first in
             "Coding work: writing, changing, building, debugging or reviewing code or any file in a git repo, docs included (\(own) is this app's own repo), is delegate with executor \"\(first.id)\" (\(first.name))" + executors.dropFirst().map { ", or \"\($0.id)\" when the user names \($0.name)" }.joined() + "; a tool the user names always wins. Committing, merging, pushing, rebuilding or restarting the app on the user's request is coding work in the same topic, with the executor of the work it continues."
-        } ?? "Coding work isn't available: no coding executor is offered, so never set executor. If the user asks to write, change, build, debug or review code or files in a git repo, reply in one sentence that coding work isn't available here."
+        } ?? (s.devRepo == nil && !all.isEmpty // coding is opt-in: off until a repository is set
+            ? "Coding work is off, so never set executor. If the user asks to write, change, build, debug or review code or files in a git repo, reply in one sentence that coding work is off and can be turned on by choosing a repository in Settings › Advanced."
+            : "Coding work isn't available: no coding executor is offered, so never set executor. If the user asks to write, change, build, debug or review code or files in a git repo, reply in one sentence that coding work isn't available here.")
         let notes = executors.map { $0.routingNotes.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.map { $0.hasSuffix(".") ? String($0.dropLast()) : $0 }
         let tail = executors.isEmpty ? "" : " " + (notes + ["work that continues an existing coding task keeps its executor."]).joined(separator: "; ")
         return """
@@ -200,7 +202,7 @@ public actor Engine {
             }
             input.files = fileViews(message.id,snapshot) // descriptors only, never contents (#316)
             input.policy = Self.routingPolicy(settings(),executors: harness.executors,jobs: !input.jobs.isEmpty || !input.approvals.isEmpty,delayed: input.messageAge != nil,files: !input.files.isEmpty || recent.contains { $0.files != nil })
-            input.sourceMessageID = message.id; input.executors = harness.executors.filter { $0.notReady == nil }.map(\.id)
+            input.sourceMessageID = message.id; input.executors = settings().devRepo == nil ? [] : harness.executors.filter { $0.notReady == nil }.map(\.id)
             input = trimmed(input,blocking: blocking,forget: message.body.range(of: Self.forgetRequest,options: .regularExpression) != nil)
             var decision = try await harness.route(input,stronger: false)
             try validate(decision,snapshot: snapshot,memories: memories,approvals: input.approvals)
@@ -215,7 +217,7 @@ public actor Engine {
         } catch {
             let coded = error as? NoticeError, offline = { if case ProjectError.offline = error { return true }; return false }()
             let code = (error as? HarnessError)?.code ?? .routingFailed
-            _ = try? await store.message(role: "assistant",body: error.localizedDescription,replyTo: message.id,kind: coded?.kind ?? "failure",notice: coded?.notice ?? (offline ? Notice(.offline) : Notice(code,["error": error.localizedDescription])))
+            _ = try? await store.message(role: "assistant",body: error.localizedDescription,replyTo: message.id,kind: coded?.kind ?? "failure",notice: coded?.notice ?? (offline ? Notice(.offline) : Notice(code,error: error)))
         }
     }
     /// IDs are checked against the full snapshot, not the trimmed view; forget against every retrieved hit.
@@ -369,7 +371,7 @@ public actor Engine {
     private func control(_ id: String,_ act: (Work,Topic) async throws -> TaskOutcome) async -> TaskOutcome {
         guard let w = try? await store.work(id), let topic = try? await store.topic(id: w.topicID) else { return TaskOutcome(accepted: false,text: "Unknown task.",notice: nil,messageID: nil) }
         do { return try await act(w,topic) } catch {
-            let coded = error as? NoticeError, notice = coded?.notice ?? Notice(.taskControlFailed,["error": error.localizedDescription])
+            let coded = error as? NoticeError, notice = coded?.notice ?? Notice(.taskControlFailed,error: error)
             let m = try? await store.message(role: "assistant",body: error.localizedDescription,topic: w.topicID,task: w.id,replyTo: w.messageID,kind: coded?.kind ?? "failure",notice: notice)
             return TaskOutcome(accepted: false,text: error.localizedDescription,notice: notice,messageID: m?.id)
         }
@@ -465,6 +467,7 @@ public actor Engine {
     }
     private func checkOffered(_ executor: String?) throws {
         guard let executor else { return }
+        guard executor == Self.scriptExecutor || settings().devRepo != nil else { throw NoticeError(.harnessNotReady,"Coding work is off. Choose a repository in Settings › Advanced to turn it on.") }
         guard let offered = harness.executors.first(where: { $0.id == executor }) else {
             let ready = harness.executors.filter { $0.notReady == nil }.map(\.name)
             throw NoticeError(.harnessNotReady,"\(executor) isn't available here; " + (ready.isEmpty ? "coding work isn't available with this harness." : "ask again and I'll use \(ready.joined(separator: " or "))."))
@@ -573,7 +576,7 @@ public actor Engine {
             guard let w = try? await store.failWork(id,error: error.localizedDescription,definite: harnessError != nil || { if case ProjectError.overflow = error { return true }; return false }()) else { return }
             // Overflow would fail the same way again, so it gets no retry offer.
             var body = "That task failed: \(error.localizedDescription) Say retry to try again.", code = harnessError?.code ?? .taskFailed; if case ProjectError.overflow(let text) = error { body = text; code = .taskOverflow }
-            _ = try? await store.message(role: "assistant",body: body,topic: w.topicID,task: id,replyTo: w.messageID,kind: "failure",notice: Notice(code,["error": error.localizedDescription]))
+            _ = try? await store.message(role: "assistant",body: body,topic: w.topicID,task: id,replyTo: w.messageID,kind: "failure",notice: Notice(code,error: error))
         }
     }
     private func update(_ id: String,_ value: StreamUpdate) async throws {
@@ -901,7 +904,7 @@ extension Engine {
         do { try await delegate(m,topic: topic,instruction: "The user wrote this in this job's own chat. Answer them as the job's agent, in their language.",executor: executor) }
         catch {
             let coded = error as? NoticeError
-            _ = try? await store.message(role: "assistant",body: error.localizedDescription,topic: id,replyTo: m.id,kind: coded?.kind ?? "failure",notice: coded?.notice ?? Notice(.taskFailed,["error": error.localizedDescription]))
+            _ = try? await store.message(role: "assistant",body: error.localizedDescription,topic: id,replyTo: m.id,kind: coded?.kind ?? "failure",notice: coded?.notice ?? Notice(.taskFailed,error: error))
         }
     }
     /// The user's yes, recorded by Yorozu (never a worker) for the exact pending hash.

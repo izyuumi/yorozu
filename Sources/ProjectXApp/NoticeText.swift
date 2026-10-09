@@ -7,6 +7,10 @@ enum NoticeText {
     /// The notice sentence for `code`, or `fallback` (the stored English body) for an unknown code, a missing
     /// parameter, or a code whose body carries content of its own (a clarify reply: `question` with no params).
     static func text(code: String, params: [String: String], fallback: String) -> String {
+        // A failure with a known setup cause leads with what to fix; the raw error stays in Details.
+        if ["routing_failed","task_failed","task_control_failed"].contains(code), let cause = plain(cause: params["cause"], subject: params["subject"]) {
+            return cause + " " + text(code: code, params: params.filter { $0.key != "cause" }, fallback: fallback)
+        }
         let name = params["name"]
         switch code {
         case "question_topic": return String(localized: "Which subject should this belong to?")
@@ -94,6 +98,20 @@ enum NoticeText {
             guard let name else { return fallback }
             return String(localized: "“\(name)”’s script was interrupted when Yorozu quit, and it won’t run again by itself. Say retry to run it again or stop to clear it.")
         default: return fallback // `question` (a clarify reply's own words) and codes newer than this build
+        }
+    }
+
+    /// A known setup cause (`PlainError.cause` in Sources/ProjectXCore/PlainError.swift) as a sentence; nil for an unknown one.
+    static func plain(cause: String?, subject: String?) -> String? {
+        switch cause {
+        case "openclaw_missing": String(localized: "OpenClaw or Node.js isn’t installed.")
+        case "gateway_down": String(localized: "The OpenClaw Gateway isn’t running. Start it with `openclaw gateway run`.")
+        case "agent_missing": String(localized: "Yorozu’s agent isn’t set up in OpenClaw.")
+        case "model_not_allowed": subject.map { String(localized: "OpenClaw doesn’t allow \($0) for Yorozu.") }
+        case "exec_markers": String(localized: "Yorozu was started from an agent’s shell; open it from Finder.")
+        case "already_running": String(localized: "Yorozu is already running.")
+        case "memory_file": subject.map { String(localized: "Yorozu’s memory can’t load \($0).") }
+        default: nil
         }
     }
 

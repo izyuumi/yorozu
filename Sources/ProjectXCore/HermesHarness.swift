@@ -34,9 +34,11 @@ public struct HermesHarness: Harness {
     let audit: RequestAudit?
     private let state = HermesState()
 
+    /// `[harness] agent`, only for topic keys, so topics made here continue after a switch to OpenClaw.
+    public let agentID: String
     /// `url`: the Hermes API server root (loopback only); profiles are served under `/p/<profile>/`.
-    public init(url: String = "http://127.0.0.1:8642", audit: RequestAudit? = nil, settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) throws {
-        client = try HermesClient(url); self.audit = audit; self.settings = settings
+    public init(url: String = "http://127.0.0.1:8642", agent: String = "yorozu", audit: RequestAudit? = nil, settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) throws {
+        client = try HermesClient(url); agentID = agent; self.audit = audit; self.settings = settings
     }
 
     public var executors: [Executor] {
@@ -399,7 +401,7 @@ public struct HermesHarness: Harness {
 
     func code(_ input: WorkerInput, settings s: HarnessSettings, update: @escaping @Sendable (StreamUpdate) async throws -> Void) async throws -> WorkerOutput {
         guard let repo = s.devRepo else { throw ProjectError.blocked("No repository is set for coding work. Set a repository in Settings › Advanced.") }
-        let executor = executors[0], session = "yorozu-\(input.topic.id)-\(executor.id)"
+        let s = try s.resolvingBase(repo), executor = executors[0], session = "yorozu-\(input.topic.id)-\(executor.id)"
         let model = s.codingModels[executor.id].flatMap { $0.isEmpty ? nil : $0 } ?? s.workerModel
         try await ensureSession(session, title: input.topic.label + " · coding", model: model)
         // No per-session working folder under Hermes (open question 2): the worker makes and reuses its own worktree.

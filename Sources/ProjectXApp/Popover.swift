@@ -70,7 +70,7 @@ struct PopoverContent: View {
                 Spacer()
                 Button("Connect…") { model.showEnrollment(); openSettings() }.buttonStyle(.link)
             } else if let status = model.status {
-                Text(status).lineLimit(1).truncationMode(.tail).help(status).textSelection(.enabled)
+                Text(status).lineLimit(1).truncationMode(.tail).help(model.statusDetail ?? status).textSelection(.enabled)
             } else if let label = model.harnessLabel {
                 Circle().fill(.green).frame(width: Metrics.dot,height: Metrics.dot).accessibilityHidden(true)
                 Text(label).lineLimit(1).truncationMode(.tail)

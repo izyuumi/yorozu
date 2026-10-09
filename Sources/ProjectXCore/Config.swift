@@ -17,7 +17,7 @@ public struct Config: Sendable, Equatable {
     public struct Relay: Sendable, Equatable { public var url = "wss://relay.yumi.to" }
     public struct Direct: Sendable, Equatable { public var enabled = true, port = 8738 }
     public struct HarnessSettings: Sendable, Equatable {
-        public var kind = HarnessKind.openclaw, agent = "yorozu", transport = Transport.native, gatewayURL = "ws://127.0.0.1:18789", hermesURL = "http://127.0.0.1:8642", devRepo = ""
+        public var kind = HarnessKind.openclaw, agent = "yorozu", transport = Transport.native, gatewayURL = "ws://127.0.0.1:18789", hermesURL = "http://127.0.0.1:8642", devRepo = "", devBase = ""
         /// nil when `dev_repo` is empty; `~/` is expanded.
         public var devRepoURL: URL? { devRepo.isEmpty ? nil : URL(fileURLWithPath: (devRepo as NSString).expandingTildeInPath,isDirectory: true) }
     }
@@ -97,7 +97,8 @@ public struct Config: Sendable, Equatable {
         field("harness.transport",\.harness.transport,"\"native\" (WebSocket client) or \"cli\" (openclaw CLI); applies after relaunch." + security),
         field("harness.gateway_url",\.harness.gatewayURL,"Gateway address, loopback only; applies after relaunch." + security),
         field("harness.hermes_url",\.harness.hermesURL,"Hermes Agent API server, loopback only with no path; applies after relaunch." + security),
-        field("harness.dev_repo",\.harness.devRepo,"Repository for coding work (absolute path or ~/…); empty ends coding work with a notice." + security),
+        field("harness.dev_repo",\.harness.devRepo,"Repository for coding work (absolute path or ~/…); empty turns coding work off." + security),
+        field("harness.dev_base",\.harness.devBase,"Branch of dev_repo that coding worktrees are cut from and merged into; empty is the branch checked out there when the work starts." + security),
         field("models.secretary",\.models.secretary,"Secretary model (provider/model); leave out for automatic." + security),
         field("models.extraction",\.models.extraction,"Memory extraction model; leave out for automatic." + security),
         field("models.worker",\.models.worker,"Worker model; leave out for automatic." + security),
@@ -178,6 +179,7 @@ public struct Config: Sendable, Equatable {
         if !Self.isLoopbackGateway(h.gatewayURL) { return ("harness.gateway_url","expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789") }
         if !Self.isLoopbackHTTP(h.hermesURL) { return ("harness.hermes_url","expected a loopback http:// or https:// address with no path, such as http://127.0.0.1:8642") }
         if !(h.devRepo.isEmpty || h.devRepo.hasPrefix("/") || h.devRepo.hasPrefix("~/")) { return ("harness.dev_repo","expected an absolute path, a ~/ path or \"\"") }
+        if !h.devBase.isEmpty, h.devBase.hasPrefix("-") || h.devBase.range(of: "^[A-Za-z0-9._/-]{1,200}$",options: .regularExpression) == nil { return ("harness.dev_base","expected a branch name or \"\"") }
         if let url = URLComponents(string: relay.url), ["ws","wss"].contains(url.scheme ?? ""), !(url.host ?? "").isEmpty {} else { return ("relay.url","expected a ws:// or wss:// address") }
         for (key,model) in [("secretary",models.secretary),("extraction",models.extraction),("worker",models.worker),("review",models.review)] + models.coding.map({ ("coding.\($0.key)",$0.value) }) where model?.isEmpty == true { return ("models.\(key)","expected \"provider/model\"; leave the key out for automatic") }
         if !(1024...65535).contains(direct.port) { return ("direct.port","expected a port from 1024 to 65535") }

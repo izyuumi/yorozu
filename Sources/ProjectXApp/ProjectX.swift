@@ -16,7 +16,9 @@ import ServiceManagement
     @Published var files: [DraftFile] = []
     @Published var fileNotice: String?
     /// The popover's one-line status: startup progress or the last error, cleared by the next success.
-    @Published var status: String? = "Opening local workspace…"
+    @Published var status: String? = "Opening local workspace…" { didSet { statusDetail = nil } }
+    /// The raw error behind a plain `status` (`showError`), as its tooltip.
+    @Published var statusDetail: String?
     /// Set when the native transport was selected but this launch fell back to the CLI.
     @Published var nativeNotice: String?
     @Published var nativeNoticeDetail = ""
@@ -172,8 +174,14 @@ import ServiceManagement
                     try await Task.sleep(for: .milliseconds(failures == 0 ? 350 : min(350 << min(failures,7),30_000)))
                 }
             } catch is CancellationError { }
-            catch { status = error.localizedDescription; ready = false }
+            catch { showError(error); ready = false }
         }
+    }
+    /// `error` in the status line: a known setup cause in plain words with the raw text as the tooltip, else the raw text.
+    func showError(_ error: Error) {
+        let plain = PlainError.describe(error)
+        status = plain.map { NoticeText.plain(cause: $0.cause,subject: $0.subject) ?? $0.title } ?? error.localizedDescription
+        statusDetail = plain?.detail
     }
     /// The main harness from `[harness] kind` (`PROJECTX_HARNESS` overrides it), after that adapter's launch guard.
     /// Open question 9: a switch waits while work is active or uncertain, so that work stays on the harness it started on.
@@ -190,14 +198,13 @@ import ServiceManagement
         case .openclaw:
             // Native launch is NOT an escape from an inherited exec restriction.
             try GatewayRPC.enforceAttribution(environment)
-            guard h.agent == "projectx" else { throw ProjectError.blocked("\(resolved.environment["harness.agent"] ?? "[harness] agent in config.toml") is \"\(h.agent)\"; this build runs only on the dedicated projectx agent, never personal agents. Set it to \"projectx\".") }
             nativeSelected = h.transport == .native
             let native = nativeSelected ? await connectNative(h.gatewayURL) : nil
             harness = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: h.agent,rpc: GatewayRPC(native: native,audit: { try await store.requestReceipt($0) },target: h.gatewayURL),settings: { box.value })
             harnessLabel = "OpenClaw Gateway · " + h.agent
         case .hermes:
             // Not ready still launches: messages are saved and the status line says what to fix (`checkHarness`).
-            harness = try HermesHarness(url: h.hermesURL,audit: { try await store.requestReceipt($0) },settings: { box.value })
+            harness = try HermesHarness(url: h.hermesURL,agent: h.agent,audit: { try await store.requestReceipt($0) },settings: { box.value })
             harnessLabel = "Hermes Agent"
         }
         try await store.recordHarness(harness.id)
@@ -296,7 +303,7 @@ import ServiceManagement
             sent.filter(\.temporary).forEach { DraftFile.discard($0.url) }
             status = nil; snapshot = try await engine.snapshot()
         }
-        catch { status = error.localizedDescription }
+        catch { showError(error) }
     }
     /// Where a stored attachment is now, or nil when it is gone (deleted in Finder).
     func attachmentURL(_ file: Attachment) async -> URL? {
