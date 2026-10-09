@@ -173,7 +173,7 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `general.start_at_login` | `true` | Login item ([Start at login and keep awake](#start-at-login-and-keep-awake)) |
 | `general.keep_mac_awake` | `false` | No idle sleep while Yorozu runs |
 | `general.yolo` | `false` | YOLO mode ([architecture.md](architecture.md#mcp-servers-and-computer-use)) |
-| `general.send_key` | `"smart"` | `"smart"` (Return sends a one-line draft) or `"cmd-enter"` (Return is always a new line); ⌘Return always sends ([architecture.md](architecture.md#mac-ui)) |
+| `general.send_key` | `"cmd-enter"` | `"cmd-enter"` (Return is always a new line) or `"smart"` (Return sends a one-line draft); ⌘Return always sends ([architecture.md](architecture.md#mac-ui)) |
 | `general.global_shortcut` | `""` (off) | Shortcut that toggles the popover: modifiers and one key joined by `+`, such as `"option+space"`, `"cmd+shift+y"` or `"ctrl+f5"`; a key other than F1–F12 needs a modifier ([architecture.md](architecture.md#mac-ui)) |
 | `general.appearance` | `"system"` | `"system"`, `"light"` or `"dark"` |
 | `general.show_advanced` | `false` | Shows the Advanced tab |

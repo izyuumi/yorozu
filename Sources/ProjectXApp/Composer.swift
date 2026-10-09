@@ -137,7 +137,7 @@ struct ComposerField: NSViewRepresentable {
 
 final class ComposerTextView: NSTextView {
     var placeholder = ""
-    var sendKey: () -> Config.SendKey = { .smart }
+    var sendKey: () -> Config.SendKey = { .cmdEnter }
     var submit: () -> Bool = { false }
     var take: (NSPasteboard) -> Bool = { _ in false }
     private var keyObserver: NSObjectProtocol?

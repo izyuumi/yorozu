@@ -809,3 +809,9 @@ Source: owner decisions in issue #348.
 - Once that conversation turns out to belong to a topic that already exists, the new sub-chat's context is attached to the original topic and the discussion continues there, keeping topics separate and properly categorized.
 - This replaces "No automatic topic merging or splitting" for this case.
 - Implementer readings (not owner decisions): `attachTo` on `delegate`/`steer`, with `topicID` naming the sub-chat (never guessed from the latest topic); the link is recorded only once the work or steer is accepted; only a topic created in the last 7 days, not a job topic, not the `self_topic`, not attached and with nothing attached to it can be attached, and only to a topic that is neither attached nor a job topic; attaching is one-way and never splits; retry, redo and correction of the sub-chat's tasks stay in it; the target's workers get an excerpt of the sub-chat, then its newer lines; the phone shows "Attached to “T”" (「T」に統合) and lists attached sub-chats on the target.
+
+## 2026-10-09 — ⌘Enter sends by default on the Mac
+Source: owner feedback after testing 0.7.0.
+
+- The Mac popover's default `[general] send_key` becomes `"cmd-enter"`: Enter adds a line and ⌘Enter sends. It stays customizable in Settings › General. This replaces smart Enter as the Mac default.
+- Implementer reading (not an owner decision): files that already set `send_key` keep their value, and every file Yorozu has written sets it, so the new default reaches new data folders; phone hardware keyboards are unchanged here.

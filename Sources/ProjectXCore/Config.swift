@@ -10,7 +10,7 @@ public struct Config: Sendable, Equatable {
     public enum Transport: String, CaseIterable, Sendable { case native, cli }
     public enum HarnessKind: String, CaseIterable, Sendable { case openclaw, hermes }
     public struct General: Sendable, Equatable {
-        public var startAtLogin = true, keepMacAwake = false, yolo = false, sendKey = SendKey.smart, globalShortcut = "", appearance = Appearance.system, showAdvanced = false
+        public var startAtLogin = true, keepMacAwake = false, yolo = false, sendKey = SendKey.cmdEnter, globalShortcut = "", appearance = Appearance.system, showAdvanced = false
     }
     public struct Notifications: Sendable, Equatable { public var enabled = true, destination = Destination.mac }
     public struct Routing: Sendable, Equatable { public var personalKnowledge = "", selfTopic = "Yorozu" }
@@ -110,7 +110,7 @@ public struct Config: Sendable, Equatable {
         field("general.start_at_login",\.general.startAtLogin,"Open Yorozu when you log in."),
         field("general.keep_mac_awake",\.general.keepMacAwake,"Keep the Mac from idle sleep while Yorozu runs; a closed lid still sleeps."),
         field("general.yolo",\.general.yolo,"YOLO: workers take outward-facing steps you asked for, and use risky cua tools, without asking first. Settings changes and unrequested actions still need your word." + security),
-        field("general.send_key",\.general.sendKey,"\"smart\" or \"cmd-enter\" (⌘Enter sends)."),
+        field("general.send_key",\.general.sendKey,"\"cmd-enter\" (the default: Enter adds a line, ⌘Enter sends) or \"smart\" (Enter sends a one-line draft)."),
         field("general.global_shortcut",\.general.globalShortcut,"Shortcut that brings up Yorozu; empty is off."),
         field("general.appearance",\.general.appearance,"\"system\", \"light\" or \"dark\"."),
         field("general.show_advanced",\.general.showAdvanced,"Show the Advanced tab in Settings."),

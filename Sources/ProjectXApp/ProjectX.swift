@@ -338,7 +338,7 @@ import YorozuWire
         return try await engine.search(query,limit: limit,offset: offset)
     }
     /// `[general] send_key`, read at each key press so a config edit applies at once.
-    var sendKey: Config.SendKey { resolved?.config.general.sendKey ?? .smart }
+    var sendKey: Config.SendKey { resolved?.config.general.sendKey ?? .cmdEnter }
 }
 @MainActor final class Delegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
