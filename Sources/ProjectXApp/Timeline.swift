@@ -20,20 +20,29 @@ struct NewestScrollIntent {
     }
 }
 
-/// A timeline row: a day separator before each day's first message, or the message.
+/// A timeline row: a day separator before each day's first message, the unread divider, or the message.
 enum TimelineItem: Identifiable {
-    case day(Date), message(Message)
+    case day(Date), unread, message(Message)
     var id: String {
-        switch self { case .day(let d): "day-\(d.timeIntervalSince1970)"; case .message(let m): m.id }
+        switch self { case .day(let d): "day-\(d.timeIntervalSince1970)"; case .unread: "unread"; case .message(let m): m.id }
     }
-    static func items(_ messages: [Message]) -> [TimelineItem] {
+    /// `unreadFrom` is the first unread message's id: the divider goes right before it.
+    static func items(_ messages: [Message],unreadFrom: String? = nil) -> [TimelineItem] {
         var out: [TimelineItem] = []; var last: Date?
         for m in messages {
             let day = Calendar.current.startOfDay(for: m.date)
             if day != last { out.append(.day(day)); last = day }
+            if m.id == unreadFrom { out.append(.unread) }
             out.append(.message(m))
         }
         return out
+    }
+    /// The first message after the read cursor that is not the owner's own (own messages are never unread, #313).
+    /// No cursor, or one not in `all`, gives no divider rather than marking the whole history unread.
+    static func firstUnread(_ timeline: [Message],all: [Message],cursor: String?) -> String? {
+        guard let cursor, let at = all.firstIndex(where: { $0.id == cursor }) else { return nil }
+        let after = Set(all[all.index(after: at)...].map(\.id))
+        return timeline.first { after.contains($0.id) && $0.role != "user" }?.id
     }
 }
 
@@ -48,6 +57,8 @@ struct MainChat: View {
     @State private var atBottom = true
     /// The newest message seen at the bottom of the open popover; later ones count as new.
     @State private var seenID: String?
+    /// The first unread message when the popover opened; the divider stays there until the next open.
+    @State private var unreadFrom: String?
     /// A message briefly ringed after a jump to it.
     @State private var flashed: String?
     @State private var height: CGFloat = 0
@@ -69,7 +80,11 @@ struct MainChat: View {
             Composer(model: model,maxHeight: height * Metrics.composerShare,send: send)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
-        .onChange(of: model.popoverShown) { _,shown in if shown { model.onBottomChanged?(atBottom); markSeen() } }
+        .onChange(of: model.popoverShown,initial: true) { _,shown in
+            guard shown else { return }
+            unreadFrom = TimelineItem.firstUnread(model.timeline,all: model.snapshot.messages,cursor: model.readCursor)
+            model.onBottomChanged?(atBottom); markSeen()
+        }
     }
 
     private func scroll(_ timeline: [Message]) -> some View {
@@ -78,13 +93,15 @@ struct MainChat: View {
         let shown = Set(timeline.map(\.id)), labels = Dictionary(model.snapshot.topics.map { ($0.id,$0.label) }) { a,_ in a }
         return ScrollView {
             LazyVStack(alignment: .leading,spacing: Metrics.rowSpacing) {
-                ForEach(TimelineItem.items(timeline)) { item in
+                ForEach(TimelineItem.items(timeline,unreadFrom: unreadFrom)) { item in
                     switch item {
                     case .day(let day): DaySeparator(day: day)
+                    case .unread: UnreadDivider()
                     case .message(let m):
                         MessageRow(message: m,header: m.replyTo.flatMap { requests[$0] }.map { ReplyHeader($0,shown: shown,labels: labels) },highlighted: flashed == m.id || search.shown && search.current == m.id,reveal: reveal)
                     }
                 }
+                if model.routing { ThinkingBubble() }
             }.scrollTargetLayout().padding(.horizontal,14).padding(.vertical,12)
         }
         .scrollPosition($position)
@@ -128,7 +145,8 @@ struct MainChat: View {
     private func markSeen() {
         guard atBottom, let last = model.timeline.last?.id else { return }
         seenID = last
-        if model.popoverShown { model.onSeen?(last) } // may repeat an id; AttentionCenter treats it as idempotent
+        // May repeat an id; AttentionCenter treats it as idempotent and markRead skips the cursor it already holds.
+        if model.popoverShown { model.onSeen?(last); model.markRead(last) }
     }
 
     private func send() {
