@@ -11,7 +11,7 @@ struct Composer: View {
     let send: () -> Void
     /// `Engine.send` takes up to 6,000 UTF-8 bytes (none when files are attached).
     static let byteLimit = 6_000
-    private enum Metrics { static let fieldRadius: CGFloat = 15, sendSide: CGFloat = 28, buttonRadius: CGFloat = 7 }
+    enum Metrics { static let fieldRadius: CGFloat = 15, sendSide: CGFloat = 28, buttonRadius: CGFloat = 7 }
     var body: some View {
         // Blocked (#317): nothing could answer, so the field and Send are off and the reason shows with Fix….
         let blocked = model.readiness.flatMap { $0.state == .blocked ? $0.problem : nil }

@@ -11,6 +11,7 @@ struct JobsSettings: View {
     @State private var deleting: JobStatus?
     @State private var problem: String?
     @State private var width: CGFloat = 0
+    @State private var refreshing: Task<Void,Never>?
     private enum Metrics {
         /// The tab's least height: nothing proposes a height to a Settings window, and the sub-chat needs room.
         static let minHeight: CGFloat = 460
@@ -79,10 +80,13 @@ struct JobsSettings: View {
         }
     }
 
+    /// One read at a time: a newer one cancels the older, so a stale list never lands last.
     private func refresh() {
-        Task {
+        refreshing?.cancel()
+        refreshing = Task {
             guard let engine = model.engine else { return }
             let rows = await engine.jobStatus(nextRuns: await model.jobScheduler?.nextRuns ?? [:])
+            guard !Task.isCancelled else { return }
             if rows != jobs { jobs = rows }
             if !rows.contains(where: { $0.id == selection }) { selection = rows.first?.id }
         }
@@ -136,7 +140,7 @@ private struct JobRow: View {
             Text(job.name).fontWeight(.semibold).lineLimit(1)
             Text(schedule).foregroundStyle(.secondary).lineLimit(2)
             Group {
-                if let state = job.stateLabel { Label(state.text,systemImage: state.icon).foregroundStyle(state.icon == "exclamationmark.triangle" ? ChatPalette.warning : .secondary) }
+                if let state = job.stateLabel { Label(state.text,systemImage: state.icon).foregroundStyle([.needsAttention,.needsApproval].contains(job.state) ? ChatPalette.warning : .secondary) }
                 Text(job.nextLine)
                 if let last = job.lastLine { Text(last).foregroundStyle(job.lastResult == "failed" ? ChatPalette.warning : .secondary) }
             }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -155,7 +159,7 @@ private struct JobDetail: View {
     @State private var height: CGFloat = 0
     @State private var position = ScrollPosition(idType: String.self)
     private enum Metrics {
-        static let fieldRadius: CGFloat = 15, sendSide: CGFloat = 28, rowSpacing: CGFloat = 10
+        static let rowSpacing: CGFloat = 10
         /// The input grows to at most this share of the pane's height.
         static let inputShare: CGFloat = 1.0 / 3
     }
@@ -230,10 +234,10 @@ private struct JobDetail: View {
                 ComposerField(text: $draft,placeholder: String(localized: "Message this job"),enabled: enabled,maxHeight: height * Metrics.inputShare,
                               sendKey: { [model] in model.sendKey },submit: { if canSend { send() }; return canSend },take: { _ in false })
                     .padding(.horizontal,12).padding(.vertical,6)
-                    .background(.background,in: RoundedRectangle(cornerRadius: Metrics.fieldRadius,style: .continuous))
-                    .overlay { RoundedRectangle(cornerRadius: Metrics.fieldRadius,style: .continuous).strokeBorder(.separator,lineWidth: 0.5) }
+                    .background(.background,in: RoundedRectangle(cornerRadius: Composer.Metrics.fieldRadius,style: .continuous))
+                    .overlay { RoundedRectangle(cornerRadius: Composer.Metrics.fieldRadius,style: .continuous).strokeBorder(.separator,lineWidth: 0.5) }
                 Button(action: send) {
-                    Image(systemName: "arrow.up").fontWeight(.bold).frame(width: Metrics.sendSide,height: Metrics.sendSide)
+                    Image(systemName: "arrow.up").fontWeight(.bold).frame(width: Composer.Metrics.sendSide,height: Composer.Metrics.sendSide)
                         .background(canSend ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.quaternary),in: Circle())
                         .foregroundStyle(canSend ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                 }.buttonStyle(.plain).disabled(!canSend).help("Send to this job").accessibilityLabel("Send to this job")

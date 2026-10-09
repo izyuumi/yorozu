@@ -54,7 +54,9 @@ the platform withholds the width, use the platform view that has it (the system 
   The Settings window's width is likewise one constant in `SettingsView`, and the setup
   window's width and least height are `SetupWindow.Metrics` in
   `Sources/ProjectXApp/SetupWindow.swift`: nothing proposes a size to a window, and the least
-  height keeps the step list from collapsing while the report loads.
+  height keeps the step list from collapsing while the report loads. Settings › Jobs likewise takes
+  its least height from `JobsSettings.Metrics.minHeight` in `Sources/ProjectXApp/SettingsJobs.swift`, so
+  the job's sub-chat has room, and gives its list a share of the width it measures.
 - The menu-bar icon is a custom component: `Logo.side` (18 points) and the notch position in
   `Sources/ProjectXApp/MenuBarHost.swift` draw the template image, and `AttentionDot.radius`
   sizes the dot that sits in the notch. The button centers the image; nothing else is fixed.
