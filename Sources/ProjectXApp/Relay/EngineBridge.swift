@@ -20,6 +20,9 @@ actor EngineBridge: RelayBackend {
     /// The latest change sequence the live updates reached; nil before the first publish.
     private var published: Int64?
     private var working = false, routing = false
+    /// The newest message created when phones were last told (#320); nil before the first publish, which only sets it, so
+    /// messages from before launch never notify.
+    private var alerted: Double?
     private var main = ThreadSummary.main(0)
     /// The last 64 `task_control` results, oldest first, for replays of the same `requestId`.
     private var controlled: [TaskControlResultData] = []
@@ -78,11 +81,15 @@ actor EngineBridge: RelayBackend {
     }
 
     /// Called on every poll with the latest snapshot: live updates for the changes past the last published sequence,
-    /// or a flag-only one when the working or routing flag moved. The first call only sets the starting point.
+    /// or a flag-only one when the working or routing flag moved, and a push for each new message `Message.alert` names.
+    /// The first call only sets the starting point.
     func publish(_ s: Snapshot, to host: RelayHost) async {
         let jobs = Set(((try? await engine.store.jobRecords()) ?? []).map(\.topicID))
         let working = s.work.contains { $0.active && !jobs.contains($0.topicID) }, routing = await engine.routing
         remember(s.attachments)
+        // Every main-timeline message goes out on `main`, so that is the thread a push names.
+        if let alerted { for m in s.messages where m.created > alerted { if let a = m.alert { await host.notify(a, threadID: "main", eventID: m.id) } } }
+        alerted = max(alerted ?? 0, s.messages.last?.created ?? 0)
         main = .main((s.messages.last(where: \.onMainTimeline)?.created ?? 0) * 1000)
         await host.setMain(main)
         guard let bounds = try? await engine.store.cursorBounds() else { return }

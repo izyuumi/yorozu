@@ -27,6 +27,8 @@ extension AppModel {
         s.filesRoot = filesRoot
         return s
     }
+    /// Phone pushes (#320): `[notifications]` on with destination `phones`.
+    var phoneAlerts: Bool { resolved.map { $0.config.notifications.enabled && $0.config.notifications.destination == .phones } ?? false }
     /// Coding executor id → its model runtime, for the executors' automatic models.
     var executorRuntimes: [String:String] { Dictionary((harness?.executors ?? []).compactMap { e in e.runtime.map { (e.id,$0) } }) { a,_ in a } }
     /// Reads the harness's model metadata, then recomputes the settings. A failed read keeps the last good metadata.
@@ -79,6 +81,7 @@ extension AppModel {
         }
         if runtimeMode == .live, next.config.relay.url != old.config.relay.url { await restartRelay() }
         else if runtimeMode == .live, let relay, (resolved ?? next).config.direct != old.config.direct { await relay.setDirect((resolved ?? next).config.direct) }
+        await relay?.setAlerts(phoneAlerts)
         // After the awaits a newer reload may have run: apply the settings in force now, not this reload's.
         applySystem((resolved ?? next).config.general)
         if runtimeMode == .live, launched?.config.harness.kind == .hermes { recheck() } // the Hermes profiles may be out of date now

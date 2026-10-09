@@ -44,10 +44,10 @@ struct GeneralSettings: View {
                 }
                 Picker(selection: model.setting(\.notifications.destination)) {
                     Text("This Mac").tag(Config.Destination.mac)
-                    Text("Phones").tag(Config.Destination.phones).selectionDisabled()
+                    Text("Phones").tag(Config.Destination.phones)
                 } label: {
                     Text("Notify on")
-                    Text("Notifications on phones are not available yet.")
+                    if model.config.notifications.destination == .phones { Text("Each phone must allow notifications from Yorozu.") }
                 }.disabled(!model.config.notifications.enabled)
             }
             Section("Keyboard") {

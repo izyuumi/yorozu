@@ -29,15 +29,18 @@ struct DirectStatus: Sendable, Equatable {
 }
 
 /// The Mac half of the v1 relay (packages/runtime/src/serve.ts `connect()`), without legacy boxes or
-/// notify; the phone half is `RelayClient`. Registers this Mac's room, mints pairing codes, admits a phone
+/// sealed previews; the phone half is `RelayClient`. Registers this Mac's room, mints pairing codes, admits a phone
 /// only with proof it read one, and exchanges sealed `ChannelEnvelope`s with each paired phone. The wire
 /// contract is docs/ios-relay-contract.md. Paired phones may also reach it directly (#315): a WebSocket
 /// listener on Wi-Fi/Ethernet and `utun` interfaces carries the same signed frames once the phone's join
-/// proves its paired key, and each phone's route follows its latest authenticated `hello`.
+/// proves its paired key, and each phone's route follows its latest authenticated `hello`. `notify` wakes
+/// paired phones through the relay's APNs path (#320) with a class and two opaque refs, never content.
 actor RelayHost {
     /// `FrameBody` and the relay envelope are private in RelayClient.swift; these are the same shapes.
     private struct FrameBody: Codable { var t: String; var pub, spub, proof, n, c: String? }
-    private struct Inbound: Decodable { var type: String; var nonce, payload, token: String?; var seq: Int? }
+    private struct Inbound: Decodable { var type: String; var nonce, payload, token, state: String?; var seq: Int? }
+    /// When this Mac was last registered at the relay and when it last sent a back-online notify (#320).
+    private struct Online: Codable { var seen: Date; var notified: Date? }
     private struct Frame: Codable { var payload, sig: String }
     private struct Batch: Encodable { var type = "frame"; var frames: [Frame] }
     /// Where a phone's frames go: the path of its latest authenticated `hello`.
@@ -107,6 +110,15 @@ actor RelayHost {
     private static let byteRate = 524_288.0, frameRate = 30.0
     private static let log = Logger(subsystem: "to.yumi.yorozu", category: "relay")
 
+    // Push (#320).
+    /// `[notifications]` on with destination `phones`.
+    private var alerts: Bool
+    /// Notifies waiting for a registration, newest last: at most 20, sent only within 24 h.
+    private var heldNotifies: [(at: Date, data: Data)] = []
+    /// `relay-online.json` beside the device file.
+    private let onlineFile: URL
+    private var lastOnline: Online?
+
     // Direct path (#315).
     private var direct: Config.Direct
     private var listener: NWListener?
@@ -131,9 +143,11 @@ actor RelayHost {
     /// Connections that have not joined yet, at most; more are cancelled on arrival.
     private static let maxPending = 8, maxLinks = 24
 
-    init(backend: any RelayBackend, relayURL: String, devicesFile: URL, direct: Config.Direct) throws {
+    init(backend: any RelayBackend, relayURL: String, devicesFile: URL, direct: Config.Direct, alerts: Bool) throws {
         identity = try RelayKeys.loadOrCreate()
-        self.backend = backend; self.relayURL = relayURL; file = devicesFile; self.direct = direct
+        self.backend = backend; self.relayURL = relayURL; file = devicesFile; self.direct = direct; self.alerts = alerts
+        onlineFile = devicesFile.deletingLastPathComponent().appendingPathComponent("relay-online.json")
+        lastOnline = try? JSONDecoder().decode(Online.self, from: Data(contentsOf: onlineFile))
         let (stream, continuation) = AsyncStream<RelayStatus>.makeStream(); status = stream; statusOut = continuation
         room = Data(SHA256.hash(data: identity.signingPublicKey)).base64URLEncodedString()
         // The relay remembers 16 devices a room, and the announce names every one of them.
@@ -173,6 +187,7 @@ actor RelayHost {
     }
 
     func stop() {
+        if registered { markOnline() }
         loop?.cancel(); pacer?.cancel(); socket?.cancel(with: .goingAway, reason: nil)
         sweeper?.cancel(); sleepWatch?.cancel(); pathMonitor?.cancel(); listenerRestart?.cancel()
         listenerGeneration += 1; listener?.cancel(); listener = nil
@@ -188,6 +203,47 @@ actor RelayHost {
         guard loop != nil else { return }
         for id in links.keys { drop(id, nil) }
         restartListener()
+    }
+
+    /// `[notifications]` changed: off drops the held notifies.
+    func setAlerts(_ on: Bool) { alerts = on; if !on { heldNotifies = [] } }
+
+    /// Wakes paired phones through the relay (#320) with only `type`, `class`, `threadRef` and `eventRef`; the relay drops
+    /// this socket on a class other than `reply`, `failed`, `approval` or `done`. Held while unregistered.
+    func notify(_ alert: Message.Alert, threadID: String, eventID: String) {
+        let cls = switch alert { case .result: "reply"; case .failure: "failed"; case .question: "approval" }
+        notify(cls, threadID: threadID, eventID: eventID)
+    }
+
+    private func notify(_ cls: String, threadID: String, eventID: String) {
+        guard alerts, !peers.isEmpty, let data = try? JSONSerialization.data(withJSONObject: [
+            "type": "notify", "class": cls, "threadRef": YorozuCrypto.threadRef(threadID), "eventRef": YorozuCrypto.threadRef(eventID)], options: .sortedKeys) else { return }
+        if registered { sendNotify(data) } else { heldNotifies = Array((heldNotifies + [(Date(), data)]).suffix(20)) }
+    }
+
+    /// The JSON holds only the class and two 8-character refs, so it is logged whole.
+    private func sendNotify(_ data: Data) {
+        Self.log.debug("notify \(String(decoding: data, as: UTF8.self), privacy: .public)")
+        send(data)
+    }
+
+    /// On each registration, after `announce`: the held notifies from the last 24 h, and `done` (Mac back online) when no
+    /// registration was seen for 10 minutes, the app's own downtime included, and none went out in the last hour.
+    private func registeredAlerts() {
+        let now = Date()
+        if alerts, !peers.isEmpty { for held in heldNotifies where now.timeIntervalSince(held.at) < 86_400 { sendNotify(held.data) } }
+        heldNotifies = []
+        if let last = lastOnline, now.timeIntervalSince(last.seen) >= 600, last.notified.map({ now.timeIntervalSince($0) >= 3600 }) ?? true, alerts, !peers.isEmpty {
+            notify("done", threadID: "main", eventID: UUID().uuidString)
+            lastOnline?.notified = now
+        }
+        markOnline()
+    }
+
+    /// Written on each registration, pong and stop while registered, so a quit or a short drop stays below the threshold.
+    private func markOnline() {
+        lastOnline = Online(seen: Date(), notified: lastOnline?.notified)
+        try? JSONEncoder().encode(lastOnline).write(to: onlineFile, options: .atomic)
     }
 
     /// Live updates to every phone whose peer-info exchange succeeded on this run.
@@ -309,6 +365,7 @@ actor RelayHost {
         case "registered":
             registered = true; retry = 2
             announce()
+            registeredAlerts()
             if pairing { send(["type": "mint"]) }
             rehandshake()
             state = "Connected"; publish()
@@ -317,6 +374,10 @@ actor RelayHost {
             newCode(token)
         case "pong":
             pongDue = false
+            if registered { markOnline() }
+        case "state":
+            // `notify rate limit` (60 a minute): that wake-up is lost, the frames are not.
+            Self.log.notice("relay state: \(message.state ?? "", privacy: .public)")
         case "frame":
             // A replayed frame carries the relay's buffer seq, and the ack is cumulative: acked only once
             // handled, after every frame before it. One that can never be handled (not a frame, unknown
