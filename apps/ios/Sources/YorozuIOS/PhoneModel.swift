@@ -219,6 +219,8 @@ final class PhoneModel {
     private(set) var directEnabled = UserDefaults.standard.bool(forKey: PhoneModel.directKey)
     /// The status saved on going to the background, shown for up to 3 s on return and launch.
     private var heldStatus: ClientConnectionStatus?
+    /// This pairing's `onboardingKey` is false: `onboardingDue` once linked.
+    private var onboardingPending = false
 
     private var pairing: QrPayload?
     /// This phone's X25519 session key, base64url: the cache's owner and `device_remove`'s `pub`.
@@ -297,8 +299,25 @@ final class PhoneModel {
         }
         disconnect()
         connect(stored)
+        // Due until shown. A Repair keeps the host, so its guide is not shown again.
+        if !pending.repair, let key = onboardingKey {
+            UserDefaults.standard.set(false, forKey: key)
+            onboardingPending = true
+        }
         start()
     }
+
+    /// The client onboarding is due: a newly added host has linked and the guide has not been shown for this pairing.
+    var onboardingDue: Bool { linked && onboardingPending }
+
+    func onboardingShown() {
+        if let key = onboardingKey { UserDefaults.standard.set(true, forKey: key) }
+        onboardingPending = false
+    }
+
+    /// Per pairing, like `pushKey`, under its own v2 name. False while due, true once shown; pairings made before
+    /// onboarding existed have none, so are never due.
+    private var onboardingKey: String? { ownPub.map { "clientOnboardingShownV2.\($0)" } }
 
     /// Tells the host to forget this phone (when the link is up; offline it wipes anyway), then wipes.
     /// The send goes first for the same reason as in `confirm`.
@@ -347,6 +366,7 @@ final class PhoneModel {
         pairedAt = stored.pairedAt
         candidates = stored.directCandidates ?? []
         ownPub = identity.base64URLEncodedString()
+        onboardingPending = onboardingKey.flatMap { UserDefaults.standard.object(forKey: $0) as? Bool } == false
         linked = stored.paired == true
         applyPush()
         if let ownPub, let snapshot = MirrorCache.shared.load(owner: ownPub) { restore(snapshot) }
@@ -379,6 +399,8 @@ final class PhoneModel {
         transfers = nil
         files.transfers = nil
         pairing = nil
+        if let onboardingKey { UserDefaults.standard.removeObject(forKey: onboardingKey) }
+        onboardingPending = false
         ownPub = nil
         linked = false
         outbox.forEach { LocalNotices.cancelExpiry($0.id) }

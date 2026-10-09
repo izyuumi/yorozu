@@ -15476,6 +15476,71 @@
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "短くしてください。" } }
       }
+    },
+    "How Yorozu works" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuのしくみ" } }
+      }
+    },
+    "Your host does the work" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "作業はホストが行います" } }
+      }
+    },
+    "Yorozu runs on your host. Research, writing and code happen there." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuはホストで動きます。調べもの・文章・コードの作業はホストで進みます。" } }
+      }
+    },
+    "This device is a client" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末はクライアントです" } }
+      }
+    },
+    "Chat, follow Activities and Scheduled tasks, and see the results here." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "チャットし、アクティビティや定期タスクの様子と結果をここで確認できます。" } }
+      }
+    },
+    "End-to-end encrypted" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "エンドツーエンドで暗号化" } }
+      }
+    },
+    "Messages go through the relay end-to-end encrypted, or straight to the host on the same network when Direct connection is on." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メッセージはエンドツーエンドで暗号化されてリレーを通ります。直接接続がオンなら、同じネットワーク上のホストに直接届きます。" } }
+      }
+    },
+    "Keep the host awake" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストを起こしておく" } }
+      }
+    },
+    "Work runs only while the host is awake. Messages wait in the relay for up to 24 hours." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "作業はホストが起きている間だけ進みます。メッセージはリレーで最大24時間待機します。" } }
+      }
+    },
+    "Stay in the loop" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "進み具合を逃さない" } }
+      }
+    },
+    "Get a notification when a result is ready, a task fails, Yorozu has a question, or the host is back online. Notifications never show message content." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "結果が届いたとき、タスクが失敗したとき、Yorozuから質問があるとき、ホストがオンラインに戻ったときに通知します。通知にメッセージの内容は表示されません。" } }
+      }
+    },
+    "Allow Notifications" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "通知を許可" } }
+      }
+    },
+    "Not Now" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "今はしない" } }
+      }
     }
   },
   "version" : "1.0"

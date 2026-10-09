@@ -116,7 +116,13 @@ enum LocalNotices {
     /// Asked the first time a message has to wait in the outbox or the relay holds one for an away
     /// Mac; iOS shows the prompt only once.
     static func requestPermission() {
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        Task { await askPermission() }
+    }
+
+    /// The same request, awaited: true when notifications are allowed. Onboarding's Allow Notifications.
+    @discardableResult
+    static func askPermission() async -> Bool {
+        (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
     }
 
     /// 24 h after the relay buffered it (`accepted` with `buffered`), identified by the message id.

@@ -49,6 +49,10 @@ struct RootView: View {
                 ? String(localized: "This host is already paired. Repair replaces only its connection.\n\nRelay: \(pending.relayHost)\nHost key: \(pending.fingerprint)")
                 : String(localized: "Add this host to Yorozu?\n\nRelay: \(pending.relayHost)\nHost key: \(pending.fingerprint)"))
         }
+        // Once per pairing, after the first handshake with a newly added host.
+        .sheet(isPresented: Binding(get: { model.onboardingDue && !repairing }, set: { if !$0 { model.onboardingShown() } })) {
+            OnboardingView { model.onboardingShown() }
+        }
         // iOS suspends the app and its socket with it. Hang up on the way out, so the relay does
         // not keep a frozen socket, and dial on the way back in rather than waiting out a backoff
         // that ran down while nothing was executing.
