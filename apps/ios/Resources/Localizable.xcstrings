@@ -522,6 +522,11 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "詳細を表示" } }
       }
     },
+    "Select Text" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "テキストを選択" } }
+      }
+    },
     "Details" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "詳細" } }
@@ -585,6 +590,36 @@
     "%@ · Fix this on your Mac" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ · Mac で修正してください" } }
+      }
+    },
+    "Fix this on your Mac" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac で修正してください" } }
+      }
+    },
+    "Mac readiness" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac の準備状況" } }
+      }
+    },
+    "Ready" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "準備完了" } }
+      }
+    },
+    "About" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "情報" } }
+      }
+    },
+    "Privacy Policy" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライバシーポリシー" } }
+      }
+    },
+    "Terms of Use" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "利用規約" } }
       }
     },
     "%lld items need attention" : {
@@ -4904,7 +4939,6 @@
       }
     },
     "Source on GitHub" : {
-      "extractionState" : "stale",
       "localizations" : {
         "es" : {
           "stringUnit" : {
@@ -15119,19 +15153,19 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "要対応" } }
       }
     },
-    "No sub-chats yet" : {
+    "No activities yet" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サブチャットはまだありません" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクティビティはまだありません" } }
       }
     },
-    "Bigger work runs in a sub-chat on your Mac. It shows up here." : {
+    "Bigger work runs in the background on your Mac. It shows up here." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "時間のかかる作業は Mac のサブチャットで進み、ここに表示されます。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "時間のかかる作業は Mac のバックグラウンドで進み、ここに表示されます。" } }
       }
     },
-    "Sub-chats" : {
+    "Activities" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サブチャット" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクティビティ" } }
       }
     },
     "Status unknown" : {
@@ -15164,9 +15198,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "この iPhone にはありません" } }
       }
     },
-    "This sub-chat is older than what this iPhone keeps. Open it on your Mac." : {
+    "This activity is older than what this iPhone keeps. Open it on your Mac." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このサブチャットは iPhone に保存される期間より古いものです。Mac で開いてください。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このアクティビティは iPhone に保存される期間より古いものです。Mac で開いてください。" } }
       }
     },
     "To change this work, write in the main chat." : {
@@ -15244,9 +15278,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべてを検索" } }
       }
     },
-    "The main chat and every sub-chat, on your Mac." : {
+    "The main chat and every activity, on your Mac." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac にあるメインのチャットとすべてのサブチャットが対象です。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac にあるメインのチャットとすべてのアクティビティが対象です。" } }
       }
     },
     "Couldn't search" : {
@@ -15254,9 +15288,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索できませんでした" } }
       }
     },
-    "Sub-chat" : {
+    "Activity" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サブチャット" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクティビティ" } }
       }
     },
     "Older than this iPhone keeps. Open it on your Mac." : {
@@ -15321,20 +15355,20 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件を読み込み済み" } }
       }
     },
-    "Jobs" : {
+    "Scheduled" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブ" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スケジュール" } }
       }
     },
-    "^[%lld job](inflect: true)" : {
+    "%lld scheduled" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件" } }
       }
     },
-    "^[%lld job](inflect: true) · %lld need attention" : {
+    "%lld scheduled · %lld need attention" : {
       "localizations" : {
         "en" : {
-          "stringUnit" : { "state" : "translated", "value" : "^[%1$lld job](inflect: true) · %#@attention@" },
+          "stringUnit" : { "state" : "translated", "value" : "%1$lld scheduled · %#@attention@" },
           "substitutions" : {
             "attention" : {
               "argNum" : 2,
@@ -15351,19 +15385,19 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$lld件 · %2$lld件要対応" } }
       }
     },
-    "To create or change a job, ask Yorozu in the main chat. Tap a job to open its sub-chat." : {
+    "To schedule or change something, ask Yorozu in the main chat. Tap one to open its activity." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブの作成や変更はメインのチャットで頼んでください。ジョブをタップするとサブチャットが開きます。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スケジュールの作成や変更はメインのチャットで頼んでください。タップするとアクティビティが開きます。" } }
       }
     },
-    "No jobs yet" : {
+    "Nothing scheduled yet" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブはまだありません" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スケジュールはまだありません" } }
       }
     },
-    "To create a job, ask Yorozu in the main chat." : {
+    "To schedule something, ask Yorozu in the main chat." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブを作るには、メインのチャットで Yorozu に頼んでください。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スケジュールを作るには、メインのチャットで Yorozu に頼んでください。" } }
       }
     },
     "Delete “%@”?" : {
@@ -15371,9 +15405,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "「%@」を削除しますか？" } }
       }
     },
-    "It stops running. Its sub-chat and its folder stay on your Mac." : {
+    "It stops running. Its activity and its folder stay on your Mac." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "実行されなくなります。サブチャットとフォルダは Mac に残ります。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "実行されなくなります。アクティビティとフォルダは Mac に残ります。" } }
       }
     },
     "Run Now" : {
@@ -15391,9 +15425,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "一時停止" } }
       }
     },
-    "Job actions" : {
+    "Actions" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブの操作" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "操作" } }
       }
     },
     "job.badge.paused" : {

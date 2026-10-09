@@ -11,7 +11,6 @@ struct AttachmentsView: View {
     let files: [AttachmentInfo]
 
     @Environment(AttachmentFiles.self) private var store: AttachmentFiles?
-    @State private var preview: URL?
     @State private var sharing: SharedFile?
 
     /// The tallest a lone image is drawn; a grid's tiles are square, two to a row.
@@ -34,7 +33,6 @@ struct AttachmentsView: View {
             }
             ForEach(others) { fileRow($0) }
         }
-        .quickLookPreview($preview)
         .sheet(item: $sharing) { ShareSheet(url: $0.url).ignoresSafeArea() }
     }
 
@@ -124,7 +122,7 @@ struct AttachmentsView: View {
     private func open(_ info: AttachmentInfo) {
         Task {
             guard let url = await store?.open(info) else { return }
-            if QLPreviewController.canPreview(url as NSURL) { preview = url } else { sharing = SharedFile(url: url) }
+            if QLPreviewController.canPreview(url as NSURL) { FilePreview.present(url) } else { sharing = SharedFile(url: url) }
         }
     }
 }
@@ -143,4 +141,31 @@ private struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// Quick Look presented by UIKit, as Files and Photos do: the image can be pinched and panned, and a swipe down
+/// closes it. SwiftUI's `quickLookPreview` hosts it in a cover without that dismissal.
+private final class FilePreview: QLPreviewController, QLPreviewControllerDataSource {
+    private let url: URL
+
+    private init(url: URL) {
+        self.url = url
+        super.init(nibName: nil, bundle: nil)
+        dataSource = self
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    static func present(_ url: URL) {
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+        guard var top = scene?.keyWindow?.rootViewController else { return }
+        while let presented = top.presentedViewController { top = presented }
+        top.present(FilePreview(url: url), animated: true)
+    }
+
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem { url as NSURL }
 }

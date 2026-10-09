@@ -804,8 +804,8 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
   phone when it changes. `EngineBridge` reads it on its snapshot poll only when the change sequence
   or the next runs moved, or 5 s passed, and `RelayHost.publishJobs(_:)` sends it only when it
   differs from the last one.
-- The phone keeps the latest in memory (not in its cache). Its Sub-chats list shows a Jobs row
-  ("N jobs · M need attention", counting `needsAttention` and `needsApproval`) and leaves job
+- The phone keeps the latest in memory (not in its cache). Its Activities list (sub-chats) shows a Scheduled row
+  ("N scheduled · M need attention", counting `needsAttention` and `needsApproval`) and leaves job
   topics out of the list and of the running count.
 
 ### `job_control` (phone -> Mac): one action
