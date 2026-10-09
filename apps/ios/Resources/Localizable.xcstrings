@@ -1,6 +1,71 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld new" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新着 %lld件" } }
+      }
+    },
+    "%@ bytes. The limit is %@." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ バイト（上限は %2$@ バイト）" } }
+      }
+    },
+    "Shorten it to send." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "短くすると送信できます。" } }
+      }
+    },
+    "Show Details" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "詳細を表示" } }
+      }
+    },
+    "Details" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "詳細" } }
+      }
+    },
+    "Sent" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "送信" } }
+      }
+    },
+    "Time" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "日時" } }
+      }
+    },
+    "Show the request" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "依頼を表示" } }
+      }
+    },
+    "Ask Yorozu anything" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu になんでも頼めます" } }
+      }
+    },
+    "Quick questions are answered right here. Bigger work (research, writing, code) runs on your Mac in the background, and the result comes back to this chat." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "簡単な質問にはここで答えます。調べもの・文章・コードなど時間のかかる作業は Mac がバックグラウンドで進め、終わったらこのチャットに結果を届けます。" } }
+      }
+    },
+    "For example" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "例" } }
+      }
+    },
+    "Find three quiet mechanical keyboards under ¥25,000 and pick one." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "2万5千円以下の静かなメカニカルキーボードを3つ探して、1つ選んで。" } }
+      }
+    },
+    "Yorozu remembers what matters on its own." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "大事なことは自動で覚えます。" } }
+      }
+    },
     "Message Yorozu…" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuにメッセージ…" } }
