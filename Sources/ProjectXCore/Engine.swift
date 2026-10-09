@@ -562,6 +562,7 @@ public actor Engine {
             case .notice(let body):
                 let w = try await store.work(id)
                 _ = try await store.message(role: "assistant",body: body,topic: w.topicID,task: id,kind: "failure",notice: Notice(.compactionFailed,["error": body]))
+            case .media: break // #316 scaffold: the store package copies and attaches these.
             }
         } catch { throw error }
     }

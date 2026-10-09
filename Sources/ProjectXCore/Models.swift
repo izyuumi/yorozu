@@ -232,7 +232,8 @@ public struct RunHandle: Codable, Sendable {
 }
 public enum RunStatus: Sendable { case running, stopped, completed(WorkerOutput), unknown }
 /// `notice`: a short failure note for the main timeline (e.g. a failed compaction), outside the task's result.
-public enum StreamUpdate: Sendable { case handle(RunHandle), event(WorkerEvent), notice(String) }
+/// `media`: image files a worker shared in a progress message (#316); the Engine copies them into the store and attaches them to that event.
+public enum StreamUpdate: Sendable { case handle(RunHandle), event(WorkerEvent), notice(String), media(eventID: String, paths: [String]) }
 /// The one cap on a raw model run's final prompt, in UTF-8 bytes. Every raw-run budget measures against it.
 public let rawPromptCap = 20_000
 public func identifier() -> String { UUID().uuidString.lowercased() }
