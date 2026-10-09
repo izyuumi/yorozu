@@ -20,15 +20,19 @@ const pages = [['/', 'Home'], ['/privacy/', 'Privacy'], ['/terms/', 'Terms']];
   <title>{title}</title>
   <meta name="description" content={description}>
   <link rel="canonical" href={new URL(path, Astro.site).href}>
-  <link rel="icon" href="/favicon.png" type="image/png">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="icon" href="/favicon.ico?v=01e2c8c265a0" type="image/x-icon" sizes="16x16 32x32 64x64">
+  <link rel="icon" href="/favicon-16.png?v=41da5df370dc" type="image/png" sizes="16x16">
+  <link rel="icon" href="/favicon-32.png?v=8056990dec9e" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon.png?v=4320efbf4c79" type="image/png" sizes="64x64">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=9e72b449">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/secondary-preview.css">
   <slot name="head" />
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site">
-    <a class="wordmark" href="/"><img src="/assets/icon.png" alt="" width="34" height="34">Yorozu</a>
+    <a class="wordmark" href="/"><img src="/assets/icon.png?v=9e72b449" alt="" width="34" height="34">Yorozu</a>
     <nav aria-label="Primary">
       <a href="/privacy/" aria-current={current('/privacy/')}>Privacy</a>
       <a href="/terms/" aria-current={current('/terms/')}>Terms</a>
