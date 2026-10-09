@@ -430,12 +430,12 @@ private struct EmptyChat: View {
     }
 }
 
-/// Connection details, notifications, the Mac's readiness, About (versions and links), Copy diagnostics, Repair and Remove.
+/// A Connection row that opens `ConnectionSettings`, notifications, the host's readiness, About (versions and links)
+/// and Copy diagnostics.
 private struct SettingsSheet: View {
     let model: PhoneModel
     let onRepair: () -> Void
 
-    @State private var removing = false
     @State private var copied = false
     @State private var notifications: UNAuthorizationStatus?
     @Environment(\.dismiss) private var dismiss
@@ -444,48 +444,15 @@ private struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    LabeledContent("Status", value: model.status.label)
-                    LabeledContent("Path") { Text(LocalizedStringKey(model.path?.name ?? "Not connected")) }
-                    if let hostName = model.hostName { LabeledContent("Host", value: hostName) }
-                    if let relayHost = model.relayHost { LabeledContent("Relay", value: relayHost) }
-                    if let fingerprint = model.fingerprint {
-                        LabeledContent("Host key") {
-                            Text(fingerprint).monospaced().textSelection(.enabled)
+                Section("Connection") {
+                    NavigationLink {
+                        ConnectionSettings(model: model, onRepair: onRepair) {
+                            Task { await model.remove() }
+                            dismiss()
                         }
+                    } label: {
+                        LabeledContent(model.hostName ?? String(localized: "Host"), value: connectionSummary)
                     }
-                    if let pairedAt = model.pairedAt {
-                        LabeledContent("Paired since") { Text(pairedAt, format: .dateTime.year().month().day()) }
-                    }
-                    if let lastError = model.lastError {
-                        VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
-                            LabeledContent("Last error") { Text(lastError.at, format: .relative(presentation: .named)) }
-                            Text(lastError.message).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    Toggle("Direct connection (LAN / Tailscale)", isOn: Binding(get: { model.directEnabled }, set: { model.setDirect($0) }))
-                    if model.directEnabled && model.directReport.localNetworkDenied {
-                        Text("Local Network access is off. Turn it on in Settings › Privacy & Security › Local Network.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    if model.directEnabled {
-                        LabeledContent("Direct addresses") {
-                            Text(model.candidates.isEmpty ? String(localized: "None yet") : model.candidates.map(\.label).joined(separator: "\n"))
-                                .multilineTextAlignment(.trailing)
-                                .textSelection(.enabled)
-                        }
-                        if let error = model.directReport.lastError {
-                            VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
-                                Text("Last direct error")
-                                Text(error).font(.footnote).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Connection")
-                } footer: {
-                    Text("Connects straight to the host on the same Wi-Fi or over Tailscale, and falls back to the relay.")
                 }
                 Section {
                     LabeledContent("Notifications") { Text(LocalizedStringKey(notificationsName)) }
@@ -497,7 +464,7 @@ private struct SettingsSheet: View {
                 }
                 // Read again on the way back from the Settings app.
                 .task(id: scenePhase) { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
-                // The Mac's own readiness, as synced; the fixes are on the Mac.
+                // The host's own readiness, as synced; the fixes are on the host.
                 if let readiness = model.readiness {
                     Section {
                         LabeledContent("Host readiness") {
@@ -537,10 +504,6 @@ private struct SettingsSheet: View {
                 } footer: {
                     Text("Versions and connection details only: never messages, keys or tokens.")
                 }
-                Section {
-                    Button("Repair connection", action: onRepair)
-                    Button("Remove host", role: .destructive) { removing = true }
-                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -549,14 +512,14 @@ private struct SettingsSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .confirmationDialog("Remove host?", isPresented: $removing, titleVisibility: .visible) {
-                Button("Remove host", role: .destructive) {
-                    Task { await model.remove() }
-                    dismiss()
-                }
-            }
         }
         .yorozuTint()
+    }
+
+    /// "Connected · Relay": the status, and the path while there is one.
+    private var connectionSummary: String {
+        ([model.status.label] + [model.path.map { String(localized: String.LocalizationValue($0.name)) }].compactMap { $0 })
+            .joined(separator: " · ")
     }
 
     /// Plain English text for a bug report, whatever the interface language. Only what Settings
@@ -599,6 +562,79 @@ private struct SettingsSheet: View {
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "\(short) (\(build))"
     }()
+}
+
+/// Settings › Connection: the host and this device, the link, the direct path, and Repair and Remove.
+private struct ConnectionSettings: View {
+    let model: PhoneModel
+    let onRepair: () -> Void
+    let onRemove: () -> Void
+
+    @State private var removing = false
+
+    var body: some View {
+        Form {
+            Section("Host") {
+                LabeledContent("Name", value: model.hostName ?? String(localized: "Unknown"))
+                if let fingerprint = model.fingerprint {
+                    LabeledContent("Host key") {
+                        Text(fingerprint).monospaced().textSelection(.enabled)
+                    }
+                }
+                if let pairedAt = model.pairedAt {
+                    LabeledContent("Paired since") { Text(pairedAt, format: .dateTime.year().month().day()) }
+                }
+            }
+            Section("This device") {
+                LabeledContent("Name", value: DeviceModel.name)
+            }
+            Section("Status") {
+                LabeledContent("Status", value: model.status.label)
+                LabeledContent("Path") { Text(LocalizedStringKey(model.path?.name ?? "Not connected")) }
+                if let relayURL = model.relayURL {
+                    LabeledContent("Relay") { Text(relayURL).textSelection(.enabled) }
+                }
+                if let lastError = model.lastError {
+                    VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                        LabeledContent("Last error") { Text(lastError.at, format: .relative(presentation: .named)) }
+                        Text(lastError.message).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Section {
+                Toggle("Direct connection (LAN / Tailscale)", isOn: Binding(get: { model.directEnabled }, set: { model.setDirect($0) }))
+                if model.directEnabled && model.directReport.localNetworkDenied {
+                    Text("Local Network access is off. Turn it on in Settings › Privacy & Security › Local Network.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if model.directEnabled {
+                    LabeledContent("Direct addresses") {
+                        Text(model.candidates.isEmpty ? String(localized: "None yet") : model.candidates.map(\.label).joined(separator: "\n"))
+                            .multilineTextAlignment(.trailing)
+                            .textSelection(.enabled)
+                    }
+                    if let error = model.directReport.lastError {
+                        VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                            Text("Last direct error")
+                            Text(error).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } footer: {
+                Text("Connects straight to the host on the same Wi-Fi or over Tailscale, and falls back to the relay.")
+            }
+            Section {
+                Button("Repair connection", action: onRepair)
+                Button("Remove host", role: .destructive) { removing = true }
+            }
+        }
+        .navigationTitle("Connection")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Remove host?", isPresented: $removing, titleVisibility: .visible) {
+            Button("Remove host", role: .destructive, action: onRemove)
+        }
+    }
 }
 
 extension TransportPath {

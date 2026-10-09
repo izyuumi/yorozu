@@ -15541,6 +15541,16 @@
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "今はしない" } }
       }
+    },
+    "Name" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "名前" } }
+      }
+    },
+    "This device" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末" } }
+      }
     }
   },
   "version" : "1.0"

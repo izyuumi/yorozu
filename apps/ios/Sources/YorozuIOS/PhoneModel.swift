@@ -207,6 +207,7 @@ final class PhoneModel {
     /// When this phone first joined the Mac (`PairingStore.Stored.pairedAt`).
     private(set) var pairedAt: Date?
     var relayHost: String? { pairing?.relayHost }
+    var relayURL: String? { pairing?.relayUrl }
     var fingerprint: String? { pairing?.fingerprint }
     /// The socket the link runs on while joined; Settings diagnostics only, never the chat.
     private(set) var path: TransportPath?
