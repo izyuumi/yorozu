@@ -272,11 +272,11 @@ import ServiceManagement
         do { try await engine.send(text); if draft == text { draft = "" }; status = nil; snapshot = try await engine.snapshot() }
         catch { status = error.localizedDescription }
     }
-    /// The popover showed this message at its bottom: the main read cursor moves to it (forward only, in the Store), and
-    /// the relay's next publish sends it to phones as `read_state`.
+    /// The popover showed this message at its bottom: the main read cursor moves to it (forward only, in the Store); the
+    /// poll picks it up into `readCursor`, and the relay's next publish sends it to phones as `read_state`.
     func markRead(_ id: String) {
         guard id != readCursor, let store else { return }
-        Task { if (try? await store.markRead(thread: "main", message: id)) == true { readCursor = id } }
+        Task { _ = try? await store.markRead(thread: "main", message: id) }
     }
     /// Chat search for the popover's ⌘F bar; the caller keeps only main-timeline message hits (open question 10).
     func search(_ query: String,limit: Int,offset: Int = 0) async throws -> (hits: [SearchHit], total: Int) {

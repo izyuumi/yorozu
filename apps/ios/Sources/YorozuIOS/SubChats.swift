@@ -28,7 +28,7 @@ extension TaskData {
 
     var stateLabel: String {
         switch state {
-        case "queued": String(localized: "Queued")
+        case "queued": String(localized: "task.state.queued", defaultValue: "Queued")
         case "working": String(localized: "Running")
         case "amendment_pending": String(localized: "Applying a change")
         case "cancellation_requested": String(localized: "Stopping")
@@ -42,18 +42,35 @@ extension TaskData {
     }
 }
 
+extension [TaskData] {
+    /// A topic's task that sets its status: active or blocking work first (coding and thinking tasks
+    /// can run side by side in one topic), else the newest.
+    var current: TaskData? { last { $0.isActive || $0.state == "uncertain" } ?? last }
+}
+
 extension PhoneModel {
+    private static func byAge(_ a: TaskData, _ b: TaskData) -> Bool { (a.created, a.seq) < (b.created, b.seq) }
+
     /// A topic's tasks, oldest first.
     func tasks(in topicId: String) -> [TaskData] {
-        tasks.values.filter { $0.topicId == topicId }.sorted { ($0.created, $0.seq) < ($1.created, $1.seq) }
+        tasks.values.filter { $0.topicId == topicId }.sorted(by: Self.byAge)
     }
 
-    /// nil while off the link: the Mac's state is unknown, never idle.
-    func status(of topicId: String) -> TopicStatus? {
-        guard working != nil else { return nil }
-        let list = tasks(in: topicId)
-        // Active or blocking work first: coding and thinking tasks can run side by side in one topic.
-        guard let current = list.last(where: { $0.isActive || $0.state == "uncertain" }) ?? list.last else { return .idle }
+    /// Every topic's tasks, oldest first, in one pass.
+    var tasksByTopic: [String: [TaskData]] {
+        Dictionary(grouping: tasks.values, by: \.topicId).mapValues { $0.sorted(by: Self.byAge) }
+    }
+
+    /// A result message repeats its task's result, which the task card already shows: the topic hides it.
+    func hidesInTopic(_ bubble: Bubble) -> Bool {
+        bubble.kind == "result" && bubble.taskId.flatMap { tasks[$0]?.result } != nil
+    }
+
+    /// nil while off the link or catching up: the Mac's state is unknown, never idle. `list`: the
+    /// topic's tasks, oldest first, when the caller has them.
+    func status(of topicId: String, tasks list: [TaskData]? = nil) -> TopicStatus? {
+        guard statusKnown else { return nil }
+        guard let current = (list ?? tasks(in: topicId)).current else { return .idle }
         if current.state == "amendment_pending", current.result != nil { return .attention }
         switch current.state {
         case "working", "queued", "amendment_pending": return .running
@@ -63,35 +80,52 @@ extension PhoneModel {
         }
     }
 
-    /// The newest thing that happened in a topic, epoch ms: orders the list.
-    func lastActivity(of topicId: String) -> Int {
-        let topic = topics[topicId]?.created ?? 0
-        let task = tasks.values.filter { $0.topicId == topicId }.map(\.created).max() ?? 0
-        let message = bubbles.last { $0.topicId == topicId }?.ts ?? 0
-        return max(topic, task, message)
+    /// The newest thing that happened in each topic, epoch ms, in one pass: orders the list.
+    func lastActivities() -> [String: Int] {
+        var latest = topics.mapValues(\.created)
+        for task in tasks.values { latest[task.topicId] = Swift.max(latest[task.topicId] ?? 0, task.created) }
+        for bubble in bubbles {
+            if let id = bubble.topicId { latest[id] = Swift.max(latest[id] ?? 0, bubble.ts) }
+        }
+        return latest
     }
 
-    var runningTopics: Int { topics.keys.filter { status(of: $0) == .running }.count }
+    var runningTopics: Int {
+        let byTopic = tasksByTopic
+        return topics.keys.filter { status(of: $0, tasks: byTopic[$0] ?? []) == .running }.count
+    }
 }
 
 /// The sub-chat list: Running, Needs attention and Recent, or one list while the status is unknown.
 struct TopicsScreen: View {
     let model: PhoneModel
 
+    /// Per topic, computed once a render: its tasks, oldest first, and its last activity.
+    private struct Facts {
+        var tasks: [String: [TaskData]]
+        var activity: [String: Int]
+    }
+
     var body: some View {
-        let ids = model.topics.keys.sorted { model.lastActivity(of: $0) > model.lastActivity(of: $1) }
+        let facts = Facts(tasks: model.tasksByTopic, activity: model.lastActivities())
+        let ids = model.topics.keys.sorted { facts.activity[$0, default: 0] > facts.activity[$1, default: 0] }
         List {
-            if model.working == nil {
+            if !model.statusKnown {
                 Section {
-                    ForEach(ids, id: \.self) { row($0, nil) }
+                    ForEach(ids, id: \.self) { row($0, nil, facts) }
                 } footer: {
-                    Text("Status unknown until your Mac is connected.")
+                    if model.working == nil {
+                        Text("Status unknown until your Mac is connected.")
+                    } else {
+                        Text("Status unknown until this iPhone has caught up with your Mac.")
+                    }
                 }
             } else {
-                let statuses = Dictionary(uniqueKeysWithValues: ids.map { ($0, model.status(of: $0) ?? .idle) })
-                section("Running", ids.filter { statuses[$0] == .running }, statuses)
-                section("Needs attention", ids.filter { statuses[$0] == .attention }, statuses)
-                section("Recent", ids.filter { statuses[$0] == .done || statuses[$0] == .idle }, statuses)
+                let statuses = Dictionary(uniqueKeysWithValues: ids.map { ($0, model.status(of: $0, tasks: facts.tasks[$0] ?? []) ?? .idle) })
+                section(String(localized: "Running"), ids.filter { statuses[$0] == .running }, statuses, facts)
+                section(String(localized: "Needs attention"), ids.filter { statuses[$0] == .attention }, statuses, facts)
+                section(String(localized: "topics.section.recent", defaultValue: "Recent"),
+                        ids.filter { statuses[$0] == .done || statuses[$0] == .idle }, statuses, facts)
             }
         }
         .listStyle(.insetGrouped)
@@ -106,21 +140,21 @@ struct TopicsScreen: View {
     }
 
     @ViewBuilder
-    private func section(_ title: LocalizedStringKey, _ ids: [String], _ statuses: [String: TopicStatus]) -> some View {
+    private func section(_ title: String, _ ids: [String], _ statuses: [String: TopicStatus], _ facts: Facts) -> some View {
         if !ids.isEmpty {
             Section(title) {
-                ForEach(ids, id: \.self) { row($0, statuses[$0]) }
+                ForEach(ids, id: \.self) { row($0, statuses[$0], facts) }
             }
         }
     }
 
-    private func row(_ id: String, _ status: TopicStatus?) -> some View {
+    private func row(_ id: String, _ status: TopicStatus?, _ facts: Facts) -> some View {
         NavigationLink(value: ChatRoute.topic(id, focus: nil)) {
             HStack(spacing: LayoutMetrics.stack) {
                 TopicSymbol(status: status)
                 VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                     Text(model.topics[id]?.label ?? "").lineLimit(1)
-                    subtitle(id, status)
+                    subtitle(status, current: (facts.tasks[id] ?? []).current, when: facts.activity[id] ?? 0)
                         .font(.footnote)
                         .lineLimit(1)
                 }
@@ -128,9 +162,8 @@ struct TopicsScreen: View {
         }
     }
 
-    private func subtitle(_ id: String, _ status: TopicStatus?) -> some View {
-        let current = model.tasks(in: id).last { $0.isActive || $0.state == "uncertain" } ?? model.tasks(in: id).last
-        let when = MessageTime.day.string(from: MessageTime.date(model.lastActivity(of: id)))
+    private func subtitle(_ status: TopicStatus?, current: TaskData?, when: Int) -> some View {
+        let when = MessageTime.day.string(from: MessageTime.date(when))
         return Group {
             switch status {
             case nil:
@@ -216,11 +249,11 @@ struct TopicScreen: View {
 
     var body: some View {
         let tasks = model.tasks(in: topicId)
-        let withResult = Set(tasks.filter { $0.result != nil }.map(\.id))
-        // A result message repeats its task's result, which the task card already shows.
-        let messages = model.bubbles.filter {
-            $0.topicId == topicId && !($0.kind == "result" && $0.taskId.map(withResult.contains) == true)
-        }
+        let messages = model.bubbles.filter { $0.topicId == topicId && !model.hidesInTopic($0) }
+        // Grouped once for every card, not filtered per card.
+        let taskIds = Set(tasks.map(\.id))
+        let events = Dictionary(grouping: model.workerEvents.values.filter { taskIds.contains($0.taskId) }, by: \.taskId)
+        let amendments = Dictionary(grouping: model.amendments.values.filter { taskIds.contains($0.taskId) }, by: \.taskId)
         let items = (messages.map(Item.message) + tasks.map(Item.task)).sorted { $0.ts < $1.ts }
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
@@ -230,7 +263,8 @@ struct TopicScreen: View {
                         MessageRow(bubble: bubble, header: nil, onShowRequest: {}, onShowDetails: {})
                             .id(bubble.id)
                     case .task(let task):
-                        TaskCard(model: model, task: task, open: task.isActive != toggled.contains(task.id)) {
+                        TaskCard(model: model, task: task, events: events[task.id] ?? [], amendments: amendments[task.id] ?? [],
+                                 open: task.isActive != toggled.contains(task.id)) {
                             if toggled.contains(task.id) { toggled.remove(task.id) } else { toggled.insert(task.id) }
                         }
                         .id(task.id)
@@ -258,7 +292,7 @@ struct TopicScreen: View {
         }
         .yorozuBottomBar {
             VStack(spacing: LayoutMetrics.tight) {
-                if model.working == nil {
+                if !model.statusKnown {
                     Text("\(model.shownStatus.label) · Status unknown")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -294,14 +328,22 @@ struct TopicScreen: View {
 private struct TaskCard: View {
     let model: PhoneModel
     let task: TaskData
+    /// This task's worker events and amendments, in any order.
+    let events: [WorkerEventData]
+    let amendments: [AmendmentData]
     let open: Bool
     let onToggle: () -> Void
 
+    /// The whole activity, rather than its newest steps.
+    @State private var showAll = false
+
     private let radius: CGFloat = 22
+    /// Steps an open activity shows before "Show all".
+    private static let shownSteps = 20
 
     var body: some View {
-        let events = model.workerEvents.values.filter { $0.taskId == task.id }.sorted { ($0.created, $0.seq) < ($1.created, $1.seq) }
-        let amendments = model.amendments.values.filter { $0.taskId == task.id }.sorted { $0.revision < $1.revision }
+        let events = events.sorted { ($0.created, $0.seq) < ($1.created, $1.seq) }
+        let amendments = amendments.sorted { $0.revision < $1.revision }
         VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
             HStack(spacing: LayoutMetrics.inner) {
                 Text(verbatim: task.executorName)
@@ -344,8 +386,14 @@ private struct TaskCard: View {
                 .buttonStyle(.plain)
                 .accessibilityValue(open ? String(localized: "Expanded") : String(localized: "Collapsed"))
                 if open {
-                    VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
-                        ForEach(events, id: \.id) { EventRow(event: $0).id($0.id) }
+                    let hidden = showAll ? 0 : Swift.max(0, events.count - Self.shownSteps)
+                    if hidden > 0 {
+                        Button("Show all \(events.count) steps") { showAll = true }
+                            .font(.subheadline)
+                            .frame(minHeight: controlTarget)
+                    }
+                    LazyVStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+                        ForEach(events.dropFirst(hidden), id: \.id) { EventRow(event: $0).id($0.id) }
                     }
                 }
             }
@@ -372,7 +420,7 @@ private struct TaskCard: View {
 
     /// Off the link a task that may still change reads "Status unknown"; finished ones keep their state.
     @ViewBuilder private var stateLabel: some View {
-        let unknown = model.working == nil && (task.isActive || task.state == "uncertain")
+        let unknown = !model.statusKnown && (task.isActive || task.state == "uncertain")
         Group {
             if unknown {
                 Label("Status unknown", systemImage: "questionmark.circle").foregroundStyle(.secondary)

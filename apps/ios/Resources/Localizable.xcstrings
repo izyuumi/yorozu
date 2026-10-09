@@ -14824,6 +14824,38 @@
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件実行中" } }
       }
+    },
+    "task.state.queued" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Queued" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "待機中" } }
+      }
+    },
+    "topics.section.recent" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最近" } }
+      }
+    },
+    "Status unknown until this iPhone has caught up with your Mac." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この iPhone が Mac に追いつくまで状態は不明です。" } }
+      }
+    },
+    "Show all %lld steps" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 件すべて表示" } }
+      }
+    },
+    "Load more" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "さらに読み込む" } }
+      }
+    },
+    "%lld loaded" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件を読み込み済み" } }
+      }
     }
   },
   "version" : "1.0"

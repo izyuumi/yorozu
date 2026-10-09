@@ -126,7 +126,7 @@ struct ChatScreen: View {
             .navigationSubtitleIfAvailable(model.shownStatus.label)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    SubChatsButton(running: model.working == nil ? 0 : model.runningTopics) { path = [.topics] }
+                    SubChatsButton(running: model.runningTopics) { path = [.topics] }
                 }
                 if !Self.hasSubtitle {
                     ToolbarItem(placement: .topBarLeading) {
@@ -154,9 +154,10 @@ struct ChatScreen: View {
                     PageScreen(model: model, messageId: id)
                 }
             }
-            // The Mac's cursor moved by another device (or first loaded) moves the divider; this phone's own does not.
+            // The Mac's cursor moved by another device (or first loaded) moves the divider; this phone's own
+            // does not, nor does any cursor at or before it, so the divider never lands on messages just read.
             .onChange(of: model.readCursor?.messageId, initial: true) { _, id in
-                if id != sentRead { unreadAfter = id }
+                if !atOrBeforeSentRead(id) { unreadAfter = id }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { unreadAfter = model.readCursor?.messageId }
@@ -232,6 +233,15 @@ struct ChatScreen: View {
         return model.bubbles.last { $0.seq != nil }?.id
     }
 
+    /// `id` is this phone's last sent read or a message before it, in timeline order.
+    private func atOrBeforeSentRead(_ id: String?) -> Bool {
+        guard let id, let sentRead else { return false }
+        if id == sentRead { return true }
+        guard let index = model.bubbles.firstIndex(where: { $0.id == id }),
+              let sent = model.bubbles.firstIndex(where: { $0.id == sentRead }) else { return false }
+        return index <= sent
+    }
+
     /// Forward only: never a message at or before the Mac's cursor.
     private func markRead(_ id: String?) {
         guard let id, id != sentRead, id != model.readCursor?.messageId else { return }
@@ -243,7 +253,7 @@ struct ChatScreen: View {
     }
 
     /// A search hit: the main timeline scrolls to it; a sub-chat opens over the search; a message
-    /// outside the cache loads its page from the Mac first.
+    /// outside the cache opens `PageScreen`, which loads its page from the Mac.
     private func open(_ hit: SearchHitData) {
         switch model.target(of: hit) {
         case .main(let id):
@@ -254,7 +264,6 @@ struct ChatScreen: View {
             path.append(.topic(topicId, focus: focus))
         case .page(let id):
             path.append(.page(id))
-            Task { await model.loadPage(around: id) }
         case .none:
             break
         }
