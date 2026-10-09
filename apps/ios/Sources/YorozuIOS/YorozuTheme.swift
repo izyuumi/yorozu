@@ -1,45 +1,29 @@
 import SwiftUI
 import UIKit
 
-// From v1 packages/shared-swift YorozuTheme.swift: the palette, the tint and the paper card.
+// The system look (#311): system backgrounds, materials and standard bars, with Yorozu's vermilion
+// accent and a few state colours. Every colour has an explicit dark counterpart.
 
-/// Yorozu's shared visual language: warm paper, charcoal ink, one vermilion action colour and
-/// quiet sage for healthy state. Every colour has an explicit dark counterpart rather than
-/// relying on a light surface to be dimmed.
 enum YorozuPalette {
-    static let canvas = adaptive(
-        light: (0.973, 0.957, 0.918),
-        dark: (0.105, 0.102, 0.090)
-    )
-    static let paper = adaptive(
-        light: (1.000, 0.992, 0.969),
-        dark: (0.145, 0.137, 0.118)
-    )
-    static let ink = adaptive(
-        light: (0.145, 0.137, 0.118),
-        dark: (0.953, 0.925, 0.863)
-    )
+    /// The accent: tint, links, labels.
     static let vermilion = adaptive(
         light: (0.737, 0.176, 0.110),
         dark: (0.941, 0.376, 0.278)
     )
-    static let sage = adaptive(
-        light: (0.349, 0.459, 0.325),
-        dark: (0.588, 0.710, 0.549)
+    /// The user's bubble behind white text: darker than the accent in dark mode, so the text holds 4.5:1.
+    static let bubble = adaptive(
+        light: (0.737, 0.176, 0.110),
+        dark: (0.722, 0.220, 0.165)
     )
-    /// Amber for a state that needs attention without being an error: an offline Mac, a picture
-    /// too big to send. Darker than the system orange so it holds 4.5:1 as text on paper.
+    static let sage = adaptive(
+        light: (0.243, 0.482, 0.227),
+        dark: (0.561, 0.749, 0.514)
+    )
+    /// Amber for a state that needs attention without being an error: an offline Mac, a failed task,
+    /// an over-long draft. Darker than the system orange so it holds 4.5:1 as text.
     static let warning = adaptive(
         light: (0.604, 0.322, 0.000),
         dark: (0.941, 0.639, 0.251)
-    )
-    static let stone = adaptive(
-        light: (0.875, 0.843, 0.788),
-        dark: (0.263, 0.247, 0.216)
-    )
-    static let rule = adaptive(
-        light: (0.824, 0.784, 0.718),
-        dark: (0.310, 0.286, 0.247)
     )
 
     private static func adaptive(
@@ -53,29 +37,33 @@ enum YorozuPalette {
     }
 }
 
-private struct YorozuPaperCard: ViewModifier {
-    let padding: CGFloat
-    let radius: CGFloat
-
-    func body(content: Content) -> some View {
-        content
-            .padding(padding)
-            .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(YorozuPalette.rule.opacity(0.72), lineWidth: 0.75)
-            }
-            .shadow(color: Color.black.opacity(0.035), radius: 1.5, y: 1)
-    }
-}
-
 extension View {
-    /// The paper-card treatment shared by thread rows, progress, work and action cards.
-    func yorozuPaperCard(
+    /// A grouped card in the system's secondary fill.
+    func yorozuCard(
         padding: CGFloat = LayoutMetrics.cardPadding,
         radius: CGFloat = LayoutMetrics.cardRadius
     ) -> some View {
-        modifier(YorozuPaperCard(padding: padding, radius: radius))
+        self.padding(padding)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+
+    /// Liquid Glass on iOS 26, the regular material before it.
+    @ViewBuilder func yorozuGlass(in shape: some Shape) -> some View {
+        if #available(iOS 26, *) {
+            glassEffect(.regular, in: shape)
+        } else {
+            background(.regularMaterial, in: shape)
+        }
+    }
+
+    /// A bar along the bottom edge: content scrolls under it with the system's edge effect on
+    /// iOS 26, over the bar material before it.
+    @ViewBuilder func yorozuBottomBar(@ViewBuilder _ content: () -> some View) -> some View {
+        if #available(iOS 26, *) {
+            safeAreaBar(edge: .bottom, spacing: 0, content: content)
+        } else {
+            safeAreaInset(edge: .bottom, spacing: 0) { content().background(.bar) }
+        }
     }
 
     /// Applies Yorozu's action colour without replacing semantic warning/error colours.

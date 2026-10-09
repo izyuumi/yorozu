@@ -3,9 +3,9 @@ import SwiftUI
 // v1 packages/shared-swift ChatView.swift's iOS composer, send button and composer layout, without
 // the attach, stash, model and Stop controls.
 
-/// One surface, like Messages: the field and the send control live inside the same rounded
-/// container, so the eye reads one thing to type into. The border turns vermilion while the
-/// Mac is working.
+/// One surface, like Messages: the field and the send control share one glass container, so the
+/// eye reads one thing to type into. The border turns vermilion while the Mac is working. A draft
+/// over the Mac's limit says so above the field rather than leaving Send silently dimmed.
 struct Composer: View {
     @Binding var text: String
     let working: Bool
@@ -17,40 +17,56 @@ struct Composer: View {
 
     @State private var sends = 0
 
-    /// The send and stop circle, inside the ``controlTarget``-tall row. Smaller than the row, so
-    /// the accent fill reads as a button rather than as a block.
+    /// The send circle, inside the ``controlTarget``-tall row. Smaller than the row, so the accent
+    /// fill reads as a button rather than as a block.
     private let sendCircle: CGFloat = 32
+    private let radius: CGFloat = 22
 
     var body: some View {
+        let bytes = text.utf8.count
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
-            ComposerTextView(text: $text, placeholder: String(localized: "Message Yorozu…"), onSubmit: send)
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
-
-            HStack(alignment: .center, spacing: 4) {
-                Spacer(minLength: 4)
+            if bytes > Self.maxBytes {
+                overLimit(bytes)
+                    .padding(.top, LayoutMetrics.stack)
+                    .padding(.trailing, LayoutMetrics.stack)
+            }
+            HStack(alignment: .bottom, spacing: LayoutMetrics.tight) {
+                ComposerTextView(text: $text, placeholder: String(localized: "Message"), onSubmit: send)
+                    // Centred on the send button while single-line; grows past it.
+                    .frame(minHeight: controlTarget)
                 sendButton
             }
-            .padding(.horizontal, 4)
-            .padding(.bottom, 4)
         }
-        .background(YorozuPalette.paper, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
+        .padding(.leading, LayoutMetrics.gutter)
+        .yorozuGlass(in: shape)
         .overlay {
-            RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
-                .strokeBorder(
-                    working ? YorozuPalette.vermilion.opacity(0.72) : YorozuPalette.rule.opacity(0.82),
-                    lineWidth: working ? 1.5 : 0.8
-                )
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            if working {
+                shape.strokeBorder(YorozuPalette.vermilion.opacity(0.72), lineWidth: 1.5)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, LayoutMetrics.stack)
+        .padding(.vertical, LayoutMetrics.inner)
         // The composer keeps to a column; a no-op on a phone.
         .frame(maxWidth: LayoutMetrics.composerWidth)
         .frame(maxWidth: .infinity, alignment: .center)
         // Sending: the moment the thread changes hands.
         .sensoryFeedback(.impact(weight: .light), trigger: sends)
+    }
+
+    private func overLimit(_ bytes: Int) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
+                Text("\(bytes.formatted()) bytes. The limit is \(Self.maxBytes.formatted()).").fontWeight(.semibold)
+                Text("Shorten it to send.").foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
+        }
+        .font(.footnote)
+        .accessibilityElement(children: .combine)
     }
 
     private var sendButton: some View {
@@ -59,8 +75,7 @@ struct Composer: View {
                 .font(.body.weight(.bold))
                 .foregroundStyle(canSend ? Color.white : Color.secondary)
                 .frame(width: sendCircle, height: sendCircle)
-                .background(canSend ? YorozuPalette.vermilion : Color.clear, in: Circle())
-                .overlay(Circle().strokeBorder(.separator, lineWidth: canSend ? 0 : 1.5))
+                .background(canSend ? AnyShapeStyle(YorozuPalette.vermilion) : AnyShapeStyle(.fill.tertiary), in: Circle())
         }
         .buttonStyle(.plain)
         .frame(width: controlTarget, height: controlTarget)

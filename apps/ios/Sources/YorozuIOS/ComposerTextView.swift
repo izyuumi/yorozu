@@ -5,8 +5,8 @@ import UIKit
 // options, prompt history and Send now.
 
 /// The phone's message field: a `UITextView` that grows to six lines, then scrolls inside. The
-/// software keyboard's Return is a new line; a hardware keyboard's Return sends and Shift-Return
-/// is a new line.
+/// software keyboard's Return is a new line; a hardware keyboard has smart Enter (see
+/// `ComposerUITextView.pressesBegan`).
 struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let placeholder: String
@@ -74,13 +74,16 @@ final class ComposerUITextView: UITextView {
     let placeholderLabel = UILabel()
     var onSubmit: () -> Void = {}
 
-    /// A hardware keyboard's Return sends; Shift-Return is a new line. Not while an input method
-    /// is composing (`markedTextRange`): that Return confirms the conversion and must reach the field.
+    /// Smart Enter on a hardware keyboard: Return sends while the draft is one line; once it has a
+    /// line break (Shift-Return or a paste), Return is a new line and ⌘Return sends. Shift-Return is
+    /// always a new line. Not while an input method is composing (`markedTextRange`): that Return
+    /// confirms the conversion and must reach the field.
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if let key = presses.first?.key, key.keyCode == .keyboardReturnOrEnter, markedTextRange == nil,
-            !key.modifierFlags.contains(.shift)
-        {
-            return onSubmit()
+        if let key = presses.first?.key, key.keyCode == .keyboardReturnOrEnter, markedTextRange == nil {
+            let flags = key.modifierFlags
+            if flags.contains(.command) || (!flags.contains(.shift) && !text.contains("\n")) {
+                return onSubmit()
+            }
         }
         super.pressesBegan(presses, with: event)
     }

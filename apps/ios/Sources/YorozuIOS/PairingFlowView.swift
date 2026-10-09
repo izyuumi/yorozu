@@ -67,7 +67,6 @@ struct PairingFlowView: View {
                 .padding(.vertical, 20)
             }
         }
-        .background(YorozuPalette.canvas.ignoresSafeArea())
         .yorozuTint()
         .sheet(item: $destination) { shown in
             switch shown {
@@ -96,7 +95,7 @@ struct PairingFlowView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .yorozuPaperCard()
+        .yorozuCard()
     }
 
     private func guideStep(_ number: Int, _ text: LocalizedStringKey) -> some View {
