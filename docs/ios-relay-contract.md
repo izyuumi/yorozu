@@ -71,7 +71,8 @@ phone. So every frame the Mac sends counts against every phone's 2 MiB window.
 
 ## Direct path
 
-Capability `direct-v1` (`DirectCandidate.capability`, in `PeerInfoData.local`). When the phone's
+Capability `direct-v1` (`DirectCandidate.capability`, in `PeerInfoData.local`; a Mac with `[direct] enabled`
+false leaves it and the candidates out of its host info). When the phone's
 "Direct connection (LAN / Tailscale)" setting is on (off by default), it also dials the Mac's own
 WebSocket listener on its LAN or VPN address. The relay stays the fallback and keeps its phone ->
 Mac buffer; pairing, push and everything before the first relay join stay on the relay. Types are

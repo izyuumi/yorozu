@@ -1,41 +1,11 @@
 import Foundation
 import Network
-
-/// The direct path's wire (#315): JSON text frames on a WebSocket to the Mac's listener. Mac → phone `nonce`,
-/// phone → Mac `join`, Mac → phone `joined`, then `frame` both ways and phone `ping` / Mac `pong`.
-// WIRE: private copies of the shapes packages/YorozuWire defines as `DirectMessage`, `DirectCandidate` and the
-// `DirectProof` sign/verify helpers; switch to the shared types once they are on this branch.
-enum DirectWire {
-    static let defaultPort = 8738
-    /// Messages larger than this close the link with `tooLarge`, like the relay's 1 MiB cap.
-    static let maxMessage = 1 << 20
-    /// The relay's frame shape: base64url `FrameBody` JSON and the sender's Ed25519 signature over that string.
-    struct Frame: Codable { var payload, sig: String }
-    struct Inbound: Decodable { var type: String; var room, pub, sig, nonce: String?; var frame: Frame?; var t: Int64? }
-    struct Nonce: Encodable { var type = "nonce"; var nonce: String }
-    struct Joined: Encodable { var type = "joined"; var pub, sig: String }
-    struct FrameOut: Encodable { var type = "frame"; var frame: Frame }
-    struct Pong: Encodable { var type = "pong"; var t: Int64 }
-    /// What the phone signs with its paired Ed25519 key over the Mac's nonce.
-    static func joinProof(room: String, nonce: String) -> Data { Data("yorozu-direct-v2|\(room)|\(nonce)".utf8) }
-    /// What the Mac signs over the phone's nonce, proving it holds the key the room is pinned to.
-    static func hostProof(room: String, nonce: String) -> Data { Data("yorozu-direct-v2-host|\(room)|\(nonce)".utf8) }
-
-    enum Close: UInt16 { case sleeping = 4000, unauthorized = 4001, superseded = 4002, tooLarge = 4003 }
-
-    // WIRE: `DirectCandidate {host, port, kind}`; at most 8 go in `PeerInfoData.directCandidates`.
-    struct Candidate: Codable, Hashable, Sendable {
-        enum Kind: String, Codable, Sendable { case lan, vpn }
-        var host: String
-        var port: Int
-        var kind: Kind
-    }
-}
+import YorozuWire
 
 /// How a direct link or an advertised address reaches this Mac, for diagnostics.
 enum DirectKind: Sendable, Equatable {
     case lan, vpn, tailscale
-    var wire: DirectWire.Candidate.Kind { self == .lan ? .lan : .vpn }
+    var wire: DirectCandidate.Kind { self == .lan ? .lan : .vpn }
 }
 
 /// The Mac's interface addresses, read with `getifaddrs`.
@@ -76,14 +46,14 @@ enum DirectInterfaces {
 
     /// The candidates `hostInfo` advertises: private Wi-Fi/Ethernet addresses as `lan`, private `utun` addresses
     /// (RFC 1918, 100.64.0.0/10, ULA) as `vpn`; never loopback or link-local. LAN first, IPv4 first, at most 8.
-    static func candidates(port: Int) -> [(candidate: DirectWire.Candidate, kind: DirectKind)] {
+    static func candidates(port: Int) -> [(candidate: DirectCandidate, kind: DirectKind)] {
         var seen = Set<String>()
-        return addresses().compactMap { address -> (DirectWire.Candidate, DirectKind, Int)? in
+        return addresses().compactMap { address -> (DirectCandidate, DirectKind, Int)? in
             guard let kind = kind(interface: address.name, bytes: address.bytes), !isLinkLocal(address.bytes),
                   kind == .lan ? isPrivate(address.bytes, cgnat: false) : isPrivate(address.bytes, cgnat: true),
                   seen.insert(address.text).inserted else { return nil }
-            return (DirectWire.Candidate(host: address.text, port: port, kind: kind.wire), kind, (kind == .lan ? 0 : 2) + (address.bytes.count == 4 ? 0 : 1))
-        }.sorted { $0.2 < $1.2 }.prefix(8).map { ($0.0, $0.1) }
+            return (DirectCandidate(host: address.text, port: port, kind: kind.wire), kind, (kind == .lan ? 0 : 2) + (address.bytes.count == 4 ? 0 : 1))
+        }.sorted { $0.2 < $1.2 }.prefix(DirectCandidate.maxCount).map { ($0.0, $0.1) }
     }
 
     /// The interface a connection arrived on, from its local address; nil when it is none of the Mac's
@@ -132,9 +102,9 @@ extension NWConnection {
     }
 
     /// A close frame with `code`, then the connection is cancelled.
-    func close(_ code: DirectWire.Close) {
+    func close(_ code: DirectCloseCode) {
         let metadata = NWProtocolWebSocket.Metadata(opcode: .close)
-        metadata.closeCode = .privateCode(code.rawValue)
+        metadata.closeCode = .privateCode(UInt16(code.rawValue))
         let context = NWConnection.ContentContext(identifier: "close", metadata: [metadata])
         send(content: nil, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] _ in self?.cancel() })
         // A peer that never takes the close frame is cut off anyway.

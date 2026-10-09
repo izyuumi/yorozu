@@ -20,7 +20,7 @@ struct RelayStatus: Sendable {
 struct DirectStatus: Sendable, Equatable {
     enum Listener: Sendable, Equatable { case off, starting, listening, failed(String) }
     var listener = Listener.off
-    var port = DirectWire.defaultPort
+    var port = DirectMessage.defaultPort
     /// What `hostInfo` advertises while listening, LAN first.
     var candidates: [Address] = []
     /// The last connection refused before it named a paired phone (unpaired key, wrong interface, no join).
@@ -38,7 +38,7 @@ actor RelayHost {
     /// `FrameBody` and the relay envelope are private in RelayClient.swift; these are the same shapes.
     private struct FrameBody: Codable { var t: String; var pub, spub, proof, n, c: String? }
     private struct Inbound: Decodable { var type: String; var nonce, payload, token: String?; var seq: Int? }
-    private typealias Frame = DirectWire.Frame
+    private struct Frame: Codable { var payload, sig: String }
     private struct Batch: Encodable { var type = "frame"; var frames: [Frame] }
     /// Where a phone's frames go: the path of its latest authenticated `hello`.
     private enum Route: Equatable { case relay, direct(Int) }
@@ -543,7 +543,7 @@ actor RelayHost {
             if let link { direct.append((link, frame)) } else { frames.append(frame) }
         }
         guard !(frames.isEmpty && direct.isEmpty), (try? persist()) != nil else { return }
-        for (link, frame) in direct { if let data = try? JSONEncoder().encode(DirectWire.FrameOut(frame: frame)) { link.sendText(data) } }
+        for (link, frame) in direct { if let text = try? DirectMessage.frame(payload: frame.payload, sig: frame.sig).text() { link.sendText(Data(text.utf8)) } }
         guard !frames.isEmpty else { return }
         var batch: [Frame] = [], bytes = 0
         for frame in frames {
@@ -582,14 +582,19 @@ actor RelayHost {
         var info = PeerInfoData.local
         info.computerName = SCDynamicStoreCopyComputerName(nil, nil) as String?
         if !info.isValid { info.computerName = nil }
-        // WIRE: once PeerInfoData has `directCandidates` and YorozuWire names the capability (#315):
-        //   info.directCandidates = advertised.map(\.candidate)   // nil while not listening
-        //   if !advertised.isEmpty, !info.capabilities.contains("direct-v1") { info.capabilities.append("direct-v1") }
+        // `direct-v1` and the candidates only with `[direct] enabled`; none while the listener is not up (#315).
+        if direct.enabled {
+            let candidates = advertised.map(\.candidate)
+            if !candidates.isEmpty { info.directCandidates = candidates }
+            if !info.isValid { info.directCandidates = nil }
+        } else {
+            info.capabilities.removeAll { $0 == DirectCandidate.capability }
+        }
         return info
     }
 
     /// The addresses a phone may dial, only while the listener is up.
-    private var advertised: [(candidate: DirectWire.Candidate, kind: DirectKind)] {
+    private var advertised: [(candidate: DirectCandidate, kind: DirectKind)] {
         listenerState == .listening ? DirectInterfaces.candidates(port: direct.port) : []
     }
 
@@ -623,7 +628,7 @@ actor RelayHost {
         guard direct.enabled else { listenerState = .off; return publish() }
         let generation = listenerGeneration
         let ws = NWProtocolWebSocket.Options()
-        ws.autoReplyPing = true; ws.maximumMessageSize = DirectWire.maxMessage
+        ws.autoReplyPing = true; ws.maximumMessageSize = DirectMessage.maxBytes
         let parameters = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
         parameters.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
         parameters.prohibitedInterfaceTypes = [.loopback]
@@ -691,9 +696,9 @@ actor RelayHost {
         guard let kind = DirectInterfaces.kind(local: connection.currentPath?.localEndpoint) else {
             return refuse(id, String(localized: "Refused a connection on an interface other than Wi-Fi, Ethernet or VPN."))
         }
-        let nonce = Data((0..<32).map { _ in UInt8.random(in: 0...255) }).base64URLEncodedString()
+        let nonce = DirectProof.newNonce()
         links[id]?.kind = kind; links[id]?.nonce = nonce; links[id]?.heard = .now
-        sendDirect(DirectWire.Nonce(nonce: nonce), on: id)
+        sendDirect(.nonce(nonce), on: id)
         Task { await read(id) }
     }
 
@@ -702,7 +707,7 @@ actor RelayHost {
         while let connection = links[id]?.connection {
             guard let data = try? await connection.receiveText() else { break }
             guard links[id] != nil else { return }
-            guard data.count <= DirectWire.maxMessage else { return drop(id, .tooLarge, error: String(localized: "A message was larger than 1 MiB.")) }
+            guard data.count <= DirectMessage.maxBytes else { return drop(id, .tooLarge, error: String(localized: "A message was larger than 1 MiB.")) }
             links[id]?.heard = .now
             message(data, on: id)
         }
@@ -711,42 +716,45 @@ actor RelayHost {
 
     private func message(_ data: Data, on id: Int) {
         guard let link = links[id] else { return }
-        guard let message = try? JSONDecoder().decode(DirectWire.Inbound.self, from: data) else {
+        guard let message = try? JSONDecoder().decode(DirectMessage.self, from: data) else {
             return link.signer == nil ? refuse(id, String(localized: "A connection sent something other than a join.")) : drop(id, .unauthorized, error: String(localized: "The phone sent a malformed message."))
         }
         guard let signer = link.signer else {
-            return message.type == "join" ? join(message, on: id) : refuse(id, String(localized: "A connection sent something other than a join."))
+            guard case .join(let room, let pub, let sig, let nonce) = message else {
+                return refuse(id, String(localized: "A connection sent something other than a join."))
+            }
+            return join(room: room, pub: pub, sig: sig, phoneNonce: nonce, on: id)
         }
-        switch message.type {
-        case "ping": sendDirect(DirectWire.Pong(t: message.t ?? 0), on: id)
-        case "frame":
-            guard let frame = message.frame, let sig = Data(base64URLEncoded: frame.sig), let key = Data(base64URLEncoded: signer),
-                  YorozuCrypto.verifyFrame(pub: key, data: Data(frame.payload.utf8), signature: sig),
-                  let raw = Data(base64URLEncoded: frame.payload), let body = try? JSONDecoder().decode(FrameBody.self, from: raw) else {
+        switch message {
+        case .ping(let t): sendDirect(.pong(t: t), on: id)
+        case .frame(let payload, let sig):
+            guard let sig = Data(base64URLEncoded: sig), let key = Data(base64URLEncoded: signer),
+                  YorozuCrypto.verifyFrame(pub: key, data: Data(payload.utf8), signature: sig),
+                  let raw = Data(base64URLEncoded: payload), let body = try? JSONDecoder().decode(FrameBody.self, from: raw) else {
                 return drop(id, .unauthorized, error: String(localized: "A frame's signature did not verify."))
             }
             directFrame(body, signer: signer, on: id)
-        default: break
+        case .nonce, .join, .joined, .pong: break
         }
     }
 
     /// The phone proves it holds a paired Ed25519 key (signing this room and our nonce); the Mac answers with
     /// its own proof over the phone's nonce. Unknown keys are refused: a phone pairs over the relay only.
-    private func join(_ m: DirectWire.Inbound, on id: Int) {
-        guard let nonce = links[id]?.nonce, m.room == room, let signer = m.pub, let sig = m.sig.flatMap({ Data(base64URLEncoded: $0) }),
-              let phoneNonce = m.nonce, Data(base64URLEncoded: phoneNonce)?.count == 32 else {
+    private func join(room joinRoom: String, pub signer: String, sig: String, phoneNonce: String, on id: Int) {
+        guard let nonce = links[id]?.nonce, joinRoom == room, let sig = Data(base64URLEncoded: sig),
+              Data(base64URLEncoded: phoneNonce)?.count == 32 else {
             return refuse(id, String(localized: "Refused a malformed join."))
         }
         guard let pub = peers.first(where: { $0.value.record.signingPub == signer })?.key, let key = Data(base64URLEncoded: signer) else {
             return refuse(id, String(localized: "Refused a key that is not paired with this Mac."))
         }
-        guard YorozuCrypto.verifyFrame(pub: key, data: DirectWire.joinProof(room: room, nonce: nonce), signature: sig) else {
+        guard DirectProof.verifyJoin(pub: key, room: room, macNonce: nonce, signature: sig) else {
             directErrors[pub] = String(localized: "Its join signature did not verify.")
             return drop(id, .unauthorized)
         }
-        guard let proof = try? YorozuCrypto.signFrame(priv: identity.signingPrivateKey, data: DirectWire.hostProof(room: room, nonce: phoneNonce)) else { return drop(id, nil) }
+        guard let proof = try? DirectProof.signJoined(priv: identity.signingPrivateKey, room: room, phoneNonce: phoneNonce) else { return drop(id, nil) }
         links[id]?.signer = signer
-        sendDirect(DirectWire.Joined(pub: identity.signingPublicKey.base64URLEncodedString(), sig: proof.base64URLEncodedString()), on: id)
+        sendDirect(.joined(pub: identity.signingPublicKey.base64URLEncodedString(), sig: proof.base64URLEncodedString()), on: id)
         publish()
     }
 
@@ -787,7 +795,7 @@ actor RelayHost {
 
     /// Closes a link (with `code`, else at once). A phone routed over it goes back to the relay route;
     /// `error` becomes its last direct error.
-    private func drop(_ id: Int, _ code: DirectWire.Close?, error: String? = nil) {
+    private func drop(_ id: Int, _ code: DirectCloseCode?, error: String? = nil) {
         guard let link = links.removeValue(forKey: id) else { return }
         if let code { link.connection.close(code) } else { link.connection.cancel() }
         for (pub, peer) in peers where peer.route == .direct(id) { peers[pub]?.route = .relay; online.remove(pub) }
@@ -795,7 +803,7 @@ actor RelayHost {
         publish()
     }
 
-    private func sendDirect(_ message: some Encodable, on id: Int) {
+    private func sendDirect(_ message: DirectMessage, on id: Int) {
         guard let data = try? JSONEncoder().encode(message) else { return }
         links[id]?.connection.sendText(data)
     }
