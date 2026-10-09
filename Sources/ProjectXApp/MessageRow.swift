@@ -12,7 +12,7 @@ extension Message {
         if role == "user" { return .user }
         if kind == "question" || notice.map({ [Notice.Code.question,.questionTopic,.questionTask].map(\.rawValue).contains($0.code) }) == true { return .question }
         if kind == "failure" { return .failure }
-        if notice != nil || ["acknowledgment","memory_receipt","approval_request"].contains(kind) { return .system }
+        if notice != nil || ["acknowledgment","memory_receipt","approval_request","job_run"].contains(kind) { return .system }
         return .answer
     }
     /// A result stored with Store's "Regarding “…”:" header carries its own context, so it gets no reply header.
@@ -179,11 +179,13 @@ private struct SystemRow: View {
     var body: some View {
         let failure = message.style == .failure, detail = message.notice.flatMap { NoticeText.details($0.params) }
         VStack(alignment: .leading,spacing: 5) {
-            HStack(alignment: .firstTextBaseline,spacing: 6) {
+            HStack(alignment: message.kind == "approval_request" ? .top : .firstTextBaseline,spacing: 6) {
                 Image(systemName: failure ? "exclamationmark.triangle" : icon).foregroundStyle(failure ? ChatPalette.warning : .secondary)
                     .accessibilityLabel(failure ? Text("Problem") : Text("Note"))
-                Text(notice(message)).foregroundStyle(failure ? .primary : .secondary).textSelection(.enabled)
-                    .frame(maxWidth: .infinity,alignment: .leading)
+                Group {
+                    // A job approval request carries the script as a fenced block.
+                    if message.kind == "approval_request" { MarkdownBlocks(notice(message)) } else { Text(notice(message)).textSelection(.enabled) }
+                }.foregroundStyle(failure ? .primary : .secondary).frame(maxWidth: .infinity,alignment: .leading)
                 if detail != nil {
                     Button { withAnimation(.snappy) { open.toggle() } } label: {
                         HStack(spacing: 2) { Text("Details"); Image(systemName: "chevron.right").imageScale(.small).rotationEffect(.degrees(open ? 90 : 0)) }
@@ -198,7 +200,7 @@ private struct SystemRow: View {
         }.font(.callout).padding(.horizontal,4)
     }
     private var icon: String {
-        switch message.kind { case "memory_receipt": "brain"; case "approval_request": "hand.raised"; default: "info.circle" }
+        switch message.kind { case "memory_receipt": "brain"; case "approval_request": "hand.raised"; case "job_run": "clock"; default: "info.circle" }
     }
 }
 

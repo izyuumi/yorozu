@@ -54,7 +54,7 @@ import YorozuWire
     /// `[harness] transport = "cli"` keeps the CLI transport; "native" selects the WebSocket client. Fixed for this launch.
     @Published private(set) var nativeSelected = false
     private var nativeClient: NativeGatewayClient?
-    private var engine: Engine?
+    private(set) var engine: Engine?
     private var observation: Task<Void,Never>?
     /// The phone's way in (iOS 0.7): live mode only, and nil when it could not start.
     private(set) var relay: RelayHost?
@@ -112,6 +112,8 @@ import YorozuWire
     var jobsConsumer: Task<Void,Never>?
     var jobObservers: [(NotificationCenter, NSObjectProtocol)] = []
     var lastJobsError: ConfigError?
+    /// The last valid job set, once the Engine and the scheduler hold it: Settings › Jobs refreshes on it.
+    @Published var jobSpecs: [JobSpec] = []
     /// Topics bound to jobs, deleted ones included: their work never turns on the working indicator (open question 10).
     @Published var jobTopics = Set<String>()
     var working: Bool { snapshot.work.contains { $0.active && !jobTopics.contains($0.topicID) } }

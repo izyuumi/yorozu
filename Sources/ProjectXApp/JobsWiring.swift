@@ -15,7 +15,7 @@ extension AppModel {
         jobsConsumer = Task { [weak self] in
             for await update in updates {
                 await engine.jobs(update.jobs); await scheduler.update(update.jobs)
-                await self?.reportJobs(update.error,engine: engine)
+                await self?.reportJobs(update.error,engine: engine); self?.jobSpecs = update.jobs
             }
         }
         let watcher = JobsWatcher(file: file) { sink.yield($0) }
