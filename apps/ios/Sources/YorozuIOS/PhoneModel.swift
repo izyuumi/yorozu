@@ -547,13 +547,15 @@ final class PhoneModel {
     /// The token the relay last heard, per pairing.
     private static let pushKey = "pushTokenOnRelayV2"
 
-    /// A silent push while not active: dial unless a link is up, catch up into the cache, let the outbox resend,
-    /// set the badge and hang up, within about 25 s. A foreground or held background link is left up. True when
+    /// A silent push in the background: dial unless a link is up, catch up into the cache, let the outbox resend and
+    /// set the badge, within about 25 s. Back in the background it hangs up a link it dialled itself (or one left to it
+    /// on the way out); #314's held link hangs up when its sends are done; a foreground link stays. True when
     /// something new arrived.
     func wake() async -> Bool {
         guard relay != nil, linked, !waking else { return false }
         let before = cursor
         waking = true
+        let dialled = listener == nil
         start()
         let end = ContinuousClock.now + .seconds(20)
         while ContinuousClock.now < end, state != .paired || catchingUp || sendingCount > 0 {
@@ -562,9 +564,8 @@ final class PhoneModel {
         waking = false
         flush()
         updateBadge()
-        if UIApplication.shared.applicationState != .active {
-            // #314's background time, if held, hangs up when its sends are done; else hang up now.
-            if backgroundTime == nil { suspend() } else { finishBackgroundIfDone() }
+        if UIApplication.shared.applicationState == .background {
+            if backgroundTime != nil { finishBackgroundIfDone() } else if dialled || inBackground { suspend() }
             await closing?.value
         }
         return cursor != before

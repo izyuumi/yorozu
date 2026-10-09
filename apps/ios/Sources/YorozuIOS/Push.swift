@@ -27,10 +27,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         model.pushFailed(error.localizedDescription)
     }
 
-    /// The relay's silent push (`content-available`): catch up while not active. On screen the link is already up.
+    /// The relay's silent push (`content-available`): catch up in the background. In the foreground, inactive
+    /// included, the link is already up.
     func application(_ application: UIApplication,
                      didReceiveRemoteNotification userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
-        guard application.applicationState != .active else { return .noData }
+        guard application.applicationState == .background else { return .noData }
         return await model.wake() ? .newData : .noData
     }
 
