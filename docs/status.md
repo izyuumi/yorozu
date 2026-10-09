@@ -109,7 +109,7 @@ Each limit is described where its mechanism is documented.
 - The job script approval gate is not a sandbox: workers run at full permission with a shell, so it only stops unattended scheduled runs of code the user has not seen ([architecture.md](architecture.md#approval-gate)).
 - A slot reached more than 60 s late (the Mac asleep, the app not running) is skipped with no catch-up ([architecture.md](architecture.md#scheduler)).
 - `JobsWatcher` never fires when `PROJECTX_DATA` contains `..`: its path match misses the normalized paths FSEvents reports, so changes to `jobs.toml`, the app's own Pause, Resume and Delete writes included, take effect only at the next launch ([architecture.md](architecture.md#jobstoml)).
-- `job_control` refusals and the `job_run` trigger's text are the Mac's English, also in the Japanese UI ([ios-relay-contract.md](ios-relay-contract.md#jobs)).
+- `job_control` refusals are the Mac's English, also in the Japanese UI ([ios-relay-contract.md](ios-relay-contract.md#jobs)).
 - A coding result's diffstat misses committed work ([openclaw-integration.md](openclaw-integration.md#methods-used), `sessions.diff`).
 - Memory search is lexical over a note's title and summary only, so it misses paraphrases ([architecture.md](architecture.md#memory), Search).
 - A symlink or a duplicate note `id` in the memory directory leaves the app not ready; other bad files are skipped and listed in a launch notice ([architecture.md](architecture.md#memory), Strictness).

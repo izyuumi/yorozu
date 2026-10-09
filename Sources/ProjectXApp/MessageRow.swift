@@ -2,8 +2,14 @@ import SwiftUI
 import AppKit
 import ProjectXCore
 
-/// A notice in the user's language; any other message as stored.
-func notice(_ m: Message) -> String { m.notice.map { NoticeText.text(code: $0.code,params: $0.params,fallback: m.body) } ?? m.body }
+/// A notice in the user's language, a job run's trigger from its kind and time; any other message as stored.
+func notice(_ m: Message) -> String {
+    if m.kind == "job_run" {
+        let at = m.date.formatted(date: .abbreviated,time: .shortened)
+        return m.body.hasPrefix("Run now") ? String(localized: "Run now · \(at)") : String(localized: "Scheduled run · \(at)")
+    }
+    return m.notice.map { NoticeText.text(code: $0.code,params: $0.params,fallback: m.body) } ?? m.body
+}
 
 extension Message {
     /// How a row draws in the popover.

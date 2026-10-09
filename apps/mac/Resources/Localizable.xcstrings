@@ -4632,6 +4632,26 @@
         }
       }
     },
+    "Run now · %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今すぐ実行 · %@"
+          }
+        }
+      }
+    },
+    "Scheduled run · %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "定時実行 · %@"
+          }
+        }
+      }
+    },
     "Not working" : {
       "localizations" : {
         "ja" : {
