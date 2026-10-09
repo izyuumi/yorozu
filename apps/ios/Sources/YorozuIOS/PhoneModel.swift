@@ -116,6 +116,8 @@ final class PhoneModel {
     private(set) var working: Bool?
     /// The secretary is routing a message (`routingThreadIds`); nil = status unknown.
     private(set) var routing: Bool?
+    /// The Mac's latest `readiness`; nil = status unknown (not connected) or a Mac that sends none.
+    private(set) var readiness: ReadinessData?
     /// Tasks with a `task_control` in flight: their Stop and Retry stay disabled.
     private(set) var controlling: Set<String> = []
     /// The latest `task_control_result` per task.
@@ -200,8 +202,15 @@ final class PhoneModel {
     var status: ClientConnectionStatus { ClientConnectionStatus(state: state, ownerOnline: ownerOnline, failure: failure) }
     /// What the chat shows: the saved status for up to 3 s after a return or launch, then `status`.
     var shownStatus: ClientConnectionStatus { heldStatus ?? status }
-    /// Send always works once linked: the outbox holds the message until it can go.
-    var canSend: Bool { linked }
+    /// Send works once linked, the outbox holding the message until it can go, unless the Mac is blocked (nothing could answer).
+    var canSend: Bool { linked && readiness?.state != .blocked }
+    /// The chat's readiness line while the Mac needs attention or is blocked: the blocking or only item, else the count.
+    var readinessReason: String? {
+        guard let r = readiness, r.state != .ready else { return nil }
+        let first = r.items.first { $0.severity == .blocking } ?? r.items.first { $0.severity == .warning }
+        if let first, r.state == .blocked || r.count == 1 { return first.title }
+        return String(localized: "\(r.count) items need attention")
+    }
     /// The Mac's work state is known: on the link and caught up.
     var statusKnown: Bool { working != nil && !catchingUp }
     /// Stop and Retry: one in flight per task, only while `.paired`.
@@ -538,6 +547,7 @@ final class PhoneModel {
     private func unlinked() {
         working = nil
         routing = nil
+        readiness = nil
         controlling = []
         searchOffset = nil
         pageDeadline?.cancel()
@@ -972,6 +982,8 @@ final class PhoneModel {
             notDelivered(status.eventId, reason: status.reason)
         case .syncDelta(let delta):
             receive(delta)
+        case .readiness(let readiness):
+            self.readiness = readiness
         case .taskControlResult(let result):
             controlling.remove(result.taskId)
             controlResults[result.taskId] = result
