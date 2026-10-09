@@ -31,6 +31,7 @@ let project = Project(
                 "CFBundleDisplayName": "Yorozu",
                 "LSApplicationCategoryType": "public.app-category.productivity",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac.",
+                "NSLocalNetworkUsageDescription": "Yorozu connects straight to your Mac on the same network when Direct connection is on.",
                 // `yorozu://pair?…` is the pairing string itself: tapping one opens the app.
                 "CFBundleURLTypes": [
                     [

@@ -37,6 +37,23 @@
         }
       }
     },
+    "NSLocalNetworkUsageDescription": {
+      "comment": "Privacy - Local Network Usage Description",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozu connects straight to your Mac on the same network when Direct connection is on."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直接接続がオンのとき、Yorozuは同じネットワーク上のMacに直接接続します。"
+          }
+        }
+      }
+    },
     "NSCameraUsageDescription": {
       "comment": "Privacy - Camera Usage Description",
       "localizations": {

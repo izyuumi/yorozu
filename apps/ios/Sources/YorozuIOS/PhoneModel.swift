@@ -134,6 +134,15 @@ final class PhoneModel {
     private(set) var pairedAt: Date?
     var relayHost: String? { pairing?.relayHost }
     var fingerprint: String? { pairing?.fingerprint }
+    /// The socket the link runs on while joined; Settings diagnostics only, never the chat.
+    private(set) var path: TransportPath?
+    /// The direct path's last failure and whether iOS withholds Local Network access.
+    private(set) var directReport = DirectReport()
+    /// The direct-path addresses the Mac last advertised (`PairingStore.Stored.directCandidates`).
+    private(set) var candidates: [DirectCandidate] = []
+    /// Settings › Connection › "Direct connection (LAN / Tailscale)", off by default. Its own key: v2 shares
+    /// v1's defaults domain, and v1's `directConnectionEnabled` means something else.
+    private(set) var directEnabled = UserDefaults.standard.bool(forKey: PhoneModel.directKey)
     /// The status saved on going to the background, shown for up to 3 s on return and launch.
     private var heldStatus: ClientConnectionStatus?
 
@@ -231,7 +240,8 @@ final class PhoneModel {
         do {
             relay = try RelayClient(
                 pairing: stored.pairing, identity: stored.identity, paired: stored.paired == true,
-                counters: PairingCounterStorage(ownPublicKey: identity), deviceName: DeviceModel.name,
+                counters: PairingCounterStorage(ownPublicKey: identity), direct: directEnabled,
+                candidates: stored.directCandidates ?? [], deviceName: DeviceModel.name,
                 onPaired: { PairingStore.markPaired(expectedIdentity: identity) })
         } catch {
             failure = error.localizedDescription
@@ -239,6 +249,7 @@ final class PhoneModel {
         }
         pairing = stored.pairing
         pairedAt = stored.pairedAt
+        candidates = stored.directCandidates ?? []
         ownPub = identity.base64URLEncodedString()
         linked = stored.paired == true
         if let ownPub, let snapshot = MirrorCache.shared.load(owner: ownPub) { restore(snapshot) }
@@ -273,6 +284,9 @@ final class PhoneModel {
         hostName = nil
         macVersion = nil
         pairedAt = nil
+        path = nil
+        directReport = DirectReport()
+        candidates = []
         lastError = nil
         clearMirror(keepPending: false)
         cursor = nil
@@ -378,10 +392,23 @@ final class PhoneModel {
             savedStatus = nil
             if Date().timeIntervalSince(saved.time) < 600 { hold(saved.status) }
         }
-        guard state != .paired else { return }
+        guard state != .paired else {
+            Task { [relay] in await relay?.refreshDirect() }
+            return
+        }
         guard listener != nil else { return start() }
         Task { [relay] in await relay?.reconnect() }
     }
+
+    /// The direct-path toggle. On tries the Mac's LAN addresses at once, which is when iOS asks for Local
+    /// Network access; off closes any direct socket and stays on the relay.
+    func setDirect(_ enabled: Bool) {
+        directEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.directKey)
+        Task { [relay] in await relay?.setDirect(enabled) }
+    }
+
+    private static let directKey = "directPathEnabledV2"
 
     private func hold(_ status: ClientConnectionStatus) {
         heldStatus = status
@@ -408,6 +435,7 @@ final class PhoneModel {
                 ownerOnline = false
                 unlinked()
             }
+            if state != .joined && state != .paired { path = nil }
             if state == .joined || state == .paired {
                 linked = true
             } else {
@@ -424,6 +452,15 @@ final class PhoneModel {
         case .peerInfo(let info):
             hostName = info.computerName
             macVersion = info.appVersion
+            let advertised = info.directCandidates ?? []
+            if advertised != candidates, let ownPub, let identity = Data(base64URLEncoded: ownPub) {
+                candidates = advertised
+                PairingStore.setCandidates(advertised, expectedIdentity: identity)
+            }
+        case .path(let path):
+            self.path = path
+        case .direct(let report):
+            directReport = report
         case .compatibility(let compatibility):
             if case .updateRequired(let reason) = compatibility {
                 updateRequired = String(localized: "Update required: \(reason)")

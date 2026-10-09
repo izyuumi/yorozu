@@ -402,8 +402,9 @@ private struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Connection") {
+                Section {
                     LabeledContent("Status", value: model.status.label)
+                    LabeledContent("Path") { Text(LocalizedStringKey(model.path?.name ?? "Not connected")) }
                     if let hostName = model.hostName { LabeledContent("Mac", value: hostName) }
                     if let relayHost = model.relayHost { LabeledContent("Relay", value: relayHost) }
                     if let fingerprint = model.fingerprint {
@@ -420,6 +421,29 @@ private struct SettingsSheet: View {
                             Text(lastError.message).font(.footnote).foregroundStyle(.secondary)
                         }
                     }
+                    Toggle("Direct connection (LAN / Tailscale)", isOn: Binding(get: { model.directEnabled }, set: { model.setDirect($0) }))
+                    if model.directEnabled && model.directReport.localNetworkDenied {
+                        Text("Local Network access is off. Turn it on in Settings › Privacy & Security › Local Network.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    if model.directEnabled {
+                        LabeledContent("Direct addresses") {
+                            Text(model.candidates.isEmpty ? String(localized: "None yet") : model.candidates.map(\.label).joined(separator: "\n"))
+                                .multilineTextAlignment(.trailing)
+                                .textSelection(.enabled)
+                        }
+                        if let error = model.directReport.lastError {
+                            VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                                Text("Last direct error")
+                                Text(error).font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Connection")
+                } footer: {
+                    Text("Connects straight to your Mac on the same Wi-Fi or over Tailscale, and falls back to the relay.")
                 }
                 Section {
                     LabeledContent("Mac version", value: model.macVersion ?? String(localized: "Unknown"))
@@ -474,6 +498,11 @@ private struct SettingsSheet: View {
             "Mac key fingerprint: \(model.fingerprint ?? "none")",
             "Paired since: \(model.pairedAt.map(date) ?? "unknown")",
             "Last error: \(model.lastError.map { "\(date($0.at)) \($0.message)" } ?? "none")",
+            "Path: \(model.path?.name ?? "not connected")",
+            "Direct connection: \(model.directEnabled ? "on" : "off")",
+            "Direct candidates: \(model.candidates.isEmpty ? "none" : model.candidates.map(\.label).joined(separator: ", "))",
+            "Last direct error: \(model.directReport.lastError ?? "none")",
+            "Local Network access: \(model.directReport.localNetworkDenied ? "denied" : "not denied")",
         ].joined(separator: "\n")
     }
 
@@ -483,4 +512,23 @@ private struct SettingsSheet: View {
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "\(short) (\(build))"
     }()
+}
+
+extension TransportPath {
+    /// English, as Copy diagnostics writes it; Settings shows it through the string catalog.
+    var name: String {
+        switch self {
+        case .relay: "Relay"
+        case .directLAN: "Direct · Wi-Fi"
+        case .directVPN(let candidate): candidate.isTailscale ? "Direct · Tailscale" : "Direct · VPN"
+        }
+    }
+}
+
+extension DirectCandidate {
+    /// `192.168.1.5:8738 LAN`, `[fd7a:115c:a1e0::1]:8738 Tailscale`.
+    var label: String {
+        let address = host.contains(":") ? "[\(host)]:\(port)" : "\(host):\(port)"
+        return "\(address) \(kind == .lan ? "LAN" : isTailscale ? "Tailscale" : "VPN")"
+    }
 }

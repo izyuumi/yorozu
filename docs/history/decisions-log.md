@@ -598,3 +598,37 @@ Added in implementation:
 - Resend gives the message a new `ts`, so the Mac's `sentAt` and the delay line count from the last resend.
 - A message the phone never got `accepted` for and whose deadline passed turns Not delivered on the phone with "This iPhone couldn't send it within 24 hours."; one that was accepted waits for the Mac's answer on `.paired`.
 - A stored outbox item whose message leaves the history window is dropped with its times.
+
+## 2026-10-09 — Direct phone ⇄ Mac path
+Source: owner decisions recorded in issue #315 ("projectx: direct phone ⇄ Mac connection over LAN and Tailscale, with automatic path selection"), Decisions section.
+
+- Add a direct path; the relay stays the fallback. Direct means the same LAN **or** a private VPN (Tailscale/WireGuard).
+- The path in use is shown only in Settings diagnostics, never in the chat.
+- Discovery: the Mac sends its LAN and Tailscale addresses inside the sealed peer info over the relay. The phone stores them with the pairing. The listener port is fixed. Bonjour later, only if needed.
+- No wake-on-LAN. Instead a **Keep Mac awake** toggle in Mac Settings, off by default.
+- The iPhone has a **"Direct connection (LAN / Tailscale)"** setting, **off by default**. Turning it on is when iOS asks for Local Network permission. Until then the phone uses the relay only. If permission is denied, Settings points to Privacy › Local Network.
+- Mac listener: inside the Mac app's relay host actor, in Swift, `NWListener` + WebSocket, fixed port, LAN and `utun` interfaces only. Each device has a route (relay | direct); a new hello moves the route. `deliver()` works per route, so LAN keeps working during relay outages.
+- Both paths carry the same sealed envelope and the same per-device sequence counter.
+- Direct handshake is mutual and domain-separated: the phone signs `yorozu-direct-v2|room|nonce`, and the Mac proves it holds the paired key. This replaces v1's undomain-separated join.
+- Staggered race: direct candidates at t=0, relay about 300 ms later; the first authenticated `joined` wins. Race only up to `joined`, never through hello. LAN candidates only on Wi-Fi/Ethernet; Tailscale candidates only when a VPN is up.
+- Re-race on foreground, network path change or failure. Make-before-break upgrade from relay to direct. Per-candidate backoff 30 s doubling to 10 min, reset on a real path change. No downgrade while the direct heartbeat is healthy. Do not port v1's `skipDirect`.
+- Liveness: the phone pings every 10 s with a 5 s deadline. The Mac drops direct links silent for more than 30 s and closes them when it sleeps. The menu-bar host holds a `ProcessInfo` activity against App Nap.
+- Dedupe by event id plus sequence. The outbox is resent after every new session. Direct never buffers: when the Mac is offline the phone uses the relay and its buffer.
+- v1 is untouched; the relay needs no deploy for the direct path.
+
+## 2026-10-09 — Direct path: implementer readings (not owner decisions)
+Source: the wire spec and plan comments on issue #315 (branch `direct`, built as `dp-phone` and `dp-mac`). The open questions were taken at their proposed defaults; the owner has not answered them, and [status.md](../status.md#open-items) keeps them as an open item.
+
+1. Port: 8738 by default (not 8443, v1's `tailscale serve` rule), overridable as `[direct] port` in `config.toml`, 1024–65535.
+2. The Mac listener has its own switch, `[direct] enabled = true`; both `[direct]` keys are security-relevant. A phone still dials directly only once its own toggle is on. With `enabled = false` the Mac leaves `direct-v1` and the candidates out of its peer info.
+3. The Mac signs `yorozu-direct-v2-host|<room>|<phone nonce>` in `joined`; the phone accepts it only when base64url sha256 of the Mac's key equals the QR's `roomId`.
+4. Generic WireGuard: any private address (RFC 1918, 100.64.0.0/10, ULA) on a `utun` interface is advertised as kind `vpn`; diagnostics call it "Tailscale" only inside 100.64.0.0/10 or fd7a:115c:a1e0::/48.
+
+Added in implementation:
+- A direct `frame` message wraps the relay's signed frame as an object, `{"type":"frame","frame":{"payload":…,"sig":…}}`, one frame per message, rather than the relay's flat `payload`/`sig` fields or its batches.
+- A race the relay wins first still upgrades: direct legs keep running beside the relay session, and the first to authenticate takes it over make-before-break.
+- A `hello` the relay replays from its buffer never takes the route from a live direct link: it is older than the link.
+- After the join, any message the Mac cannot decode, an unknown `type` included, closes the link with 4001 (unauthorized); before the join, anything other than a valid join is refused the same way.
+- The phone's candidates refresh only at the next peer-info exchange: a Mac whose addresses change publishes them in its own diagnostics at once but sends nothing until a phone's next session.
+- Close codes 4000 sleeping, 4001 unauthorized, 4002 superseded, 4003 over 1 MiB; at most 8 connections wait for a join on the Mac, each for 10 s; a failed listener restarts from 2 s, doubling to 60 s.
+- The phone's toggle uses the new `UserDefaults` key `directPathEnabledV2`, never v1's `directConnectionEnabled`; its candidates live in the Keychain pairing record.

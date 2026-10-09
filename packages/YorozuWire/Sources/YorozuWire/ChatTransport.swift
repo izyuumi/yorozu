@@ -111,4 +111,25 @@ public enum TransportUpdate: Sendable {
     /// or, with `buffered`, stored durably for it. Relay transport only; once per sent frame.
     case accepted(eventId: String, buffered: Bool)
     case failed(String)
+    /// The socket the session now runs on, yielded with each `.joined`. For diagnostics only.
+    case path(TransportPath)
+    /// The direct path's last failure and whether iOS withholds Local Network access. Diagnostics only.
+    case direct(DirectReport)
+}
+
+/// Which socket carries the session.
+public enum TransportPath: Equatable, Sendable {
+    case relay
+    case directLAN(DirectCandidate)
+    case directVPN(DirectCandidate)
+}
+
+public struct DirectReport: Equatable, Sendable {
+    public var lastError: String?
+    public var localNetworkDenied: Bool
+
+    public init(lastError: String? = nil, localNetworkDenied: Bool = false) {
+        self.lastError = lastError
+        self.localNetworkDenied = localNetworkDenied
+    }
 }

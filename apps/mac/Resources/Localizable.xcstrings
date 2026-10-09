@@ -1,6 +1,236 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Off" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフ"
+          }
+        }
+      }
+    },
+    "Listener" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リスナー"
+          }
+        }
+      }
+    },
+    "Addresses" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アドレス"
+          }
+        }
+      }
+    },
+    "Direct · %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接 · %@"
+          }
+        }
+      }
+    },
+    "Last refused" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最後に拒否した接続"
+          }
+        }
+      }
+    },
+    "Direct connection" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続"
+          }
+        }
+      }
+    },
+    "Phones on the same Wi-Fi or VPN connect straight to this Mac once their Direct connection setting is on. Set `[direct] enabled` and `port` in config.toml." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同じ Wi-Fi または VPN 上の iPhone は、iPhone 側の「直接接続」をオンにするとこの Mac に直接接続します。config.toml の `[direct] enabled` と `port` で設定します。"
+          }
+        }
+      }
+    },
+    "Starting on port %@…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ポート %@ で起動中…"
+          }
+        }
+      }
+    },
+    "Listening on port %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ポート %@ で待ち受け中"
+          }
+        }
+      }
+    },
+    "Not listening on port %@: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ポート %1$@ で待ち受けていません: %2$@"
+          }
+        }
+      }
+    },
+    "A connection sent no valid join within 10 seconds." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "10 秒以内に有効な join を送らなかった接続を閉じました。"
+          }
+        }
+      }
+    },
+    "Refused a connection on an interface other than Wi-Fi, Ethernet or VPN." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wi-Fi、Ethernet、VPN 以外のインターフェイスからの接続を拒否しました。"
+          }
+        }
+      }
+    },
+    "A message was larger than 1 MiB." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 MiB を超えるメッセージを受け取りました。"
+          }
+        }
+      }
+    },
+    "A connection sent something other than a probe and a join." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "probe と join 以外のメッセージを送った接続を拒否しました。"
+          }
+        }
+      }
+    },
+    "Refused a probe for another Mac." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "別の Mac 宛ての probe を拒否しました。"
+          }
+        }
+      }
+    },
+    "The phone sent a malformed message." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone が不正な形式のメッセージを送りました。"
+          }
+        }
+      }
+    },
+    "A frame's signature did not verify." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フレームの署名を検証できませんでした。"
+          }
+        }
+      }
+    },
+    "Refused a malformed join." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不正な形式の join を拒否しました。"
+          }
+        }
+      }
+    },
+    "Refused a key that is not paired with this Mac." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac とペアリングされていない鍵を拒否しました。"
+          }
+        }
+      }
+    },
+    "Its join signature did not verify." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "join の署名を検証できませんでした。"
+          }
+        }
+      }
+    },
+    "Its hello named another key than its join." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "hello の鍵が join の鍵と一致しませんでした。"
+          }
+        }
+      }
+    },
+    "Its direct link went silent for more than 30 seconds." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続が 30 秒以上応答しませんでした。"
+          }
+        }
+      }
+    },
+    "This Mac went to sleep." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac がスリープしました。"
+          }
+        }
+      }
+    },
     "Delivered" : {
       "localizations" : {
         "ja" : {

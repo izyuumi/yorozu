@@ -77,6 +77,7 @@ extension AppModel {
             _ = try? await store?.message(role: "assistant",body: "Settings changed: \(keys)",kind: "acknowledgment",notice: Notice(.settingsChanged,["keys": keys]))
         }
         if runtimeMode == .live, next.config.relay.url != old.config.relay.url { await restartRelay() }
+        else if runtimeMode == .live, let relay, (resolved ?? next).config.direct != old.config.direct { await relay.setDirect((resolved ?? next).config.direct) }
         // After the awaits a newer reload may have run: apply the settings in force now, not this reload's.
         applySystem((resolved ?? next).config.general)
         if let launched {

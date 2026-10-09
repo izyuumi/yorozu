@@ -14,14 +14,14 @@ holds a cache of the [history window](#history-window), catches up by
 [change sequence](#change-sequence), can Stop or Retry a task, moves the read cursor, searches the
 Mac's full history and removes its own pairing.
 
-Out of scope for 0.7: APNs/`notify`, attachments, direct paths,
+Out of scope for 0.7: APNs/`notify`, attachments,
 typing in sub-chats, multiple threads (the thread id is carried everywhere and never hard-wired
 beyond the one thread `"main"`).
 
 ## Transport (unchanged v1 relay)
 
 - Relay: `wss://relay.yumi.to`, protocol unchanged. Pairing is `QrPayload` (v1 QR or `yorozu://pair`).
-- Phone side: `RelayClient` (vendored). It does join, the cleartext `hello`
+- Phone side: `RelayClient`, one session over the relay or the [direct path](#direct-path). It does join, the cleartext `hello`
   (`{t:"hello",pub,spub,proof}`, proof = `YorozuCrypto.helloProof(secret:pub:spub:)`), the
   sealed channel, flow acks and the peer-info gate. `PhoneModel` sees only `TransportUpdate`s.
 - Mac side: `RelayHost` re-implements the v1 host half (register, mint, hello check, seal/open
@@ -68,6 +68,109 @@ phone. So every frame the Mac sends counts against every phone's 2 MiB window.
   `sync_request`. The phone catches up from its cursor.
 - A phone the relay still drops redials, gets `.paired` again and asks from its cursor; the
   page that was cut off is sent again whole.
+
+## Direct path
+
+Capability `direct-v1` (`DirectCandidate.capability`, in `PeerInfoData.local`; a Mac with `[direct] enabled`
+false leaves it and the candidates out of its host info). When the phone's
+"Direct connection (LAN / Tailscale)" setting is on (off by default), it also dials the Mac's own
+WebSocket listener on its LAN or VPN address. The relay stays the fallback and keeps its phone ->
+Mac buffer; pairing, push and everything before the first relay join stay on the relay. Types are
+in `packages/YorozuWire`: `DirectCandidate`, `DirectMessage`, `DirectProof` (`Crypto.swift`) and
+`DirectCloseCode`.
+
+### Candidates
+
+The host's peer info (handshake step 3 and every later `thread_list`) carries
+`directCandidates: [{host, port, kind}]`: at most 8, `host` an IP literal without a zone (IPv4 as a
+plain dotted quad, no shorthand such as `10.1`), `port` 1–65535, `kind` `"lan"` (RFC 1918 or ULA
+fc00::/7, on Wi-Fi/Ethernet) or `"vpn"` (RFC 1918, 100.64.0.0/10 or ULA, on a `utun` interface).
+Loopback, unspecified, link-local and public addresses are never candidates.
+`DirectCandidate.isValid` (through `PeerInfoData.isValid`) enforces this with `DirectCandidate.allows`,
+the same test the Mac uses for what it advertises and accepts; a phone's claim carries none, and a
+host with its listener off sends none. The phone takes them only
+from a peer exchange that negotiated `direct-v1`, keeps them in its Keychain pairing record
+(`PairingStore.Stored.directCandidates`, so Remove host and Repair drop them) and replaces them on
+every exchange. Diagnostics call a `vpn` candidate "Tailscale" only inside 100.64.0.0/10 or
+fd7a:115c:a1e0::/48. The listener port is fixed, 8738 by default (`DirectMessage.defaultPort`).
+
+### Wire
+
+JSON text frames over `ws://host:port/`, at most 1 MiB each (`DirectMessage.maxBytes`); binary
+strings are base64url without padding.
+
+The Mac proves its key before the phone reveals anything about itself:
+
+1. Phone -> Mac on connect: `{"type":"probe","room":<roomId>,"nonce":<32 random bytes>}`. The Mac
+   answers only a probe for its own room with a 32-byte nonce; anything else closes with 4001.
+2. Mac -> phone: `{"type":"joined","pub":<Mac Ed25519 relay key>,"sig":…,"nonce":<32 random bytes>}`,
+   `sig` = Ed25519 over the UTF-8 of `yorozu-direct-v2-host|<room>|<phone nonce>`
+   (`DirectProof.signJoined`). The phone accepts it only if base64url sha256(`pub`) equals the QR's
+   `roomId` and the signature verifies (`DirectProof.verifyJoined`), and the nonce is 32 bytes;
+   otherwise the leg fails without the phone sending anything more. A pairing without `roomId` never
+   dials direct.
+3. Phone -> Mac: `{"type":"join","room":<roomId>,"pub":<phone Ed25519 key>,"sig":…}`, `sig` over
+   `yorozu-direct-v2|<room>|<Mac nonce>` (`DirectProof.signJoin` / `verifyJoin`). The Mac accepts only
+   a key in `relay-devices.json`, and closes with 4001 otherwise. The phone treats its leg as
+   authenticated once it has sent the join (it does not wait for a reply), so `hello` follows the join
+   on the same socket; a refused join surfaces as the 4001 close.
+4. Both ways after the join: `{"type":"frame","frame":{"payload":…,"sig":…}}`, exactly the signed
+   frame the relay carries (base64url frame-body JSON and the sender's signature over that string),
+   one frame per message, the same `ChannelEnvelope` sealing and the same per-device
+   `ChannelCounter`. The phone checks each signature against the `joined` key. Direct frames are never
+   acked to the relay, and there is no `accepted`.
+5. The phone pings every 10 s, `{"type":"ping","t":<epoch ms>}`, and the Mac answers
+   `{"type":"pong","t":<same>}`; 5 s without the pong fails the leg. The Mac drops a link silent for
+   more than 30 s.
+
+The Mac closes a connection that has not sent a valid join 10 s after it was accepted. It takes
+connections only on a private local address that it would advertise (RFC 1918/ULA on `en*`, plus
+100.64.0.0/10 on `utun*`) whose path's first interface is Wi-Fi or wired Ethernet (`lan`) or `.other`
+(`utun`); any other is closed with 4001 unheard. A `hello` on a direct link moves the phone's route
+to it (closing an older link with 4002); a relay `hello` moves it back, except one the relay replays
+from its buffer (it carries `seq`) or a live one (no `seq`) that arrives within 2 s of the direct
+link's own `hello` while that link is still heard: both are older than the direct link and leave the
+route alone. The domain strings keep the two signatures from
+standing for each other or for a relay join, which signs a bare nonce.
+
+What a LAN sniffer sees: the `room` in the probe travels in cleartext. It is a stable hash of the
+Mac's Ed25519 key, so it links connections to the same Mac across networks; the phone's key, and so
+its identity, is no longer sent to anyone who has not first proved they hold that Mac's key. Frames
+stay sealed end to end.
+
+Close codes: 4000 the Mac is going to sleep (sent on `NSWorkspace.willSleepNotification` to every link,
+and to every new connection until `didWakeNotification`), 4001 unauthorized, 4002 superseded (a newer
+session took the route), 4003 a message over 1 MiB.
+
+### Session rules (phone)
+
+- One `RelayClient`, one in-memory `ChannelCounter`, two socket kinds: `URLSessionWebSocketTask`
+  for the relay, `NWConnection` + `NWProtocolWebSocket` for direct.
+- Race: eligible direct candidates at t = 0, the relay about 300 ms later (at once when there are
+  none, or when every direct leg has already failed). The first leg to an authenticated `joined`
+  carries the session; `hello` and the peer exchange run on it alone. A direct winner cancels the
+  others; a relay winner leaves direct legs running, and the first to authenticate takes over.
+- Eligible: the setting on, the relay already knows the device, the candidate not backing off and
+  not refused Local Network access, and its kind of network up (`NWPathMonitor`): `lan` only with a
+  Wi-Fi or wired interface, `vpn` only with an `.other` interface. A `lan` socket never uses cellular.
+- Upgrade, make-before-break: on a direct `joined` while on the relay, `hello` on the direct socket,
+  then the relay socket closes.
+- No downgrade while the direct heartbeat is healthy. A failed direct session hands over at once (a
+  new race, the relay among it); a direct socket whose kind of network goes away closes at once.
+- Re-race on foreground (`refreshDirect()`, which also retries refused candidates), on a real path
+  change (another set of interfaces) and on failure. Per candidate, a failure backs off 30 s,
+  doubling to 10 minutes; a path change resets every backoff, and a session that reaches `.paired`
+  resets its own. A 4000 close backs off every candidate at once, so the next race goes straight to the
+  relay; a 4002 close backs off none and re-races at once.
+- Local Network: a socket iOS holds back with `.localNetworkDenied` waits (the prompt may be up) and
+  is judged at its 10 s deadline; then that candidate is skipped until the next foreground or toggle
+  and Settings shows one line pointing to Settings › Privacy & Security › Local Network.
+- Every path switch is a new session: `.path`, `.joined`, `.paired`, then `PhoneModel` sends
+  `sync_request` from its cursor and resends its outbox. The Mac dedupes by event id and channel
+  seq; a relay-buffered frame overtaken by a direct session is dropped as a replay.
+- `TransportUpdate.path(.relay | .directLAN(c) | .directVPN(c))` and `.direct(DirectReport)` are for
+  Settings diagnostics only (path, last direct error, candidates, Copy diagnostics); the chat never
+  shows the path.
 
 ## Event envelope
 

@@ -138,6 +138,46 @@ public enum YorozuCrypto {
     }
 }
 
+/// The direct path's mutual, domain-separated handshake (docs/ios-relay-contract.md, "Direct path"). The Mac
+/// signs the phone's probe nonce under `yorozu-direct-v2-host` first; only then does the phone sign the Mac's
+/// nonce under `yorozu-direct-v2`, both with the Ed25519 keys the relay already knows them by. The prefixes keep either signature from
+/// standing for the other, or for a relay join, which signs a bare nonce.
+public enum DirectProof {
+    public static func joinMessage(room: String, nonce: String) -> Data { Data("yorozu-direct-v2|\(room)|\(nonce)".utf8) }
+    public static func joinedMessage(room: String, nonce: String) -> Data { Data("yorozu-direct-v2-host|\(room)|\(nonce)".utf8) }
+
+    /// Phone: signs the Mac's `nonce` for `join`.
+    public static func signJoin(priv: Data, room: String, macNonce: String) throws -> Data {
+        try YorozuCrypto.signFrame(priv: priv, data: joinMessage(room: room, nonce: macNonce))
+    }
+
+    /// Mac: checks a `join` against the device's stored signing key.
+    public static func verifyJoin(pub: Data, room: String, macNonce: String, signature: Data) -> Bool {
+        YorozuCrypto.verifyFrame(pub: pub, data: joinMessage(room: room, nonce: macNonce), signature: signature)
+    }
+
+    /// Mac: signs the phone's nonce for `joined`.
+    public static func signJoined(priv: Data, room: String, phoneNonce: String) throws -> Data {
+        try YorozuCrypto.signFrame(priv: priv, data: joinedMessage(room: room, nonce: phoneNonce))
+    }
+
+    /// Phone: `joined` is the paired Mac only if its key hashes to the QR's room and the signature verifies.
+    public static func verifyJoined(pub: Data, room: String, phoneNonce: String, signature: Data) -> Bool {
+        roomId(signingPub: pub) == room
+            && YorozuCrypto.verifyFrame(pub: pub, data: joinedMessage(room: room, nonce: phoneNonce), signature: signature)
+    }
+
+    /// base64url sha256 of an Ed25519 public key: how a room is named.
+    public static func roomId(signingPub: Data) -> String {
+        Data(SHA256.hash(data: signingPub)).base64URLEncodedString()
+    }
+
+    /// 32 random bytes, base64url.
+    public static func newNonce() -> String {
+        Data(SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }).base64URLEncodedString()
+    }
+}
+
 extension Data {
     public init?(base64URLEncoded text: String) {
         var s = text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
