@@ -90,6 +90,13 @@ public actor Store {
         }
         // #314. Nullable: the phone's send time, set only for messages that came from a phone (older builds name their columns).
         migration.registerMigration("receipts-sent-at") { db in try db.execute(sql: "ALTER TABLE messages ADD COLUMN sentAt DOUBLE") }
+        // #316. New tables only: older builds never read them. An attachment belongs to a message or a worker event; a
+        // work row links the files it carries (its message's, steer messages', and the original work's on retry/redo/correct).
+        migration.registerMigration("attachments-r1") { db in try db.execute(sql: """
+            CREATE TABLE attachments(id TEXT PRIMARY KEY, messageID TEXT, eventID TEXT, path TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, created DOUBLE NOT NULL);
+            CREATE INDEX attachments_message ON attachments(messageID); CREATE INDEX attachments_event ON attachments(eventID);
+            CREATE TABLE workAttachments(workID TEXT NOT NULL, attachmentID TEXT NOT NULL, PRIMARY KEY(workID,attachmentID));
+            """) }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -112,6 +119,8 @@ public actor Store {
             s.work = try Work.fetchAll(db, sql: "SELECT * FROM work ORDER BY created,rowid")
             s.events = try WorkerEvent.fetchAll(db, sql: "SELECT * FROM events ORDER BY created,rowid")
             s.amendments = try Amendment.fetchAll(db, sql: "SELECT * FROM amendments ORDER BY rowid")
+            s.attachments = try Attachment.fetchAll(db, sql: "SELECT * FROM attachments ORDER BY created,rowid")
+            for row in try Row.fetchAll(db, sql: "SELECT workID,attachmentID FROM workAttachments ORDER BY rowid") { s.workFiles[row[0], default: []].append(row[1]) }
             return s
         }
     }
@@ -120,9 +129,10 @@ public actor Store {
         let id = identifier(); let t = Topic(id: id, label: label, sessionKey: "agent:\(agent):projectx:\(id)", created: Date().timeIntervalSince1970)
         try db.write { try t.insert($0) }; return t
     }
-    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation", id: String = identifier(), notice: Notice? = nil, sentAt: Double? = nil) throws -> Message {
+    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation", id: String = identifier(), notice: Notice? = nil, sentAt: Double? = nil, attachments: [Attachment] = []) throws -> Message {
         let m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970, notice: notice, sentAt: sentAt)
-        try db.write { try m.insert($0) }; return m
+        // Attachments go in with their message, in one transaction (#316).
+        try db.write { db in try m.insert(db); for var a in attachments { a.messageID = m.id; a.eventID = nil; try a.insert(db) } }; return m
     }
     /// Newest first over message bodies and sub-chat worker event bodies (results are `result` messages; a superseded
     /// answer is an event). Terms of 3+ characters match the trigram indexes (AND, each a quoted phrase); a shorter term
@@ -244,11 +254,43 @@ public actor Store {
     public func assign(message: String, topic: String) throws {
         try db.write { try $0.execute(sql: "UPDATE messages SET topicID=? WHERE id=? AND topicID IS NULL", arguments: [topic,message]) }
     }
-    public func insertWork(_ work: Work) throws {
+    /// `files`: attachment ids the work carries (#316), linked in the same transaction.
+    public func insertWork(_ work: Work, files: [String] = []) throws {
         try db.write { db in
             // One active task per (topic, executor id; NULL = thinking): a long coding run never blocks thinking work in the same topic.
             guard try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM work WHERE topicID=? AND executor IS ? AND (state IN ('queued','working','amendment_pending','cancellation_requested','uncertain'))", arguments: [work.topicID,work.executor]) == 0 else { throw ProjectError.blocked("This topic already has active or uncertain work. Steer it or reconcile before retrying.") }
             try work.insert(db)
+            try Self.link(db,work: work.id,files: files)
+        }
+    }
+    // MARK: Attachments (#316)
+
+    private static func link(_ db: Database,work: String,files: [String]) throws {
+        for id in files { try db.execute(sql: "INSERT OR IGNORE INTO workAttachments(workID,attachmentID) SELECT ?,id FROM attachments WHERE id=?",arguments: [work,id]) }
+    }
+    /// A message's files join the work it steers or amends.
+    private static func link(_ db: Database,work: String,message: String) throws {
+        try db.execute(sql: "INSERT OR IGNORE INTO workAttachments(workID,attachmentID) SELECT ?,id FROM attachments WHERE messageID=? ORDER BY created,rowid",arguments: [work,message])
+    }
+    public func link(work: String,files: [String]) throws { try db.write { try Self.link($0,work: work,files: files) } }
+    public func attachment(id: String) throws -> Attachment? { try db.read { try Attachment.fetchOne($0,key: id) } }
+    public func attachments(message: String) throws -> [Attachment] { try db.read { try Attachment.fetchAll($0,sql: "SELECT * FROM attachments WHERE messageID=? ORDER BY created,rowid",arguments: [message]) } }
+    public func attachments(event: String) throws -> [Attachment] { try db.read { try Attachment.fetchAll($0,sql: "SELECT * FROM attachments WHERE eventID=? ORDER BY created,rowid",arguments: [event]) } }
+    /// The files a work carries, in link order.
+    public func attachments(work: String) throws -> [Attachment] {
+        try db.read { try Attachment.fetchAll($0,sql: "SELECT a.* FROM workAttachments l JOIN attachments a ON a.id=l.attachmentID WHERE l.workID=? ORDER BY l.rowid",arguments: [work]) }
+    }
+    /// Which of these attachment ids have a row (the rest are copies nobody owns).
+    public func storedAttachments(_ ids: [String]) throws -> Set<String> {
+        try db.read { db in Set(try ids.filter { try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM attachments WHERE id=?",arguments: [$0]) ?? 0 > 0 }) }
+    }
+    /// Attaches files to a worker event of `task`, re-stamping the event so phones see the change; false (nothing
+    /// stored) when there is no such event.
+    public func attach(_ files: [Attachment],event: String,task: String) throws -> Bool {
+        try db.write { db in
+            guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM events WHERE id=? AND taskID=?",arguments: [event,task]) ?? 0 > 0 else { return false }
+            for var a in files { a.eventID = event; a.messageID = nil; try a.insert(db) }
+            try db.execute(sql: "UPDATE events SET kind=kind WHERE id=?",arguments: [event]); return true
         }
     }
     public func startWork(_ id: String) throws -> Work? {
@@ -317,7 +359,7 @@ public actor Store {
             if queued { w.instruction += "\nAmendment \(w.revision): " + instruction } else { w.state = "amendment_pending" }
             try w.update(db)
             let a = Amendment(id: identifier(), taskID: task, messageID: message, revision: w.revision, instruction: instruction, state: queued ? "queued_input" : "pending")
-            try a.insert(db); return a
+            try a.insert(db); try Self.link(db,work: task,message: message); return a
         }
     }
     /// Preserve a correction for an uncertain run without claiming active steering or dispatching.
@@ -326,21 +368,23 @@ public actor Store {
             guard var w = try Work.fetchOne(db,key: task), w.state == "uncertain", !w.suppressed else { throw ProjectError.blocked("Target changed during correction; no duplicate or steering claim made.") }
             w.revision += 1; try w.update(db)
             let a = Amendment(id: identifier(),taskID: task,messageID: message,revision: w.revision,instruction: instruction,state: "pending_reconciliation")
-            try a.insert(db); return a
+            try a.insert(db); try Self.link(db,work: task,message: message); return a
         }
     }
     /// Only a still-pending amendment changes; a follow-up turn that already took it as input wins.
     public func amendmentState(id: String, state: String) throws { try db.write { try $0.execute(sql: "UPDATE amendments SET state=? WHERE id=? AND state='pending'", arguments: [state,id]) } }
     /// Completion is transactional with amendment admission and correction suppression.
-    @discardableResult public func complete(task: String, output: WorkerOutput) throws -> Message? {
-        try db.write { try Self.complete($0,task: task,output: output) }
+    @discardableResult public func complete(task: String, output: WorkerOutput, files: [Attachment] = []) throws -> Message? {
+        try db.write { try Self.complete($0,task: task,output: output,files: files) }
     }
     /// Amendments live steering did not admit (or did not confirm) become a follow-up turn of the SAME task and
     /// session, atomically with completion. Returns the work to run again, or the delivered result.
     /// `requeue` hands the follow-up to the worker queue (retry of a reconciled run) instead of the running executor.
     /// `from`: deliver only if the work is still in that state and unsuppressed, else nothing (a concurrent reconcile won).
     /// `delivery`: a job topic's result kind (`result` in the main timeline, `job_result` in the sub-chat only). Nil is an ordinary `result`.
-    public func finish(task: String, output: WorkerOutput, requeue: Bool = false, from state: String? = nil, delivery: String? = nil) throws -> (reply: Message?, followUp: Work?) {
+    /// `files`: copies of the files the worker returned (#316), attached to the delivered result, the superseded answer's
+    /// event, or the unconfirmed-change notice in the same transaction; a copy no row took is the caller's to remove.
+    public func finish(task: String, output: WorkerOutput, requeue: Bool = false, from state: String? = nil, delivery: String? = nil, files: [Attachment] = []) throws -> (reply: Message?, followUp: Work?) {
         try db.write { db in
             if let state { guard let w = try Work.fetchOne(db,key: task), w.state == state, !w.suppressed else { return (nil,nil) } }
             if var w = try Work.fetchOne(db,key: task), !w.suppressed {
@@ -348,17 +392,19 @@ public actor Store {
                 if !open.isEmpty {
                     for var a in open { w.instruction += "\nAmendment \(a.revision): " + a.instruction; a.state = "queued_input"; try a.update(db) }
                     // Keep the superseded answer inspectable in the sub-chat; it is not delivered as the result.
-                    try WorkerEvent(id: task + ":superseded:" + identifier(),taskID: task,kind: "superseded_result",body: output.text,created: Date().timeIntervalSince1970).insert(db)
+                    let event = WorkerEvent(id: task + ":superseded:" + identifier(),taskID: task,kind: "superseded_result",body: output.text,created: Date().timeIntervalSince1970)
+                    try event.insert(db); for var a in files { a.eventID = event.id; a.messageID = nil; try a.insert(db) }
                     // A follow-up has no run until setHandle stamps one: a stale ID would let retry reconcile the superseded
                     // run, and queued work with a run ID would make a later steer treat it as live.
                     w.state = requeue ? "queued" : "working"; w.runID = nil
                     try w.update(db); return (nil,w)
                 }
             }
-            return (try Self.complete(db,task: task,output: output,delivery: delivery),nil)
+            return (try Self.complete(db,task: task,output: output,delivery: delivery,files: files),nil)
         }
     }
-    private static func complete(_ db: Database, task: String, output: WorkerOutput, delivery: String? = nil) throws -> Message? {
+    private static func complete(_ db: Database, task: String, output: WorkerOutput, delivery: String? = nil, files: [Attachment] = []) throws -> Message? {
+        func attach(_ m: Message) throws { for var a in files { a.messageID = m.id; a.eventID = nil; try a.insert(db) } }
         guard var w = try Work.fetchOne(db, key: task) else { throw ProjectError.invalid("Unknown task.") }
         w.result = output.text; w.outputRevision = output.appliedRevision
         let pending = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM amendments WHERE taskID=? AND state NOT IN ('accepted','applied','queued_input')", arguments: [task]) ?? 0
@@ -368,14 +414,14 @@ public actor Store {
         guard output.appliedRevision >= steered, pending == 0 else { w.state = "amendment_pending"; w.error = "Result retained in sub-chat; latest amendment not confirmed."; try w.update(db)
             let kind = "amendment_unconfirmed_" + String(w.revision)
             if try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind=?",arguments: [task,kind]) == 0 {
-                try Message(id: identifier(),role: "assistant",body: "The task finished without confirming your latest change. Its answer is in the sub-chat.",topicID: w.topicID,taskID: task,replyTo: w.messageID,kind: kind,created: Date().timeIntervalSince1970,notice: Notice(.amendmentUnconfirmed)).insert(db)
+                let m = Message(id: identifier(),role: "assistant",body: "The task finished without confirming your latest change. Its answer is in the sub-chat.",topicID: w.topicID,taskID: task,replyTo: w.messageID,kind: kind,created: Date().timeIntervalSince1970,notice: Notice(.amendmentUnconfirmed)); try m.insert(db); try attach(m)
             }; return nil }
         w.state = "done"; w.error = nil; try w.update(db)
         try db.execute(sql: "UPDATE amendments SET state='applied' WHERE taskID=?", arguments: [task])
         if try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind IN ('result','job_result')", arguments: [task]) ?? 0 > 0 { return nil }
         // The answer alone (#311): the UI draws the reply header from `replyTo`; results stored before keep their "Regarding" prefix.
         let m = Message(id: identifier(), role: "assistant", body: output.text, topicID: w.topicID, taskID: task, replyTo: w.messageID, kind: delivery ?? "result", created: Date().timeIntervalSince1970)
-        try m.insert(db); return m
+        try m.insert(db); try attach(m); return m
     }
     // MARK: Jobs (#319)
 

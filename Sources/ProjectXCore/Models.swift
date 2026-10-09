@@ -61,6 +61,8 @@ public struct Snapshot: Sendable, Equatable {
     public var amendments: [Amendment] = []
     /// Files attached to messages and worker events (#316).
     public var attachments: [Attachment] = []
+    /// Files each work carries (work id → attachment ids, in link order; `workAttachments`).
+    public var workFiles: [String:[String]] = [:]
     public init() {}
 }
 public enum ProjectError: Error, LocalizedError, Sendable {
@@ -173,7 +175,9 @@ public struct Decision: Codable, Sendable {
 /// The secretary's slim view: only the fields routing needs, never database records. Long text is excerpted by bytes.
 public struct RoutingInput: Codable, Sendable {
     public struct TopicView: Codable, Sendable { public var id: String; public var label: String }
-    public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String }
+    /// A file the secretary may know about (#316): name, type, size and absolute path, never contents.
+    public struct FileView: Codable, Sendable { public var name: String; public var type: String; public var size: String; public var path: String }
+    public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String; public var files: [FileView]? = nil }
     public struct WorkView: Codable, Sendable { public var id: String; public var topicID: String; public var state: String; public var executor: String?; public var instruction: String; public var error: String? }
     public struct MemoryView: Codable, Sendable { public var id: String; public var title: String; public var excerpt: String }
     /// A scheduled job: its topic, name and the first line of its summary (#319).
@@ -191,11 +195,13 @@ public struct RoutingInput: Codable, Sendable {
     public var omitted: String? = nil
     /// How long ago the user sent a delayed message ("7 h 16 min"); nil unless it reached the Mac over 60 s late (#314).
     public var messageAge: String? = nil
-    enum CodingKeys: String, CodingKey { case message, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
+    /// The current message's attached files (#316); left out when it has none.
+    public var files: [FileView] = []
+    enum CodingKeys: String, CodingKey { case message, files, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
     /// Empty job lists are left out, so a workspace without jobs sends the pre-#319 context unchanged.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(message,forKey: .message); try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
+        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
         try c.encodeIfPresent(latestTopic,forKey: .latestTopic); try c.encode(memory,forKey: .memory); try c.encodeIfPresent(sourceMessageID,forKey: .sourceMessageID); try c.encodeIfPresent(omitted,forKey: .omitted)
         if !jobs.isEmpty { try c.encode(jobs,forKey: .jobs) }; if !approvals.isEmpty { try c.encode(approvals,forKey: .approvals) }
     }
