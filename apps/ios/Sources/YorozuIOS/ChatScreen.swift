@@ -141,7 +141,7 @@ struct ChatScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     // A standard bar button: the whole glass circle is the target, and the badge is the bar's own.
-                    Button("Sub-chats", systemImage: "bubble.left.and.bubble.right") { path = [.topics] }
+                    Button("Sub-chats", systemImage: "bubble.left.and.bubble.right") { navigate([.topics]) }
                         .badge(model.runningTopics)
                         .accessibilityValue(model.runningTopics > 0 ? String(localized: "\(model.runningTopics) running") : "")
                 }
@@ -155,7 +155,7 @@ struct ChatScreen: View {
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("Search", systemImage: "magnifyingglass") { path = [.search] }
+                    Button("Search", systemImage: "magnifyingglass") { navigate([.search]) }
                     Button("Settings", systemImage: "gearshape") { settings = true }
                 }
             }
@@ -166,7 +166,7 @@ struct ChatScreen: View {
                 case .jobs:
                     JobsScreen(model: model) { path.append(.topic($0, focus: nil)) }
                 case .topic(let id, let focus):
-                    TopicScreen(model: model, topicId: id, focus: focus) { path = [] }
+                    TopicScreen(model: model, topicId: id, focus: focus) { navigate([]) }
                 case .search:
                     SearchScreen(model: model, onOpen: open) { path.removeLast() }
                 case .page(let id):
@@ -241,6 +241,13 @@ struct ChatScreen: View {
         guard RowStyle(bubble) == .answer, !stored, let id = bubble.replyTo else { return nil }
         if let request = byId[id] { return ReplyHeader(text: request.shownText, revealable: true) }
         return bubble.topicId.flatMap { model.topics[$0]?.label }.map { ReplyHeader(text: $0, revealable: false) }
+    }
+
+    /// Moves to `route` with the keyboard down first. A field still first responder when its screen is covered is
+    /// remembered by UIKit and raised again when the screen comes back, which popped the keyboard up on return.
+    private func navigate(_ route: [ChatRoute]) {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        path = route
     }
 
     private func show(_ id: String?) {
