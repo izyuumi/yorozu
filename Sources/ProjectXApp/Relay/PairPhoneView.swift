@@ -20,7 +20,7 @@ struct PairPhoneView: View {
                         .accessibilityLabel("Pairing QR code")
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Scan with the iPhone Camera").font(.headline)
-                        Text("Or open Yorozu on the iPhone, tap Pair, and enter the code. Check that the Mac key matches what the phone shows.")
+                        Text("Or open Yorozu on the iPhone, tap Enter code manually, and paste the code. Check that the Mac key matches what the phone shows.")
                             .foregroundStyle(.secondary)
                         field("Mac key", (try? QrPayload.decode(link))?.fingerprint ?? "")
                         field("Code", link)

@@ -13,10 +13,19 @@ struct Composer: View {
     static let byteLimit = 6_000
     private enum Metrics { static let fieldRadius: CGFloat = 15, sendSide: CGFloat = 28, buttonRadius: CGFloat = 7 }
     var body: some View {
-        let bytes = model.draft.utf8.count, enabled = model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged)
+        // Blocked (#317): nothing could answer, so the field and Send are off and the reason shows with Fix….
+        let blocked = model.readiness.flatMap { $0.state == .blocked ? $0.problem : nil }
+        let bytes = model.draft.utf8.count, enabled = model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged) && blocked == nil
         let hasContent = !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.files.isEmpty
         let canSend = model.ready && !model.submitting && enabled && bytes <= Self.byteLimit && hasContent && model.files.count <= DraftFile.countLimit
         VStack(alignment: .leading,spacing: 6) {
+            if let blocked {
+                HStack(spacing: 8) {
+                    Image(systemName: "xmark.octagon.fill").foregroundStyle(.red).accessibilityHidden(true)
+                    Text(LocalizedStringKey(blocked.title)).frame(maxWidth: .infinity,alignment: .leading).help(blocked.detail.isEmpty ? blocked.title : blocked.detail)
+                    FixButton(model: model,fix: blocked.fix ?? .step("harness")).controlSize(.small)
+                }.font(.callout)
+            }
             if bytes > Self.byteLimit {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(ChatPalette.warning).accessibilityHidden(true)
