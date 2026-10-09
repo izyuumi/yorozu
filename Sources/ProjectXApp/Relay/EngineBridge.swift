@@ -87,8 +87,8 @@ actor EngineBridge: RelayBackend {
         let jobs = Set(((try? await engine.store.jobRecords()) ?? []).map(\.topicID))
         let working = s.work.contains { $0.active && !jobs.contains($0.topicID) }, routing = await engine.routing
         remember(s.attachments)
-        // Every main-timeline message goes out on `main`, so that is the thread a push names.
-        if let alerted { for m in s.messages where m.created > alerted { if let a = m.alert { await host.notify(a, threadID: "main", eventID: m.id) } } }
+        // Every main-timeline message goes out on the main thread, so that is the thread a push names.
+        if let alerted { for m in s.messages where m.created > alerted { if let a = m.alert { await host.notify(a, threadID: main.id, eventID: m.id) } } }
         alerted = max(alerted ?? 0, s.messages.last?.created ?? 0)
         main = .main((s.messages.last(where: \.onMainTimeline)?.created ?? 0) * 1000)
         await host.setMain(main)
