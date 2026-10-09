@@ -61,9 +61,10 @@ extension PhoneModel {
         Dictionary(grouping: tasks.values, by: \.topicId).mapValues { $0.sorted(by: Self.byAge) }
     }
 
-    /// A result message repeats its task's result, which the task card already shows: the topic hides it.
+    /// A result message repeats its task's result, which the task card already shows: the topic hides it,
+    /// unless it carries files the card does not.
     func hidesInTopic(_ bubble: Bubble) -> Bool {
-        bubble.kind == "result" && bubble.taskId.flatMap { tasks[$0]?.result } != nil
+        bubble.kind == "result" && bubble.files.isEmpty && bubble.taskId.flatMap { tasks[$0]?.result } != nil
     }
 
     /// nil while off the link or catching up: the Mac's state is unknown, never idle. `list`: the
@@ -469,7 +470,8 @@ private struct TaskCard: View {
     }
 }
 
-/// One worker event: tools, commands and output in monospace, messages as text, the rest as notes.
+/// One worker event: tools, commands and output in monospace, messages as text, the rest as notes,
+/// and any images the worker shared (#316).
 private struct EventRow: View {
     let event: WorkerEventData
 
@@ -483,12 +485,16 @@ private struct EventRow: View {
             Image(systemName: icon)
                 .foregroundStyle(event.kind == "error" ? YorozuPalette.warning : Color.secondary)
                 .accessibilityHidden(true)
-            Text(body)
-                .font(mono ? .footnote.monospaced() : .subheadline)
-                .foregroundStyle(event.kind == "message" ? Color.primary : Color.secondary)
-                .lineLimit(mono ? 8 : nil)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+                Text(body)
+                    .font(mono ? .footnote.monospaced() : .subheadline)
+                    .foregroundStyle(event.kind == "message" ? Color.primary : Color.secondary)
+                    .lineLimit(mono ? 8 : nil)
+                    .textSelection(.enabled)
+                let files = event.attachmentInfos
+                if !files.isEmpty { AttachmentsView(files: files) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Text(MessageTime.date(event.created), format: .dateTime.hour().minute())
                 .font(.caption)
                 .foregroundStyle(.secondary)

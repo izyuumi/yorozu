@@ -1,6 +1,183 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Update Yorozu on your Mac to send files." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイルを送るには、MacのYorozuをアップデートしてください。"
+          }
+        }
+      }
+    },
+    "Too large: %@. Each file must be 50 MB or smaller." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "大きすぎます：%@。ファイルは1つ50 MB以下にしてください。"
+          }
+        }
+      }
+    },
+    "A message can carry up to 10 files. Remove one to add another." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1つのメッセージに添付できるファイルは10個までです。追加するには1つ削除してください。"
+          }
+        }
+      }
+    },
+    "attachment.textFileName" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Message.txt"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージ.txt"
+          }
+        }
+      }
+    },
+    "Original" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オリジナル"
+          }
+        }
+      }
+    },
+    "Send original" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オリジナルで送信"
+          }
+        }
+      }
+    },
+    "Opens the picture" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真を開きます"
+          }
+        }
+      }
+    },
+    "Downloads and opens the file" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイルをダウンロードして開きます"
+          }
+        }
+      }
+    },
+    "File no longer available" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイルはもうありません"
+          }
+        }
+      }
+    },
+    "Attachments aren’t available right now." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "現在、添付ファイルは使えません。"
+          }
+        }
+      }
+    },
+    "Couldn’t keep the files for sending. Try again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信用にファイルを保存できませんでした。もう一度お試しください。"
+          }
+        }
+      }
+    },
+    "The files are no longer on this iPhone." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイルがこのiPhoneにもうありません。"
+          }
+        }
+      }
+    },
+    "Couldn’t send" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信できませんでした"
+          }
+        }
+      }
+    },
+    "Shorten it, or send it as a text file." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "短くするか、テキストファイルとして送ってください。"
+          }
+        }
+      }
+    },
+    "Send as Text File" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テキストファイルで送信"
+          }
+        }
+      }
+    },
+    "Uploading ^[%lld file](inflect: true)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld個のファイルをアップロード中"
+          }
+        }
+      }
+    },
+    "You sent ^[%lld file](inflect: true)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld個のファイルを送信しました"
+          }
+        }
+      }
+    }
+,
     "Path" : {
       "localizations" : {
         "ja" : {

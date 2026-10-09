@@ -1,21 +1,28 @@
 import SwiftUI
 
 // v1 packages/shared-swift ChatView.swift's iOS composer, send button and composer layout, without
-// the attach, stash, model and Stop controls.
+// the stash, model and Stop controls; the attach menu is AttachMenu (#316).
 
 /// One surface, like Messages: the field and the send control share one glass container, so the
 /// eye reads one thing to type into. The border turns vermilion while the Mac is working. A draft
-/// over the Mac's limit says so above the field rather than leaving Send silently dimmed.
+/// over the Mac's limit says so above the field rather than leaving Send silently dimmed, and offers
+/// to send it as a text file. Staged files sit in a strip above the field.
 struct Composer: View {
     @Binding var text: String
+    @Binding var files: [DraftFile]
+    /// The Mac takes attachments, or has not said it does not.
+    let attachments: Bool
     let working: Bool
     let enabled: Bool
     let onSend: () -> Void
+    let onSendAsTextFile: () -> Void
 
     /// What the host takes in one message (Engine.send).
     static let maxBytes = 6000
 
     @State private var sends = 0
+    /// Picked files are still being copied and reduced: Send waits for them.
+    @State private var loading = false
 
     /// The send circle, inside the ``controlTarget``-tall row. Smaller than the row, so the accent
     /// fill reads as a button rather than as a block.
@@ -29,16 +36,24 @@ struct Composer: View {
             if bytes > Self.maxBytes {
                 overLimit(bytes)
                     .padding(.top, LayoutMetrics.stack)
-                    .padding(.trailing, LayoutMetrics.stack)
+                    .padding(.horizontal, LayoutMetrics.stack)
+            }
+            if !files.isEmpty {
+                StagedStrip(files: $files)
+                    .padding(.top, LayoutMetrics.inner)
+                    .padding(.horizontal, LayoutMetrics.stack)
             }
             HStack(alignment: .bottom, spacing: LayoutMetrics.tight) {
+                AttachMenu(remaining: AttachmentLimits.maxCount - files.count, available: attachments, loading: $loading) {
+                    files += $0
+                }
                 ComposerTextView(text: $text, placeholder: String(localized: "Message"), onSubmit: send)
                     // Centred on the send button while single-line; grows past it.
                     .frame(minHeight: controlTarget)
                 sendButton
             }
         }
-        .padding(.leading, LayoutMetrics.gutter)
+        .padding(.leading, LayoutMetrics.tight)
         .yorozuGlass(in: shape)
         .overlay {
             if working {
@@ -57,16 +72,31 @@ struct Composer: View {
     }
 
     private func overLimit(_ bytes: Int) -> some View {
-        Label {
-            VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
-                Text("\(bytes.formatted()) bytes. The limit is \(Self.maxBytes.formatted()).").fontWeight(.semibold)
-                Text("Shorten it to send.").foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: LayoutMetrics.inner) {
+            Label {
+                VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
+                    Text("\(bytes.formatted()) bytes. The limit is \(Self.maxBytes.formatted()).").fontWeight(.semibold)
+                    Text("Shorten it, or send it as a text file.").foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
             }
-        } icon: {
-            Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
+            .font(.footnote)
+            .accessibilityElement(children: .combine)
+            Button {
+                onSendAsTextFile()
+                sends += 1
+            } label: {
+                Label("Send as Text File", systemImage: "doc.text")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, LayoutMetrics.stack)
+                    .frame(minHeight: controlTarget)
+                    .background(.fill.tertiary, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tint)
+            .disabled(!enabled || !attachments || loading || files.count >= AttachmentLimits.maxCount)
         }
-        .font(.footnote)
-        .accessibilityElement(children: .combine)
     }
 
     private var sendButton: some View {
@@ -86,7 +116,8 @@ struct Composer: View {
     }
 
     private var canSend: Bool {
-        enabled && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.utf8.count <= Self.maxBytes
+        enabled && !loading && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty)
+            && text.utf8.count <= Self.maxBytes
     }
 
     private func send() {
