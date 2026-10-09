@@ -673,3 +673,5 @@ Added in implementation:
 - Phone previews are the Mac's own 512 px JPEG thumbnails; downloads go 160 KiB a chunk, at most two requests in flight per phone. A `worker_event` record becomes an upsert by `seq`, since attaching shared images re-stamps it.
 - The Mac stores sub-chat images but shows none: it has no sub-chat UI.
 - On 2026-10-09 `models.list` for agent `projectx` listed `image` in the input of every configured model, the worker default `openai-pool/gpt-6-astra` included ([setup.md](../setup.md#models)).
+
+- Worker-returned files: `FileStore.adopt` refuses private folders (`~/.ssh`, `~/.gnupg`, `~/Library/Keychains`, `~/.appstoreconnect`, `~/.openclaw`, `~/.hermes`, `~/.aws`, `~/.config/gh`, the app support folder and data root) and key-like names (`*.pem`, `*.p8`, `*.key`, extensionless `id_*`). A narrowing of "any readable path is accepted" for safety: a prompt-injected worker could otherwise name a secret that then syncs to the phone. Files the user attaches are not filtered.
