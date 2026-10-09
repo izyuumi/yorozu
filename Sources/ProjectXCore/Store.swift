@@ -154,7 +154,7 @@ public actor Store {
         return try db.read { db in
             var hits: [SearchHit] = []; var total = 0
             // Messages that stay in a job's sub-chat are not searchable from phones (#319), the only caller.
-            let jobOnly = " AND t.kind NOT IN (" + Message.jobOnlyKinds.sorted().map { "'\($0)'" }.joined(separator: ",") + ")"
+            let jobOnly = " AND t.kind NOT IN \(Self.jobOnlyList)"
             for (table,index,columns,extra) in [("messages","messageSearch","t.topicID AS topic,t.taskID AS task",jobOnly),("events","eventSearch","(SELECT topicID FROM work WHERE id=t.taskID) AS topic,t.taskID AS task","")] {
                 let (from,args): (String,StatementArguments) = fts ? ("\(index) JOIN \(table) t ON t.rowid=\(index).rowid WHERE \(index) MATCH ?\(extra)",[match]) : ("\(table) t WHERE \(filter)\(extra)",StatementArguments(like))
                 let rows = try Row.fetchAll(db,sql: "SELECT t.id,t.created,t.body,\(columns)\(fts ? ",snippet(\(index),0,'','','…',48) AS s" : "") FROM \(from) ORDER BY t.created DESC,t.rowid DESC LIMIT \(offset + limit)",arguments: args)
@@ -186,19 +186,22 @@ public actor Store {
         }
     }
     public func readCursor(thread: String) throws -> String? { try db.read { try String.fetchOne($0,sql: "SELECT messageID FROM readCursor WHERE threadID=?",arguments: [thread]) } }
-    /// History window (#313 open question 1, the union): the newest 500 messages plus every message of the last 30 days,
-    /// that is every message created at or after `start`. Work: created in it, the task of a windowed message, or
+    /// History window (#313 open question 1, the union): the newest 500 main-timeline messages plus every message of the
+    /// last 30 days, that is every message created at or after `start`; job-only messages (#319) only from the last 30
+    /// days. Work: created in it (a job's run or input: in the last 30 days), the task of a windowed message, or
     /// unsuppressed active or uncertain (so it can still be stopped or retried). Topics: created in it or used by
     /// windowed messages or work (re-stamped when one starts using it, `sync-topic-touch`). Events and amendments:
     /// those of windowed work. Read cursors: always.
     private static func scope(_ table: String) -> String {
         let s = "(SELECT s FROM w)"
-        let work = "(created>=\(s) OR id IN (SELECT taskID FROM messages WHERE created>=\(s)) OR (suppressed=0 AND state IN ('queued','working','amendment_pending','cancellation_requested','uncertain')))"
+        let recent = "created>=strftime('%s','now')-\(30 * 86400)"
+        let messages = "created>=\(s) AND (kind NOT IN \(jobOnlyList) OR \(recent))"
+        let work = "((created>=\(s) AND (\(recent) OR NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=work.messageID AND m.kind IN \(jobOnlyList)))) OR id IN (SELECT taskID FROM messages WHERE \(messages)) OR (suppressed=0 AND state IN ('queued','working','amendment_pending','cancellation_requested','uncertain')))"
         switch table {
-        case "messages": return "created>=\(s)"
+        case "messages": return messages
         case "work": return work
         case "events", "amendments": return "taskID IN (SELECT id FROM work WHERE \(work))"
-        case "topics": return "(created>=\(s) OR id IN (SELECT topicID FROM messages WHERE created>=\(s)) OR id IN (SELECT topicID FROM work WHERE \(work)))"
+        case "topics": return "(created>=\(s) OR id IN (SELECT topicID FROM messages WHERE \(messages)) OR id IN (SELECT topicID FROM work WHERE \(work)))"
         default: return "1"
         }
     }
@@ -222,12 +225,14 @@ public actor Store {
     public func cursorBounds() throws -> (latest: Int64, floor: Int64?) {
         try db.read { db in
             (try Int64.fetchOne(db,sql: "SELECT value FROM changeSeq") ?? 0,
-             try Int64.fetchOne(db,sql: "SELECT MIN(seq) FROM messages WHERE created>=?",arguments: [try Self.windowStart(db)]))
+             try Int64.fetchOne(db,sql: "WITH w(s) AS (SELECT ?) SELECT MIN(seq) FROM messages WHERE \(Self.scope("messages"))",arguments: [try Self.windowStart(db)]))
         }
     }
-    /// Messages created at or after this belong to the window.
+    /// `Message.jobOnlyKinds` as an SQL list.
+    private static let jobOnlyList = "(" + Message.jobOnlyKinds.sorted().map { "'\($0)'" }.joined(separator: ",") + ")"
+    /// Messages created at or after this belong to the window (job-only ones only from the last 30 days).
     private static func windowStart(_ db: Database) throws -> Double {
-        let nth = try Double.fetchOne(db,sql: "SELECT created FROM messages ORDER BY created DESC,rowid DESC LIMIT 1 OFFSET 499")
+        let nth = try Double.fetchOne(db,sql: "SELECT created FROM messages WHERE kind NOT IN \(jobOnlyList) ORDER BY created DESC,rowid DESC LIMIT 1 OFFSET 499")
         return min(Date().timeIntervalSince1970 - 30 * 86400,nth ?? 0)
     }
     private static func record(_ table: String,_ row: Row) throws -> Change.Record {
@@ -240,14 +245,14 @@ public actor Store {
         default: return .readCursor(try ReadCursor(row: row))
         }
     }
-    /// Up to `before` older and `after` newer messages (each ≤ 500) around one message, in timeline order, inside or
-    /// outside the window; nil for an unknown id.
+    /// Up to `before` older and `after` newer main-timeline messages (each ≤ 500) around one message, in timeline order,
+    /// inside or outside the window; nil for an unknown id.
     public func page(around id: String, before: Int = 50, after: Int = 50) throws -> [Change]? {
         try db.read { db in
             guard let at = try Row.fetchOne(db,sql: "SELECT created,rowid FROM messages WHERE id=?",arguments: [id]) else { return nil }
             let c: Double = at[0], r: Int64 = at[1]
-            let older = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE (created,rowid)<(?,?) ORDER BY created DESC,rowid DESC LIMIT ?",arguments: [c,r,max(0,min(before,500))])
-            let newer = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE (created,rowid)>=(?,?) ORDER BY created,rowid LIMIT ?",arguments: [c,r,max(0,min(after,500)) + 1])
+            let older = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE kind NOT IN \(Self.jobOnlyList) AND (created,rowid)<(?,?) ORDER BY created DESC,rowid DESC LIMIT ?",arguments: [c,r,max(0,min(before,500))])
+            let newer = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE kind NOT IN \(Self.jobOnlyList) AND (created,rowid)>=(?,?) ORDER BY created,rowid LIMIT ?",arguments: [c,r,max(0,min(after,500)) + 1])
             return try (older.reversed() + newer).map { Change(seq: $0["seq"],record: try Self.record("messages",$0)) }
         }
     }

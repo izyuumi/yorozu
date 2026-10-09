@@ -262,8 +262,8 @@ since the phone is where they are read).
 
 ## History window
 
-The phone caches, and catch-up serves, the **history window**: the newest 500 messages plus every
-message younger than 30 days (the union), with the topics, tasks, amendments, worker events and
+The phone caches, and catch-up serves, the **history window**: the newest 500 main-timeline messages plus every
+message younger than 30 days (the union; a job sub-chat's own messages only the latter), with the topics, tasks, amendments, worker events and
 read cursors that belong to it. Older history is reached only through
 [search and page requests](#search_request--search_result-search).
 

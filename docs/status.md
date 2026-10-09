@@ -108,7 +108,6 @@ Each limit is described where its mechanism is documented.
 - A phone record passes only if it fits 256 chunks (about 48 MiB); a larger one keeps its head ([ios-relay-contract.md](ios-relay-contract.md)).
 - The job script approval gate is not a sandbox: workers run at full permission with a shell, so it only stops unattended scheduled runs of code the user has not seen ([architecture.md](architecture.md#approval-gate)).
 - A slot reached more than 60 s late (the Mac asleep, the app not running) is skipped with no catch-up ([architecture.md](architecture.md#scheduler)).
-- The history window's newest 500 messages count `job_run` triggers, which phones never get: an every-minute job can push main-chat history out of the window a phone holds ([architecture.md](architecture.md#change-sequence-and-history-window)).
 - `JobsWatcher` never fires when `PROJECTX_DATA` contains `..`: its path match misses the normalized paths FSEvents reports, so changes to `jobs.toml`, the app's own Pause, Resume and Delete writes included, take effect only at the next launch ([architecture.md](architecture.md#jobstoml)).
 - `job_control` refusals and the `job_run` trigger's text are the Mac's English, also in the Japanese UI ([ios-relay-contract.md](ios-relay-contract.md#jobs)).
 - A coding result's diffstat misses committed work ([openclaw-integration.md](openclaw-integration.md#methods-used), `sessions.diff`).

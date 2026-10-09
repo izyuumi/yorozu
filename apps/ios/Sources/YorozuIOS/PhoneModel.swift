@@ -1205,13 +1205,13 @@ final class PhoneModel {
             amendments: Array(amendments.values), workerEvents: Array(workerEvents.values), jobs: cacheHasJobs))
     }
 
-    /// The history window by the phone's clock and count: the newest 500 stored messages plus every
-    /// one younger than 30 days, and the topics, tasks, amendments and worker events they reach, plus
-    /// unsuppressed active or uncertain tasks (the Mac's work scope).
+    /// The history window by the phone's clock and count: the newest 500 stored main-timeline messages
+    /// plus every one younger than 30 days (job-only ones only then), and the topics, tasks, amendments
+    /// and worker events they reach, plus unsuppressed active or uncertain tasks (the Mac's work scope).
     private func trim() {
         let cutoff = Self.now - Self.windowDays * 86_400_000
         let stored = bubbles.filter { $0.seq != nil }
-        let newest = Set(stored.suffix(Self.windowCount).map(\.id))
+        let newest = Set(stored.filter { !Self.jobOnlyKinds.contains($0.kind ?? "") }.suffix(Self.windowCount).map(\.id))
         bubbles.removeAll { $0.seq != nil && $0.ts < cutoff && !newest.contains($0.id) }
         let kept = Set(bubbles.map(\.id))
         let keptTasks = Set(bubbles.compactMap(\.taskId))
