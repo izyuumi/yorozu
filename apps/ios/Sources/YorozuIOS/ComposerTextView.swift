@@ -4,7 +4,7 @@ import UIKit
 // The iOS half of v1 packages/shared-swift ComposerTextView.swift, without image paste, question
 // options, prompt history and Send now.
 
-/// The phone's message field: a `UITextView` that grows to six lines, then scrolls inside. The
+/// The phone's message field: a `UITextView` that grows to five lines, then scrolls inside. The
 /// software keyboard's Return is a new line; a hardware keyboard has smart Enter (see
 /// `ComposerUITextView.pressesBegan`).
 struct ComposerTextView: UIViewRepresentable {
@@ -12,7 +12,7 @@ struct ComposerTextView: UIViewRepresentable {
     let placeholder: String
     let onSubmit: () -> Void
 
-    private static let maxLines: CGFloat = 6
+    private static let maxLines: CGFloat = 5
 
     func makeUIView(context: Context) -> ComposerUITextView {
         let view = ComposerUITextView()
@@ -53,7 +53,7 @@ struct ComposerTextView: UIViewRepresentable {
         guard let width = proposal.width, let font = uiView.font else { return nil }
         let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         let maxHeight = ceil(font.lineHeight * Self.maxLines)
-        // Grows with the text up to six lines, then scrolls inside, as the TextField did.
+        // Grows with the text up to five lines, then scrolls inside, as the TextField did.
         uiView.isScrollEnabled = fit.height > maxHeight
         return CGSize(width: width, height: min(max(fit.height, ceil(font.lineHeight)), maxHeight))
     }
