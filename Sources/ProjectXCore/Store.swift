@@ -457,12 +457,13 @@ public actor Store {
     public func pendingApprovals() throws -> [JobApproval] {
         try db.read { try JobApproval.fetchAll($0,sql: "SELECT a.* FROM jobApprovals a JOIN jobs j ON j.pendingApprovalID=a.id WHERE a.state='pending' ORDER BY a.requested") }
     }
-    /// Records the user's yes (never a worker's): only a user message created after the request, and only while the job's
-    /// current script still has the requested hash (`currentSHA`).
+    /// Records the user's yes (never a worker's): only a user message sent after the request (a phone's send time, so a
+    /// yes queued in its outbox never approves a script changed meanwhile), and only while the job's current script still
+    /// has the requested hash (`currentSHA`).
     public func approve(_ approvalID: String, message: String, currentSHA: String?) throws -> JobApproval {
         try db.write { db in
             guard var a = try JobApproval.fetchOne(db,key: approvalID), a.state == "pending", var r = try JobRecord.fetchOne(db,key: a.jobID), r.pendingApprovalID == a.id else { throw ProjectError.invalid("No such pending approval.") }
-            guard let m = try Message.fetchOne(db,key: message), m.role == "user", m.created > a.requested else { throw ProjectError.invalid("Only a message sent after the approval request can approve it.") }
+            guard let m = try Message.fetchOne(db,key: message), m.role == "user", min(m.sentAt ?? m.created,m.created) > a.requested else { throw ProjectError.invalid("Only a message sent after the approval request can approve it.") }
             guard currentSHA == a.scriptSHA else { throw NoticeError(.jobApprovalStale,"That script changed after the request, so it was not approved. A new request shows the current script.") }
             a.state = "approved"; a.approved = Date().timeIntervalSince1970; a.messageID = message; try a.update(db)
             r.approvedScriptSHA = a.scriptSHA; r.pendingApprovalID = nil; try r.update(db); return a
