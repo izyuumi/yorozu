@@ -28,7 +28,9 @@ App code (`Sources/ProjectXApp`) compiles only through `build_native.sh`; iOS co
 
 ## Docs
 
-- Status: [docs/status.md](docs/status.md) has what is done, in progress or stuck, the roadmap, and open items with their defaults. Read when choosing or scoping work.
+Read these yourself when their topic comes up; nobody will paste them in. When the owner asks about the app, its state, plans or behaviour, or before starting any work, first read docs/status.md and OWNER_DECISIONS.md. Read the others when their area is involved. Open owner steps are in the newest comment of the latest open `projectx` queue issue (`gh issue list --label projectx`).
+
+- Status: [docs/status.md](docs/status.md) has what is done, in progress or stuck, the roadmap, open items with their defaults, and known limits. Read first when discussing the app or choosing or scoping work.
 - Architecture: [docs/architecture.md](docs/architecture.md) covers components, message flows, routing, workers, memory and state names. Read before changing `Sources/`.
 - Gateway: [docs/openclaw-integration.md](docs/openclaw-integration.md) covers calls, session keys, timeouts and gotchas. Read before touching `Harness.swift` or `NativeGateway.swift`, or before probing the Gateway.
 - Hermes: [docs/hermes-integration.md](docs/hermes-integration.md) covers calls, profiles, session and run ids, limits and the OpenClaw migration hazards. Read before touching `Hermes*.swift` or before probing Hermes.
@@ -36,4 +38,4 @@ App code (`Sources/ProjectXApp`) compiles only through `build_native.sh`; iOS co
 - Setup: [docs/setup.md](docs/setup.md) covers tools, the OpenClaw agent entry, models, signing, credentials, Keychain items, data paths and environment variables. Read when a path, variable or machine requirement is in question.
 - Release: [docs/release.md](docs/release.md) covers versions, Mac rebuilds, TestFlight uploads, build numbers and the iOS compile check. Read before bumping a version or uploading.
 - Computer use: [docs/cua-integration.md](docs/cua-integration.md) is the R3 design. Read before cua work.
-- Owner decisions: [OWNER_DECISIONS.md](OWNER_DECISIONS.md). Check before changing product behaviour.
+- Owner decisions: [OWNER_DECISIONS.md](OWNER_DECISIONS.md) records every product decision, dated. Read first when discussing the app, and check it before changing product behaviour. History is in [docs/history/decisions-log.md](docs/history/decisions-log.md).
