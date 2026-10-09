@@ -611,16 +611,6 @@
         }
       }
     },
-    "Copy link" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "リンクをコピー"
-          }
-        }
-      }
-    },
     "Copy message text" : {
       "localizations" : {
         "ja" : {
@@ -1125,16 +1115,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "このスクリプトをこのまま承認するには「yes」と送ってください。"
-          }
-        }
-      }
-    },
-    "Scan with Yorozu on your iPhone. Each code works once." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iPhoneのYorozuで読み取ってください。各コードは1回だけ使えます。"
           }
         }
       }
@@ -3285,6 +3265,56 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ファイルはもう利用できません"
+          }
+        }
+      }
+    },
+    "Scan with the iPhone Camera" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone のカメラで読み取ってください"
+          }
+        }
+      }
+    },
+    "Or open Yorozu on the iPhone, tap Pair, and enter the code. Check that the Mac key matches what the phone shows." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "または iPhone の Yorozu で「ペアリング」をタップしてコードを入力します。Mac の鍵が iPhone の表示と一致することを確認してください。"
+          }
+        }
+      }
+    },
+    "Code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コード"
+          }
+        }
+      }
+    },
+    "Mac key" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac の鍵"
+          }
+        }
+      }
+    },
+    "Copy Link" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リンクをコピー"
           }
         }
       }

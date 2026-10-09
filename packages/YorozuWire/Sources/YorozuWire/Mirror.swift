@@ -209,6 +209,34 @@ public struct PageRequestData: Codable, Equatable, Sendable {
     }
 }
 
+/// `readiness` (Mac -> phone, `readiness-v1`): whether the Mac can answer, after each handshake and on every
+/// change. `count` is the items that need attention (warning or blocking); `title` and `fix` are user-facing.
+public struct ReadinessData: Codable, Equatable, Sendable {
+    public static let capability = "readiness-v1"
+    public enum State: String, Codable, Sendable { case ready, attention, blocked }
+    public struct Item: Codable, Equatable, Sendable {
+        public enum Severity: String, Codable, Sendable { case ok, warning, blocking }
+        public var id: String
+        public var title: String
+        public var severity: Severity
+        public var fix: String?
+        public init(id: String, title: String, severity: Severity, fix: String? = nil) {
+            self.id = id
+            self.title = title
+            self.severity = severity
+            self.fix = fix
+        }
+    }
+    public var state: State
+    public var count: Int
+    public var items: [Item]
+    public init(state: State, count: Int, items: [Item]) {
+        self.state = state
+        self.count = count
+        self.items = items
+    }
+}
+
 /// `chunk` (Mac -> phone): one ordered slice of an event whose JSON encoding exceeds ``budget``.
 /// `data` is base64 of up to ``slice`` bytes of that encoding; `id` names the set.
 public struct ChunkData: Codable, Equatable, Sendable {

@@ -551,14 +551,24 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuにメッセージ…" } }
       }
     },
-    "On your Mac, open Yorozu and show its pairing code." : {
+    "On your Mac, open Settings › Devices › Pair iPhone and scan its QR code." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "MacでYorozuを開き、ペアリングコードを表示してください。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac で「設定」›「デバイス」›「iPhoneをペアリング」を開き、QRコードをスキャンしてください。" } }
       }
     },
-    "Show its pairing code" : {
+    "Scan its QR code, or paste the code shown beside it" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリングコードを表示" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "QRコードをスキャン、または横に表示されたコードを貼り付け" } }
+      }
+    },
+    "%@ · Fix this on your Mac" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ · Mac で修正してください" } }
+      }
+    },
+    "%lld items need attention" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 件の項目に対応が必要です" } }
       }
     },
     "Confirming delivery…" : {
@@ -10815,7 +10825,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Macの鍵"
+            "value": "Mac の鍵"
           }
         }
       }
@@ -10825,7 +10835,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Macの鍵：%@"
+            "value": "Mac の鍵：%@"
           }
         }
       }
@@ -13346,22 +13356,22 @@
         }
       }
     },
-    "Open Yorozu on your Mac": {
+    "On your Mac, open Settings › Devices › Pair iPhone": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "MacでYorozuを開く"
+            "value": "Mac で「設定」›「デバイス」›「iPhoneをペアリング」を開く"
           }
         }
       }
     },
-    "Paste the code shown in Yorozu on your host Mac.": {
+    "Paste the Code from Settings › Devices › Pair iPhone on your Mac. Copy Link there copies it.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ホストのMacでYorozuに表示されるコードを貼り付けてください。"
+            "value": "Mac の「設定」›「デバイス」›「iPhoneをペアリング」に表示されるコードを貼り付けてください。そこの「リンクをコピー」でコピーできます。"
           }
         }
       }
@@ -13446,12 +13456,12 @@
         }
       }
     },
-    "Scan the code, or paste it here": {
+    "Check that the Mac key matches": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "コードをスキャン、またはここに貼り付け"
+            "value": "Mac の鍵が一致することを確認"
           }
         }
       }
@@ -13511,7 +13521,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このMacをYorozuに追加しますか？\n\nリレー：%1$@\nMacのキー：%2$@"
+            "value": "このMacをYorozuに追加しますか？\n\nリレー：%1$@\nMac の鍵：%2$@"
           }
         }
       }
@@ -13521,7 +13531,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このMacはペアリング済みです。修復すると接続だけが置き換わります。\n\nリレー：%1$@\nMacのキー：%2$@"
+            "value": "このMacはペアリング済みです。修復すると接続だけが置き換わります。\n\nリレー：%1$@\nMac の鍵：%2$@"
           }
         }
       }

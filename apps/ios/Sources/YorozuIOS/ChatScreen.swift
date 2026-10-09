@@ -108,6 +108,14 @@ struct ChatScreen: View {
                         Text(model.updateRequired ?? String(localized: "\(model.shownStatus.label) · Status unknown"))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                    } else if let reason = model.readinessReason {
+                        // The Mac's own readiness; when blocked the composer below is off with it.
+                        Label { Text("\(reason) · Fix this on your Mac") } icon: {
+                            Image(systemName: model.readiness?.state == .blocked ? "xmark.octagon" : "exclamationmark.triangle")
+                                .foregroundStyle(model.readiness?.state == .blocked ? YorozuPalette.vermilion : YorozuPalette.warning)
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                     }
                     Composer(text: $model.draft, files: $model.draftFiles, attachments: model.attachmentsSupported != false,
                              working: model.working == true, enabled: model.canSend) {

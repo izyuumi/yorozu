@@ -104,6 +104,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case searchResult = "search_result"
         case pageRequest = "page_request"
         case chunk
+        case readiness
     }
 
     public enum Payload: Equatable, Sendable {
@@ -171,6 +172,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case searchResult(SearchResultData)
         case pageRequest(PageRequestData)
         case chunk(ChunkData)
+        case readiness(ReadinessData)
 
         public var kind: Kind {
             switch self {
@@ -238,6 +240,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .searchResult: .searchResult
             case .pageRequest: .pageRequest
             case .chunk: .chunk
+            case .readiness: .readiness
             }
         }
 
@@ -340,6 +343,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .searchResult: payload = .searchResult(try c.decode(SearchResultData.self, forKey: .data))
             case .pageRequest: payload = .pageRequest(try c.decode(PageRequestData.self, forKey: .data))
             case .chunk: payload = .chunk(try c.decode(ChunkData.self, forKey: .data))
+            case .readiness: payload = .readiness(try c.decode(ReadinessData.self, forKey: .data))
             }
         } catch {
             payload = .unknown(kind: rawKind, data: rawData)
@@ -425,6 +429,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .searchResult(let d): try c.encode(d, forKey: .data)
         case .pageRequest(let d): try c.encode(d, forKey: .data)
         case .chunk(let d): try c.encode(d, forKey: .data)
+        case .readiness(let d): try c.encode(d, forKey: .data)
         }
     }
 }
@@ -1781,6 +1786,13 @@ public struct QrPayload: Codable, Equatable, Sendable {
     /// The page a pairing QR opens, and the universal link the phone app claims: the same query
     /// as the `yorozu://` form, in the fragment, so a browser never sends it anywhere.
     public static let link = "https://yorozu.yumi.to/pair"
+
+    /// The Mac key's first 8 bytes as uppercase hex in groups of two bytes ("3F9A 1C07 B2E4 55D0"): what both
+    /// the Mac's pair sheet and the phone's confirmation show, to compare.
+    public var fingerprint: String {
+        let hex = (Data(base64URLEncoded: macPubkey) ?? Data()).prefix(8).map { String(format: "%02X", $0) }
+        return stride(from: 0, to: hex.count, by: 2).map { hex[$0..<min($0 + 2, hex.count)].joined() }.joined(separator: " ")
+    }
 
     /// The one parser for every way a pairing arrives: the QR, a pasted string, a tapped
     /// `yorozu://` link or the web link the QR carries. Throws on anything that is not a v1
