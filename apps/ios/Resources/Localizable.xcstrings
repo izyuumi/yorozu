@@ -587,6 +587,36 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ · Mac で修正してください" } }
       }
     },
+    "Fix this on your Mac" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac で修正してください" } }
+      }
+    },
+    "Mac readiness" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac の準備状況" } }
+      }
+    },
+    "Ready" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "準備完了" } }
+      }
+    },
+    "About" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "情報" } }
+      }
+    },
+    "Privacy Policy" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライバシーポリシー" } }
+      }
+    },
+    "Terms of Use" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "利用規約" } }
+      }
+    },
     "%lld items need attention" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 件の項目に対応が必要です" } }
@@ -4904,7 +4934,6 @@
       }
     },
     "Source on GitHub" : {
-      "extractionState" : "stale",
       "localizations" : {
         "es" : {
           "stringUnit" : {

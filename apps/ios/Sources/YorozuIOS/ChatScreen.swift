@@ -423,7 +423,7 @@ private struct EmptyChat: View {
     }
 }
 
-/// Connection details, Copy diagnostics, Repair, Remove and both versions.
+/// Connection details, notifications, the Mac's readiness, About (versions and links), Copy diagnostics, Repair and Remove.
 private struct SettingsSheet: View {
     let model: PhoneModel
     let onRepair: () -> Void
@@ -490,9 +490,32 @@ private struct SettingsSheet: View {
                 }
                 // Read again on the way back from the Settings app.
                 .task(id: scenePhase) { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
+                // The Mac's own readiness, as synced; the fixes are on the Mac.
+                if let readiness = model.readiness {
+                    Section {
+                        LabeledContent("Mac readiness") {
+                            Text(model.readinessReason ?? String(localized: "Ready"))
+                        }
+                        ForEach(readiness.items.filter { $0.severity != .ok }, id: \.id) { item in
+                            Label {
+                                Text(item.title)
+                            } icon: {
+                                Image(systemName: item.severity == .blocking ? "xmark.octagon" : "exclamationmark.triangle")
+                                    .foregroundStyle(item.severity == .blocking ? YorozuPalette.vermilion : YorozuPalette.warning)
+                            }
+                        }
+                    } footer: {
+                        if readiness.state != .ready { Text("Fix this on your Mac") }
+                    }
+                }
                 Section {
                     LabeledContent("Mac version", value: model.macVersion ?? String(localized: "Unknown"))
                     LabeledContent("iPhone version", value: Self.version)
+                    Link("Privacy Policy", destination: URL(string: "https://yorozu.yumi.to/privacy/")!)
+                    Link("Terms of Use", destination: URL(string: "https://yorozu.yumi.to/terms/")!)
+                    Link("Source on GitHub", destination: URL(string: "https://github.com/izyuumi/yorozu")!)
+                } header: {
+                    Text("About")
                 }
                 Section {
                     Button(copied ? String(localized: "Copied") : String(localized: "Copy diagnostics"),
