@@ -882,7 +882,8 @@ final class PhoneModel {
             deliveredAt: item?.deliveredAt,
             expiresAt: item?.buffered == true && !stored && item?.stored == false ? sentAt + Outbox.lifetime : nil,
             receivedAt: stored ? bubble.ts : nil, readAt: bubble.readAt, reason: item?.reason,
-            files: item?.files?.count ?? 0, upload: uploading ? uploadProgress[bubble.id] ?? 0 : nil)
+            files: item?.files?.count ?? 0, upload: uploading ? uploadProgress[bubble.id] ?? 0 : nil,
+            onHost: stored || item?.stored == true)
     }
 
     /// A message has to wait in the outbox when the relay is out of reach: the moment to ask for

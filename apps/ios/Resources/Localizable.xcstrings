@@ -15551,6 +15551,11 @@
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末" } }
       }
+    },
+    "Accepted by relay" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "リレーが受理" } }
+      }
     }
   },
   "version" : "1.0"

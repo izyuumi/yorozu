@@ -80,20 +80,31 @@ struct Delivery: Equatable {
     var files = 0
     /// The files' upload, 0 to 1, while it runs.
     var upload: Double?
+    /// The host has it (its `receipt` or stored copy), not just the relay.
+    var onHost = false
 
-    var symbol: String {
+    /// The mark's step: Delivered (`MarkState`) splits into Sent (the relay's `accepted`) and Delivered (on the host).
+    enum Step { case sending, sent, delivered, read, notDelivered }
+
+    var step: Step {
         switch state {
-        case .sending: "circle.dotted"
-        case .delivered: "checkmark.circle"
-        case .read: "checkmark.circle.fill"
-        case .notDelivered: "exclamationmark.circle"
+        case .sending: .sending
+        case .delivered: onHost ? .delivered : .sent
+        case .read: .read
+        case .notDelivered: .notDelivered
         }
+    }
+
+    /// The single symbol of the sending and failed marks.
+    var symbol: String {
+        state == .notDelivered ? "exclamationmark.circle" : "circle.dotted"
     }
 
     /// The status word VoiceOver reads after the message.
     var word: String {
-        switch state {
+        switch step {
         case .sending: sent ? String(localized: "Sending") : String(localized: "Waiting for connection")
+        case .sent: String(localized: "Sent")
         case .delivered: String(localized: "Delivered")
         case .read: String(localized: "Read")
         case .notDelivered: notDelivered

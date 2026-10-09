@@ -79,7 +79,6 @@ struct MessageRow: View {
     @State private var expanded = false
     @State private var markDetails = false
     @State private var selecting = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let bubbleRadius: CGFloat = 20
     private let cardRadius: CGFloat = 22
@@ -136,10 +135,7 @@ struct MessageRow: View {
     /// The mark under the bubble: icon only, in the text colour (red when not delivered). Tap for details.
     private func mark(_ delivery: Delivery) -> some View {
         Button { markDetails = true } label: {
-            Image(systemName: delivery.symbol)
-                .symbolEffect(.rotate, isActive: delivery.inFlight && !reduceMotion)
-                .foregroundStyle(delivery.state == .notDelivered ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
-                .font(.caption)
+            DeliveryMark(delivery: delivery)
                 .padding(.vertical, LayoutMetrics.hair)
                 .padding(.leading, LayoutMetrics.inner)
                 .contentShape(Rectangle())
@@ -237,6 +233,48 @@ struct MessageRow: View {
     }
 }
 
+/// The mark under a user bubble, Signal-style: one dotted circle while Sending, one check circle once the relay has it
+/// (Sent), two overlapping check circles once the host has it (Delivered), two filled ones once read (Read), and the
+/// failure symbol in red. A custom component: it owns the overlap; its size follows the caption font.
+struct DeliveryMark: View {
+    let delivery: Delivery
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Half a caption-sized circle: the two circles overlap by about half.
+    @ScaledMetric(relativeTo: .caption) private var overlap: CGFloat = 6
+
+    var body: some View {
+        Group {
+            switch delivery.step {
+            case .sending:
+                Image(systemName: "circle.dotted")
+                    .symbolEffect(.rotate, isActive: delivery.inFlight && !reduceMotion)
+            case .sent:
+                Image(systemName: "checkmark.circle")
+            case .delivered:
+                pair("checkmark.circle")
+            case .read:
+                pair("checkmark.circle.fill")
+            case .notDelivered:
+                Image(systemName: "exclamationmark.circle")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(delivery.state == .notDelivered ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+        .accessibilityElement()
+        .accessibilityLabel(delivery.word)
+    }
+
+    /// The front circle knocks out the one behind it with a background-coloured disc, so the outlines do not cross.
+    private func pair(_ symbol: String) -> some View {
+        HStack(spacing: -overlap) {
+            Image(systemName: symbol)
+            Image(systemName: symbol)
+                .background { Image(systemName: "circle.fill").foregroundStyle(Color(.systemBackground)) }
+        }
+    }
+}
+
 /// VoiceOver's actions on a user bubble: Details, plus Resend and Delete when it was not delivered.
 private struct MarkActions: ViewModifier {
     let delivery: Delivery?
@@ -283,7 +321,7 @@ struct DeliveryRows: View {
         }
         row("Sent", delivery.sentAt)
         if let delivered = delivery.deliveredAt {
-            row("Delivered", delivered)
+            row("Accepted by relay", delivered)
             if let expires = delivery.expiresAt {
                 Text("Held by the relay until the host is online · expires \(MessageTime.exact.string(from: MessageTime.date(expires)))")
                     .font(.footnote)
