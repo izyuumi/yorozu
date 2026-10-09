@@ -220,7 +220,7 @@ import ServiceManagement
         relayRetry?.cancel(); relayRetry = nil
         do {
             let bridge = EngineBridge(engine: engine,mode: runtimeMode) { [weak self] in await self?.ensureModels() }
-            let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile)
+            let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile,direct: resolved?.config.direct ?? Config().direct)
             self.bridge = bridge; relay = host
             Task { for await status in host.status where relay === host { relayStatus = status } }
             await host.start()
