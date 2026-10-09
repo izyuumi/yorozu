@@ -143,14 +143,15 @@ public actor NativeGatewayClient {
         maxPayload = min(limit,8_000_000); methods = Set(advertised); ready = true; sequence = nil
         reader = Task { await self.readLoop(ws) }
     }
-    public func call(_ method: String,json: String,final: Bool) async throws -> String {
+    /// `deadline`: seconds before the call fails as uncertain (default 270; a long thinking step passes its own).
+    public func call(_ method: String,json: String,final: Bool,deadline: Int = 270) async throws -> String {
         try GatewayRPC.enforceAttribution(ProcessInfo.processInfo.environment); try await connect()
         guard ready, let ws = socket, methods.contains(method) else { throw ProjectError.blocked("Gateway does not advertise requested method; no alternate dispatch attempted.") }
         let params = try JSONSerialization.jsonObject(with:Data(json.utf8)); let id = identifier()
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 pending[id] = (final,continuation)
-                timers[id] = Task { try? await Task.sleep(for:.seconds(270)); if !Task.isCancelled { self.fail(id,ProjectError.uncertain("Gateway deadline elapsed; remote run may still be active. Reconcile before retry.")) } }
+                timers[id] = Task { try? await Task.sleep(for:.seconds(deadline)); if !Task.isCancelled { self.fail(id,ProjectError.uncertain("Gateway deadline elapsed; remote run may still be active. Reconcile before retry.")) } }
                 Task { do { try await self.send(["type":"req","id":id,"method":method,"params":params],on:ws) } catch { self.fail(id,ProjectError.uncertain("Gateway send failed; delivery uncertain. No automatic replay.")) } }
             }
         },onCancel:{ Task { await self.cancelPending(id) } })

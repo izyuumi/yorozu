@@ -1,13 +1,41 @@
 import Foundation
 import ProjectXCore
 
-/// The binary's entry point: `Yorozu setup …` runs the setup CLI and exits; anything else starts the app.
+/// The binary's entry point: `Yorozu setup …` runs the setup CLI and `Yorozu agent …` the coding-agent client, then exit;
+/// anything else starts the app.
 @main enum Main {
     static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
+        if args.first == "agent" { exit(AgentCLI.run(Array(args.dropFirst()))) }
         guard args.first == "setup" else { ProjectXApp.main(); return }
         Task.detached { exit(await SetupCLI.run(Array(args.dropFirst()))) }
         dispatchMain()
+    }
+}
+
+/// `Yorozu agent run <agent> --task <id> [--dir <folder>] [--socket <path>] -- <prompt>` (#351): a worker runs a coding
+/// agent through the running app, which spawns it, streams its output into the task's sub-chat and answers when it ends.
+/// Prints the agent's final output; the exit status is the agent's (1 when it could not run). No Store, no app.lock.
+enum AgentCLI {
+    static let usage = "usage: Yorozu agent run <agent> --task <task id> [--dir <folder>] [--socket <path>] -- <prompt>"
+    static func run(_ arguments: [String]) -> Int32 {
+        func fail(_ message: String, _ code: Int32 = 2) -> Int32 { FileHandle.standardError.write(Data("error: \(message)\n".utf8)); return code }
+        guard arguments.first == "run", arguments.count > 1, let cut = arguments.firstIndex(of: "--") else { return fail(usage) }
+        var options: [String:String] = [:], rest = arguments[2..<cut].makeIterator()
+        while let key = rest.next() { guard ["--task","--dir","--socket"].contains(key), let value = rest.next() else { return fail(usage) }; options[key] = value }
+        let prompt = arguments[(cut + 1)...].joined(separator: " ")
+        guard let task = options["--task"], !prompt.isEmpty else { return fail(usage) }
+        let socket: String
+        if let s = options["--socket"] { socket = s } else {
+            guard let root = try? Config.dataRoot(ProcessInfo.processInfo.environment,bundleID: Bundle.main.bundleIdentifier ?? "to.yumi.yorozu").root else { return fail("Couldn't find Yorozu's data folder; pass --socket.") }
+            socket = root.appendingPathComponent("agents.sock").path
+        }
+        do {
+            let reply = try CodingAgentHost.call(socket: socket,.init(agent: arguments[1],task: task,dir: options["--dir"],prompt: prompt))
+            if !reply.output.isEmpty { print(reply.output) }
+            if let error = reply.error { return fail(error,reply.exitCode.map { $0 == 0 ? 1 : $0 } ?? 1) }
+            return reply.exitCode ?? 0
+        } catch { return fail(error.localizedDescription,1) }
     }
 }
 

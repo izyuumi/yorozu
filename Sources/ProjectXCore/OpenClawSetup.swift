@@ -65,10 +65,6 @@ public struct OpenClawSetup: HarnessSetup {
         return agent.lowercased() == "main" || (entries?[agent] as? [String:Any])?["default"] as? Bool == true
     }
 
-    public func executors(_ settings: HarnessSettings) -> [CodingExecutor] {
-        OpenClawHarness(workspace: URL(fileURLWithPath: "/"),agent: agent,settings: { settings }).executors.map { CodingExecutor(executor: $0,binary: $0.id,path: Self.which($0.id,extra: ["~/.local/bin"])) }
-    }
-
     /// Read-only: Yorozu's entry, the role models, provider auth, and the assisted write that would fix what a write can.
     /// Calls `config.get`, `models.list` (configured, and all only when a role model is missing) and `models.authStatus`.
     /// Refuses OpenClaw's default agent (`personal`), so `apply` never writes it.
@@ -86,7 +82,7 @@ public struct OpenClawSetup: HarnessSetup {
         }
 
         // Yorozu's own entry in today's shape (docs/setup.md); nothing else in it is inspected.
-        let workspace = c.harness.devRepoURL ?? Self.workspace(dataRoot)
+        let workspace = Self.workspace(dataRoot)
         var shape: [String] = []
         if let entry {
             out.entry.append(Readiness.Item(id: "openclaw.agent",title: String(localized: "Yorozu's agent \(agent) is set up in OpenClaw"),severity: .ok))
@@ -130,9 +126,8 @@ public struct OpenClawSetup: HarnessSetup {
             do {
                 let rows = try await rpc.call("models.list",["agentId":agent,"view":"configured","includeDetails":true],timeout: Self.probe)["models"] as? [[String:Any]] ?? []
                 let meta = OpenClawHarness.models(rows,config: config)
-                let m = settings.models(meta.allowed,primary: meta.primary,runtimes: Dictionary(executors(HarnessSettings()).compactMap { e in e.executor.runtime.map { (e.executor.id,$0) } }) { a,_ in a })
-                var roles = [("Secretary",String(localized: "Secretary"),m.secretary),("Memory extraction",String(localized: "Memory extraction"),m.extraction),("Worker",String(localized: "Worker"),m.worker),("Review",String(localized: "Review"),m.review)]
-                if c.harness.devRepoURL != nil { roles += m.coding.sorted { $0.key < $1.key }.map { ("Coding (\($0.key))",String(localized: "Coding (\($0.key))"),$0.value) } }
+                let m = settings.models(meta.allowed,primary: meta.primary)
+                let roles = [("Secretary",String(localized: "Secretary"),m.secretary),("Memory extraction",String(localized: "Memory extraction"),m.extraction),("Worker",String(localized: "Worker"),m.worker),("Review",String(localized: "Review"),m.review)]
                 let byID = Dictionary(rows.map { ("\($0["provider"] as? String ?? "")/\($0["id"] as? String ?? "")",$0) }) { a,_ in a }
                 var missing: [String] = []
                 used = Set(roles.compactMap { $0.2.id?.split(separator: "/").first.map(String.init) })
@@ -205,7 +200,8 @@ public struct OpenClawSetup: HarnessSetup {
         guard patched["ok"] as? Bool == true else { throw ProjectError.uncertain("OpenClaw did not confirm the config update.") }
     }
 
-    /// The empty Yorozu-owned workspace used while coding is off (no `dev_repo`).
+    /// The agent's workspace: an empty Yorozu-owned folder, where OpenClaw's bootstrap files land. Topic sessions work in
+    /// their task folders (`sessions.create` `cwd`, #351).
     public static func workspace(_ dataRoot: URL) -> URL { dataRoot.appendingPathComponent("openclaw-workspace",isDirectory: true) }
     static func normalized(_ path: String?) -> String? { path.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).standardizedFileURL.path } }
     /// A model value's primary: "provider/model" or `{primary}`.

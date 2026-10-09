@@ -21,11 +21,13 @@ public enum HermesProfiles {
     """
 
     public struct Settings: Sendable, Equatable {
-        public var home: URL, devRepo: URL?, usableWindow: Int?, mcpServers: [String:MCPServer]
-        public init(home: URL = FileManager.default.homeDirectoryForCurrentUser, devRepo: URL? = nil, usableWindow: Int? = nil, mcpServers: [String:MCPServer] = MCPServers.defaults) {
-            self.home = home; self.devRepo = devRepo; self.usableWindow = usableWindow; self.mcpServers = mcpServers
+        /// `workspace`: `yorozu-worker`'s `terminal.cwd` (#351); each task's contract names its own folder inside it. Nil is the home folder.
+        public var home: URL, workspace: URL?, usableWindow: Int?, mcpServers: [String:MCPServer]
+        public init(home: URL = FileManager.default.homeDirectoryForCurrentUser, workspace: URL? = nil, usableWindow: Int? = nil, mcpServers: [String:MCPServer] = MCPServers.defaults) {
+            self.home = home; self.workspace = workspace; self.usableWindow = usableWindow; self.mcpServers = mcpServers
         }
-        public init(config: Config, usableWindow: Int? = nil) { self.init(devRepo: config.harness.devRepoURL, usableWindow: usableWindow, mcpServers: config.effectiveMCPServers) }
+        /// The live workspace: Hermes runs only in live mode, so an empty `[workspace] path` is `~/Yorozu/workspace`.
+        public init(config: Config, usableWindow: Int? = nil) { self.init(workspace: config.workspace.url(dataRoot: FileManager.default.homeDirectoryForCurrentUser,isolated: false), usableWindow: usableWindow, mcpServers: config.effectiveMCPServers) }
     }
 
     public enum Step: Sendable, Equatable, CustomStringConvertible {
@@ -65,7 +67,7 @@ public enum HermesProfiles {
                       ("curator.enabled","false"), ("agent.disabled_toolsets",#"["cronjob", "skills"]"#), ("auth.adopt_external_logins","false")]
                 .map { Step.setConfig(profile: profile, key: $0.0, value: $0.1) }
         }
-        let cwd = (settings.devRepo ?? settings.home).standardizedFileURL.path
+        let cwd = (settings.workspace ?? settings.home).standardizedFileURL.path
         steps += [Step.setConfig(profile: worker, key: "approvals.mode", value: "off"), .setConfig(profile: worker, key: "terminal.cwd", value: cwd),
                   .setConfig(profile: worker, key: "compression.threshold_tokens", value: String(window)), try projectMCP(servers: settings.mcpServers)]
         steps += [Step.makeFolder(profile: roles, name: workFolder), .setConfig(profile: roles, key: "terminal.cwd", value: profileDir(roles, settings.home).appendingPathComponent(workFolder).path),

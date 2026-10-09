@@ -17,6 +17,7 @@ public struct JobSpec: Codable, Sendable, Equatable {
     /// Script timeout in seconds.
     public var timeout = 600
     public var model: String?
+    /// Ignored since the coding executors went (#351); kept so existing files stay valid.
     public var executor: String?
     public var topic: String?
     public init(id: String, name: String, schedule: [String]) { self.id = id; self.name = name; self.schedule = schedule }

@@ -45,6 +45,10 @@ import YorozuWire
     var filesNotice: String?
     /// The file store's root, for `HarnessSettings.filesRoot`; nil without a store.
     var filesRoot: URL?
+    /// The data root and whether it is isolated (`PROJECTX_DATA` or fixture mode), for the workspace default (#351).
+    var dataRoot: URL?, isolatedData = false
+    /// Runs coding agents for workers (#351), on `<data root>/agents.sock`; nil when it could not start.
+    var agentHost: CodingAgentHost?
     /// Feedback for the enrollment form in Settings.
     @Published var enrollmentNotice = ""
     @Published var ready = false
@@ -152,6 +156,9 @@ import YorozuWire
                                                                                             : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/files",isDirectory: true),dataRoot: root)
                 } catch { filesNotice = error.localizedDescription }
                 filesRoot = files?.root
+                dataRoot = root; isolatedData = explicit != nil || runtimeMode == .fixture
+                // The workspace (#351) exists before any worker starts: Hermes's profile uses it as its terminal folder.
+                if let w = harnessSettings().workspace { try? fm.createDirectory(at: w,withIntermediateDirectories: true,attributes: [.posixPermissions: 0o700]) }
                 let box = settingsBox; box.value = harnessSettings()
                 let harness: any Harness
                 switch runtimeMode {
@@ -162,6 +169,10 @@ import YorozuWire
                 // Queued work resumes with the automatic models, unless the first metadata read takes more than 10 s.
                 self.harness = harness; await refreshModels().value(upTo: .seconds(10))
                 let engine = Engine(store: store,memory: memory,harness: harness,files: files,settings: { box.value }); self.engine = engine
+                if runtimeMode != .offline {
+                    let host = CodingAgentHost(socket: root.appendingPathComponent("agents.sock"),settings: { box.value },folder: { try await engine.agentFolder(task: $0) },emit: { try await engine.agentEvent($0) })
+                    do { try host.start(); agentHost = host; box.value = harnessSettings() } catch { NSLog("Yorozu: coding agents are off this launch: %@",error.localizedDescription) }
+                }
                 await engine.resume()
                 await startJobs(engine,root: root,scripts: explicit != nil || runtimeMode == .fixture ? root.appendingPathComponent("jobs",isDirectory: true) : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/jobs",isDirectory: true))
                 // Keys and device counters live as long as each other, so the device file stays in the support root whatever PROJECTX_DATA says.
@@ -283,7 +294,7 @@ import YorozuWire
         }
         relayRestart = task; await task.value
     }
-    func stop() { observation?.cancel(); stopJobs(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
+    func stop() { observation?.cancel(); stopJobs(); agentHost?.stop(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
     /// This Mac holds a Gateway device token (Keychain), for Settings › Advanced.
     var nativeEnrolled: Bool { nativeClient?.isEnrolled ?? false }
     func enroll() async {

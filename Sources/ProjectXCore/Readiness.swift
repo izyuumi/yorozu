@@ -55,14 +55,18 @@ public struct HarnessDetection: Sendable, Equatable {
     public var items: [Readiness.Item] = []
 }
 
-/// A coding executor for display (Settings › Advanced): whether its tool's binary is found on the launch PATH, `~/.local/bin`
-/// or the Homebrew folders. Never a login state: no Gateway method reports one.
+/// A coding agent for display (#351; Settings shows found or not found): whether its program is found (`CodingAgent.executable`),
+/// and the sign-in command to copy. Never a login state: Yorozu can't tell whether the tool is signed in. `executor`
+/// carries the agent's name for the Settings rows written before #351.
 public struct CodingExecutor: Sendable, Equatable {
     public var executor: Executor; public var binary: String?; public var path: String?
+    public var login: String?
+    public init(_ agent: CodingAgent) { executor = Executor(id: agent.name,name: Self.titles[agent.name] ?? agent.name,appAccess: false,liveSteer: false); binary = agent.command.first; path = agent.executable; login = agent.login }
+    static let titles = ["claude": "Claude Code", "codex": "Codex"]
 }
 
 /// The setup seam each harness adapter fills in beside `Harness` (#317): read-only detection, its readiness checks, the setup
-/// steps it takes part in, and its coding executors for display.
+/// steps it takes part in. Coding agents are the same under every harness (`executors`).
 public protocol HarnessSetup: Sendable {
     var kind: Config.HarnessKind { get }
     var title: String { get }
@@ -72,7 +76,10 @@ public protocol HarnessSetup: Sendable {
     func detect() async -> HarnessDetection
     /// The setup steps (`SetupEngine.order`) this adapter takes part in beyond detection.
     var steps: [String] { get }
-    func executors(_ settings: HarnessSettings) -> [CodingExecutor]
+}
+public extension HarnessSetup {
+    /// The coding agents workers may run (#351), found or not; the same under every harness.
+    func executors(_ settings: HarnessSettings) -> [CodingExecutor] { settings.codingAgents.map(CodingExecutor.init) }
 }
 
 public extension Config.HarnessKind {
