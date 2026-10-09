@@ -41,6 +41,11 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "このiPhoneから24時間以内に送信できませんでした。" } }
       }
     },
+    "Your Mac was offline for more than 24 hours." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macが24時間以上オフラインでした。" } }
+      }
+    },
     "A message to your Mac expired without being read." : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macへのメッセージが読まれないまま期限切れになりました。" } }

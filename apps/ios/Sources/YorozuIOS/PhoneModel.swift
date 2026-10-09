@@ -108,6 +108,8 @@ final class PhoneModel {
     private(set) var marks: [String: MarkState] = [:]
     /// Messages whose frame is on its way to the relay, until `accepted` (or 10 s without one).
     private(set) var inFlight: Set<String> = []
+    /// Sent on the link that is up, 10 s without `accepted` (an old relay): still Sending, not waiting.
+    private(set) var unconfirmed: Set<String> = []
     private var flushTask: Task<Void, Never>?
     private var inBackground = false
     /// Background time held while messages are still Sending.
@@ -290,7 +292,8 @@ final class PhoneModel {
         listener = Task { [weak self] in
             await closing?.value
             for await update in await relay.connect() {
-                guard let self else { return }
+                // An unpaired relay's late updates must never reach the next pairing's mirror.
+                guard let self, self.relay === relay else { return }
                 if generation == self.generation {
                     self.apply(update)
                 } else if case .accepted = update {
@@ -318,6 +321,7 @@ final class PhoneModel {
         }
         state = .closed
         ownerOnline = false
+        unconfirmed = []
         unlinked()
     }
 
@@ -404,7 +408,12 @@ final class PhoneModel {
                 ownerOnline = false
                 unlinked()
             }
-            if state == .joined || state == .paired { linked = true } else { inFlight = [] }
+            if state == .joined || state == .paired {
+                linked = true
+            } else {
+                inFlight = []
+                unconfirmed = []
+            }
             // Mac away: only what is still Sending; the relay already holds the rest.
             if state == .joined { flushOutbox(all: false) }
             if state == .paired { paired() }
@@ -542,7 +551,8 @@ final class PhoneModel {
         let stored = bubble.seq != nil
         let sentAt = item?.sentAt ?? bubble.sentAt ?? bubble.ts
         return Delivery(
-            state: state, inFlight: state == .sending && inFlight.contains(bubble.id), sentAt: sentAt,
+            state: state, inFlight: state == .sending && inFlight.contains(bubble.id),
+            sent: state == .sending && (inFlight.contains(bubble.id) || unconfirmed.contains(bubble.id)), sentAt: sentAt,
             deliveredAt: item?.deliveredAt,
             expiresAt: item?.buffered == true && !stored && item?.stored == false ? sentAt + Outbox.lifetime : nil,
             receivedAt: stored ? bubble.ts : nil, readAt: bubble.readAt, reason: item?.reason)
@@ -583,26 +593,35 @@ final class PhoneModel {
                 settle(id)
             } catch {
                 inFlight.remove(id)
+                unconfirmed.remove(id)
                 LocalNotices.requestPermission()
             }
         }
         finishBackgroundIfDone()
     }
 
-    /// An old relay never answers `accepted`: the mark stops spinning after 10 s and stays Sending.
+    /// An old relay never answers `accepted`: the mark stops spinning after 10 s and stays Sending,
+    /// marked sent while that link is up.
     private func settle(_ id: String) {
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(10))
-            self?.inFlight.remove(id)
+            if self?.inFlight.remove(id) != nil { self?.unconfirmed.insert(id) }
         }
     }
 
+    /// The expiry notification only for a frame the relay holds for an away Mac, and the moment to
+    /// ask for permission to show it.
     private func accepted(_ id: String, buffered: Bool) {
         inFlight.remove(id)
+        unconfirmed.remove(id)
         guard marks[id] == .sending, let index = outbox.firstIndex(where: { $0.id == id }), !outbox[index].stored else { return }
         outbox[index].deliveredAt = Self.now
         outbox[index].buffered = buffered
         setMark(id, .delivered)
+        if buffered {
+            LocalNotices.requestPermission()
+            LocalNotices.scheduleExpiry(id)
+        }
         saveOutbox()
         finishBackgroundIfDone()
     }
@@ -612,8 +631,10 @@ final class PhoneModel {
     private func stored(_ id: String, read: Bool) {
         guard marks[id] != nil || outbox.contains(where: { $0.id == id }) else { return }
         inFlight.remove(id)
+        unconfirmed.remove(id)
+        // The relay no longer holds it, so it can no longer expire there.
+        LocalNotices.cancelExpiry(id)
         if read {
-            LocalNotices.cancelExpiry(id)
             marks[id] = nil
             outbox.removeAll { $0.id == id }
         } else {
@@ -626,6 +647,7 @@ final class PhoneModel {
 
     private func notDelivered(_ id: String, reason: String?) {
         inFlight.remove(id)
+        unconfirmed.remove(id)
         guard let index = outbox.firstIndex(where: { $0.id == id }), MarkState.allows(marks[id], .notDelivered) else { return }
         outbox[index].reason = reason
         setMark(id, .notDelivered)
@@ -641,14 +663,14 @@ final class PhoneModel {
         }
     }
 
-    /// The forward-only rule, and the expiry notification that follows the mark.
+    /// The forward-only rule; leaving Delivered cancels the expiry notification `accepted` scheduled.
     private func setMark(_ id: String, _ new: MarkState, resend: Bool = false) {
         let old = marks[id]
         guard resend || MarkState.allows(old, new) else { return }
         marks[id] = new
         switch new {
         case .delivered:
-            if old != .delivered { LocalNotices.scheduleExpiry(id) }
+            break
         case .sending, .read:
             LocalNotices.cancelExpiry(id)
         case .notDelivered:
@@ -727,7 +749,10 @@ final class PhoneModel {
             if let whole = chunks.add(chunk) { receive(whole) }
         case .receipt(let receipt):
             stored(receipt.eventId, read: false)
-        case .admissionStatus(let status) where status.status == .rejected || status.status == .expired:
+        case .admissionStatus(let status) where status.status == .expired:
+            // One meaning, said in the phone's language rather than the Mac's English reason.
+            notDelivered(status.eventId, reason: String(localized: "Your Mac was offline for more than 24 hours."))
+        case .admissionStatus(let status) where status.status == .rejected:
             notDelivered(status.eventId, reason: status.reason)
         case .syncDelta(let delta):
             receive(delta)
@@ -904,8 +929,9 @@ final class PhoneModel {
         let before = outbox.count
         outbox.removeAll { $0.stored && !kept.contains($0.id) }
         let queued = Set(outbox.map(\.id))
-        marks = marks.filter { kept.contains($0.key) || queued.contains($0.key) }
-        if outbox.count != before { saveOutbox() }
+        let pruned = marks.keys.filter { !kept.contains($0) && !queued.contains($0) }
+        pruned.forEach { marks[$0] = nil; LocalNotices.cancelExpiry($0) }
+        if outbox.count != before || !pruned.isEmpty { saveOutbox() }
     }
 
     private static let windowCount = 500

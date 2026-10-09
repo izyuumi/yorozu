@@ -94,7 +94,7 @@ actor EngineBridge: RelayBackend {
         if await exists(id) { return receipt }
         // Past its deadline (the phone sets send time + 24 h): never routed late, the phone shows Not delivered (#314).
         if let deadline = m.admissionDeadline, deadline < Self.now {
-            return .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .expired, reason: "Not delivered: your Mac was offline for more than 24 hours.")))
+            return .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .expired, reason: "Your Mac was offline for more than 24 hours.")))
         }
         await prepare()
         // Text, id and send time only: no model may learn which device a message came from (#313).

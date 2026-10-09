@@ -60,6 +60,8 @@ struct Delivery: Equatable {
     var state: MarkState
     /// A frame is on its way to the relay: the Sending mark spins.
     var inFlight: Bool
+    /// In flight, or sent without `accepted` on the link that is up: the word says Sending.
+    var sent: Bool
     var sentAt: Int
     /// The relay's `accepted`.
     var deliveredAt: Int?
@@ -82,7 +84,7 @@ struct Delivery: Equatable {
     /// The status word VoiceOver reads after the message.
     var word: String {
         switch state {
-        case .sending: inFlight ? String(localized: "Sending") : String(localized: "Waiting for connection")
+        case .sending: sent ? String(localized: "Sending") : String(localized: "Waiting for connection")
         case .delivered: String(localized: "Delivered")
         case .read: String(localized: "Read")
         case .notDelivered: notDelivered
@@ -102,12 +104,13 @@ enum LocalNotices {
     private static var center: UNUserNotificationCenter { .current() }
     private static let waitingId = "outbox-waiting"
 
-    /// Asked the first time a message has to wait in the outbox; iOS shows the prompt only once.
+    /// Asked the first time a message has to wait in the outbox or the relay holds one for an away
+    /// Mac; iOS shows the prompt only once.
     static func requestPermission() {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    /// 24 h after Delivered, identified by the message id.
+    /// 24 h after the relay buffered it (`accepted` with `buffered`), identified by the message id.
     static func scheduleExpiry(_ id: String) {
         let content = UNMutableNotificationContent()
         content.body = String(localized: "A message to your Mac expired without being read.")

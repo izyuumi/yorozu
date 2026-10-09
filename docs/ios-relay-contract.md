@@ -255,7 +255,8 @@ reason. The marks live beside the items in a forward-only id -> state map (below
 States only move forward (Sending -> Delivered -> Read); a late `accepted` after Read is ignored.
 Not delivered goes back to Sending only through Resend, but a stored copy still lifts it to
 Delivered or Read, since that proves the Mac has it. Without a relay `accepted` (an old relay),
-the mark spins for at most 10 s per frame and stays Sending until the Mac's `receipt`. User
+the mark spins for at most 10 s per frame and stays Sending until the Mac's `receipt`; while
+that link stays up its status word stays "Sending", not "Waiting for connection". User
 messages typed on the Mac, and those in sub-chats, take their mark from the stored copy alone.
 
 Host checks, in this order, then acts:
@@ -290,7 +291,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
             payload: .admissionStatus(AdmissionStatusData(eventId: messageId, status: .rejected, reason: reason)))
 ```
 
-`status` is `.rejected` or `.expired`. `reason` is user-facing text the phone shows as is:
+`status` is `.rejected` or `.expired`. `reason` is user-facing text the phone shows after "Not delivered: ", as is for
+`rejected`; for `expired` the phone shows its own localized copy of the same sentence:
 
 | Cause | `status` | `reason` |
 |---|---|---|
@@ -298,7 +300,7 @@ YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
 | attachments | `rejected` | `"Attachments aren't supported yet."` |
 | fixture mode | `rejected` | `"This Mac is in fixture mode and doesn't take phone messages."` |
 | Engine error | `rejected` | `error.localizedDescription` (e.g. "Message must be 1–6000 UTF-8 bytes.") |
-| past `admissionDeadline` | `expired` | `"Not delivered: your Mac was offline for more than 24 hours."` |
+| past `admissionDeadline` | `expired` | `"Your Mac was offline for more than 24 hours."` |
 
 Either status clears `messageId` from the phone's send queue: the bubble shows Not delivered with
 the reason, Resend and Delete, and is not resent on its own.
