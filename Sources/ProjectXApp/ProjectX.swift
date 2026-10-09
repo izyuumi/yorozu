@@ -29,12 +29,21 @@ import ProjectXCore
     private var nativeClient: NativeGatewayClient?
     private var engine: Engine?
     private var observation: Task<Void,Never>?
-    /// Assistant Markdown parsed once per message id; message bodies never change after insert.
-    private var parsed: [String: AttributedString] = [:]
     /// The phone's way in (iOS 0.7): live mode only, and nil when it could not start.
     private(set) var relay: RelayHost?
     private var bridge: EngineBridge?
     @Published var relayStatus = RelayStatus()
+    // ATTENTION: popover hooks for the menu-bar host and attention center, wired at integration.
+    /// Set by the host to bring a message into view; the timeline scrolls to it and clears it.
+    @Published var focusMessageID: String?
+    /// Set by the host from `popoverWillShow`/`popoverDidClose`; seen reports go out only while it is true.
+    @Published var popoverShown = false
+    /// Whether the open popover shows the newest message; kept current by the timeline.
+    var popoverAtBottom = true
+    /// The newest message the reader has seen at the bottom of the open popover.
+    var onSeen: ((String) -> Void)?
+    /// The open popover reached or left the newest message.
+    var onBottomChanged: ((Bool) -> Void)?
     // config.toml (#312), applied in ConfigWiring.swift.
     let environment = ProcessInfo.processInfo.environment
     let settingsBox = SettingsBox()
@@ -244,109 +253,13 @@ import ProjectXCore
         do { try await engine.send(text); if draft == text { draft = "" }; status = nil; snapshot = try await engine.snapshot() }
         catch { status = error.localizedDescription }
     }
-    /// User text stays verbatim; assistant Markdown is parsed on first display only.
-    func text(_ message: Message) -> AttributedString {
-        if message.role == "user" { return AttributedString(message.body) }
-        if let hit = parsed[message.id] { return hit }
-        let value = AttributedString(chatMarkdown: message.body); parsed[message.id] = value; return value
+    /// Chat search for the popover's ⌘F bar; the caller keeps only main-timeline message hits (open question 10).
+    func search(_ query: String,limit: Int,offset: Int = 0) async throws -> (hits: [SearchHit], total: Int) {
+        guard let engine else { return ([],0) }
+        return try await engine.search(query,limit: limit,offset: offset)
     }
-}
-struct MessageCard: View {
-    let message: Message
-    let text: AttributedString
-    @State private var copied: Bool?
-    var body: some View {
-        VStack(alignment: .leading,spacing: 6) {
-            HStack {
-                Text(message.role == "user" ? "You" : "Yorozu").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button(action: copy) {
-                    Label(copied == nil ? "Copy" : copied! ? "Copied" : "Copy failed",systemImage: copied == nil ? "doc.on.doc" : copied! ? "checkmark" : "exclamationmark.triangle")
-                }.buttonStyle(.borderless).font(.caption).foregroundStyle(copied == false ? Color.orange : Color.secondary)
-                    .help("Copy message text").accessibilityLabel(copied == nil ? "Copy message" : copied! ? "Message copied" : "Copy failed")
-            }
-            // Assistant Markdown renders natively in one Text, so a drag still selects the whole message; user text stays verbatim.
-            Text(text).textSelection(.enabled).frame(maxWidth: .infinity,alignment: .leading)
-        }.padding(12).background(message.role == "user" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-    private func copy() {
-        let board = NSPasteboard.general; board.clearContents()
-        let ok = board.setString(message.body,forType: .string); copied = ok
-        NSAccessibility.post(element: NSApp as Any,notification: .announcementRequested,userInfo: [.announcement: ok ? "Message copied" : "Copy failed",.priority: NSAccessibilityPriorityLevel.high.rawValue])
-        Task { try? await Task.sleep(for: .seconds(2)); if copied == ok { copied = nil } }
-    }
-}
-struct MainChat: View {
-    @ObservedObject var model: AppModel
-    var body: some View {
-        let timeline = model.timeline
-        VStack(spacing: 0) {
-            ScrollViewReader { reader in
-                ScrollView { LazyVStack(alignment: .leading,spacing: 14) {
-                    if timeline.isEmpty { Text("One conversation. Background thinking in topic sub-chats.").foregroundStyle(.secondary).padding(.vertical,30) }
-                    ForEach(timeline) { MessageCard(message: $0,text: model.text($0)).id($0.id) }
-                }.padding() }
-                .onChange(of: timeline.count) { _,_ in if let last = timeline.last { reader.scrollTo(last.id,anchor: .bottom) } }
-            }
-            Divider()
-            HStack(alignment: .bottom) {
-                // A fifth of the popover's height, so the timeline keeps the rest.
-                TextEditor(text: $model.draft).font(.body).containerRelativeFrame(.vertical) { height,_ in height / 5 }.accessibilityLabel(model.runtimeMode == .fixture ? "Synthetic test message, no AI" : "Main conversation message").disabled(!model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged))
-                Button(model.runtimeMode.sendLabel) { Task { await model.send() } }.keyboardShortcut(.return,modifiers: .command).buttonStyle(.borderedProminent)
-                    .disabled(!model.ready || model.submitting || !model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged) || model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }.padding()
-            Text("⌘ Return to send · Return for a new line").font(.caption2).foregroundStyle(.secondary).padding(.bottom,6)
-        }
-    }
-}
-/// The popover's content: header menu, mode banner, notices, then the main chat. It fills whatever the popover gives it.
-struct PopoverContent: View {
-    @ObservedObject var model: AppModel
-    let openSettings: () -> Void
-    var body: some View {
-        VStack(alignment: .leading,spacing: 0) {
-            HStack {
-                Text(model.runtimeMode.windowTitle).font(.headline)
-                if let label = model.harnessLabel { Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                Spacer()
-                if model.working { ProgressView().controlSize(.small).help("Working on it") }
-                Menu {
-                    Button("Settings…",action: openSettings).keyboardShortcut(",")
-                    Divider()
-                    Button("Quit Yorozu") { NSApp.terminate(nil) }.keyboardShortcut("q")
-                } label: { Image(systemName: "ellipsis.circle") }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("Yorozu menu")
-            }.padding(.horizontal).padding(.vertical,8)
-            Divider()
-            if model.runtimeMode != .live {
-                VStack(alignment: .leading,spacing: 6) {
-                    Label(model.runtimeMode.bannerTitle,systemImage: "exclamationmark.triangle.fill").font(.headline)
-                    Text(model.runtimeMode.explanation).font(.callout).fixedSize(horizontal: false,vertical: true)
-                    if model.runtimeMode == .fixture && !model.fixtureAcknowledged {
-                        Button("I understand: enable synthetic TEST input") { model.fixtureAcknowledged = true }
-                            .accessibilityIdentifier("acknowledgeSyntheticFixture")
-                    }
-                }.frame(maxWidth: .infinity,alignment: .leading).padding(12)
-                    .background(Color.orange.opacity(0.18)).accessibilityElement(children: .contain)
-            }
-            if let notice = model.nativeNotice {
-                HStack {
-                    Text(notice).lineLimit(1).truncationMode(.tail).help(model.nativeNoticeDetail)
-                    Spacer()
-                    Button("Connect…",action: openSettings).buttonStyle(.link)
-                }.font(.callout).padding(.horizontal).padding(.vertical,6)
-            }
-            if let notice = model.harnessNotice {
-                Text(notice).font(.callout).foregroundStyle(.orange).lineLimit(2).truncationMode(.tail).help(notice)
-                    .textSelection(.enabled).padding(.horizontal).padding(.vertical,6)
-            }
-            if let status = model.status {
-                Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail).help(status)
-                    .textSelection(.enabled).padding(.horizontal).padding(.vertical,6)
-            }
-            MainChat(model: model)
-        }
-    }
+    /// `[general] send_key`, read at each key press so a config edit applies at once.
+    var sendKey: Config.SendKey { resolved?.config.general.sendKey ?? .smart }
 }
 @MainActor final class Delegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
