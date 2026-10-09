@@ -276,6 +276,17 @@
         }
       }
     },
+    "Hermes uses GitHub Copilot, which Yorozu doesn't use" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes が GitHub Copilot を使っていますが、Yorozu では使いません"
+          }
+        }
+      }
+    },
     "Hermes isn't connected to an AI provider" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1213,12 +1224,22 @@
         }
       }
     },
-    "Hermes isn’t connected to an AI provider. Pick one with `hermes -p yorozu-worker model` and `hermes -p yorozu-roles model`." : {
+    "Hermes isn’t connected to an AI provider. Sign in to Codex with `hermes auth login openai-codex`, then run `hermes -p yorozu-worker config set model.provider openai-codex` and the same for yorozu-roles." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hermes が AI プロバイダに接続されていません。`hermes -p yorozu-worker model` と `hermes -p yorozu-roles model` で選んでください。"
+            "value" : "Hermes が AI プロバイダに接続されていません。`hermes auth login openai-codex` で Codex にサインインしてから、`hermes -p yorozu-worker config set model.provider openai-codex` と、yorozu-roles にも同じコマンドを実行してください。"
+          }
+        }
+      }
+    },
+    "Hermes uses GitHub Copilot, which Yorozu doesn’t use. Set both Yorozu profiles to Codex with `hermes -p yorozu-worker config set model.provider openai-codex` and the same for yorozu-roles." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes が GitHub Copilot を使う設定になっていますが、Yorozu は GitHub Copilot を使いません。`hermes -p yorozu-worker config set model.provider openai-codex` と、yorozu-roles にも同じコマンドで、両方の Yorozu プロファイルを Codex に設定してください。"
           }
         }
       }
