@@ -2,13 +2,11 @@ import AppKit
 import CoreImage.CIFilterBuiltins
 import SwiftUI
 
-/// Pair an iPhone: a fresh one-time code as a QR and a link, and the phones already paired.
+/// The Pair iPhone sheet from Settings › Devices: a fresh one-time code as a QR and a link. It mints only once shown,
+/// which only the Pair iPhone… button does, so opening Settings never makes a code.
 struct PairPhoneView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var removing: RelayDeviceStatus?
-    /// A code is minted only on request: each stays valid until a phone pairs, so opening Settings must not make one.
-    @State private var pairing = false
     /// The QR's side, the one size this sheet owns.
     private let qrSide: CGFloat = 220
 
@@ -20,36 +18,18 @@ struct PairPhoneView: View {
                     .accessibilityLabel("Pairing QR code")
                 Text("Scan with Yorozu on your iPhone. Each code works once.").font(.caption).foregroundStyle(.secondary)
                 Button("Copy link") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(link, forType: .string) }
-            } else if !pairing {
-                Button("Show pairing code") { pairing = true }.disabled(model.relay == nil).frame(height: qrSide)
             } else {
                 VStack(spacing: 8) {
                     if model.relay != nil { ProgressView() }
                     Text(model.relayStatus.state).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }.frame(height: qrSide)
             }
-            if !model.relayStatus.devices.isEmpty {
-                Divider()
-                ForEach(model.relayStatus.devices) { device in
-                    HStack {
-                        Label(device.displayName, systemImage: "iphone")
-                        Spacer()
-                        Text(device.online ? "Online" : "Paired \(device.pairedAt.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
-                        Button("Remove…", role: .destructive) { removing = device }.accessibilityLabel("Remove \(device.displayName)")
-                    }
-                }
-            }
             HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
         }
         .padding()
-        // Keyed on the host so a sheet opened while the app is still starting asks once it exists.
-        .task(id: pairing && model.relay != nil) { if pairing { await model.relay?.mintPairing() } }
+        // Keyed on the host so a sheet opened while the relay restarts asks once it exists.
+        .task(id: model.relay != nil) { await model.relay?.mintPairing() }
         .onDisappear { Task { await model.relay?.endPairing() } }
-        .confirmationDialog("Remove this iPhone?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { device in
-            Button("Remove", role: .destructive) { Task { await model.relay?.removeDevice(device.pub) } }
-        } message: { _ in
-            Text("It loses access to this Mac and has to pair again.")
-        }
     }
 
     private static func qr(_ text: String) -> NSImage? {

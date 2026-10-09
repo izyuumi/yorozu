@@ -1,36 +1,57 @@
+import AppKit
+import ProjectXCore
 import SwiftUI
 
-/// The `Settings` scene (⌘, and Settings… in the menus): a shell for Pair iPhone and native enrollment until #312 builds its tabs.
+/// The `Settings` scene (⌘, and Settings… in the menus): native grouped forms over `config.toml` (#312). Advanced shows
+/// only while General › Show Advanced settings is on.
 struct SettingsView: View {
+    enum Tab: Hashable { case general, devices, connection, storage, advanced }
     @ObservedObject var model: AppModel
+    @State private var tab = Tab.general
     /// The window's width, the one size this pane owns: nothing proposes a width to a Settings window.
-    private let width: CGFloat = 500
+    private let width: CGFloat = 560
     var body: some View {
-        Group {
-            if model.runtimeMode == .live {
-                TabView {
-                    PairPhoneView(model: model).tabItem { Label("iPhone", systemImage: "iphone") }
-                    if model.nativeSelected { EnrollmentView(model: model).tabItem { Label("Gateway", systemImage: "network") } }
-                }
-            } else {
-                Text("Pairing and the Gateway are available in live mode only.").foregroundStyle(.secondary).padding()
+        TabView(selection: $tab) {
+            GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }.tag(Tab.general)
+            DevicesSettings(model: model).tabItem { Label("Devices", systemImage: "iphone") }.tag(Tab.devices)
+            ConnectionSettings(model: model) { model.writeSettings { $0.general.showAdvanced = true }; tab = .advanced }
+                .tabItem { Label("Connection", systemImage: "network") }.tag(Tab.connection)
+            StorageSettings(model: model).tabItem { Label("Storage", systemImage: "internaldrive") }.tag(Tab.storage)
+            if model.config.general.showAdvanced {
+                AdvancedSettings(model: model).tabItem { Label("Advanced", systemImage: "gearshape.2") }.tag(Tab.advanced)
             }
-        }.frame(width: width)
+        }
+        .frame(width: width)
+        .onChange(of: model.config.general.showAdvanced) { _, on in if !on, tab == .advanced { tab = .general } }
     }
 }
 
-/// Enrolls Yorozu's own device with the local Gateway for the native transport.
-struct EnrollmentView: View {
+/// Settings reads the resolved values (environment overrides included) and writes the file through `writeSettings`.
+extension AppModel {
+    var config: Config { resolved?.config ?? Config() }
+    /// Writes one file value; the row shows the resolved value.
+    func setting<V>(_ path: WritableKeyPath<Config,V>) -> Binding<V> {
+        Binding(get: { self.config[keyPath: path] }, set: { value in self.writeSettings { $0[keyPath: path] = value } })
+    }
+    /// The environment variable that sets `key` for this run, if any.
+    func override(_ key: String) -> String? { resolved?.environment[key] }
+}
+
+/// "Set by `PROJECTX_…`": the subtitle of a row the environment overrides, which is then disabled.
+func overrideNote(_ variable: String?) -> Text? { variable.map { Text("Set by `\($0)`") } }
+
+/// A path as `~/…`.
+func tildePath(_ url: URL) -> String { (url.path as NSString).abbreviatingWithTildeInPath }
+
+/// A Settings write that failed, or a `config.toml` that does not load; first in a tab's form.
+struct ConfigProblems: View {
     @ObservedObject var model: AppModel
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Enroll Yorozu with the local Gateway").font(.headline)
-            Text("This is a separate app device, not a model-provider login. The Gateway is loopback only. Enter its bootstrap token/password privately here; never put it in chat. Only Yorozu's own device token and generated key are saved in Keychain. A new device approval may be required. Leave blank to reconnect an enrolled device.").fixedSize(horizontal: false, vertical: true)
-            SecureField("Gateway bootstrap secret (not saved)", text: $model.bootstrapSecret)
-            Text(model.enrollmentNotice).font(.caption).textSelection(.enabled)
-            HStack { Spacer(); Button(model.connecting ? "Connecting…" : "Connect") { Task { await model.enroll() } }.disabled(model.connecting) }
+        if let problem = model.settingsError ?? model.lastConfigError?.localizedDescription {
+            Section {
+                Label { Text(problem).textSelection(.enabled) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange) }
+                if let file = model.configFile { Button("Show config.toml in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) } }
+            }
         }
-        .padding(24)
-        .onDisappear { model.bootstrapSecret = "" }
     }
 }
