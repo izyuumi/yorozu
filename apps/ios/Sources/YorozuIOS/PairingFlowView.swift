@@ -29,7 +29,7 @@ struct PairingFlowView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         .accessibilityHidden(true)
                     Text("Yorozu").font(.largeTitle.weight(.semibold))
-                    Text("Your Mac's agent, in your pocket.")
+                    Text("Your host's agent, wherever you are.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -87,11 +87,11 @@ struct PairingFlowView: View {
     /// The three steps, named as the Mac's pair sheet shows them.
     private var guide: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Pair with your Mac").font(.subheadline.weight(.semibold))
+            Text("Pair with your host").font(.subheadline.weight(.semibold))
             VStack(alignment: .leading, spacing: 4) {
-                guideStep(1, "On your Mac, open Settings › Devices › Pair iPhone")
+                guideStep(1, "On the host, open Settings › Devices › Pair a Client Device")
                 guideStep(2, "Scan its QR code, or paste the code shown beside it")
-                guideStep(3, "Check that the Mac key matches")
+                guideStep(3, "Check that the host key matches")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,7 +134,7 @@ struct PairView: View {
                         .autocorrectionDisabled()
                         .lineLimit(3...6)
                 } footer: {
-                    Text("Paste the Code from Settings › Devices › Pair iPhone on your Mac. Copy Link there copies it.")
+                    Text("Paste the Code from Settings › Devices › Pair a Client Device on the host. Copy Link there copies it.")
                 }
                 if let error {
                     Section {
@@ -144,7 +144,7 @@ struct PairView: View {
                     }
                 }
             }
-            .navigationTitle("Pair with your Mac")
+            .navigationTitle("Pair with your host")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -2,7 +2,8 @@ import AppKit
 import ProjectXCore
 import SwiftUI
 
-/// Settings › Storage: the memory and files folders with their sizes, measured off the main actor.
+/// Settings › Storage: the memory and files folders with their sizes, measured off the main actor, and, with Advanced
+/// settings on, what this install runs on.
 struct StorageSettings: View {
     @ObservedObject var model: AppModel
     /// Folder → bytes on disk; a missing folder has no entry once measured.
@@ -19,8 +20,9 @@ struct StorageSettings: View {
             } footer: {
                 Text("Memory is plain Markdown you own; edit it with any app.").foregroundStyle(.secondary)
             }
+            if model.config.general.showAdvanced { AboutInstallSection(model: model) }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .task(id: model.memoryFolder) {
             var found: [URL: Int64] = [:]
             for folder in [model.memoryFolder, files].compactMap({ $0 }) { found[folder] = await Self.size(folder) }
@@ -60,23 +62,21 @@ struct StorageSettings: View {
     }
 }
 
-/// Settings › Advanced (only while General › Show Advanced settings is on): the harness connection, coding workers,
-/// per-role models and what this install runs on.
-struct AdvancedSettings: View {
+/// Settings › Harness (only while General › Show Advanced settings is on): the main harness, its connection and the
+/// Gateway enrollment, and per-role models.
+struct HarnessSettingsView: View {
     @ObservedObject var model: AppModel
     @State private var gateway = ""
     @State private var hermes = ""
     @State private var enrolled = false
     /// A harness switch waiting for the user's confirmation.
     @State private var switchTo: Config.HarnessKind?
-    /// Each coding tool's sign-in command, run by the user where the Gateway runs.
-    static let logins = ["claude": "claude auth login", "codex": "codex login"]
 
     var body: some View {
         let config = model.config, launched = model.launched?.config.harness
         Form {
             ConfigProblems(model: model)
-            Section {
+            Section("Harness connection") {
                 let locked = model.override("harness.kind")
                 Picker(selection: Binding(get: { config.harness.kind }, set: { if $0 != config.harness.kind { switchTo = $0 } })) {
                     ForEach(Config.HarnessKind.allCases, id: \.self) { Text(Self.harnessTitle($0)).tag($0) }
@@ -86,9 +86,7 @@ struct AdvancedSettings: View {
                     else if let launched, launched.kind != config.harness.kind { Text("Relaunch to apply.") }
                     else { Text("Answers every message and runs the workers.") }
                 }.disabled(locked != nil)
-            }
-            if config.harness.kind == .openclaw {
-                Section("Harness connection") {
+                if config.harness.kind == .openclaw {
                     Picker(selection: model.setting(\.harness.transport)) {
                         Text("Native (WebSocket)").tag(Config.Transport.native)
                         Text("Command line").tag(Config.Transport.cli)
@@ -100,10 +98,7 @@ struct AdvancedSettings: View {
                     }.disabled(model.override("harness.transport") != nil)
                     urlRow("Gateway URL", text: $gateway, key: "harness.gateway_url", path: \.gatewayURL, valid: Config.isLoopbackGateway(gateway),
                            expected: "Expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789.", launched: launched)
-                    if model.runtimeMode == .live, model.nativeSelected { enrollment }
-                }
-            } else {
-                Section("Harness connection") {
+                } else {
                     urlRow("Hermes URL", text: $hermes, key: "harness.hermes_url", path: \.hermesURL, valid: Config.isLoopbackHTTP(hermes),
                            expected: "Expected a loopback http:// or https:// address with no path, such as http://127.0.0.1:8642.", launched: launched)
                     LabeledContent {
@@ -114,32 +109,7 @@ struct AdvancedSettings: View {
                     }
                 }
             }
-            Section {
-                let locked = model.override("harness.dev_repo")
-                Toggle(isOn: Binding(get: { !config.harness.devRepo.isEmpty }, set: { on in if on { chooseRepo() } else { model.writeSettings { $0.harness.devRepo = "" } } })) {
-                    Text("Allow coding work")
-                    Text("Coding workers change code only in this repository, each in its own worktree. Off: Yorozu says coding is off.")
-                }.disabled(locked != nil)
-                LabeledContent {
-                    Button("Choose…", action: chooseRepo)
-                } label: {
-                    Text("Repository")
-                    Text(config.harness.devRepo.isEmpty ? String(localized: "Not set: coding work is off.") : config.harness.devRepo).monospaced().textSelection(.enabled)
-                    if let note = overrideNote(locked) { note }
-                }.disabled(locked != nil)
-                ForEach(config.harness.kind.adapter(config, rpc: GatewayRPC()).executors(model.settingsBox.value), id: \.executor.id) { e in
-                    LabeledContent {
-                        if e.path == nil { Text("Not found").foregroundStyle(.orange) } else { Text("Found") }
-                        if let login = Self.logins[e.executor.id] { Button("Copy Sign-In Command") { copyToClipboard(login) } }
-                    } label: {
-                        Text(e.executor.name)
-                        Text(e.path.map { tildePath(URL(fileURLWithPath: $0)) } ?? String(localized: "Not on PATH, ~/.local/bin or Homebrew")).monospaced().textSelection(.enabled)
-                        if let login = Self.logins[e.executor.id] { Text("Sign in where the Gateway runs: `\(login)`") }
-                    }
-                }
-            } header: { Text("Coding workers") } footer: {
-                Text("Found means the tool is on this Mac. Yorozu can't tell whether it is signed in.").foregroundStyle(.secondary)
-            }
+            if config.harness.kind == .openclaw, model.runtimeMode == .live, model.nativeSelected { Section { enrollment } }
             Section {
                 ModelRow(model: model, title: "Secretary", key: "models.secretary", path: \.secretary, choice: { $0.secretary })
                 ModelRow(model: model, title: "Memory extraction", key: "models.extraction", path: \.extraction, choice: { $0.extraction })
@@ -151,35 +121,8 @@ struct AdvancedSettings: View {
             } header: { Text("Models") } footer: {
                 Text("Allowed models come from the harness. Automatic picks again at launch and whenever settings change.").foregroundStyle(.secondary)
             }
-            IntegrationsSection(model: model)
-            Section {
-                LabeledContent("Run mode") { Text(Self.mode(model.runtimeMode)) }
-                LabeledContent("Harness") { Text(model.harnessLabel ?? config.harness.kind.rawValue) }
-                LabeledContent {
-                    Text(config.harness.agent).monospaced()
-                } label: {
-                    Text("Agent id")
-                    if let note = overrideNote(model.override("harness.agent")) { note }
-                }
-                if let root = model.configFile?.deletingLastPathComponent() {
-                    LabeledContent {
-                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([root]) }
-                    } label: {
-                        Text("Data folder")
-                        Text(tildePath(root)).monospaced().textSelection(.enabled)
-                    }
-                }
-                LabeledContent {
-                    if let file = model.configFile { Button("Show config.toml") { NSWorkspace.shared.activateFileViewerSelecting([file]) } }
-                } label: {
-                    Text("MCP servers")
-                    Text(config.effectiveMCPServers.isEmpty ? String(localized: "None") : config.effectiveMCPServers.keys.sorted().joined(separator: ", ")).monospaced()
-                }
-            } header: { Text("About this install") } footer: {
-                Text("MCP servers are edited in config.toml or by asking in the chat.").foregroundStyle(.secondary)
-            }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .onAppear { gateway = config.harness.gatewayURL; hermes = config.harness.hermesURL; enrolled = model.nativeEnrolled }
         .onChange(of: config.harness.gatewayURL) { _, new in gateway = new }
         .onChange(of: config.harness.hermesURL) { _, new in hermes = new }
@@ -227,6 +170,48 @@ struct AdvancedSettings: View {
             if !model.enrollmentNotice.isEmpty { Text(model.enrollmentNotice).textSelection(.enabled) }
         }
     }
+}
+
+/// Settings › Advanced (only while General › Show Advanced settings is on): coding workers and integrations.
+struct AdvancedSettings: View {
+    @ObservedObject var model: AppModel
+    /// Each coding tool's sign-in command, run by the user where the Gateway runs.
+    static let logins = ["claude": "claude auth login", "codex": "codex login"]
+
+    var body: some View {
+        let config = model.config
+        Form {
+            ConfigProblems(model: model)
+            Section {
+                let locked = model.override("harness.dev_repo")
+                Toggle(isOn: Binding(get: { !config.harness.devRepo.isEmpty }, set: { on in if on { chooseRepo() } else { model.writeSettings { $0.harness.devRepo = "" } } })) {
+                    Text("Allow coding work")
+                    Text("Coding workers change code only in this repository, each in its own worktree. Off: Yorozu says coding is off.")
+                }.disabled(locked != nil)
+                LabeledContent {
+                    Button("Choose…", action: chooseRepo)
+                } label: {
+                    Text("Repository")
+                    Text(config.harness.devRepo.isEmpty ? String(localized: "Not set: coding work is off.") : config.harness.devRepo).monospaced().textSelection(.enabled)
+                    if let note = overrideNote(locked) { note }
+                }.disabled(locked != nil)
+                ForEach(config.harness.kind.adapter(config, rpc: GatewayRPC()).executors(model.settingsBox.value), id: \.executor.id) { e in
+                    LabeledContent {
+                        if e.path == nil { Text("Not found").foregroundStyle(.orange) } else { Text("Found") }
+                        if let login = Self.logins[e.executor.id] { Button("Copy Sign-In Command") { copyToClipboard(login) } }
+                    } label: {
+                        Text(e.executor.name)
+                        Text(e.path.map { tildePath(URL(fileURLWithPath: $0)) } ?? String(localized: "Not on PATH, ~/.local/bin or Homebrew")).monospaced().textSelection(.enabled)
+                        if let login = Self.logins[e.executor.id] { Text("Sign in where the Gateway runs: `\(login)`") }
+                    }
+                }
+            } header: { Text("Coding workers") } footer: {
+                Text("Found means the tool is on this Mac. Yorozu can't tell whether it is signed in.").foregroundStyle(.secondary)
+            }
+            IntegrationsSection(model: model)
+        }
+        .settingsForm()
+    }
 
     private func chooseRepo() {
         let panel = NSOpenPanel()
@@ -240,6 +225,41 @@ struct AdvancedSettings: View {
         // An empty dev_base becomes the repo's current branch now; `resolvingBase` stays the fallback at run time.
         let base = (try? HarnessSettings().resolvingBase(url).codingBaseBranch) ?? ""
         model.writeSettings { $0.harness.devRepo = path; if $0.harness.devBase.isEmpty { $0.harness.devBase = base } }
+    }
+}
+
+/// Settings › Storage › About this install (with Advanced settings on): what this install runs on.
+struct AboutInstallSection: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        let config = model.config
+        Section {
+            LabeledContent("Run mode") { Text(Self.mode(model.runtimeMode)) }
+            LabeledContent("Harness") { Text(model.harnessLabel ?? config.harness.kind.rawValue) }
+            LabeledContent {
+                Text(config.harness.agent).monospaced()
+            } label: {
+                Text("Agent id")
+                if let note = overrideNote(model.override("harness.agent")) { note }
+            }
+            if let root = model.configFile?.deletingLastPathComponent() {
+                LabeledContent {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([root]) }
+                } label: {
+                    Text("Data folder")
+                    Text(tildePath(root)).monospaced().textSelection(.enabled)
+                }
+            }
+            LabeledContent {
+                if let file = model.configFile { Button("Show config.toml") { NSWorkspace.shared.activateFileViewerSelecting([file]) } }
+            } label: {
+                Text("MCP servers")
+                Text(config.effectiveMCPServers.isEmpty ? String(localized: "None") : config.effectiveMCPServers.keys.sorted().joined(separator: ", ")).monospaced()
+            }
+        } header: { Text("About this install") } footer: {
+            Text("MCP servers are edited in config.toml or by asking in the chat.").foregroundStyle(.secondary)
+        }
     }
 
     static func mode(_ mode: RuntimeMode) -> String {

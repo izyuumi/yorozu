@@ -16,6 +16,9 @@ struct Composer: View {
     let enabled: Bool
     /// False for text-only input (a job's own input, #319): no attach menu and no "Send as Text File".
     var allowsFiles = true
+    /// The first line of the message being replied to, with the bar's ✕; nil when not replying.
+    var replyQuote: String?
+    var onCancelReply: () -> Void = {}
     let onSend: () -> Void
     let onSendAsTextFile: () -> Void
 
@@ -38,6 +41,11 @@ struct Composer: View {
             if bytes > Self.maxBytes {
                 overLimit(bytes)
                     .padding(.top, LayoutMetrics.stack)
+                    .padding(.horizontal, LayoutMetrics.stack)
+            }
+            if let replyQuote {
+                replyBar(replyQuote)
+                    .padding(.top, LayoutMetrics.inner)
                     .padding(.horizontal, LayoutMetrics.stack)
             }
             if !files.isEmpty {
@@ -74,6 +82,31 @@ struct Composer: View {
         .frame(maxWidth: .infinity, alignment: .center)
         // Sending: the moment the thread changes hands.
         .sensoryFeedback(.impact(weight: .light), trigger: sends)
+    }
+
+    /// "Replying to" the target's first line, in the reply header's quote style, and ✕ to stop replying.
+    private func replyBar(_ quote: String) -> some View {
+        HStack(spacing: LayoutMetrics.inner) {
+            Label {
+                Text(verbatim: "“\(quote)”").lineLimit(1)
+            } icon: {
+                Image(systemName: "arrowshape.turn.up.left")
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text("Replying to \(quote)"))
+            Button("Cancel Reply", systemImage: "xmark", action: onCancelReply)
+                .labelStyle(.iconOnly)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: controlTarget, height: controlTarget)
+                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+        }
+        .padding(.leading, LayoutMetrics.inner)
+        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: LayoutMetrics.controlRadius, style: .continuous))
     }
 
     private func overLimit(_ bytes: Int) -> some View {

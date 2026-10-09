@@ -22,7 +22,7 @@ public enum ClientConnectionStatus: Equatable, Sendable {
         switch self {
         case .connected: String(localized: "Connected")
         case .connecting: String(localized: "Connecting…")
-        case .hostOffline: String(localized: "Host Mac offline")
+        case .hostOffline: String(localized: "Host offline")
         case .offline: String(localized: "Offline")
         case .failed: String(localized: "Couldn’t connect")
         }

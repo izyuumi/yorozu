@@ -44,6 +44,15 @@ struct Composer: View {
                     Button { model.fileNotice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Dismiss")
                 }.font(.callout)
             }
+            if let reply = model.replyingTo {
+                HStack(spacing: 8) {
+                    let quoted = reply.style == .answer ? reply.copyText : notice(reply)
+                    Label { Text(verbatim: "“\(quoted.split(separator: "\n").first.map(String.init) ?? quoted)”").lineLimit(1).truncationMode(.tail) }
+                        icon: { Image(systemName: "arrowshape.turn.up.left") }
+                        .foregroundStyle(.secondary).frame(maxWidth: .infinity,alignment: .leading)
+                    Button { model.replyingTo = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Cancel reply")
+                }.font(.callout).accessibilityElement(children: .contain).accessibilityLabel(Text("Replying"))
+            }
             if !model.files.isEmpty {
                 let rows = VStack(spacing: 4) {
                     ForEach($model.files) { $file in
@@ -137,7 +146,7 @@ struct ComposerField: NSViewRepresentable {
 
 final class ComposerTextView: NSTextView {
     var placeholder = ""
-    var sendKey: () -> Config.SendKey = { .smart }
+    var sendKey: () -> Config.SendKey = { .cmdEnter }
     var submit: () -> Bool = { false }
     var take: (NSPasteboard) -> Bool = { _ in false }
     private var keyObserver: NSObjectProtocol?

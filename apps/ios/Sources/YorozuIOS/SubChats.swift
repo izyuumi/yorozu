@@ -141,9 +141,9 @@ struct TopicsScreen: View {
                     ForEach(ids, id: \.self) { row($0, nil, facts) }
                 } footer: {
                     if model.working == nil {
-                        Text("Status unknown until your Mac is connected.")
+                        Text("Status unknown until the host is connected.")
                     } else {
-                        Text("Status unknown until this iPhone has caught up with your Mac.")
+                        Text("Status unknown until this device has caught up with the host.")
                     }
                 }
             } else {
@@ -158,7 +158,7 @@ struct TopicsScreen: View {
         .overlay {
             if ids.isEmpty && !showsJobs {
                 ContentUnavailableView("No activities yet", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("Bigger work runs in the background on your Mac. It shows up here."))
+                                       description: Text("Bigger work runs in the background on the host. It shows up here."))
             }
         }
         .navigationTitle("Activities")
@@ -294,35 +294,35 @@ struct TopicScreen: View {
         let job = model.jobsSupported == true ? model.jobs.first { $0.topicId == topicId } : nil
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
-                AttachLinks(model: model, topicId: topicId)
+                AttachLinks(model: model, topicId: topicId).readableRow(gutter: LayoutMetrics.stack)
                 ForEach(items) { item in
                     switch item {
                     case .message(let bubble):
                         MessageRow(bubble: bubble, header: nil, delivery: model.delivery(of: bubble),
                                    onShowRequest: {}, onShowDetails: { details = bubble },
                                    onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
+                            .readableRow(gutter: LayoutMetrics.stack)
                             .id(bubble.id)
                     case .task(let task):
                         TaskCard(model: model, task: task, events: events[task.id] ?? [], amendments: amendments[task.id] ?? [],
                                  open: task.isActive != toggled.contains(task.id)) {
                             if toggled.contains(task.id) { toggled.remove(task.id) } else { toggled.insert(task.id) }
                         }
+                        .readableRow(gutter: LayoutMetrics.stack)
                         .id(task.id)
                     }
                 }
             }
             .scrollTargetLayout()
-            .padding(LayoutMetrics.stack)
-            .frame(maxWidth: LayoutMetrics.readingWidth)
-            .frame(maxWidth: .infinity)
+            .padding(.vertical, LayoutMetrics.stack)
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .background(Color(.systemGroupedBackground))
         .overlay {
             if model.topics[topicId] == nil && job == nil {
-                ContentUnavailableView("Not on this iPhone", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("This activity is older than what this iPhone keeps. Open it on your Mac."))
+                ContentUnavailableView("Not on this device", systemImage: "bubble.left.and.bubble.right",
+                                       description: Text("This activity is older than what this device keeps. Open it on the host."))
             }
         }
         .task {

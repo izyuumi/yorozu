@@ -106,7 +106,7 @@ struct MainChat: View {
                     case .unread: UnreadDivider()
                     case .message(let m):
                         MessageRow(message: m,header: m.replyTo.flatMap { requests[$0] }.map { ReplyHeader($0,shown: shown,labels: labels) },highlighted: flashed == m.id || search.shown && search.current == m.id,reveal: reveal,
-                                   files: files[m.id] ?? [],locate: { [model] in await model.attachmentURL($0) })
+                                   files: files[m.id] ?? [],locate: { [model] in await model.attachmentURL($0) },reply: { [model] in model.replyingTo = $0 })
                     }
                 }
                 if model.routing { ThinkingBubble() }

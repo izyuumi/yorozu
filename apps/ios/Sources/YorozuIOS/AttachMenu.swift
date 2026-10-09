@@ -218,7 +218,7 @@ struct AttachMenu: View {
     }
 
     private var hint: String {
-        if !available { return String(localized: "Update Yorozu on your Mac to send files.") }
+        if !available { return String(localized: "Update Yorozu on the host to send files.") }
         if remaining <= 0 { return String(localized: "Remove an attachment to add another") }
         return String(localized: "Choose photos or files for this message")
     }

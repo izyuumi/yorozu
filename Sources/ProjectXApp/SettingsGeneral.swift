@@ -13,7 +13,7 @@ struct GeneralSettings: View {
         let general = model.config.general
         Form {
             ConfigProblems(model: model)
-            Section {
+            Section("Startup") {
                 LabeledContent {
                     Button("Run Setup Again…") { model.openSetup() }
                 } label: {
@@ -22,8 +22,6 @@ struct GeneralSettings: View {
                         if let r = model.readiness { Text(r.state == .ready ? String(localized: "Setup: Ready") : r.summary) } else { Text("Setup: checking…") }
                     }
                 }
-            }
-            Section("Startup") {
                 Toggle(isOn: Binding(get: { general.startAtLogin && model.loginItemBlocker == nil }, set: { on in model.writeSettings { $0.general.startAtLogin = on } })) {
                     Text("Start at login")
                     if let blocker = model.loginItemBlocker { Text(blocker) }
@@ -33,8 +31,8 @@ struct GeneralSettings: View {
                     Button("Open Login Items…") { SMAppService.openSystemSettingsLoginItems() }
                 }
                 Toggle(isOn: model.setting(\.general.keepMacAwake)) {
-                    Text("Keep this Mac awake")
-                    Text("Workers and paired phones need the Mac awake. A closed lid still sleeps.")
+                    Text("Keep the host awake")
+                    Text("Workers and client devices need the host awake. A closed lid still sleeps.")
                 }
             }
             Section("Notifications") {
@@ -43,11 +41,11 @@ struct GeneralSettings: View {
                     Text("For results, failures and questions. Nothing is shown while you are reading the latest message.")
                 }
                 Picker(selection: model.setting(\.notifications.destination)) {
-                    Text("This Mac").tag(Config.Destination.mac)
+                    Text("This host").tag(Config.Destination.mac)
                     Text("Phones").tag(Config.Destination.phones)
                 } label: {
                     Text("Notify on")
-                    if model.config.notifications.destination == .phones { Text("Each phone must allow notifications from Yorozu.") }
+                    if model.config.notifications.destination == .phones { Text("Each client device must allow notifications from Yorozu.") }
                 }.disabled(!model.config.notifications.enabled)
             }
             Section("Keyboard") {
@@ -89,7 +87,7 @@ struct GeneralSettings: View {
                 Toggle("Show Advanced settings", isOn: model.setting(\.general.showAdvanced))
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .onAppear { shortcut = general.globalShortcut; model.refreshLoginItem() }
         .onChange(of: general.globalShortcut) { _, spec in shortcut = spec }
     }

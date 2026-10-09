@@ -12,6 +12,8 @@ struct RelayStatus: Sendable {
     var state = "Connecting to the relay…"
     /// The pairing link (QR and copy), while the sheet has asked for one and the relay has minted it.
     var link: String?
+    /// The key of the client device that paired while the sheet showed, so the sheet can say so.
+    var justPaired: String?
     var devices: [RelayDeviceStatus] = []
     var direct = DirectStatus()
 }
@@ -80,6 +82,7 @@ actor RelayHost {
     private var jobs: JobListData?
     private var state = RelayStatus().state
     private var link: String?
+    private var justPaired: String?
     private var pairing = false
     /// Secrets behind the last few codes minted, newest last. Only here and in the QR; never the relay.
     private var secrets: [String] = []
@@ -167,7 +170,7 @@ actor RelayHost {
 
     func start() {
         guard loop == nil else { return }
-        activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Yorozu serves paired phones")
+        activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Yorozu serves client devices")
         publish()
         loop = Task { await run() }
         restartListener()
@@ -295,13 +298,13 @@ actor RelayHost {
 
     /// A fresh one-time code for the pair sheet. Minted again after each phone pairs, until `endPairing`.
     func mintPairing() {
-        pairing = true; link = nil; publish()
+        pairing = true; link = nil; justPaired = nil; publish()
         if registered { send(["type": "mint"]) }
     }
 
     /// The sheet closed: no more codes. Secrets already minted stay until a phone pairs, so a phone
     /// that scanned just before the sheet closed still gets in.
-    func endPairing() { pairing = false; link = nil; publish() }
+    func endPairing() { pairing = false; link = nil; justPaired = nil; publish() }
 
     /// Forgets a phone here and at the relay: it has to pair again.
     func removeDevice(_ pub: String) {
@@ -490,7 +493,7 @@ actor RelayHost {
             announce()
         }
         // A code is for one phone: the next one gets a fresh code.
-        if proved { secrets = []; link = nil; if pairing { send(["type": "mint"]) } }
+        if proved { secrets = []; link = nil; if pairing { justPaired = pub; send(["type": "mint"]) } }
         publish()
         // Its assembler starts afresh and it catches up from its cursor, so frames still waiting for it are moot.
         outbox.removeAll { $0.pub == pub }
@@ -740,7 +743,7 @@ actor RelayHost {
         }
         let direct = DirectStatus(listener: listenerState, port: self.direct.port,
                                   candidates: advertised.map { .init(host: $0.candidate.host, kind: $0.kind) }, lastRefusal: lastRefusal)
-        statusOut.yield(RelayStatus(state: state, link: link, devices: devices, direct: direct))
+        statusOut.yield(RelayStatus(state: state, link: link, justPaired: justPaired, devices: devices, direct: direct))
     }
 
     // MARK: Direct path (#315)
@@ -843,7 +846,7 @@ actor RelayHost {
     private func message(_ data: Data, on id: Int) {
         guard let link = links[id] else { return }
         guard let message = try? JSONDecoder().decode(DirectMessage.self, from: data) else {
-            return link.signer == nil ? refuse(id, String(localized: "A connection sent something other than a probe and a join.")) : drop(id, .unauthorized, error: String(localized: "The phone sent a malformed message."))
+            return link.signer == nil ? refuse(id, String(localized: "A connection sent something other than a probe and a join.")) : drop(id, .unauthorized, error: String(localized: "The client device sent a malformed message."))
         }
         guard let signer = link.signer else {
             switch message {
@@ -884,7 +887,7 @@ actor RelayHost {
             return refuse(id, String(localized: "Refused a malformed join."))
         }
         guard let pub = peers.first(where: { $0.value.record.signingPub == signer })?.key, let key = Data(base64URLEncoded: signer) else {
-            return refuse(id, String(localized: "Refused a key that is not paired with this Mac."))
+            return refuse(id, String(localized: "Refused a key that is not paired with this host."))
         }
         guard DirectProof.verifyJoin(pub: key, room: room, macNonce: nonce, signature: sig) else {
             directErrors[pub] = String(localized: "Its join signature did not verify.")
@@ -923,7 +926,7 @@ actor RelayHost {
     private func sleeping(_ asleep: Bool) {
         self.asleep = asleep
         guard asleep else { return }
-        for id in links.keys { drop(id, .sleeping, error: String(localized: "This Mac went to sleep.")) }
+        for id in links.keys { drop(id, .sleeping, error: String(localized: "The host went to sleep.")) }
     }
 
     /// Closes a connection that never named a paired phone.

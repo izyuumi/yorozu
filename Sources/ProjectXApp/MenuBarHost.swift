@@ -1,11 +1,13 @@
 import AppKit
 import Combine
+import ProjectXCore
 import SwiftUI
 
-/// The menu-bar host: a status item whose left click toggles the chat popover and whose right click offers Settings… and Quit.
+/// The menu-bar host: a status item whose left click toggles the chat popover and whose right or Control click opens the
+/// menu: Quick Chat, pairing, the direct connection and keep-awake switches, Settings… and Quit.
 /// AppKit rather than `MenuBarExtra`, which has no public way to open its window from code (the global shortcut and
 /// notification taps open it).
-@MainActor final class MenuBarHost: NSObject, NSPopoverDelegate {
+@MainActor final class MenuBarHost: NSObject, NSPopoverDelegate, NSMenuDelegate {
     /// The popover's size, the one size this component owns: nothing proposes one to an `NSPopover`.
     static let popoverSize = NSSize(width: 420, height: 744)
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -32,9 +34,7 @@ import SwiftUI
         popover.contentSize = Self.popoverSize
         popover.behavior = .transient
         popover.delegate = self
-        menu.addItem(withTitle: String(localized: "Settings…"), action: #selector(showSettings), keyEquivalent: ",").target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: String(localized: "Quit Yorozu"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.delegate = self
         attention.onOpen = { [weak self] in self?.open() }
         model.onSeen = { AttentionCenter.shared.seen(upTo: $0) }
         model.onBottomChanged = { AttentionCenter.shared.popoverAtBottom = $0 }
@@ -57,7 +57,7 @@ import SwiftUI
     }
 
     @objc private func clicked(_ sender: NSStatusBarButton) {
-        if NSApp.currentEvent?.type == .rightMouseUp {
+        if let event = NSApp.currentEvent, event.type == .rightMouseUp || event.modifierFlags.contains(.control) {
             menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
         } else if popover.isShown {
             popover.performClose(nil)
@@ -72,6 +72,33 @@ import SwiftUI
         NSApp.activate() // An LSUIElement app must activate for the composer to take keys.
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
+
+    /// Rebuilt on each open, so the switches show the settings in force.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let config = model?.config ?? Config()
+        func add(_ title: String.LocalizationValue, _ action: Selector, key: String = "", on: Bool? = nil, enabled: Bool = true) {
+            let item = menu.addItem(withTitle: String(localized: title), action: enabled ? action : nil, keyEquivalent: key)
+            item.target = self; if let on { item.state = on ? .on : .off }
+        }
+        add("Open Quick Chat", #selector(openChat))
+        add("Pair a Client Device…", #selector(pair), enabled: model?.relay != nil)
+        menu.addItem(.separator())
+        add("Direct Connection (LAN/VPN)", #selector(toggleDirect), on: config.direct.enabled)
+        add("Keep Host Awake", #selector(toggleAwake), on: config.general.keepMacAwake)
+        menu.addItem(.separator())
+        add("Settings…", #selector(showSettings), key: ",")
+        menu.addItem(withTitle: String(localized: "Quit Yorozu"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    }
+
+    @objc private func openChat() { open() }
+
+    /// Settings › Devices with its pair sheet open.
+    @objc private func pair() { model?.settingsTab = .devices; showSettings(); model?.pairingSheet = true }
+
+    /// The same `config.toml` writes Settings makes.
+    @objc private func toggleDirect() { model?.writeSettings { $0.direct.enabled.toggle() } }
+    @objc private func toggleAwake() { model?.writeSettings { $0.general.keepMacAwake.toggle() } }
 
     /// The global shortcut: opens the popover, or closes it when it is shown.
     func toggle() { popover.isShown ? popover.performClose(nil) : open() }

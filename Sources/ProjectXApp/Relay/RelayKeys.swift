@@ -73,7 +73,7 @@ struct RelayDeviceStatus: Sendable, Identifiable, Equatable {
     /// Its last direct-path problem on this run.
     var directError: String?
     var id: String { pub }
-    var displayName: String { label ?? name ?? "iPhone" }
+    var displayName: String { label ?? name ?? String(localized: "Client device") }
 }
 
 /// `relay-devices.json`: written 0600 to a temp file, flushed, then renamed over the old one (v1's

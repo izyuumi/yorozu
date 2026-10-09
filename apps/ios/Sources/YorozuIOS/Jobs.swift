@@ -73,7 +73,7 @@ struct JobsScreen: View {
                             titleVisibility: .visible, presenting: deleting) { job in
             Button("Delete", role: .destructive) { act(job, .delete) }
         } message: { _ in
-            Text("It stops running. Its activity and its folder stay on your Mac.")
+            Text("It stops running. Its activity and its folder stay on the host.")
         }
     }
 

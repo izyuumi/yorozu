@@ -252,7 +252,7 @@ newestMessageCreatedMs /* 0 if none */)`. A phone `thread_list` without `peerInf
 ### The 0.6.x refusal
 
 A 0.6.x phone advertises protocol 1, which does not overlap the Mac's 2. The Mac sends it
-`peerInfoError: "Update Yorozu on this iPhone to talk to this Mac."` and serves it nothing else;
+`peerInfoError: "Update Yorozu on this device to talk to this host."` and serves it nothing else;
 the 0.6.x phone shows that reason in Settings. Once it runs 0.7 the same pairing works without
 pairing again (the device's stored `compatible` result is dropped because its `hostProtocol`
 differs, and the next claim decides). A 0.7 phone that meets a 0.6.x Mac gets the Mac's own
@@ -344,6 +344,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device
 - `ts` is the phone's send time; the Mac keeps it as the message's `sentAt`. Resend renews it.
 - `admissionDeadline` is always `ts` + 24 h, the relay buffer's lifetime. Resend renews it.
 - `jobId` (`jobs-v1` only) makes it that job's own input ([Jobs](#jobs)); absent for the main chat.
+- `replyTo`, set when the user replied to a stored main-timeline message, is that message's id; the host files the
+  reply with its target's topic. Absent otherwise.
 - `delivery`, `channelModel`, `sentAt`, `readAt` and the other 0.7 metadata are not sent and the
   host ignores them.
 
@@ -421,11 +423,11 @@ YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
 | Cause | `status` | `reason` |
 |---|---|---|
 | bad id | `rejected` | `"Invalid message id."` |
-| inline v1 attachments | `rejected` | `"Update Yorozu on this iPhone to send attachments."` |
+| inline v1 attachments | `rejected` | `"Update Yorozu on this device to send attachments."` |
 | bad commit files | `rejected` | `"Up to 10 files of at most 50 MB each."` |
 | fixture mode | `rejected` | `"This Mac is in fixture mode and doesn't take phone messages."` |
 | Engine error | `rejected` | `error.localizedDescription` (e.g. "Message must be 1–6000 UTF-8 bytes.") |
-| past `admissionDeadline` | `expired` | `"Your Mac was offline for more than 24 hours."` |
+| past `admissionDeadline` | `expired` | `"The host was offline for more than 24 hours."` |
 
 Either status clears `messageId` from the phone's send queue: the bubble shows Not delivered with
 the reason, Resend and Delete, and is not resent on its own.
@@ -655,7 +657,7 @@ Capability `readiness-v1` (`ReadinessData.capability`); the Mac sends it only to
   keeps it across relay restarts). A Mac that has no value yet sends nothing.
 - The phone keeps only the latest and drops it off `.paired`, where the status line already reads
   "Status unknown". While `attention` or `blocked` it shows one line over the composer: the blocking
-  item's title, the only item's title, or "N items need attention", then "Fix this on your Mac". While
+  item's title, the only item's title, or "N items need attention", then "Fix this on the host". While
   `blocked` the composer is off, the same rule as on the Mac.
 - A value that does not decode (an unknown `state` or `severity`) is ignored like an unknown kind.
 
@@ -820,7 +822,7 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
   next `job_list` shows the change. Run now (`Engine.runJobNow`) runs under the no-overlap rule,
   also when paused; a skipped run is `rejected` with `"It didn't run: " + Engine.skipText(reason)`.
   A control whose envelope `ts` is more than 120 s before the Mac's clock is `rejected` with "That
-  tap reached your Mac too late." and does nothing.
+  tap reached the host too late." and does nothing.
   Any Engine error, and fixture mode, is `rejected` with its text. Reasons are the Mac's English
   text, not localized on either side.
 - The phone sends one per tap, only while `.paired`, never queued, and keeps that job's actions
@@ -888,7 +890,7 @@ change, and no relay deploy. When the Mac sends a `notify` is in
 | A result (`.result`) | `reply` | `Yorozu replied.` | Yorozu replied. | Yorozu が返信しました。 |
 | A failure (`.failure`) | `failed` | `Yorozu needs attention.` | A task failed. | タスクが失敗しました。 |
 | A question (`.question`) | `approval` | `Yorozu needs your approval.` | Yorozu has a question for you. | Yorozuから質問があります。 |
-| The Mac back online | `done` | `Yorozu finished.` | Your Mac is back online. | Macがオンラインに戻りました。 |
+| The Mac back online | `done` | `Yorozu finished.` | Your host is back online. | ホストがオンラインに戻りました。 |
 
 - es, ko and zh-Hans carry the same v2 meaning for all four keys.
 - Notifies the Mac holds while unregistered, and those sent since the last `pong` (a socket left

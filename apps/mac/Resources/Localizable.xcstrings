@@ -1,6 +1,86 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Reply" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返信"
+          }
+        }
+      }
+    },
+    "Cancel reply" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返信をやめる"
+          }
+        }
+      }
+    },
+    "Replying" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返信中"
+          }
+        }
+      }
+    },
+    "Open Quick Chat" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クイックチャットを開く"
+          }
+        }
+      }
+    },
+    "Direct Connection (LAN/VPN)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続（LAN/VPN）"
+          }
+        }
+      }
+    },
+    "Keep Host Awake" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストをスリープさせない"
+          }
+        }
+      }
+    },
+    "Paired with “%@”" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」とペアリングしました"
+          }
+        }
+      }
+    },
+    "Paired with a client device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クライアント端末とペアリングしました"
+          }
+        }
+      }
+    },
     "Yorozu needs its own OpenClaw agent, not your main one. Set [harness] agent to a dedicated id." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -408,13 +488,13 @@
         }
       }
     },
-    "Settings › Advanced › Harness connection" : {
+    "Settings › Harness" : {
       "extractionState" : "manual",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設定 › 詳細設定 › ハーネス接続"
+            "value" : "設定 › ハーネス"
           }
         }
       }
@@ -430,13 +510,13 @@
         }
       }
     },
-    "Settings › Devices › Pair iPhone" : {
+    "Settings › Devices › Pair a Client Device" : {
       "extractionState" : "manual",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設定 › デバイス › iPhone をペアリング"
+            "value" : "設定 › デバイス › クライアント端末をペアリング"
           }
         }
       }
@@ -574,12 +654,12 @@
         }
       }
     },
-    "Pair your iPhone" : {
+    "Pair a client device" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhone をペアリング"
+            "value" : "クライアント端末をペアリング"
           }
         }
       }
@@ -894,12 +974,12 @@
         }
       }
     },
-    "Enrolling needs a live run on the native transport (Settings › Advanced)." : {
+    "Enrolling needs a live run on the native transport (Settings › Harness)." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登録にはネイティブ接続でのライブ実行が必要です（設定 › 詳細）。"
+            "value" : "登録にはネイティブ接続でのライブ実行が必要です（設定 › ハーネス）。"
           }
         }
       }
@@ -934,22 +1014,22 @@
         }
       }
     },
-    "On by default, so paired phones and scheduled jobs can reach Yorozu after a restart." : {
+    "On by default, so client devices and scheduled jobs can reach Yorozu after a restart." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "既定ではオンです。再起動後もペアリングした iPhone やスケジュールされたジョブが Yorozu に届きます。"
+            "value" : "既定ではオンです。再起動後もクライアント端末やスケジュールされたジョブが Yorozu に届きます。"
           }
         }
       }
     },
-    "Scan the code with the iPhone Camera. You can also pair later in Settings › Devices." : {
+    "Scan the code with the client device's camera. You can also pair later in Settings › Devices." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhone のカメラでコードを読み取ります。あとで 設定 › デバイス からペアリングすることもできます。"
+            "value" : "クライアント端末のカメラでコードを読み取ります。あとで 設定 › デバイス からペアリングすることもできます。"
           }
         }
       }
@@ -1364,12 +1444,12 @@
         }
       }
     },
-    "Phones on the same Wi-Fi or VPN connect straight to this Mac once their Direct connection setting is on. Set `[direct] enabled` and `port` in config.toml." : {
+    "Client devices on the same Wi-Fi or VPN connect straight to the host once their Direct connection setting is on. Set `[direct] enabled` and `port` in config.toml." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "同じ Wi-Fi または VPN 上の iPhone は、iPhone 側の「直接接続」をオンにするとこの Mac に直接接続します。config.toml の `[direct] enabled` と `port` で設定します。"
+            "value" : "同じ Wi-Fi または VPN 上のクライアント端末は、端末側の「直接接続」をオンにするとホストに直接接続します。config.toml の `[direct] enabled` と `port` で設定します。"
           }
         }
       }
@@ -1454,12 +1534,12 @@
         }
       }
     },
-    "The phone sent a malformed message." : {
+    "The client device sent a malformed message." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhone が不正な形式のメッセージを送りました。"
+            "value" : "クライアント端末が不正な形式のメッセージを送りました。"
           }
         }
       }
@@ -1484,12 +1564,12 @@
         }
       }
     },
-    "Refused a key that is not paired with this Mac." : {
+    "Refused a key that is not paired with this host." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "この Mac とペアリングされていない鍵を拒否しました。"
+            "value" : "このホストとペアリングされていない鍵を拒否しました。"
           }
         }
       }
@@ -1524,12 +1604,12 @@
         }
       }
     },
-    "This Mac went to sleep." : {
+    "The host went to sleep." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "この Mac がスリープしました。"
+            "value" : "ホストがスリープしました。"
           }
         }
       }
@@ -1574,12 +1654,12 @@
         }
       }
     },
-    "sent %@ from phone · delivered %@" : {
+    "sent %@ from a client device · delivered %@" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhoneから %@ に送信 · %@ に配信"
+            "value" : "クライアント端末から %@ に送信 · %@ に配信"
           }
         }
       }
@@ -1994,12 +2074,12 @@
         }
       }
     },
-    "It loses access to this Mac and has to pair again." : {
+    "It loses access to this host and has to pair again." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "このMacにアクセスできなくなり、もう一度ペアリングが必要になります。"
+            "value" : "このホストにアクセスできなくなり、もう一度ペアリングが必要になります。"
           }
         }
       }
@@ -2182,12 +2262,12 @@
         }
       }
     },
-    "Pair iPhone" : {
+    "Pair a Client Device" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhoneをペアリング"
+            "value" : "クライアント端末をペアリング"
           }
         }
       }
@@ -2292,12 +2372,12 @@
         }
       }
     },
-    "Remove this iPhone?" : {
+    "Remove this client device?" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "このiPhoneを削除しますか？"
+            "value" : "このクライアント端末を削除しますか？"
           }
         }
       }
@@ -2902,12 +2982,12 @@
         }
       }
     },
-    "iPhone" : {
+    "Client device" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhone"
+            "value" : "クライアント端末"
           }
         }
       }
@@ -3242,12 +3322,12 @@
         }
       }
     },
-    "All paired phones must pair again." : {
+    "All client devices must pair again." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ペアリング済みのすべての iPhone でペアリングし直す必要があります。"
+            "value" : "すべてのクライアント端末でペアリングし直す必要があります。"
           }
         }
       }
@@ -3412,12 +3492,12 @@
         }
       }
     },
-    "Connect this Mac to the Gateway in Settings › Advanced." : {
+    "Connect this Mac to the Gateway in Settings › Harness." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設定 › 詳細 でこの Mac を Gateway に接続してください。"
+            "value" : "設定 › ハーネス でこの Mac を Gateway に接続してください。"
           }
         }
       }
@@ -3472,12 +3552,12 @@
         }
       }
     },
-    "Every paired phone has to pair again after a change." : {
+    "Every client device has to pair again after a change." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "変更すると、ペアリング済みのすべての iPhone でペアリングし直す必要があります。"
+            "value" : "変更すると、すべてのクライアント端末でペアリングし直す必要があります。"
           }
         }
       }
@@ -3642,12 +3722,12 @@
         }
       }
     },
-    "Keep this Mac awake" : {
+    "Keep the host awake" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "この Mac をスリープさせない"
+            "value" : "ホストをスリープさせない"
           }
         }
       }
@@ -3672,12 +3752,12 @@
         }
       }
     },
-    "Leave it empty to use the name the phone sends." : {
+    "Leave it empty to use the name the device sends." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "空欄にすると iPhone から送られた名前を使います。"
+            "value" : "空欄にすると端末から送られた名前を使います。"
           }
         }
       }
@@ -3812,12 +3892,12 @@
         }
       }
     },
-    "No paired phones yet." : {
+    "No client devices yet." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ペアリング済みの iPhone はまだありません。"
+            "value" : "クライアント端末はまだありません。"
           }
         }
       }
@@ -3892,12 +3972,12 @@
         }
       }
     },
-    "Each phone must allow notifications from Yorozu." : {
+    "Each client device must allow notifications from Yorozu." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "各 iPhone で Yorozu からの通知を許可してください。"
+            "value" : "各クライアント端末で Yorozu からの通知を許可してください。"
           }
         }
       }
@@ -3972,22 +4052,22 @@
         }
       }
     },
-    "Pair a new iPhone" : {
+    "Pair a new client device" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新しい iPhone をペアリング"
+            "value" : "新しいクライアント端末をペアリング"
           }
         }
       }
     },
-    "Pair iPhone…" : {
+    "Pair a Client Device…" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhone をペアリング…"
+            "value" : "クライアント端末をペアリング…"
           }
         }
       }
@@ -4002,12 +4082,12 @@
         }
       }
     },
-    "Paired phones" : {
+    "Client devices" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ペアリング済みの iPhone"
+            "value" : "クライアント端末"
           }
         }
       }
@@ -4018,16 +4098,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ペアリングはライブモードでのみ使えます。"
-          }
-        }
-      }
-    },
-    "Phones" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iPhone"
           }
         }
       }
@@ -4082,12 +4152,12 @@
         }
       }
     },
-    "Removing a phone revokes its key at the relay. It has to pair again to connect." : {
+    "Removing a client device revokes its key at the relay. It has to pair again to connect." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "削除するとリレーでその iPhone の鍵が無効になります。再接続にはペアリングし直す必要があります。"
+            "value" : "削除するとリレーでそのクライアント端末の鍵が無効になります。再接続にはペアリングし直す必要があります。"
           }
         }
       }
@@ -4112,12 +4182,12 @@
         }
       }
     },
-    "Rename iPhone" : {
+    "Rename Client Device" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhone の名前を変更"
+            "value" : "クライアント端末の名前を変更"
           }
         }
       }
@@ -4182,12 +4252,12 @@
         }
       }
     },
-    "Show Advanced" : {
+    "Show Harness" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "詳細を表示"
+            "value" : "ハーネスを表示"
           }
         }
       }
@@ -4322,12 +4392,12 @@
         }
       }
     },
-    "This Mac" : {
+    "This host" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "この Mac"
+            "value" : "このホスト"
           }
         }
       }
@@ -4362,12 +4432,12 @@
         }
       }
     },
-    "Workers and paired phones need the Mac awake. A closed lid still sleeps." : {
+    "Workers and client devices need the host awake. A closed lid still sleeps." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ワーカーとペアリングした iPhone には Mac の起動が必要です。蓋を閉じるとスリープします。"
+            "value" : "ワーカーとクライアント端末にはホストの起動が必要です。蓋を閉じるとスリープします。"
           }
         }
       }
@@ -4562,22 +4632,22 @@
         }
       }
     },
-    "Scan with the iPhone Camera" : {
+    "Scan with the client device's camera" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhone のカメラで読み取ってください"
+            "value" : "クライアント端末のカメラで読み取ってください"
           }
         }
       }
     },
-    "Or open Yorozu on the iPhone, tap Enter code manually, and paste the code. Check that the Mac key matches what the phone shows." : {
+    "Or open Yorozu on the client device, choose Enter code manually, and paste the code. Check that the host key matches what the device shows." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "または iPhone の Yorozu で「コードを手動入力」をタップしてコードを貼り付けます。Mac の鍵が iPhone の表示と一致することを確認してください。"
+            "value" : "または、クライアント端末の Yorozu で「コードを手動入力」を選んでコードを貼り付けます。ホストの鍵が端末の表示と一致することを確認してください。"
           }
         }
       }
@@ -4592,12 +4662,12 @@
         }
       }
     },
-    "Mac key" : {
+    "Host key" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mac の鍵"
+            "value" : "ホストの鍵"
           }
         }
       }

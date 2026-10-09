@@ -49,8 +49,8 @@ final class DirectSocket: LegSocket, @unchecked Sendable {
         let code: Int?
         var errorDescription: String? {
             switch code.flatMap(DirectCloseCode.init(rawValue:)) {
-            case .sleeping: String(localized: "The Mac went to sleep")
-            case .unauthorized: String(localized: "The Mac refused this iPhone on the direct path")
+            case .sleeping: String(localized: "The host went to sleep")
+            case .unauthorized: String(localized: "The host refused this device on the direct path")
             case .superseded: String(localized: "A newer connection took over")
             case .tooLarge: String(localized: "A message was too large")
             case nil: String(localized: "The direct connection closed")
