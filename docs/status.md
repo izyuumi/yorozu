@@ -1,6 +1,23 @@
 # Status
 
-As of 2026-10-09, `projectx` at 7425964: issues #310–#317, #319 and #320 merged (#324–#343) and closed; issue #318, Hermes Agent harness, merged in #330 and #341 and open until the owner's Hermes steps and its live check; the website update for 0.7.0 (#321) is a PR to `main` that waits for the release. Update this file when a part changes state; keep only the current picture. Past decisions are in [history/decisions-log.md](history/decisions-log.md).
+As of 2026-10-10, `projectx` at d1ed859. The 0.7.0 queue (#323) is worked through:
+- #310–#317, #319 and #320 are merged (#324–#343) and closed.
+- #321, the website, is merged to `main` (#345) and deployed.
+- #318, the Hermes Agent harness, has its code merged (#330, #341, #346, #347); its live check is deferred by the owner and the issue is closed.
+
+Owner feedback since then is merged:
+- #348, topic routing: small talk isn't filed, unclear requests get a new sub-chat, and a sub-chat can be attached to an existing topic (#350).
+- iOS polish (#349).
+- Host and client wording, client onboarding, replies pinned to their topic, Signal-style marks, and Mac Settings without scrolling (#352).
+- #351, the workspace and coding agents run by Yorozu (#353, #354, #355).
+- The scroll fix for the reply swipe (#356).
+
+TestFlight 0.7.0 builds 1–4 are uploaded, to Internal testing only. Open owner steps are listed on #323:
+- the Codex model (`~/.codex/config.toml` pins a model Codex refuses for a ChatGPT sign-in);
+- on-device checks of build 4;
+- Hermes, when the owner resumes it.
+
+Update this file when a part changes state; keep only the current picture. Past decisions are in [history/decisions-log.md](history/decisions-log.md).
 
 ## Parts
 
