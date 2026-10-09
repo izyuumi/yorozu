@@ -552,3 +552,14 @@ Source: the phase B plan comment on issue #312, built on the approved #311 mocku
 - The General setup status row ("Run setup again…") and the coding opt-in switch are left to #317; Settings › Advanced has the dev repo picker, and an empty one still ends coding work with a notice. The harness choice is a read-only row for the same reason.
 - The Settings window is 560 points wide (the shell was 500), so the grouped forms' subtitles fit without crowding; it is the one size the window owns.
 - Design items not built: the Connection tab's direct-path diagnostics and the iPhone Direct connection toggle (#315), the Phones notification destination (shown, disabled, until #320), and a shortcut recorder: the global shortcut is a text field with the same syntax as `config.toml`.
+
+## 2026-10-09 — Phone sync PR C: implementer readings (not owner decisions)
+Source: the PR C plan comment on issue #313 (branch `mirror-ui`), built on the approved #311 mockups. These are readings where the decisions, the plan or the mockups leave a detail open; the UI is in [architecture.md](../architecture.md#ios-app).
+
+- Timeline order: a topic's messages and task cards run oldest first and open at the bottom, like the main timeline, rather than the mockups' newest-first tasks, so amendments, results and follow-up turns read in the order they happened.
+- Duplicate results: a `result` message whose task card already shows that result is hidden in the topic, so the answer appears once; a result message without a matching card stays.
+- A search hit outside the phone's cache opens a separate read-only "In context" screen with the Mac's page around the message (`page_request`), not a jump inside the cached timeline, since those messages are not in the mirror.
+- Scope counts: All shows the Mac's `total`; Main and Sub-chats filter the hits loaded so far on the phone and count those, since the Mac returns one combined result per query.
+- Retry stays 再試行 in Japanese, the catalog's existing translation.
+- The unread divider stays where it was drawn while the user reads: on the Mac until the popover opens again, on the phone until another device moves the cursor or the app returns to the foreground. Reading moves the cursor right away; only the divider waits.
+- The Mac's menu-bar dot follows the synced read cursor as well as what the open popover shows, forward only, so a phone reading a result clears the dot and its delivered notification.
