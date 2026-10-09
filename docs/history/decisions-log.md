@@ -543,3 +543,12 @@ Source: the phase B plan comment on issue #311. The remaining open questions wer
 - Job results drop the `Regarding “<job name>”:` header too, so `Store.finish` takes only the result kind.
 - Native as the default: the native client holds only `operator.read` and `operator.write`, so each call that needs `operator.admin` (`config.patch`, `sessions.compact`, `sessions.create` or `sessions.patch` with `permissionMode: "full"` or `toolOverrides`, an `agent` run of `/new` or `/reset`) goes through the CLI, and everything else stays native so live events stream. The list mirrors OpenClaw's scope tables.
 - "Send as text file" is not built: the over-limit hint asks the user to shorten the draft.
+
+## 2026-10-09 — Settings phase B: implementer readings (not owner decisions)
+Source: the phase B plan comment on issue #312, built on the approved #311 mockups.
+
+- Copy diagnostics on the iPhone is plain English text whatever the interface language, so a bug report reads the same for anyone; the Settings screen around it is localized.
+- The Jobs tab the mockups show is left to #319, with the job screens; jobs stay in the chat and `jobs.toml` until then.
+- The General setup status row ("Run setup again…") and the coding opt-in switch are left to #317; Settings › Advanced has the dev repo picker, and an empty one still ends coding work with a notice. The harness choice is a read-only row for the same reason.
+- The Settings window is 560 points wide (the shell was 500), so the grouped forms' subtitles fit without crowding; it is the one size the window owns.
+- Design items not built: the Connection tab's direct-path diagnostics and the iPhone Direct connection toggle (#315), the Phones notification destination (shown, disabled, until #320), and a shortcut recorder: the global shortcut is a text field with the same syntax as `config.toml`.
