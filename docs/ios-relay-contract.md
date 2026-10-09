@@ -630,17 +630,20 @@ Capability `readiness-v1` (`ReadinessData.capability`); the Mac sends it only to
 
 ```swift
 .readiness(ReadinessData(state: .attention, count: 1, items: [
-    .init(id: "gateway", title: "The OpenClaw Gateway isn't running.", severity: .warning, fix: "Start it with `openclaw gateway run`.")]))
+    .init(id: "openclaw.gateway", title: "The OpenClaw Gateway isn't running. Start it with `openclaw gateway run`.", severity: .warning, fix: "openclaw gateway run")]))
 ```
 
 ```json
 {"kind":"readiness","threadId":"","agentId":"main","id":"…","ts":0,
- "data":{"state":"attention","count":1,"items":[{"id":"gateway","title":"…","severity":"warning","fix":"…"}]}}
+ "data":{"state":"attention","count":1,"items":[{"id":"openclaw.gateway","title":"…","severity":"warning","fix":"…"}]}}
 ```
 
 - `state` is `ready`, `attention` (warnings) or `blocked` (nothing could answer). `count` is the items
   whose `severity` is `warning` or `blocking`; `ok` items may be listed too. `title` and `fix` are
   user-facing, in the Mac's language; `fix` is optional and the fix itself is done on the Mac.
+  The Mac fills them from its readiness model (`ReadinessData(_:)` over `Readiness`,
+  [architecture.md](architecture.md#setup-and-readiness)): `id` is the item's stable id, and `fix`
+  is the command to copy, the URL, or "Setup › <step>" for a setup step.
 - The Mac sends the latest value after each compatible claim (every handshake) and to every served phone
   on each change, from `RelayHost.publishReadiness(_:)` (through `AppModel.publishReadiness(_:)`, which
   keeps it across relay restarts). A Mac that has no value yet sends nothing.
