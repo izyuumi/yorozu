@@ -140,7 +140,10 @@ struct ChatScreen: View {
             .navigationSubtitleIfAvailable(model.shownStatus.label)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    SubChatsButton(running: model.runningTopics) { path = [.topics] }
+                    // A standard bar button: the whole glass circle is the target, and the badge is the bar's own.
+                    Button("Sub-chats", systemImage: "bubble.left.and.bubble.right") { path = [.topics] }
+                        .badge(model.runningTopics)
+                        .accessibilityValue(model.runningTopics > 0 ? String(localized: "\(model.runningTopics) running") : "")
                 }
                 if !Self.hasSubtitle {
                     ToolbarItem(placement: .topBarLeading) {
@@ -323,33 +326,6 @@ struct ChatScreen: View {
         case .none:
             break
         }
-    }
-}
-
-/// Sub-chats, with the number of running topics.
-private struct SubChatsButton: View {
-    let running: Int
-    let action: () -> Void
-
-    private let badgeOffset: CGFloat = 8
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .overlay(alignment: .topTrailing) {
-                    if running > 0 {
-                        Text(verbatim: "\(running)")
-                            .font(.caption2.weight(.bold))
-                            .monospacedDigit()
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, LayoutMetrics.tight)
-                            .background(YorozuPalette.bubble, in: Capsule())
-                            .offset(x: badgeOffset, y: -badgeOffset)
-                    }
-                }
-        }
-        .accessibilityLabel("Sub-chats")
-        .accessibilityValue(running > 0 ? String(localized: "\(running) running") : "")
     }
 }
 
