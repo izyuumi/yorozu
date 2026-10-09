@@ -110,15 +110,18 @@ struct MessageRow: View {
     }
 }
 
-/// The delivery mark the clients draw too: two `checkmark.circle` symbols overlapping by half, filled once read. The
-/// Mac's own messages have no relay step, so they read Delivered while waiting and Read once routing starts.
+/// The delivery mark the clients draw too: two `checkmark.circle` symbols overlapping by a little over half, each with
+/// a 1-pixel outline, filled once read. The Mac's own messages have no relay step, so they read Delivered while waiting
+/// and Read once routing starts.
 struct DeliveryMark: View {
     let read: Bool
+    @Environment(\.displayScale) private var displayScale
     var body: some View {
         let symbol = Image(systemName: read ? "checkmark.circle.fill" : "checkmark.circle")
+            .overlay { Circle().strokeBorder(lineWidth: 1 / displayScale) }
         ZStack(alignment: .leading) {
             symbol
-            symbol.alignmentGuide(.leading) { -$0.width / 2 }
+            symbol.alignmentGuide(.leading) { -$0.width * 0.42 }
         }.accessibilityHidden(true)
     }
 }
