@@ -186,7 +186,7 @@ struct AdvancedSettings: View {
         .onChange(of: model.connecting) { _, busy in if !busy { enrolled = model.nativeEnrolled } }
         .onDisappear { model.bootstrapSecret = "" }
         .alert("Switch the main harness?", isPresented: Binding(get: { switchTo != nil }, set: { if !$0 { switchTo = nil } }), presenting: switchTo) { kind in
-            Button("Switch to \(Self.harnessTitle(kind))") { model.writeSettings { $0.harness.kind = kind } }
+            Button("Switch to \(Self.harnessTitle(kind))") { model.writeSettings { $0.harness.kind = kind; $0.setup.answered.removeAll { $0 == "harness" } } }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Your messages, memory excerpts and workers' tasks then go to this harness. The switch applies at the next launch, once running work finishes.")

@@ -9,9 +9,9 @@ extension AppModel {
     /// Checks readiness again: at launch, after a Gateway call fails, and before a send while not ready. One check at a
     /// time; phones get each change. Fixture and offline runs have no harness to check.
     func recheck() {
-        guard recheckTask == nil else { return }
+        guard recheckTask == nil else { recheckAgain = true; return }
         recheckTask = Task {
-            defer { recheckTask = nil }
+            defer { recheckTask = nil; if recheckAgain { recheckAgain = false; recheck() } }
             // The launched harness, against the settings in force now: Hermes's profiles follow [mcp_servers] and dev_repo.
             var c = config
             if let l = launched?.config.harness { let repo = c.harness.devRepo; c.harness = l; c.harness.devRepo = repo }

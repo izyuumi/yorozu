@@ -16,6 +16,9 @@ public struct SetupStep: Sendable, Equatable, Identifiable {
     /// The assisted write this step offers: OpenClaw's with question `openclaw_setup` (harness, models), or Yorozu's Hermes
     /// profiles with `hermes_setup` (harness).
     public var plan: OpenClawPlan?
+    /// The write `plan` offers on a done step, beside `question` (the harness choice): `hermes_setup` for profiles that are
+    /// missing or out of date after a skip. The window shows it with its own Apply button.
+    public var write: Question?
     /// Where in the app to finish an app-only step.
     public var whereInApp: String?
 }
@@ -112,7 +115,7 @@ public struct SetupEngine: Sendable {
             harness = step("harness",.needed,checks: harnessChecks,retry("harness"))
         }
         // Skipped Hermes profiles that are missing or out of date: the done step still offers the write, for Fix….
-        if let hermes, harness.state == .done { harness.question = assist(hermes,hermes: true); harness.plan = hermes }
+        if let hermes, harness.state == .done { harness.write = assist(hermes,hermes: true); harness.plan = hermes }
         steps.append(harness)
 
         // Native transport enrollment (app-only), for OpenClaw on the native transport.
@@ -186,14 +189,18 @@ public struct SetupEngine: Sendable {
         if host == nil, let step = report.steps.first(where: { $0.id == id && $0.state == .app }) {
             throw ProjectError.blocked("Finish this in the Yorozu app: \(step.whereInApp ?? "the setup window").")
         }
-        guard let step = report.steps.first(where: { $0.question?.id == id }), let question = step.question else { throw ProjectError.invalid("Nothing to answer for \"\(id)\" now. Known steps: " + Self.order.joined(separator: ", ") + ".") }
+        guard let step = report.steps.first(where: { $0.question?.id == id || $0.write?.id == id }), let question = step.question?.id == id ? step.question : step.write else { throw ProjectError.invalid("Nothing to answer for \"\(id)\" now. Known steps: " + Self.order.joined(separator: ", ") + ".") }
         let assisted = Self.assisted.contains(id)
         if assisted, value.hasPrefix("apply"), !question.choices.contains(value) {
-            throw ProjectError.conflict("These aren't the changes Yorozu would make now. Run `yorozu setup --json` again, review the changes, and answer with its apply:<plan_digest>.")
+            throw ProjectError.invalid("These aren't the changes Yorozu would make now. Run `yorozu setup --json` again, review the changes, and answer with its apply:<plan_digest>.")
         }
         guard question.choices.contains(value) else { throw ProjectError.invalid("\"\(value)\" isn't an answer to \(id); choose one of: " + question.choices.joined(separator: ", ") + ".") }
         let next: SetupReport
-        if assisted, value.hasPrefix("apply"), let plan = step.plan { next = try await applyAssisted(plan) }
+        if assisted, value.hasPrefix("apply"), let plan = step.plan {
+            // A failed write is not a usage error: the CLI exits 1 for it, as for a plan that changed meanwhile.
+            do { next = try await applyAssisted(plan) }
+            catch ProjectError.invalid(let m) { throw ProjectError.uncertain(m) } catch ProjectError.blocked(let m) { throw ProjectError.uncertain(m) }
+        }
         else if value == "check" { next = report }
         else {
             if id == "path_link", value == "yes", let executable { try Self.makeLink(to: executable) }
@@ -203,7 +210,10 @@ public struct SetupEngine: Sendable {
                     if !(id == "harness" && value != "skip"), !c.setup.answered.contains(mark) { c.setup.answered.append(mark) }
                 }
                 switch id {
-                case "harness" where value != "skip": c.harness.kind = Config.HarnessKind(rawValue: value)!
+                case "harness" where value != "skip":
+                    let kind = Config.HarnessKind(rawValue: value)!
+                    if kind != c.harness.kind { c.setup.answered.removeAll { $0 == "harness" } } // a skip of the old harness's step
+                    c.harness.kind = kind
                 case "yolo": c.general.yolo = value == "on"
                 case "start_at_login": c.general.startAtLogin = value == "on"
                 case _ where id.hasPrefix("integrations."): c.integrations[String(id.dropFirst(13))]?.enabled = value == "on"

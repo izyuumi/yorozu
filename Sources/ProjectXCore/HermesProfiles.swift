@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 
 /// Setup of Yorozu's two Hermes profiles (#318 H5), checked against Hermes Agent v0.21.6. `plan` lists every write so
 /// the setup step engine can show it first; `apply` runs it, and only an explicit setup action calls `apply`.
@@ -75,10 +76,11 @@ public enum HermesProfiles {
     /// The plan's writes not yet in place, read-only, each with its change line (what is on disk → what the write sets):
     /// the harness step's diff and digest, and the staleness check. Empty once Yorozu's profiles are as planned.
     public static func pending(_ settings: Settings) throws -> [(step: Step, change: OpenClawPlan.Change)] {
-        var configs: [String: Any] = [:]
+        var configs: [String: [String:Any]?] = [:]
         func onDisk(_ p: String, _ key: String) -> String? {
-            if configs[p] == nil { configs[p] = yamlTree((try? String(contentsOf: profileDir(p, settings.home).appendingPathComponent("config.yaml"), encoding: .utf8)) ?? "") }
-            var node = configs[p]
+            if configs[p] == nil { configs[p] = .some(yamlTree((try? String(contentsOf: profileDir(p, settings.home).appendingPathComponent("config.yaml"), encoding: .utf8)) ?? "")) }
+            guard let tree = configs[p]! else { return "(config.yaml not readable)" }
+            var node: Any? = tree
             for part in key.split(separator: ".") { node = (node as? [String:Any])?[String(part)] }
             return node.map(canonical)
         }
@@ -92,8 +94,8 @@ public enum HermesProfiles {
                 change = old == new ? nil : .init(path: "\(p): \(key)", old: old, new: new)
             case .writeAPIKey(let p):
                 let key = ((try? String(contentsOf: dir.appendingPathComponent(".env"), encoding: .utf8)) ?? "").components(separatedBy: .newlines).compactMap(apiKeyValue).last
-                change = (key?.count ?? 0) >= 32 && keychainHas(p) ? nil
-                    : .init(path: "\(p)/.env: API_SERVER_KEY", old: key.map { $0.count < 32 ? "(shorter than 32 characters)" : "(not in the Keychain)" }, new: "(a key, also saved in the Keychain)")
+                change = key.map { $0.count >= 32 && keychainMatches(p, key: $0) } == true ? nil
+                    : .init(path: "\(p)/.env: API_SERVER_KEY", old: key.map { $0.count < 32 ? "(shorter than 32 characters)" : "(the Keychain holds another key or none)" }, new: "(a key, also saved in the Keychain)")
             case let .writeSOUL(p,text):
                 let old = try? String(contentsOf: dir.appendingPathComponent("SOUL.md"), encoding: .utf8)
                 change = old == text ? nil : .init(path: "\(p)/SOUL.md", old: old.map { _ in "(other text)" }, new: "(Yorozu's role identity)")
@@ -237,26 +239,42 @@ public enum HermesProfiles {
         return found
     }
 
-    /// A profile's `config.yaml` as Hermes writes it (PyYAML `safe_dump`, block style): mappings, `- ` sequences at or below
-    /// their key, `[]`/`{}`, quoted and folded scalars. Every scalar is a string; anything else reads as different, so the
-    /// step shows it as a change rather than hiding one.
-    static func yamlTree(_ text: String) -> [String:Any] {
+    /// A profile's `config.yaml` as Hermes 0.21.6 writes it (ruamel round-trip, `utils.atomic_roundtrip_yaml_save`: block
+    /// style, 2-space mappings, `- ` items under their key, quotes and comments kept): mappings, sequences, `[]`, `{}`, flow
+    /// lists of scalars, quoted and folded scalars, comments. Every scalar is a string. Nil for anything else, such as a
+    /// line it can't classify, an unbalanced quote, a tab in the indent or a duplicate key; every key then counts as changed.
+    static func yamlTree(_ text: String) -> [String:Any]? {
         let lines = text.components(separatedBy: .newlines).filter { let t = $0.trimmingCharacters(in: .whitespaces); return !t.isEmpty && !t.hasPrefix("#") && t != "---" }
-        var i = 0
+        if lines.contains(where: { $0.prefix { $0 == " " || $0 == "\t" }.contains("\t") }) { return nil }
+        var i = 0, bad = false
         func indent(_ n: Int) -> Int { lines[n].prefix { $0 == " " }.count }
         func item(_ n: Int, _ at: Int) -> Bool { let t = lines[n].dropFirst(at); return t == "-" || t.hasPrefix("- ") }
         /// A scalar and its folded continuation lines (deeper than `at`).
         func scalar(_ first: String, _ at: Int) -> Any {
             var text = first
             while i < lines.count, indent(i) > at { text += " " + lines[i].trimmingCharacters(in: .whitespaces); i += 1 }
-            switch text {
-            case "[]": return [Any]()
-            case "{}": return [String:Any]()
-            case _ where text.count >= 2 && text.hasPrefix("'") && text.hasSuffix("'"): return String(text.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'")
-            case _ where text.count >= 2 && text.hasPrefix("\"") && text.hasSuffix("\""): return String(text.dropFirst().dropLast()).replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\")
-            case _ where text.hasPrefix("[") && text.hasSuffix("]"): return text.dropFirst().dropLast().split(separator: ",").map { unquote(String($0)) }
-            default: return text
+            if let q = text.first, q == "'" || q == "\"" {
+                var body = "", rest = Substring(text.dropFirst()), closed = false
+                while let c = rest.popFirst() {
+                    if c == q, q == "'", rest.first == "'" { body.append(rest.removeFirst()); continue }
+                    if c == q { closed = true; break }
+                    if c == "\\", q == "\"", let next = rest.popFirst() { body.append(next); continue }
+                    body.append(c)
+                }
+                let after = rest.trimmingCharacters(in: .whitespaces)
+                if !closed || !(after.isEmpty || after.hasPrefix("#")) { bad = true }
+                return body
             }
+            let plain = text.components(separatedBy: " #").first!.trimmingCharacters(in: .whitespaces)
+            if plain == "[]" { return [Any]() }
+            if plain == "{}" { return [String:Any]() }
+            guard !plain.hasPrefix("{") else { bad = true; return plain }
+            if plain.hasPrefix("[") {
+                let inner = plain.dropFirst().dropLast()
+                guard plain.hasSuffix("]"), !inner.contains(where: { "[]{}".contains($0) }) else { bad = true; return plain }
+                return inner.split(separator: ",").map { unquote(String($0)) }
+            }
+            return plain
         }
         func node(_ at: Int) -> Any {
             if item(i, at) {
@@ -270,19 +288,24 @@ public enum HermesProfiles {
             var map: [String:Any] = [:]
             while i < lines.count, indent(i) == at, !item(i, at) {
                 let line = String(lines[i].dropFirst(at)); i += 1
-                guard let colon = line.range(of: ": ")?.lowerBound ?? (line.hasSuffix(":") ? line.index(before: line.endIndex) : nil) else { continue }
+                guard let colon = line.range(of: ": ")?.lowerBound ?? (line.hasSuffix(":") ? line.index(before: line.endIndex) : nil) else { bad = true; continue }
                 let key = unquote(String(line[..<colon])), rest = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-                if !rest.isEmpty { map[key] = scalar(rest, at) }
+                if map[key] != nil { bad = true }
+                if !rest.isEmpty, !rest.hasPrefix("#") { map[key] = scalar(rest, at) }
                 else if i < lines.count, indent(i) > at || (indent(i) == at && item(i, at)) { map[key] = node(indent(i)) }
                 else { map[key] = "" }
             }
             return map
         }
         var root: [String:Any] = [:]
-        while i < lines.count { let before = i; if let m = node(indent(i)) as? [String:Any] { root.merge(m) { $1 } }; if i == before { i += 1 } }
-        return root
+        while i < lines.count, !bad {
+            guard indent(i) == 0, let m = node(0) as? [String:Any] else { return nil }
+            for (k, v) in m { if root[k] != nil { bad = true }; root[k] = v }
+        }
+        return bad ? nil : root
     }
-    /// A value as comparable text: scalars as written, lists and mappings as sorted JSON of their scalars' text.
+    /// A value as comparable JSON text: scalars as strings (so a quoted "[...]" never equals a list), lists and mappings
+    /// as sorted JSON of those strings.
     static func canonical(_ value: Any) -> String {
         func plain(_ v: Any) -> Any {
             switch v {
@@ -294,15 +317,21 @@ public enum HermesProfiles {
             }
         }
         let p = plain(value)
-        if let s = p as? String { return s }
-        return (try? JSONSerialization.data(withJSONObject: p, options: [.sortedKeys, .withoutEscapingSlashes])).map { String(decoding: $0, as: UTF8.self) } ?? "\(p)"
+        return (try? JSONSerialization.data(withJSONObject: p, options: [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed])).map { String(decoding: $0, as: UTF8.self) } ?? "\(p)"
     }
 
     // MARK: - Key and Keychain
 
-    /// Whether the profile's key is in the Keychain; reads no secret.
-    static func keychainHas(_ account: String) -> Bool {
-        SecItemCopyMatching([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: keychainService, kSecAttrAccount as String: account] as CFDictionary, nil) == errSecSuccess
+    /// A non-secret fingerprint of a key, kept in the Keychain item's `kSecAttrGeneric`: 8 bytes of its SHA-256.
+    static func fingerprint(_ key: String) -> Data { Data(SHA256.hash(data: Data(key.utf8)).prefix(8)) }
+    /// Whether the Keychain item holds `key`, judged by its fingerprint attribute; reads no secret, so no prompt. An item
+    /// without the attribute does not match.
+    static func keychainMatches(_ account: String, key: String) -> Bool {
+        var found: CFTypeRef?
+        let query: [String:Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: keychainService, kSecAttrAccount as String: account,
+                                   kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        guard SecItemCopyMatching(query as CFDictionary, &found) == errSecSuccess else { return false }
+        return (found as? [String:Any])?[kSecAttrGeneric as String] as? Data == fingerprint(key)
     }
 
     /// 32 random bytes as base64url: 43 characters.
@@ -313,7 +342,7 @@ public enum HermesProfiles {
     }
     static func saveKeychain(account: String, key: String) throws {
         let query: [String:Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: keychainService, kSecAttrAccount as String: account]
-        let update: [String:Any] = [kSecValueData as String: Data(key.utf8), kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let update: [String:Any] = [kSecValueData as String: Data(key.utf8), kSecAttrGeneric as String: fingerprint(key), kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
         var status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if status == errSecItemNotFound { status = SecItemAdd(query.merging(update) { $1 } as CFDictionary, nil) }
         guard status == errSecSuccess else { throw ProjectError.blocked("Could not save the Hermes API key for \(account) in the Keychain. Unlock the login Keychain and retry setup.") }

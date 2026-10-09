@@ -35,6 +35,8 @@ import YorozuWire
     /// The Gateway client the live OpenClaw harness uses, for readiness and setup; nil otherwise.
     var gatewayRPC: GatewayRPC?
     var recheckTask: Task<Void,Never>?
+    /// A recheck asked for while one ran: it runs once more when that one ends.
+    var recheckAgain = false
     /// The newest failure row seen by the poll; a newer one triggers a recheck.
     var lastFailureID: String?
     /// Set at launch when a harness switch waits for running work (open question 9).

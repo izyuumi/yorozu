@@ -189,7 +189,7 @@ struct SetupWindow: View {
 
     /// The assisted write the step offers (OpenClaw's config, or Yorozu's Hermes profiles), as a diff of every path it changes.
     @ViewBuilder private func plan(_ s: SetupStep) -> some View {
-        if let plan = s.plan, let id = s.question?.id, SetupEngine.assisted.contains(id) {
+        if let plan = s.plan, let id = [s.question, s.write].compactMap(\.?.id).first(where: SetupEngine.assisted.contains) {
             let hermes = id == "hermes_setup"
             VStack(alignment: .leading, spacing: 6) {
                 if hermes { Text("Continue writes only Yorozu's two Hermes profiles, yorozu-worker and yorozu-roles:") }
@@ -202,6 +202,7 @@ struct SetupWindow: View {
                     }.font(.caption.monospaced()).lineLimit(3).textSelection(.enabled)
                 }
                 Text(hermes ? "Your default Hermes profile and any other profile don't change." : "Nothing else in OpenClaw's config changes.").font(.caption).foregroundStyle(.secondary)
+                if s.write != nil { Button("Apply Changes") { apply(plan) }.disabled(busy) } // Continue answers the harness choice here
             }
         }
     }
