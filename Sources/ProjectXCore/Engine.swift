@@ -885,10 +885,11 @@ extension Engine {
     // MARK: Job input, approvals, summaries
 
     private func jobInput(_ m: Message,spec: JobSpec,topic: Topic) async {
-        // While its script waits for a yes, one raw secretary-model check reads this message as that yes or not.
+        // While its script waits for a yes, one raw secretary-model check reads this message as that yes or not. It gets
+        // the approval id only: the job's name comes from jobs.toml, which a worker may write.
         let record = (try? await store.job(spec.id)) ?? nil
         if let pending = record?.pendingApprovalID, let a = ((try? await store.pendingApprovals()) ?? []).first(where: { $0.id == pending }),
-           let d = try? await rawAsk(policy: Prompts.jobApprovalCheckPolicy,message: m.body,approvals: [.init(approvalID: a.id,topicID: topic.id,job: spec.name)]),
+           let d = try? await rawAsk(policy: Prompts.jobApprovalCheckPolicy,message: m.body,approvals: [.init(approvalID: a.id,topicID: topic.id,job: "")]),
            d.action == "approve", d.approvalID == a.id {
             try? await approveJob(a,message: m,replyTo: nil) // no reply link: the job's agent still answers the message
         }
