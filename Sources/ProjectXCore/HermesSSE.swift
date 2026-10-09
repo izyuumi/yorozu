@@ -38,7 +38,8 @@ struct HermesClient: Sendable {
         guard Config.isLoopbackHTTP(url), let u = URL(string: url) else { throw ProjectError.blocked("Only loopback Hermes URLs with no path are allowed, such as http://127.0.0.1:8642.") }
         root = u.absoluteString.hasSuffix("/") ? String(u.absoluteString.dropLast()) : u.absoluteString
     }
-    func url(_ profile: String, _ path: String) -> URL { URL(string: root + "/p/" + profile + path)! }
+    /// An empty profile is the default profile's own listener at the root.
+    func url(_ profile: String, _ path: String) -> URL { URL(string: root + (profile.isEmpty ? "" : "/p/" + profile) + path)! }
 
     /// The profile's `API_SERVER_KEY`, mirrored by setup into Keychain item `to.yumi.yorozu.hermes` / account = profile.
     static func key(_ profile: String) throws -> String {

@@ -254,6 +254,39 @@
         }
       }
     },
+    "Copy Command" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コマンドをコピー"
+          }
+        }
+      }
+    },
+    "Restart Hermes so it serves Yorozu's profiles" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のプロファイルを使えるよう Hermes を再起動してください"
+          }
+        }
+      }
+    },
+    "Hermes isn't connected to an AI provider" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes が AI プロバイダに接続されていません"
+          }
+        }
+      }
+    },
     "Hermes profiles need updating" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1176,6 +1209,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OpenClaw は Yorozu に %@ の使用を許可していません。"
+          }
+        }
+      }
+    },
+    "Hermes isn’t connected to an AI provider. Pick one with `hermes -p yorozu-worker model` and `hermes -p yorozu-roles model`." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes が AI プロバイダに接続されていません。`hermes -p yorozu-worker model` と `hermes -p yorozu-roles model` で選んでください。"
           }
         }
       }

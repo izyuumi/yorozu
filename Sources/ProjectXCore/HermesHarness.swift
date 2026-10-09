@@ -7,7 +7,11 @@ public struct HermesReadiness: Sendable, Equatable {
     public var version: String?
     public var tested = false
     public var problems: [String] = [], warnings: [String] = []
-    public var ready: Bool { problems.isEmpty }
+    /// The default profile answers but not Yorozu's: the gateway picks the profiles it serves only when it starts.
+    public var restart = false
+    /// Profiles with no AI provider chosen (`model.provider` empty or `auto` in `/api/model/options`).
+    public var noProvider: [String] = []
+    public var ready: Bool { problems.isEmpty && !restart && noProvider.isEmpty }
 }
 
 /// Hermes's setup seam (#317): `HermesHarness.readiness()` as readiness items, plus two read-only checks: the default
@@ -35,6 +39,17 @@ public struct HermesSetup: HarnessSetup {
         d.items = [Readiness.Item(id: "hermes.installed",title: String(localized: "Hermes Agent is installed"),detail: launcher + (r.version.map { " " + $0 } ?? ""),severity: .ok)]
             + r.problems.enumerated().map { Readiness.Item(id: "hermes.problem.\($0.offset)",title: String(localized: "Hermes Agent isn't ready"),detail: $0.element,severity: .warning,fix: .step("harness")) }
             + r.warnings.enumerated().map { Readiness.Item(id: "hermes.warning.\($0.offset)",title: String(localized: "This Hermes Agent version hasn't been tested with Yorozu"),detail: $0.element,severity: .warning) }
+        if r.restart {
+            d.items.append(Readiness.Item(id: "hermes.restart",title: String(localized: "Restart Hermes so it serves Yorozu's profiles"),
+                                          detail: "Hermes picks the profiles it serves when its gateway starts, so it doesn't serve yorozu-worker and yorozu-roles yet. Run `hermes -p default gateway restart` in Terminal. Unless Hermes runs as a service (`hermes gateway install`), the gateway then keeps running in that Terminal window.",
+                                          severity: .warning,fix: .copy(title: String(localized: "Copy Command"),command: "hermes -p default gateway restart")))
+        }
+        if !r.noProvider.isEmpty {
+            let commands = r.noProvider.map { "hermes -p \($0) model" }
+            d.items.append(Readiness.Item(id: "hermes.provider",title: String(localized: "Hermes isn't connected to an AI provider"),
+                                          detail: "No AI provider is chosen for " + r.noProvider.joined(separator: " and ") + ", so Hermes can't run Yorozu's work. Pick one with " + commands.map { "`\($0)`" }.joined(separator: " and ") + " (the free Nous tier needs no API key).",
+                                          severity: .warning,fix: .copy(title: String(localized: "Copy Commands"),command: commands.joined(separator: " && "))))
+        }
         let home = profiles?.home ?? FileManager.default.homeDirectoryForCurrentUser
         if let text = HermesProfiles.defaultProfileAPIServerStep(home: home) {
             d.items.append(Readiness.Item(id: "hermes.default_api_server",title: String(localized: "Turn on the API server in your default Hermes profile"),detail: text,severity: .warning,
@@ -105,16 +120,24 @@ public struct HermesHarness: Harness {
         for p in [Self.workerProfile, Self.rolesProfile] {
             guard fm.fileExists(atPath: hermes.appendingPathComponent("profiles/" + p).path) else { r.problems.append("Hermes profile \(p) does not exist. Run the Hermes setup step."); continue }
             // Unauthenticated liveness probe; then the authenticated feature flags.
-            guard let (code, health) = try? await client.call(p, "GET", "/health", auth: false), code == 200, health["platform"] as? String == "hermes-agent" else {
-                r.problems.append("Hermes's API server does not answer for profile \(p). Start `hermes gateway` with the API server on."); continue
+            let health = try? await client.call(p, "GET", "/health", auth: false)
+            guard let health, health.status == 200, health.json["platform"] as? String == "hermes-agent" else {
+                // A 404 under /p/ while the default profile answers: the profile was written after the gateway started.
+                if health?.status == 404, (try? await client.call("", "GET", "/health", auth: false))?.status == 200 { r.restart = true }
+                else { r.problems.append("Hermes's API server does not answer for profile \(p). Start `hermes gateway` with the API server on.") }
+                continue
             }
-            r.version = health["version"] as? String ?? r.version
+            r.version = health.json["version"] as? String ?? r.version
             do {
                 let (code, caps) = try await client.call(p, "GET", "/v1/capabilities")
                 guard code == 200 else { throw HermesClient.failure(code, caps, profile: p, doing: "list its capabilities") }
                 let features = caps["features"] as? [String:Any] ?? [:]
                 let missing = Self.requiredFeatures.filter { features[$0] as? Bool != true }
                 if !missing.isEmpty { r.problems.append("Hermes (profile \(p)) lacks " + missing.joined(separator: ", ") + ".") }
+                // `auto` resolves only from env keys or a login, and fails every run when there is none (hermes_cli/auth.py).
+                let (c, options) = try await client.call(p, "GET", "/api/model/options?include_unconfigured=false")
+                guard c == 200 else { throw HermesClient.failure(c, options, profile: p, doing: "list its models") }
+                if ["", "auto"].contains((options["provider"] as? String ?? "").lowercased()) { r.noProvider.append(p) }
             } catch { r.problems.append(error.localizedDescription) }
         }
         if let v = r.version {
