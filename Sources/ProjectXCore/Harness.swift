@@ -156,11 +156,29 @@ public struct GatewayRPC: Sendable {
             throw ProjectError.uncertain(error.localizedDescription + " Request ID: " + id)
         }
     }
+    /// Whether OpenClaw requires `operator.admin` for a call this harness makes. The native client holds only read and write, so these go
+    /// through the CLI, which holds admin; everything else stays native so live events stream. Mirrors OpenClaw's
+    /// `core-descriptors.ts` (static scopes), `method-scopes.ts` (`agent` reset commands) and
+    /// `shared/session-method-scopes-base.ts` (param-dependent `sessions.create` and `sessions.patch`).
+    static func needsAdmin(_ method: String, _ params: [String:Any]) -> Bool {
+        switch method {
+        case "config.patch", "sessions.compact": return true
+        case "agent": return (params["message"] as? String)?.range(of: #"^/(new|reset)(\s|$)"#,options: [.regularExpression,.caseInsensitive]) != nil
+        case "sessions.create":
+            return params["permissionMode"] as? String == "full" || params["toolOverrides"] != nil
+        case "sessions.patch":
+            let write: Set = ["key","agentId","expectedSessionId","expectedLifecycleRevision","expectedPermissionMode","expectedMarkedUnreadAt",
+                              "label","autoLabel","icon","color","category","boardFace","boardPresentation","pinned","archived","snoozedUntil","unread",
+                              "model","agentRuntime","thinkingLevel","fastMode","permissionMode"]
+            return params["permissionMode"] as? String == "full" || !Set(params.keys).isSubset(of: write)
+        default: return false
+        }
+    }
     private func perform(_ method: String, _ params: [String:Any], final: Bool) async throws -> [String:Any] {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: params),as: UTF8.self)
         let text: String
         if let fixture { text = try await fixture(method,json,final) }
-        else if let native { text = try await native.call(method,json: json,final: final) }
+        else if let native, !Self.needsAdmin(method,params) { text = try await native.call(method,json: json,final: final) }
         else {
             let env = ProcessInfo.processInfo.environment
             try Self.enforceAttribution(env)
