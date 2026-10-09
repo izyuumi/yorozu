@@ -1,100 +1,102 @@
 ---
 import Base from '../layouts/Base.astro';
+const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
+const build = 'https://github.com/izyuumi/yorozu/blob/projectx/README.md#build';
 ---
-<Base title="Yorozu — Your Mac's AI agents, from your iPhone" description="Yorozu lets you talk to OpenClaw, Claude Code and Codex on your Mac from your iPhone, end-to-end encrypted through a relay that cannot read your messages.">
+<Base title="Yorozu — Your Mac's assistant, from the menu bar and your iPhone" description="Yorozu is one conversation with an assistant on your own Mac. It hands real work to OpenClaw (Hermes Agent support is experimental) and reaches your iPhone end-to-end encrypted through a relay that cannot read your messages.">
   <Fragment slot="head">
     <script is:inline src="/copy.js" defer></script>
     <meta property="og:title" content="Yorozu">
-    <meta property="og:description" content="Your Mac's AI agents, from your iPhone. End-to-end encrypted.">
+    <meta property="og:description" content="One conversation with the assistant on your Mac, from the menu bar or your iPhone. End-to-end encrypted.">
     <meta property="og:url" content="https://yorozu.yumi.to/">
     <meta property="og:image" content="https://yorozu.yumi.to/assets/icon.png">
   </Fragment>
   <section class="hero" aria-labelledby="title">
     <div class="hero-inner">
       <div class="hero-copy">
-        <h1 id="title">Your Mac's agents.<br><em>In your pocket.</em></h1>
-        <p class="lede">Yorozu <span class="kana" lang="ja">(よろず)</span> puts the AI agents on your own Mac (OpenClaw, Claude Code and Codex) on your iPhone. Start a task on the train, approve a command from the lock screen, read the result at your desk.</p>
+        <h1 id="title">Your Mac's agent.<br><em>In your pocket.</em></h1>
+        <p class="lede">Yorozu <span class="kana" lang="ja">(よろず)</span> is one conversation with an assistant that lives on your Mac. It answers quick questions itself and hands bigger work to background workers through OpenClaw. Ask from the menu bar or your iPhone, follow each topic in its own sub-chat, and read the result wherever you are.</p>
         <div class="actions">
-          <a class="button" href="/mac">Download for Mac</a>
-          <a class="button ghost" href="/iphone">Join iPhone TestFlight</a>
+          <a class="button" href="/mac">Download v1 for Mac</a>
+          <a class="button ghost" href="/iphone">Join v1 on TestFlight</a>
         </div>
-        <p class="fine">Mac: macOS 15+ · Apple silicon · <a href="https://openclaw.ai">OpenClaw</a> on the host<br>iPhone: iOS 18+ · public beta · <a href="#setup-with-an-agent">Set up with an agent</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
+        <p class="fine">Both buttons install Yorozu v1, the current public release. Yorozu 0.7.0, described on this page, builds from source on the Mac for now (<a href={build}>build</a>, <a href={guide}>setup guide</a>); its iPhone app is in internal testing only.<br>Mac: macOS 15+ · iPhone: iOS 18+ · <a href="#setup-with-an-agent">Set up with an agent</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
       </div>
-      <figure class="phone">
-        <div class="iphone-device">
-          <img class="iphone-screen" src="/assets/iphone-chat.webp" alt="Yorozu on iPhone 18 Pro planning a Moon Picnic Club outing, with a snack budget and an emergency-cookie request" width="804" height="1748" fetchpriority="high">
-          <img class="iphone-bezel" src="/assets/iphone-18-pro-bezel.webp" alt="" aria-hidden="true" width="1350" height="2760">
-        </div>
-      </figure>
     </div>
   </section>
+  <style>
+    /* The hero is copy only; the menu-bar section shows the 0.7.0 popover. Astro emits
+       this as an external stylesheet (inlineStylesheets: 'never'), which the CSP allows. */
+    .hero-inner { grid-template-columns: minmax(0, 1fr); }
+    .hero-copy { padding-bottom: clamp(48px, 8vw, 110px); }
+    .popover-shot { max-width: 420px; margin: clamp(32px, 5vw, 56px) auto 0; }
+  </style>
 
   <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
     <div class="agent-setup-text">
       <h2 id="agent-setup-title">Set it up with one prompt.</h2>
-      <p>Paste this into Claude Code, Codex or any coding agent on your Mac. It checks what you already have, then walks you through installing both apps, permissions, OpenClaw with its Yorozu channel, and pairing your iPhone. It asks before every change and never decides for you.</p>
+      <p>Paste this into Claude Code, Codex, OpenClaw or any coding agent on your Mac. Your agent runs <code>Yorozu setup --json</code> and asks you each of its questions: the harness, models, integrations and YOLO mode. It shows you every change before you answer, never installs software, signs in or grants permissions for you, and stops when setup says it is done.</p>
     </div>
     <div class="prompt">
       <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
       <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
     </div>
     <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
-    <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. Prefer to do it yourself? <a href="#iphone-availability">Install</a> and <a href="#pair">pair</a> by hand. Either way, read <a href="#before-you-install">Before you install</a> first.</p>
+    <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. It needs Yorozu 0.7.0 built from source first. Prefer to do it yourself? <a href="#iphone-availability">Install</a> and <a href="#pair">pair</a> by hand. Either way, read <a href="#before-you-install">Before you install</a> first.</p>
   </section>
 
-  <section class="proof" aria-labelledby="approve-title">
-    <div class="proof-text">
-      <h2 id="approve-title">A yes or no, from wherever you are.</h2>
-      <p>When an agent wants to run a command, send a message or spend money, the question lands on your phone as a card. Quick decisions get <strong>Allow</strong> and <strong>Don't allow</strong> right on the notification. Anything bigger opens the card, so nothing dangerous is one accidental tap away.</p>
-      <p>Say <em>Discuss first</em> and the agent explains before it acts.</p>
-    </div>
-    <figure class="shot phone-shot">
-      <div class="iphone-device">
-        <img class="iphone-screen" src="/assets/iphone-approval.webp" alt="Yorozu on iPhone 18 Pro asking permission to send a playful Moon Picnic Club invitation, with Allow once, For this task, Don't allow and Discuss first buttons" width="804" height="1748" loading="lazy">
-        <img class="iphone-bezel" src="/assets/iphone-18-pro-bezel.webp" alt="" aria-hidden="true" width="1350" height="2760" loading="lazy">
-      </div>
-    </figure>
-  </section>
-
-  <section class="proof flip" aria-labelledby="mac-title">
-    <div class="proof-text">
-      <h2 id="mac-title">Your Mac does the work.</h2>
-      <p>OpenClaw answers by default, with Yorozu as one of its chat channels and the providers, models, tools and memory you configured there. Its scheduled jobs can post into a Yorozu thread too. Open a thread as <strong>Claude Code</strong> or <strong>Codex</strong> instead and it runs in a folder under <code>~/Projects</code>, with that agent's own permissions.</p>
-      <p>Threads sync between the Mac and every paired device. Pick up on the desktop exactly where the phone left off.</p>
-    </div>
-    <figure class="shot mac-shot">
-      <picture>
-        <source srcset="/assets/mac-demo-dark.webp" media="(prefers-color-scheme: dark)" width="820" height="540">
-        <img src="/assets/mac-demo-light.webp" alt="Yorozu on a Mac desktop with demo threads and a playful Saturday adventure plan, including a park stroll and an emergency snack fund" width="820" height="540" loading="lazy">
-      </picture>
-    </figure>
-  </section>
-
-  <section class="more" aria-labelledby="more-title">
-    <h2 id="more-title">Made for a phone in one hand.</h2>
+  <section class="more" aria-labelledby="mac-title">
+    <h2 id="mac-title">It lives in your menu bar.</h2>
     <dl class="facts">
-      <div><dt>Share from any app</dt><dd>Send a link, some text or a photo from the share sheet straight into a thread.</dd></div>
-      <div><dt>See what needs you</dt><dd>The thread list shows which agents are running, done, or waiting on your answer.</dd></div>
-      <div><dt>Search everything</dt><dd>Search the full history on your Mac, not just what your phone has loaded.</dd></div>
-      <div><dt>More than one Mac</dt><dd>Pair several Macs and see all their threads in one list.</dd></div>
+      <div><dt>A quick chat</dt><dd>Click the Yorozu icon for the main timeline and a composer. Type, or drop in a file.</dd></div>
+      <div><dt>Search with ⌘F</dt><dd>Search the main timeline, with next, previous and a count.</dd></div>
+      <div><dt>Always running</dt><dd>The icon shows when work is running or something needs you. Yorozu keeps working after you close the popover.</dd></div>
+      <div><dt>A Settings window</dt><dd>General, Devices, Connection, Storage and Jobs, plus Advanced when you want it. Or change a setting by asking in the chat.</dd></div>
+    </dl>
+    <figure class="shot mac-shot popover-shot">
+      <img src="/assets/mac-07-dark.webp" alt="The Yorozu popover on a Mac with a demo chat: a name for a desk plant, and how long to steep sencha, answered by a background worker" width="426" height="750" loading="lazy">
+    </figure>
+  </section>
+
+  <section class="more" aria-labelledby="phone-title">
+    <h2 id="phone-title">Your iPhone is the full client.</h2>
+    <p class="steps-intro">The 0.7.0 iPhone app is in internal TestFlight testing only; the public TestFlight installs v1.</p>
+    <dl class="facts">
+      <div><dt>A sub-chat for every topic</dt><dd>See what is running, what needs your attention and what finished, and look inside each task as it works.</dd></div>
+      <div><dt>Stop and Retry</dt><dd>Stop a task that went the wrong way, or retry one that failed, right from its sub-chat.</dd></div>
+      <div><dt>Jobs</dt><dd>See every scheduled job with its next run and last result. Pause, resume, run now or delete it.</dd></div>
+      <div><dt>Search everything</dt><dd>Search the full history on your Mac, sub-chats included, not just what your phone has loaded.</dd></div>
     </dl>
   </section>
 
-  <section class="proof duo-support" id="duo" aria-labelledby="duo-title">
-    <div class="proof-text">
-      <h2 id="duo-title">Also supports iPhone Duo.</h2>
-      <p>Open your iPhone Duo to see your sessions and conversation side by side.</p>
-    </div>
-    <figure class="shot duo-shot">
-      <div class="duo-device">
-        <picture>
-          <source srcset="/assets/iphone-duo-dark.webp" media="(prefers-color-scheme: dark)" width="1440" height="1013">
-          <img src="/assets/iphone-duo-light.webp" alt="Yorozu on iPhone Duo fully open in landscape, with demo sessions on the left, a dinner-planning conversation on the right, and New session at the lower right" width="1440" height="1013" loading="lazy">
-        </picture>
-        <img class="duo-bezel" src="/assets/iphone-duo-bezel.webp" alt="" aria-hidden="true" width="3093" height="2247" loading="lazy">
-      </div>
-      <figcaption class="fine">iPhone Duo, fully open in landscape.</figcaption>
-    </figure>
+  <section class="more" aria-labelledby="harness-title">
+    <h2 id="harness-title">It works through the agent you already run.</h2>
+    <dl class="facts">
+      <div><dt>OpenClaw first</dt><dd>Yorozu drives one harness on your Mac through its local API, with the providers and models you set up there. OpenClaw is the tested harness. Hermes Agent support is experimental: built, but not yet tested live. Setup detects which one you have.</dd></div>
+      <div><dt>Coding when you want it</dt><dd>Coding is opt-in: choose one repository in Settings › Advanced, and the harness runs its coding executors there, such as Claude Code or Codex through OpenClaw.</dd></div>
+      <div><dt>Computer use, optional</dt><dd>With <a href="https://cua.ai">CuaDriver</a> installed, workers can operate apps on your Mac in the background. You can turn it off in Settings › Advanced, shown after “Show Advanced settings”.</dd></div>
+      <div><dt>YOLO mode</dt><dd>Off by default. Turn it on and Yorozu tells workers to stop asking first before steps you requested, but still to ask before settings changes and actions you did not ask for. A new job script always needs your yes; Yorozu enforces that one.</dd></div>
+    </dl>
+  </section>
+
+  <section class="more" aria-labelledby="delivery-title">
+    <h2 id="delivery-title">Send now, even if the Mac is asleep.</h2>
+    <dl class="facts">
+      <div><dt>Files, both ways</dt><dd>Attach photos, camera shots, files or anything you paste, up to 10 files of 50 MB each. Workers can hand files back with their results. While the Mac is away, files wait on your phone until it is back.</dd></div>
+      <div><dt>Delivery marks</dt><dd>Every message moves from Sending to Delivered to Read. One that never arrives says so, with Resend and Delete.</dd></div>
+      <div><dt>A 24-hour buffer</dt><dd>While your Mac is offline, the relay holds your text messages for up to 24 hours. Your phone tells you if one expires before the Mac picks it up.</dd></div>
+      <div><dt>Direct at home, if you like</dt><dd>Turn on Direct connection on the phone and it talks to the Mac over your LAN or Tailscale, with the relay as the fallback. It is off by default.</dd></div>
+    </dl>
+  </section>
+
+  <section class="more" aria-labelledby="files-title">
+    <h2 id="files-title">Yours, as plain files.</h2>
+    <dl class="facts">
+      <div><dt>Memory in Markdown</dt><dd>Yorozu remembers useful facts on its own and keeps them as Markdown files in <code>~/Yorozu/memory</code>. Open them in any editor.</dd></div>
+      <div><dt>Jobs on a schedule</dt><dd>Ask for something to run on a schedule and Yorozu's own scheduler runs it. A new or changed script runs only after you say yes to it.</dd></div>
+      <div><dt>Settings you can read</dt><dd>Settings live in <code>config.toml</code> and jobs in <code>jobs.toml</code>. Edit them by hand, in Settings, or by asking in the chat.</dd></div>
+      <div><dt>Alerts without content</dt><dd>Your phone hears about a reply, a question, a failure or the Mac coming back online. The alert carries fixed text, never your messages.</dd></div>
+    </dl>
   </section>
 
   <section class="relay" aria-labelledby="relay-title">
@@ -108,60 +110,60 @@ import Base from '../layouts/Base.astro';
     </figure>
     <dl class="facts">
       <div><dt>Keys never leave your devices</dt><dd>An X25519 exchange at pairing time. The relay stores public keys and a room id, nothing it could open.</dd></div>
-      <div><dt>No Yorozu account</dt><dd>No email, no password, no analytics. Your provider logins stay in OpenClaw, Claude Code and Codex on the Mac.</dd></div>
-      <div><dt>Run it yourself if you like</dt><dd>The relay is a few hundred lines. Put it on a Mac mini over Tailscale and change one URL in Settings.</dd></div>
+      <div><dt>No Yorozu account</dt><dd>No email, no password, no analytics. Your provider logins stay in your harness on the Mac.</dd></div>
+      <div><dt>Run it yourself if you like</dt><dd>The relay is small. Put it on a Mac mini over Tailscale and set its URL in Settings › Connection. Every paired phone then pairs again.</dd></div>
     </dl>
   </section>
 
   <section class="iphone-availability" id="iphone-availability" aria-labelledby="iphone-title">
     <div class="availability-intro">
       <h2 id="iphone-title">Get the apps.</h2>
-      <p>The Mac app is free and updates itself. The iPhone app is in public beta on TestFlight; there is no App Store release yet.</p>
+      <p>The download and TestFlight links install <strong>Yorozu v1</strong>, the current public release, which works differently from this page. Yorozu 0.7.0 has no installer yet. Build it from source until there is a Mac download and a public TestFlight for it.</p>
     </div>
     <div class="installation-options">
       <article>
-        <h3>Mac</h3>
-        <p>Download the app, move it to Applications and open it. Yorozu lives in your menu bar. Want early builds? <a href="/beta">Download the beta</a> and turn on beta updates in Settings.</p>
-        <a href="/mac">Download for Mac</a>
+        <h3>Yorozu 0.7.0, from source</h3>
+        <p>Developers can build the 0.7.0 Mac app from the repository's <code>projectx</code> branch with <code>mise install</code> and <code>scripts/build_native.sh</code>; the <a href={guide}>setup guide</a> lists what else you need. The 0.7.0 iPhone app is not available outside internal TestFlight yet: the iPhone project is tied to the owner's team, and a self-signed build loses Camera pairing and alerts.</p>
+        <a href={build}>Open the build instructions</a>
       </article>
       <article>
-        <h3>iPhone, via TestFlight</h3>
-        <p>Open the link on your iPhone, install <a href="https://apps.apple.com/app/testflight/id899247664">TestFlight</a> if prompted, then install Yorozu. Beta builds update automatically.</p>
-        <a href="/iphone">Join on TestFlight</a>
+        <h3>Mac, v1</h3>
+        <p>Installs Yorozu v1 for Apple silicon Macs. Move it to Applications and open it. Want early v1 builds? <a href="/beta">Download the v1 beta</a>.</p>
+        <a href="/mac">Download v1 for Mac</a>
       </article>
       <article>
-        <h3>iPhone, from source</h3>
-        <p>Developers can use Xcode and Tuist on a Mac. Follow the development guide to generate the workspace, then open <code>apps/ios/Yorozu.xcworkspace</code> in Xcode. For a physical iPhone, configure your own signing team and provisioning for the app and its extensions, select the <code>YorozuIOS</code> scheme and your connected iPhone, then run.</p>
-        <a href="https://github.com/izyuumi/yorozu#development">Open the development guide</a>
+        <h3>iPhone, v1, via TestFlight</h3>
+        <p>The public TestFlight installs the v1 iPhone app. Open the link on your iPhone, install <a href="https://apps.apple.com/app/testflight/id899247664">TestFlight</a> if prompted, then install Yorozu.</p>
+        <a href="/iphone">Join v1 on TestFlight</a>
       </article>
     </div>
   </section>
 
   <section class="steps" id="pair" aria-labelledby="steps-title">
     <h2 id="steps-title">Then pair once.</h2>
-    <p class="steps-intro">You’ll need an Apple silicon Mac with macOS 15 or later and <a href="https://docs.openclaw.ai/install">OpenClaw</a> configured. Keep your host Mac awake and online to reach it from your phone.</p>
+    <p class="steps-intro">These steps are for Yorozu 0.7.0. You’ll need a Mac with macOS 15 or later and <a href="https://docs.openclaw.ai/install">OpenClaw</a> set up (or, experimentally, <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a>), and an iPhone with iOS 18 or later and the 0.7.0 app, which is in internal testing for now. Keep the Mac awake and online to reach it from your phone.</p>
     <ol>
       <li>
         <span class="num" aria-hidden="true">1</span>
-        <h3>Set up your host Mac</h3>
-        <p>Open Yorozu from the menu bar, choose “Host Yorozu on this Mac” and grant the permissions you want. Then add Yorozu to OpenClaw as a chat channel with <a href="https://github.com/izyuumi/yorozu#install">four commands</a>.</p>
+        <h3>Set up the Mac</h3>
+        <p>Open Yorozu; the setup window opens at first launch. It walks you through the harness, models, integrations and YOLO mode, and skips whatever is already in place.</p>
       </li>
       <li>
         <span class="num" aria-hidden="true">2</span>
-        <h3>Scan one code</h3>
-        <p>In Mac Settings → Devices, choose “Pair Another Device”. Open Yorozu on your iPhone and scan the code. No Yorozu account needed.</p>
+        <h3>Pair your iPhone</h3>
+        <p>On the Mac, open Settings › Devices › Pair iPhone. Scan the code with the iPhone Camera, or open Yorozu on the iPhone, tap “Enter code manually” and paste the code. Check that the Mac key matches. No Yorozu account needed.</p>
       </li>
       <li>
         <span class="num" aria-hidden="true">3</span>
         <h3>Talk from anywhere</h3>
-        <p>Every thread lives on the Mac. Your phone, and any other Mac, just reaches it.</p>
+        <p>The conversation lives on the Mac. Your phone reaches it through the relay, or directly at home if you turn that on.</p>
       </li>
     </ol>
   </section>
 
   <section class="warning" id="before-you-install" aria-labelledby="risk-title">
     <h2 id="risk-title">Before you install</h2>
-    <p><strong>Using Yorozu could get your Claude or ChatGPT/Codex account suspended or banned.</strong> Yorozu drives Claude Code and Codex on your Mac with the account you signed in with. Anthropic and OpenAI decide what use of their subscriptions is allowed, change those rules without notice, and have suspended accounts used with third-party agent tools. If you want the lowest risk, use an API key rather than a subscription login.</p>
-    <p>AI agents take real actions on your Mac: they run commands, edit and delete files, and can send messages. Review what you approve. See the <a href="/terms/">Terms of Use</a>.</p>
+    <p><strong>Using Yorozu could get your Claude or ChatGPT/Codex account suspended or banned.</strong> Your harness runs coding executors such as Claude Code and Codex, and the models behind them, with the accounts you signed in with. Anthropic and OpenAI decide what use of their subscriptions is allowed, change those rules without notice, and have suspended accounts used with third-party agent tools. If you want the lowest risk, use an API key rather than a subscription login.</p>
+    <p>AI agents take real actions on your Mac: they run commands, edit and delete files, operate apps and can send messages. Review what you allow, especially with YOLO mode on. See the <a href="/terms/">Terms of Use</a>.</p>
   </section>
 </Base>
