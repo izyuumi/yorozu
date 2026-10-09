@@ -31,8 +31,6 @@ extension AppModel {
     }
     /// Phone pushes (#320): `[notifications]` on with destination `phones`.
     var phoneAlerts: Bool { resolved.map { $0.config.notifications.enabled && $0.config.notifications.destination == .phones } ?? false }
-    /// Retired with the coding executors (#351); kept empty for the Settings rows until they go.
-    var executorRuntimes: [String:String] { [:] }
     /// Reads the harness's model metadata, then recomputes the settings. A failed read keeps the last good metadata.
     @discardableResult func refreshModels() -> Task<Void,Never> {
         metadataAsked = Date()

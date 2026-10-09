@@ -55,18 +55,17 @@ public struct HarnessDetection: Sendable, Equatable {
     public var items: [Readiness.Item] = []
 }
 
-/// A coding agent for display (#351; Settings shows found or not found): whether its program is found (`CodingAgent.executable`),
-/// and the sign-in command to copy. Never a login state: Yorozu can't tell whether the tool is signed in. `executor`
-/// carries the agent's name for the Settings rows written before #351.
-public struct CodingExecutor: Sendable, Equatable {
-    public var executor: Executor; public var binary: String?; public var path: String?
-    public var login: String?
-    public init(_ agent: CodingAgent) { executor = Executor(id: agent.name,name: Self.titles[agent.name] ?? agent.name,appAccess: false,liveSteer: false); binary = agent.command.first; path = agent.executable; login = agent.login }
+/// A coding agent for display (#351; Settings › Advanced shows found or not found): its program's path when found
+/// (`CodingAgent.executable`) and the sign-in command to copy. Never a login state: Yorozu can't tell whether the tool is signed in.
+public struct CodingAgentStatus: Sendable, Equatable, Identifiable {
+    public var name: String, title: String, path: String?, login: String?
+    public var id: String { name }
+    public init(_ agent: CodingAgent) { name = agent.name; title = Self.titles[agent.name] ?? agent.name; path = agent.executable; login = agent.login }
     static let titles = ["claude": "Claude Code", "codex": "Codex"]
 }
 
 /// The setup seam each harness adapter fills in beside `Harness` (#317): read-only detection, its readiness checks, the setup
-/// steps it takes part in. Coding agents are the same under every harness (`executors`).
+/// steps it takes part in.
 public protocol HarnessSetup: Sendable {
     var kind: Config.HarnessKind { get }
     var title: String { get }
@@ -77,10 +76,7 @@ public protocol HarnessSetup: Sendable {
     /// The setup steps (`SetupEngine.order`) this adapter takes part in beyond detection.
     var steps: [String] { get }
 }
-public extension HarnessSetup {
-    /// The coding agents workers may run (#351), found or not; the same under every harness.
-    func executors(_ settings: HarnessSettings) -> [CodingExecutor] { settings.codingAgents.map(CodingExecutor.init) }
-}
+
 
 public extension Config.HarnessKind {
     /// This kind's setup adapter for `config`; `rpc` is the Gateway client OpenClaw's checks go through.

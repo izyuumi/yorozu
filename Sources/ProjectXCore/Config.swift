@@ -18,12 +18,6 @@ public struct Config: Sendable, Equatable {
     public struct Direct: Sendable, Equatable { public var enabled = true, port = 8738 }
     public struct HarnessSettings: Sendable, Equatable {
         public var kind = HarnessKind.openclaw, agent = "yorozu", transport = Transport.native, gatewayURL = "ws://127.0.0.1:18789", hermesURL = "http://127.0.0.1:8642"
-        /// Retired with `dev_repo` and `dev_base` (#351): never read from or written to the file, where old keys stay as
-        /// unknown data. Kept only until Settings › Advanced drops its coding-repository rows.
-        @available(*, deprecated, message: "Retired in #351: coding runs in the workspace; dev_repo is ignored.")
-        public var devRepo = "", devBase = ""
-        @available(*, deprecated, message: "Retired in #351.")
-        public var devRepoURL: URL? { nil }
     }
     /// Where workers and coding agents work (#351): one folder per task under `path`. `restrict` keeps them inside it.
     public struct Workspace: Sendable, Equatable {
@@ -35,11 +29,9 @@ public struct Config: Sendable, Equatable {
             return isolated ? dataRoot.appendingPathComponent("workspace",isDirectory: true) : FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/workspace",isDirectory: true)
         }
     }
-    /// A nil role or a missing executor is automatic (`ModelDefaults`).
+    /// A nil role is automatic (`ModelDefaults`).
     public struct Models: Sendable, Equatable {
         public var secretary, extraction, worker, review: String?; public var rules = Rules()
-        /// Retired with the coding executors (#351): never read from or written to the file (`[models.coding]` stays as unknown data).
-        public var coding: [String:String] = [:]
         public init() {}
     }
     public struct Rules: Sendable, Equatable { public var minContextTokens = 32000, minOutputTokens = 16000 }
@@ -472,9 +464,8 @@ public struct ResolvedSettings: Sendable, Equatable {
     public func source(_ key: String) -> SettingSource {
         environment[key] != nil ? .environment : config.fileKeys.contains(key) ? .file : key.hasPrefix("models.") && !key.hasPrefix("models.rules.") ? .automatic : .default
     }
-    /// Per-role models from the harness's metadata; explicit choices (environment or file) win. `runtimes` maps the
-    /// harness's coding executors to their model runtimes (`Executor.runtime`).
-    public func models(_ available: [ModelInfo], primary: String?, runtimes: [String:String] = [:]) -> ModelChoices { ModelDefaults.resolve(available,primary: primary,explicit: config.models,runtimes: runtimes) }
+    /// Per-role models from the harness's metadata; explicit choices (environment or file) win.
+    public func models(_ available: [ModelInfo], primary: String?) -> ModelChoices { ModelDefaults.resolve(available,primary: primary,explicit: config.models) }
     public static func == (a: Self, b: Self) -> Bool { a.config == b.config && a.environment == b.environment }
 }
 

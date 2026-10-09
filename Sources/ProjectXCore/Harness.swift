@@ -1,23 +1,6 @@
 import Foundation
 import CryptoKit
 
-/// Retired with the routing-level executors (#351): workers call coding agents through Yorozu instead. Kept only until
-/// Settings › Advanced drops its executor rows; no harness offers one.
-public struct Executor: Codable, Sendable, Equatable {
-    public var id: String, name: String
-    /// Gets Yorozu's MCP servers, so it can operate apps and browsers.
-    public var appAccess: Bool
-    /// Takes changes while a run is going; otherwise they wait for a follow-up turn.
-    public var liveSteer: Bool
-    /// Harness-specific routing guidance for the secretary policy.
-    public var routingNotes: String
-    /// Nil when ready; otherwise why not.
-    public var notReady: String?
-    /// The model runtime it runs on, matched against `ModelInfo.runtimes` for its automatic model; nil means none.
-    public var runtime: String?
-    public init(id: String, name: String, appAccess: Bool, liveSteer: Bool, runtime: String? = nil, routingNotes: String = "", notReady: String? = nil) { self.id = id; self.name = name; self.appAccess = appAccess; self.liveSteer = liveSteer; self.runtime = runtime; self.routingNotes = routingNotes; self.notReady = notReady }
-}
-
 public protocol Harness: Sendable {
     var name: String { get }
     /// Stable harness id: openclaw, hermes, fixture, offline.
@@ -42,8 +25,6 @@ public protocol Harness: Sendable {
 }
 public extension Harness {
     var agentID: String { Config.HarnessSettings().agent }
-    @available(*, deprecated, message: "Retired in #351: no harness offers coding executors.")
-    var executors: [Executor] { [] }
     var rawPromptCap: Int { ProjectXCore.rawPromptCap }
     var workerGuard: Int { 32000 }
     func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal] { [] }
@@ -76,13 +57,6 @@ public struct HarnessSettings: Sendable {
     /// The file store root (#316): an attachment's file is `filesRoot` + `Attachment.path`. Nil: no store, so no file is available.
     public var filesRoot: URL?
     public init() {}
-}
-/// Retired with `dev_repo` (#351); kept only until Settings › Advanced drops its repository picker.
-public extension HarnessSettings {
-    @available(*, deprecated, message: "Retired in #351.")
-    var codingBaseBranch: String { "" }
-    @available(*, deprecated, message: "Retired in #351.")
-    func resolvingBase(_ repo: URL) throws -> HarnessSettings { self }
 }
 public struct OfflineHarness: Harness {
     public let id = "offline"
