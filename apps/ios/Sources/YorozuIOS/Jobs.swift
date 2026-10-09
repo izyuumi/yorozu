@@ -11,7 +11,7 @@ extension JobListData.Job {
     var needsAttention: Bool { state == "needsAttention" || state == "needsApproval" }
 }
 
-/// "Jobs" atop the sub-chat list: how many, and how many need attention.
+/// "Scheduled" (jobs) atop the Activities list: how many, and how many need attention.
 struct JobsRow: View {
     let jobs: [JobListData.Job]
 
@@ -25,12 +25,12 @@ struct JobsRow: View {
                         .foregroundStyle(YorozuPalette.vermilion)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
-                        Text("Jobs").lineLimit(1)
+                        Text("Scheduled").lineLimit(1)
                         Group {
                             if attention > 0 {
-                                Text("^[\(jobs.count) job](inflect: true) · \(attention) need attention").foregroundStyle(YorozuPalette.warning)
+                                Text("\(jobs.count) scheduled · \(attention) need attention").foregroundStyle(YorozuPalette.warning)
                             } else {
-                                Text("^[\(jobs.count) job](inflect: true)").foregroundStyle(.secondary)
+                                Text("\(jobs.count) scheduled").foregroundStyle(.secondary)
                             }
                         }
                         .font(.footnote)
@@ -56,24 +56,24 @@ struct JobsScreen: View {
                 ForEach(model.jobs) { row($0) }
             } footer: {
                 if !model.jobs.isEmpty {
-                    Text("To create or change a job, ask Yorozu in the main chat. Tap a job to open its sub-chat.")
+                    Text("To schedule or change something, ask Yorozu in the main chat. Tap one to open its activity.")
                 }
             }
         }
         .listStyle(.insetGrouped)
         .overlay {
             if model.jobs.isEmpty {
-                ContentUnavailableView("No jobs yet", systemImage: "clock",
-                                       description: Text("To create a job, ask Yorozu in the main chat."))
+                ContentUnavailableView("Nothing scheduled yet", systemImage: "clock",
+                                       description: Text("To schedule something, ask Yorozu in the main chat."))
             }
         }
-        .navigationTitle("Jobs")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationTitle("Scheduled")
+        .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog(Text("Delete “\(deleting?.name ?? "")”?"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                             titleVisibility: .visible, presenting: deleting) { job in
             Button("Delete", role: .destructive) { act(job, .delete) }
         } message: { _ in
-            Text("It stops running. Its sub-chat and its folder stay on your Mac.")
+            Text("It stops running. Its activity and its folder stay on your Mac.")
         }
     }
 
@@ -112,7 +112,7 @@ struct JobsScreen: View {
             }
             .buttonStyle(.borderless)
             .disabled(!enabled)
-            .accessibilityLabel("Job actions")
+            .accessibilityLabel("Actions")
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Group {

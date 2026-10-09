@@ -70,8 +70,10 @@ struct ChatScreen: View {
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .scrollDismissesKeyboard(.interactively)
             .onScrollGeometryChange(for: ScrollEdge.self) { geometry in
+                // `containerSize` is the bounds less the insets and the offset is -top at the top, so the end
+                // sits at content - container - top (measured on iOS 26 and 27, with the bars' insets).
                 ScrollEdge(offset: geometry.contentOffset.y,
-                           maxOffset: geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height)
+                           maxOffset: geometry.contentSize.height - geometry.containerSize.height - geometry.contentInsets.top)
             } action: { old, new in
                 if new.offset == old.offset, new.maxOffset > old.maxOffset {
                     // Content grew (a message, a longer answer, the keyboard): follow it only from the bottom.
@@ -96,6 +98,8 @@ struct ChatScreen: View {
             .overlay(alignment: .bottom) {
                 if !atBottom && newCount > 0 {
                     NewMessagesPill(count: newCount) {
+                        atBottom = true
+                        seenId = model.timeline.last?.id
                         withAnimation { position.scrollTo(edge: .bottom) }
                     }
                     .padding(.bottom, LayoutMetrics.inner)
@@ -136,7 +140,10 @@ struct ChatScreen: View {
             .navigationSubtitleIfAvailable(model.shownStatus.label)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    SubChatsButton(running: model.runningTopics) { path = [.topics] }
+                    // A standard bar button: the whole glass circle is the target, and the badge is the bar's own.
+                    Button("Activities", systemImage: "bubble.left.and.bubble.right") { navigate([.topics]) }
+                        .badge(model.runningTopics)
+                        .accessibilityValue(model.runningTopics > 0 ? String(localized: "\(model.runningTopics) running") : "")
                 }
                 if !Self.hasSubtitle {
                     ToolbarItem(placement: .topBarLeading) {
@@ -148,7 +155,7 @@ struct ChatScreen: View {
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("Search", systemImage: "magnifyingglass") { path = [.search] }
+                    Button("Search", systemImage: "magnifyingglass") { navigate([.search]) }
                     Button("Settings", systemImage: "gearshape") { settings = true }
                 }
             }
@@ -159,7 +166,7 @@ struct ChatScreen: View {
                 case .jobs:
                     JobsScreen(model: model) { path.append(.topic($0, focus: nil)) }
                 case .topic(let id, let focus):
-                    TopicScreen(model: model, topicId: id, focus: focus) { path = [] }
+                    TopicScreen(model: model, topicId: id, focus: focus) { navigate([]) }
                 case .search:
                     SearchScreen(model: model, onOpen: open) { path.removeLast() }
                 case .page(let id):
@@ -234,6 +241,13 @@ struct ChatScreen: View {
         guard RowStyle(bubble) == .answer, !stored, let id = bubble.replyTo else { return nil }
         if let request = byId[id] { return ReplyHeader(text: request.shownText, revealable: true) }
         return bubble.topicId.flatMap { model.topics[$0]?.label }.map { ReplyHeader(text: $0, revealable: false) }
+    }
+
+    /// Moves to `route` with the keyboard down first. A field still first responder when its screen is covered is
+    /// remembered by UIKit and raised again when the screen comes back, which popped the keyboard up on return.
+    private func navigate(_ route: [ChatRoute]) {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        path = route
     }
 
     private func show(_ id: String?) {
@@ -319,33 +333,6 @@ struct ChatScreen: View {
         case .none:
             break
         }
-    }
-}
-
-/// Sub-chats, with the number of running topics.
-private struct SubChatsButton: View {
-    let running: Int
-    let action: () -> Void
-
-    private let badgeOffset: CGFloat = 8
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .overlay(alignment: .topTrailing) {
-                    if running > 0 {
-                        Text(verbatim: "\(running)")
-                            .font(.caption2.weight(.bold))
-                            .monospacedDigit()
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, LayoutMetrics.tight)
-                            .background(YorozuPalette.bubble, in: Capsule())
-                            .offset(x: badgeOffset, y: -badgeOffset)
-                    }
-                }
-        }
-        .accessibilityLabel("Sub-chats")
-        .accessibilityValue(running > 0 ? String(localized: "\(running) running") : "")
     }
 }
 
@@ -443,7 +430,7 @@ private struct EmptyChat: View {
     }
 }
 
-/// Connection details, Copy diagnostics, Repair, Remove and both versions.
+/// Connection details, notifications, the Mac's readiness, About (versions and links), Copy diagnostics, Repair and Remove.
 private struct SettingsSheet: View {
     let model: PhoneModel
     let onRepair: () -> Void
@@ -510,9 +497,32 @@ private struct SettingsSheet: View {
                 }
                 // Read again on the way back from the Settings app.
                 .task(id: scenePhase) { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
+                // The Mac's own readiness, as synced; the fixes are on the Mac.
+                if let readiness = model.readiness {
+                    Section {
+                        LabeledContent("Mac readiness") {
+                            Text(model.readinessReason ?? String(localized: "Ready"))
+                        }
+                        ForEach(readiness.items.filter { $0.severity != .ok }, id: \.id) { item in
+                            Label {
+                                Text(item.title)
+                            } icon: {
+                                Image(systemName: item.severity == .blocking ? "xmark.octagon" : "exclamationmark.triangle")
+                                    .foregroundStyle(item.severity == .blocking ? YorozuPalette.vermilion : YorozuPalette.warning)
+                            }
+                        }
+                    } footer: {
+                        if readiness.state != .ready { Text("Fix this on your Mac") }
+                    }
+                }
                 Section {
                     LabeledContent("Mac version", value: model.macVersion ?? String(localized: "Unknown"))
                     LabeledContent("iPhone version", value: Self.version)
+                    Link("Privacy Policy", destination: URL(string: "https://yorozu.yumi.to/privacy/")!)
+                    Link("Terms of Use", destination: URL(string: "https://yorozu.yumi.to/terms/")!)
+                    Link("Source on GitHub", destination: URL(string: "https://github.com/izyuumi/yorozu")!)
+                } header: {
+                    Text("About")
                 }
                 Section {
                     Button(copied ? String(localized: "Copied") : String(localized: "Copy diagnostics"),

@@ -154,15 +154,15 @@ struct AttachMenu: View {
     let onPick: ([DraftFile]) -> Void
 
     @State private var photos: [PhotosPickerItem] = []
+    @State private var choosingPhotos = false
     @State private var browsingFiles = false
     @State private var takingPhoto = false
     @State private var failure: String?
 
     var body: some View {
         Menu {
-            PhotosPicker(selection: $photos, maxSelectionCount: max(1, remaining), matching: .any(of: [.images, .videos])) {
-                Label("Photo Library", systemImage: "photo.on.rectangle")
-            }
+            // A flag rather than a PhotosPicker in the menu: a picker inside a Menu never presents.
+            Button("Photo Library", systemImage: "photo.on.rectangle") { choosingPhotos = true }
             // Only where there is a camera to open: a simulator has none.
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button("Take Photo", systemImage: "camera") { takingPhoto = true }
@@ -190,6 +190,8 @@ struct AttachMenu: View {
         } message: {
             Text(failure ?? "")
         }
+        .photosPicker(isPresented: $choosingPhotos, selection: $photos, maxSelectionCount: max(1, remaining),
+                      matching: .any(of: [.images, .videos]))
         .task(id: photos) { await loadPhotos() }
         .fileImporter(isPresented: $browsingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             switch result {

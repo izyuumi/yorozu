@@ -136,12 +136,12 @@ struct TopicsScreen: View {
         .listStyle(.insetGrouped)
         .overlay {
             if ids.isEmpty && !showsJobs {
-                ContentUnavailableView("No sub-chats yet", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("Bigger work runs in a sub-chat on your Mac. It shows up here."))
+                ContentUnavailableView("No activities yet", systemImage: "bubble.left.and.bubble.right",
+                                       description: Text("Bigger work runs in the background on your Mac. It shows up here."))
             }
         }
-        .navigationTitle("Sub-chats")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationTitle("Activities")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     @ViewBuilder
@@ -235,6 +235,7 @@ struct TopicScreen: View {
     /// A job's own input (#319); other sub-chats are inspect only.
     @State private var draft = ""
     @State private var noFiles: [DraftFile] = []
+    @State private var details: PhoneModel.Bubble?
 
     private enum Item: Identifiable {
         case message(PhoneModel.Bubble)
@@ -270,7 +271,7 @@ struct TopicScreen: View {
                     switch item {
                     case .message(let bubble):
                         MessageRow(bubble: bubble, header: nil, delivery: model.delivery(of: bubble),
-                                   onShowRequest: {}, onShowDetails: {},
+                                   onShowRequest: {}, onShowDetails: { details = bubble },
                                    onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
                             .id(bubble.id)
                     case .task(let task):
@@ -293,7 +294,7 @@ struct TopicScreen: View {
         .overlay {
             if model.topics[topicId] == nil && job == nil {
                 ContentUnavailableView("Not on this iPhone", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("This sub-chat is older than what this iPhone keeps. Open it on your Mac."))
+                                       description: Text("This activity is older than what this iPhone keeps. Open it on your Mac."))
             }
         }
         .task {
@@ -322,6 +323,10 @@ struct TopicScreen: View {
         .navigationTitle(job?.name ?? model.topics[topicId]?.label ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(job.map(\.schedule) ?? String(localized: "Inspect only"))
+        .sheet(item: $details) { bubble in
+            MessageDetails(bubble: bubble, delivery: model.delivery(of: bubble),
+                           onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
+        }
     }
 
     private var inspectOnly: some View {
