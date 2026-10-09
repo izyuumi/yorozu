@@ -240,12 +240,13 @@ private struct EmptyChat: View {
     }
 }
 
-/// Status, Repair, Remove and the version.
+/// Connection details, Copy diagnostics, Repair, Remove and both versions.
 private struct SettingsSheet: View {
     let model: PhoneModel
     let onRepair: () -> Void
 
     @State private var removing = false
+    @State private var copied = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -254,16 +255,38 @@ private struct SettingsSheet: View {
                 Section("Connection") {
                     LabeledContent("Status", value: model.status.label)
                     if let hostName = model.hostName { LabeledContent("Mac", value: hostName) }
-                    if let failure = model.failure {
-                        Text(failure).font(.footnote).foregroundStyle(.secondary)
+                    if let relayHost = model.relayHost { LabeledContent("Relay", value: relayHost) }
+                    if let fingerprint = model.fingerprint {
+                        LabeledContent("Mac key") {
+                            Text(fingerprint).monospaced().textSelection(.enabled)
+                        }
                     }
+                    if let pairedAt = model.pairedAt {
+                        LabeledContent("Paired since") { Text(pairedAt, format: .dateTime.year().month().day()) }
+                    }
+                    if let lastError = model.lastError {
+                        VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                            LabeledContent("Last error") { Text(lastError.at, format: .relative(presentation: .named)) }
+                            Text(lastError.message).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Section {
+                    LabeledContent("Mac version", value: model.macVersion ?? String(localized: "Unknown"))
+                    LabeledContent("iPhone version", value: Self.version)
+                }
+                Section {
+                    Button(copied ? String(localized: "Copied") : String(localized: "Copy diagnostics"),
+                           systemImage: copied ? "checkmark" : "doc.on.doc") {
+                        UIPasteboard.general.string = diagnostics
+                        copied = true
+                    }
+                } footer: {
+                    Text("Versions and connection details only: never messages, keys or tokens.")
                 }
                 Section {
                     Button("Repair connection", action: onRepair)
                     Button("Remove host", role: .destructive) { removing = true }
-                }
-                Section {
-                    LabeledContent("Version", value: Self.version)
                 }
             }
             .navigationTitle("Settings")
@@ -281,6 +304,23 @@ private struct SettingsSheet: View {
             }
         }
         .yorozuTint()
+    }
+
+    /// Plain English text for a bug report, whatever the interface language. Only what Settings
+    /// shows: no message content, keys (the fingerprint is a prefix of the public key) or tokens.
+    private var diagnostics: String {
+        let date = { (d: Date) in d.ISO8601Format() }
+        return [
+            "Yorozu diagnostics \(date(Date()))",
+            "iPhone app: \(Self.version)",
+            "iOS: \(UIDevice.current.systemVersion)",
+            "Mac app: \(model.macVersion ?? "unknown")",
+            "Status: \(model.status)",
+            "Relay host: \(model.relayHost ?? "none")",
+            "Mac key fingerprint: \(model.fingerprint ?? "none")",
+            "Paired since: \(model.pairedAt.map(date) ?? "unknown")",
+            "Last error: \(model.lastError.map { "\(date($0.at)) \($0.message)" } ?? "none")",
+        ].joined(separator: "\n")
     }
 
     private static let version: String = {

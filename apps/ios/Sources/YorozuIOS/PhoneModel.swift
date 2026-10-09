@@ -57,12 +57,8 @@ final class PhoneModel {
         /// The Mac this phone is already paired with: a repair rather than a new Mac.
         let repair: Bool
 
-        var relayHost: String { URLComponents(string: payload.relayUrl)?.host ?? payload.relayUrl }
-        /// The Mac key's first 8 bytes as hex, to compare with the Mac's screen.
-        var fingerprint: String {
-            (Data(base64URLEncoded: payload.macPubkey) ?? Data()).prefix(8)
-                .map { String(format: "%02x", $0) }.joined(separator: " ")
-        }
+        var relayHost: String { payload.relayHost }
+        var fingerprint: String { payload.fingerprint }
     }
 
     /// The reply to the latest `page_request`: the messages around one message, for display only.
@@ -106,12 +102,20 @@ final class PhoneModel {
     private(set) var state: TransportState = .closed
     private(set) var ownerOnline = false
     /// The link's failure; cleared by the next `.paired`.
-    private(set) var failure: String?
+    private(set) var failure: String? { didSet { noteError(failure) } }
     /// "Update required: …" while the Mac refuses this phone, for the chat's status line.
     private(set) var updateRequired: String?
     /// Why the last send did not go; the draft is still in the composer.
-    private(set) var sendError: String?
+    private(set) var sendError: String? { didSet { noteError(sendError) } }
+    /// The latest failure or send error, kept after it clears, for Settings and Copy diagnostics.
+    private(set) var lastError: (message: String, at: Date)?
     private(set) var hostName: String?
+    /// The Mac's app version, from its peer info.
+    private(set) var macVersion: String?
+    /// When this phone first joined the Mac (`PairingStore.Stored.pairedAt`).
+    private(set) var pairedAt: Date?
+    var relayHost: String? { pairing?.relayHost }
+    var fingerprint: String? { pairing?.fingerprint }
     /// The status saved on going to the background, shown for up to 3 s on return and launch.
     private var heldStatus: ClientConnectionStatus?
 
@@ -211,6 +215,7 @@ final class PhoneModel {
             return
         }
         pairing = stored.pairing
+        pairedAt = stored.pairedAt
         ownPub = identity.base64URLEncodedString()
         linked = stored.paired == true
         if let ownPub, let snapshot = MirrorCache.shared.load(owner: ownPub) { restore(snapshot) }
@@ -228,6 +233,9 @@ final class PhoneModel {
         updateRequired = nil
         sendError = nil
         hostName = nil
+        macVersion = nil
+        pairedAt = nil
+        lastError = nil
         clearMirror(keepPending: false)
         cursor = nil
         saveTask?.cancel()
@@ -311,6 +319,7 @@ final class PhoneModel {
             ownerOnline = online
         case .peerInfo(let info):
             hostName = info.computerName
+            macVersion = info.appVersion
         case .compatibility(let compatibility):
             if case .updateRequired(let reason) = compatibility {
                 updateRequired = String(localized: "Update required: \(reason)")
@@ -338,6 +347,8 @@ final class PhoneModel {
 
     /// The relay never buffers Mac -> phone frames, so every `.paired` catches up and resends.
     private func paired() {
+        // `PairingStore.markPaired` stamps the first join; mirror it rather than reread the Keychain.
+        if pairedAt == nil { pairedAt = Date() }
         failure = nil
         updateRequired = nil
         catchingUp = true
@@ -626,6 +637,19 @@ final class PhoneModel {
     private static let windowDays = 30
     private static let liveStates: Set = ["queued", "working", "amendment_pending", "cancellation_requested", "uncertain"]
     private static var now: Int { Int(Date().timeIntervalSince1970 * 1000) }
+
+    private func noteError(_ message: String?) {
+        if let message { lastError = (message, Date()) }
+    }
+}
+
+extension QrPayload {
+    var relayHost: String { URLComponents(string: relayUrl)?.host ?? relayUrl }
+    /// The Mac key's first 8 bytes as hex, to compare with the Mac's screen.
+    var fingerprint: String {
+        (Data(base64URLEncoded: macPubkey) ?? Data()).prefix(8)
+            .map { String(format: "%02x", $0) }.joined(separator: " ")
+    }
 }
 
 /// The chat's status when the app last went to the background.
