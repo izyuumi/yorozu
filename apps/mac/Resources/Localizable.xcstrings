@@ -1179,16 +1179,6 @@
         }
       }
     },
-    "Shorten it to send it." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "送信するには短くしてください。"
-          }
-        }
-      }
-    },
     "Show details" : {
       "localizations" : {
         "ja" : {
@@ -3055,6 +3045,166 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "⌘Enter で送信"
+          }
+        }
+      }
+    },
+    "Shorten it, or send it as a text file." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "短くするか、テキストファイルとして送ってください。"
+          }
+        }
+      }
+    },
+    "Send as Text File" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テキストファイルで送信"
+          }
+        }
+      }
+    },
+    "Dismiss" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "閉じる"
+          }
+        }
+      }
+    },
+    "Attach files" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイルを添付"
+          }
+        }
+      }
+    },
+    "Up to %lld files per message." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1つのメッセージに添付できるファイルは%lld個までです。"
+          }
+        }
+      }
+    },
+    "“%@” is over %@. Files can be up to %@ each." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%1$@」は%2$@を超えています。ファイルは1つ%3$@までです。"
+          }
+        }
+      }
+    },
+    "“%@” isn't a file, so it can't be attached." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」はファイルではないため添付できません。"
+          }
+        }
+      }
+    },
+    "Pasted image" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペーストした画像"
+          }
+        }
+      }
+    },
+    "Attach" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添付"
+          }
+        }
+      }
+    },
+    "Message" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージ"
+          }
+        }
+      }
+    },
+    "Send original" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オリジナルを送信"
+          }
+        }
+      }
+    },
+    "Send at full size instead of %lld px on the long edge" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "長辺 %lld px に縮小せず、元のサイズで送信します"
+          }
+        }
+      }
+    },
+    "Quick Look" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クイックルック"
+          }
+        }
+      }
+    },
+    "Image %@, %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "画像 %1$@、%2$@"
+          }
+        }
+      }
+    },
+    "Opens Quick Look" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クイックルックで開きます"
+          }
+        }
+      }
+    },
+    "File no longer available" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイルはもう利用できません"
           }
         }
       }
