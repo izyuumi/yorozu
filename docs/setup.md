@@ -101,7 +101,7 @@ Step `path_link` offers a `yorozu` command: answered `yes`, it links `~/.local/b
 
 ### Paste-in message
 
-The text a user pastes into an agent they already use (Claude Code, Codex, OpenClaw…) so it drives `Yorozu setup` with them. #321 publishes it in `Start.md` and on the website; keep those copies the same as this one.
+The text a user pastes into an agent they already use (Claude Code, Codex, OpenClaw…) so it drives `Yorozu setup` with them. #321 publishes it verbatim in `Start.md` and on the website, both on `main` ([release.md](release.md#website)). Those copies must stay word for word the same as this one, so a change to the message here also needs a PR to `main`.
 
 ```text
 Help me set up Yorozu on this Mac. Yorozu has a setup command: you run it, and I answer its questions.

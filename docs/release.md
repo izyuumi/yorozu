@@ -1,6 +1,6 @@
 # Release
 
-How the Mac dev app is rebuilt and how iOS builds reach TestFlight. Credentials and signing are in [setup.md](setup.md); the steps each script runs are in its header comment.
+How the Mac dev app is rebuilt, how iOS builds reach TestFlight and how the website ships. Credentials and signing are in [setup.md](setup.md); the steps each script runs are in its header comment.
 
 ## Version
 
@@ -45,6 +45,12 @@ env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme Y
     -clonedSourcePackagesDirPath .build/xcode-packages -skipPackagePluginValidation \
     CODE_SIGNING_ALLOWED=NO
 ```
+
+## Website
+
+https://yorozu.yumi.to is the Astro site in `apps/web` on `main`, not on `projectx`. `.github/workflows/deploy-web.yml` deploys it on every push to `main` that touches `apps/web/**`, so merging is deploying. `Start.md` on `main` is the guide the site's one-line prompt points agents at; it changes in the same PR as the site.
+
+The 0.7.0 update (#321) is a PR to `main` that stays open until the release; the owner merges it at release time. v1 keeps its links: `/pair`, the AASA file, the privacy and terms pages, and the public TestFlight link, which stays on v1 until v2 is released to that group.
 
 ## Not wired
 

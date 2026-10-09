@@ -772,3 +772,23 @@ Added in implementation:
 - Held notifies live in memory (the latest 20, sent on registration when under 24 h old, collapsed to the newest per class); a quit loses them. Notifies sent since the last pong are sent again on the next registration, for a socket left half-open by sleep.
 - The back-online push names a random event ref, so its tap opens the main timeline at the bottom.
 - With the direct path, a phone whose current token the relay has not heard opens one extra relay socket to register it (`RelayClient.registerPush(deviceToken:relayKnows:)`), and stores the token the relay heard per pairing.
+
+## 2026-10-09 — Website for 0.7.0
+Source: owner decisions recorded in issue #321 ("projectx: website update for 0.7.0"), Decisions section.
+
+- The site (https://yorozu.yumi.to, `apps/web` on `main`) describes only what has shipped by the 0.7.0 release.
+- Every claim that no longer holds for 0.7.0 is rewritten, not left in place.
+- The site's "Set it up with one prompt" section and `Start.md` carry the 0.7.0 paste-in message verbatim from docs/setup.md (#317); #321 publishes it and writes no second version.
+- v1 keeps working for its existing users: `/pair`, the AASA file, and the privacy and terms pages keep working for both v1 and v2 links.
+- The public TestFlight link stays on the v1 build until v2 is released to that group.
+- No personal data on the site, in screenshots or in `Start.md`.
+- Screenshots are regenerated from the 0.7.0 UI.
+- Process: a branch off `main` and a PR to `main`, with `Start.md` in the same PR. Merging deploys, so the owner merges it at the 0.7.0 release.
+
+## 2026-10-09 — Website: open questions at their defaults (not owner decisions)
+Source: the plan comment on issue #321. The open questions were taken at their proposed defaults; the owner may override them, and [status.md](../status.md#open-items) keeps them as an open item.
+
+1. Downloads: `/mac`, `/beta` and `/iphone` stay on v1, each labelled with what it installs. 0.7.0 builds from source.
+2. Prompt URL: stays the raw `Start.md` on `main`, which becomes a short 0.7.0 guide with the paste-in message copied verbatim from docs/setup.md.
+3. Third parties: Hermes Agent and CuaDriver are added to the terms, the privacy page and the footer, and both effective dates change. The owner approves the legal wording.
+4. Screenshots: Mac shots from the 0.7.0 dev app in a throwaway fixture-mode data folder, with the relay pointed at a dead address so it never joins the owner's room, and an invented conversation. Phone shots wait for an internal build on an owner device; the v1 phone shots come off the page until then.
