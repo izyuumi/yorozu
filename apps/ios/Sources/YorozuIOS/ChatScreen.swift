@@ -15,7 +15,7 @@ struct ChatScreen: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
                         ForEach(model.bubbles) { BubbleRow(bubble: $0).id($0.id) }
-                        if model.working {
+                        if model.working == true {
                             ProgressView().accessibilityLabel("Working…")
                         }
                     }
@@ -33,8 +33,9 @@ struct ChatScreen: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     // Words as well as the dot, so the state is never told by colour alone.
-                    if model.status != .connected {
-                        Text(model.status.label)
+                    if model.shownStatus != .connected {
+                        // Off the link the Mac's work state is unknown, never idle.
+                        Text(model.updateRequired ?? String(localized: "\(model.shownStatus.label) · Status unknown"))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -45,7 +46,7 @@ struct ChatScreen: View {
                         .font(.footnote)
                         .padding(.horizontal, LayoutMetrics.gutter)
                     }
-                    Composer(text: $model.draft, working: model.working, enabled: model.canSend) {
+                    Composer(text: $model.draft, working: model.working == true, enabled: model.canSend) {
                         Task { await model.send() }
                     }
                 }
@@ -60,7 +61,7 @@ struct ChatScreen: View {
                         .fill(dotColor)
                         .frame(width: Self.dot, height: Self.dot)
                         .accessibilityElement()
-                        .accessibilityLabel(model.status.label)
+                        .accessibilityLabel(model.shownStatus.label)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Settings", systemImage: "gearshape") { settings = true }
@@ -79,7 +80,7 @@ struct ChatScreen: View {
     private static let dot: CGFloat = 8
 
     private var dotColor: Color {
-        switch model.status {
+        switch model.shownStatus {
         case .connected: YorozuPalette.sage
         case .hostOffline: YorozuPalette.warning
         case .failed: YorozuPalette.vermilion
@@ -153,7 +154,7 @@ private struct SettingsSheet: View {
             }
             .confirmationDialog("Remove host?", isPresented: $removing, titleVisibility: .visible) {
                 Button("Remove host", role: .destructive) {
-                    model.remove()
+                    Task { await model.remove() }
                     dismiss()
                 }
             }

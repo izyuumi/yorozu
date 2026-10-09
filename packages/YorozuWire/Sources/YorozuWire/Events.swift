@@ -92,6 +92,18 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case receipt
         case updateStatus = "update_status"
         case updateControl = "update_control"
+        // Contract 0.7 (docs/ios-relay-contract.md).
+        case topic
+        case task
+        case amendment
+        case workerEvent = "worker_event"
+        case readState = "read_state"
+        case taskControl = "task_control"
+        case taskControlResult = "task_control_result"
+        case searchRequest = "search_request"
+        case searchResult = "search_result"
+        case pageRequest = "page_request"
+        case chunk
     }
 
     public enum Payload: Equatable, Sendable {
@@ -148,6 +160,17 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case receipt(ReceiptData)
         case updateStatus(UpdateStatusData)
         case updateControl(UpdateControlData)
+        case topic(TopicData)
+        case task(TaskData)
+        case amendment(AmendmentData)
+        case workerEvent(WorkerEventData)
+        case readState(ReadStateData)
+        case taskControl(TaskControlData)
+        case taskControlResult(TaskControlResultData)
+        case searchRequest(SearchRequestData)
+        case searchResult(SearchResultData)
+        case pageRequest(PageRequestData)
+        case chunk(ChunkData)
 
         public var kind: Kind {
             switch self {
@@ -204,6 +227,17 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .receipt: .receipt
             case .updateStatus: .updateStatus
             case .updateControl: .updateControl
+            case .topic: .topic
+            case .task: .task
+            case .amendment: .amendment
+            case .workerEvent: .workerEvent
+            case .readState: .readState
+            case .taskControl: .taskControl
+            case .taskControlResult: .taskControlResult
+            case .searchRequest: .searchRequest
+            case .searchResult: .searchResult
+            case .pageRequest: .pageRequest
+            case .chunk: .chunk
             }
         }
 
@@ -295,6 +329,17 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .receipt: payload = .receipt(try c.decode(ReceiptData.self, forKey: .data))
             case .updateStatus: payload = .updateStatus(try c.decode(UpdateStatusData.self, forKey: .data))
             case .updateControl: payload = .updateControl(try c.decode(UpdateControlData.self, forKey: .data))
+            case .topic: payload = .topic(try c.decode(TopicData.self, forKey: .data))
+            case .task: payload = .task(try c.decode(TaskData.self, forKey: .data))
+            case .amendment: payload = .amendment(try c.decode(AmendmentData.self, forKey: .data))
+            case .workerEvent: payload = .workerEvent(try c.decode(WorkerEventData.self, forKey: .data))
+            case .readState: payload = .readState(try c.decode(ReadStateData.self, forKey: .data))
+            case .taskControl: payload = .taskControl(try c.decode(TaskControlData.self, forKey: .data))
+            case .taskControlResult: payload = .taskControlResult(try c.decode(TaskControlResultData.self, forKey: .data))
+            case .searchRequest: payload = .searchRequest(try c.decode(SearchRequestData.self, forKey: .data))
+            case .searchResult: payload = .searchResult(try c.decode(SearchResultData.self, forKey: .data))
+            case .pageRequest: payload = .pageRequest(try c.decode(PageRequestData.self, forKey: .data))
+            case .chunk: payload = .chunk(try c.decode(ChunkData.self, forKey: .data))
             }
         } catch {
             payload = .unknown(kind: rawKind, data: rawData)
@@ -369,6 +414,17 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .receipt(let d): try c.encode(d, forKey: .data)
         case .updateStatus(let data): try c.encode(data, forKey: .data)
         case .updateControl(let data): try c.encode(data, forKey: .data)
+        case .topic(let d): try c.encode(d, forKey: .data)
+        case .task(let d): try c.encode(d, forKey: .data)
+        case .amendment(let d): try c.encode(d, forKey: .data)
+        case .workerEvent(let d): try c.encode(d, forKey: .data)
+        case .readState(let d): try c.encode(d, forKey: .data)
+        case .taskControl(let d): try c.encode(d, forKey: .data)
+        case .taskControlResult(let d): try c.encode(d, forKey: .data)
+        case .searchRequest(let d): try c.encode(d, forKey: .data)
+        case .searchResult(let d): try c.encode(d, forKey: .data)
+        case .pageRequest(let d): try c.encode(d, forKey: .data)
+        case .chunk(let d): try c.encode(d, forKey: .data)
         }
     }
 }
@@ -651,6 +707,18 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var runId: String?
     /// Host-owned final response identity; absent on a client submission.
     public var completionId: String?
+    /// 0.7, Mac -> phone: the v2 message kind (`conversation`, `result`, `failure`, `question`, ...), kept as text so a new kind still decodes.
+    public var kind: String?
+    /// 0.7, Mac -> phone: the sub-chat the message is filed in, if any.
+    public var topicId: String?
+    /// 0.7, Mac -> phone: the task the message belongs to, if any.
+    public var taskId: String?
+    /// 0.7, Mac -> phone: the message this one answers (draws the reply header).
+    public var replyTo: String?
+    /// 0.7, Mac -> phone: an app notice, rendered from its code in the phone's language; `text` is the English fallback.
+    public var notice: NoticeData?
+    /// 0.7, Mac -> phone: the Mac's change sequence of this row (docs/ios-relay-contract.md, "Change sequence").
+    public var seq: Int?
 
     public init(
         role: Role,
@@ -664,8 +732,20 @@ public struct MessageData: Codable, Equatable, Sendable {
         runId: String? = nil,
         completionId: String? = nil,
         delivery: MessageDelivery? = nil,
-        channelModel: ChannelModelChoice? = nil
+        channelModel: ChannelModelChoice? = nil,
+        kind: String? = nil,
+        topicId: String? = nil,
+        taskId: String? = nil,
+        replyTo: String? = nil,
+        notice: NoticeData? = nil,
+        seq: Int? = nil
     ) {
+        self.kind = kind
+        self.topicId = topicId
+        self.taskId = taskId
+        self.replyTo = replyTo
+        self.notice = notice
+        self.seq = seq
         self.delivery = delivery
         self.channelModel = channelModel
         self.role = role
@@ -680,7 +760,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -699,6 +779,12 @@ public struct MessageData: Codable, Equatable, Sendable {
         admissionDeadline = try c.decodeIfPresent(Int.self, forKey: .admissionDeadline)
         runId = try c.decodeIfPresent(String.self, forKey: .runId)
         completionId = try c.decodeIfPresent(String.self, forKey: .completionId)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        topicId = try c.decodeIfPresent(String.self, forKey: .topicId)
+        taskId = try c.decodeIfPresent(String.self, forKey: .taskId)
+        replyTo = try c.decodeIfPresent(String.self, forKey: .replyTo)
+        notice = try c.decodeIfPresent(NoticeData.self, forKey: .notice)
+        seq = try c.decodeIfPresent(Int.self, forKey: .seq)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -715,6 +801,12 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(admissionDeadline, forKey: .admissionDeadline)
         try c.encodeIfPresent(runId, forKey: .runId)
         try c.encodeIfPresent(completionId, forKey: .completionId)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(topicId, forKey: .topicId)
+        try c.encodeIfPresent(taskId, forKey: .taskId)
+        try c.encodeIfPresent(replyTo, forKey: .replyTo)
+        try c.encodeIfPresent(notice, forKey: .notice)
+        try c.encodeIfPresent(seq, forKey: .seq)
     }
 }
 
@@ -1581,18 +1673,21 @@ public struct StopStatusData: Codable, Equatable, Sendable {
     }
 }
 
-/// Last event id the device already holds, per thread.
+/// Last event id the device already holds, per thread (v1). In 0.7 `lastSeen` is `[:]` and the cursor is `afterSeq`.
 public struct SyncRequestData: Codable, Equatable, Sendable {
     public var lastSeen: [String: String]
     public var threadId: String?
     public var focusThreadId: String?
     public var includeCurrent: Bool?
-    public init(lastSeen: [String: String], threadId: String? = nil, focusThreadId: String? = nil,
-                includeCurrent: Bool? = nil) {
+    /// 0.7: the `latestSeq` of the last page the phone applied; nil or 0 = no cache (start at the history window).
+    public var afterSeq: Int?
+    public init(lastSeen: [String: String] = [:], threadId: String? = nil, focusThreadId: String? = nil,
+                includeCurrent: Bool? = nil, afterSeq: Int? = nil) {
         self.lastSeen = lastSeen
         self.threadId = threadId
         self.focusThreadId = focusThreadId
         self.includeCurrent = includeCurrent
+        self.afterSeq = afterSeq
     }
 }
 
@@ -1603,12 +1698,32 @@ public struct SyncDeltaData: Codable, Equatable, Sendable {
     /// Threads with a turn still running on the Mac when this page was made.
     public var workingThreadIds: [String]?
     public var more: Bool?
-    public init(events: [YorozuEvent], current: [YorozuEvent]? = nil, threadId: String? = nil, workingThreadIds: [String]? = nil, more: Bool? = nil) {
+    /// 0.7: threads whose secretary is routing a message right now (the thinking bubble).
+    public var routingThreadIds: [String]?
+    /// 0.7: the cursor these changes continue from (the request's `afterSeq`, or the previous live update's `latestSeq`).
+    public var afterSeq: Int?
+    /// 0.7: the phone's next cursor once it applied this page.
+    public var latestSeq: Int?
+    /// 0.7, reply page only: the cursor was absent or stale, so this starts the history window; drop the cache first.
+    public var reset: Bool?
+    /// 0.7: set on the reply to a `page_request`, which never moves the cursor.
+    public var requestId: String?
+    /// 0.7: the Mac could not read its store; user-facing text. The page has no events and the cursor stays.
+    public var error: String?
+    public init(events: [YorozuEvent], current: [YorozuEvent]? = nil, threadId: String? = nil, workingThreadIds: [String]? = nil, more: Bool? = nil,
+                routingThreadIds: [String]? = nil, afterSeq: Int? = nil, latestSeq: Int? = nil, reset: Bool? = nil,
+                requestId: String? = nil, error: String? = nil) {
         self.events = events
         self.current = current
         self.threadId = threadId
         self.workingThreadIds = workingThreadIds
         self.more = more
+        self.routingThreadIds = routingThreadIds
+        self.afterSeq = afterSeq
+        self.latestSeq = latestSeq
+        self.reset = reset
+        self.requestId = requestId
+        self.error = error
     }
 }
 

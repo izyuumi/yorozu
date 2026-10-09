@@ -8506,6 +8506,16 @@
         }
       }
     },
+    "%@ · Status unknown" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · 状態不明"
+          }
+        }
+      }
+    },
     "Update required: %@": {
       "localizations": {
         "ja": {

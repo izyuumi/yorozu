@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 import SystemConfiguration
 import YorozuWire
 
@@ -67,6 +68,13 @@ actor RelayHost {
     private var pongDue = false
     private var retry: Double = 2
     private var loop: Task<Void, Never>?
+    /// Events waiting for `pace`, in send order; `paced` marks chunk frames.
+    private var outbox: [(pub: String, event: YorozuEvent, paced: Bool)] = []
+    private var pacer: Task<Void, Never>?
+    /// The token bucket every sealed frame is charged against (`afford`).
+    private var credit = (bytes: RelayHost.byteRate, frames: RelayHost.frameRate, at: ContinuousClock.now)
+    private static let byteRate = 524_288.0, frameRate = 30.0
+    private static let log = Logger(subsystem: "to.yumi.yorozu", category: "relay")
 
     init(backend: any RelayBackend, relayURL: String, devicesFile: URL) throws {
         identity = try RelayKeys.loadOrCreate()
@@ -91,7 +99,7 @@ actor RelayHost {
     }
 
     func stop() {
-        loop?.cancel(); socket?.cancel(with: .goingAway, reason: nil); statusOut.finish()
+        loop?.cancel(); pacer?.cancel(); socket?.cancel(with: .goingAway, reason: nil); statusOut.finish()
     }
 
     /// Live updates to every phone whose peer-info exchange succeeded on this run.
@@ -120,6 +128,7 @@ actor RelayHost {
         guard let peer = peers.removeValue(forKey: pub) else { return }
         do { try persist() } catch { peers[pub] = peer; state = error.localizedDescription; return publish() }
         online.remove(pub)
+        outbox.removeAll { $0.pub == pub }
         release(pub, serve: false)
         announce()
         if registered { send(["type": "revoke", "pubkey": peer.record.signingPub]) }
@@ -153,6 +162,8 @@ actor RelayHost {
             } catch {}
             heartbeat.cancel(); ws.cancel()
             socket = nil; registered = false; online = []
+            // Frames are never buffered for a phone: it catches up after it redials.
+            outbox = []
             state = "Relay offline, retrying…"; publish()
             // Doubling until a registration lands, so a relay that keeps refusing is not hammered.
             try? await Task.sleep(for: .seconds(retry))
@@ -277,6 +288,8 @@ actor RelayHost {
         // A code is for one phone: the next one gets a fresh code.
         if proved { secrets = []; link = nil; if pairing { send(["type": "mint"]) } }
         publish()
+        // Its assembler starts afresh and it catches up from its cursor, so frames still waiting for it are moot.
+        outbox.removeAll { $0.pub == pub }
         // The first sealed event; the phone answers it with its peer-info claim.
         restartExchange([pub])
     }
@@ -292,7 +305,7 @@ actor RelayHost {
     private func restartExchange(_ pubs: [String]) {
         let served = pubs.map { ($0, peers[$0]?.compatibility) }
         for pub in pubs { peers[pub]?.compatibility = nil }
-        deliver(pubs.map { ($0, .control(.threadList(ThreadListData(threads: [main], peerInfoSupported: true)))) })
+        handshake(pubs.map { ($0, .control(.threadList(ThreadListData(threads: [main], peerInfoSupported: true)))) })
         for (pub, compatibility) in served { peers[pub]?.compatibility = compatibility }
     }
 
@@ -322,7 +335,14 @@ actor RelayHost {
         let previous = tail
         tail = Task {
             await previous?.value
-            if let handled { self.deliver(await self.backend.handle(handled).map { (pub, $0) }) }
+            if case .deviceRemove(let remove)? = handled?.payload {
+                // A phone can remove only itself; no reply.
+                if remove.pub == pub { self.removeDevice(pub) }
+            } else if let handled {
+                // A new request supersedes chunk sets still waiting for this phone; it catches up from its cursor.
+                if case .syncRequest = handled.payload { self.outbox.removeAll { $0.pub == pub && $0.paced } }
+                self.deliver(await self.backend.handle(handled).map { (pub, $0) })
+            }
             self.commit(channel, for: pub)
         }
     }
@@ -359,15 +379,75 @@ actor RelayHost {
         if peers[pub]?.record != before.record {
             do { try persist(); publish() } catch { peers[pub]?.record = before.record }
         }
-        deliver([(pub, .control(.threadList(ThreadListData(threads: [main], peerInfoReplyTo: String(id.prefix(128))))))])
+        handshake([(pub, .control(.threadList(ThreadListData(threads: [main], peerInfoReplyTo: String(id.prefix(128))))))])
         // Boxes held for this claim are served after the reply, or dropped for a phone that must update.
         if case .compatible = result { release(pub, serve: true) } else { release(pub, serve: false) }
     }
 
-    /// Seals each event for its phone and sends them as `frame` batches of at most 16 frames and about
-    /// 900 KB (the relay takes 1 MiB a message). Counters are written before anything leaves.
+    /// Handshake thread lists leave at once, ahead of any frames waiting for the phone, so a long chunk set
+    /// never runs out the phone's handshake deadline. Sealing order is still wire order: waiting frames are
+    /// sealed only when `pace` sends them. Charged against the bucket, which may go below zero for them.
+    private func handshake(_ items: [(String, YorozuEvent)]) {
+        guard registered else { return }
+        let stamped = items.compactMap { pub, event in peers[pub].map { (pub, stamp(event, for: $0)) } }
+        for (_, event) in stamped { _ = afford(event, force: true) }
+        transmit(stamped)
+    }
+
+    /// Sends each event to its phone: whole when its encoding fits `ChunkData.budget`, else as a chunk set,
+    /// and through `pace` whenever the bucket cannot cover it now. A phone with frames still waiting gets
+    /// everything after them in order behind them. Thread lists are stamped now, with the phone's handshake
+    /// state at this moment.
     private func deliver(_ items: [(String, YorozuEvent)]) {
         guard registered else { return }
+        var now: [(String, YorozuEvent)] = []
+        for (pub, event) in items {
+            guard let peer = peers[pub] else { continue }
+            let event = stamp(event, for: peer)
+            let parts: [YorozuEvent]
+            do { parts = try event.chunked() } catch {
+                // The bridge caps records well below this; nothing else gets this large.
+                Self.log.error("event \(event.id, privacy: .public) too large to send: \(error.localizedDescription, privacy: .public)")
+                continue
+            }
+            if parts.count == 1 && !outbox.contains(where: { $0.pub == pub }) && afford(event) { now.append((pub, event)) }
+            else { outbox += parts.map { (pub, $0, parts.count > 1) } }
+        }
+        transmit(now)
+        if !outbox.isEmpty && pacer == nil { pacer = Task { await pace() } }
+    }
+
+    /// Every sealed frame (about 16/9 of the encoded event) is charged once against a bucket of 512 KiB and
+    /// 30 frames a second across all phones, since every frame counts against every phone's 2 MiB relay
+    /// window. True, and charged, when the bucket covers it (or `force`).
+    private func afford(_ event: YorozuEvent, force: Bool = false) -> Bool {
+        let now = ContinuousClock.now, elapsed = credit.at.duration(to: now) / .seconds(1)
+        credit = (min(Self.byteRate, credit.bytes + elapsed * Self.byteRate), min(Self.frameRate, credit.frames + elapsed * Self.frameRate), now)
+        let cost = Self.cost(event)
+        guard force || (credit.bytes >= cost && credit.frames >= 1) else { return false }
+        credit.bytes -= cost; credit.frames -= 1
+        return true
+    }
+
+    private static func cost(_ event: YorozuEvent) -> Double { Double((try? JSONEncoder().encode(event).count) ?? ChunkData.budget) * 16 / 9 }
+
+    /// Sends waiting frames in order as the bucket allows.
+    private func pace() async {
+        while registered, !outbox.isEmpty {
+            var batch: [(String, YorozuEvent)] = []
+            while let first = outbox.first, afford(first.event) { batch.append((first.pub, first.event)); outbox.removeFirst() }
+            transmit(batch)
+            guard let first = outbox.first else { break }
+            let wait = max(0.01, (Self.cost(first.event) - credit.bytes) / Self.byteRate, (1 - credit.frames) / Self.frameRate)
+            try? await Task.sleep(for: .seconds(wait))
+        }
+        pacer = nil
+    }
+
+    /// Seals each event for its phone and sends them as `frame` batches of at most 16 frames and about
+    /// 900 KB (the relay takes 1 MiB a message). Counters are written before anything leaves.
+    private func transmit(_ items: [(String, YorozuEvent)]) {
+        guard registered, !items.isEmpty else { return }
         var frames: [Frame] = []
         for (pub, event) in items {
             guard var peer = peers[pub], let frame = try? seal(event, for: &peer) else { continue }
@@ -384,17 +464,20 @@ actor RelayHost {
     }
 
     /// Every thread list a phone gets says this host negotiates, and once it has claimed, answers it.
-    private func seal(_ event: YorozuEvent, for peer: inout Peer) throws -> Frame {
+    private func stamp(_ event: YorozuEvent, for peer: Peer) -> YorozuEvent {
+        guard case .threadList(var list) = event.payload else { return event }
         var event = event
-        if case .threadList(var list) = event.payload {
-            list.peerInfoSupported = true
-            switch peer.compatibility {
-            case .updateRequired(let reason)?: list.peerInfoError = reason
-            case .some: list.peerInfo = hostInfo
-            case nil: break
-            }
-            event.payload = .threadList(list)
+        list.peerInfoSupported = true
+        switch peer.compatibility {
+        case .updateRequired(let reason)?: list.peerInfoError = reason
+        case .some: list.peerInfo = hostInfo
+        case nil: break
         }
+        event.payload = .threadList(list)
+        return event
+    }
+
+    private func seal(_ event: YorozuEvent, for peer: inout Peer) throws -> Frame {
         let box = try YorozuCrypto.seal(key: peer.keys.send, plaintext: ChannelEnvelope(seq: peer.record.counter.next(), event: event).encoded())
         let payload = try JSONEncoder().encode(FrameBody(t: "box", n: box.nonce.base64URLEncodedString(), c: box.ciphertext.base64URLEncodedString())).base64URLEncodedString()
         // The relay verifies this over the payload string itself.

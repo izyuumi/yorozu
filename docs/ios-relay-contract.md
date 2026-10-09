@@ -1,20 +1,29 @@
-# iOS 0.6.x host <-> phone relay contract (frozen)
+# iOS 0.7 host <-> phone relay contract
 
 This is the wire contract between the Mac host (`RelayHost` + `EngineBridge` in the Mac app) and
-the iOS app (`PhoneModel` on top of `RelayClient`) for Yorozu v2 0.6.x. Both sides implement
-against this file. Change it only with a matching change on both sides.
+the iOS app (`PhoneModel` on top of `RelayClient`) for Yorozu v2 0.7. Both sides implement
+against this file. Change it only with a matching change on both sides, and follow
+[Versioning](#versioning).
 
-All types come from `packages/YorozuWire` (the v1 `YorozuShared` wire files, vendored). Build
-events with the Swift types named here, never with hand-written JSON.
+All types come from `packages/YorozuWire` (the v1 `YorozuShared` wire files, vendored, plus the
+0.7 payloads in `Mirror.swift`). Build events with the Swift types named here, never with
+hand-written JSON.
 
-Out of scope for 0.6.x: APNs/`notify`, Stop, attachments, sub-chats, device management events.
+The phone is a mirror of the Mac with control: the Mac is the only source of truth. The phone
+holds a cache of the [history window](#history-window), catches up by
+[change sequence](#change-sequence), can Stop or Retry a task, moves the read cursor, searches the
+Mac's full history and removes its own pairing.
+
+Out of scope for 0.7: APNs/`notify`, attachments, delivery marks and the outbox, direct paths,
+typing in sub-chats, multiple threads (the thread id is carried everywhere and never hard-wired
+beyond the one thread `"main"`).
 
 ## Transport (unchanged v1 relay)
 
 - Relay: `wss://relay.yumi.to`, protocol unchanged. Pairing is `QrPayload` (v1 QR or `yorozu://pair`).
-- Phone side: `RelayClient` (vendored, unchanged). It does join, the cleartext `hello`
+- Phone side: `RelayClient` (vendored). It does join, the cleartext `hello`
   (`{t:"hello",pub,spub,proof}`, proof = `YorozuCrypto.helloProof(secret:pub:spub:)`), the
-  sealed channel and the peer-info gate. `PhoneModel` sees only `TransportUpdate`s.
+  sealed channel, flow acks and the peer-info gate. `PhoneModel` sees only `TransportUpdate`s.
 - Mac side: `RelayHost` re-implements the v1 host half (register, mint, hello check, seal/open
   per device with role `.mac`, `ack{seq}` for replayed frames). `FrameBody` and the relay
   envelope are private in `RelayClient`; `RelayHost` declares its own copies.
@@ -24,19 +33,45 @@ Out of scope for 0.6.x: APNs/`notify`, Stop, attachments, sub-chats, device mana
 - The relay buffers phone -> Mac frames (replayed with `seq`) but never Mac -> phone frames.
   So the host must be idempotent on replays, and the phone catches up with `sync_request`.
 
+### Relay limits and pacing
+
+The relay (on `main`, not changed by 0.7) takes at most 1 MiB per WebSocket message and 60
+messages a second per socket, and drops a phone socket with `1013 slow receiver` once more than
+2 MiB sent to it is unacknowledged (`RelayClient` acks every 1 MiB or 16 frames). It forwards
+every Mac frame to every phone socket of the room, and a phone ignores boxes sealed for another
+phone. So every frame the Mac sends counts against every phone's 2 MiB window.
+
+- `RelayHost.transmit` batches at most 16 frames and about 900 KB a message.
+- Catch-up is request-driven: the Mac sends a reply page only for a `sync_request`, so each
+  phone has at most one page in flight.
+- The Mac keeps reply pages to at most 200 records and 256 KiB of encoded events, except that a
+  page always holds at least one record when any remain (a bigger one is then
+  [chunked](#chunking)).
+- Every sealed frame is charged once against one token bucket across all phones: 512 KiB and
+  30 frames a second, starting and capped at 512 KiB and 30 frames. A frame leaves only when the
+  bucket covers it, else it waits; anything else for a phone that still has frames waiting
+  queues behind them, in order. Handshake thread lists (steps 1 and 3) leave at once, ahead of
+  waiting frames, and are charged even past zero; frames are sealed only as they leave, so
+  sealing order is still wire order. Waiting frames are dropped when the relay socket drops, the
+  phone is removed or says `hello`; its waiting chunk frames are also dropped when it sends a new
+  `sync_request`. The phone catches up from its cursor.
+- A phone the relay still drops redials, gets `.paired` again and asks from its cursor; the
+  page that was cut off is sent again whole.
+
 ## Event envelope
 
 Every event is a `YorozuEvent`:
 
 | Field | Phone -> Mac | Mac -> phone |
 |---|---|---|
-| `id` | `UUID().uuidString` (for `message`: the bubble's id, see below) | `UUID().uuidString`, except chat messages: the v2 `Message.id` |
-| `threadId` | `"main"` | `"main"` on chat messages, `""` on control events |
-| `ts` | epoch ms, phone clock | epoch ms; chat messages: `Int(Message.created * 1000)` |
+| `id` | `UUID().uuidString` (for `message`: the bubble's id) | records: the record's id; anything else: `UUID().uuidString` |
+| `threadId` | the thread (`"main"`) | records and pages: the thread (`"main"`); control replies: `""` |
+| `ts` | epoch ms, phone clock | records: the record's `created` (a task's or topic's too), `read_state`: now; others: now |
 | `agentId` | `"device"` | `"main"` |
-| `syncCursor` | unset | chat messages: the `Message.id`; otherwise unset |
+| `syncCursor` | unset | unset (0.7 uses `seq`, below) |
 
-`clientTs` and `parentAgentId` are never set. There is exactly one thread, id `"main"`.
+`clientTs` and `parentAgentId` are never set. All times inside payloads are epoch milliseconds
+(`Int`), converted from the Mac's `Double` seconds with `Int(t * 1000)`.
 
 ## Handshake (peer-info), done before anything below
 
@@ -48,9 +83,8 @@ Handled by `RelayClient` on the phone and `RelayHost` on the Mac; `PhoneModel` a
 2. The phone answers `.threadList(ThreadListData(threads: [], peerInfo: claim))` with event id
    `R`, where `claim` is `PeerInfoData.local` with `computerName` set to the phone's model name
    ("iPhone 17 Pro"; `DeviceModel.swift` maps the hardware identifier, unknown ones send "iPhone"
-   or "iPad"). The field was already optional, so 0.6.x peers are unaffected. The host stores it
-   as the device's `name` in `relay-devices.json`; a claim without it keeps the stored name, and a
-   phone that never sent one is listed as "iPhone".
+   or "iPad"). The host stores it as the device's `name` in `relay-devices.json`; a claim without
+   it keeps the stored name, and a phone that never sent one is listed as "iPhone".
 3. The host checks `PeerInfoData.local.compatibility(with: claim)` and replies
    `.threadList(ThreadListData(threads: [main], peerInfoSupported: true, peerInfo: host,
    peerInfoReplyTo: R))`, where `host` is `PeerInfoData.local` with `computerName` set to the
@@ -69,17 +103,103 @@ phone can still be `.paired` while live updates were lost; this restarts its exc
 next `.paired` catches up. A device that had finished the exchange stays served meanwhile.
 
 The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15 s deadline,
-`RelayClient.swift`). Both ends advertise `PeerInfoData.local`:
-capabilities `["peer-info","host-name","channel-sequence","yorozu-v2"]`, required
-`["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update required".
-Until a device's exchange succeeds, the host passes none of its other events to the backend; a
-known device whose last result on file is compatible counts as succeeded (Mac-side seams below).
+`RelayClient.swift`). Both ends advertise `PeerInfoData.local`: protocol 2 (`protocolMin` =
+`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2"]`,
+required `["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update
+required". Until a device's exchange succeeds, the host passes none of its other events to the
+backend; a known device whose last result on file is compatible counts as succeeded (Mac-side
+seams below).
 
-`main` above is the one summary defined under `thread_list` below.
+`main` above is `ThreadSummary(id: "main", title: "Yorozu", archived: false, lastActivity:
+newestMessageCreatedMs /* 0 if none */)`. A phone `thread_list` without `peerInfo` gets
+`.threadList(ThreadListData(threads: [main], peerInfoSupported: true, peerInfo: host))` back.
 
-## The six event kinds
+### Versioning
 
-### 1. `message` (phone -> Mac): send a user message
+- **A breaking change raises the protocol version** in `PeerInfoData.local` on both apps. Peers
+  whose ranges do not overlap end in "Update required".
+- **A feature added within 0.7 brings a new peer-info capability** (a name like `attachments`,
+  added to `PeerInfoData.local.capabilities`). Each side reads the negotiated
+  `.compatible(version:capabilities:)` list and hides or never sends the feature when the peer
+  lacks it. New kinds and new optional fields that an older 0.7 peer can ignore follow this rule;
+  they are never made required.
+- Unknown kinds decode as `.unknown(kind:data:)`, and so does a known kind whose data does not
+  decode. Both sides ignore them.
+
+### The 0.6.x refusal
+
+A 0.6.x phone advertises protocol 1, which does not overlap the Mac's 2. The Mac sends it
+`peerInfoError: "Update Yorozu on this iPhone to talk to this Mac."` and serves it nothing else;
+the 0.6.x phone shows that reason in Settings. Once it runs 0.7 the same pairing works without
+pairing again (the device's stored `compatible` result is dropped because its `hostProtocol`
+differs, and the next claim decides). A 0.7 phone that meets a 0.6.x Mac gets the Mac's own
+0.6.x reason; if it ever computes the mismatch itself it reads "Update Yorozu on the Mac to
+talk to this iPhone." (`PeerInfoData.compatibility(with:)` words both from the phone's side,
+since the phone is where they are read).
+
+## History window
+
+The phone caches, and catch-up serves, the **history window**: the newest 500 messages plus every
+message younger than 30 days (the union), with the topics, tasks, amendments, worker events and
+read cursors that belong to it. Older history is reached only through
+[search and page requests](#search_request--search_result-search).
+
+- A phone with no cache (`afterSeq` absent or 0), a newly paired phone, or a cursor that is
+  stale gets the window from its start, not the whole history. The first reply page then has
+  `reset: true`, and the phone drops its cache before applying it.
+- A cursor is stale when it is greater than the Mac's latest sequence (another database) or lower
+  than the smallest `seq` of any message in the window (every message the phone could hold
+  changed since, so nothing is kept).
+- The phone trims its cache to the window by its own clock and count when it loads and saves it,
+  keeping unsuppressed active or uncertain tasks as the Mac does.
+- A topic that a new message or task starts using is re-stamped, so an old topic re-entering the
+  window reaches the phone.
+
+## Change sequence
+
+The Mac stamps every row of `topics`, `messages`, `work`, `events`, `amendments` and
+`readCursor` with a database-wide change sequence (`seq`), bumped in the same transaction as each
+insert and update (topic assignment, task state, amendment state, routing start). Every record
+event carries its row's `seq`.
+
+- **Upsert rule.** The phone keys records by kind and id and replaces a held record only with
+  one of a higher `seq` (`worker_event` is insert-only; a known id is skipped). Records can
+  arrive out of order across pages, live updates and page replies; this rule makes that safe.
+  Messages change after insert in 0.7 (topic, task and notice can be set later), so a stored
+  message must be replaced, not kept.
+- **Cursor.** The phone's cursor is the `latestSeq` of the last page it applied whole. It is
+  kept in the cache.
+
+## Event kinds
+
+| Kind | Direction | Payload | Notes |
+|---|---|---|---|
+| `message` | phone -> Mac | `MessageData` | send a user message |
+| `receipt` | Mac -> phone | `ReceiptData` | message stored |
+| `admission_status` | Mac -> phone | `AdmissionStatusData` | message refused |
+| `sync_request` | phone -> Mac | `SyncRequestData` | catch up after a cursor |
+| `sync_delta` | Mac -> phone | `SyncDeltaData` | reply page, live update or page reply |
+| `message` | Mac -> phone, in pages | `MessageData` | record, upsert |
+| `topic` | Mac -> phone, in pages | `TopicData` | record, upsert |
+| `task` | Mac -> phone, in pages | `TaskData` | record, upsert |
+| `amendment` | Mac -> phone, in pages | `AmendmentData` | record, upsert |
+| `worker_event` | Mac -> phone, in pages | `WorkerEventData` | record, insert-only |
+| `read_state` | both | `ReadStateData` | read cursor; a record when Mac -> phone |
+| `task_control` | phone -> Mac | `TaskControlData` | Stop or Retry |
+| `task_control_result` | Mac -> phone | `TaskControlResultData` | its outcome |
+| `search_request` | phone -> Mac | `SearchRequestData` | full-history search |
+| `search_result` | Mac -> phone | `SearchResultData` | hits |
+| `page_request` | phone -> Mac | `PageRequestData` | the page around one message |
+| `device_remove` | phone -> Mac | `DeviceRemoveData` | remove the sender's own record |
+| `chunk` | Mac -> phone | `ChunkData` | one slice of an oversized event |
+| `thread_list` | both | `ThreadListData` | peer-info only (handshake) |
+
+Record kinds travel only inside `sync_delta.events`. Everything else is a top-level event. The
+host ignores every other kind (no reply, no receipt); the phone ignores kinds it does not show.
+The vendored v1 kinds `thread_read`, `interrupt`/`stop_status` and
+`thread_search_request`/`thread_search_result` are not used by v2.
+
+### `message` (phone -> Mac): send a user message
 
 ```swift
 YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device",
@@ -87,7 +207,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device
 ```
 
 - `text` is 1-6000 UTF-8 bytes after the phone's own check. No attachments.
-- `admissionDeadline`, `delivery`, `channelModel` are not sent and the host ignores them.
+- `admissionDeadline`, `delivery`, `channelModel` and the 0.7 metadata are not sent and the host
+  ignores them.
 - The phone keeps the event in a pending set until it gets a `receipt` or an
   `admission_status` for that `id`, and resends every pending event on every `.paired`.
 
@@ -102,24 +223,26 @@ Host checks, in this order, then acts:
    If it throws: if a `Message` with that id now exists (a concurrent duplicate won), reply
    `receipt`; else reply `admission_status rejected` with `reason = error.localizedDescription`.
 
-### 2. `receipt` (Mac -> phone): the message is stored
+The Engine is never told which device a message came from.
+
+### `receipt` (Mac -> phone): the message is stored
 
 ```swift
 YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
             payload: .receipt(ReceiptData(eventId: messageId)))
 ```
 
-The phone drops `messageId` from its pending set. The bubble stays; the stored copy arrives
-through `sync_delta` with the same id and replaces it in place.
+The phone drops `messageId` from its pending set. The bubble stays; the stored copy arrives as a
+record with the same id and replaces it in place.
 
-### 3. `admission_status` (Mac -> phone): the message was refused
+### `admission_status` (Mac -> phone): the message was refused
 
 ```swift
 YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
             payload: .admissionStatus(AdmissionStatusData(eventId: messageId, status: .rejected, reason: reason)))
 ```
 
-Only `status: .rejected` is sent in 0.6.x. `reason` is user-facing text the phone shows as is:
+Only `status: .rejected` is sent. `reason` is user-facing text the phone shows as is:
 
 | Cause | `reason` |
 |---|---|
@@ -130,86 +253,237 @@ Only `status: .rejected` is sent in 0.6.x. `reason` is user-facing text the phon
 
 The phone drops `messageId` from its pending set, marks that bubble failed and does not resend it.
 
-### 4. `sync_request` (phone -> Mac): catch up
+### `sync_request` (phone -> Mac): catch up
 
 ```swift
 YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device",
-            payload: .syncRequest(SyncRequestData(lastSeen: cursor.map { ["main": $0] } ?? [:], threadId: "main")))
+            payload: .syncRequest(SyncRequestData(threadId: "main", afterSeq: cursor)))
 ```
 
-- Sent on every `.paired`, and again whenever a reply page has `more == true`.
-- `lastSeen["main"]` is the `syncCursor` of the newest message the phone holds without a gap
-  (rules under `sync_delta`). Absent means "from the start".
-- `focusThreadId` and `includeCurrent` are unset and ignored.
+- Sent on every `.paired`, again whenever a reply page has `more == true`, and again when
+  neither a reply page nor a `chunk` arrived within 15 s (each chunk restarts the deadline).
+- `afterSeq` is the phone's cursor; nil or 0 when it has no cache.
+- `lastSeen` is `[:]` (encoded as `{}`, still required by the decoder); `focusThreadId` and
+  `includeCurrent` are unset and ignored.
 
-The host answers with one `sync_delta` reply page.
+The host always answers with one reply page, an error page if it cannot read its store.
 
-### 5. `sync_delta` (Mac -> phone): messages and the working flag
+### `sync_delta` (Mac -> phone): records and status
 
 ```swift
-YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
-            payload: .syncDelta(SyncDeltaData(events: page, threadId: replyThreadId,
-                                              workingThreadIds: working ? ["main"] : [], more: more)))
+YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "main",
+            payload: .syncDelta(SyncDeltaData(events: records, threadId: "main",
+                workingThreadIds: working ? ["main"] : [], more: more ? true : nil,
+                routingThreadIds: routing ? ["main"] : [], afterSeq: after, latestSeq: next,
+                reset: reset ? true : nil)))
 ```
 
-Each element of `events` is one v2 `Message`, oldest first, in snapshot order
-(`created, rowid`), every message regardless of topic (the Mac's main chat shows all of them):
+Fields:
 
-```swift
-YorozuEvent(id: m.id, threadId: "main", ts: Int(m.created * 1000), agentId: "main", syncCursor: m.id,
-            payload: .message(MessageData(role: m.role == "user" ? .user : .agent, text: m.body,
-                                          done: true, failed: m.kind == "failure" ? true : nil)))
-```
-
-- `working` is true when any `Work.active` is true in the snapshot.
-- `workingThreadIds` is always present (`[]` when idle); the phone shows the working indicator
-  exactly when it contains `"main"`.
+- `events`: record events in `seq` order (see the record kinds below).
+- `workingThreadIds`: threads with any `Work.active` outside job topics; the global working spinner. Always present.
+- `routingThreadIds`: threads whose secretary is routing a message (`Engine.routing`); the
+  thinking bubble. Always present.
+- `afterSeq`: the cursor these changes continue from.
+- `latestSeq`: the phone's next cursor after applying this page: the last record's `seq` while
+  `more == true`, else the Mac's latest sequence (`ChangePage.latest`).
+- `more`: `true` when changes remain after `latestSeq`, else nil.
+- `reset`: `true` on the first reply page of a [window start](#history-window).
+- `requestId`: set only on a page reply (below).
+- `error`: user-facing text when the Mac could not read its store; no events, cursor unchanged.
 - `current` is unset.
 
-Two flavours, told apart by `threadId`:
+Three flavours:
 
-- **Reply page** (`threadId == "main"`): answers a `sync_request`. Contains the messages after
-  the cursor (all of them if the cursor is absent or unknown), at most 200 events and at most
-  512 KB of encoded events (always at least one event if any remain). `more = true` when
-  messages remain, else `nil`.
-- **Live update** (`threadId == nil`, `more == nil`): sent unprompted to every paired device when
-  the 350 ms poll's snapshot has message ids the previous one lacked, or the working flag
-  changed. `events` holds only the new messages (may be empty when only the flag changed).
-  More than 200 new messages go out as several live updates.
+- **Reply page** (`requestId == nil`, answers a `sync_request`): the window's changes after the
+  request's `afterSeq`, at most 200 records and 256 KiB of encoded events (at least one record if
+  any remain); `afterSeq` echoes the request.
+- **Live update** (`requestId == nil`, `more == nil`, `latestSeq` set): sent unprompted to every
+  paired device when the Mac's latest sequence moved past the last one it published, or the
+  working or routing flag changed. `afterSeq` is the previous live update's `latestSeq`.
+  `events` may be empty when only a flag changed. More than 200 changes go out as several live
+  updates.
+- **Page reply** (`requestId` set, answers a `page_request`): the messages around the asked-for
+  message, inside or outside the window, in timeline order. `afterSeq`, `latestSeq` and `more`
+  are unset and it never moves the cursor. An unknown message id gets no events and
+  `error: "Message not found."`; a page whose encoding would pass what 256 chunks carry gets
+  `error: "That part of the chat is too large to send."`.
+
+A `sync_request` or `page_request` for a thread the Mac does not have gets no events and
+`error: "Unknown thread."`.
 
 Phone rules:
 
-1. A message whose `id` the phone already holds replaces that entry; otherwise it is added.
-   Either way it goes after the last held message whose `ts` is not later than its own (a sent
-   bubble holds the phone's `ts` until its stored copy replaces it), since pages, live updates
-   and sends can arrive out of Mac order. v2 messages never change after insert, so nothing
-   else is needed.
-2. On every `.paired`, set `catchingUp = true` and send `sync_request`.
-3. On a reply page: merge; if it has events, set `cursor` to the last event's `syncCursor`;
-   if `more == true` send the next `sync_request` with that cursor, else `catchingUp = false`.
-4. On a live update: merge; advance `cursor` to its last event's `syncCursor` only when
-   `!catchingUp`. (While catching up, older pages may still be missing; re-fetching later is
-   safe because rule 1 dedupes.)
+1. Apply every record by the [upsert rule](#change-sequence). A sent bubble holds the phone's
+   `ts` until its stored copy (same id) replaces it.
+2. On every `.paired`, set `catchingUp = true` and send `sync_request` with the cursor.
+3. On a reply page: if `reset`, drop the cache; apply; set the cursor to `latestSeq`; if
+   `more == true` send the next `sync_request`, else `catchingUp = false`. On `error`, keep the
+   cursor, show nothing new and ask again on the next `.paired` or deadline.
+4. On a live update: apply; set the cursor to `latestSeq` only when `!catchingUp` and its
+   `afterSeq` is not greater than the cursor (no live update was missed). A greater `afterSeq`
+   while not catching up starts a catch-up at once (`catchingUp = true`, `sync_request`); while
+   catching up, that catch-up fills the gap. Re-applying is safe by rule 1.
+5. On a page reply: apply its messages for display; keep the ones outside the window out of the
+   cache.
+6. The flags are only true while `.paired`. While not paired the phone shows "status unknown"
+   for the working indicator, the thinking bubble and topic statuses, never idle.
 
-### 6. `thread_list` (both directions)
+### Record kinds (inside `sync_delta.events`)
 
-The one summary, `main`:
+All carry `threadId: "main"`, `agentId: "main"`, `id` = the record's id and `ts` = its `created`
+in ms (an `amendment` or `read_state` record, which has no `created`: now).
+
+**`message`** (`MessageData`, upsert):
 
 ```swift
-ThreadSummary(id: "main", title: "Yorozu", archived: false, lastActivity: newestMessageCreatedMs /* 0 if none */)
+MessageData(role: m.role == "user" ? .user : .agent, text: m.body, done: true,
+            failed: m.kind == "failure" ? true : nil, kind: m.kind, topicId: m.topicID,
+            taskId: m.taskID, replyTo: m.replyTo, notice: m.notice.map { NoticeData(code: $0.code, params: $0.params) },
+            seq: Int(seq))
 ```
 
-- Peer-info use is in the handshake above (`RelayHost`).
-- A phone `thread_list` without `peerInfo` gets
-  `.threadList(ThreadListData(threads: [main], peerInfoSupported: true, peerInfo: host))` back
-  (`RelayHost` adds the peer fields to whatever thread list the backend returns). The 0.6.x
-  phone doesn't need to send one.
+`kind` is the v2 message kind as text (`conversation`, `result`, `failure`, `question`,
+`acknowledgment`, ...); the phone treats an unknown kind like `conversation`. `readAt` never
+leaves the Mac. Every message goes to the main timeline as on the Mac; `topicId` also files it in
+its sub-chat.
 
-## Everything else
+**`topic`** (`TopicData`, upsert): `id`, `label`, `created`, `seq`.
 
-The host ignores every other kind (no reply, no receipt). The phone sends nothing but `message`,
-`sync_request` and, via `RelayClient`, the peer-info `thread_list`, and ignores events of other
-kinds.
+**`task`** (`TaskData`, upsert): `id`, `topicId`, `messageId` (the message that started it),
+`instruction`, `executor` (nil = thinking worker, else `claude` or `codex`), `state` (the Mac's
+work state as text), `revision`, `suppressed`, `error`, `result`, `created`, `seq`. The phone
+derives a topic's status with the Mac's rule (`docs/architecture.md`).
+
+**`amendment`** (`AmendmentData`, upsert): `id`, `taskId`, `messageId`, `revision`,
+`instruction`, `state`, `seq`.
+
+**`worker_event`** (`WorkerEventData`, insert-only): `id`, `taskId`, `kind`, `body`, `created`,
+`seq`.
+
+**`read_state`** (`ReadStateData`): `threadId`, `messageId`, `seq` (below).
+
+### `read_state` (both directions): read cursor
+
+The Mac holds one read cursor per thread: the newest message seen on any device. It only moves
+forward.
+
+```swift
+YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device",
+            payload: .readState(ReadStateData(threadId: "main", messageId: newestSeenId)))
+```
+
+- Phone -> Mac: sent when the newest message on screen changes while the app is active and the
+  chat is shown. The user's own messages never count as unread. No reply.
+- The Mac ignores an unknown message id and one not newer (`created`, then row order) than the
+  held cursor. A cursor that moved is a changed `readCursor` row, so it reaches every phone as a
+  `read_state` record with `seq` in the next live update (and in catch-up).
+- The phone applies a record by the upsert rule and draws the unread divider after that message.
+
+### `task_control` / `task_control_result`: Stop and Retry
+
+```swift
+// phone -> Mac
+YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device",
+            payload: .taskControl(TaskControlData(requestId: rid, taskId: task.id, action: .stop /* or .retry */)))
+// Mac -> phone
+YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
+            payload: .taskControlResult(TaskControlResultData(requestId: rid, taskId: task.id, accepted: o.accepted,
+                text: o.text, notice: o.notice.map { NoticeData(code: $0.code, params: $0.params) }, messageId: o.messageID)))
+```
+
+- The Mac calls `Engine.stopTask(id:)` or `Engine.retryTask(id:)` (no secretary call) and replies
+  with the `TaskOutcome`. Stop needs active or uncertain work; Retry needs failed or uncertain,
+  unsuppressed work and never starts a duplicate. Any acknowledgment or failure message is
+  posted in the task's topic, replying to the task's original message, and reaches the phone as
+  a record; no user message is created.
+- The phone sends one `task_control` per tap, only while `.paired`, and keeps that button
+  disabled until the result or a change to that task arrives. It is never queued or resent.
+- `text` is user-facing; `notice` lets the phone render it in its own language.
+- A replayed `task_control` (same `requestId`, among the Mac's last 64) gets its first result
+  again and does not run again (`EngineBridge`); an older one runs again, and the Engine's guards
+  make that a no-op with `accepted: false`.
+
+### `search_request` / `search_result`: search
+
+```swift
+// phone -> Mac
+.searchRequest(SearchRequestData(requestId: rid, query: query, offset: offset /* nil = 0 */))
+// Mac -> phone, threadId ""
+.searchResult(SearchResultData(requestId: rid, hits: hits, total: total, nextOffset: next))
+```
+
+- The Mac runs `Engine.search(query, limit: 50, offset:)` over its full history, main timeline
+  and sub-chats.
+- Each hit is `SearchHitData{threadId, topicId?, taskId?, messageId?, eventId?, snippet,
+  created}`: a message hit has `messageId` (and `topicId` when filed in a topic); a worker-event
+  hit has `eventId`, `taskId` and `topicId`.
+- `total` is the full hit count; `nextOffset` is `offset + hits.count` while more remain, else
+  nil. A failure sends no hits, `total: 0` and a user-facing `error`.
+- Search needs `.paired`; the phone ignores a result whose `requestId` is not its latest.
+
+### `page_request`: the page around one message
+
+```swift
+.pageRequest(PageRequestData(requestId: rid, threadId: "main", messageId: id))
+```
+
+Answered with a page reply (`sync_delta` with `requestId`, above): `Store.page(around:)`, up to
+50 older and 50 newer messages. The phone uses it for a search hit outside its cache.
+
+### `device_remove` (phone -> Mac): forget this phone
+
+```swift
+.deviceRemove(DeviceRemoveData(pub: myBoxPub)) // the phone's own X25519 public key, base64url
+```
+
+- Sent by Remove host and by confirming any new pairing (Repair, or a code for another Mac),
+  over the current link and only while `.paired`, before the phone wipes its pairing and cache.
+  No reply; the phone does not wait for one.
+- The Mac acts only when `pub` is the sender's own key: it drops that `RelayDevice`, revokes it
+  at the relay and announces the device list (`RelayHost.removeDevice`). Any other `pub` is
+  ignored; a phone can remove only itself.
+- If the phone cannot reach the relay it wipes anyway; the Mac's record stays until removed in
+  Mac Settings.
+
+### `chunk` (Mac -> phone): oversized events
+
+An event whose JSON encoding exceeds 256 KiB (`ChunkData.budget`) is sent as a set of ordered
+`chunk` events instead: `ChunkData{id, index, count, data}`, where `id` names the set, `index`
+runs `0..<count`, `count` is 2...256 and `data` is base64 of up to 192 KiB
+(`ChunkData.slice`) of the encoding.
+
+- Mac: `try event.chunked()` returns the event itself or its chunk events; send a set back to
+  back, never interleaved with another set to the same phone, paced as
+  [above](#relay-limits-and-pacing). Any top-level event may be chunked; in practice it is a
+  `sync_delta` page holding one large record, so the page stays whole and the cursor rules are
+  unchanged.
+- Phone: feed every `chunk` to one `ChunkAssembler`; `add(_:)` returns the whole event after the
+  last chunk, which is then handled as if it had arrived directly. A chunk that does not continue
+  the current set drops the partial set; a dropped page is asked for again by the 15 s deadline,
+  which each chunk restarts.
+- Worker output has no size limit, so a record could pass what 256 chunks (48 MiB) carry. The
+  Mac caps every record at 256 chunks less 64 KiB for the page around it: a larger one keeps the
+  head of its long text fields (a message's `text`; a task's `instruction`, `result` and `error`;
+  an amendment's `instruction`; a worker event's `body`), each followed by
+  `"\n\n…(truncated; the full text is on the Mac)"`, and the Mac logs it. An event that still
+  cannot be chunked is logged and not sent.
+
+## Notice codes
+
+A `message` record or `task_control_result` may carry `notice{code, params}`, the Mac's
+`Notice` (`Sources/ProjectXCore/Models.swift`). The phone renders known codes as system rows from
+its own string catalog in its language (English and Japanese), and falls back to the message's
+English `text` for an unknown code. Raw error text is only ever in `params["error"]`.
+
+Codes in 0.7: `question`, `question_topic`, `question_task`, `routing_failed`, `offline`,
+`task_failed`, `task_overflow`, `interrupted_by_restart`, `compaction_failed`, `memory_skipped`,
+`retry_running`, `retry_not_allowed`, `correction_blocked`, `earlier_stopped_with_change`,
+`earlier_finished_change`, `earlier_running`, `earlier_unknown`, `change_queued`, `change_sent`,
+`change_held`, `change_after_finish`, `not_running`, `stopped`, `stopping`, `moved`,
+`moved_stopping`, `correction_saved`, `earlier_retired`, `memory_forgotten`,
+`amendment_unconfirmed`, `closed_too_long`, `task_control_failed`, `config_invalid`,
+`settings_changed`. A new code needs no capability: the fallback covers it.
 
 ## Mac-side seams
 
@@ -217,12 +491,10 @@ kinds.
   `RelayHost` passes it each decrypted phone event other than the peer-info `thread_list`, one at
   a time in arrival order and off the receive path (so hellos and claims never wait on the
   Engine), and seals the returned events back to that same device only. `EngineBridge`
-  implements it (kinds 1, 4, 6 in; 2, 3, 5 out).
-- Duplicate check (host check 4): an id in the last published snapshot gets its `receipt` with no
-  send; after a failed send, `Store.message(id:)` tells a duplicate from a refusal.
-- `sync_request`: if the Engine cannot read its snapshot, no page goes back and the error is
-  logged (subsystem `to.yumi.yorozu`, category `relay`). The phone stays catching up, so live
-  updates cannot move its cursor past the gap, and its next `.paired` asks again.
+  implements it (`message`, `sync_request`, `read_state`, `task_control`, `search_request`,
+  `page_request` in; `receipt`, `admission_status`, `sync_delta`, `task_control_result`,
+  `search_result` out). `device_remove` needs the sender's key, so `RelayHost` handles it.
+- Duplicate check (host check 4): `Store.message(id:)`, a keyed lookup.
 - Acks for replayed frames: the ack is cumulative, so the host sends `ack{seq}` for a replayed
   frame only after the backend has handled it and every phone event before it, that is once the
   Engine stored or refused its message. A frame that can never be handled (not a frame, unknown
@@ -245,7 +517,8 @@ kinds.
   matches serves the device from its first frame; another protocol drops it and the next claim
   decides. A `hello` from a known device keeps a `.compatible` result and restarts the exchange
   (step 1); each claim replaces the result, and one that is not compatible clears it.
-- Live updates go out through `RelayHost.broadcast([YorozuEvent])` to every paired device.
+- Live updates come from `Store.changes(after:)` past the last published sequence and go out
+  through `RelayHost.broadcast([YorozuEvent])` to every paired device, chunked when needed.
 - `Engine.send(_:id:)` / `Store.message(..., id:)` keep the phone's `id` as the v2 `Message.id`,
   so the phone's bubble and the stored message are one entry.
 - Paired devices live in `relay-devices.json` (`RelayDevice`): keys, `pairedAt` and the channel

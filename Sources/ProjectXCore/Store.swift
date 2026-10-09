@@ -77,6 +77,17 @@ public actor Store {
         // One topic per job. Duplicates are not expected; any are dropped but the oldest binding, so the others get a new
         // topic and ask for approval again.
         migration.registerMigration("jobs-topic-unique") { db in try db.execute(sql: "DELETE FROM jobs WHERE rowid NOT IN (SELECT MIN(rowid) FROM jobs GROUP BY topicID); CREATE UNIQUE INDEX jobs_topic ON jobs(topicID)") }
+        // A message or work row that starts using a topic re-stamps it (`topics_seq_au` fires on any update), so an old
+        // topic re-entering the window reaches phones with a `seq` past their cursor.
+        migration.registerMigration("sync-topic-touch") { db in
+            let touch = "UPDATE topics SET label=label WHERE id=new.topicID;"
+            try db.execute(sql: """
+            CREATE TRIGGER messages_topic_ai AFTER INSERT ON messages WHEN new.topicID IS NOT NULL BEGIN \(touch) END;
+            CREATE TRIGGER messages_topic_au AFTER UPDATE OF topicID ON messages WHEN new.topicID IS NOT old.topicID AND new.topicID IS NOT NULL BEGIN \(touch) END;
+            CREATE TRIGGER work_topic_ai AFTER INSERT ON work BEGIN \(touch) END;
+            CREATE TRIGGER work_topic_au AFTER UPDATE OF topicID ON work WHEN new.topicID IS NOT old.topicID BEGIN \(touch) END;
+            """)
+        }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -129,8 +140,10 @@ public actor Store {
         }
         return try db.read { db in
             var hits: [SearchHit] = []; var total = 0
-            for (table,index,columns) in [("messages","messageSearch","t.topicID AS topic,t.taskID AS task"),("events","eventSearch","(SELECT topicID FROM work WHERE id=t.taskID) AS topic,t.taskID AS task")] {
-                let (from,args): (String,StatementArguments) = fts ? ("\(index) JOIN \(table) t ON t.rowid=\(index).rowid WHERE \(index) MATCH ?",[match]) : ("\(table) t WHERE \(filter)",StatementArguments(like))
+            // Messages that stay in a job's sub-chat are not searchable from phones (#319), the only caller.
+            let jobOnly = " AND t.kind NOT IN (" + Message.jobOnlyKinds.sorted().map { "'\($0)'" }.joined(separator: ",") + ")"
+            for (table,index,columns,extra) in [("messages","messageSearch","t.topicID AS topic,t.taskID AS task",jobOnly),("events","eventSearch","(SELECT topicID FROM work WHERE id=t.taskID) AS topic,t.taskID AS task","")] {
+                let (from,args): (String,StatementArguments) = fts ? ("\(index) JOIN \(table) t ON t.rowid=\(index).rowid WHERE \(index) MATCH ?\(extra)",[match]) : ("\(table) t WHERE \(filter)\(extra)",StatementArguments(like))
                 let rows = try Row.fetchAll(db,sql: "SELECT t.id,t.created,t.body,\(columns)\(fts ? ",snippet(\(index),0,'','','…',48) AS s" : "") FROM \(from) ORDER BY t.created DESC,t.rowid DESC LIMIT \(offset + limit)",arguments: args)
                 hits += rows.map { row in
                     SearchHit(topicID: row["topic"],taskID: row["task"],messageID: table == "messages" ? row["id"] : nil,eventID: table == "events" ? row["id"] : nil,snippet: fts ? row["s"] : cut(row["body"]),created: row["created"])
@@ -163,7 +176,8 @@ public actor Store {
     /// History window (#313 open question 1, the union): the newest 500 messages plus every message of the last 30 days,
     /// that is every message created at or after `start`. Work: created in it, the task of a windowed message, or
     /// unsuppressed active or uncertain (so it can still be stopped or retried). Topics: created in it or used by
-    /// windowed messages or work. Events and amendments: those of windowed work. Read cursors: always.
+    /// windowed messages or work (re-stamped when one starts using it, `sync-topic-touch`). Events and amendments:
+    /// those of windowed work. Read cursors: always.
     private static func scope(_ table: String) -> String {
         let s = "(SELECT s FROM w)"
         let work = "(created>=\(s) OR id IN (SELECT taskID FROM messages WHERE created>=\(s)) OR (suppressed=0 AND state IN ('queued','working','amendment_pending','cancellation_requested','uncertain')))"
@@ -177,10 +191,9 @@ public actor Store {
     }
     /// Rows of the window changed after `seq`, at most `limit` (1–1000), in sequence order.
     public func changes(after seq: Int64, limit: Int = 200) throws -> ChangePage {
-        let limit = max(1,min(limit,1000)), now = Date().timeIntervalSince1970
+        let limit = max(1,min(limit,1000))
         return try db.read { db in
-            let nth = try Double.fetchOne(db,sql: "SELECT created FROM messages ORDER BY created DESC,rowid DESC LIMIT 1 OFFSET 499")
-            let start = min(now - 30 * 86400,nth ?? 0)
+            let start = try Self.windowStart(db)
             var all: [Change] = []
             for t in Self.synced {
                 for row in try Row.fetchAll(db,sql: "WITH w(s) AS (SELECT ?) SELECT * FROM \(t) WHERE seq>? AND \(Self.scope(t)) ORDER BY seq LIMIT ?",arguments: [start,seq,limit + 1]) {
@@ -190,6 +203,19 @@ public actor Store {
             all.sort { $0.seq < $1.seq }
             return ChangePage(changes: Array(all.prefix(limit)),more: all.count > limit,latest: try Int64.fetchOne(db,sql: "SELECT value FROM changeSeq") ?? 0)
         }
+    }
+    /// The latest change sequence and the smallest `seq` of a message in the window (nil when it has none): a phone
+    /// cursor above the first or below the second is stale (docs/ios-relay-contract.md, "History window").
+    public func cursorBounds() throws -> (latest: Int64, floor: Int64?) {
+        try db.read { db in
+            (try Int64.fetchOne(db,sql: "SELECT value FROM changeSeq") ?? 0,
+             try Int64.fetchOne(db,sql: "SELECT MIN(seq) FROM messages WHERE created>=?",arguments: [try Self.windowStart(db)]))
+        }
+    }
+    /// Messages created at or after this belong to the window.
+    private static func windowStart(_ db: Database) throws -> Double {
+        let nth = try Double.fetchOne(db,sql: "SELECT created FROM messages ORDER BY created DESC,rowid DESC LIMIT 1 OFFSET 499")
+        return min(Date().timeIntervalSince1970 - 30 * 86400,nth ?? 0)
     }
     private static func record(_ table: String,_ row: Row) throws -> Change.Record {
         switch table {
