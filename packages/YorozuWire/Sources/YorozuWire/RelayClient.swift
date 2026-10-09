@@ -948,6 +948,8 @@ public actor RelayClient: ChatTransport {
             if !rejoin { message["token"] = pairing.token }
             try await send(message, on: leg)
         } catch {
+            // The push leg is not the session: it just ends.
+            if leg === pushLeg { return endPushLeg(leg) }
             updates?.yield(.failed(error.localizedDescription))
         }
     }
@@ -975,7 +977,8 @@ public actor RelayClient: ChatTransport {
         onPushSent?(token)
     }
 
-    /// A relay socket beside a direct session: join (as a known device), say `push`, hang up.
+    /// A relay socket beside a direct session: join (as a known device), say `push`, ask `owner` and hang up at its
+    /// answer. Without one within 15 s the token stays owed.
     private func startPushLeg() {
         guard pushLeg == nil, paired, !stopped else { return }
         let task = session.webSocketTask(with: dial)
@@ -989,6 +992,7 @@ public actor RelayClient: ChatTransport {
         }
         Task {
             defer { self.endPushLeg(leg) }
+            var said: String?
             while self.pushLeg === leg, let text = try? await leg.socket.receive() {
                 guard let message = try? JSONDecoder().decode(Inbound.self, from: Data(text.utf8)) else { continue }
                 if message.type == "nonce", !leg.joined {
@@ -996,7 +1000,12 @@ public actor RelayClient: ChatTransport {
                     await self.join(leg)
                 } else if message.type == "joined", let token = self.deviceToken {
                     leg.joined = true
-                    if (try? await self.send(["type": "push", "deviceToken": token], on: leg)) != nil { self.pushSent(token) }
+                    guard (try? await self.send(["type": "push", "deviceToken": token], on: leg)) != nil,
+                          (try? await self.send(["type": "owner"], on: leg)) != nil else { return }
+                    said = token
+                } else if message.type == "owner", let said {
+                    // The room handles one message at a time, so `push` is stored by the time `owner` is answered.
+                    self.pushSent(said)
                     return
                 }
             }
