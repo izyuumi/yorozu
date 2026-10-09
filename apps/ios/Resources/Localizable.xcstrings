@@ -5827,6 +5827,12 @@
       "comment" : "Push body: the relay's fixed loc-key.",
       "extractionState" : "manual",
       "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A task failed."
+          }
+        },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
@@ -5836,7 +5842,7 @@
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Yorozu に対応が必要です。"
+            "value" : "タスクが失敗しました。"
           }
         },
         "ko" : {
