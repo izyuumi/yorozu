@@ -765,7 +765,7 @@ Source: the plan comment on issue #320 (branch `push`, built as `pu-mac` and `pu
 Added in implementation:
 - "Seen" for the back-online rule is the last time the Mac was online at the relay: written on each registration, on each pong of the 30 s heartbeat and on stop while registered, so a quit, a quick restart or a short drop stays silent. A Mac with no `relay-online.json` yet sends none.
 - `approval_request` (a job script waiting for a yes) counts as a question. The classifier is shared, so this, and counting secretary replies and unconfirmed-change notices as results, changes the Mac's notifications and menu-bar dot too.
-- The phone cannot see the Mac's destination, so it asks for permission at launch when it is paired and has never been asked, besides #314's moments; iOS shows the prompt once.
+- The phone cannot see the Mac's destination, so instead of open question 7's default (ask when Phones is selected) it asks for permission at a foreground launch when it is paired and has never been asked, besides #314's moments; a background launch (a silent push) asks nothing, and iOS shows the prompt once. This is the chosen behaviour.
 - The badge is left unchanged when the read cursor is unknown (none yet, or not in the phone's timeline).
 - The es, ko and zh-Hans translations of the two reworded keys ("Yorozu needs your approval.", "Yorozu finished.") were dropped, since they carry v1's meaning; those languages show the English v2 text. The unchanged keys keep theirs.
 - Turning notifications off, or the destination to This Mac, drops the held notifies.

@@ -934,7 +934,7 @@ change, and no relay deploy. When the Mac sends a `notify` is in
   removed.
 - A read on the Mac clears the phone's badge at its next sync (foreground or silent wake): the
   relay has no badge-only push.
-- Permission (`.alert`, `.sound`, `.badge`, one request shared with #314) is asked at launch when
+- Permission (`.alert`, `.sound`, `.badge`, one request shared with #314) is asked at a foreground launch when
   the phone is paired, as well as at #314's moments; iOS shows the prompt once. The Notifications
   row in Settings shows On, Off or Not asked yet, with Open Settings when off; Copy diagnostics adds
   the permission and the registration state, never the token.
