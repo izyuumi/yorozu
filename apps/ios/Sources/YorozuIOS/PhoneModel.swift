@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 import YorozuWire
 
 /// The phone's half of docs/ios-relay-contract.md: the one pairing, the `RelayClient` it drives,
@@ -14,10 +15,8 @@ final class PhoneModel {
         /// Epoch ms: the Mac's `created` once stored, the phone's clock until then. Orders the list.
         var ts: Int
         var text: String
-        /// Refused by the Mac, or a `failure` message: drawn with the failure label.
+        /// A `failure` message: drawn with the failure label.
         var failed: Bool
-        /// Why the Mac refused a message, shown under it as is.
-        var reason: String?
         /// The Mac's message kind (`conversation`, `result`, `failure`, …); nil until stored.
         var kind: String?
         var topicId: String?
@@ -26,16 +25,21 @@ final class PhoneModel {
         var notice: NoticeData?
         /// The Mac's change sequence; nil for a sent bubble whose stored copy has not arrived.
         var seq: Int?
+        /// A user message: when the Mac started processing it (epoch ms).
+        var readAt: Int?
+        /// A user message from a phone: the phone's send time (epoch ms).
+        var sentAt: Int?
 
-        init(id: String, user: Bool, ts: Int, text: String, failed: Bool = false, reason: String? = nil,
+        init(id: String, user: Bool, ts: Int, text: String, failed: Bool = false,
              kind: String? = nil, topicId: String? = nil, taskId: String? = nil, replyTo: String? = nil,
-             notice: NoticeData? = nil, seq: Int? = nil) {
+             notice: NoticeData? = nil, seq: Int? = nil, readAt: Int? = nil, sentAt: Int? = nil) {
             self.id = id
             self.user = user
             self.ts = ts
             self.text = text
             self.failed = failed
-            self.reason = reason
+            self.readAt = readAt
+            self.sentAt = sentAt
             self.kind = kind
             self.topicId = topicId
             self.taskId = taskId
@@ -46,7 +50,8 @@ final class PhoneModel {
 
         init(record id: String, ts: Int, _ m: MessageData) {
             self.init(id: id, user: m.role == .user, ts: ts, text: m.text, failed: m.failed == true || m.kind == "failure",
-                      kind: m.kind, topicId: m.topicId, taskId: m.taskId, replyTo: m.replyTo, notice: m.notice, seq: m.seq)
+                      kind: m.kind, topicId: m.topicId, taskId: m.taskId, replyTo: m.replyTo, notice: m.notice, seq: m.seq,
+                      readAt: m.readAt, sentAt: m.sentAt)
         }
     }
 
@@ -94,9 +99,22 @@ final class PhoneModel {
     private(set) var search: SearchResultData?
     private(set) var page: PageReply?
 
+    // MARK: Outbox (#314)
+
+    /// Messages the Mac has not stored, and stored ones kept for their times until Read. Persisted.
+    private(set) var outbox: [Outbox.Item] = []
+    /// The forward-only marks of messages sent from this phone and not yet Read. `merge()` replaces
+    /// bubbles, so marks live here; Read and messages typed on the Mac are read off the stored copy.
+    private(set) var marks: [String: MarkState] = [:]
+    /// Messages whose frame is on its way to the relay, until `accepted` (or 10 s without one).
+    private(set) var inFlight: Set<String> = []
+    private var flushTask: Task<Void, Never>?
+    private var inBackground = false
+    /// Background time held while messages are still Sending.
+    private var backgroundTime: BackgroundTask?
+
     // MARK: Link
 
-    private(set) var sending = false
     /// The relay has accepted this phone, so the chat shows rather than the pairing screen.
     private(set) var linked = false
     private(set) var state: TransportState = .closed
@@ -105,9 +123,7 @@ final class PhoneModel {
     private(set) var failure: String? { didSet { noteError(failure) } }
     /// "Update required: …" while the Mac refuses this phone, for the chat's status line.
     private(set) var updateRequired: String?
-    /// Why the last send did not go; the draft is still in the composer.
-    private(set) var sendError: String? { didSet { noteError(sendError) } }
-    /// The latest failure or send error, kept after it clears, for Settings and Copy diagnostics.
+    /// The latest failure, kept after it clears, for Settings and Copy diagnostics.
     private(set) var lastError: (message: String, at: Date)?
     private(set) var hostName: String?
     /// The Mac's app version, from its peer info.
@@ -124,10 +140,9 @@ final class PhoneModel {
     private var ownPub: String?
     private var relay: RelayClient?
     private var listener: Task<Void, Never>?
+    /// Bumped by each `start()` and `suspend()`: a closing listener only delivers send outcomes.
+    private var generation = 0
     private var closing: Task<Void, Never>?
-    /// Messages without a `receipt` or `admission_status` yet, resent on every `.paired`. The Mac
-    /// dedupes by id, so a resend is never a second message.
-    private var unreceipted: [YorozuEvent] = []
     /// `latestSeq` of the last reply page applied whole.
     private var cursor: Int?
     /// A `sync_request` is out and its pages are not all in: the records may be stale.
@@ -147,7 +162,8 @@ final class PhoneModel {
     var status: ClientConnectionStatus { ClientConnectionStatus(state: state, ownerOnline: ownerOnline, failure: failure) }
     /// What the chat shows: the saved status for up to 3 s after a return or launch, then `status`.
     var shownStatus: ClientConnectionStatus { heldStatus ?? status }
-    var canSend: Bool { state == .paired && !sending }
+    /// Send always works once linked: the outbox holds the message until it can go.
+    var canSend: Bool { linked }
     /// The Mac's work state is known: on the link and caught up.
     var statusKnown: Bool { working != nil && !catchingUp }
     /// Stop and Retry: one in flight per task, only while `.paired`.
@@ -224,19 +240,34 @@ final class PhoneModel {
         ownPub = identity.base64URLEncodedString()
         linked = stored.paired == true
         if let ownPub, let snapshot = MirrorCache.shared.load(owner: ownPub) { restore(snapshot) }
+        if let ownPub, let saved = Outbox.file.load(Outbox.self), saved.owner == ownPub {
+            outbox = saved.items
+            marks = saved.marks
+            // The cache keeps stored messages only: draw the rest from the outbox.
+            for item in outbox where !item.stored && !bubbles.contains(where: { $0.id == item.id }) {
+                if case .message(let message) = item.event.payload {
+                    merge(Bubble(id: item.id, user: true, ts: item.event.ts, text: message.text))
+                }
+            }
+            expireOverdue()
+        }
     }
 
     /// Forgets the pairing's link and its whole mirror, cache file included.
     private func disconnect() {
+        // Nothing to wait for: the old link's late events must not reach the next pairing's mirror.
+        inFlight = []
         suspend()
         relay = nil
         pairing = nil
         ownPub = nil
         linked = false
-        unreceipted = []
+        outbox.forEach { LocalNotices.cancelExpiry($0.id) }
+        outbox = []
+        marks = [:]
+        Outbox.file.wipe()
         failure = nil
         updateRequired = nil
-        sendError = nil
         hostName = nil
         macVersion = nil
         pairedAt = nil
@@ -254,36 +285,91 @@ final class PhoneModel {
     func start() {
         guard let relay, listener == nil else { return }
         let closing = closing
+        generation += 1
+        let generation = generation
         listener = Task { [weak self] in
             await closing?.value
             for await update in await relay.connect() {
-                self?.apply(update)
+                guard let self else { return }
+                if generation == self.generation {
+                    self.apply(update)
+                } else if case .accepted = update {
+                    self.apply(update)
+                } else if case .event = update {
+                    self.apply(update)
+                }
             }
         }
     }
 
-    /// Hangs up, so the next `start()` dials afresh rather than trusting a socket iOS froze.
+    /// Hangs up, so the next `start()` dials afresh rather than trusting a socket iOS froze. A frame
+    /// in flight gets up to 5 s for its `accepted` first; the listener runs on until then.
     func suspend() {
-        listener?.cancel()
-        listener = nil
+        let listener = listener
+        self.listener = nil
+        generation += 1
         let relay = relay
-        closing = Task { await relay?.close() }
+        let waiting = !inFlight.isEmpty
+        closing = Task { [weak self] in
+            if waiting { await self?.waitForFlight() }
+            listener?.cancel()
+            await relay?.close()
+            self?.inFlight = []
+        }
         state = .closed
         ownerOnline = false
         unlinked()
     }
 
-    /// Going to the background: remember what the chat showed, save the cache and hang up.
+    private func waitForFlight() async {
+        let end = ContinuousClock.now + .seconds(5)
+        while !inFlight.isEmpty, ContinuousClock.now < end {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    /// Going to the background: remember what the chat showed and save the cache. With messages
+    /// still Sending, keep the link and flushing on background time; otherwise hang up.
     func enterBackground() {
         savedStatus = SavedStatus(status: shownStatus, time: Date())
         savedStatus?.save()
         flush()
+        inBackground = true
+        guard sendingCount > 0 else { return suspend() }
+        backgroundTime = BackgroundTask("Yorozu outbox") { [weak self] in self?.backgroundExpired() }
+        flushOutbox(all: state == .paired)
+    }
+
+    /// Background time ran out with messages still Sending: say so, and hang up.
+    private func backgroundExpired() {
+        backgroundTime = nil
+        let count = sendingCount
+        if count > 0 { LocalNotices.postWaiting(count) }
         suspend()
     }
+
+    /// In the background, once nothing is Sending: hang up, then give the time back.
+    private func finishBackgroundIfDone() {
+        guard inBackground, let held = backgroundTime, sendingCount == 0 else { return }
+        backgroundTime = nil
+        suspend()
+        let closing = closing
+        Task {
+            await closing?.value
+            held.end()
+        }
+    }
+
+    private var sendingCount: Int { outbox.filter { marks[$0.id] == .sending }.count }
 
     /// Back in the foreground: show the saved status (if under 10 minutes old) for up to 3 s, and dial
     /// (or redial now instead of waiting out a backoff) unless the link is already up.
     func resume() {
+        inBackground = false
+        backgroundTime?.end()
+        backgroundTime = nil
+        LocalNotices.clearWaiting()
+        expireOverdue()
         if let saved = savedStatus {
             savedStatus = nil
             if Date().timeIntervalSince(saved.time) < 600 { hold(saved.status) }
@@ -318,8 +404,12 @@ final class PhoneModel {
                 ownerOnline = false
                 unlinked()
             }
-            if state == .joined || state == .paired { linked = true }
+            if state == .joined || state == .paired { linked = true } else { inFlight = [] }
+            // Mac away: only what is still Sending; the relay already holds the rest.
+            if state == .joined { flushOutbox(all: false) }
             if state == .paired { paired() }
+        case .accepted(let eventId, let buffered):
+            accepted(eventId, buffered: buffered)
         case .ownerOnline(let online):
             ownerOnline = online
         case .peerInfo(let info):
@@ -351,7 +441,8 @@ final class PhoneModel {
         chunks = ChunkAssembler()
     }
 
-    /// The relay never buffers Mac -> phone frames, so every `.paired` catches up and resends.
+    /// The relay never buffers Mac -> phone frames, so every `.paired` catches up, and resends every
+    /// message the Mac has not stored (it dedupes by id).
     private func paired() {
         // `PairingStore.markPaired` stamps the first join; mirror it rather than reread the Keychain.
         if pairedAt == nil { pairedAt = Date() }
@@ -361,10 +452,7 @@ final class PhoneModel {
         requestSync()
         // The relay dropped a page request that went out before the link fell: ask again.
         if let page, page.bubbles.isEmpty, page.error == nil { Task { await requestPage() } }
-        let events = unreceipted
-        Task { [relay] in
-            for event in events { try? await relay?.send(event) }
-        }
+        flushOutbox(all: true)
     }
 
     /// Asks for the changes after the cursor, and again after 15 s with neither a reply page nor a chunk.
@@ -387,27 +475,191 @@ final class PhoneModel {
 
     // MARK: Sending
 
-    /// The draft stays in the composer until the relay has taken the message.
-    func send() async {
+    /// Into the outbox: the bubble shows at once with Sending, the draft clears, and the flush sends it
+    /// now if the relay is reachable.
+    func send() {
         let text = draft
-        guard let relay, canSend else { return }
-        sending = true
-        defer { sending = false }
-        let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: Self.now, agentId: "device",
-                                payload: .message(MessageData(role: .user, text: text)))
-        unreceipted.append(event)
-        // Before the await, so a stored copy arriving meanwhile is never overwritten by this one.
-        merge(Bubble(id: event.id, user: true, ts: event.ts, text: text))
-        do {
-            try await relay.send(event)
-        } catch {
-            unreceipted.removeAll { $0.id == event.id }
-            bubbles.removeAll { $0.id == event.id && $0.seq == nil }
-            sendError = error.localizedDescription
-            return
+        guard canSend, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let ts = Self.now
+        let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: ts, agentId: "device",
+                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime)))
+        outbox.append(Outbox.Item(event: event, sentAt: ts))
+        setMark(event.id, .sending)
+        merge(Bubble(id: event.id, user: true, ts: ts, text: text))
+        draft = ""
+        saveOutbox()
+        queued()
+    }
+
+    /// Not delivered → Sending: the same id with a new `ts` and deadline.
+    func resend(_ id: String) {
+        guard marks[id] == .notDelivered, let index = outbox.firstIndex(where: { $0.id == id }) else { return }
+        let ts = Self.now
+        var item = outbox[index]
+        item.event.ts = ts
+        if case .message(var message) = item.event.payload {
+            message.admissionDeadline = ts + Outbox.lifetime
+            item.event.payload = .message(message)
         }
-        sendError = nil
-        if draft == text { draft = "" }
+        item.sentAt = ts
+        item.deliveredAt = nil
+        item.buffered = false
+        item.reason = nil
+        outbox[index] = item
+        setMark(id, .sending, resend: true)
+        if var bubble = bubbles.first(where: { $0.id == id }), bubble.seq == nil {
+            bubble.ts = ts
+            merge(bubble)
+        }
+        saveOutbox()
+        queued()
+    }
+
+    /// Removes a Not delivered message: its bubble, its outbox item and its notification.
+    func delete(_ id: String) {
+        guard marks[id] == .notDelivered else { return }
+        outbox.removeAll { $0.id == id }
+        marks[id] = nil
+        bubbles.removeAll { $0.id == id && $0.seq == nil }
+        LocalNotices.cancelExpiry(id)
+        saveOutbox()
+    }
+
+    /// The mark and times of a user message; nil for Yorozu's.
+    func delivery(of bubble: Bubble) -> Delivery? {
+        guard bubble.user else { return nil }
+        let item = outbox.first { $0.id == bubble.id }
+        let state: MarkState
+        if bubble.readAt != nil {
+            state = .read
+        } else if let mark = marks[bubble.id] {
+            state = mark
+        } else if bubble.seq != nil {
+            state = .delivered
+        } else {
+            return nil
+        }
+        let stored = bubble.seq != nil
+        let sentAt = item?.sentAt ?? bubble.sentAt ?? bubble.ts
+        return Delivery(
+            state: state, inFlight: state == .sending && inFlight.contains(bubble.id), sentAt: sentAt,
+            deliveredAt: item?.deliveredAt,
+            expiresAt: item?.buffered == true && !stored && item?.stored == false ? sentAt + Outbox.lifetime : nil,
+            receivedAt: stored ? bubble.ts : nil, readAt: bubble.readAt, reason: item?.reason)
+    }
+
+    /// A message has to wait in the outbox when the relay is out of reach: the moment to ask for
+    /// notification permission (#314 open question 4).
+    private func queued() {
+        if state != .joined && state != .paired { LocalNotices.requestPermission() }
+        flushOutbox(all: false)
+    }
+
+    /// One flush at a time, in order. `all` (on `.paired`): every message the Mac has not stored;
+    /// otherwise only those still Sending.
+    private func flushOutbox(all: Bool) {
+        let previous = flushTask
+        flushTask = Task { [weak self] in
+            await previous?.value
+            await self?.runFlush(all: all)
+        }
+    }
+
+    private func runFlush(all: Bool) async {
+        expireOverdue()
+        guard let relay, state == .joined || state == .paired else { return }
+        let time = BackgroundTask("Yorozu send")
+        defer { time.end() }
+        let due = outbox.filter {
+            !$0.stored && !inFlight.contains($0.id) && (marks[$0.id] == .sending || (all && marks[$0.id] == .delivered))
+        }.map(\.id)
+        for id in due {
+            guard self.relay === relay, state == .joined || state == .paired else { break }
+            guard let item = outbox.first(where: { $0.id == id }), !item.stored,
+                  marks[id] == .sending || marks[id] == .delivered else { continue }
+            inFlight.insert(id)
+            do {
+                try await relay.send(item.event)
+                settle(id)
+            } catch {
+                inFlight.remove(id)
+                LocalNotices.requestPermission()
+            }
+        }
+        finishBackgroundIfDone()
+    }
+
+    /// An old relay never answers `accepted`: the mark stops spinning after 10 s and stays Sending.
+    private func settle(_ id: String) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            self?.inFlight.remove(id)
+        }
+    }
+
+    private func accepted(_ id: String, buffered: Bool) {
+        inFlight.remove(id)
+        guard marks[id] == .sending, let index = outbox.firstIndex(where: { $0.id == id }), !outbox[index].stored else { return }
+        outbox[index].deliveredAt = Self.now
+        outbox[index].buffered = buffered
+        setMark(id, .delivered)
+        saveOutbox()
+        finishBackgroundIfDone()
+    }
+
+    /// The Mac has the message: a `receipt`, or its stored copy (`read` once it has `readAt`). The item
+    /// leaves the send queue; at Read its times go too.
+    private func stored(_ id: String, read: Bool) {
+        guard marks[id] != nil || outbox.contains(where: { $0.id == id }) else { return }
+        inFlight.remove(id)
+        if read {
+            LocalNotices.cancelExpiry(id)
+            marks[id] = nil
+            outbox.removeAll { $0.id == id }
+        } else {
+            if let index = outbox.firstIndex(where: { $0.id == id }) { outbox[index].stored = true }
+            setMark(id, .delivered)
+        }
+        saveOutbox()
+        finishBackgroundIfDone()
+    }
+
+    private func notDelivered(_ id: String, reason: String?) {
+        inFlight.remove(id)
+        guard let index = outbox.firstIndex(where: { $0.id == id }), MarkState.allows(marks[id], .notDelivered) else { return }
+        outbox[index].reason = reason
+        setMark(id, .notDelivered)
+        saveOutbox()
+        finishBackgroundIfDone()
+    }
+
+    /// Never accepted by the relay and past its deadline: Not delivered here, without the Mac.
+    private func expireOverdue() {
+        let now = Self.now
+        for item in outbox where marks[item.id] == .sending && item.deliveredAt == nil && !item.stored && now > item.deadline {
+            notDelivered(item.id, reason: String(localized: "This iPhone couldn’t send it within 24 hours."))
+        }
+    }
+
+    /// The forward-only rule, and the expiry notification that follows the mark.
+    private func setMark(_ id: String, _ new: MarkState, resend: Bool = false) {
+        let old = marks[id]
+        guard resend || MarkState.allows(old, new) else { return }
+        marks[id] = new
+        switch new {
+        case .delivered:
+            if old != .delivered { LocalNotices.scheduleExpiry(id) }
+        case .sending, .read:
+            LocalNotices.cancelExpiry(id)
+        case .notDelivered:
+            LocalNotices.cancelExpiry(id)
+            UIAccessibility.post(notification: .announcement, argument: String(localized: "Message not delivered"))
+        }
+    }
+
+    private func saveOutbox() {
+        guard let ownPub else { return }
+        Outbox.file.save(Outbox(owner: ownPub, items: outbox, marks: marks))
     }
 
     /// Stop or Retry one task. One per tap, only while `.paired`, never queued or resent; returns
@@ -474,13 +726,9 @@ final class PhoneModel {
             if requestedAfter != nil { armDeadline() }
             if let whole = chunks.add(chunk) { receive(whole) }
         case .receipt(let receipt):
-            unreceipted.removeAll { $0.id == receipt.eventId }
-        case .admissionStatus(let status) where status.status == .rejected:
-            unreceipted.removeAll { $0.id == status.eventId }
-            if let index = bubbles.firstIndex(where: { $0.id == status.eventId }) {
-                bubbles[index].failed = true
-                bubbles[index].reason = status.reason
-            }
+            stored(receipt.eventId, read: false)
+        case .admissionStatus(let status) where status.status == .rejected || status.status == .expired:
+            notDelivered(status.eventId, reason: status.reason)
         case .syncDelta(let delta):
             receive(delta)
         case .taskControlResult(let result):
@@ -559,6 +807,7 @@ final class PhoneModel {
             let held = bubbles.first { $0.id == event.id }
             guard held?.seq == nil || (held?.seq ?? 0) < (message.seq ?? 0) else { return }
             merge(Bubble(record: event.id, ts: event.ts, message))
+            if message.role == .user, message.seq != nil { stored(event.id, read: message.readAt != nil) }
         case .topic(let topic):
             if (topics[topic.id]?.seq ?? -1) < topic.seq { topics[topic.id] = topic }
         case .task(let task):
@@ -651,6 +900,12 @@ final class PhoneModel {
         topics = topics.filter { topicIds.contains($0.key) || $0.value.created >= cutoff }
         amendments = amendments.filter { tasks[$0.value.taskId] != nil }
         workerEvents = workerEvents.filter { tasks[$0.value.taskId] != nil }
+        // A stored message that left the window is never Read here: its times go with it.
+        let before = outbox.count
+        outbox.removeAll { $0.stored && !kept.contains($0.id) }
+        let queued = Set(outbox.map(\.id))
+        marks = marks.filter { kept.contains($0.key) || queued.contains($0.key) }
+        if outbox.count != before { saveOutbox() }
     }
 
     private static let windowCount = 500
