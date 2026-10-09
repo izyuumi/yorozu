@@ -7,7 +7,7 @@ Everything here was written against Hermes v0.21.6 (2026-10-08): its docs (`webs
 ## Transport
 
 - One API server, run inside `hermes gateway` by the default profile, on `[harness] hermes_url` (default `http://127.0.0.1:8642`). Only a loopback `http`/`https` URL with no path, query or credentials is accepted, at config validation and again in `HermesClient`.
-- Multiplexing (on by default in Hermes): the default profile's listener serves each named profile at `<root>/p/<profile>/…`, and each profile takes only the `API_SERVER_KEY` from its own `.env`. Yorozu calls only `/p/yorozu-worker/` and `/p/yorozu-roles/`. A named profile must not start its own listener.
+- Multiplexing (on by default in Hermes): the default profile's listener serves each named profile at `<root>/p/<profile>/…`, and each profile takes only the `API_SERVER_KEY` from its own `.env`. Yorozu calls only `/p/yorozu-worker/` and `/p/yorozu-roles/`, plus the root `/health` for the restart check ([Readiness](#readiness)). A named profile must not start its own listener.
 - Auth: `Authorization: Bearer <key>`, the profile's key read from the Keychain (`to.yumi.yorozu.hermes`, account = profile) on every request. The key is never logged, put in a URL, written to a receipt or quoted in an error. A missing item is `harness_not_ready` ("Run the Hermes setup step"); a 401 or 403 says Hermes refused the key.
 - An ephemeral `URLSession` (no cookies, cache or credential store) with a 60 s idle timeout. A transport failure means nothing is known about admission and is reported as uncertain.
 - A 429 is `harness_busy`: Hermes already runs its maximum of 10 runs at once and started nothing. Other refusals become an uncertain error with Hermes's error code and message, the message dropped when it looks like a secret.
@@ -57,6 +57,9 @@ With Hermes as the main harness, the setup engine's `harness` step offers the pr
 - both profile folders;
 - per profile, an unauthenticated `GET /health` answering 200 with `platform: "hermes-agent"` (its `version` is reported);
 - per profile, `GET /v1/capabilities` with every one of `run_status`, `run_events_sse`, `run_stop`, `run_steer`, `session_model_lock`, `tool_progress_events`, `model_options` true in `features`.
+- per profile, `GET /api/model/options` with a `provider` other than empty or `auto`. With `auto`, Hermes resolves the provider per run from env keys, a login or the free tier (`hermes_cli/auth.py`, `resolve_provider`; GitHub Copilot is never picked automatically, even when listed as authenticated), and with none of those every run fails with "Hermes is not connected to any AI provider yet". The item is the warning "Hermes isn't connected to an AI provider" with `hermes -p <profile> model` for each such profile to copy; that failure text in a notice maps to the same sentence (`PlainError`, cause `hermes_no_provider`). `auto` with an env key would still run, so this can warn about a profile that works; it stays a warning.
+
+Hermes's host gateway decides which profiles it serves only at startup (`gateway/run_startup.py`, `profiles_to_serve`), so a profile written after it started gets 404 under `/p/<profile>/`. When a profile folder exists, its `/health` is 404 and the default profile's own `/health` (the root, no `/p/`) answers 200, readiness shows the warning "Restart Hermes so it serves Yorozu's profiles" with `hermes -p default gateway restart` to copy, instead of the "does not answer" problem. Without an installed service (`hermes gateway install`), `gateway restart` stops the running gateway and runs a new one in the foreground of that shell (`hermes_cli/gateway.py`, `_cmd_restart`). The `hermes_setup` question says a restart follows; readiness after the apply shows it.
 
 A version not in `HermesHarness.testedVersions` (0.21.6; a leading `v` is ignored) is only a warning. Hermes not ready still launches the app: messages are saved and runs fail with the reason.
 
@@ -66,9 +69,9 @@ All under `<root>/p/<profile>`.
 
 | Call | Profile | Used for | Notes |
 |---|---|---|---|
-| `GET /health` | both | Readiness | No auth. |
+| `GET /health` | both, and the root | Readiness | No auth. The root is the default profile's own listener. |
 | `GET /v1/capabilities` | both | Readiness | Feature flags above. |
-| `GET /api/model/options` | both | Model metadata ([Models](#models)) | |
+| `GET /api/model/options` | both | Model metadata ([Models](#models)), readiness's provider check | |
 | `POST /api/sessions` | worker | Topic and coding sessions | `{id, title, source: "yorozu", provider, model, require_model_lock: true}`. 400 `invalid_title` retries without the title; 409 `session_exists` locks the existing session with `POST /api/sessions/{id}/model {provider, model}`. Once per session and model per app run. Hermes 0.21.6 keeps only its own source names and stores `source` as `api_server`. |
 | `GET /api/sessions/{id}/messages?limit=1` | worker | Compaction check | Reads `session_id`, the session's live id. |
 | `POST /v1/runs` | both | Every run | `{input, instructions, provider, model}` plus `session_id` for workers, header `Idempotency-Key`. 200 or 202 with `run_id` (the server's `run_<uuid>`). An identical retry within 24 h returns the original run (`Idempotency-Replayed`). A run without `session_id` gets a new session. A bare model name without a provider is ignored by Hermes, so Yorozu always sends both. |

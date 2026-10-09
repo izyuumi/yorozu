@@ -175,7 +175,7 @@ public struct SetupEngine: Sendable {
     /// Applying names the plan it was shown: `apply:<plan digest>`.
     func assist(_ plan: OpenClawPlan, hermes: Bool = false) -> SetupStep.Question {
         let apply = "apply:" + plan.digest
-        if hermes { return .init(id: "hermes_setup",text: "Write Yorozu's two Hermes profiles, yorozu-worker and yorozu-roles, as listed? Your default profile and any other profile don't change.",choices: [apply,"skip"],default: apply) }
+        if hermes { return .init(id: "hermes_setup",text: "Write Yorozu's two Hermes profiles, yorozu-worker and yorozu-roles, as listed? Your default profile and any other profile don't change. Hermes serves new profiles only after its gateway restarts; readiness says when.",choices: [apply,"skip"],default: apply) }
         return plan.needsConfirmation
             ? .init(id: "openclaw_setup",text: "Yorozu's agent entry in OpenClaw differs from what Yorozu expects. Apply the changes listed? Nothing else in OpenClaw's config changes.",choices: [apply,"skip"],default: "skip")
             : .init(id: "openclaw_setup",text: "Write Yorozu's own entries into OpenClaw's config, as listed: its agent, its allowed models and its yorozu-* MCP servers? Nothing else changes.",choices: [apply,"skip"],default: apply)
