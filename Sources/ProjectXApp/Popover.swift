@@ -68,7 +68,7 @@ struct PopoverContent: View {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(ChatPalette.warning).accessibilityHidden(true)
                 Text(notice).lineLimit(1).truncationMode(.tail).help(model.nativeNoticeDetail)
                 Spacer()
-                Button("Connect…",action: openSettings).buttonStyle(.link)
+                Button("Connect…") { model.showEnrollment(); openSettings() }.buttonStyle(.link)
             } else if let status = model.status {
                 Text(status).lineLimit(1).truncationMode(.tail).help(status).textSelection(.enabled)
             } else if let label = model.harnessLabel {

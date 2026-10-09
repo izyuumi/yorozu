@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ProjectXCore
+import ServiceManagement
 
 @MainActor final class AppModel: ObservableObject {
     let runtimeMode = RuntimeMode.from(ProcessInfo.processInfo.environment)
@@ -46,7 +47,7 @@ import ProjectXCore
     let environment = ProcessInfo.processInfo.environment
     let settingsBox = SettingsBox()
     var configFile: URL?
-    var resolved: ResolvedSettings?
+    @Published var resolved: ResolvedSettings?
     /// Resolved at launch: transport, Gateway URL, agent and harness kind apply only from the next launch.
     var launched: ResolvedSettings?
     var fileConfig: Config?
@@ -54,8 +55,19 @@ import ProjectXCore
     var store: Store?
     var harness: (any Harness)?
     var devicesFile: URL?
-    var lastConfigError: ConfigError?
-    var metadata: (allowed: [ModelInfo], primary: String?)?
+    @Published var lastConfigError: ConfigError?
+    @Published var metadata: (allowed: [ModelInfo], primary: String?)?
+    /// The last Settings write that failed, shown in Settings until the next one succeeds.
+    @Published var settingsError: String?
+    /// The Settings window's tab, so the popover's Connect… can open Advanced.
+    @Published var settingsTab = SettingsView.Tab.general
+    /// Why `[general] global_shortcut` is not registered (unrecognized, or in use by another app); nil when it is or it is off.
+    @Published var shortcutProblem: String?
+    /// The login item as Settings shows it: its real status, or why this run leaves it alone.
+    @Published var loginItemStatus: SMAppService.Status?
+    @Published var loginItemBlocker: String?
+    /// The Markdown memory folder in use, for Settings › Storage.
+    var memoryFolder: URL?
     var metadataTask: Task<Void,Never>?
     /// When the model metadata was last asked for; with no metadata yet, a message asks again at most every 30 s.
     var metadataAsked: Date?
@@ -100,6 +112,7 @@ import ProjectXCore
                 let memory = explicit != nil || runtimeMode == .fixture ? try MemoryStore(dataRoot: root) : try MemoryStore(
                     root: fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/memory",isDirectory: true),
                     index: try fm.url(for: .cachesDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID + "/memory-index.sqlite"))
+                memoryFolder = await memory.root
                 try await memory.rebuild()
                 // Bad note files are skipped, not fatal; say which, once per launch.
                 let skipped = await memory.skipped
@@ -230,6 +243,8 @@ import ProjectXCore
         relayRestart = task; await task.value
     }
     func stop() { observation?.cancel(); stopJobs(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
+    /// This Mac holds a Gateway device token (Keychain), for Settings › Advanced.
+    var nativeEnrolled: Bool { nativeClient?.isEnrolled ?? false }
     func enroll() async {
         guard let nativeClient, !connecting else { return }
         connecting = true; let secret = bootstrapSecret; bootstrapSecret = ""

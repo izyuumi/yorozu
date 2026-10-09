@@ -18,8 +18,7 @@ extension AppModel {
     func harnessSettings() -> HarnessSettings {
         guard let resolved else { return HarnessSettings() }
         let c = resolved.config, meta = metadata ?? ([],nil)
-        let runtimes = Dictionary((harness?.executors ?? []).compactMap { e in e.runtime.map { (e.id,$0) } }) { a,_ in a }
-        let m = resolved.models(meta.allowed,primary: meta.primary,runtimes: runtimes)
+        let m = resolved.models(meta.allowed,primary: meta.primary,runtimes: executorRuntimes)
         var s = HarnessSettings()
         s.secretaryModel = m.secretary.id ?? ""; s.extractionModel = m.extraction.id ?? ""; s.workerModel = m.worker.id ?? ""; s.reviewModel = m.review.id ?? ""
         s.codingModels = m.coding.compactMapValues(\.id)
@@ -27,6 +26,8 @@ extension AppModel {
         s.personalKnowledge = c.routing.personalKnowledge; s.selfTopic = c.routing.selfTopic
         return s
     }
+    /// Coding executor id → its model runtime, for the executors' automatic models.
+    var executorRuntimes: [String:String] { Dictionary((harness?.executors ?? []).compactMap { e in e.runtime.map { (e.id,$0) } }) { a,_ in a } }
     /// Reads the harness's model metadata, then recomputes the settings. A failed read keeps the last good metadata.
     @discardableResult func refreshModels() -> Task<Void,Never> {
         metadataAsked = Date()
@@ -48,7 +49,13 @@ extension AppModel {
         let watcher = ConfigWatcher(file: configFile,seen: configText) { [weak self] result in Task { @MainActor in await self?.reload(result) } }
         self.watcher = watcher; watcher.start()
     }
-    private func reload(_ result: Result<Config,ConfigError>) async {
+    /// A Settings change: read-modify-write through `Config.update`, applied at once; the watcher then sees the same file and skips it.
+    func writeSettings(_ change: (inout Config) -> Void) {
+        guard let configFile else { return }
+        do { let file = try Config.update(configFile) { change(&$0) }; settingsError = nil; Task { await reload(.success(file)) } }
+        catch { settingsError = error.localizedDescription }
+    }
+    func reload(_ result: Result<Config,ConfigError>) async {
         guard let configFile, let old = resolved else { return }
         let file: Config, next: ResolvedSettings
         do { file = try result.get(); next = try ResolvedSettings(file,environment: environment) }
@@ -59,7 +66,8 @@ extension AppModel {
             lastConfigError = problem
             return await postInvalid(problem,body: "Settings not applied: \(problem.localizedDescription). The last valid settings stay in force.")
         }
-        lastConfigError = nil
+        if file == fileConfig, lastConfigError == nil { return } // a Settings write the watcher saw again
+        lastConfigError = nil; settingsError = nil
         let changed = fileConfig.map { file.securityChanges(from: $0) } ?? []
         fileConfig = file; resolved = next
         settingsBox.value = harnessSettings() // explicit choices, YOLO, routing hints and MCP now; automatic models after the read
@@ -69,9 +77,10 @@ extension AppModel {
             _ = try? await store?.message(role: "assistant",body: "Settings changed: \(keys)",kind: "acknowledgment",notice: Notice(.settingsChanged,["keys": keys]))
         }
         if runtimeMode == .live, next.config.relay.url != old.config.relay.url { await restartRelay() }
-        applySystem(next.config.general)
+        // After the awaits a newer reload may have run: apply the settings in force now, not this reload's.
+        applySystem((resolved ?? next).config.general)
         if let launched {
-            let h = next.config.harness, l = launched.config.harness
+            let h = (resolved ?? next).config.harness, l = launched.config.harness
             let pending = [("harness.kind",h.kind != l.kind),("harness.agent",h.agent != l.agent),("harness.transport",h.transport != l.transport),("harness.gateway_url",h.gatewayURL != l.gatewayURL),("harness.hermes_url",h.hermesURL != l.hermesURL)].filter(\.1).map(\.0)
             if !pending.isEmpty {
                 let keys = pending.joined(separator: ", ")
@@ -90,12 +99,18 @@ extension AppModel {
     func applySystem(_ general: Config.General) {
         if general.keepMacAwake, awake == nil { awake = ProcessInfo.processInfo.beginActivity(options: .idleSystemSleepDisabled,reason: "Keep Mac awake (Yorozu setting)") }
         else if !general.keepMacAwake, let activity = awake { ProcessInfo.processInfo.endActivity(activity); awake = nil }
-        guard runtimeMode != .fixture, environment["PROJECTX_DATA"] == nil, let marker = configFile?.deletingLastPathComponent().appendingPathComponent("login-item-registered") else { return }
+        NSApp.appearance = switch general.appearance { case .system: nil; case .light: NSAppearance(named: .aqua); case .dark: NSAppearance(named: .darkAqua) }
+        loginItemBlocker = nil
+        guard runtimeMode != .fixture, environment["PROJECTX_DATA"] == nil, let marker = configFile?.deletingLastPathComponent().appendingPathComponent("login-item-registered") else {
+            loginItemBlocker = String(localized: "Test fixture and PROJECTX_DATA runs leave the login item alone."); return
+        }
         let me = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
-        if let id = Bundle.main.bundleIdentifier, NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).contains(where: { $0.resolvingSymlinksInPath().standardizedFileURL.path != me }) {
+        if let id = Bundle.main.bundleIdentifier, let other = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).first(where: { $0.resolvingSymlinksInPath().standardizedFileURL.path != me }) {
+            loginItemBlocker = String(localized: "Off while another Yorozu with the same bundle id is installed (\(other.path)): macOS could act on that app's login item.")
             if general.startAtLogin { status = String(localized: "Start at login is off while another Yorozu with the same id is installed") }; return
         }
         let service = SMAppService.mainApp, fm = FileManager.default
+        defer { loginItemStatus = service.status }
         do {
             switch (general.startAtLogin,service.status) {
             case (true,.notRegistered),(true,.notFound): try service.register(); fm.createFile(atPath: marker.path,contents: nil)
@@ -105,6 +120,8 @@ extension AppModel {
             if general.startAtLogin, service.status == .requiresApproval { status = String(localized: "Start at login needs approval in System Settings › General › Login Items") }
         } catch { status = String(localized: "Start at login: \(error.localizedDescription)") }
     }
+    /// The login item's status again, for Settings: approval in System Settings happens outside Yorozu.
+    func refreshLoginItem() { if loginItemBlocker == nil, loginItemStatus != nil { loginItemStatus = SMAppService.mainApp.status } }
 }
 extension Task where Success == Void, Failure == Never {
     /// Waits for the task for at most `limit`; the task itself keeps running.

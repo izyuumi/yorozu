@@ -7,16 +7,22 @@ import Carbon.HIToolbox
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private(set) var spec = ""
+    /// Why `spec` is not registered; nil when it is or it is off.
+    private var problem: String?
+    /// The hot key was in use: the next update tries the same spec again (the other app may let go).
+    private var retry = false
 
     init(action: @escaping () -> Void) { self.action = action }
 
-    /// Registers `spec` in place of the current one. Returns a problem to show, or nil when registered or off.
+    /// Registers `spec` in place of the current one. Returns the current problem, or nil when registered or off.
     func update(_ spec: String) -> String? {
-        guard spec != self.spec else { return nil }
-        self.spec = spec
+        guard spec != self.spec || retry else { return problem }
+        self.spec = spec; problem = nil; retry = false
         if let hotKey { UnregisterEventHotKey(hotKey); self.hotKey = nil }
         guard !spec.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
-        guard let (key, modifiers) = Self.parse(spec) else { return String(localized: "Global shortcut not recognized: \(spec)") }
+        guard let (key, modifiers) = Self.parse(spec) else {
+            problem = String(localized: "Global shortcut not recognized: \(spec)"); return problem
+        }
         if handler == nil {
             var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
             InstallEventHandler(GetApplicationEventTarget(), { _, _, me in
@@ -27,9 +33,8 @@ import Carbon.HIToolbox
         }
         let id = EventHotKeyID(signature: OSType(0x59525A55), id: 1) // "YRZU"
         guard RegisterEventHotKey(key, modifiers, id, GetApplicationEventTarget(), 0, &hotKey) == noErr else {
-            // Forget the spec, so the next update retries (the other app may let go) and keeps showing the problem.
-            self.spec = ""
-            return String(localized: "Global shortcut \(spec) is in use by another app")
+            retry = true
+            problem = String(localized: "Global shortcut \(spec) is in use by another app"); return problem
         }
         return nil
     }

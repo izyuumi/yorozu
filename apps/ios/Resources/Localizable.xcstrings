@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Last error" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最後のエラー" } }
+      }
+    },
+    "iPhone version" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "iPhoneのバージョン" } }
+      }
+    },
+    "Unknown" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "不明" } }
+      }
+    },
+    "Versions and connection details only: never messages, keys or tokens." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "バージョンと接続の情報だけをコピーします。メッセージ、鍵、トークンは含みません。" } }
+      }
+    },
     "%lld new" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "新着 %lld件" } }

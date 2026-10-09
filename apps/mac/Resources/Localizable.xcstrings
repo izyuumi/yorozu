@@ -291,16 +291,6 @@
         }
       }
     },
-    "Enroll Yorozu with the local Gateway" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ローカルGatewayにYorozuを登録"
-          }
-        }
-      }
-    },
     "Expanded" : {
       "localizations" : {
         "ja" : {
@@ -629,16 +619,6 @@
         }
       }
     },
-    "Pairing and the Gateway are available in live mode only." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ペアリングとGatewayはライブモードでのみ使えます。"
-          }
-        }
-      }
-    },
     "Previous" : {
       "localizations" : {
         "ja" : {
@@ -929,16 +909,6 @@
         }
       }
     },
-    "Show pairing code" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ペアリングコードを表示"
-          }
-        }
-      }
-    },
     "Show the request" : {
       "localizations" : {
         "ja" : {
@@ -1185,16 +1155,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "タスクは最新の変更を確認しないまま終わりました。回答はサブチャットにあります。"
-          }
-        }
-      }
-    },
-    "This is a separate app device, not a model-provider login. The Gateway is loopback only. Enter its bootstrap token/password privately here; never put it in chat. Only Yorozu's own device token and generated key are saved in Keychain. A new device approval may be required. Leave blank to reconnect an enrolled device." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "これはモデルプロバイダーへのログインではなく、別のアプリデバイスです。Gatewayはループバック専用です。ブートストラップのトークン/パスワードはここに非公開で入力し、チャットには絶対に書かないでください。キーチェーンに保存されるのはYorozu自身のデバイストークンと生成された鍵だけです。新しいデバイスの承認が必要になる場合があります。登録済みのデバイスに再接続するには空欄のままにしてください。"
           }
         }
       }
@@ -1645,6 +1605,1146 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "「%@」への返信"
+          }
+        }
+      }
+    },
+    "%@ · price unknown" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · 価格不明"
+          }
+        }
+      }
+    },
+    "A code is created only when you press this. Each code works once." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードはこのボタンを押したときだけ作られ、1回だけ使えます。"
+          }
+        }
+      }
+    },
+    "A separate app device, not a model-provider login. Enter the Gateway's bootstrap token or password here, never in chat; only Yorozu's own device token and key are saved in Keychain. The Gateway may ask you to approve the device. Leave it blank to reconnect an enrolled device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルプロバイダへのログインではなく、アプリ専用のデバイスです。Gateway のブートストラップトークンまたはパスワードはチャットではなくここに入力してください。キーチェーンに保存されるのは Yorozu 自身のデバイストークンと鍵だけです。Gateway がデバイスの承認を求めることがあります。登録済みのデバイスを再接続するときは空欄のままにします。"
+          }
+        }
+      }
+    },
+    "About this install" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このインストールについて"
+          }
+        }
+      }
+    },
+    "Agent id" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェント ID"
+          }
+        }
+      }
+    },
+    "All paired phones must pair again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング済みのすべての iPhone でペアリングし直す必要があります。"
+          }
+        }
+      }
+    },
+    "Allowed models come from the harness. Automatic picks again at launch and whenever settings change." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "許可モデルはハーネスから取得します。自動は起動時と設定の変更時に選び直します。"
+          }
+        }
+      }
+    },
+    "Appearance" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外観"
+          }
+        }
+      }
+    },
+    "Automatic" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動"
+          }
+        }
+      }
+    },
+    "Automatic (%@)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動（%@）"
+          }
+        }
+      }
+    },
+    "Automatic (%@, %@)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動（%1$@、%2$@）"
+          }
+        }
+      }
+    },
+    "Cancel" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "キャンセル"
+          }
+        }
+      }
+    },
+    "Change Relay" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーを変更"
+          }
+        }
+      }
+    },
+    "Change Relay…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーを変更…"
+          }
+        }
+      }
+    },
+    "Change the relay?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーを変更しますか？"
+          }
+        }
+      }
+    },
+    "Choose" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選択"
+          }
+        }
+      }
+    },
+    "Choose…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選択…"
+          }
+        }
+      }
+    },
+    "Clear" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消去"
+          }
+        }
+      }
+    },
+    "Coding workers" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コーディングワーカー"
+          }
+        }
+      }
+    },
+    "Coding: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コーディング: %@"
+          }
+        }
+      }
+    },
+    "Command line" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コマンドライン"
+          }
+        }
+      }
+    },
+    "Connect" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続"
+          }
+        }
+      }
+    },
+    "Connect this Mac to the Gateway in Settings › Advanced." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 › 詳細 でこの Mac を Gateway に接続してください。"
+          }
+        }
+      }
+    },
+    "Connecting…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続中…"
+          }
+        }
+      }
+    },
+    "Dark" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ダーク"
+          }
+        }
+      }
+    },
+    "Data folder" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "データフォルダ"
+          }
+        }
+      }
+    },
+    "Device enrollment" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デバイス登録"
+          }
+        }
+      }
+    },
+    "Enrolled" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登録済み"
+          }
+        }
+      }
+    },
+    "Every paired phone has to pair again after a change." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "変更すると、ペアリング済みのすべての iPhone でペアリングし直す必要があります。"
+          }
+        }
+      }
+    },
+    "Expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "パスのないループバックの ws:// または wss:// アドレスを入力してください（例: ws://127.0.0.1:18789）。"
+          }
+        }
+      }
+    },
+    "Expected a ws:// or wss:// address." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ws:// または wss:// のアドレスを入力してください。"
+          }
+        }
+      }
+    },
+    "Files" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイル"
+          }
+        }
+      }
+    },
+    "For results, failures and questions. Nothing is shown while you are reading the latest message." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "結果・失敗・質問を通知します。最新のメッセージを見ているあいだは表示しません。"
+          }
+        }
+      }
+    },
+    "Gateway URL" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway URL"
+          }
+        }
+      }
+    },
+    "Gateway bootstrap secret (not saved)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway のブートストラップシークレット（保存されません）"
+          }
+        }
+      }
+    },
+    "Global shortcut" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "グローバルショートカット"
+          }
+        }
+      }
+    },
+    "Harness" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ハーネス"
+          }
+        }
+      }
+    },
+    "Harness connection" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ハーネス接続"
+          }
+        }
+      }
+    },
+    "Keep this Mac awake" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac をスリープさせない"
+          }
+        }
+      }
+    },
+    "Keyboard" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "キーボード"
+          }
+        }
+      }
+    },
+    "Last seen %@ · paired %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最終接続: %1$@ · %2$@ にペアリング"
+          }
+        }
+      }
+    },
+    "Leave it empty to use the name the phone sends." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空欄にすると iPhone から送られた名前を使います。"
+          }
+        }
+      }
+    },
+    "Light" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ライト"
+          }
+        }
+      }
+    },
+    "Live" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ライブ"
+          }
+        }
+      }
+    },
+    "Loopback only. Press Return to apply." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ループバックのみ。Return で適用します。"
+          }
+        }
+      }
+    },
+    "MCP servers" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MCP サーバ"
+          }
+        }
+      }
+    },
+    "MCP servers are edited in config.toml or by asking in the chat." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MCP サーバは config.toml を編集するか、チャットで頼んで変更します。"
+          }
+        }
+      }
+    },
+    "Memory" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メモリ"
+          }
+        }
+      }
+    },
+    "Memory extraction" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メモリ抽出"
+          }
+        }
+      }
+    },
+    "Memory is plain Markdown you own; edit it with any app." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メモリはあなたが所有するプレーンな Markdown です。どのアプリでも編集できます。"
+          }
+        }
+      }
+    },
+    "Models" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデル"
+          }
+        }
+      }
+    },
+    "Modifiers and a key, such as option+space or cmd+shift+y. Press Return to apply." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修飾キーとキーを option+space や cmd+shift+y のように入力し、Return で適用します。"
+          }
+        }
+      }
+    },
+    "Name" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名前"
+          }
+        }
+      }
+    },
+    "Native (WebSocket)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ネイティブ（WebSocket）"
+          }
+        }
+      }
+    },
+    "Native gets live progress and tool names. If it is unavailable, Yorozu uses the command line for that launch and says so." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ネイティブはライブ進捗とツール名を受け取ります。使えない場合はその起動中だけコマンドラインに切り替え、その旨を表示します。"
+          }
+        }
+      }
+    },
+    "No paired phones yet." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング済みの iPhone はまだありません。"
+          }
+        }
+      }
+    },
+    "None" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "なし"
+          }
+        }
+      }
+    },
+    "Not a shortcut Yorozu understands: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu が認識できないショートカットです: %@"
+          }
+        }
+      }
+    },
+    "Not among the harness's allowed models. Yorozu still uses it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ハーネスの許可モデルにありません。Yorozu はこのまま使います。"
+          }
+        }
+      }
+    },
+    "Not created yet" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだ作成されていません"
+          }
+        }
+      }
+    },
+    "Not enrolled" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未登録"
+          }
+        }
+      }
+    },
+    "Not set: coding work ends with a notice." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未設定: コーディング作業はお知らせを出して終了します。"
+          }
+        }
+      }
+    },
+    "Notifications" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通知"
+          }
+        }
+      }
+    },
+    "Notifications on phones are not available yet." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone への通知はまだ使えません。"
+          }
+        }
+      }
+    },
+    "Notify on" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通知先"
+          }
+        }
+      }
+    },
+    "Off while another Yorozu with the same bundle id is installed (%@): macOS could act on that app's login item." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同じバンドル ID の別の Yorozu（%@）がインストールされているためオフです。macOS がそのアプリのログイン項目を操作するおそれがあります。"
+          }
+        }
+      }
+    },
+    "Off: Enter sends a one-line message; once a draft has more lines, Enter adds a line and ⌘Enter sends. On: Enter always adds a line." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフ: 1行のときは Enter で送信。複数行になると Enter で改行、⌘Enter で送信。オン: Enter は常に改行。"
+          }
+        }
+      }
+    },
+    "Offline" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフライン"
+          }
+        }
+      }
+    },
+    "Online · paired %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オンライン · %@ にペアリング"
+          }
+        }
+      }
+    },
+    "Open Login Items…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ログイン項目を開く…"
+          }
+        }
+      }
+    },
+    "Opens Yorozu from any app." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "どのアプリからでも Yorozu を開きます。"
+          }
+        }
+      }
+    },
+    "Pair a new iPhone" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい iPhone をペアリング"
+          }
+        }
+      }
+    },
+    "Pair iPhone…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone をペアリング…"
+          }
+        }
+      }
+    },
+    "Paired %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ にペアリング"
+          }
+        }
+      }
+    },
+    "Paired phones" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング済みの iPhone"
+          }
+        }
+      }
+    },
+    "Pairing works in live mode only." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングはライブモードでのみ使えます。"
+          }
+        }
+      }
+    },
+    "Phones" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone"
+          }
+        }
+      }
+    },
+    "Re-enroll" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再登録"
+          }
+        }
+      }
+    },
+    "Ready" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "準備完了"
+          }
+        }
+      }
+    },
+    "Relaunch to apply." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再起動すると適用されます。"
+          }
+        }
+      }
+    },
+    "Relay" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレー"
+          }
+        }
+      }
+    },
+    "Relay URL" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレー URL"
+          }
+        }
+      }
+    },
+    "Removing a phone revokes its key at the relay. It has to pair again to connect." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除するとリレーでその iPhone の鍵が無効になります。再接続にはペアリングし直す必要があります。"
+          }
+        }
+      }
+    },
+    "Rename" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名前を変更"
+          }
+        }
+      }
+    },
+    "Rename %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ の名前を変更"
+          }
+        }
+      }
+    },
+    "Rename iPhone" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone の名前を変更"
+          }
+        }
+      }
+    },
+    "Rename…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名前を変更…"
+          }
+        }
+      }
+    },
+    "Repository" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リポジトリ"
+          }
+        }
+      }
+    },
+    "Run mode" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行モード"
+          }
+        }
+      }
+    },
+    "Secretary" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "秘書"
+          }
+        }
+      }
+    },
+    "Set by `%@`" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "`%@` で設定"
+          }
+        }
+      }
+    },
+    "Shortcut" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ショートカット"
+          }
+        }
+      }
+    },
+    "Show Advanced" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "詳細を表示"
+          }
+        }
+      }
+    },
+    "Show Advanced settings" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "詳細設定を表示"
+          }
+        }
+      }
+    },
+    "Show config.toml" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "config.toml を表示"
+          }
+        }
+      }
+    },
+    "Show config.toml in Finder" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "config.toml を Finder で表示"
+          }
+        }
+      }
+    },
+    "Show in Finder" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finder で表示"
+          }
+        }
+      }
+    },
+    "Show notifications" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通知を表示"
+          }
+        }
+      }
+    },
+    "Start at login" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ログイン時に起動"
+          }
+        }
+      }
+    },
+    "Startup" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "起動"
+          }
+        }
+      }
+    },
+    "Status" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "状態"
+          }
+        }
+      }
+    },
+    "Stronger review" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "強いレビュー"
+          }
+        }
+      }
+    },
+    "System" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "システム"
+          }
+        }
+      }
+    },
+    "Test fixture" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テストフィクスチャ"
+          }
+        }
+      }
+    },
+    "Test fixture and PROJECTX_DATA runs leave the login item alone." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テストフィクスチャと PROJECTX_DATA での実行ではログイン項目を変更しません。"
+          }
+        }
+      }
+    },
+    "The relay runs in live mode only." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーはライブモードでのみ動作します。"
+          }
+        }
+      }
+    },
+    "This Mac" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac"
+          }
+        }
+      }
+    },
+    "Transport" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "トランスポート"
+          }
+        }
+      }
+    },
+    "Waiting for your approval in System Settings › General › Login Items." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "システム設定 › 一般 › ログイン項目 で許可されるのを待っています。"
+          }
+        }
+      }
+    },
+    "Workers" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ワーカー"
+          }
+        }
+      }
+    },
+    "Workers and paired phones need the Mac awake. A closed lid still sleeps." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ワーカーとペアリングした iPhone には Mac の起動が必要です。蓋を閉じるとスリープします。"
+          }
+        }
+      }
+    },
+    "Workers take outward-facing steps you asked for, and use risky computer-use tools, without asking first. Always held: settings changes and anything you did not ask for still need your word; no secrets; Yorozu never takes focus or touches other agents' sessions." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "依頼された外部向けの操作と、リスクのあるコンピュータ操作ツールを確認なしで実行します。常に守られること: 設定の変更と依頼していない操作には引き続き確認が必要、秘密情報は扱わない、Yorozu はフォーカスを奪わず、他のエージェントのセッションに触れません。"
+          }
+        }
+      }
+    },
+    "YOLO mode" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "YOLO モード"
+          }
+        }
+      }
+    },
+    "⌘Enter to send" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘Enter で送信"
           }
         }
       }
