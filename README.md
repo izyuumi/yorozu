@@ -5,7 +5,7 @@ A native macOS personal assistant backed by a local OpenClaw Gateway, with an iP
 - **One conversation.** A secretary model answers quick turns itself and hands substantive work to background workers. Each topic gets a sub-chat you can inspect while you keep talking.
 - **Workers.** Thinking work runs in OpenClaw sessions; coding work runs Claude Code or Codex in managed git worktrees.
 - **Memory you own.** Useful facts and knowledge are saved automatically as Markdown files in `~/Yorozu/memory`, with a rebuildable search index.
-- **iPhone.** Pair from the Mac's Pair iPhone sheet; messages travel through an end-to-end-encrypted relay.
+- **iPhone.** Pair from the Mac's Pair a Client Device sheet; messages travel through an end-to-end-encrypted relay.
 
 This branch, `projectx`, is Yorozu v2. Yorozu v1 lives on `main`.
 

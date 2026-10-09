@@ -7,13 +7,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Yorozu lets your paired iPhone connect to this Mac directly over your local network or VPN."
+            "value" : "Yorozu lets your paired client devices connect to this Mac directly over your local network or VPN."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ペアリング済みの iPhone が、ローカルネットワークや VPN 経由でこの Mac に直接接続できるようにします。"
+            "value" : "ペアリング済みのクライアント端末が、ローカルネットワークや VPN 経由でこの Mac に直接接続できるようにします。"
           }
         }
       }

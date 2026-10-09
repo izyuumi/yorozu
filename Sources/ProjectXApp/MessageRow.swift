@@ -65,6 +65,8 @@ struct MessageRow: View {
     /// Files attached to a user message or a result (#316), and where each one is now.
     var files: [Attachment] = []
     var locate: (Attachment) async -> URL? = { _ in nil }
+    /// Reply in the context menu: quotes this message above the composer, and the reply stays in its topic.
+    var reply: ((Message) -> Void)? = nil
     private enum Metrics {
         static let cardRadius: CGFloat = 14, bubbleRadius: CGFloat = 16, ring: CGFloat = 2
         static let bubbleShare: CGFloat = 0.8
@@ -72,12 +74,16 @@ struct MessageRow: View {
     var body: some View {
         content
             .help(Text(message.date,format: .dateTime.weekday(.wide).day().month(.wide).year().hour().minute().second()))
-            .contextMenu { Button("Copy") { _ = Pasteboard.copy(message.style == .answer ? message.copyText : notice(message)) } }
+            .contextMenu {
+                if let reply { Button("Reply") { reply(message) } }
+                Button("Copy") { _ = Pasteboard.copy(message.style == .answer ? message.copyText : notice(message)) }
+            }
     }
     @ViewBuilder private var content: some View {
         switch message.style {
         case .user:
             VStack(alignment: .trailing,spacing: 3) {
+                if let header { ReplyQuote(header: header,reveal: reveal) }
                 if !files.isEmpty { MessageFiles(files: files,locate: locate).overlay { if message.body.isEmpty { ring(Metrics.cardRadius / 2) } } }
                 // An attachment-only message has no bubble.
                 if !message.body.isEmpty {
@@ -104,6 +110,19 @@ struct MessageRow: View {
     }
 }
 
+/// The delivery mark the clients draw too: two `checkmark.circle` symbols overlapping by half, filled once read. The
+/// Mac's own messages have no relay step, so they read Delivered while waiting and Read once routing starts.
+struct DeliveryMark: View {
+    let read: Bool
+    var body: some View {
+        let symbol = Image(systemName: read ? "checkmark.circle.fill" : "checkmark.circle")
+        ZStack(alignment: .leading) {
+            symbol
+            symbol.alignmentGuide(.leading) { -$0.width / 2 }
+        }.accessibilityHidden(true)
+    }
+}
+
 /// Under a user bubble (#314): the delay line of a message that reached the Mac late, then the Delivered (stored) or
 /// Read (routing started) mark, which opens the two times. Updates arrive with the poll; nothing is announced.
 private struct ReceiptLine: View {
@@ -113,18 +132,18 @@ private struct ReceiptLine: View {
     var body: some View {
         HStack(spacing: Metrics.spacing) {
             if message.delay != nil, let sent = message.sentAt {
-                Text("sent \(Self.stamp(sent)) from phone · delivered \(Self.stamp(message.created))")
+                Text("sent \(Self.stamp(sent)) from a client device · delivered \(Self.stamp(message.created))")
             }
             Button { open.toggle() } label: {
-                Image(systemName: message.readAt == nil ? "checkmark.circle" : "checkmark.circle.fill").foregroundStyle(.secondary)
+                DeliveryMark(read: message.readAt != nil).foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
             .help(message.readAt.map { Text("Read \(Self.stamp($0))") } ?? Text("Delivered \(Self.stamp(message.created))"))
             .accessibilityLabel(message.readAt == nil ? Text("Delivered") : Text("Read"))
             .popover(isPresented: $open,arrowEdge: .bottom) {
                 VStack(alignment: .leading,spacing: Metrics.spacing) {
-                    Label("Delivered \(Self.stamp(message.created))",systemImage: "checkmark.circle")
-                    if let read = message.readAt { Label("Read \(Self.stamp(read))",systemImage: "checkmark.circle.fill") }
+                    Label { Text("Delivered \(Self.stamp(message.created))") } icon: { DeliveryMark(read: false) }
+                    if let read = message.readAt { Label { Text("Read \(Self.stamp(read))") } icon: { DeliveryMark(read: true) } }
                     else { Text("Waiting: earlier messages are still being handled").foregroundStyle(.secondary) }
                 }.font(.callout).padding(Metrics.padding)
             }
@@ -146,6 +165,23 @@ private extension View {
     }
 }
 
+/// The quoted line above an answer or a user's reply; jumps to the quoted message when it is on the timeline.
+struct ReplyQuote: View {
+    let header: ReplyHeader
+    let reveal: (String) -> Void
+    private enum Metrics { static let radius: CGFloat = 7 }
+    var body: some View {
+        let label = Label { Text(verbatim: "“\(header.text)”").lineLimit(1).truncationMode(.tail) }
+            icon: { Image(systemName: "arrowshape.turn.up.left") }
+            .font(.caption).foregroundStyle(.secondary)
+            .padding(.horizontal,7).padding(.vertical,3)
+            .background(.quaternary,in: RoundedRectangle(cornerRadius: Metrics.radius,style: .continuous))
+        if let target = header.target {
+            Button { reveal(target) } label: { label }.buttonStyle(.plain).help("Show the request").accessibilityLabel("Show the request")
+        } else { label.accessibilityLabel(Text("In reply to \(header.text)")) }
+    }
+}
+
 /// An answer: a quoted reply header (which jumps to the request when it is on the timeline), the body, and a Copy pill on hover.
 private struct AnswerCard: View {
     let message: Message
@@ -154,19 +190,10 @@ private struct AnswerCard: View {
     let files: [Attachment]
     let locate: (Attachment) async -> URL?
     @State private var hovering = false
-    private enum Metrics { static let radius: CGFloat = 14, headerRadius: CGFloat = 7 }
+    private enum Metrics { static let radius: CGFloat = 14 }
     var body: some View {
         VStack(alignment: .leading,spacing: 8) {
-            if let header {
-                let label = Label { Text(verbatim: "“\(header.text)”").lineLimit(1).truncationMode(.tail) }
-                    icon: { Image(systemName: "arrowshape.turn.up.left") }
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(.horizontal,7).padding(.vertical,3)
-                    .background(.quaternary,in: RoundedRectangle(cornerRadius: Metrics.headerRadius,style: .continuous))
-                if let target = header.target {
-                    Button { reveal(target) } label: { label }.buttonStyle(.plain).help("Show the request").accessibilityLabel("Show the request")
-                } else { label.accessibilityLabel(Text("In reply to \(header.text)")) }
-            }
+            if let header { ReplyQuote(header: header,reveal: reveal) }
             MarkdownBlocks(message.body)
             if !files.isEmpty { MessageFiles(files: files,locate: locate) }
         }

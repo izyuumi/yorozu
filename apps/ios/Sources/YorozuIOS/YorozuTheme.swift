@@ -38,6 +38,16 @@ enum YorozuPalette {
 }
 
 extension View {
+    /// One row of a scrolling column: its gutter, prose stopped at the reading width, centred in the scroll view's full
+    /// width (a no-op on a phone). Each row is centred rather than the column: with `scrollTargetLayout`, a
+    /// `ScrollPosition` scroll lines the target layout's leading edge up with the view's, which on an iPad shifted a
+    /// centred column to the left edge.
+    func readableRow(gutter: CGFloat = LayoutMetrics.gutter) -> some View {
+        padding(.horizontal, gutter)
+            .frame(maxWidth: LayoutMetrics.readingWidth, alignment: .leading)
+            .frame(maxWidth: .infinity)
+    }
+
     /// A grouped card in the system's secondary fill.
     func yorozuCard(
         padding: CGFloat = LayoutMetrics.cardPadding,

@@ -40,8 +40,8 @@ enum AttachmentLimits {
     /// The bubble's Not delivered reason for an upload that cannot go on.
     static func reason(_ code: String) -> String {
         switch code {
-        case AttachmentTransfers.localFileMissing: String(localized: "The files are no longer on this iPhone.")
-        case AttachmentReason.expired: String(localized: "Your Mac was offline for more than 24 hours.")
+        case AttachmentTransfers.localFileMissing: String(localized: "The files are no longer on this device.")
+        case AttachmentReason.expired: String(localized: "The host was offline for more than 24 hours.")
         case AttachmentReason.unsupported: String(localized: "Attachments aren’t available right now.")
         default: String(localized: "Couldn’t send")
         }

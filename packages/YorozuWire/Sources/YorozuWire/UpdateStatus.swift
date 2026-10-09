@@ -31,7 +31,7 @@ public struct UpdateStatusData: Codable, Equatable, Sendable {
         case .countdown: return String(localized: "Restarting in \(max(0, Int(ceil((deadline ?? 0) / 1000 - date.timeIntervalSince1970))))s")
         case .postponed: return String(localized: "Update postponed until \(Date(timeIntervalSince1970: (postponedUntil ?? 0) / 1000).formatted(date: .omitted, time: .shortened))")
         case .draining: return String(localized: "Finishing agent work before update")
-        case .installing: return String(localized: "Updating · waiting for Mac to restart")
+        case .installing: return String(localized: "Updating · waiting for the host to restart")
         }
     }
 }

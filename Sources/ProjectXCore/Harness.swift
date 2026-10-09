@@ -364,7 +364,7 @@ public struct OpenClawHarness: Harness {
     static let stepTimeout = CodingAgent.defaultTimeout + 600
     private func model(_ prompt: String, model: String, sourceMessageID: String? = nil) async throws -> String {
         guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Model input exceeds bounded context.") }
-        guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this role; choose one in Settings › Advanced.") }
+        guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this role; choose one in Settings › Harness.") }
         // Public CLI `agent` connects with operator.write; per-turn model overrides require admin.
         // Select the role model through supported session creation, then run without an override.
         let selection = SHA256.hash(data: Data((workspace.path + "|" + model).utf8)).map { String(format: "%02x",$0) }.joined()
@@ -577,7 +577,7 @@ extension OpenClawHarness {
     /// turn; claude-cli runs ignore it (OpenClaw 2026.9.6 does not pass session toolOverrides to the CLI runner). Gateway
     /// calls happen only when the wanted state differs from what this app run last applied to the key.
     func prepare(_ key: String,model: String,runtime: String? = nil,create: [String:any Sendable],mcp: Bool) async throws {
-        guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this work; choose one in Settings › Advanced.") }
+        guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this work; choose one in Settings › Harness.") }
         let overlay = mcp ? try await mcpOverlay() : [:]
         let wanted = "\(model)|\(runtime ?? "")|" + overlay.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
         guard await sessions.applied(key) != wanted else { return }

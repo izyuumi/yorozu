@@ -29,7 +29,7 @@ let project = Project(
                 "NSAccentColorName": "AccentColor",
                 "LSApplicationCategoryType": "public.app-category.productivity",
                 "LSUIElement": true, // Menu-bar host: no Dock icon, no main window.
-                "NSLocalNetworkUsageDescription": "Yorozu lets your paired iPhone connect to this Mac directly over your local network or VPN.",
+                "NSLocalNetworkUsageDescription": "Yorozu lets your paired client devices connect to this Mac directly over your local network or VPN.",
             ]),
             sources: ["../../Sources/ProjectXApp/**"],
             resources: ["Resources/Yorozu.icns", "Resources/Accent.xcassets", "Resources/Localizable.xcstrings", "Resources/InfoPlist.xcstrings"],

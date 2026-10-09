@@ -177,7 +177,7 @@ public struct HermesHarness: Harness {
     /// through here, so a GitHub Copilot provider (an explicit choice or `yorozu-worker`'s primary) never starts one.
     static func split(_ model: String) throws -> (provider: String, model: String) {
         guard let cut = model.firstIndex(of: "/"), cut != model.startIndex, model.index(after: cut) != model.endIndex
-        else { throw ProjectError.blocked(model.isEmpty ? "No model is set for this role; choose one in Settings › Advanced." : "Hermes needs models as provider/model; \(model) has no provider.") }
+        else { throw ProjectError.blocked(model.isEmpty ? "No model is set for this role; choose one in Settings › Harness." : "Hermes needs models as provider/model; \(model) has no provider.") }
         let provider = String(model[..<cut])
         guard !isCopilot(provider) else { throw ProjectError.blocked(copilotRefusal + ". Set both Yorozu profiles to Codex: `\(codexCommand(workerProfile))` and `\(codexCommand(rolesProfile))`.") }
         return (provider, String(model[model.index(after: cut)...]))

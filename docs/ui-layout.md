@@ -40,7 +40,7 @@ the platform withholds the width, use the platform view that has it (the system 
   v1's chat on `main` used a custom `.principal` title instead; on iOS 26 the bar gave it
   565 points on a 402-point screen and it ran under the toolbar buttons, and a
   `frame(maxWidth: 160)` cap hid that on one phone only.
-- The Mac's Pair iPhone sheet draws its QR code, the gap beside it and its text column from
+- The Mac's Pair a Client Device sheet draws its QR code, the gap beside it and its text column from
   three constants, `qrSide`, `gap` and `textWidth` in
   `Sources/ProjectXApp/Relay/PairPhoneView.swift`, which also size the placeholder: a custom
   component owning its geometry. A sheet proposes no width, so without `textWidth` the long
@@ -51,7 +51,11 @@ the platform withholds the width, use the platform view that has it (the system 
   up to a third of the popover's height, measured with `onGeometryChange` in
   `Sources/ProjectXApp/Timeline.swift`, then scrolls, rather than taking a fixed `minHeight`.
   The user bubble takes four fifths of the row through `containerRelativeFrame(.horizontal)`.
-  The Settings window's width is likewise one constant in `SettingsView`, and the setup
+  The Settings window's width is likewise one constant in `SettingsView`; its height comes from the
+  selected tab: `settingsForm()` in `Sources/ProjectXApp/SettingsView.swift` gives each tab's form its ideal height
+  (`fixedSize(horizontal: false, vertical: true)`, since a window proposes no height), so the window fits the tab and
+  no tab scrolls (owner decision). A tab too tall for a 1080-point screen is split, as Harness was from Advanced,
+  not given a scroll view. The setup
   window's width and least height are `SetupWindow.Metrics` in
   `Sources/ProjectXApp/SetupWindow.swift`: nothing proposes a size to a window, and the least
   height keeps the step list from collapsing while the report loads. Settings › Jobs likewise takes

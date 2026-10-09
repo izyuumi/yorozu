@@ -103,7 +103,7 @@ struct SetupWindow: View {
             checks(s.checks)
             if let q = s.question, q.id == "harness", !q.choices.contains("check") {
                 Picker("Main harness", selection: pick(q)) {
-                    ForEach(q.choices, id: \.self) { Text(Config.HarnessKind(rawValue: $0).map(AdvancedSettings.harnessTitle) ?? $0).tag($0) }
+                    ForEach(q.choices, id: \.self) { Text(Config.HarnessKind(rawValue: $0).map(HarnessSettingsView.harnessTitle) ?? $0).tag($0) }
                 }
             }
             plan(s)
@@ -121,7 +121,7 @@ struct SetupWindow: View {
                     if !model.enrollmentNotice.isEmpty { Text(model.enrollmentNotice).textSelection(.enabled) }
                 }
             } else {
-                Text("Enrolling needs a live run on the native transport (Settings › Advanced).").foregroundStyle(.secondary)
+                Text("Enrolling needs a live run on the native transport (Settings › Harness).").foregroundStyle(.secondary)
             }
             LabeledContent {
                 Button("Copy") { copyToClipboard("openclaw devices list") }
@@ -147,15 +147,15 @@ struct SetupWindow: View {
             // Off and disabled while this run leaves the login item alone, as in Settings › General.
             Toggle(isOn: model.loginItemBlocker == nil ? toggle(s.question) : .constant(false)) {
                 Text("Start at login")
-                Text("On by default, so paired phones and scheduled jobs can reach Yorozu after a restart.")
+                Text("On by default, so client devices and scheduled jobs can reach Yorozu after a restart.")
                 if let blocker = model.loginItemBlocker { Text(blocker) }
             }.disabled(model.loginItemBlocker != nil)
         case "pair_iphone":
             LabeledContent {
-                Button("Pair iPhone…") { pairing = true }.disabled(model.relay == nil)
+                Button("Pair a Client Device…") { pairing = true }.disabled(model.relay == nil)
             } label: {
-                Text("No paired phones yet.")
-                Text(model.runtimeMode == .live ? "Scan the code with the iPhone Camera. You can also pair later in Settings › Devices." : "Pairing works in live mode only.")
+                Text("No client devices yet.")
+                Text(model.runtimeMode == .live ? "Scan the code with the client device's camera. You can also pair later in Settings › Devices." : "Pairing works in live mode only.")
             }
         default: EmptyView()
         }
@@ -300,7 +300,7 @@ struct SetupWindow: View {
         case "integrations": "Computer use (CuaDriver)"
         case "yolo": "YOLO mode"
         case "start_at_login": "Start at login"
-        case "pair_iphone": "Pair your iPhone"
+        case "pair_iphone": "Pair a client device"
         default: LocalizedStringKey(id)
         }
     }
@@ -309,21 +309,19 @@ struct SetupWindow: View {
     }
 }
 
-/// A setup row's state: done (green check), current (ring and dot), to do (ring), optional (dashed ring).
+/// A setup row's state as an SF Symbol: done (green check), current (ring and dot), to do (ring), optional (dashed ring).
 struct StepGlyph: View {
     enum Kind { case done, current, todo, optional }
     let kind: Kind
-    private static let side: CGFloat = 16, line: CGFloat = 1.5, dot: CGFloat = 6
+    private static let side: CGFloat = 16
     private var label: LocalizedStringKey { switch kind { case .done: "Done"; case .current: "Current step"; case .todo: "To do"; case .optional: "Optional" } }
     var body: some View {
-        ZStack {
+        Group {
             switch kind {
             case .done: Image(systemName: "checkmark.circle.fill").resizable().foregroundStyle(.green)
-            case .current:
-                Circle().strokeBorder(Color.accentColor, lineWidth: Self.line)
-                Circle().fill(Color.accentColor).frame(width: Self.dot, height: Self.dot)
-            case .todo: Circle().strokeBorder(.tertiary, lineWidth: Self.line)
-            case .optional: Circle().strokeBorder(.tertiary, style: StrokeStyle(lineWidth: Self.line, dash: [2, 2]))
+            case .current: Image(systemName: "smallcircle.filled.circle").resizable().foregroundStyle(Color.accentColor)
+            case .todo: Image(systemName: "circle").resizable().foregroundStyle(.tertiary)
+            case .optional: Image(systemName: "circle.dashed").resizable().foregroundStyle(.tertiary)
             }
         }
         .frame(width: Self.side, height: Self.side)

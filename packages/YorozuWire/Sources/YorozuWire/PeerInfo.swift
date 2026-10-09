@@ -72,7 +72,7 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
 
     public func compatibility(with peer: PeerInfoData?) -> PeerCompatibility {
         guard let peer else { return .legacy }
-        guard isValid, peer.isValid else { return .updateRequired(String(localized: "Invalid peer information. Update Yorozu on this device and its host Mac.")) }
+        guard isValid, peer.isValid else { return .updateRequired(String(localized: "Invalid peer information. Update Yorozu on this device and its host.")) }
         let version = min(protocolMax, peer.protocolMax)
         guard version >= max(protocolMin, peer.protocolMin) else {
             // Reasons are read on the phone: the Mac sends its own as `peerInfoError`.
@@ -82,12 +82,12 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
             let phoneOutdated = protocolMax < peer.protocolMin
             #endif
             return .updateRequired(phoneOutdated
-                ? String(localized: "Update Yorozu on this iPhone to talk to this Mac.")
-                : String(localized: "Update Yorozu on the Mac to talk to this iPhone."))
+                ? String(localized: "Update Yorozu on this device to talk to this host.")
+                : String(localized: "Update Yorozu on the host to talk to this device."))
         }
         guard Set(requiredCapabilities).isSubset(of: Set(peer.capabilities)),
             Set(peer.requiredCapabilities).isSubset(of: Set(capabilities)) else {
-            return .updateRequired(String(localized: "Update Yorozu on this device and its host Mac: a required security or protocol capability is unavailable."))
+            return .updateRequired(String(localized: "Update Yorozu on this device and its host: a required security or protocol capability is unavailable."))
         }
         return .compatible(version: version, capabilities: capabilities.filter { peer.capabilities.contains($0) })
     }

@@ -43,7 +43,8 @@ public actor Engine {
     /// (epoch seconds), kept for the delay line and the secretary's `messageAge` (#314). Never the device.
     /// `attachments` (#316): at most 10 files of at most 50 MB each; the body may then be empty. Files are copied into the
     /// store first, then the message and its attachment rows are stored in one transaction; a failure removes the copies.
-    @discardableResult public func send(_ body: String, attachments: [PendingFile] = [], id: String = identifier(), sentAt: Double? = nil) async throws -> String {
+    /// `replyTo`: the message the user replied to; a reply to a message in a topic stays in that topic (owner, 2026-10-09).
+    @discardableResult public func send(_ body: String, attachments: [PendingFile] = [], id: String = identifier(), sentAt: Double? = nil, replyTo: String? = nil) async throws -> String {
         guard body.utf8.count <= 6000, !attachments.isEmpty || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ProjectError.invalid(attachments.isEmpty ? "Message must be 1–6000 UTF-8 bytes." : "Message text must be at most 6000 UTF-8 bytes.") }
         guard attachments.count <= FileStore.maxFiles else { throw ProjectError.invalid("At most \(FileStore.maxFiles) files per message.") }
         guard attachments.isEmpty || files != nil else { throw ProjectError.blocked("Attachments can't be stored here.") }
@@ -56,7 +57,7 @@ public actor Engine {
             do { for f in attachments { copies.append(try await Self.offActor { try files.store(f) }) } } catch { copies.forEach(files.remove); throw error }
         }
         let m: Message
-        do { m = try await store.message(role: "user",body: body,id: id,sentAt: sentAt,attachments: copies) } catch { copies.forEach { files?.remove($0) }; throw error }
+        do { m = try await store.message(role: "user",body: body,replyTo: replyTo,id: id,sentAt: sentAt,attachments: copies) } catch { copies.forEach { files?.remove($0) }; throw error }
         enqueueRoute(m); return m.id
     }
     private func enqueueRoute(_ m: Message) {
@@ -194,13 +195,17 @@ public actor Engine {
             input.files = fileViews(message.id,snapshot) // descriptors only, never contents (#316)
             input.policy = Self.routingPolicy(settings(),jobs: !input.jobs.isEmpty || !input.approvals.isEmpty,delayed: input.messageAge != nil,files: !input.files.isEmpty || recent.contains { $0.files != nil })
             input.sourceMessageID = message.id
+            // A reply to a message in a topic belongs to that topic: the secretary picks the action, never the topic (owner, 2026-10-09).
+            let pinned = message.replyTo.flatMap { r in snapshot.messages.first { $0.id == r }?.topicID }.map { Self.home($0,snapshot) }
+            if let pinned { input.policy += "\nThis message replies to a message in topic \(pinned); use topicID \(pinned), never newTopic, attachTo or another topic." }
             input = trimmed(input,blocking: blocking,forget: message.body.range(of: Self.forgetRequest,options: .regularExpression) != nil)
-            var decision = Self.usable(try await harness.route(input,stronger: false),snapshot)
+            var decision = Self.pin(Self.usable(try await harness.route(input,stronger: false),snapshot),to: pinned,snapshot)
+            if let pinned { try await store.receipt(kind: "routing_pin",body: try encoded(["replyTo": message.replyTo!,"topicID": pinned])) }
             try validate(decision,snapshot: snapshot,memories: memories,approvals: input.approvals)
             try await store.receipt(kind: "routing",body: try encoded(decision))
             if decision.action == "clarify" {
                 do {
-                    let stronger = Self.usable(try await harness.route(input,stronger: true),snapshot); try validate(stronger,snapshot: snapshot,memories: memories,approvals: input.approvals); decision = stronger
+                    let stronger = Self.pin(Self.usable(try await harness.route(input,stronger: true),snapshot),to: pinned,snapshot); try validate(stronger,snapshot: snapshot,memories: memories,approvals: input.approvals); decision = stronger
                     try await store.receipt(kind: "routing_escalation",body: try encoded(stronger))
                 } catch { /* Preserve the original clarification, not a guessed dispatch. */ }
             }
@@ -214,6 +219,17 @@ public actor Engine {
     /// `attachTo` (#348) is dropped, never fatal, when it names no topic or the action is not delegate or steer.
     private static func usable(_ d: Decision,_ snapshot: Snapshot) -> Decision {
         var d = d; if let t = d.attachTo, !["delegate","steer"].contains(d.action) || !snapshot.topics.contains(where: { $0.id == t }) { d.attachTo = nil }; return d
+    }
+    /// A reply's pinned topic overrides the topic of a delegate, reply or clarify; a steer of a task outside it becomes new
+    /// work there. Other actions keep their targets.
+    private static func pin(_ d: Decision,to topic: String?,_ snapshot: Snapshot) -> Decision {
+        guard let topic, ["delegate","steer","reply","clarify"].contains(d.action) else { return d }
+        var d = d; d.newTopic = nil; d.attachTo = nil
+        if d.action == "steer" {
+            if let w = snapshot.work.first(where: { $0.id == d.taskID }), home(w.topicID,snapshot) == topic { d.topicID = nil; return d }
+            d.action = "delegate"; d.taskID = nil
+        }
+        d.topicID = topic; return d
     }
     /// IDs are checked against the full snapshot, not the trimmed view; forget against every retrieved hit.
     private func validate(_ d: Decision,snapshot: Snapshot,memories: [MemoryHit],approvals: [RoutingInput.ApprovalView] = []) throws {

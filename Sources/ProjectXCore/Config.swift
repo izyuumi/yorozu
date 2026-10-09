@@ -10,7 +10,7 @@ public struct Config: Sendable, Equatable {
     public enum Transport: String, CaseIterable, Sendable { case native, cli }
     public enum HarnessKind: String, CaseIterable, Sendable { case openclaw, hermes }
     public struct General: Sendable, Equatable {
-        public var startAtLogin = true, keepMacAwake = false, yolo = false, sendKey = SendKey.smart, globalShortcut = "", appearance = Appearance.system, showAdvanced = false
+        public var startAtLogin = true, keepMacAwake = false, yolo = false, sendKey = SendKey.cmdEnter, globalShortcut = "", appearance = Appearance.system, showAdvanced = false
     }
     public struct Notifications: Sendable, Equatable { public var enabled = true, destination = Destination.mac }
     public struct Routing: Sendable, Equatable { public var personalKnowledge = "", selfTopic = "Yorozu" }
@@ -133,16 +133,16 @@ public struct Config: Sendable, Equatable {
         field("general.start_at_login",\.general.startAtLogin,"Open Yorozu when you log in."),
         field("general.keep_mac_awake",\.general.keepMacAwake,"Keep the Mac from idle sleep while Yorozu runs; a closed lid still sleeps."),
         field("general.yolo",\.general.yolo,"YOLO: workers take outward-facing steps you asked for, and use risky cua tools, without asking first. Settings changes and unrequested actions still need your word." + security),
-        field("general.send_key",\.general.sendKey,"\"smart\" or \"cmd-enter\" (⌘Enter sends)."),
+        field("general.send_key",\.general.sendKey,"\"cmd-enter\" (the default: Enter adds a line, ⌘Enter sends) or \"smart\" (Enter sends a one-line draft)."),
         field("general.global_shortcut",\.general.globalShortcut,"Shortcut that brings up Yorozu; empty is off."),
         field("general.appearance",\.general.appearance,"\"system\", \"light\" or \"dark\"."),
         field("general.show_advanced",\.general.showAdvanced,"Show the Advanced tab in Settings."),
         field("notifications.enabled",\.notifications.enabled,"Post notifications."),
-        field("notifications.destination",\.notifications.destination,"Where notifications appear: \"mac\" or \"phones\"."),
+        field("notifications.destination",\.notifications.destination,"Where notifications appear: \"mac\" (the host) or \"phones\" (client devices)."),
         field("routing.personal_knowledge",\.routing.personalKnowledge,"Where the user's personal notes live, named in the routing policy; empty drops that hint."),
         field("routing.self_topic",\.routing.selfTopic,"Topic that holds work on Yorozu itself."),
-        field("relay.url",\.relay.url,"Relay for the iPhone app (ws:// or wss://). After a change every phone must pair again." + security),
-        field("direct.enabled",\.direct.enabled,"Let paired phones connect straight to this Mac over the local network or a VPN (Tailscale/WireGuard); a phone tries only after its own Direct connection setting is on." + security),
+        field("relay.url",\.relay.url,"Relay for client devices (ws:// or wss://). After a change every client device must pair again." + security),
+        field("direct.enabled",\.direct.enabled,"Let client devices connect straight to the host over the local network or a VPN (Tailscale/WireGuard); a client tries only after its own Direct connection setting is on." + security),
         field("direct.port",\.direct.port,"TCP port the direct listener uses on Wi-Fi, Ethernet and VPN interfaces (1024-65535)." + security),
         field("harness.kind",\.harness.kind,"Main harness: \"openclaw\" or \"hermes\"; applies after relaunch, and only once no work is running." + security),
         field("harness.agent",\.harness.agent,"Harness agent id Yorozu runs on." + security),
@@ -161,7 +161,7 @@ public struct Config: Sendable, Equatable {
         field("setup.answered",\.setup.answered,"Setup steps answered or skipped, by id."),
     ]
     static let sections = [
-        "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "iPhone relay.", "direct": "Direct iPhone connection over LAN or VPN.",
+        "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "Relay for client devices.", "direct": "Direct client connection over LAN or VPN.",
         "harness": "Harness connection.", "models": "Models per role; a missing role is chosen automatically from the harness's model metadata.",
         "workspace": "Workspace for workers and coding agents.",
         "coding_agents": "Coding agents workers run through Yorozu: [coding_agents.<name>] with command (the program and its arguments; the prompt is added as the last argument) and optional timeout (seconds, default 3600). Built-in: claude and codex, offered when found; an entry with the same name replaces it." + security,

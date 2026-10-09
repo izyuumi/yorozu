@@ -58,7 +58,8 @@ struct ReadinessDot: View {
         case .attention(let n): n == 1 ? String(localized: "1 item needs attention") : String(localized: "\(n) items need attention")
         case .blocked: String(localized: "Blocked")
         }
-        Circle().fill(color).frame(width: Self.side,height: Self.side).accessibilityElement().accessibilityLabel(label)
+        Image(systemName: "circle.fill").resizable().foregroundStyle(color).frame(width: Self.side,height: Self.side)
+            .accessibilityElement().accessibilityLabel(label)
     }
 }
 

@@ -48,22 +48,21 @@ struct ChatScreen: View {
                                 onShowRequest: { show(row.bubble.replyTo) },
                                 onShowDetails: { details = row.bubble },
                                 onResend: { model.resend(row.bubble.id) },
-                                onDelete: { model.delete(row.bubble.id) })
+                                onDelete: { model.delete(row.bubble.id) },
+                                onReply: canReply(row.bubble) ? { model.replyingTo = row.bubble.id } : nil)
                         }
+                        .readableRow()
                         .id(row.id)
                     }
                     if model.routing == true {
-                        ThinkingRow()
+                        ThinkingRow().readableRow()
                     }
                     if model.working == true {
-                        ProgressView().accessibilityLabel("Working…")
+                        ProgressView().accessibilityLabel("Working…").readableRow()
                     }
                 }
                 .scrollTargetLayout()
-                .padding(LayoutMetrics.gutter)
-                // Prose stops at a reading width; a no-op on a phone.
-                .frame(maxWidth: LayoutMetrics.readingWidth)
-                .frame(maxWidth: .infinity)
+                .padding(.vertical, LayoutMetrics.gutter)
             }
             .scrollPosition($position)
             // Only the first layout starts at the bottom; later growth leaves the reading position alone.
@@ -115,7 +114,7 @@ struct ChatScreen: View {
                             .foregroundStyle(.secondary)
                     } else if let reason = model.readinessReason {
                         // The Mac's own readiness; when blocked the composer below is off with it.
-                        Label { Text("\(reason) · Fix this on your Mac") } icon: {
+                        Label { Text("\(reason) · Fix this on the host") } icon: {
                             Image(systemName: model.readiness?.state == .blocked ? "xmark.octagon" : "exclamationmark.triangle")
                                 .foregroundStyle(model.readiness?.state == .blocked ? YorozuPalette.vermilion : YorozuPalette.warning)
                         }
@@ -123,7 +122,8 @@ struct ChatScreen: View {
                         .foregroundStyle(.secondary)
                     }
                     Composer(text: $model.draft, files: $model.draftFiles, attachments: model.attachmentsSupported != false,
-                             working: model.working == true, enabled: model.canSend) {
+                             working: model.working == true, enabled: model.canSend,
+                             replyQuote: replyQuote, onCancelReply: { model.replyingTo = nil }) {
                         // Sending jumps to the bottom, so the sent message and its answer are followed.
                         atBottom = true
                         position.scrollTo(edge: .bottom)
@@ -147,9 +147,9 @@ struct ChatScreen: View {
                 }
                 if !Self.hasSubtitle {
                     ToolbarItem(placement: .topBarLeading) {
-                        Circle()
-                            .fill(dotColor)
-                            .frame(width: Self.dot, height: Self.dot)
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: Self.dot))
+                            .foregroundStyle(dotColor)
                             .accessibilityElement()
                             .accessibilityLabel(model.shownStatus.label)
                     }
@@ -237,10 +237,32 @@ struct ChatScreen: View {
     /// replies to its run trigger, which the Mac never sends). Old results that still carry the stored
     /// `Regarding “…”:` prefix are shown as stored, without a header.
     private func header(for bubble: PhoneModel.Bubble, in byId: [String: PhoneModel.Bubble]) -> ReplyHeader? {
+        // The user's own reply: the message it answers, when held.
+        if bubble.user {
+            return bubble.replyTo.flatMap { byId[$0] }.map { ReplyHeader(text: Self.firstLine($0), revealable: true) }
+        }
         let stored = bubble.text.hasPrefix("Regarding “") && bubble.text.contains("”:\n\n")
         guard RowStyle(bubble) == .answer, !stored, let id = bubble.replyTo else { return nil }
         if let request = byId[id] { return ReplyHeader(text: request.shownText, revealable: true) }
         return bubble.topicId.flatMap { model.topics[$0]?.label }.map { ReplyHeader(text: $0, revealable: false) }
+    }
+
+    /// The user's own messages and the agent's answers and questions, once the host has stored them (so it holds the
+    /// target); not notices or failures.
+    private func canReply(_ bubble: PhoneModel.Bubble) -> Bool {
+        bubble.seq != nil && [.user, .answer, .question].contains(RowStyle(bubble))
+    }
+
+    /// The composer's quote bar: the first line of the message being replied to.
+    private var replyQuote: String? {
+        guard let id = model.replyingTo, let target = model.timeline.first(where: { $0.id == id }) else { return nil }
+        return Self.firstLine(target)
+    }
+
+    /// A quoted message's first non-empty line, its Markdown markers dropped.
+    private static func firstLine(_ bubble: PhoneModel.Bubble) -> String {
+        let line = bubble.shownText.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map(String.init) ?? ""
+        return (try? AttributedString(markdown: line)).map { String($0.characters) } ?? line
     }
 
     /// Moves to `route` with the keyboard down first. A field still first responder when its screen is covered is
@@ -410,7 +432,7 @@ private struct EmptyChat: View {
         ContentUnavailableView {
             Label("Ask Yorozu anything", systemImage: "text.bubble")
         } description: {
-            Text("Quick questions are answered right here. Bigger work (research, writing, code) runs on your Mac in the background, and the result comes back to this chat.")
+            Text("Quick questions are answered right here. Bigger work (research, writing, code) runs on your host in the background, and the result comes back to this chat.")
         } actions: {
             VStack(spacing: LayoutMetrics.stack) {
                 Text("For example")
@@ -430,12 +452,12 @@ private struct EmptyChat: View {
     }
 }
 
-/// Connection details, notifications, the Mac's readiness, About (versions and links), Copy diagnostics, Repair and Remove.
+/// A Connection row that opens `ConnectionSettings`, notifications, the host's readiness, About (versions and links)
+/// and Copy diagnostics.
 private struct SettingsSheet: View {
     let model: PhoneModel
     let onRepair: () -> Void
 
-    @State private var removing = false
     @State private var copied = false
     @State private var notifications: UNAuthorizationStatus?
     @Environment(\.dismiss) private var dismiss
@@ -444,48 +466,15 @@ private struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    LabeledContent("Status", value: model.status.label)
-                    LabeledContent("Path") { Text(LocalizedStringKey(model.path?.name ?? "Not connected")) }
-                    if let hostName = model.hostName { LabeledContent("Mac", value: hostName) }
-                    if let relayHost = model.relayHost { LabeledContent("Relay", value: relayHost) }
-                    if let fingerprint = model.fingerprint {
-                        LabeledContent("Mac key") {
-                            Text(fingerprint).monospaced().textSelection(.enabled)
+                Section("Connection") {
+                    NavigationLink {
+                        ConnectionSettings(model: model, onRepair: onRepair) {
+                            Task { await model.remove() }
+                            dismiss()
                         }
+                    } label: {
+                        LabeledContent(model.hostName ?? String(localized: "Host"), value: connectionSummary)
                     }
-                    if let pairedAt = model.pairedAt {
-                        LabeledContent("Paired since") { Text(pairedAt, format: .dateTime.year().month().day()) }
-                    }
-                    if let lastError = model.lastError {
-                        VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
-                            LabeledContent("Last error") { Text(lastError.at, format: .relative(presentation: .named)) }
-                            Text(lastError.message).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    Toggle("Direct connection (LAN / Tailscale)", isOn: Binding(get: { model.directEnabled }, set: { model.setDirect($0) }))
-                    if model.directEnabled && model.directReport.localNetworkDenied {
-                        Text("Local Network access is off. Turn it on in Settings › Privacy & Security › Local Network.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    if model.directEnabled {
-                        LabeledContent("Direct addresses") {
-                            Text(model.candidates.isEmpty ? String(localized: "None yet") : model.candidates.map(\.label).joined(separator: "\n"))
-                                .multilineTextAlignment(.trailing)
-                                .textSelection(.enabled)
-                        }
-                        if let error = model.directReport.lastError {
-                            VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
-                                Text("Last direct error")
-                                Text(error).font(.footnote).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Connection")
-                } footer: {
-                    Text("Connects straight to your Mac on the same Wi-Fi or over Tailscale, and falls back to the relay.")
                 }
                 Section {
                     LabeledContent("Notifications") { Text(LocalizedStringKey(notificationsName)) }
@@ -497,10 +486,10 @@ private struct SettingsSheet: View {
                 }
                 // Read again on the way back from the Settings app.
                 .task(id: scenePhase) { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
-                // The Mac's own readiness, as synced; the fixes are on the Mac.
+                // The host's own readiness, as synced; the fixes are on the host.
                 if let readiness = model.readiness {
                     Section {
-                        LabeledContent("Mac readiness") {
+                        LabeledContent("Host readiness") {
                             Text(model.readinessReason ?? String(localized: "Ready"))
                         }
                         ForEach(readiness.items.filter { $0.severity != .ok }, id: \.id) { item in
@@ -512,12 +501,12 @@ private struct SettingsSheet: View {
                             }
                         }
                     } footer: {
-                        if readiness.state != .ready { Text("Fix this on your Mac") }
+                        if readiness.state != .ready { Text("Fix this on the host") }
                     }
                 }
                 Section {
-                    LabeledContent("Mac version", value: model.macVersion ?? String(localized: "Unknown"))
-                    LabeledContent("iPhone version", value: Self.version)
+                    LabeledContent("Host version", value: model.macVersion ?? String(localized: "Unknown"))
+                    LabeledContent("Version on this device", value: Self.version)
                     Link("Privacy Policy", destination: URL(string: "https://yorozu.yumi.to/privacy/")!)
                     Link("Terms of Use", destination: URL(string: "https://yorozu.yumi.to/terms/")!)
                     Link("Source on GitHub", destination: URL(string: "https://github.com/izyuumi/yorozu")!)
@@ -537,10 +526,6 @@ private struct SettingsSheet: View {
                 } footer: {
                     Text("Versions and connection details only: never messages, keys or tokens.")
                 }
-                Section {
-                    Button("Repair connection", action: onRepair)
-                    Button("Remove host", role: .destructive) { removing = true }
-                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -549,14 +534,14 @@ private struct SettingsSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .confirmationDialog("Remove host?", isPresented: $removing, titleVisibility: .visible) {
-                Button("Remove host", role: .destructive) {
-                    Task { await model.remove() }
-                    dismiss()
-                }
-            }
         }
         .yorozuTint()
+    }
+
+    /// "Connected · Relay": the status, and the path while there is one.
+    private var connectionSummary: String {
+        ([model.status.label] + [model.path.map { String(localized: String.LocalizationValue($0.name)) }].compactMap { $0 })
+            .joined(separator: " · ")
     }
 
     /// Plain English text for a bug report, whatever the interface language. Only what Settings
@@ -565,12 +550,12 @@ private struct SettingsSheet: View {
         let date = { (d: Date) in d.ISO8601Format() }
         return [
             "Yorozu diagnostics \(date(Date()))",
-            "iPhone app: \(Self.version)",
+            "Client app: \(Self.version)",
             "iOS: \(UIDevice.current.systemVersion)",
-            "Mac app: \(model.macVersion ?? "unknown")",
+            "Host app: \(model.macVersion ?? "unknown")",
             "Status: \(model.status)",
             "Relay host: \(model.relayHost ?? "none")",
-            "Mac key fingerprint: \(model.fingerprint ?? "none")",
+            "Host key fingerprint: \(model.fingerprint ?? "none")",
             "Paired since: \(model.pairedAt.map(date) ?? "unknown")",
             "Last error: \(model.lastError.map { "\(date($0.at)) \($0.message)" } ?? "none")",
             "Path: \(model.path?.name ?? "not connected")",
@@ -599,6 +584,79 @@ private struct SettingsSheet: View {
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "\(short) (\(build))"
     }()
+}
+
+/// Settings › Connection: the host and this device, the link, the direct path, and Repair and Remove.
+private struct ConnectionSettings: View {
+    let model: PhoneModel
+    let onRepair: () -> Void
+    let onRemove: () -> Void
+
+    @State private var removing = false
+
+    var body: some View {
+        Form {
+            Section("Host") {
+                LabeledContent("Name", value: model.hostName ?? String(localized: "Unknown"))
+                if let fingerprint = model.fingerprint {
+                    LabeledContent("Host key") {
+                        Text(fingerprint).monospaced().textSelection(.enabled)
+                    }
+                }
+                if let pairedAt = model.pairedAt {
+                    LabeledContent("Paired since") { Text(pairedAt, format: .dateTime.year().month().day()) }
+                }
+            }
+            Section("This device") {
+                LabeledContent("Name", value: DeviceModel.name)
+            }
+            Section("Status") {
+                LabeledContent("Status", value: model.status.label)
+                LabeledContent("Path") { Text(LocalizedStringKey(model.path?.name ?? "Not connected")) }
+                if let relayURL = model.relayURL {
+                    LabeledContent("Relay") { Text(relayURL).textSelection(.enabled) }
+                }
+                if let lastError = model.lastError {
+                    VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                        LabeledContent("Last error") { Text(lastError.at, format: .relative(presentation: .named)) }
+                        Text(lastError.message).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Section {
+                Toggle("Direct connection (LAN / Tailscale)", isOn: Binding(get: { model.directEnabled }, set: { model.setDirect($0) }))
+                if model.directEnabled && model.directReport.localNetworkDenied {
+                    Text("Local Network access is off. Turn it on in Settings › Privacy & Security › Local Network.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if model.directEnabled {
+                    LabeledContent("Direct addresses") {
+                        Text(model.candidates.isEmpty ? String(localized: "None yet") : model.candidates.map(\.label).joined(separator: "\n"))
+                            .multilineTextAlignment(.trailing)
+                            .textSelection(.enabled)
+                    }
+                    if let error = model.directReport.lastError {
+                        VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                            Text("Last direct error")
+                            Text(error).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } footer: {
+                Text("Connects straight to the host on the same Wi-Fi or over Tailscale, and falls back to the relay.")
+            }
+            Section {
+                Button("Repair connection", action: onRepair)
+                Button("Remove host", role: .destructive) { removing = true }
+            }
+        }
+        .navigationTitle("Connection")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Remove host?", isPresented: $removing, titleVisibility: .visible) {
+            Button("Remove host", role: .destructive, action: onRemove)
+        }
+    }
 }
 
 extension TransportPath {
