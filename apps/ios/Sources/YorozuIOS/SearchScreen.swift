@@ -262,13 +262,12 @@ struct PageScreen: View {
                                     .fill(Color.yellow.opacity(0.18))
                             }
                         }
+                        .readableRow()
                         .id(bubble.id)
                 }
             }
             .scrollTargetLayout()
-            .padding(LayoutMetrics.gutter)
-            .frame(maxWidth: LayoutMetrics.readingWidth)
-            .frame(maxWidth: .infinity)
+            .padding(.vertical, LayoutMetrics.gutter)
         }
         .scrollPosition($position)
         .onChange(of: bubbles.count, initial: true) { _, count in

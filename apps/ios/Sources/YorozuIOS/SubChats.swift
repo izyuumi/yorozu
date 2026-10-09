@@ -294,27 +294,27 @@ struct TopicScreen: View {
         let job = model.jobsSupported == true ? model.jobs.first { $0.topicId == topicId } : nil
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
-                AttachLinks(model: model, topicId: topicId)
+                AttachLinks(model: model, topicId: topicId).readableRow(gutter: LayoutMetrics.stack)
                 ForEach(items) { item in
                     switch item {
                     case .message(let bubble):
                         MessageRow(bubble: bubble, header: nil, delivery: model.delivery(of: bubble),
                                    onShowRequest: {}, onShowDetails: { details = bubble },
                                    onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
+                            .readableRow(gutter: LayoutMetrics.stack)
                             .id(bubble.id)
                     case .task(let task):
                         TaskCard(model: model, task: task, events: events[task.id] ?? [], amendments: amendments[task.id] ?? [],
                                  open: task.isActive != toggled.contains(task.id)) {
                             if toggled.contains(task.id) { toggled.remove(task.id) } else { toggled.insert(task.id) }
                         }
+                        .readableRow(gutter: LayoutMetrics.stack)
                         .id(task.id)
                     }
                 }
             }
             .scrollTargetLayout()
-            .padding(LayoutMetrics.stack)
-            .frame(maxWidth: LayoutMetrics.readingWidth)
-            .frame(maxWidth: .infinity)
+            .padding(.vertical, LayoutMetrics.stack)
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)

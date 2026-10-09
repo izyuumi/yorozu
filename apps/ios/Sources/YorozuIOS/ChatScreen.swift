@@ -50,20 +50,18 @@ struct ChatScreen: View {
                                 onResend: { model.resend(row.bubble.id) },
                                 onDelete: { model.delete(row.bubble.id) })
                         }
+                        .readableRow()
                         .id(row.id)
                     }
                     if model.routing == true {
-                        ThinkingRow()
+                        ThinkingRow().readableRow()
                     }
                     if model.working == true {
-                        ProgressView().accessibilityLabel("Working…")
+                        ProgressView().accessibilityLabel("Working…").readableRow()
                     }
                 }
                 .scrollTargetLayout()
-                .padding(LayoutMetrics.gutter)
-                // Prose stops at a reading width; a no-op on a phone.
-                .frame(maxWidth: LayoutMetrics.readingWidth)
-                .frame(maxWidth: .infinity)
+                .padding(.vertical, LayoutMetrics.gutter)
             }
             .scrollPosition($position)
             // Only the first layout starts at the bottom; later growth leaves the reading position alone.
