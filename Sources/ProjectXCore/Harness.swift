@@ -66,6 +66,8 @@ public struct HarnessSettings: Sendable {
     public var configFile: URL?
     /// Routing hints: the user's knowledge source the secretary cannot read ("" drops it), and the topic for this app.
     public var personalKnowledge = "", selfTopic = "Yorozu"
+    /// The file store root (#316): an attachment's file is `filesRoot` + `Attachment.path`. Nil: no store, so no file is available.
+    public var filesRoot: URL?
     public init() {}
 }
 public struct OfflineHarness: Harness {
@@ -291,6 +293,33 @@ public struct OpenClawHarness: Harness {
               !value.isEmpty else { throw ProjectError.invalid("Gateway output empty or hidden; withheld.") }
         return value
     }
+    /// Files the reply payloads carry as `mediaUrl`/`mediaUrls` (#316; OpenClaw lifts a reply's standalone `MEDIA:` lines into these). URLs are left out.
+    static func payloadMedia(_ envelope: [String:Any]) -> [String] {
+        let payloads = (envelope["result"] as? [String:Any])?["payloads"] as? [[String:Any]] ?? []
+        return payloads.filter { $0["isReasoning"] as? Bool != true }.flatMap { [$0["mediaUrl"] as? String].compactMap { $0 } + ($0["mediaUrls"] as? [String] ?? []) }.compactMap { Prompts.localPath($0) }
+    }
+    /// OpenClaw's image cap (`MAX_IMAGE_BYTES`) and the formats sent inline; other images go by path only.
+    static let maxImageBytes = 6 * 1024 * 1024, inlineTypes: Set = ["image/png","image/jpeg","image/gif","image/webp"]
+    /// Encoded `agent` params budgets: the native frame (8,000,000 bytes, `NativeGateway`) less envelope room, and on the
+    /// CLI transport a safe margin under the argv limit (one `--params` string; base64 images fail above about 750 KB).
+    static let nativeParamsBudget = 7_600_000, cliParamsBudget = 600_000
+    /// The work's images as `agent` `attachments` (`{type, mimeType, fileName, content}`, base64) when `models.list`
+    /// lists `image` among `model`'s inputs, each is at most 6 MiB and all fit the transport with the message; the rest
+    /// (and every image when the check fails) reach the worker by path only.
+    func inlineImages(_ attachments: [Attachment], model: String, root: URL?, message: Int) async -> [[String:String]] {
+        let candidates = attachments.filter { Self.inlineTypes.contains($0.mime.lowercased()) && $0.bytes <= Self.maxImageBytes }
+        guard !candidates.isEmpty, let rows = try? await rpc.call("models.list",["agentId":agent,"view":"configured","includeDetails":true])["models"] as? [[String:Any]],
+              rows.contains(where: { "\($0["provider"] as? String ?? "")/\($0["id"] as? String ?? "")" == model && ($0["input"] as? [String] ?? []).contains("image") }) else { return [] }
+        var budget = (rpc.native != nil ? Self.nativeParamsBudget : Self.cliParamsBudget) - message * 2 - 4096 // escaping and the other params
+        var images: [[String:String]] = []
+        for a in candidates {
+            guard let url = Prompts.fileURL(a,root: root), let data = try? Data(contentsOf: url), data.count <= Self.maxImageBytes else { continue }
+            let content = data.base64EncodedString(), cost = content.utf8.count + a.name.utf8.count * 2 + 128
+            guard cost <= budget else { continue }
+            budget -= cost; images.append(["type":"image","mimeType":a.mime.lowercased(),"fileName":a.name,"content":content])
+        }
+        return images
+    }
     private func model(_ prompt: String, model: String, sourceMessageID: String? = nil) async throws -> String {
         guard agent == "projectx" else { throw ProjectError.blocked("Live R1 requires the dedicated projectx agent; personal agents are not an app backend.") }
         guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Model input exceeds bounded context.") }
@@ -330,24 +359,28 @@ public struct OpenClawHarness: Harness {
         for step in 0...Prompts.memoryOperations {
             // Checked before the run ID is stamped: an oversized wire never dispatches; an overflow fails the work (also on later memory steps).
             guard wire.utf8.count <= workerGuard else { throw ProjectError.overflow("This step's input is too large to send (\(wire.utf8.count) bytes, limit \(workerGuard)).") }
+            // Images ride only with the step that names them; memory steps send none.
+            let images = step == 0 ? await inlineImages(input.attachments,model: s.workerModel,root: s.filesRoot,message: wire.utf8.count) : []
             let runID = "projectx-run-" + identifier()
             try await update(.handle(RunHandle(sessionKey: key,controllerKey: controller,runID: runID)))
             let listener = await rpc.native?.observe { raw in
                 if let event = Self.publicEvent(raw,session: key,run: runID,task: input.work.id) { try? await update(.event(event)) }
             }
             let result: [String:Any]
-            do { result = try await rpc.call("agent",["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":240,"idempotencyKey":runID],final: true,sourceMessageID: input.work.messageID) }
+            var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":240,"idempotencyKey":runID]
+            if !images.isEmpty { params["attachments"] = images }
+            do { result = try await rpc.call("agent",params,final: true,sourceMessageID: input.work.messageID) }
             catch { if let listener { await rpc.native?.removeObserver(listener) }; throw error }
             if let listener { await rpc.native?.removeObserver(listener) }
             // The CLI cannot stream; committed public messages of this exact run are projected once it ends.
             if let history = try? await rpc.call("chat.history",["sessionKey":key,"limit":10,"maxChars":64000]) {
-                for event in Self.visibleEvents(history,task: input.work.id,run: runID) { try? await update(.event(event)) }
+                for event in Self.visibleEvents(history,task: input.work.id,run: runID) { try? await Prompts.emitProgress(event,update: update) }
             }
             let answer: String
             do { answer = try text(result) } catch ProjectError.overflow {
                 throw ProjectError.overflow(try await compactTopic(input,force: true,update: update) ? "This topic's session ran out of context. Yorozu compacted it, so asking again should now work." : "This topic's session is too long for the model and could not be compacted. Start a new topic for this request.")
             }
-            switch try Prompts.workerReply(answer,step: step) {
+            switch try Prompts.workerReply(answer,step: step,media: Self.payloadMedia(result)) {
             case .final(let output): return output
             case .memory(let call): wire = try await Prompts.memoryStep(call,eventID: runID + "-memory",task: input.work.id,update: update,memory: memory)
             }
@@ -384,7 +417,7 @@ public struct OpenClawHarness: Harness {
         if let reply = messages.last(where: { $0["role"] as? String == "assistant" && ($0["__openclaw"] as? [String:Any])?["runId"] as? String == run }) {
             guard let full = try? await whole(reply,key: topic.sessionKey) else { return .unknown }
             let text = (full["content"] as? [[String:Any]])?.last(where: { $0["type"] as? String == "text" })?["text"] as? String
-            if let text, let final = try? JSONDecoder().decode(WorkerOutput.self,from: Data(text.utf8)), !final.text.isEmpty, final.appliedRevision >= 0 { return .completed(final) }
+            if let text, case .final(let final)? = try? Prompts.workerReply(text,step: 0) { return .completed(final) }
             // Tool-using runs commit tool-call messages mid-run. Only a non-tool stop, a known end or 15 min of silence settles it.
             guard ["toolUse","tool_use"].contains(reply["stopReason"] as? String ?? ""), !ended else { return .stopped }
             return Date().timeIntervalSince1970 - (reply["timestamp"] as? Double ?? 0) / 1000 > 900 ? .stopped : .unknown
@@ -578,16 +611,21 @@ extension OpenClawHarness {
         guard let tool = executors.first(where: { $0.id == executor })?.name else { throw HarnessError.notReady("OpenClaw offers no coding executor \"\(executor)\".") }
         let runID = "projectx-code-" + identifier(); let handle = RunHandle(sessionKey: codingKey(input.topic,executor),controllerKey: "",runID: runID)
         // The run marker anchors reconcile to this run's own user turn in the session transcript.
-        let message = Prompts.codingMessage(input,contract: Prompts.codingContract(executor: tool,repo: repo,settings: s,cuaSession: "yorozu-" + identifier().prefix(8)),runID: runID)
+        let message = Prompts.codingMessage(input,contract: Prompts.codingContract(executor: tool,repo: repo,settings: s,topic: input.topic.id,cuaSession: "yorozu-" + identifier().prefix(8)),runID: runID,root: s.filesRoot)
         // Contract ~5 KB + instruction and user message ≤ 6000 B each + history ≤ 6000 B. Checked before the handle is stamped.
         guard message.utf8.count <= workerGuard else { throw ProjectError.overflow("The coding task message is \(message.utf8.count) bytes, over the \(workerGuard)-byte cap; shorten the request or start a new topic.") }
-        let key = try await codingSession(input.topic,executor,model: s.codingModels[executor] ?? "",base: s.codingBaseBranch)
+        let model = s.codingModels[executor] ?? ""
+        let key = try await codingSession(input.topic,executor,model: model,base: s.codingBaseBranch)
+        // Claude Code gets inline images as local paths, Codex as data URLs (OpenClaw); both also get the paths.
+        let images = await inlineImages(input.attachments,model: model,root: s.filesRoot,message: message.utf8.count)
         try await update(.handle(handle))
         let earlier = Set(Self.messageIDs((try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":200])) ?? [:]))
         let mark = try? await sessionMark(key)
-        let started = try await rpc.call("agent",["agentId":agent,"sessionKey":key,"message":message,"deliver":false,"timeout":7200,"idempotencyKey":runID],sourceMessageID: input.work.messageID)
+        var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":message,"deliver":false,"timeout":7200,"idempotencyKey":runID]
+        if !images.isEmpty { params["attachments"] = images }
+        let started = try await rpc.call("agent",params,sourceMessageID: input.work.messageID)
         guard started["runId"] as? String == runID else { throw ProjectError.uncertain("\(tool) run start unconfirmed. Request ID: \(runID)") }
-        var lost = 0, failures = 0, unread = 0
+        var lost = 0, failures = 0, unread = 0, shared = Set<String>() // events whose images went out already
         while true {
             try Task.checkCancellation()
             // Re-asserting the handle throws once the work is suppressed, so a stop is noticed within one poll even if
@@ -601,7 +639,8 @@ extension OpenClawHarness {
             }
             failures = 0
             let fetched = try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":2000])
-            for event in Self.codingEvents(fetched ?? [:],task: input.work.id,skip: earlier) { try? await update(.event(event)) }
+            // Each poll re-reads the run's messages: an event's images go out once.
+            for event in Self.codingEvents(fetched ?? [:],task: input.work.id,skip: earlier) { try? await Prompts.emitProgress(event,media: shared.insert(event.id).inserted,update: update) }
             if (r["endedAt"] as? Double ?? 0) > 0 {
                 // agent.wait carries only the error text, no kind: match the Gateway's overflow wording (packages/ai/src/utils/overflow.ts).
                 if r["status"] as? String != "ok", let error = r["error"] as? String, error.range(of: "context.*overflow|context window.*(too (large|long)|exceed|over|limit|max)|context.?length|prompt.*too (large|long)|maximum context|compaction fail|request_too_large|too many tokens|token limit exceeded",options: [.regularExpression,.caseInsensitive]) != nil, error.range(of: "too small",options: .caseInsensitive) == nil {
@@ -629,15 +668,18 @@ extension OpenClawHarness {
             try? await update(.event(WorkerEvent(id: input.work.id + ":" + runID + ":compaction",taskID: input.work.id,kind: "compaction",body: "\(tool) compacted its session" + sizes,created: Date().timeIntervalSince1970)))
         }
         let full = (try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":2000])) ?? [:]
-        var text = try await finalText(full,key: key,skip: earlier) ?? "\(tool) finished without a summary."
+        let reply = try await finalText(full,key: key,skip: earlier) ?? "\(tool) finished without a summary."
         // Only what the worker left uncommitted (the default scope compares to origin/main); a committed change reads as 0 files.
-        if let diff = try? await rpc.call("sessions.diff",["sessionKey":key,"agentId":agent,"scope":"uncommitted"]) {
+        let diff = try? await rpc.call("sessions.diff",["sessionKey":key,"agentId":agent,"scope":"uncommitted"])
+        // Relative returned paths resolve against the worktree.
+        var output = Prompts.coded(reply,revision: input.work.revision,base: (diff?["root"] as? String).map { URL(fileURLWithPath: $0) })
+        if let diff {
             let files = (diff["files"] as? [[String:Any]] ?? []).compactMap { $0["path"] as? String }
             let line = "Worktree \(diff["root"] as? String ?? "?") (branch \(diff["branch"] as? String ?? "?"), uncommitted) · \(files.count) file(s) · +\(diff["additions"] as? Int ?? 0) −\(diff["deletions"] as? Int ?? 0)" + (diff["truncated"] as? Bool == true ? " (truncated)" : "")
             try? await update(.event(WorkerEvent(id: input.work.id + ":" + runID + ":diff",taskID: input.work.id,kind: "diff",body: ([line] + files.prefix(20)).joined(separator: "\n"),created: Date().timeIntervalSince1970)))
-            text += "\n\n" + line
+            output.text += "\n\n" + line
         }
-        return WorkerOutput(coded: text,appliedRevision: input.work.revision)
+        return output
     }
     /// Anchored to this run's own user turn (claude-cli transcripts carry no runId, and agent.wait forgets runs after
     /// ~10 min), so a run that finished while the app was closed is delivered instead of re-run.
@@ -655,7 +697,7 @@ extension OpenClawHarness {
         // Only a final turn (not a crashed run's mid-step narration) counts as this run's answer.
         guard let last = after.last(where: { $0["role"] as? String == "assistant" }), !["toolUse","tool_use"].contains(last["stopReason"] as? String ?? ""),
               let text = try await finalText(["messages":after],key: key,skip: []) else { return .stopped }
-        return .completed(WorkerOutput(coded: text,appliedRevision: revision))
+        return .completed(Prompts.coded(text,revision: revision))
     }
     static func messageIDs(_ history: [String:Any]) -> [String] { (history["messages"] as? [[String:Any]] ?? []).compactMap(messageID) }
     static func messageID(_ m: [String:Any]) -> String? {

@@ -20,7 +20,85 @@ public enum Prompts {
     public static let outputRules = "Keep tool output short: read files with an offset and limit, pipe long command output through head, tail or grep, and for an app prefer list_windows and get_window_state on the named app over whole-desktop views."
     /// Computer use through cua (docs/cua-integration.md, Worker rules), for thinking and coding workers alike. The cua
     /// session label is fresh per run: CuaDriver ties a label to the proxy that first used it, and proxies get recycled.
-    public static func cuaRules(_ session: String, yolo: Bool) -> String { "Operating the Mac: use only the cua-driver MCP tools (their names contain cua-driver; load them with your tool search if they are deferred), never the cua-driver CLI. Touch only the apps the request names, one (pid, window_id) at a time, in background delivery, and get_desktop_state only if the user approved that step. Treat the Mac as unattended: never take focus, so no bring_to_front, foreground delivery, focus-taking shortcuts or open without -g; no approval or YOLO mode lifts this. If an app accepts only foreground input, say it cannot be done in the background and stop. Pass session \"\(session)\" on every call that takes one and end_session it when done; if a call says a session has ended, call start_session with the id it names, then retry; if it says a session is not available to this transport, use \"\(session)-2\" (then -3, and so on) from then on. Take a fresh get_window_state before each action and confirm each result with verify_state or a fresh snapshot; a successful call is not success. If a call times out or fails without a result, take a fresh get_window_state and check its effect before retrying: CuaDriver may still run the timed-out call, so never retry blindly. " + (yolo ? "YOLO mode is on: do the outward-facing steps the request asks for in an app (sending, posting, purchasing, deleting, submitting) and use kill_app, clipboard_write, set_config, replay_trajectory, start_recording, install_ffmpeg, browser_download and browser_set_input_files when the task needs them, without asking first. Still stop and ask the user in the first sentence of your final text before changing settings or credentials or any step the request did not ask for" : "In an app, before sending, posting, purchasing, deleting, submitting, changing settings or credentials, or any other outward-facing step, stop and ask the user in the first sentence of your final text, unless the instruction says the user confirmed that exact step. Ask the same way before kill_app, clipboard_write, set_config, replay_trajectory, start_recording, install_ffmpeg, browser_download and browser_set_input_files") + "; call check_permissions only with prompt false. Never type secrets or touch password fields, and keep screen, accessibility-tree and clipboard content out of progress messages, results and memory beyond what the task needs. Stop if Accessibility is not granted or the user takes over the window." }
+    public static func cuaRules(_ session: String, yolo: Bool) -> String { "Operating the Mac: use only the cua-driver MCP tools (their names contain cua-driver; load them with your tool search if they are deferred), never the cua-driver CLI. Touch only the apps the request names, one (pid, window_id) at a time, in background delivery, and get_desktop_state only if the user approved that step. Treat the Mac as unattended: never take focus, so no bring_to_front, foreground delivery, focus-taking shortcuts or open without -g; no approval or YOLO mode lifts this. If an app accepts only foreground input, say it cannot be done in the background and stop. Pass session \"\(session)\" on every call that takes one and end_session it when done; if a call says a session has ended, call start_session with the id it names, then retry; if it says a session is not available to this transport, use \"\(session)-2\" (then -3, and so on) from then on. Take a fresh get_window_state before each action and confirm each result with verify_state or a fresh snapshot; a successful call is not success. If a call times out or fails without a result, take a fresh get_window_state and check its effect before retrying: CuaDriver may still run the timed-out call, so never retry blindly. " + (yolo ? "YOLO mode is on: do the outward-facing steps the request asks for in an app (sending, posting, purchasing, deleting, submitting) and use kill_app, clipboard_write, set_config, replay_trajectory, start_recording, install_ffmpeg, browser_download and browser_set_input_files when the task needs them, without asking first. Still stop and ask the user in the first sentence of your final text before changing settings or credentials or any step the request did not ask for" : "In an app, before sending, posting, purchasing, deleting, submitting, changing settings or credentials, or any other outward-facing step, stop and ask the user in the first sentence of your final text, unless the instruction says the user confirmed that exact step. Ask the same way before kill_app, clipboard_write, set_config, replay_trajectory, start_recording, install_ffmpeg, browser_download and browser_set_input_files") + "; call check_permissions only with prompt false. Never type secrets or touch password fields. You may share a screenshot in a progress message, as a standalone MEDIA:<absolute path> line, when it helps the user follow the work; keep accessibility-tree dumps and clipboard contents out of progress messages and results beyond what the task needs, and never put screen content into memory. Stop if Accessibility is not granted or the user takes over the window." }
+
+    // MARK: Files (#316)
+
+    /// Where workers write files they make for the user: outside any repo, per topic, under the system temp folder,
+    /// which every worker can write (a Codex `workspace` sandbox writes only its worktree and the temp folders). The
+    /// worker creates it on demand; Yorozu copies returned files into its store, so nothing here needs to last.
+    public static func scratchDirectory(topic: String) -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("yorozu-scratch/" + topic,isDirectory: true) }
+    /// The contract lines on files, for thinking and coding workers alike.
+    static func fileRules(topic: String) -> String {
+        "Attached document lines name files the user attached, by absolute path; read them with your tools (an image the model already received needs no reading). Write files you make for the user, other than code changes, in \(scratchDirectory(topic: topic).path) (it may not exist yet; create it), never in a repo checkout or worktree unless the user asks for that. To show an image in the task's progress, put a standalone MEDIA:<absolute path> line in a progress message."
+    }
+    /// An attachment's file, or nil without a store root.
+    public static func fileURL(_ a: Attachment, root: URL?) -> URL? { root.map { $0.appendingPathComponent(a.path) } }
+    /// One `Attached document: <path>` line per file; a file gone since it was attached gets a line saying so.
+    public static func attachmentLines(_ attachments: [Attachment], root: URL?) -> String {
+        attachments.map { a in
+            guard let url = fileURL(a,root: root), FileManager.default.isReadableFile(atPath: url.path) else { return "Attached document no longer available: \(a.name) (deleted since it was attached)" }
+            return "Attached document: " + url.path
+        }.joined(separator: "\n")
+    }
+    static let imageExtensions: Set = ["png","jpg","jpeg","gif","webp","heic","heif","tif","tiff","bmp"]
+    static func isImage(_ path: String) -> Bool { imageExtensions.contains(URL(fileURLWithPath: path).pathExtension.lowercased()) }
+    /// A returned file reference as a local path: `file:` and `~/` resolved, a relative path against `base` (kept as is
+    /// without one); nil for a URL, which stays text.
+    static func localPath(_ raw: String, base: URL? = nil) -> String? {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        while let f = s.first, let l = s.last, s.count >= 2, (f == "\"" && l == "\"") || (f == "`" && l == "`") || (f == "'" && l == "'") || (f == "<" && l == ">") { s = String(s.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces) }
+        if s.lowercased().hasPrefix("file://") { s = String(s.dropFirst(7)) } else if s.lowercased().hasPrefix("file:") { s = String(s.dropFirst(5)) }
+        guard !s.isEmpty, s.range(of: #"^[A-Za-z][A-Za-z0-9+.-]*:"#,options: .regularExpression) == nil else { return nil }
+        if s.hasPrefix("~/") { return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(String(s.dropFirst(2))).path }
+        if s.hasPrefix("/") { return s }
+        return base.map { $0.appendingPathComponent(s).standardizedFileURL.path } ?? s
+    }
+    /// Splits returned files out of `text`: standalone `MEDIA:<path>` lines (OpenClaw's form: outside fenced or indented
+    /// code, at most three leading spaces) and, with `filesSection`, a coding reply's `Files:` section of absolute or `~/`
+    /// paths. References `keep` refuses, and URLs, stay as text. Returns the text without them and the paths.
+    static func splitFiles(_ text: String, filesSection: Bool = false, base: URL? = nil, keep: (String) -> Bool = { _ in true }) -> (text: String, files: [String]) {
+        var out: [Substring] = [], files: [String] = [], fence: String?, section: [Substring]?, listed: [String] = []
+        func endSection() { if let s = section { if listed.isEmpty { out += s } else { files += listed } }; section = nil; listed = [] }
+        for line in text.split(separator: "\n",omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces), indent = line.prefix { $0 == " " }.count
+            if let f = fence { out.append(line); if trimmed.hasPrefix(f) { fence = nil }; continue }
+            let code = indent >= 4 || line.hasPrefix("\t")
+            if section != nil {
+                let item = trimmed.firstMatch(of: #/^(?:[-*+]|\d+[.)])\s+(.+)$/#).map { String($0.1) }
+                if let item, item.hasPrefix("/") || item.hasPrefix("~/") || item.hasPrefix("`/") || item.hasPrefix("`~/"), let path = localPath(item,base: base) { section!.append(line); listed.append(path); continue }
+                if trimmed.isEmpty, listed.isEmpty { section!.append(line); continue }
+                if item != nil { out += section!; section = nil; listed = [] } else { endSection() } // a listed relative path: not a Files section
+            }
+            if !code, trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") { fence = String(trimmed.prefix(3)); out.append(line); continue }
+            if !code, filesSection, trimmed.range(of: #"^(#{1,6}\s*)?(\*\*)?Files:?(\*\*)?:?$"#,options: [.regularExpression,.caseInsensitive]) != nil { section = [line]; continue }
+            if !code, trimmed.uppercased().hasPrefix("MEDIA:"), let path = localPath(String(trimmed.dropFirst(6)),base: base), keep(path) { files.append(path); continue }
+            out.append(line)
+        }
+        endSection()
+        guard !files.isEmpty else { return (text,[]) }
+        return (out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines),files)
+    }
+    /// A final answer with its returned files: those named in `files` (thinking JSON), `extra` (payload media, lines
+    /// outside the JSON) and the text's own `MEDIA:` lines (and `Files:` section), stripped from the stored text.
+    public static func withFiles(_ output: WorkerOutput, extra: [String] = [], filesSection: Bool = false, base: URL? = nil) -> WorkerOutput {
+        var o = output; let (text,found) = splitFiles(o.text,filesSection: filesSection,base: base)
+        var all: [String] = []
+        for p in (o.files ?? []).compactMap({ localPath($0,base: base) }) + extra + found where !all.contains(p) { all.append(p) }
+        o.files = all.isEmpty ? nil : all
+        if !found.isEmpty { o.text = text.isEmpty ? "See the attached file\(all.count == 1 ? "" : "s")." : text }
+        return o
+    }
+    /// A coding executor's final reply as its result: `Files:` section and `MEDIA:` lines become returned files.
+    public static func coded(_ text: String, revision: Int, base: URL? = nil) -> WorkerOutput { withFiles(WorkerOutput(coded: text,appliedRevision: revision),filesSection: true,base: base) }
+    /// Posts a sub-chat event. A progress message's `MEDIA:` lines naming images (open question 6) leave its body, and
+    /// with `media` the images follow as `.media` for that event.
+    public static func emitProgress(_ event: WorkerEvent, media: Bool = true, update: (StreamUpdate) async throws -> Void) async throws {
+        var e = event; var images: [String] = []
+        if e.kind == "message" { let (text,found) = splitFiles(e.body,keep: isImage); if !found.isEmpty { e.body = text.isEmpty ? "Shared an image." : text; images = found } }
+        try await update(.event(e))
+        if media, !images.isEmpty { try await update(.media(eventID: e.id,paths: images)) }
+    }
 
     // MARK: Thinking workers
 
@@ -30,17 +108,23 @@ public enum Prompts {
     /// the result (`memoryResult`) as the next step of the same task.
     public static let memoryCall = "You may instead return {\"memoryCall\":{\"tool\":\"memory.search|memory.read|memory.write\",\"path\":relative UUID.md,\"query\":optional,\"markdown\":complete canonical Markdown,\"expectedSHA256\":read hash or null for create}}. Only app-mediated scoped memory writes. Read before edits, reconcile conflicts, retain attribution. Never claim a failed write succeeded. Markdown first line is JSON metadata (id,title,topicID,sources,evidence,knowledgeType,attribution,epistemicStatus,created,updated,lineage), then blank line/body. Generated notes must remain assistant/generated_analysis/unverified. Six operations maximum."
     /// Sent after `WorkerInput.wire` on a task's first step.
-    public static func thinkingContract(_ s: HarnessSettings, cuaSession: String) -> String {
+    public static func thinkingContract(_ s: HarnessSettings, topic: String, cuaSession: String) -> String {
         let repo = s.devRepo.map { "Code changes to the repo at \($0.path) (the user's live checkout) belong to a coding worker; never run its tests or CI. " } ?? ""
         let config = s.configFile.map { "Yorozu's settings are in \($0.path), which documents its keys; edit it when the user asks to change a setting, but change MCP servers, the relay URL, direct connection, the harness, Advanced items or yolo only after the user's explicit yes in this chat. " } ?? ""
         // jobs.toml sits next to config.toml (#319); a new job's entry names the topic it was created in.
         let jobs = s.configFile.map { "Scheduled jobs are [jobs.<id>] tables in \($0.deletingLastPathComponent().appendingPathComponent("jobs.toml").path) (id ^[a-z0-9][a-z0-9-]{0,39}$; keys name, schedule (list of 5-field cron strings, the Mac's time zone), once, paused, retired, post (always|notable), script, instruction, ai_when (always|changed|a regular expression), timeout (seconds), model, executor, topic; unknown keys are errors; at least one of script and instruction). To create a job, add one entry with topic set to this task's topic id, keep the file valid, ask whether results always go to the main chat or only when notable if the user did not say, and never call a script active before the user's yes to Yorozu's approval request. " } ?? ""
-        return "You are a knowledge worker. Emit only public progress, no hidden reasoning. Final ONLY JSON {\"text\":string,\"appliedRevision\":integer}. Echo the highest applied amendment revision. Use your tools (shell, files, web) to do what the user asks yourself, end to end; never hand the user steps you can do, and ask only for what only they can do (logins, approvals, secrets). Never take destructive or outward-facing actions the user did not ask for. Never read or message other agents' sessions. " + repo + config + jobs + outputRules + " " + cuaRules(cuaSession,yolo: s.yolo) + " " + memoryCall
+        return "You are a knowledge worker. Emit only public progress, no hidden reasoning. Final ONLY JSON {\"text\":string,\"appliedRevision\":integer,\"files\":optional array of absolute paths of files to send the user with the answer}. Echo the highest applied amendment revision. Use your tools (shell, files, web) to do what the user asks yourself, end to end; never hand the user steps you can do, and ask only for what only they can do (logins, approvals, secrets). Never take destructive or outward-facing actions the user did not ask for. Never read or message other agents' sessions. " + repo + config + jobs + fileRules(topic: topic) + " " + outputRules + " " + cuaRules(cuaSession,yolo: s.yolo) + " " + memoryCall
     }
-    /// A task's first step: the slim wire plus the contract. A follow-up turn (`WorkerInput.followUp`) sends only its new
-    /// amendments: the session holds the contract and the earlier turn.
+    /// A task's first step: the slim wire, the work's attachment lines and the contract. A follow-up turn
+    /// (`WorkerInput.followUp`) sends only its new amendments and the attachment lines: the session holds the contract and the earlier turn.
     public static func firstStep(_ input: WorkerInput, settings s: HarnessSettings, cuaSession: String) throws -> String {
-        try followUp(input) ?? (input.wire + "\n" + thinkingContract(s,cuaSession: cuaSession))
+        let message = try workerMessage(input,root: s.filesRoot)
+        return input.followUp != nil ? message : message + "\n" + thinkingContract(s,topic: input.topic.id,cuaSession: cuaSession)
+    }
+    /// The wire (or follow-up) plus one `Attached document` line per file the work carries, without the contract.
+    public static func workerMessage(_ input: WorkerInput, root: URL?) throws -> String {
+        let lines = attachmentLines(input.attachments,root: root)
+        return try (followUp(input) ?? input.wire) + (lines.isEmpty ? "" : "\n" + lines)
     }
     /// A follow-up turn's message (its new amendments only), or nil on a task's first turn.
     public static func followUp(_ input: WorkerInput) -> String? {
@@ -48,14 +132,17 @@ public enum Prompts {
     }
     public enum WorkerReply: Sendable { case final(WorkerOutput), memory(MemoryCall) }
     /// A thinking worker's final text under the contract. `step` counts from 0; a memoryCall past the bound is refused.
-    public static func workerReply(_ answer: String, step: Int) throws -> WorkerReply {
+    /// Returned files come from the JSON's `files`, `MEDIA:` lines inside or outside the JSON, and `media` (payload
+    /// `mediaUrl`/`mediaUrls`).
+    public static func workerReply(_ raw: String, step: Int, media: [String] = []) throws -> WorkerReply {
+        let (answer,outside) = splitFiles(raw)
         if let object = try JSONSerialization.jsonObject(with: Data(answer.utf8)) as? [String:Any], let request = object["memoryCall"] {
             guard object.count == 1, step < memoryOperations else { throw ProjectError.invalid("Memory operation bound reached; prior writes retained.") }
             return .memory(try JSONDecoder().decode(MemoryCall.self,from: JSONSerialization.data(withJSONObject: request)))
         }
         let output = try JSONDecoder().decode(WorkerOutput.self,from: Data(answer.utf8))
         guard !output.text.isEmpty, output.appliedRevision >= 0 else { throw ProjectError.invalid("Invalid final answer contract.") }
-        return .final(output)
+        return .final(withFiles(output,extra: outside + media))
     }
     /// Runs a memoryCall through the app, posts its tool row and returns the next step's message.
     public static func memoryStep(_ call: MemoryCall, eventID: String, task: String, update: @Sendable (StreamUpdate) async throws -> Void, memory: @Sendable (MemoryCall) async throws -> String) async throws -> String {
@@ -87,7 +174,7 @@ public enum Prompts {
     /// branch and build command come from settings. `worktree` is nil when the harness starts the worker in a worktree it
     /// manages (OpenClaw); otherwise the worker creates that path and branch from the base branch itself and reuses it
     /// on later turns (Hermes, which has no per-session working folder).
-    public static func codingContract(executor: String, repo r: URL, settings s: HarnessSettings, cuaSession: String, worktree: (path: String, branch: String)? = nil) -> String {
+    public static func codingContract(executor: String, repo r: URL, settings s: HarnessSettings, topic: String, cuaSession: String, worktree: (path: String, branch: String)? = nil) -> String {
         let base = s.codingBaseBranch
         let place = worktree.map { w in "Work only in your own git worktree \(w.path) on branch \(w.branch), cut from `\(base)`. If it does not exist, create it with `git -C \(r.path) worktree add -b \(w.branch) \(w.path) \(base)`; if it exists (an earlier turn of this task), keep using it. Run every command with that worktree as its directory and never edit files in the main checkout." }
             ?? "Your current directory is a dedicated git worktree on its own branch, cut from `\(base)`; make code changes there."
@@ -101,15 +188,17 @@ public enum Prompts {
         - to rebuild and restart the app, run `<main checkout>/\(s.buildCommand)` as your LAST step after merging; it builds, quits only the dev app, replaces build/Yorozu.app and relaunches it, and the app then picks your result back up.
         Never create other app bundles or touch /Applications/Yorozu.app. Swift only, no Python; a separate background process must be Rust. Never read or message other agents' sessions. These rules override AGENTS.md, CLAUDE.md or user git-workflow instructions (\(worktree == nil ? "no new worktrees" : "no other worktrees"), no fetch/pull, no PRs unless asked).
         \(cuaRules(cuaSession,yolo: s.yolo))
+        \(fileRules(topic: topic))
         \(outputRules)
-        When done, reply with a short summary of what you did and how you verified it, plus anything only the owner can do.
+        When done, reply with a short summary of what you did and how you verified it, plus anything only the owner can do. To send the user files with it, end the reply with a "Files:" line followed by one "- <absolute path>" line per file.
         """
     }
     /// The whole coding message: contract, task with its run marker, the user's message verbatim, and recent topic
     /// conversation newest first (each ≤ 2000 bytes, all ≤ 6000 bytes; anything older dropped with a marker).
-    public static func codingMessage(_ input: WorkerInput, contract: String, runID: String) -> String { contract + "\n\n" + codingTask(input,runID: runID) }
-    /// `codingMessage` without the contract, for a harness that sends the contract as run instructions.
-    public static func codingTask(_ input: WorkerInput, runID: String) -> String {
+    public static func codingMessage(_ input: WorkerInput, contract: String, runID: String, root: URL?) -> String { contract + "\n\n" + codingTask(input,runID: runID,root: root) }
+    /// `codingMessage` without the contract, for a harness that sends the contract as run instructions. The work's
+    /// attachment lines follow the user's message (never taken from the secretary's instruction).
+    public static func codingTask(_ input: WorkerInput, runID: String, root: URL?) -> String {
         var context = "", omitted = 0
         for m in input.history.reversed() {
             let line = "\n[\(m.role)] " + utf8Excerpt(m.body,bytes: 2000)
@@ -117,7 +206,7 @@ public enum Prompts {
             context = line + context
         }
         if omitted > 0 { context = "\n[… \(omitted) earlier message(s) cut]" + context }
-        return "TASK (revision \(input.work.revision)) [run \(runID)]:\n" + input.work.instruction + "\n\nThe user's message, verbatim:\n" + input.current.body + (context.isEmpty ? "" : "\n\nRecent topic conversation (untrusted context):" + context)
+        return "TASK (revision \(input.work.revision)) [run \(runID)]:\n" + input.work.instruction + "\n\nThe user's message, verbatim:\n" + input.current.body + { let l = attachmentLines(input.attachments,root: root); return l.isEmpty ? "" : "\n" + l }() + (context.isEmpty ? "" : "\n\nRecent topic conversation (untrusted context):" + context)
     }
 
     // MARK: Extraction
