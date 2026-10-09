@@ -1,7 +1,8 @@
 import Foundation
 
 /// Whether Yorozu can answer (#317), in plain words: items with a fix, and the overall state. Blocked only when no
-/// harness is installed at all; everything else that is wrong is a warning. The app maps it to the wire's `ReadinessData`.
+/// harness is installed at all, or the agent is the user's own (OpenClaw's default); everything else wrong is a warning.
+/// The app maps it to the wire's `ReadinessData`.
 public struct Readiness: Sendable, Equatable {
     public struct Item: Sendable, Equatable, Identifiable {
         public enum Severity: String, Sendable { case ok, warning, blocking }
@@ -13,10 +14,10 @@ public struct Readiness: Sendable, Equatable {
             case open(title: String, url: URL)
             /// A one-line hint for phones (the wire's `fix`).
             public var hint: String {
-                switch self { case .step(let id): "Setup › " + (SetupEngine.titles[id] ?? id); case .copy(_,let command): command; case .open(_,let url): url.absoluteString }
+                switch self { case .step(let id): String(localized: "Setup › \(SetupEngine.titles[id] ?? id)"); case .copy(_,let command): command; case .open(_,let url): url.absoluteString }
             }
             public init(_ fix: Integration.Fix) {
-                switch fix { case .copy(let t,let c): self = .copy(title: t,command: c); case .open(let t,let u): self = .open(title: t,url: u) }
+                switch fix { case .copy(let t,let c): self = .copy(title: String(localized: String.LocalizationValue(t)),command: c); case .open(let t,let u): self = .open(title: String(localized: String.LocalizationValue(t)),url: u) }
             }
         }
         /// Stable id, such as `openclaw.gateway`; `title` is plain language; `detail` is the raw text for Details.
@@ -31,7 +32,7 @@ public struct Readiness: Sendable, Equatable {
     public var state: State { items.contains { $0.severity == .blocking } ? .blocked : count > 0 ? .attention(count) : .ready }
     /// "Ready", "N items need attention", or the first blocking item's title.
     public var summary: String {
-        switch state { case .ready: "Ready"; case .attention(let n): n == 1 ? "1 item needs attention" : "\(n) items need attention"; case .blocked: items.first { $0.severity == .blocking }!.title }
+        switch state { case .ready: String(localized: "Ready"); case .attention(let n): n == 1 ? String(localized: "1 item needs attention") : String(localized: "\(n) items need attention"); case .blocked: items.first { $0.severity == .blocking }!.title }
     }
 
     /// The main harness's readiness: its detection, Gateway `health` included. The app runs it at launch and again after a

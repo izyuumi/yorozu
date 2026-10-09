@@ -14,14 +14,20 @@ public struct PlainError: Sendable, Equatable {
         func plain(_ cause: String,_ title: String,_ subject: String? = nil) -> PlainError { PlainError(cause: cause,title: title,detail: raw,subject: subject) }
         let s = raw.lowercased()
         // Yorozu's own refusals (`GatewayRPC.enforceAttribution`, `Store`), then `GatewayRPC` categories, then OpenClaw's error texts.
-        if s.contains("caller-attribution") { return plain("exec_markers","Yorozu was started from an agent's shell; open it from Finder") }
-        if s.contains("data directory is already open") { return plain("already_running","Yorozu is already running") }
-        if s.contains("exit=127") || s.contains("category=executable-") { return plain("openclaw_missing","OpenClaw or Node.js isn't installed") }
-        if s.contains("category=gateway-unreachable") || s.contains("could not connect to the server") { return plain("gateway_down","The OpenClaw Gateway isn't running. Start it with `openclaw gateway run`.") }
-        if s.contains("unknown agent id") { return plain("agent_missing","Yorozu's agent isn't set up in OpenClaw") }
+        if s.contains("caller-attribution") { return plain("exec_markers",String(localized: "Yorozu was started from an agent's shell; open it from Finder")) }
+        if s.contains("data directory is already open") { return plain("already_running",String(localized: "Yorozu is already running")) }
+        if s.contains(OpenClawSetup.personalAgent.lowercased()) { return plain("personal_agent",OpenClawSetup.personalAgent) }
+        // Only the shapes `GatewayRPC` writes: worker errors may quote anything.
+        if s.contains("gateway cli failed [exit=127,") || s.contains("category=executable-or-runtime]") || s.contains("[category=executable-unavailable]") { return plain("openclaw_missing",String(localized: "OpenClaw or Node.js isn't installed")) }
+        if s.contains("category=gateway-unreachable]") { return plain("gateway_down",String(localized: "The OpenClaw Gateway isn't running. Start it with `openclaw gateway run`.")) }
+        if let m = raw.firstMatch(of: #/category=gateway-target-mismatch, target=([^\]\s]+)\]/#) {
+            let url = String(m.1)
+            return plain("gateway_target",String(localized: "Nothing answers at \(url); check [harness] gateway_url"),url)
+        }
+        if s.contains("unknown agent id") { return plain("agent_missing",String(localized: "Yorozu's agent isn't set up in OpenClaw")) }
         if let m = raw.firstMatch(of: #/(?i)model not allowed:\s*([^\s"'`,;]+)/#) {
             let model = String(m.1).trimmingCharacters(in: CharacterSet(charactersIn: ".)"))
-            return plain("model_not_allowed","OpenClaw doesn't allow \(model) for Yorozu",model)
+            return plain("model_not_allowed",String(localized: "OpenClaw doesn't allow \(model) for Yorozu"),model)
         }
         return nil
     }

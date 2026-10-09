@@ -23,6 +23,8 @@ public protocol Harness: Sendable {
     var id: String { get }
     /// Coding executors this harness offers, in preference order.
     var executors: [Executor] { get }
+    /// The harness agent topic session keys carry (`agent:<agent>:projectx:<topic>`): `[harness] agent` for every harness,
+    /// offline and fixture included, so topics keep one key prefix whatever the mode.
     var agentID: String { get }
     func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision
     func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput
@@ -40,8 +42,7 @@ public protocol Harness: Sendable {
     var workerGuard: Int { get }
 }
 public extension Harness {
-    /// The harness agent topic session keys carry (`agent:<agent>:projectx:<topic>`); harnesses without one use the default id.
-    var agentID: String { "yorozu" }
+    var agentID: String { Config.HarnessSettings().agent }
     var executors: [Executor] { [] }
     var rawPromptCap: Int { ProjectXCore.rawPromptCap }
     var workerGuard: Int { 32000 }
@@ -88,7 +89,8 @@ public struct HarnessSettings: Sendable {
 public struct OfflineHarness: Harness {
     public let id = "offline"
     public let name = "Offline · no model calls"
-    public init() {}
+    public let agentID: String
+    public init(agent: String = Config().harness.agent) { agentID = agent }
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision { throw ProjectError.offline }
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput { throw ProjectError.offline }
     public func steer(_ work: Work, topic: Topic, amendment: Amendment) async throws -> Bool { false }
@@ -100,8 +102,9 @@ public struct OfflineHarness: Harness {
 public actor FixtureHarness: Harness {
     nonisolated public let id = "fixture"
     nonisolated public let name = "Synthetic fixture · NOT a live model"
+    nonisolated public let agentID: String
     private var states: [String: RunStatus] = [:]; private var revisions: [String: Int] = [:]; private var cancelled = Set<String>()
-    public init() {}
+    public init(agent: String = Config().harness.agent) { agentID = agent }
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision {
         let text = input.message.trimmingCharacters(in: .whitespacesAndNewlines)
         let latest = input.latestTopic ?? input.topics.last?.id
@@ -157,21 +160,6 @@ public struct GatewayRPC: Sendable {
         if s.contains("timed out") || s.contains("timeout") { return "deadline-or-timeout" }
         if s.contains("no such file") || s.contains("command not found") || s.contains("node.js") { return "executable-or-runtime" }
         return "unclassified-refusal-or-disconnect"
-    }
-    /// True when the loopback `target` (already pinned by `perform`) refuses a TCP connection: nothing listens there.
-    static func refused(_ target: URLComponents) -> Bool {
-        let port = in_port_t(UInt16(clamping: target.port ?? (target.scheme == "wss" ? 443 : 80)).bigEndian), v6 = target.host == "::1"
-        let fd = socket(v6 ? AF_INET6 : AF_INET,SOCK_STREAM,0); guard fd >= 0 else { return false }
-        defer { close(fd) }
-        let code: Int32
-        if v6 {
-            var a = sockaddr_in6(); a.sin6_family = sa_family_t(AF_INET6); a.sin6_port = port; inet_pton(AF_INET6,"::1",&a.sin6_addr)
-            code = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self,capacity: 1) { connect(fd,$0,socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
-        } else {
-            var a = sockaddr_in(); a.sin_family = sa_family_t(AF_INET); a.sin_port = port; inet_pton(AF_INET,"127.0.0.1",&a.sin_addr)
-            code = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self,capacity: 1) { connect(fd,$0,socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-        }
-        return code != 0 && errno == ECONNREFUSED
     }
     /// `timeout` (ms, CLI transport only) shortens the CLI's 260 s wait, for setup and readiness probes.
     public func call(_ method: String, _ params: [String:Any], final: Bool = false, sourceMessageID: String? = nil, timeout: Int? = nil) async throws -> [String:Any] {
@@ -254,9 +242,8 @@ public struct GatewayRPC: Sendable {
                 let stderr = await errorReader.value
                 guard process.terminationStatus == 0 else {
                     var category = Self.diagnosticCategory(String(decoding: stderr + data.prefix(32768),as: UTF8.self))
-                    // The CLI compares its own Gateway URL with `--expect-url` before dialing, so a target nothing listens on
-                    // reads as a mismatch; a refused connection to that loopback port means the Gateway there isn't running.
-                    if category == "gateway-target-mismatch", Self.refused(url) { category = "gateway-unreachable" }
+                    // The CLI refuses a `--expect-url` other than its own configured Gateway, whether or not anything listens there.
+                    if category == "gateway-target-mismatch" { category += ", target=" + target }
                     // Gateway refusals arrive as a JSON envelope on stdout; its code/message is safe to show unless secret-shaped.
                     let refusal = (try? JSONSerialization.jsonObject(with: data) as? [String:Any])?["error"] as? [String:Any]
                     // Else the CLI's own words from stderr (such as "Start it with `openclaw gateway run`"), for Details (`PlainError`).

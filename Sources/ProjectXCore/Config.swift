@@ -73,9 +73,16 @@ public struct Config: Sendable, Equatable {
         }
         do { return try Data(contentsOf: url) } catch { throw ConfigError(file: url.path,reason: error.localizedDescription) }
     }
-    /// Read-modify-write: reads the file fresh, so an edit made since the last load is kept.
+    /// Read-modify-write: reads the file fresh, so an edit made since the last load is kept. Serialized in this process
+    /// and, through `flock` on `.config.toml.lock` beside the file, with the app and `Yorozu setup` in other processes.
     @discardableResult public static func update(_ url: URL, _ change: (inout Config) throws -> Void) throws -> Config {
         lock.lock(); defer { lock.unlock() }
+        let folder = url.deletingLastPathComponent(), lockFile = folder.appendingPathComponent(".config.toml.lock").path
+        try FileManager.default.createDirectory(at: folder,withIntermediateDirectories: true)
+        let fd = open(lockFile,O_RDWR | O_CREAT | O_CLOEXEC,0o600)
+        guard fd >= 0 else { throw ConfigError(file: url.path,reason: "could not open \(lockFile): " + String(cString: strerror(errno))) }
+        defer { close(fd) } // closing releases the lock
+        guard flock(fd,LOCK_EX) == 0 else { throw ConfigError(file: url.path,reason: "could not lock \(lockFile): " + String(cString: strerror(errno))) }
         var config = try load(url); try change(&config); try config.write(url); return try load(url)
     }
     private static let lock = NSLock()

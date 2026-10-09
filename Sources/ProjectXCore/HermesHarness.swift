@@ -22,16 +22,16 @@ public struct HermesSetup: HarnessSetup {
     public func detect() async -> HarnessDetection {
         var d = HarnessDetection(kind: kind,title: title)
         guard let harness = try? HermesHarness(url: url,agent: agent) else {
-            d.items = [Readiness.Item(id: "hermes.url",title: "Hermes's address in config.toml isn't usable",detail: url,severity: .warning,fix: .step("harness"))]; return d
+            d.items = [Readiness.Item(id: "hermes.url",title: String(localized: "Hermes's address in config.toml isn't usable"),detail: url,severity: .warning,fix: .step("harness"))]; return d
         }
         let r = await harness.readiness()
         d.installed = r.launcher != nil; d.version = r.version; d.reachable = d.installed ? r.version != nil : nil
         guard let launcher = r.launcher else {
-            d.items = [Readiness.Item(id: "hermes.installed",title: "Hermes Agent isn't installed",detail: r.problems.joined(separator: "\n"),severity: .blocking,fix: .open(title: "How to install Hermes Agent",url: URL(string: "https://hermes-agent.nousresearch.com")!))]; return d
+            d.items = [Readiness.Item(id: "hermes.installed",title: String(localized: "Hermes Agent isn't installed"),detail: r.problems.joined(separator: "\n"),severity: .blocking,fix: .open(title: String(localized: "How to install Hermes Agent"),url: URL(string: "https://hermes-agent.nousresearch.com")!))]; return d
         }
-        d.items = [Readiness.Item(id: "hermes.installed",title: "Hermes Agent is installed",detail: launcher + (r.version.map { " " + $0 } ?? ""),severity: .ok)]
-            + r.problems.enumerated().map { Readiness.Item(id: "hermes.problem.\($0.offset)",title: $0.element,detail: $0.element,severity: .warning,fix: .step("harness")) }
-            + r.warnings.enumerated().map { Readiness.Item(id: "hermes.warning.\($0.offset)",title: $0.element,detail: $0.element,severity: .warning) }
+        d.items = [Readiness.Item(id: "hermes.installed",title: String(localized: "Hermes Agent is installed"),detail: launcher + (r.version.map { " " + $0 } ?? ""),severity: .ok)]
+            + r.problems.enumerated().map { Readiness.Item(id: "hermes.problem.\($0.offset)",title: String(localized: "Hermes Agent isn't ready"),detail: $0.element,severity: .warning,fix: .step("harness")) }
+            + r.warnings.enumerated().map { Readiness.Item(id: "hermes.warning.\($0.offset)",title: String(localized: "This Hermes Agent version hasn't been tested with Yorozu"),detail: $0.element,severity: .warning) }
         return d
     }
     public func executors(_ settings: HarnessSettings) -> [CodingExecutor] {
