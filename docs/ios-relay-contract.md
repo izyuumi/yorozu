@@ -21,6 +21,11 @@ beyond the one thread `"main"`).
 ## Transport (unchanged v1 relay)
 
 - Relay: `wss://relay.yumi.to`, protocol unchanged. Pairing is `QrPayload` (v1 QR or `yorozu://pair`).
+  The Mac's pair sheet shows the QR, the code as text (the QR's own `https://yorozu.yumi.to/pair#…`
+  link, which the phone's manual entry takes, as it takes `yorozu://pair?…`) and the Mac key,
+  `QrPayload.fingerprint` (the session key's first 8 bytes, uppercase hex in groups of two bytes:
+  `3F9A 1C07 B2E4 55D0`), which the phone's confirmation shows too. The phone claims
+  `applinks:yorozu.yumi.to`, so the system Camera opens the link in the app.
 - Phone side: `RelayClient`, one session over the relay or the [direct path](#direct-path). It does join, the cleartext `hello`
   (`{t:"hello",pub,spub,proof}`, proof = `YorozuCrypto.helloProof(secret:pub:spub:)`), the
   sealed channel, flow acks and the peer-info gate. `PhoneModel` sees only `TransportUpdate`s.
@@ -222,7 +227,7 @@ next `.paired` catches up. A device that had finished the exchange stays served 
 
 The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15 s deadline,
 `RelayClient.swift`). Both ends advertise `PeerInfoData.local`: protocol 2 (`protocolMin` =
-`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1"]`,
+`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1"]`,
 required `["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update
 required". Until a device's exchange succeeds, the host passes none of its other events to the
 backend; a known device whose last result on file is compatible counts as succeeded (Mac-side
@@ -318,6 +323,7 @@ event carries its row's `seq`.
 | `attachment_commit` | phone -> Mac | `AttachmentCommitData` | send a message with files |
 | `attachment_download_request` | phone -> Mac | `AttachmentDownloadRequestData` | a file or thumbnail chunk |
 | `attachment_download_chunk` | Mac -> phone | `AttachmentDownloadChunkData` | its answer |
+| `readiness` | Mac -> phone | `ReadinessData` | whether the Mac can answer ([`readiness`](#readiness-mac---phone-can-the-mac-answer)) |
 
 Record kinds travel only inside `sync_delta.events`. Everything else is a top-level event. The
 host ignores every other kind (no reply, no receipt); the phone ignores kinds it does not show.
@@ -618,6 +624,32 @@ Answered with a page reply (`sync_delta` with `requestId`, above): `Store.page(a
 - If the phone cannot reach the relay it wipes anyway; the Mac's record stays until removed in
   Mac Settings.
 
+### `readiness` (Mac -> phone): can the Mac answer
+
+Capability `readiness-v1` (`ReadinessData.capability`); the Mac sends it only to a phone that negotiated it.
+
+```swift
+.readiness(ReadinessData(state: .attention, count: 1, items: [
+    .init(id: "gateway", title: "The OpenClaw Gateway isn't running.", severity: .warning, fix: "Start it with `openclaw gateway run`.")]))
+```
+
+```json
+{"kind":"readiness","threadId":"","agentId":"main","id":"…","ts":0,
+ "data":{"state":"attention","count":1,"items":[{"id":"gateway","title":"…","severity":"warning","fix":"…"}]}}
+```
+
+- `state` is `ready`, `attention` (warnings) or `blocked` (nothing could answer). `count` is the items
+  whose `severity` is `warning` or `blocking`; `ok` items may be listed too. `title` and `fix` are
+  user-facing, in the Mac's language; `fix` is optional and the fix itself is done on the Mac.
+- The Mac sends the latest value after each compatible claim (every handshake) and to every served phone
+  on each change, from `RelayHost.publishReadiness(_:)` (through `AppModel.publishReadiness(_:)`, which
+  keeps it across relay restarts). A Mac that has no value yet sends nothing.
+- The phone keeps only the latest and drops it off `.paired`, where the status line already reads
+  "Status unknown". While `attention` or `blocked` it shows one line over the composer: the blocking
+  item's title, the only item's title, or "N items need attention", then "Fix this on your Mac". While
+  `blocked` the composer is off, the same rule as on the Mac.
+- A value that does not decode (an unknown `state` or `severity`) is ignored like an unknown kind.
+
 ### `chunk` (Mac -> phone): oversized events
 
 An event whose JSON encoding exceeds 256 KiB (`ChunkData.budget`) is sent as a set of ordered
@@ -764,6 +796,7 @@ Codes in 0.7: `question`, `question_topic`, `question_task`, `routing_failed`, `
   `page_request`, `attachment_chunk`, `attachment_commit`, `attachment_download_request` in;
   `receipt`, `admission_status`, `sync_delta`, `task_control_result`, `search_result`,
   `attachment_progress`, `attachment_download_chunk` out).
+  `readiness` is not a reply: `RelayHost` sends it itself (above).
 - Descriptors on records come from `Snapshot.attachments`, read after the page's records (attachment
   rows are written with their owner, or re-stamp it). Downloads resolve a path with
   `Engine.attachmentURL(_:)`. `device_remove` needs the sender's key, so `RelayHost` handles it.

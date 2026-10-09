@@ -104,6 +104,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case searchResult = "search_result"
         case pageRequest = "page_request"
         case chunk
+        case readiness
     }
 
     public enum Payload: Equatable, Sendable {
@@ -171,6 +172,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case searchResult(SearchResultData)
         case pageRequest(PageRequestData)
         case chunk(ChunkData)
+        case readiness(ReadinessData)
 
         public var kind: Kind {
             switch self {
@@ -238,6 +240,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .searchResult: .searchResult
             case .pageRequest: .pageRequest
             case .chunk: .chunk
+            case .readiness: .readiness
             }
         }
 
@@ -340,6 +343,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .searchResult: payload = .searchResult(try c.decode(SearchResultData.self, forKey: .data))
             case .pageRequest: payload = .pageRequest(try c.decode(PageRequestData.self, forKey: .data))
             case .chunk: payload = .chunk(try c.decode(ChunkData.self, forKey: .data))
+            case .readiness: payload = .readiness(try c.decode(ReadinessData.self, forKey: .data))
             }
         } catch {
             payload = .unknown(kind: rawKind, data: rawData)
@@ -425,6 +429,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .searchResult(let d): try c.encode(d, forKey: .data)
         case .pageRequest(let d): try c.encode(d, forKey: .data)
         case .chunk(let d): try c.encode(d, forKey: .data)
+        case .readiness(let d): try c.encode(d, forKey: .data)
         }
     }
 }

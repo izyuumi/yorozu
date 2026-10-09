@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import ProjectXCore
 import ServiceManagement
+import YorozuWire
 
 @MainActor final class AppModel: ObservableObject {
     let runtimeMode = RuntimeMode.from(ProcessInfo.processInfo.environment)
@@ -45,6 +46,8 @@ import ServiceManagement
     private(set) var relay: RelayHost?
     private var bridge: EngineBridge?
     @Published var relayStatus = RelayStatus()
+    /// What paired phones show as the Mac's readiness (#317), kept across relay restarts; set with `publishReadiness`.
+    private var readiness: ReadinessData?
     // Popover hooks, wired by MenuBarHost to AttentionCenter.
     /// Set by the host to bring a message into view; the timeline scrolls to it and clears it.
     @Published var focusMessageID: String?
@@ -237,6 +240,7 @@ import ServiceManagement
             let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile,direct: resolved?.config.direct ?? Config().direct)
             self.bridge = bridge; relay = host
             Task { for await status in host.status where relay === host { relayStatus = status } }
+            if let readiness { await host.publishReadiness(readiness) }
             await host.start()
         } catch {
             relayStatus.state = error.localizedDescription
@@ -246,6 +250,11 @@ import ServiceManagement
                 await startRelay(engine,url: url)
             }
         }
+    }
+    /// The Mac readiness model (#317) calls this on every change; phones get it now and after each handshake.
+    func publishReadiness(_ readiness: ReadinessData) async {
+        self.readiness = readiness
+        await relay?.publishReadiness(readiness)
     }
     /// A new relay URL: the old host stops and a fresh one dials the new relay with the same keys and devices.
     /// Restarts run one after another, each dialing the relay URL in force once the old host has stopped, so quick edits leave one relay.
