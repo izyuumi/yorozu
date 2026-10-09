@@ -261,6 +261,7 @@ struct DeliveryMark: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.colorScheme) private var colorScheme
     /// A little over half a caption-sized circle: the two circles overlap by about 58%.
     @ScaledMetric(relativeTo: .caption) private var overlap: CGFloat = 7
 
@@ -286,8 +287,8 @@ struct DeliveryMark: View {
         .accessibilityLabel(delivery.word)
     }
 
-    /// Each circle has a 1-pixel outline; the front one knocks out the one behind it with a background-coloured disc,
-    /// so the outlines do not cross.
+    /// Each circle has a 1-pixel outline in one colour against the checkmarks (black in Dark Mode, white in Light
+    /// Mode); the front one knocks out the one behind it with a background-coloured disc, so the outlines do not cross.
     private func pair(_ symbol: String) -> some View {
         HStack(spacing: -overlap) {
             outlined(symbol)
@@ -297,7 +298,8 @@ struct DeliveryMark: View {
     }
 
     private func outlined(_ symbol: String) -> some View {
-        Image(systemName: symbol).overlay { Circle().strokeBorder(lineWidth: 1 / displayScale) }
+        let outline = colorScheme == .dark ? Color.black : Color.white
+        return Image(systemName: symbol).overlay { Circle().strokeBorder(outline, lineWidth: 1 / displayScale) }
     }
 }
 
