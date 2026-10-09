@@ -11,7 +11,9 @@ public struct HermesReadiness: Sendable, Equatable {
     public var restart = false
     /// Profiles with no AI provider chosen (`model.provider` empty or `auto` in `/api/model/options`).
     public var noProvider: [String] = []
-    public var ready: Bool { problems.isEmpty && !restart && noProvider.isEmpty }
+    /// Profiles set to GitHub Copilot, which Yorozu never uses (`HermesHarness.isCopilot`).
+    public var copilot: [String] = []
+    public var ready: Bool { problems.isEmpty && !restart && noProvider.isEmpty && copilot.isEmpty }
 }
 
 /// Hermes's setup seam (#317): `HermesHarness.readiness()` as readiness items, plus two read-only checks: the default
@@ -44,10 +46,16 @@ public struct HermesSetup: HarnessSetup {
                                           detail: "Hermes picks the profiles it serves when its gateway starts, so it doesn't serve yorozu-worker and yorozu-roles yet. Run `hermes -p default gateway restart` in Terminal. Unless Hermes runs as a service (`hermes gateway install`), the gateway then keeps running in that Terminal window.",
                                           severity: .warning,fix: .copy(title: String(localized: "Copy Command"),command: "hermes -p default gateway restart")))
         }
+        if !r.copilot.isEmpty {
+            let commands = r.copilot.map(HermesHarness.codexCommand)
+            d.items.append(Readiness.Item(id: "hermes.copilot",title: String(localized: "Hermes uses GitHub Copilot, which Yorozu doesn't use"),
+                                          detail: r.copilot.joined(separator: " and ") + (r.copilot.count > 1 ? " use" : " uses") + " GitHub Copilot. Yorozu runs its work on Codex or Claude Code only, so it starts no run until you set " + (r.copilot.count > 1 ? "them" : "it") + " back with " + commands.map { "`\($0)`" }.joined(separator: " and ") + ". " + HermesHarness.codexRoute,
+                                          severity: .blocking,fix: .copy(title: String(localized: "Copy Commands"),command: commands.joined(separator: " && "))))
+        }
         if !r.noProvider.isEmpty {
-            let commands = r.noProvider.map { "hermes -p \($0) model" }
+            let commands = ["hermes auth login openai-codex"] + r.noProvider.map(HermesHarness.codexCommand)
             d.items.append(Readiness.Item(id: "hermes.provider",title: String(localized: "Hermes isn't connected to an AI provider"),
-                                          detail: "No AI provider is chosen for " + r.noProvider.joined(separator: " and ") + ", so Hermes can't run Yorozu's work. Pick one with " + commands.map { "`\($0)`" }.joined(separator: " and ") + " (the free Nous tier needs no API key).",
+                                          detail: "No AI provider is chosen for " + r.noProvider.joined(separator: " and ") + ", so Hermes can't run Yorozu's work. Run " + commands.map { "`\($0)`" }.joined(separator: ", then ") + ". " + HermesHarness.codexRoute,
                                           severity: .warning,fix: .copy(title: String(localized: "Copy Commands"),command: commands.joined(separator: " && "))))
         }
         let home = profiles?.home ?? FileManager.default.homeDirectoryForCurrentUser
@@ -137,7 +145,9 @@ public struct HermesHarness: Harness {
                 // `auto` resolves only from env keys or a login, and fails every run when there is none (hermes_cli/auth.py).
                 let (c, options) = try await client.call(p, "GET", "/api/model/options?include_unconfigured=false")
                 guard c == 200 else { throw HermesClient.failure(c, options, profile: p, doing: "list its models") }
-                if ["", "auto"].contains((options["provider"] as? String ?? "").lowercased()) { r.noProvider.append(p) }
+                let provider = options["provider"] as? String ?? ""
+                if Self.isCopilot(provider) { r.copilot.append(p) }
+                else if ["", "auto"].contains(provider.lowercased()) { r.noProvider.append(p) }
             } catch { r.problems.append(error.localizedDescription) }
         }
         if let v = r.version {
@@ -159,7 +169,7 @@ public struct HermesHarness: Harness {
             if p == Self.workerProfile, let provider = json["provider"] as? String, let model = json["model"] as? String, !provider.isEmpty, !model.isEmpty { primary = provider + "/" + model }
             let price = { (s: Any?) in (s as? String).flatMap { $0.hasPrefix("$") ? Double($0.dropFirst()) : nil } }
             lists.append((json["providers"] as? [[String:Any]] ?? []).filter { $0["authenticated"] as? Bool != false }.flatMap { row -> [ModelInfo] in
-                guard let slug = row["slug"] as? String else { return [] }
+                guard let slug = row["slug"] as? String, !Self.isCopilot(slug) else { return [] }
                 let pricing = row["pricing"] as? [String:[String:Any]] ?? [:]
                 return (row["models"] as? [String] ?? []).map { m in
                     ModelInfo(id: slug + "/" + m, price: price(pricing[m]?["input"]).flatMap { i in price(pricing[m]?["output"]).map { i + $0 } }, runtimes: ["hermes"])
@@ -172,12 +182,22 @@ public struct HermesHarness: Harness {
 
     // MARK: Role runs (secretary, stronger review, extraction)
 
-    /// "provider/model" → (provider, model); the model id may itself contain "/".
+    /// "provider/model" → (provider, model); the model id may itself contain "/". Every run and session lock goes
+    /// through here, so a GitHub Copilot provider (an explicit choice or `yorozu-worker`'s primary) never starts one.
     static func split(_ model: String) throws -> (provider: String, model: String) {
         guard let cut = model.firstIndex(of: "/"), cut != model.startIndex, model.index(after: cut) != model.endIndex
         else { throw ProjectError.blocked(model.isEmpty ? "No model is set for this role; choose one in Settings › Advanced." : "Hermes needs models as provider/model; \(model) has no provider.") }
-        return (String(model[..<cut]), String(model[model.index(after: cut)...]))
+        let provider = String(model[..<cut])
+        guard !isCopilot(provider) else { throw ProjectError.blocked(copilotRefusal + ". Set both Yorozu profiles to Codex: `\(codexCommand(workerProfile))` and `\(codexCommand(rolesProfile))`.") }
+        return (provider, String(model[model.index(after: cut)...]))
     }
+    /// Owner decision (2026-10-09): Hermes runs Yorozu's work on Codex or Claude Code, never GitHub Copilot
+    /// (`copilot`, `copilot-acp`; hermes_cli/auth.py).
+    static func isCopilot(_ provider: String) -> Bool { provider.lowercased().hasPrefix("copilot") }
+    static let copilotRefusal = "Hermes uses GitHub Copilot, which Yorozu doesn't use"
+    static func codexCommand(_ profile: String) -> String { "hermes -p \(profile) config set model.provider openai-codex" }
+    /// The Codex sign-in route, for readiness details.
+    static let codexRoute = "Codex signs in once with `hermes auth login openai-codex` (a device code in the browser; answer N when it offers to import the Codex CLI's tokens), and Yorozu's profiles borrow that sign-in from your default profile. Each profile's default model must be a Codex model too (`hermes -p <profile> model`). Claude Code is the other allowed route, but Hermes reaches it only by borrowing Claude Code's own login, which a token refresh can sign out; Yorozu's profiles block that borrowing (`auth.adopt_external_logins: false`)."
     /// Fails closed unless the run was served by exactly the requested pair (H6.1: a fallback model is a mismatch).
     /// Providers compare as Hermes resolves them: lowercased, and `openai` served as `custom` (runtime_provider.py,
     /// runtime_provider_custom.py); the request side is the run's `runtime.requested` when present.

@@ -24,6 +24,7 @@ public struct PlainError: Sendable, Equatable {
             let url = String(m.1)
             return plain("gateway_target",String(localized: "Nothing answers at \(url); check [harness] gateway_url"),url)
         }
+        if s.contains(HermesHarness.copilotRefusal.lowercased()) { return plain("hermes_copilot",String(localized: "Hermes uses GitHub Copilot, which Yorozu doesn't use")) } // HermesHarness.split
         if s.contains("not connected to any ai provider") { return plain("hermes_no_provider",String(localized: "Hermes isn't connected to an AI provider")) } // hermes_cli/auth.py, no_provider_configured
         if s.contains("unknown agent id") { return plain("agent_missing",String(localized: "Yorozu's agent isn't set up in OpenClaw")) }
         if let m = raw.firstMatch(of: #/(?i)model not allowed:\s*([^\s"'`,;]+)/#) {

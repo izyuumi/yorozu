@@ -792,3 +792,11 @@ Source: the plan comment on issue #321. The open questions were taken at their p
 2. Prompt URL: stays the raw `Start.md` on `main`, which becomes a short 0.7.0 guide with the paste-in message copied verbatim from docs/setup.md.
 3. Third parties: Hermes Agent and CuaDriver are added to the terms, the privacy page and the footer, and both effective dates change. The owner approves the legal wording.
 4. Screenshots: Mac shots from the 0.7.0 dev app in a throwaway fixture-mode data folder, with the relay pointed at a dead address so it never joins the owner's room, and an invented conversation. Phone shots wait for an internal build on an owner device; the v1 phone shots come off the page until then.
+
+## 2026-10-09 — Hermes providers
+Source: owner decision in issue #318 ("Hermes uses Codex or Claude Code, never Copilot").
+
+- Hermes runs Yorozu's work on Codex or Claude Code, never GitHub Copilot. Copilot was removed from both Yorozu profiles.
+- Codex is the route: Hermes's own device-code login (`hermes auth login openai-codex`, answering N to importing the Codex CLI's tokens), borrowed by Yorozu's profiles from the default profile, so one sign-in covers both.
+- `auth.adopt_external_logins` stays false in Yorozu's profiles: a refresh of a borrowed Codex CLI or Claude Code token can sign that tool out. The Anthropic route exists only as that borrowing, so Codex is the safe choice.
+- Implemented: readiness blocks on a `copilot*` provider ("Hermes uses GitHub Copilot, which Yorozu doesn't use") with the `config set model.provider openai-codex` commands to copy; the no-provider warning copies the Codex route; the run path refuses a Copilot provider before sending, and the model list drops Copilot rows.

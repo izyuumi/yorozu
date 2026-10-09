@@ -57,11 +57,24 @@ With Hermes as the main harness, the setup engine's `harness` step offers the pr
 - both profile folders;
 - per profile, an unauthenticated `GET /health` answering 200 with `platform: "hermes-agent"` (its `version` is reported);
 - per profile, `GET /v1/capabilities` with every one of `run_status`, `run_events_sse`, `run_stop`, `run_steer`, `session_model_lock`, `tool_progress_events`, `model_options` true in `features`.
-- per profile, `GET /api/model/options` with a `provider` other than empty or `auto`. With `auto`, Hermes resolves the provider per run from env keys, a login or the free tier (`hermes_cli/auth.py`, `resolve_provider`; GitHub Copilot is never picked automatically, even when listed as authenticated), and with none of those every run fails with "Hermes is not connected to any AI provider yet". The item is the warning "Hermes isn't connected to an AI provider" with `hermes -p <profile> model` for each such profile to copy; that failure text in a notice maps to the same sentence (`PlainError`, cause `hermes_no_provider`). `auto` with an env key would still run, so this can warn about a profile that works; it stays a warning.
+- per profile, `GET /api/model/options` with a `provider` other than empty or `auto`. With `auto`, Hermes resolves the provider per run from env keys, a login or the free tier (`hermes_cli/auth.py`, `resolve_provider`; GitHub Copilot is never picked automatically, even when listed as authenticated), and with none of those every run fails with "Hermes is not connected to any AI provider yet". The item is the warning "Hermes isn't connected to an AI provider" with the Codex route ([Providers](#providers)) to copy: `hermes auth login openai-codex`, then `hermes -p <profile> config set model.provider openai-codex` for each such profile; that failure text in a notice maps to the same sentence (`PlainError`, cause `hermes_no_provider`). `auto` with an env key would still run, so this can warn about a profile that works; it stays a warning.
+- per profile, a `provider` that is not GitHub Copilot (`copilot`, `copilot-acp`). One is the blocking item "Hermes uses GitHub Copilot, which Yorozu doesn't use", with `hermes -p <profile> config set model.provider openai-codex` to copy.
 
 Hermes's host gateway decides which profiles it serves only at startup (`gateway/run_startup.py`, `profiles_to_serve`), so a profile written after it started gets 404 under `/p/<profile>/`. When a profile folder exists, its `/health` is 404 and the default profile's own `/health` (the root, no `/p/`) answers 200, readiness shows the warning "Restart Hermes so it serves Yorozu's profiles" with `hermes -p default gateway restart` to copy, instead of the "does not answer" problem. Without an installed service (`hermes gateway install`), `gateway restart` stops the running gateway and runs a new one in the foreground of that shell (`hermes_cli/gateway.py`, `_cmd_restart`). The `hermes_setup` question says a restart follows; readiness after the apply shows it.
 
 A version not in `HermesHarness.testedVersions` (0.21.6; a leading `v` is ignored) is only a warning. Hermes not ready still launches the app: messages are saved and runs fail with the reason.
+
+## Providers
+
+Owner decision (2026-10-09): Hermes runs Yorozu's work on Codex or Claude Code, never GitHub Copilot. `HermesHarness.split`, which every run and session lock goes through, refuses a `copilot*` provider before anything is sent, whether it comes from `[models]` or from `yorozu-worker`'s primary model, and `models()` drops Copilot rows, so Yorozu never sends `provider: "copilot"`; the refusal maps to the same sentence in notices (`PlainError`, cause `hermes_copilot`).
+
+The Codex route, the recommended one:
+
+1. The owner signs in once with `hermes auth login openai-codex`: a device code in the browser, and **N** when Hermes offers to import the Codex CLI's tokens. That is Hermes's own ChatGPT grant, kept in the default profile.
+2. Yorozu's profiles borrow the default profile's grant (`hermes_cli/auth_oauth_grants.py`), so one sign-in covers both.
+3. `hermes -p yorozu-worker config set model.provider openai-codex`, the same for `yorozu-roles`, and a Codex model as each profile's `model.default` (`hermes -p <profile> model`). `config set model.provider` keeps the old `model.default`.
+
+Claude Code is the other allowed route, but Hermes reaches Anthropic through it only by borrowing Claude Code's own login, and a refresh of a borrowed token can sign Claude Code out. Yorozu's profiles keep `auth.adopt_external_logins: false`, which blocks that borrowing for both Claude Code and the Codex CLI.
 
 ## Calls
 
@@ -144,7 +157,7 @@ Hermes compacts a session itself once it passes `compression.threshold_tokens`, 
 
 ## Models
 
-`HermesHarness.models()` reads `GET /api/model/options` from both profiles and keeps models both list, since each role runs in one of them. Rows come from `providers[]` (those not marked `authenticated: false`): id `<slug>/<model>`, price the sum of `pricing.<model>.input` and `.output` when both are `$<number>` per million tokens (`free` or missing is unknown), runtime `hermes`. The primary model is `yorozu-worker`'s `provider/model`. The payload has no context window, output cap or input kinds, so the automatic choice ([setup.md](setup.md#models)) falls back to the primary model for every role.
+`HermesHarness.models()` reads `GET /api/model/options` from both profiles and keeps models both list, since each role runs in one of them. Rows come from `providers[]` (those not marked `authenticated: false`, GitHub Copilot rows dropped): id `<slug>/<model>`, price the sum of `pricing.<model>.input` and `.output` when both are `$<number>` per million tokens (`free` or missing is unknown), runtime `hermes`. The primary model is `yorozu-worker`'s `provider/model`. The payload has no context window, output cap or input kinds, so the automatic choice ([setup.md](setup.md#models)) falls back to the primary model for every role.
 
 ## Limits
 
