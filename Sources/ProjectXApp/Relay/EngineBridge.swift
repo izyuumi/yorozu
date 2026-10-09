@@ -137,7 +137,11 @@ actor EngineBridge: RelayBackend {
         // goes to that job's sub-chat without the secretary (#319).
         do {
             if let job = m.jobId { try await engine.sendToJob(jobID: job, body: m.text, id: id, sentAt: Double(ts) / 1000) }
-            else { try await engine.send(m.text, id: id, sentAt: Double(ts) / 1000) }
+            else {
+                // A reply names the message it answers; its topic then holds this one (owner, 2026-10-09).
+                let replyTo = m.replyTo.flatMap { $0.range(of: #"^[A-Za-z0-9-]{1,64}\z"#, options: .regularExpression) != nil ? $0 : nil }
+                try await engine.send(m.text, id: id, sentAt: Double(ts) / 1000, replyTo: replyTo)
+            }
             return receipt
         } catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
     }

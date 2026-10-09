@@ -1,6 +1,36 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Reply" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返信"
+          }
+        }
+      }
+    },
+    "Cancel reply" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返信をやめる"
+          }
+        }
+      }
+    },
+    "Replying" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返信中"
+          }
+        }
+      }
+    },
     "Open Quick Chat" : {
       "localizations" : {
         "ja" : {

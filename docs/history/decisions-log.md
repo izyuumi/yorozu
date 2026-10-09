@@ -815,3 +815,9 @@ Source: owner feedback after testing 0.7.0.
 
 - The Mac popover's default `[general] send_key` becomes `"cmd-enter"`: Enter adds a line and ⌘Enter sends. It stays customizable in Settings › General. This replaces smart Enter as the Mac default.
 - Implementer reading (not an owner decision): files that already set `send_key` keep their value, and every file Yorozu has written sets it, so the new default reaches new data folders; phone hardware keyboards are unchanged here.
+
+## 2026-10-09 — Replies skip categorization
+Source: owner feedback after testing 0.7.0.
+
+- A reply links to the replied message's topic without categorization.
+- Implementer readings (not owner decisions): clients send `MessageData.replyTo`; a reply to a message with a topic pins that topic's home (an attached sub-chat resolves to its target) for `delegate`, `reply` and `clarify`, and a `steer` of a task outside it becomes new work there; a `routing_pin` receipt records it; the Mac context menu has Reply, then Copy (it has no Share, Select Text or Show Details items).

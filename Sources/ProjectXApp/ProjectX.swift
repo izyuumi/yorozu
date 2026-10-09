@@ -13,6 +13,8 @@ import YorozuWire
     /// The main thread's read cursor (`Store.readCursor`), moved here or by a phone's `read_state`.
     @Published var readCursor: String?
     @Published var draft = ""
+    /// The message Reply quoted above the composer; the next send names it as `replyTo`.
+    @Published var replyingTo: Message?
     /// The composer's files (#316), sent with the draft; `fileNotice` says why one was refused.
     @Published var files: [DraftFile] = []
     @Published var fileNotice: String?
@@ -303,7 +305,7 @@ import YorozuWire
     func send() async {
         guard let engine, !submitting, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return }
         submitting = true; defer { submitting = false }
-        let text = draft, sent = files
+        let text = draft, sent = files, reply = replyingTo?.id
         if readiness.map({ $0.state != .ready }) ?? false { recheck() }
         await ensureModels()
         // Downscaling reads and re-encodes images, so it runs off the main actor; its scratch copies go once the Engine has
@@ -313,8 +315,9 @@ import YorozuWire
         catch { fileNotice = error.localizedDescription; return }
         defer { prepared.scratch.forEach(DraftFile.discard) }
         do {
-            try await engine.send(text,attachments: prepared.pending)
+            try await engine.send(text,attachments: prepared.pending,replyTo: reply)
             if draft == text { draft = "" }
+            if replyingTo?.id == reply { replyingTo = nil }
             let ids = Set(sent.map(\.id)); files.removeAll { ids.contains($0.id) }
             sent.filter(\.temporary).forEach { DraftFile.discard($0.url) }
             status = nil; snapshot = try await engine.snapshot()

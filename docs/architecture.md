@@ -146,6 +146,12 @@ The secretary's policy is built by `Engine.routingPolicy` from the `[routing]` h
 - "Stop" or "cancel that" about running work is `stop` with its task ID.
 - **(code)** Routing questions are not failures: a decision with no topic to file under ("Which subject should this belong to?") or a `steer`, `correct`, `retry` or `stop` without a task ID ("Which task do you mean?") is posted as kind `question` with notice code `question_topic` or `question_task`; it stays in the secretary's recent context, since the user's next message may answer it. A `clarify` reply stays `conversation` with notice code `question`; its text is the model's own, so a renderer draws it from the body, not from the code. Other routing errors are `failure`, with their own code or `routing_failed` (`offline` in offline mode).
 
+### Replies
+
+A client or the Mac popover's Reply sends `replyTo`, the id of the message being answered (`MessageData.replyTo`, `Engine.send(…, replyTo:)`), stored as the user message's `replyTo` and drawn as a quoted header above its bubble (owner, 2026-10-09).
+
+- **(code)** When the replied message has a `topicID` (a result, a job result, a delegated user message, an earlier linked reply), the reply is pinned to that topic's home (`Engine.home`, so an attached sub-chat resolves to its target). The policy gains one line naming the topic; after the decision, a `delegate`, `reply` or `clarify` gets that `topicID` with `newTopic` and `attachTo` cleared, and a `steer` of a task outside the topic becomes a `delegate` there. Other actions keep their targets. A `routing_pin` receipt records `replyTo` and the topic. A reply to an untopiced message routes normally.
+
 ### Attach
 
 A substantive message with too little context starts a new sub-chat; once a later message shows that sub-chat P belongs to an existing topic T, the secretary sets `topicID: P` and `attachTo: T` on a `delegate`, or `attachTo: T` on a `steer` of a P task (owner, #348). Each topic in its view carries `age` (since creation, "5h" or "3d") and `attachedTo`, so it can judge what is recent and what is already attached.
