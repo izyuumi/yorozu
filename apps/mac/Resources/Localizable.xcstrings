@@ -3828,12 +3828,12 @@
         }
       }
     },
-    "Notifications on phones are not available yet." : {
+    "Each phone must allow notifications from Yorozu." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iPhone への通知はまだ使えません。"
+            "value" : "各 iPhone で Yorozu からの通知を許可してください。"
           }
         }
       }

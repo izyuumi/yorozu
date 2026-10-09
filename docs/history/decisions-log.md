@@ -737,3 +737,38 @@ Added in implementation:
 - The job input is text only on both devices: no attachments and no Send as Text File.
 - The job sub-chat on the Mac shows the run's worker events (a script's output, the lifecycle lines) as compact monospaced rows between the messages, and the `job_run` trigger as a system row.
 - `job_control` refusals (`admission_status rejected`) carry the Mac's English text, as other admission refusals do; the phone shows them as they arrive.
+
+## 2026-10-09 — Push notifications
+Source: owner decisions recorded in issue #320 ("projectx: push notifications for the phone"), Decisions section.
+
+- Push is its own issue, linked from the sync issue (#313).
+- The lock screen shows only content-free text ("Yorozu replied"), never message content. No sealed previews.
+- Triggers: a result arrived, a failure, a result that asks the user a question, and the Mac coming back online.
+- The app badge shows an unread count taken from the synced read state (#313's one "last seen message" cursor through the Mac).
+- The notification destination setting decides where notifications appear: this Mac, phones, and later a Mac client (#311, #312). #320 makes "phones" work.
+- Scope: the APNs entitlement and the background mode in the iOS app, calling the existing `RelayClient.registerPush`, the relay's `notify` path, the triggers, the badge and the destination setting.
+- The outbox notification after the background flush and the 24 h expiry alert stay local notifications from #314; they need no push.
+- Standing rules: no model learns which device a message came from (#313); v1 keeps working for its existing users; v2 iOS builds stay internal-only.
+
+## 2026-10-09 — Push notifications: implementer readings (not owner decisions)
+Source: the plan comment on issue #320 (branch `push`, built as `pu-mac` and `pu-ios`). The open questions were taken at their proposed defaults; the owner has not answered them, and [status.md](../status.md#open-items) keeps them as an open item. The flow is in [architecture.md](../architecture.md#push-notifications), the wire in [ios-relay-contract.md](../ios-relay-contract.md#push).
+
+1. No relay change: the Mac sends only the four classes the deployed relay accepts, result → `reply`, failure → `failed`, question → `approval`, Mac back online → `done`. The phone's string catalog words each fixed relay `loc-key` for v2 in English and Japanese ("Yorozu needs your approval." → "Yorozu has a question for you.", "Yorozu finished." → "Your Mac is back online."). v1 phones are never in a v2 Mac's room.
+2. A result is a `result` message (worker results and job results posted to the main timeline), a secretary reply (assistant `conversation`) or an `amendment_unconfirmed_*` notice. Acknowledgments, memory receipts, routing notices and job-only kinds do not count, and messages that existed at launch never notify.
+3. A question is #311's signal (kind `question`, notice `question`, `question_topic` or `question_task`); no `asksUser` field was added to the worker contracts.
+4. "Mac back online" fires once, when a relay registration follows at least 10 minutes offline, counting time the app was not running, at most once an hour, persisted in `relay-online.json`.
+5. The phone sets the badge itself (`setBadgeCount`) after every sync and silent wake; no count goes through the relay, so a read on the Mac clears it at the phone's next wake or foreground. When the cursor passes a message, its delivered pushes are removed (matched by the `event` ref).
+6. No banner while the app shows the main timeline; a banner elsewhere in the app. A tap opens the main timeline at the message the `event` ref names, found by hashing held message ids after catch-up, else at the bottom.
+7. One permission request (alert, sound, badge) shared with #314, keeping #314's first-queued-message moment.
+8. The destination stays one choice, `mac` or `phones`. Pushes, back online included, go out only with notifications on and destination `phones`.
+
+Added in implementation:
+- "Seen" for the back-online rule is the last time the Mac was online at the relay: written on each registration, on each pong of the 30 s heartbeat and on stop while registered, so a quit, a quick restart or a short drop stays silent. A Mac with no `relay-online.json` yet sends none.
+- `approval_request` (a job script waiting for a yes) counts as a question. The classifier is shared, so this, and counting secretary replies and unconfirmed-change notices as results, changes the Mac's notifications and menu-bar dot too.
+- The phone cannot see the Mac's destination, so instead of open question 7's default (ask when Phones is selected) it asks for permission at a foreground launch when it is paired and has never been asked, besides #314's moments; a background launch (a silent push) asks nothing, and iOS shows the prompt once. This is the chosen behaviour.
+- The badge counts from the later of the phone's own last read and the Mac's cursor; with neither in the phone's timeline it counts every Yorozu message there. Back-online alerts are removed when the app comes to the foreground.
+- The failure key ("Yorozu needs attention.") reads "A task failed." (ja "タスクが失敗しました。"), as on the Mac, and all four keys have es, ko and zh-Hans with the v2 meaning.
+- Turning notifications off, or the destination to This Mac, drops the held notifies.
+- Held notifies live in memory (the latest 20, sent on registration when under 24 h old, collapsed to the newest per class); a quit loses them. Notifies sent since the last pong are sent again on the next registration, for a socket left half-open by sleep.
+- The back-online push names a random event ref, so its tap opens the main timeline at the bottom.
+- With the direct path, a phone whose current token the relay has not heard opens one extra relay socket to register it (`RelayClient.registerPush(deviceToken:relayKnows:)`), and stores the token the relay heard per pairing.

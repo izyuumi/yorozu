@@ -249,7 +249,7 @@ import YorozuWire
         relayRetry?.cancel(); relayRetry = nil
         do {
             let bridge = EngineBridge(engine: engine,mode: runtimeMode,scheduler: jobScheduler) { [weak self] in await self?.ensureModels() }
-            let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile,direct: resolved?.config.direct ?? Config().direct)
+            let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile,direct: resolved?.config.direct ?? Config().direct,alerts: phoneAlerts)
             self.bridge = bridge; relay = host
             Task { for await status in host.status where relay === host { relayStatus = status } }
             if let phoneReadiness { await host.publishReadiness(phoneReadiness) }

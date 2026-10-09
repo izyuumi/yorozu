@@ -19,6 +19,19 @@ public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable
     /// Seconds between the phone's send and the Mac storing it, when over 60 s (#314 open question 2); else nil.
     public var delay: Double? { sentAt.map { created - $0 }.flatMap { $0 > 60 ? $0 : nil } }
 }
+extension Message {
+    public enum Alert: Sendable { case result, failure, question }
+    /// What a new main-timeline message tells the owner, for Mac notifications (#311) and phone pushes (#320). Questions:
+    /// a clarify (`question` notice), a `question` reply and a job script waiting for a yes. Results: worker and posted job
+    /// results, secretary replies and unconfirmed-change notices. Failures, but not offline mode's. Nothing else: the user's
+    /// own messages, acknowledgments, memory receipts and job-only kinds.
+    public var alert: Alert? {
+        guard role == "assistant", onMainTimeline else { return nil }
+        if ["question","approval_request"].contains(kind) || ["question","question_topic","question_task"].contains(notice?.code) { return .question }
+        if kind == "failure" { return notice?.code == Notice.Code.offline.rawValue ? nil : .failure }
+        return ["result","conversation"].contains(kind) || kind.hasPrefix("amendment_unconfirmed_") ? .result : nil
+    }
+}
 public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "work"
     public var id: String; public var topicID: String; public var messageID: String; public var instruction: String

@@ -3,7 +3,7 @@ import ProjectXCore
 import UserNotifications
 
 /// What needs the owner's eyes on the Mac (#311): the menu-bar dot and macOS notifications for results, failures and
-/// questions on the main timeline. Notification text is fixed and never carries message content (open question 3).
+/// questions on the main timeline (`Message.alert`, shared with phone pushes). Notification text is fixed and never carries message content (open question 3).
 ///
 /// The popover drives what counts as seen: it calls `seen(upTo:)` for the newest message it has shown and keeps
 /// `popoverAtBottom` true while it is open and scrolled to the newest message; nothing is posted then (open question 4).
@@ -12,7 +12,6 @@ import UserNotifications
 /// A tapped notification calls `open(messageID:)`: the host shows the popover and `focusMessageID` names the message to scroll to.
 @MainActor final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = AttentionCenter()
-    enum Reason { case result, failure, question }
 
     /// Unseen result, failure and question ids, oldest first; the dot shows while it is not empty.
     @Published private(set) var unseen: [String] = []
@@ -39,18 +38,11 @@ import UserNotifications
         UNUserNotificationCenter.current().delegate = self
     }
 
-    static func reason(_ m: Message) -> Reason? {
-        guard m.role == "assistant", m.onMainTimeline else { return nil }
-        if m.kind == "question" || ["question","question_topic","question_task"].contains(m.notice?.code) { return .question }
-        if m.kind == "failure", m.notice?.code != Notice.Code.offline.rawValue { return .failure }
-        return m.kind == "result" ? .result : nil
-    }
-
     func ingest(_ snapshot: Snapshot) {
         messages = snapshot.messages
         applyCursor()
         if popoverAtBottom { seenThrough = max(seenThrough, newest) }
-        for m in messages where m.created > notifiedThrough && m.created > seenThrough { if let r = Self.reason(m) { post(m.id, r) } }
+        for m in messages where m.created > notifiedThrough && m.created > seenThrough { if let r = m.alert { post(m.id, r) } }
         notifiedThrough = max(notifiedThrough, newest)
         refresh()
     }
@@ -75,14 +67,14 @@ import UserNotifications
     }
 
     private func refresh() {
-        let next = messages.filter { $0.created > seenThrough && Self.reason($0) != nil }.map(\.id)
+        let next = messages.filter { $0.created > seenThrough && $0.alert != nil }.map(\.id)
         let cleared = Set(unseen).subtracting(next)
         if !cleared.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: Array(cleared)) }
         if next != unseen { unseen = next }
     }
 
     /// Asks for permission the first time a notification would be posted.
-    private func post(_ id: String, _ reason: Reason) {
+    private func post(_ id: String, _ reason: Message.Alert) {
         guard notificationsEnabled() else { return }
         let content = UNMutableNotificationContent()
         switch reason {

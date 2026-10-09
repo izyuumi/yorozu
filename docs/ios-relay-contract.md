@@ -12,9 +12,9 @@ hand-written JSON.
 The phone is a mirror of the Mac with control: the Mac is the only source of truth. The phone
 holds a cache of the [history window](#history-window), catches up by
 [change sequence](#change-sequence), can Stop or Retry a task, moves the read cursor, searches the
-Mac's full history and removes its own pairing.
+Mac's full history and removes its own pairing. The relay wakes it with content-free [push](#push).
 
-Out of scope for 0.7: APNs/`notify`,
+Out of scope for 0.7:
 typing in sub-chats (other than a job's own input, [Jobs](#jobs)), multiple threads (the thread id is carried everywhere and never hard-wired
 beyond the one thread `"main"`).
 
@@ -842,6 +842,117 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
   (`job_run`) reaches no phone; its tasks and worker events are ordinary records.
 - A cache filled without `jobs-v1` has a cursor past the job-only messages, so the first
   `jobs-v1` handshake asks from no cursor (a window start); the cache records that it holds them.
+
+## Push
+
+Push (#320) uses the relay-level `push` (phone) and `notify` (Mac) messages the relay on `main`
+already has (`apps/relay/src/protocol.ts`, `worker.ts`); no sealed event, capability or protocol
+change, and no relay deploy. When the Mac sends a `notify` is in
+[architecture.md](architecture.md#push-notifications).
+
+### Token registration (phone -> relay)
+
+- `AppDelegate` (`Push.swift`) calls `registerForRemoteNotifications()` on every launch and gives
+  the token, as lowercase hex, to `PhoneModel.registerPush`, which keeps it for every `RelayClient`
+  it makes (`RelayClient.registerPush(deviceToken:relayKnows:)`). A failure goes to Copy
+  diagnostics ("Push registration: failed: …").
+- `RelayClient` sends `{"type":"push","deviceToken":<hex>}` on the session's relay socket after
+  each relay `joined`, and again when the token is set. The relay keeps one token per device.
+- Direct path: a direct session never joins the relay. When the relay has not heard this token
+  (`relayKnows` false), `RelayClient` opens one more relay socket beside the session, joins as the
+  known device (nonce challenge), sends `push`, then `{"type":"owner"}`, and hangs up at the
+  relay's `owner` reply: the room handles one message at a time, so `push` is stored by then.
+  Without that reply within 15 s it gives up and the token stays owed; a failed join on that
+  socket ends it and never fails the session. `onPushSent` reports each token the relay was told
+  on the session's relay socket or stored for that extra one; `PhoneModel` stores it per pairing
+  (`pushTokenOnRelayV2.<session key>` in `UserDefaults`) and passes `relayKnows: true` for an
+  unchanged token, so that socket opens only once per new token.
+- Removing a phone on the Mac revokes it at the relay, which deletes its token with it.
+
+### `notify` (Mac -> relay)
+
+```json
+{"class":"reply","eventRef":"<8 chars>","threadRef":"<8 chars>","type":"notify"}
+```
+
+- Exactly these four keys (`RelayHost.notify`): `threadRef` is `YorozuCrypto.threadRef` of the
+  main thread id the Mac publishes (`main`),
+  `eventRef` is `YorozuCrypto.threadRef(<message id>)` (the first 8 base64url characters of a
+  SHA-256). Never `previews` or `actions`.
+- Only the four classes the relay accepts; any other makes it drop the Mac's socket with "bad
+  notify". Each class's alert body is a fixed relay `loc-key`, which the phone's string catalog
+  rewords for v2:
+
+| Mac event (`Message.alert`) | `class` | Relay `loc-key` | Phone, en | Phone, ja |
+|---|---|---|---|---|
+| A result (`.result`) | `reply` | `Yorozu replied.` | Yorozu replied. | Yorozu が返信しました。 |
+| A failure (`.failure`) | `failed` | `Yorozu needs attention.` | A task failed. | タスクが失敗しました。 |
+| A question (`.question`) | `approval` | `Yorozu needs your approval.` | Yorozu has a question for you. | Yorozuから質問があります。 |
+| The Mac back online | `done` | `Yorozu finished.` | Your Mac is back online. | Macがオンラインに戻りました。 |
+
+- es, ko and zh-Hans carry the same v2 meaning for all four keys.
+- Notifies the Mac holds while unregistered, and those sent since the last `pong` (a socket left
+  half-open by sleep may have lost them), go out on the next `registered` collapsed to the newest
+  per class, so at most four (details in [architecture.md](architecture.md#push-notifications)).
+- The relay takes at most 60 notifies a minute per room and answers more with
+  `{"type":"state","state":"notify rate limit"}`; the Mac logs it and carries on (that wake-up is
+  lost, frames are not).
+
+### What the relay and APNs see
+
+- No previews: the alert is the fixed title "Yorozu" and the class's `loc-key`, never message
+  content, and has no `badge`. The relay and APNs see the class, the two 8-character refs (the
+  thread ref is the same for every push to the one thread), the phone's token and the timing.
+- The relay's alert payload: `aps.alert {title, "loc-key"}`, `sound: "default"`, `thread-id` (the
+  thread ref), for `approval` also `category: "approval-review"` (v1's; the v2 phone registers no
+  categories, so no buttons show), plus top-level `ref` (thread ref), `cls` and `event` (event
+  ref).
+
+### Silent push and catch-up
+
+- Every registered phone gets the alert. A phone with no live relay socket also gets a silent
+  `content-available` push, at most one a minute (relay `BACKGROUND_INTERVAL_MS`). A relay without
+  the APNs secrets forwards frames and wakes nobody ([setup.md](setup.md#push-notifications)).
+- Phone (`application(_:didReceiveRemoteNotification:)`): only in the background; active or
+  inactive (Notification Center pulled down) the foreground link is up and the push is ignored.
+  `PhoneModel.wake()`, for a linked phone with no wake running: start the link unless one is up,
+  wait up to 20 s for `.paired`, the end of catch-up and an empty Sending set (the outbox resends,
+  #314), save the cache and set the badge. Still in the background, it leaves the hang-up to
+  #314's background time while that is held, else hangs up a link it dialled itself or one the app
+  left to it on going to the background; a foreground link is never hung up. It returns `.newData`
+  when the sync cursor moved, else `.noData`.
+
+### Foreground presentation and taps
+
+- `willPresent` applies to pushes only (`UNPushNotificationTrigger`); #314's local notices stay
+  unshown in the foreground. No banner while the main timeline is on screen (app active, no pushed
+  screen, no Settings sheet, no message details: `PhoneModel.mainShown`); elsewhere a banner, a
+  list entry and the sound.
+- A tap pops to the main timeline, closes Settings and details, and waits up to 10 s, while the
+  link is not `.paired` or catching up, for a held message whose `threadRef(id)` equals the push's
+  `event`; it scrolls there (centred), else to the bottom. A back-online push's `event` names no
+  message, so it opens at the bottom.
+
+### Badge
+
+- The phone sets it itself (`setBadgeCount`); no count goes through the relay. It is the number of
+  Yorozu's messages in the main timeline after the later (by timeline position) of this phone's own
+  last read and the Mac's cursor, so a delta that arrives before the Mac echoes this phone's read
+  does not raise it again (the owner's own messages never count, as for the unread divider). It is
+  set after every applied `sync_delta` (foreground and silent wake) and at once when this phone
+  sends `read_state`. With neither read in the timeline (no cursor yet, or one older than the
+  window), every Yorozu message there counts. Remove host and new pairings set it to 0. Updates run
+  one after another, so the latest count wins.
+- When that read moves, the delivered pushes whose `event` names a message at or before it are
+  removed. Each foreground removes the delivered back-online pushes (top-level `cls` `done`).
+- A read on the Mac clears the phone's badge at its next sync (foreground or silent wake): the
+  relay has no badge-only push.
+- Permission (`.alert`, `.sound`, `.badge`, one request shared with #314) is asked at a
+  foreground launch when the phone is paired (never at a background, silent-push launch), as well
+  as at #314's moments; iOS shows the prompt once. The Notifications
+  row in Settings shows On, Off or Not asked yet, with Open Settings when off; Copy diagnostics adds
+  the permission and the registration state, never the token: whether Apple gave a token (or the
+  failure) and whether the relay has stored it for this pairing (`onPushSent`).
 
 ## Notice codes
 

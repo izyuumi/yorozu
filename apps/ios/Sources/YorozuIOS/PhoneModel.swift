@@ -165,6 +165,28 @@ final class PhoneModel {
     /// Background time held while messages are still Sending.
     private var backgroundTime: BackgroundTask?
 
+    // MARK: Push (#320)
+
+    /// A tapped push: the main timeline opens at the message its `event` ref names, else at the bottom.
+    struct PushOpen: Equatable {
+        let id = UUID()
+        let ref: String?
+    }
+
+    /// The APNs token from `AppDelegate`, given to every `RelayClient` this model makes.
+    private var pushToken: String?
+    /// For Copy diagnostics: nil until iOS answers, then "token from Apple" or the failure.
+    private(set) var pushRegistration: String?
+    var pushOpen: PushOpen?
+    /// The main timeline is on screen: `willPresent` shows no banner.
+    @ObservationIgnored var mainShown = false
+    /// A silent push's catch-up is running: going to the background leaves the link to it.
+    @ObservationIgnored private var waking = false
+    /// The read cursor the delivered pushes were last cleared to.
+    @ObservationIgnored private var clearedTo: String?
+    /// This phone's last read, which the Mac's cursor may not echo yet.
+    @ObservationIgnored private var localRead: String?
+
     // MARK: Link
 
     /// The relay has accepted this phone, so the chat shows rather than the pairing screen.
@@ -297,12 +319,14 @@ final class PhoneModel {
 
     private func connect(_ stored: PairingStore.Stored) {
         let identity = stored.identity.sessionPublicKey
+        let pushKey = "\(Self.pushKey).\(identity.base64URLEncodedString())"
         do {
             relay = try RelayClient(
                 pairing: stored.pairing, identity: stored.identity, paired: stored.paired == true,
                 counters: PairingCounterStorage(ownPublicKey: identity), direct: directEnabled,
                 candidates: stored.directCandidates ?? [], deviceName: DeviceModel.name,
-                onPaired: { PairingStore.markPaired(expectedIdentity: identity) })
+                onPaired: { PairingStore.markPaired(expectedIdentity: identity) },
+                onPushSent: { UserDefaults.standard.set($0, forKey: pushKey) })
         } catch {
             failure = error.localizedDescription
             return
@@ -324,6 +348,7 @@ final class PhoneModel {
         candidates = stored.directCandidates ?? []
         ownPub = identity.base64URLEncodedString()
         linked = stored.paired == true
+        applyPush()
         if let ownPub, let snapshot = MirrorCache.shared.load(owner: ownPub) { restore(snapshot) }
         if let ownPub, let saved = Outbox.file.load(Outbox.self), saved.owner == ownPub {
             outbox = saved.items
@@ -357,6 +382,9 @@ final class PhoneModel {
         ownPub = nil
         linked = false
         outbox.forEach { LocalNotices.cancelExpiry($0.id) }
+        PushNotices.update(badge: 0, read: nil)
+        localRead = nil
+        clearedTo = nil
         outbox = []
         marks = [:]
         Outbox.file.wipe()
@@ -446,7 +474,7 @@ final class PhoneModel {
         savedStatus?.save()
         flush()
         inBackground = true
-        guard sendingCount > 0 else { return suspend() }
+        guard sendingCount > 0 else { return waking ? () : suspend() }
         backgroundTime = BackgroundTask("Yorozu outbox") { [weak self] in self?.backgroundExpired() }
         flushOutbox(all: state == .paired)
     }
@@ -461,7 +489,7 @@ final class PhoneModel {
 
     /// In the background, once nothing is Sending: hang up, then give the time back.
     private func finishBackgroundIfDone() {
-        guard inBackground, let held = backgroundTime, sendingCount == 0 else { return }
+        guard inBackground, !waking, let held = backgroundTime, sendingCount == 0 else { return }
         backgroundTime = nil
         suspend()
         let closing = closing
@@ -480,6 +508,7 @@ final class PhoneModel {
         backgroundTime?.end()
         backgroundTime = nil
         LocalNotices.clearWaiting()
+        PushNotices.removeBackOnline()
         expireOverdue()
         if let saved = savedStatus {
             savedStatus = nil
@@ -502,6 +531,71 @@ final class PhoneModel {
     }
 
     private static let directKey = "directPathEnabledV2"
+
+    // MARK: Push
+
+    func registerPush(_ token: String) {
+        pushToken = token
+        pushRegistration = "token from Apple"
+        applyPush()
+    }
+
+    func pushFailed(_ reason: String) { pushRegistration = "failed: \(reason)" }
+
+    /// The relay learns the token on every relay join; a direct session joins the relay once for a token it has not heard.
+    private func applyPush() {
+        guard let pushToken, let relay else { return }
+        let known = pushOnRelay
+        Task { await relay.registerPush(deviceToken: pushToken, relayKnows: known) }
+    }
+
+    /// The token the relay last heard, per pairing.
+    private static let pushKey = "pushTokenOnRelayV2"
+
+    /// The relay has stored this pairing's current token (`onPushSent`).
+    var pushOnRelay: Bool {
+        guard let pushToken, let ownPub else { return false }
+        return UserDefaults.standard.string(forKey: "\(Self.pushKey).\(ownPub)") == pushToken
+    }
+
+    /// A silent push in the background: dial unless a link is up, catch up into the cache, let the outbox resend and
+    /// set the badge, within about 25 s. Back in the background it hangs up a link it dialled itself (or one left to it
+    /// on the way out); #314's held link hangs up when its sends are done; a foreground link stays. True when
+    /// something new arrived.
+    func wake() async -> Bool {
+        guard relay != nil, linked, !waking else { return false }
+        let before = cursor
+        waking = true
+        let dialled = listener == nil
+        start()
+        let end = ContinuousClock.now + .seconds(20)
+        while ContinuousClock.now < end, state != .paired || catchingUp || sendingCount > 0 {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        waking = false
+        flush()
+        updateBadge()
+        if UIApplication.shared.applicationState == .background {
+            if backgroundTime != nil { finishBackgroundIfDone() } else if dialled || inBackground { suspend() }
+            await closing?.value
+        }
+        return cursor != before
+    }
+
+    func open(pushEvent ref: String?) { pushOpen = PushOpen(ref: ref) }
+
+    /// The main-timeline message a push's `event` ref names.
+    func messageId(ref: String) -> String? { timeline.last { YorozuCrypto.threadRef($0.id) == ref }?.id }
+
+    /// The badge is Yorozu's messages after the later of this phone's read and the Mac's cursor, or all of them when
+    /// neither is in the timeline. When that read moves, the delivered pushes for messages at or before it go.
+    private func updateBadge() {
+        let index = [localRead, readCursor?.messageId].compactMap { id in timeline.firstIndex { $0.id == id } }.max()
+        let id = index.map { timeline[$0].id }
+        let read = index.flatMap { i in id == clearedTo ? nil : Set(timeline[...i].map { YorozuCrypto.threadRef($0.id) }) }
+        clearedTo = id
+        PushNotices.update(badge: timeline[(index.map { $0 + 1 } ?? 0)...].filter { !$0.user }.count, read: read)
+    }
 
     private func hold(_ status: ClientConnectionStatus) {
         heldStatus = status
@@ -1019,6 +1113,8 @@ final class PhoneModel {
     /// Moves the Mac's read cursor to the newest message seen. Only while `.paired`; not queued.
     func markRead(_ messageId: String) async {
         guard state == .paired else { return }
+        localRead = messageId
+        updateBadge()
         _ = await sendNow(.readState(ReadStateData(threadId: "main", messageId: messageId)))
     }
 
@@ -1079,7 +1175,7 @@ final class PhoneModel {
     /// The contract's phone rules for a reply page, a live update or a page reply.
     private func receive(_ delta: SyncDeltaData) {
         receiving = true
-        defer { receiving = false; rebuildTimeline() }
+        defer { receiving = false; rebuildTimeline(); updateBadge() }
         if let working = delta.workingThreadIds { self.working = working.contains("main") }
         if let routing = delta.routingThreadIds { self.routing = routing.contains("main") }
         if let requestId = delta.requestId {
