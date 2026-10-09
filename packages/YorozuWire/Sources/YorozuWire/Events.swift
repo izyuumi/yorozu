@@ -719,10 +719,9 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var notice: NoticeData?
     /// 0.7, Mac -> phone: the Mac's change sequence of this row (docs/ios-relay-contract.md, "Change sequence").
     public var seq: Int?
-    /// 0.7, Mac -> phone: when the owner read this user message on the Mac, epoch ms. Absent while unread.
+    /// 0.7, Mac -> phone: when the Mac started processing this user message (routing began), epoch ms (#314).
     public var readAt: Int?
-    /// 0.7: when the phone first sent this user message, epoch ms. Set by the phone on a
-    /// submission and echoed by the Mac, so a message delayed in the relay buffer keeps its time.
+    /// 0.7, Mac -> phone: the phone's send time (the event `ts`) of a user message that came from a phone, epoch ms (#314).
     public var sentAt: Int?
 
     public init(

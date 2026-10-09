@@ -137,6 +137,7 @@ public enum Prompts {
         var budget = message.body.utf8.count, prompt = ""
         for _ in 0..<4 { // JSON escaping can grow the body; shrink by the measured excess.
             var bounded = message; bounded.body = utf8Excerpt(message.body,bytes: budget)
+            bounded.readAt = nil; bounded.sentAt = nil // delivery times never reach a model (#313, #314)
             prompt = extractionPolicy + "\nSource:" + String(decoding: try encoder.encode(bounded),as: UTF8.self) + question + "\nExisting relevant memory:" + memory
             let excess = prompt.utf8.count - cap
             if excess <= 0 { break }; budget -= excess
