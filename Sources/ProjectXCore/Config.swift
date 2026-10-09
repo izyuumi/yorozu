@@ -142,7 +142,7 @@ public struct Config: Sendable, Equatable {
         field("harness.gateway_url",\.harness.gatewayURL,"Gateway address, loopback only; applies after relaunch." + security),
         field("harness.hermes_url",\.harness.hermesURL,"Hermes Agent API server, loopback only with no path; applies after relaunch." + security),
         field("workspace.path",\.workspace.path,"Folder where agents work, one subfolder per task; downloads and clones go there. Empty is ~/Yorozu/workspace (<data root>/workspace under PROJECTX_DATA or in fixture mode)." + security),
-        field("workspace.restrict",\.workspace.restrict,"Keep agents inside the workspace: workers are told to, and Yorozu runs coding agents only in folders inside it. Off: file access is not limited." + security),
+        field("workspace.restrict",\.workspace.restrict,"Limit agents to the workspace: workers are told to stay inside it (not enforced), and coding agents start only in folders inside it and run their restricted_command, which sandboxes their writes. Off: file access is not limited." + security),
         field("models.secretary",\.models.secretary,"Secretary model (provider/model); leave out for automatic." + security),
         field("models.extraction",\.models.extraction,"Memory extraction model; leave out for automatic." + security),
         field("models.worker",\.models.worker,"Worker model; leave out for automatic." + security),
@@ -156,7 +156,7 @@ public struct Config: Sendable, Equatable {
         "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "Relay for client devices.", "direct": "Direct client connection over LAN or VPN.",
         "harness": "Harness connection.", "models": "Models per role; a missing role is chosen automatically from the harness's model metadata.",
         "workspace": "Workspace for workers and coding agents.",
-        "coding_agents": "Coding agents workers run through Yorozu: [coding_agents.<name>] with command (the program and its arguments; the prompt is added as the last argument) and optional timeout (seconds, default 3600). Built-in: claude and codex, offered when found; an entry with the same name replaces it." + security,
+        "coding_agents": "Coding agents workers run through Yorozu: [coding_agents.<name>] with command (the program and its arguments; the prompt is added as the last argument; it sets the agent's access: the built-ins run with full access), optional restricted_command (used while [workspace] restrict is on; it must sandbox the agent to its folder and \"{workspace}\"; without one the agent is refused then) and optional timeout (seconds, default 1500). Built-in: claude and codex, offered when found; an entry with the same name replaces it." + security,
         "models.rules": "Inputs of the automatic choice.", "setup": "First-launch setup progress (Yorozu setup, or the setup window).",
         "mcp_servers": "MCP servers workers may use: [mcp_servers.<name>] with command (absolute path) and args; env is not supported." + security,
         "integrations": "Integrations: MCP servers, worker rules, checks and fixes as data, each with enabled = true or false. Built-in: [integrations.cua] (computer use through CuaDriver). Your own [integrations.<name>] may also set title, rules (\"{session}\" is the per-run cua session label), checks = [{ title, file or socket = \"/path\" }], fixes = [{ title, copy = \"command\" or url }], [integrations.<name>.mcp_servers.<server>] and [integrations.<name>.settings]." + security,
@@ -216,6 +216,7 @@ public struct Config: Sendable, Equatable {
                 let key = "coding_agents.\(name)"
                 guard case .table(var entry) = value, let raw = entry.removeValue(forKey: "command"), let command = [String](toml: raw) else { throw fail(key,"needs command = [\"program\", \"argument\", …]") }
                 var agent = CodingAgent(name: name,command: command)
+                if let raw = entry.removeValue(forKey: "restricted_command") { guard let c = [String](toml: raw) else { throw fail(key + ".restricted_command","expected [\"program\", \"argument\", …]") }; agent.restrictedCommand = c }
                 if let t = entry.removeValue(forKey: "timeout") { guard let seconds = Int(toml: t) else { throw fail(key + ".timeout","expected an integer") }; agent.timeout = seconds }
                 config.codingAgents[name] = agent; config.fileKeys.insert(key)
                 if !entry.isEmpty { rest[name] = .table(entry) }
@@ -292,6 +293,7 @@ public struct Config: Sendable, Equatable {
             let key = "coding_agents.\(a.name)"
             if a.name.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return (key,"expected a name of 1-64 letters, digits, - or _") }
             if a.command.first?.isEmpty != false { return (key + ".command","expected a program and its arguments") }
+            if let r = a.restrictedCommand, r.first?.isEmpty != false { return (key + ".restricted_command","expected a program and its arguments") }
             if a.timeout < 1 { return (key + ".timeout","expected a positive number of seconds") }
         }
         if let url = URLComponents(string: relay.url), ["ws","wss"].contains(url.scheme ?? ""), !(url.host ?? "").isEmpty {} else { return ("relay.url","expected a ws:// or wss:// address") }
@@ -362,6 +364,7 @@ public struct Config: Sendable, Equatable {
         if case .table(let rest)? = tree["coding_agents"] { tree["coding_agents"] = .table(rest.filter { codingAgents[$0.key] != nil }) }
         for (name,a) in codingAgents {
             put(&tree,["coding_agents",name,"command"],.array(a.command.map { .string($0) }))
+            if let r = a.restrictedCommand { put(&tree,["coding_agents",name,"restricted_command"],.array(r.map { .string($0) })) }
             if a.timeout != CodingAgent.defaultTimeout { put(&tree,["coding_agents",name,"timeout"],.integer(Int64(a.timeout))) }
         }
         if case .table(let rest)? = tree["integrations"] { tree["integrations"] = .table(rest.filter { integrations[$0.key] != nil }) }
@@ -385,7 +388,7 @@ public struct Config: Sendable, Equatable {
         var out = "# Yorozu settings. Yorozu rewrites this file in this layout: unknown keys are kept, added comments are not.\n# PROJECTX_* environment variables override these values.\n"
         func emit(_ table: [String:TOMLValue], _ path: [String]) {
             let dot = path.isEmpty ? "" : path.joined(separator: ".") + "."
-            let rank = path.count == 2 && path[0] == "coding_agents" ? ["command","timeout"] : path.count == 2 && path[0] == "mcp_servers" || path.count == 4 && path[0] == "integrations" && path[2] == "mcp_servers" ? ["command","args"]
+            let rank = path.count == 2 && path[0] == "coding_agents" ? ["command","restricted_command","timeout"] : path.count == 2 && path[0] == "mcp_servers" || path.count == 4 && path[0] == "integrations" && path[2] == "mcp_servers" ? ["command","args"]
                 : path.count == 2 && path[0] == "integrations" ? ["enabled","title","rules","checks","fixes"] : Self.order.filter { $0.hasPrefix(dot) && !$0.dropFirst(dot.count).contains(".") }.map { String($0.dropFirst(dot.count)) }
             let keys = rank + table.keys.filter { !rank.contains($0) }.sorted()
             for key in keys {

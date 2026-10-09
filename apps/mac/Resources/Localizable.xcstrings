@@ -5015,16 +5015,6 @@
         }
       }
     },
-    "Workers are told to stay inside it, and coding agents run only in folders inside it. Off: file access is not limited." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ワーカーにはその中にとどまるよう指示し、コーディングエージェントはその中のフォルダでのみ実行します。オフ：ファイルへのアクセスは制限されません。"
-          }
-        }
-      }
-    },
     "Each task gets its own folder here; downloaded files and cloned repositories go there." : {
       "localizations" : {
         "ja" : {
@@ -5075,22 +5065,32 @@
         }
       }
     },
-    "Agents' file access becomes limited to the workspace folder, from the next task." : {
+    "Coding agents start only inside it and run sandboxed, writing only there (Claude Code runs no shell commands, Codex has no network). Workers are told to stay inside it, which isn't enforced. Off: file access is not limited." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "次のタスクから、エージェントのファイルアクセスがワークスペースフォルダ内に制限されます。"
+            "value" : "コーディングエージェントはその中でのみ起動し、サンドボックス内で実行されてその中にだけ書き込みます（Claude Code はシェルコマンドを実行せず、Codex はネットワークを使いません）。ワーカーにはその中にとどまるよう指示しますが、強制はされません。オフ：ファイルへのアクセスは制限されません。"
           }
         }
       }
     },
-    "Agents may read and write files anywhere on the host, from the next task." : {
+    "From the next task, coding agents write only inside the workspace, and agents without a sandboxed command won't run. Workers are told to stay inside it." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "次のタスクから、エージェントはホスト上のどこでもファイルを読み書きできるようになります。"
+            "value" : "次のタスクから、コーディングエージェントはワークスペース内にだけ書き込み、サンドボックス用のコマンドがないエージェントは実行されません。ワーカーにはその中にとどまるよう指示します。"
+          }
+        }
+      }
+    },
+    "From the next task, coding agents and workers may read and write files anywhere on the host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "次のタスクから、コーディングエージェントとワーカーはホスト上のどこでもファイルを読み書きできるようになります。"
           }
         }
       }

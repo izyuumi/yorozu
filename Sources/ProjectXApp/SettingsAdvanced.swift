@@ -83,7 +83,7 @@ struct WorkspaceSection: View {
             }
             Toggle(isOn: Binding(get: { config.workspace.restrict }, set: { if $0 != config.workspace.restrict { restrictTo = $0 } })) {
                 Text("Limit agents to the workspace")
-                Text("Workers are told to stay inside it, and coding agents run only in folders inside it. Off: file access is not limited.")
+                Text("Coding agents start only inside it and run sandboxed, writing only there (Claude Code runs no shell commands, Codex has no network). Workers are told to stay inside it, which isn't enforced. Off: file access is not limited.")
             }
         } header: { Text("Workspace") } footer: {
             Text("Each task gets its own folder here; downloaded files and cloned repositories go there.").foregroundStyle(.secondary)
@@ -93,7 +93,7 @@ struct WorkspaceSection: View {
             Button(restrictTo == true ? "Limit" : "Stop Limiting") { if let on = restrictTo { model.writeSettings { $0.workspace.restrict = on } }; restrictTo = nil }
             Button("Cancel", role: .cancel) { restrictTo = nil }
         } message: {
-            Text(restrictTo == true ? "Agents' file access becomes limited to the workspace folder, from the next task." : "Agents may read and write files anywhere on the host, from the next task.")
+            Text(restrictTo == true ? "From the next task, coding agents write only inside the workspace, and agents without a sandboxed command won't run. Workers are told to stay inside it." : "From the next task, coding agents and workers may read and write files anywhere on the host.")
         }
     }
 

@@ -174,7 +174,7 @@ import YorozuWire
                 self.harness = harness; await refreshModels().value(upTo: .seconds(10))
                 let engine = Engine(store: store,memory: memory,harness: harness,files: files,settings: { box.value }); self.engine = engine
                 if runtimeMode != .offline {
-                    let host = CodingAgentHost(socket: root.appendingPathComponent("agents.sock"),settings: { box.value },folder: { try await engine.agentFolder(task: $0) },emit: { try await engine.agentEvent($0) })
+                    let host = CodingAgentHost(socket: root.appendingPathComponent("agents.sock"),settings: { box.value },folder: { try await engine.agentFolder(task: $0) },alive: { await engine.agentTaskRunning($0) },emit: { try await engine.agentEvent($0) })
                     do { try host.start(); agentHost = host; box.value = harnessSettings() } catch { NSLog("Yorozu: coding agents are off this launch: %@",error.localizedDescription) }
                 }
                 await engine.resume()

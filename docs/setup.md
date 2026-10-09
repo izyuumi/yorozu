@@ -190,11 +190,11 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `harness.gateway_url` | `"ws://127.0.0.1:18789"` | Loopback `ws`/`wss` only, with no path, query or credentials |
 | `harness.hermes_url` | `"http://127.0.0.1:8642"` | Hermes API server root, loopback `http`/`https` only, with no path, query or credentials; profiles are reached under `/p/<profile>/`. Settings › Harness › Hermes URL while Hermes is the main harness (applied on Return; "Relaunch to apply." while it differs from the launched value) |
 | `workspace.path` | `""` | Folder where agents work, one subfolder per task ([Workspace and coding agents](#workspace-and-coding-agents)); an absolute or `~/` path. Empty is `~/Yorozu/workspace`, or `<data root>/workspace` under `PROJECTX_DATA` or in fixture mode |
-| `workspace.restrict` | `false` | Keep agents inside the workspace: workers are told to, and coding agents run only in folders inside it. Off: file access is not limited |
+| `workspace.restrict` | `false` | Limit agents to the workspace: coding agents start only inside it and run their `restricted_command`, which sandboxes their writes; workers are told to stay inside it (not enforced). Off: file access is not limited |
 | `models.secretary`, `models.extraction`, `models.worker`, `models.review` | absent (automatic) | `"provider/model"` ([Models](#models)) |
 | `models.rules.min_context_tokens`, `models.rules.min_output_tokens` | `32000`, `16000` | Inputs of the automatic secretary and extraction choice |
 | `mcp_servers.<name>` | none ([MCP servers](#mcp-servers)) | `command` and `args` |
-| `coding_agents.<name>` | built-in `claude` and `codex` ([Workspace and coding agents](#workspace-and-coding-agents)) | `command` (program and arguments) and optional `timeout` (seconds, default 3600) |
+| `coding_agents.<name>` | built-in `claude` and `codex` ([Workspace and coding agents](#workspace-and-coding-agents)) | `command` (program and arguments; sets the agent's access), optional `restricted_command` (used while `restrict` is on) and `timeout` (seconds, default 1500) |
 | `integrations.<name>.enabled` | `true` for the built-in `cua` | Turns an integration on or off ([Integrations](#integrations)); Settings › Advanced › Integrations |
 | `setup.done` | `false` | Setup is finished; until then the app opens the setup window at launch ([First setup](#first-setup)) |
 | `setup.answered` | `[]` | Ids of the setup steps the user answered or skipped |
@@ -249,18 +249,19 @@ Workers work in one folder per task, and run coding agents through Yorozu (#351;
 ```toml
 [workspace]
 path = ""            # empty: ~/Yorozu/workspace (<data root>/workspace under PROJECTX_DATA or in fixture mode)
-restrict = false     # true: workers stay inside it, coding agents run only inside it
+restrict = false     # true: coding agents run sandboxed inside it; workers are told to stay inside it
 
 [coding_agents.claude]           # replaces the built-in of the same name
 command = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions", "--"]
-timeout = 3600
+restricted_command = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--add-dir", "{workspace}", "--"]
+timeout = 1500
 ```
 
-- Each task's folder is `<workspace>/<topic label slug>-<first 8 of the topic id>/`, created 0700 at first use; workers download files and clone repositories there. A coding agent's full output is in `<task folder>/.yorozu/<time>-<agent>.log`.
-- Built-in agents: `claude` (`claude -p --output-format stream-json --verbose --permission-mode bypassPermissions -- <prompt>`) and `codex` (`codex exec --skip-git-repo-check --sandbox danger-full-access --color never -- <prompt>`), offered only when the program is found: an absolute `command[0]`, else `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` or `~/.local/share/mise/shims`. A Finder launch's `PATH` is short, so a tool installed elsewhere needs an absolute path in its own entry. Both run with full access, as file access is unlimited by default; sign in once with `claude auth login` and `codex login`. Settings shows each agent as found or not found; Yorozu can't tell whether it is signed in.
-- Your own agent: `[coding_agents.<name>]` (1–64 letters, digits, `-` or `_`) with `command`, the program and its arguments; the prompt is added as the last argument, so end the list with `"--"` when the program takes options. Optional `timeout` in seconds (default 3600). Other keys are kept as data.
-- The command a worker runs, given in its contract: `Yorozu agent run <agent> --task <task id> [--dir <folder>] [--socket <path>] -- <prompt>`. It reaches the running app on `<data root>/agents.sock` (0600; same user only); without `--socket` it finds the data root as the app does. It prints the agent's final answer and exits with the agent's status.
-- `restrict`: enforced for coding agents (their folder must be inside the workspace); for workers it is an instruction in their contract, which neither harness enforces.
+- Each task's folder is `<workspace>/<topic label slug>-<first 8 of the topic id>/`, created 0700 at first use; workers download files and clone repositories there. A coding agent's full output is in `<data root>/agent-runs/<task folder name>/<time>-<agent>.log` (outside the task folder, so it never lands in a repository).
+- Built-in agents: `claude` (`claude -p --output-format stream-json --verbose --permission-mode bypassPermissions -- <prompt>`) and `codex` (`codex exec --skip-git-repo-check --sandbox danger-full-access --color never -- <prompt>`), offered only when the program is found: an absolute `command[0]`, else `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` or `~/.local/share/mise/shims`. A Finder launch's `PATH` is short, so a tool installed elsewhere needs an absolute path in its own entry. Their `command` runs with full access, as file access is unlimited by default (a per-agent setting: give an entry of the same name your own `command`); while `restrict` is on they run their sandboxed `restricted_command` instead (Claude Code: `--permission-mode acceptEdits --add-dir <workspace>`, edits only in its folder and the workspace and no shell commands; Codex: `--sandbox workspace-write --add-dir <workspace>`, writes only there and no network; reads are not limited); sign in once with `claude auth login` and `codex login`. Settings shows each agent as found or not found; Yorozu can't tell whether it is signed in.
+- Your own agent: `[coding_agents.<name>]` (1–64 letters, digits, `-` or `_`) with `command`, the program and its arguments; the prompt is added as the last argument, so end the list with `"--"` when the program takes options. Optional `restricted_command`, used while `restrict` is on, which must sandbox the agent to its folder and `"{workspace}"` (replaced by the workspace path); an agent without one is refused while `restrict` is on. Optional `timeout` in seconds (default 1500). Other keys are kept as data. At most 2 agents run at once across the app, one per task; a third waits for a slot.
+- The command a worker runs, given in its contract: `Yorozu agent run <agent> --task <task id> [--dir <folder>] [--socket <path>] -- - <<'YOROZU_PROMPT'` with the prompt on stdin (a prompt after `--` works too), run with a shell timeout of at least the agent's timeout plus 120 s. It reaches the running app on `<data root>/agents.sock` (0600; same user only); without `--socket` it finds the data root as the app does. It prints the agent's final answer and exits with the agent's status.
+- `restrict`: enforced for coding agents (their folder must be inside the workspace, and they run their sandboxed `restricted_command`); for workers it is an instruction in their contract, which neither harness enforces.
 
 ### Integrations
 
@@ -384,7 +385,8 @@ The relay and Gateway items are `WhenUnlockedThisDeviceOnly`; the phone item is 
 | Phone upload staging (`<device key>/<message id>/<index>-<sha256>.part`, 0700/0600; at most 1 GB and 64 messages, pruned after 48 h untouched) | `~/Library/Application Support/<bundle id>/uploads/` | same as live | none (no relay) |
 | Attachment thumbnails (the popover's previews as `<id>-<px>.png`, phones' 512 px previews as `<id>.jpg`; rebuildable) | `~/Library/Caches/<bundle id>/thumbs/` | same as live | same as live |
 | Composer scratch files (pasted or dropped image data, downscaled images, Send as Text File; deleted once sent or removed) | `$TMPDIR/Yorozu-attachments/<uuid>/` | same | same |
-| Workspace (one folder per task, `<label slug>-<topic id prefix>/`, mode 700, created at first use; downloads, clones, files workers make, and coding agents' logs in `.yorozu/`) | `~/Yorozu/workspace/` (`[workspace] path`) | `<dir>/workspace/` | `…/Fixture/workspace/` |
+| Workspace (one folder per task, `<label slug>-<topic id prefix>/`, mode 700, created at first use; downloads, clones and files workers make) | `~/Yorozu/workspace/` (`[workspace] path`) | `<dir>/workspace/` | `…/Fixture/workspace/` |
+| Coding-agent logs (`agent-runs/<task folder name>/<time>-<agent>.log`, 0600 in 0700 folders) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
 | Coding-agent socket (`agents.sock`, mode 600, while the app runs) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
 | Worker scratch folder without a workspace | `$TMPDIR/yorozu-scratch/<topic id>/` | same | same |
 | Retired MCP server list (`mcp-servers.json`) | imported once into a new `config.toml`, then unused ([MCP servers](#mcp-servers)) | same | same |

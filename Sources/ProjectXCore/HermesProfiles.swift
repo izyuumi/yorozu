@@ -26,8 +26,13 @@ public enum HermesProfiles {
         public init(home: URL = FileManager.default.homeDirectoryForCurrentUser, workspace: URL? = nil, usableWindow: Int? = nil, mcpServers: [String:MCPServer] = MCPServers.defaults) {
             self.home = home; self.workspace = workspace; self.usableWindow = usableWindow; self.mcpServers = mcpServers
         }
-        /// The live workspace: Hermes runs only in live mode, so an empty `[workspace] path` is `~/Yorozu/workspace`.
-        public init(config: Config, usableWindow: Int? = nil) { self.init(workspace: config.workspace.url(dataRoot: FileManager.default.homeDirectoryForCurrentUser,isolated: false), usableWindow: usableWindow, mcpServers: config.effectiveMCPServers) }
+        /// The workspace the app uses: the data root comes from the environment as the app finds it (`PROJECTX_DATA`,
+        /// `PROJECTX_MODE`), so an empty `[workspace] path` resolves the same way in both.
+        public init(config: Config, usableWindow: Int? = nil) {
+            let env = ProcessInfo.processInfo.environment, home = FileManager.default.homeDirectoryForCurrentUser
+            let data = try? Config.dataRoot(env, bundleID: Bundle.main.bundleIdentifier ?? "to.yumi.yorozu")
+            self.init(workspace: config.workspace.url(dataRoot: data?.root ?? home, isolated: data?.explicit == true || RuntimeMode.from(env) == .fixture), usableWindow: usableWindow, mcpServers: config.effectiveMCPServers)
+        }
     }
 
     public enum Step: Sendable, Equatable, CustomStringConvertible {

@@ -334,8 +334,9 @@ public struct OpenClawHarness: Harness {
             return try await rpc.call("agent",bare,final: final,sourceMessageID: sourceMessageID,timeout: timeout)
         }
     }
-    /// A thinking step's run timeout (s): long enough for a coding agent the worker runs (`CodingAgent.defaultTimeout`) plus its own work (#351).
-    static let stepTimeout = CodingAgent.defaultTimeout + 600
+    /// A thinking step's run timeout (s): long enough for the longest coding agent the worker may run, plus 10 minutes
+    /// of its own work (#351); 2100 s with the default agents.
+    static func stepTimeout(_ s: HarnessSettings) -> Int { (s.codingAgents.map(\.timeout).max() ?? CodingAgent.defaultTimeout) + 600 }
     private func model(_ prompt: String, model: String, sourceMessageID: String? = nil) async throws -> String {
         guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Model input exceeds bounded context.") }
         guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this role; choose one in Settings › Harness.") }
@@ -383,9 +384,9 @@ public struct OpenClawHarness: Harness {
                 if let event = Self.publicEvent(raw,session: key,run: runID,task: input.work.id) { try? await update(.event(event)) }
             }
             let result: [String:Any]
-            var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":Self.stepTimeout,"idempotencyKey":runID]
+            var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":Self.stepTimeout(s),"idempotencyKey":runID]
             if !images.isEmpty { params["attachments"] = images }
-            do { result = try await dispatch(params,final: true,sourceMessageID: input.work.messageID,timeout: (Self.stepTimeout + 30) * 1000) }
+            do { result = try await dispatch(params,final: true,sourceMessageID: input.work.messageID,timeout: (Self.stepTimeout(s) + 30) * 1000) }
             catch { if let listener { await rpc.native?.removeObserver(listener) }; throw error }
             if let listener { await rpc.native?.removeObserver(listener) }
             // The CLI cannot stream; committed public messages of this exact run are projected once it ends.
@@ -421,7 +422,10 @@ public struct OpenClawHarness: Harness {
         guard let run = work.runID else { return .unknown }
         guard run.hasPrefix("projectx-") else { return .stopped } // Another harness's run: not reachable from here.
         // A coding run from before #351: still going, or over (its result is no longer read).
-        if work.executor != nil { return (try? await rpc.call("agent.wait",["runId":run,"timeoutMs":1]))?["status"] as? String == "pending" ? .running : .stopped }
+        if work.executor != nil {
+            guard let r = try? await rpc.call("agent.wait",["runId":run,"timeoutMs":1]) else { return .unknown }
+            return r["status"] as? String == "pending" ? .running : .stopped
+        }
         let r = try await rpc.call("agent.wait",["runId":run,"timeoutMs":1])
         guard r["runId"] as? String == run else { return .unknown }
         if r["status"] as? String == "pending" { return .running }
