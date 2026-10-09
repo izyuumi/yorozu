@@ -429,59 +429,6 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
     }
 }
 
-/// A file kept with the durable message; new peers transfer its bytes in encrypted chunks
-/// before the host admits the complete message.
-public struct AttachmentDescriptor: Codable, Equatable, Sendable {
-    public var name: String
-    public var mime: String
-    public var bytes: Int
-    public var sha256: String
-
-    public init(name: String, mime: String, bytes: Int, sha256: String) {
-        self.name = name
-        self.mime = mime
-        self.bytes = bytes
-        self.sha256 = sha256
-    }
-}
-
-public struct AttachmentChunkData: Codable, Equatable, Sendable {
-    public var messageId: String
-    public var index: Int
-    public var offset: Int
-    public var totalBytes: Int
-    public var sha256: String
-    public var deadline: Int
-    public var data: String
-
-    public init(messageId: String, index: Int, offset: Int, totalBytes: Int, sha256: String,
-                deadline: Int, data: String) {
-        self.messageId = messageId
-        self.index = index
-        self.offset = offset
-        self.totalBytes = totalBytes
-        self.sha256 = sha256
-        self.deadline = deadline
-        self.data = data
-    }
-}
-
-public struct AttachmentProgressData: Codable, Equatable, Sendable {
-    public var requestId: String
-    public var messageId: String
-    public var index: Int
-    public var nextOffset: Int
-    public var reason: String?
-
-    public init(requestId: String, messageId: String, index: Int, nextOffset: Int, reason: String? = nil) {
-        self.requestId = requestId
-        self.messageId = messageId
-        self.index = index
-        self.nextOffset = nextOffset
-        self.reason = reason
-    }
-}
-
 public enum MessageDelivery: String, Codable, Sendable { case queue, steer }
 
 public struct SteerData: Codable, Equatable, Sendable {
@@ -520,117 +467,6 @@ public struct ThreadModelsData: Codable, Equatable, Sendable {
         self.models = models
         self.error = error
     }
-}
-
-public struct AttachmentCommitData: Codable, Equatable, Sendable {
-    public var delivery: MessageDelivery?
-    public var channelModel: ChannelModelChoice?
-    public var text: String
-    public var attachments: [AttachmentDescriptor]
-    public var admissionDeadline: Int
-
-    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, delivery: MessageDelivery? = nil, channelModel: ChannelModelChoice? = nil) {
-        self.delivery = delivery
-        self.channelModel = channelModel
-        self.text = text
-        self.attachments = attachments
-        self.admissionDeadline = admissionDeadline
-    }
-}
-
-public struct AttachmentDownloadRequestData: Codable, Equatable, Sendable {
-    public var messageId: String
-    public var index: Int
-    public var offset: Int
-    public init(messageId: String, index: Int, offset: Int) {
-        self.messageId = messageId
-        self.index = index
-        self.offset = offset
-    }
-}
-
-public struct AttachmentDownloadChunkData: Codable, Equatable, Sendable {
-    public var messageId: String
-    public var index: Int
-    public var offset: Int
-    public var totalBytes: Int
-    public var data: String
-    public var sha256: String
-    public var reason: String?
-    public init(messageId: String, index: Int, offset: Int, totalBytes: Int,
-                data: String, sha256: String, reason: String? = nil) {
-        self.messageId = messageId
-        self.index = index
-        self.offset = offset
-        self.totalBytes = totalBytes
-        self.data = data
-        self.sha256 = sha256
-        self.reason = reason
-    }
-}
-
-public struct MessageAttachment: Codable, Equatable, Sendable {
-    /// Largest attachment this device will send, decoded. The cache and host history retain
-    /// the whole message; relay frames stay bounded by encrypted chunk size.
-    /// Mirrors `ATTACHMENT_MAX_BYTES` in packages/shared/src/events.ts.
-    public static let maxBytes = 5 * 1024 * 1024
-    public static let chunkBytes = 256 * 1024
-    public static let maxCount = 10
-    public static let maxTotalBytes = 20 * 1024 * 1024
-    public static let maxPerMessage = maxCount
-    public static let messageMaxBytes = maxTotalBytes
-
-    public static func withinLimits(_ attachments: [MessageAttachment]) -> Bool {
-        attachments.count <= maxCount
-            && attachments.allSatisfy { ($0.bytes?.count ?? maxBytes + 1) <= maxBytes }
-            && attachments.compactMap(\.bytes).reduce(0) { $0 + $1.count } <= maxTotalBytes
-    }
-
-    /// Original file name. What a text-only model is told was attached.
-    public var name: String
-    /// IANA media type, e.g. "image/jpeg". `image/*` is what a vision model is handed.
-    public var mime: String
-    /// The file itself, standard base64 with padding.
-    public var data: String
-    public var sizeBytes: Int?
-    public var sha256: String?
-
-    public init(name: String, mime: String, data: String, sizeBytes: Int? = nil, sha256: String? = nil) {
-        self.name = name
-        self.mime = mime
-        self.data = data
-        self.sizeBytes = sizeBytes
-        self.sha256 = sha256
-    }
-
-    /// Wraps raw bytes, refusing anything over ``maxBytes`` rather than sending a frame the
-    /// other end would have to reject: the cap is the sender's job, and the user is standing
-    /// right here to be told.
-    public init?(name: String, mime: String, bytes: Data) {
-        guard bytes.count <= Self.maxBytes else { return nil }
-        self.init(name: name, mime: mime, data: bytes.base64EncodedString())
-    }
-
-    /// The bytes back, or nil if what arrived was not base64 after all.
-    public var bytes: Data? { Data(base64Encoded: data) }
-    private var legacyDescriptor: (bytes: Int, hash: String)? {
-        // Asked of every attachment on every draw: never walk megabytes of file to say no.
-        guard data.hasPrefix("yorozu-deferred-v1:") else { return nil }
-        let parts = data.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 3, parts[0] == "yorozu-deferred-v1",
-              let size = Int(parts[1]), size > 0, size <= Self.maxBytes,
-              parts[2].utf8.count == 64,
-              parts[2].utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
-        return (size, String(parts[2]))
-    }
-    public var deferredByteCount: Int? { sizeBytes ?? legacyDescriptor?.bytes }
-    public var deferredSHA256: String? { sha256 ?? legacyDescriptor?.hash }
-    public var byteCount: Int { deferredByteCount ?? bytes?.count ?? 0 }
-    public var isDeferred: Bool {
-        ((data.isEmpty && (sizeBytes ?? 0) > 0) || legacyDescriptor != nil) && deferredSHA256 != nil
-    }
-
-    public var isImage: Bool { mime.hasPrefix("image/") }
 }
 
 public struct AdmissionQueryData: Codable, Equatable, Sendable {
@@ -699,8 +535,12 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var failed: Bool?
     /// Final reply stopped by the user; text, if any, is the partial reply.
     public var interrupted: Bool?
-    /// Photos and files the user sent with this message. Only set on a `user` message.
+    /// v1 inline files (base64). Unused in 0.7: a 0.7 host refuses a `message` that carries any, and files travel
+    /// as `files` descriptors plus `attachment_*` transfers (docs/ios-relay-contract.md, "Attachments").
     public var attachments: [MessageAttachment]
+    /// 0.7 `attachments-v1`, Mac -> phone: descriptors of the files stored with this message (user messages and
+    /// results alike). Never bytes; the phone fetches thumbnails and files with `attachment_download_request`.
+    public var files: [AttachmentDescriptor]?
     /// Encrypted initial-admission deadline, exactly 24 hours after the event timestamp.
     public var admissionDeadline: Int?
     /// Host-owned execution association; absent on a client submission.
@@ -744,8 +584,10 @@ public struct MessageData: Codable, Equatable, Sendable {
         notice: NoticeData? = nil,
         seq: Int? = nil,
         readAt: Int? = nil,
-        sentAt: Int? = nil
+        sentAt: Int? = nil,
+        files: [AttachmentDescriptor]? = nil
     ) {
+        self.files = files
         self.readAt = readAt
         self.sentAt = sentAt
         self.kind = kind
@@ -768,7 +610,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt, files }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -795,6 +637,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         seq = try c.decodeIfPresent(Int.self, forKey: .seq)
         readAt = try c.decodeIfPresent(Int.self, forKey: .readAt)
         sentAt = try c.decodeIfPresent(Int.self, forKey: .sentAt)
+        files = try c.decodeIfPresent([AttachmentDescriptor].self, forKey: .files)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -819,6 +662,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(seq, forKey: .seq)
         try c.encodeIfPresent(readAt, forKey: .readAt)
         try c.encodeIfPresent(sentAt, forKey: .sentAt)
+        try c.encodeIfPresent(files, forKey: .files)
     }
 }
 

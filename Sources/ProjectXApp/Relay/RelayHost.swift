@@ -444,7 +444,7 @@ actor RelayHost {
             } else if let handled {
                 // A new request supersedes chunk sets still waiting for this phone; it catches up from its cursor.
                 if case .syncRequest = handled.payload { self.outbox.removeAll { $0.pub == pub && $0.paced } }
-                self.deliver(await self.backend.handle(handled).map { (pub, $0) })
+                self.deliver(await self.backend.handle(handled, from: pub).map { (pub, $0) })
             }
             self.commit(channel, for: pub)
         }
@@ -505,6 +505,10 @@ actor RelayHost {
         var now: [(String, YorozuEvent)] = []
         for (pub, event) in items {
             guard let peer = peers[pub], reachable(peer) else { continue }
+            // A phone keeps at most two download requests in flight; past two chunks already waiting for it, one is
+            // dropped and its request times out and comes again, so downloads never pile up behind the bucket.
+            if case .attachmentDownloadChunk = event.payload,
+               outbox.lazy.filter({ if $0.pub == pub, case .attachmentDownloadChunk = $0.event.payload { true } else { false } }).count >= 2 { continue }
             let event = stamp(event, for: peer)
             let parts: [YorozuEvent]
             do { parts = try event.chunked() } catch {
