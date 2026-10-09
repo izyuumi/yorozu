@@ -260,8 +260,9 @@ struct DeliveryMark: View {
     let delivery: Delivery
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Half a caption-sized circle: the two circles overlap by about half.
-    @ScaledMetric(relativeTo: .caption) private var overlap: CGFloat = 6
+    @Environment(\.displayScale) private var displayScale
+    /// A little over half a caption-sized circle: the two circles overlap by about 58%.
+    @ScaledMetric(relativeTo: .caption) private var overlap: CGFloat = 7
 
     var body: some View {
         Group {
@@ -285,13 +286,18 @@ struct DeliveryMark: View {
         .accessibilityLabel(delivery.word)
     }
 
-    /// The front circle knocks out the one behind it with a background-coloured disc, so the outlines do not cross.
+    /// Each circle has a 1-pixel outline; the front one knocks out the one behind it with a background-coloured disc,
+    /// so the outlines do not cross.
     private func pair(_ symbol: String) -> some View {
         HStack(spacing: -overlap) {
-            Image(systemName: symbol)
-            Image(systemName: symbol)
-                .background { Image(systemName: "circle.fill").foregroundStyle(Color(.systemBackground)) }
+            outlined(symbol)
+            outlined(symbol)
+                .background { Circle().fill(Color(.systemBackground)) }
         }
+    }
+
+    private func outlined(_ symbol: String) -> some View {
+        Image(systemName: symbol).overlay { Circle().strokeBorder(lineWidth: 1 / displayScale) }
     }
 }
 
