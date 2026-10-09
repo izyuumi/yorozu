@@ -344,6 +344,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device
 - `ts` is the phone's send time; the Mac keeps it as the message's `sentAt`. Resend renews it.
 - `admissionDeadline` is always `ts` + 24 h, the relay buffer's lifetime. Resend renews it.
 - `jobId` (`jobs-v1` only) makes it that job's own input ([Jobs](#jobs)); absent for the main chat.
+- `replyTo`, set when the user replied to a stored main-timeline message, is that message's id; the host files the
+  reply with its target's topic. Absent otherwise.
 - `delivery`, `channelModel`, `sentAt`, `readAt` and the other 0.7 metadata are not sent and the
   host ignores them.
 
@@ -888,7 +890,7 @@ change, and no relay deploy. When the Mac sends a `notify` is in
 | A result (`.result`) | `reply` | `Yorozu replied.` | Yorozu replied. | Yorozu が返信しました。 |
 | A failure (`.failure`) | `failed` | `Yorozu needs attention.` | A task failed. | タスクが失敗しました。 |
 | A question (`.question`) | `approval` | `Yorozu needs your approval.` | Yorozu has a question for you. | Yorozuから質問があります。 |
-| The Mac back online | `done` | `Yorozu finished.` | Your Mac is back online. | Macがオンラインに戻りました。 |
+| The Mac back online | `done` | `Yorozu finished.` | Your host is back online. | ホストがオンラインに戻りました。 |
 
 - es, ko and zh-Hans carry the same v2 meaning for all four keys.
 - Notifies the Mac holds while unregistered, and those sent since the last `pong` (a socket left

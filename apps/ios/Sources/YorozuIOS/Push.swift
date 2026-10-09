@@ -13,9 +13,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().delegate = self
         // Every launch: a restore or an OS update can change the token.
         application.registerForRemoteNotifications()
-        // The phone cannot see the Mac's destination, so a paired phone is asked at a foreground launch as well as at
-        // #314's first queued message; iOS shows the prompt only once. A background (silent-push) launch asks nothing.
-        if model.linked, application.applicationState != .background { LocalNotices.requestPermission() }
+        // The phone cannot see the host's destination, so a paired phone is asked at a foreground launch as well as at
+        // #314's first queued message; iOS shows the prompt only once. A background (silent-push) launch asks nothing,
+        // nor does one while the client onboarding is due: its notifications page is the first place to ask.
+        if model.linked, !model.onboardingDue, application.applicationState != .background { LocalNotices.requestPermission() }
         return true
     }
 

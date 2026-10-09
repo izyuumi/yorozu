@@ -245,7 +245,7 @@ public actor RelayClient: ChatTransport {
             throw YorozuCrypto.CryptoError.malformed(String(localized: "relay URL is not a websocket URL"))
         }
         guard let macPub = Data(base64URLEncoded: pairing.macPubkey) else {
-            throw YorozuCrypto.CryptoError.malformed(String(localized: "Mac public key is not base64url"))
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "Host public key is not base64url"))
         }
         self.pairing = pairing
         self.identity = identity
@@ -742,7 +742,7 @@ public actor RelayClient: ChatTransport {
             try? await Task.sleep(for: .seconds(direct ? 5 : 10))
             guard !Task.isCancelled else { return }
             self.pongDeadline = nil
-            self.fail(leg, direct ? String(localized: "Mac stopped answering") : String(localized: "Relay stopped answering"))
+            self.fail(leg, direct ? String(localized: "Host stopped answering") : String(localized: "Relay stopped answering"))
         }
         // A send that throws means the socket is already gone, and the receive loop reports that.
         if direct {
@@ -796,7 +796,7 @@ public actor RelayClient: ChatTransport {
         try Task.checkCancellation()
         guard !stopped, !incompatible else { throw YorozuCrypto.CryptoError.malformed(String(localized: "Host connection is closed")) }
         guard let format = sealFormat else {
-            throw YorozuCrypto.CryptoError.malformed(String(localized: "Mac has not answered pairing"))
+            throw YorozuCrypto.CryptoError.malformed(String(localized: "Host has not answered pairing"))
         }
         let eventId = track ? event.id : nil
         if format == .legacy {
@@ -1038,13 +1038,13 @@ public actor RelayClient: ChatTransport {
             guard !leg.joined, !leg.phoneNonce.isEmpty else { return }
             guard let key = Data(base64URLEncoded: pub), let signature = Data(base64URLEncoded: sig),
                   DirectProof.verifyJoined(pub: key, room: room, phoneNonce: leg.phoneNonce, signature: signature) else {
-                return fail(leg, String(localized: "The direct listener is not this Mac"))
+                return fail(leg, String(localized: "The direct listener is not this host"))
             }
             guard Data(base64URLEncoded: nonce)?.count == 32,
                   let proof = try? DirectProof.signJoin(priv: identity.signingPrivateKey, room: room, macNonce: nonce),
                   let join = try? DirectMessage.join(room: room, pub: identity.signingPublicKey.base64URLEncodedString(),
                                                      sig: proof.base64URLEncodedString()).text() else {
-                return fail(leg, String(localized: "The direct listener is not this Mac"))
+                return fail(leg, String(localized: "The direct listener is not this host"))
             }
             leg.nonce = nonce
             leg.joined = true
@@ -1161,7 +1161,7 @@ public actor RelayClient: ChatTransport {
                 let result = localPeer.compatibility(with: peer)
                 if case .updateRequired(let reason) = result { failCompatibility(reason); return }
                 guard channelFormat == .current else {
-                    failCompatibility(String(localized: "A replay-protected channel is required. Update Yorozu on the host Mac."))
+                    failCompatibility(String(localized: "A replay-protected channel is required. Update Yorozu on the host."))
                     return
                 }
                 compatibility = result
@@ -1179,7 +1179,7 @@ public actor RelayClient: ChatTransport {
                 return
             } else if peerInfoRequestID != nil || counter.peerInfoRequired == true ||
                         localPeer.requiredCapabilities.contains("admission-expiry-v1") {
-                failCompatibility(String(localized: "This host no longer advertises required protocol support. Update Yorozu on the host Mac."))
+                failCompatibility(String(localized: "This host no longer advertises required protocol support. Update Yorozu on the host."))
                 return
             }
             if !ready {
@@ -1213,7 +1213,7 @@ public actor RelayClient: ChatTransport {
 
     private func requestPeerInfo() {
         guard channelFormat == .current else {
-            failCompatibility(String(localized: "A replay-protected channel is required. Update Yorozu on the host Mac."))
+            failCompatibility(String(localized: "A replay-protected channel is required. Update Yorozu on the host."))
             return
         }
         ready = false
@@ -1258,7 +1258,7 @@ public actor RelayClient: ChatTransport {
             counter.peerInfoRequired = true
             guard (try? counterStore.save(counter)) != nil else { return }
         }
-        failCompatibility(String(localized: "Invalid peer information. Update Yorozu on this device and its host Mac."))
+        failCompatibility(String(localized: "Invalid peer information. Update Yorozu on this device and its host."))
     }
 
     private static var now: Int { Int(Date().timeIntervalSince1970 * 1_000) }

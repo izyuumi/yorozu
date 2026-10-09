@@ -22,7 +22,7 @@ struct ScannerView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    Text("On your Mac, open Settings › Devices › Pair iPhone and scan its QR code.")
+                    Text("On the host, open Settings › Devices › Pair a Client Device and scan its QR code.")
                         .font(.headline)
                         .multilineTextAlignment(.center)
 
@@ -58,7 +58,7 @@ struct ScannerView: View {
 
                     // The host and the relay both handle parts of a code, so the true advice is
                     // about whose code it is, not who reads it.
-                    Text("Scan a code from a Mac you trust. Pairing codes are secret.")
+                    Text("Scan a code from a host you trust. Pairing codes are secret.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

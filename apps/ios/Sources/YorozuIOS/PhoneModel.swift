@@ -207,6 +207,7 @@ final class PhoneModel {
     /// When this phone first joined the Mac (`PairingStore.Stored.pairedAt`).
     private(set) var pairedAt: Date?
     var relayHost: String? { pairing?.relayHost }
+    var relayURL: String? { pairing?.relayUrl }
     var fingerprint: String? { pairing?.fingerprint }
     /// The socket the link runs on while joined; Settings diagnostics only, never the chat.
     private(set) var path: TransportPath?
@@ -219,6 +220,8 @@ final class PhoneModel {
     private(set) var directEnabled = UserDefaults.standard.bool(forKey: PhoneModel.directKey)
     /// The status saved on going to the background, shown for up to 3 s on return and launch.
     private var heldStatus: ClientConnectionStatus?
+    /// This pairing's `onboardingKey` is false: `onboardingDue` once linked.
+    private var onboardingPending = false
 
     private var pairing: QrPayload?
     /// This phone's X25519 session key, base64url: the cache's owner and `device_remove`'s `pub`.
@@ -297,8 +300,25 @@ final class PhoneModel {
         }
         disconnect()
         connect(stored)
+        // Due until shown. A Repair keeps the host, so its guide is not shown again.
+        if !pending.repair, let key = onboardingKey {
+            UserDefaults.standard.set(false, forKey: key)
+            onboardingPending = true
+        }
         start()
     }
+
+    /// The client onboarding is due: a newly added host has linked and the guide has not been shown for this pairing.
+    var onboardingDue: Bool { linked && onboardingPending }
+
+    func onboardingShown() {
+        if let key = onboardingKey { UserDefaults.standard.set(true, forKey: key) }
+        onboardingPending = false
+    }
+
+    /// Per pairing, like `pushKey`, under its own v2 name. False while due, true once shown; pairings made before
+    /// onboarding existed have none, so are never due.
+    private var onboardingKey: String? { ownPub.map { "clientOnboardingShownV2.\($0)" } }
 
     /// Tells the host to forget this phone (when the link is up; offline it wipes anyway), then wipes.
     /// The send goes first for the same reason as in `confirm`.
@@ -347,6 +367,7 @@ final class PhoneModel {
         pairedAt = stored.pairedAt
         candidates = stored.directCandidates ?? []
         ownPub = identity.base64URLEncodedString()
+        onboardingPending = onboardingKey.flatMap { UserDefaults.standard.object(forKey: $0) as? Bool } == false
         linked = stored.paired == true
         applyPush()
         if let ownPub, let snapshot = MirrorCache.shared.load(owner: ownPub) { restore(snapshot) }
@@ -359,7 +380,7 @@ final class PhoneModel {
                 for (index, info) in (item.files ?? []).enumerated() { files.register(UploadStore.url(item.id, index), for: info) }
                 if case .message(let message) = item.event.payload, !bubbles.contains(where: { $0.id == item.id }) {
                     merge(Bubble(id: item.id, user: true, ts: item.event.ts, text: message.text, kind: message.jobId.map { _ in "job_input" },
-                                 topicId: item.topicId, attachments: item.files ?? []))
+                                 topicId: item.topicId, replyTo: message.replyTo, attachments: item.files ?? []))
                 }
             }
             expireOverdue()
@@ -379,6 +400,8 @@ final class PhoneModel {
         transfers = nil
         files.transfers = nil
         pairing = nil
+        if let onboardingKey { UserDefaults.standard.removeObject(forKey: onboardingKey) }
+        onboardingPending = false
         ownPub = nil
         linked = false
         outbox.forEach { LocalNotices.cancelExpiry($0.id) }
@@ -400,6 +423,7 @@ final class PhoneModel {
         cacheHasJobs = false
         draftFiles.forEach { $0.discard() }
         draftFiles = []
+        replyingTo = nil
         failure = nil
         updateRequired = nil
         hostName = nil
@@ -743,10 +767,12 @@ final class PhoneModel {
             UploadStore.setOffsets(id, uploadOffsets[id] ?? [])
         }
         let event = YorozuEvent(id: id, threadId: "main", ts: ts, agentId: "device",
-                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime)))
+                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, replyTo: replyingTo)))
         draft = ""
         draftFiles = []
-        enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos), Bubble(id: id, user: true, ts: ts, text: text, attachments: infos))
+        enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos),
+                Bubble(id: id, user: true, ts: ts, text: text, replyTo: replyingTo, attachments: infos))
+        replyingTo = nil
     }
 
     /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only.
@@ -795,6 +821,9 @@ final class PhoneModel {
         draft = ""
         send()
     }
+
+    /// The main-timeline message the next `send()` replies to (`MessageData.replyTo`); the host files the reply with it.
+    var replyingTo: String?
 
     /// Why the last send with files did not go; the composer shows it.
     var attachFailure: String?
@@ -859,7 +888,8 @@ final class PhoneModel {
             deliveredAt: item?.deliveredAt,
             expiresAt: item?.buffered == true && !stored && item?.stored == false ? sentAt + Outbox.lifetime : nil,
             receivedAt: stored ? bubble.ts : nil, readAt: bubble.readAt, reason: item?.reason,
-            files: item?.files?.count ?? 0, upload: uploading ? uploadProgress[bubble.id] ?? 0 : nil)
+            files: item?.files?.count ?? 0, upload: uploading ? uploadProgress[bubble.id] ?? 0 : nil,
+            onHost: stored || item?.stored == true)
     }
 
     /// A message has to wait in the outbox when the relay is out of reach: the moment to ask for
@@ -1046,7 +1076,7 @@ final class PhoneModel {
     private func expireOverdue() {
         let now = Self.now
         for item in outbox where marks[item.id] == .sending && item.deliveredAt == nil && !item.stored && now > item.deadline {
-            notDelivered(item.id, reason: String(localized: "This iPhone couldn’t send it within 24 hours."))
+            notDelivered(item.id, reason: String(localized: "This device couldn’t send it within 24 hours."))
         }
     }
 
@@ -1144,7 +1174,7 @@ final class PhoneModel {
             stored(receipt.eventId, read: false)
         case .admissionStatus(let status) where status.status == .expired:
             // One meaning, said in the phone's language rather than the Mac's English reason.
-            notDelivered(status.eventId, reason: String(localized: "Your Mac was offline for more than 24 hours."))
+            notDelivered(status.eventId, reason: String(localized: "The host was offline for more than 24 hours."))
         case .admissionStatus(let status) where status.status == .rejected:
             notDelivered(status.eventId, reason: status.reason)
         case .syncDelta(let delta):

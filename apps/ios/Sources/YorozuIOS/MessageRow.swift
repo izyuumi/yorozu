@@ -64,7 +64,8 @@ struct ReplyHeader {
 }
 
 /// One timeline row: the user's vermilion bubble, an answer or question card in the system's
-/// grouped fill, or a compact system row for notices and failures. Long-press: Copy, Share, Show Details, Select Text.
+/// grouped fill, or a compact system row for notices and failures. Long-press: Reply, Copy, Share, Select Text, Show Details;
+/// a left-to-right swipe also replies.
 struct MessageRow: View {
     let bubble: PhoneModel.Bubble
     /// The reply header: the message this one answers, or a job's name.
@@ -75,23 +76,38 @@ struct MessageRow: View {
     let onShowDetails: () -> Void
     var onResend: () -> Void = {}
     var onDelete: () -> Void = {}
+    /// Starts a reply to this message; nil where replying is not offered.
+    var onReply: (() -> Void)?
 
     @State private var expanded = false
     @State private var markDetails = false
     @State private var selecting = false
+    /// The row's horizontal pull while a reply swipe runs.
+    @State private var pull: CGFloat = 0
+    /// The swipe has decided it is horizontal (true) or vertical (false); nil until it has moved enough.
+    @State private var horizontal: Bool?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let bubbleRadius: CGFloat = 20
     private let cardRadius: CGFloat = 22
     private let quoteRadius: CGFloat = 10
+    /// How far a swipe must pull the row to reply, and the most it moves.
+    private let replyThreshold: CGFloat = 64
+    private let maxPull: CGFloat = 88
 
     var body: some View {
         content
             .contextMenu {
+                if let onReply { Button("Reply", systemImage: "arrowshape.turn.up.left", action: onReply) }
                 Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = bubble.copyText }
                 ShareLink(item: bubble.copyText)
-                Button("Show Details", systemImage: "info.circle", action: onShowDetails)
                 Button("Select Text", systemImage: "selection.pin.in.out") { selecting = true }
+                Button("Show Details", systemImage: "info.circle", action: onShowDetails)
+            }
+            .modifier(ReplySwipe(enabled: onReply != nil, pull: $pull, horizontal: $horizontal,
+                                 threshold: replyThreshold, maxPull: maxPull, reduceMotion: reduceMotion) { onReply?() })
+            .accessibilityActions {
+                if let onReply { Button("Reply", action: onReply) }
             }
             .sheet(isPresented: $selecting) { SelectTextSheet(text: bubble.copyText) }
     }
@@ -111,6 +127,8 @@ struct MessageRow: View {
             // A bubble stops short of the far edge, so its side says who spoke even when it is long.
             Spacer(minLength: LayoutMetrics.section * 2)
             VStack(alignment: .trailing, spacing: LayoutMetrics.tight) {
+                // A reply: the quoted message it answers, as on a result.
+                if let header { quote(header) }
                 // Files above the text, each its own element: they open on tap.
                 if !bubble.files.isEmpty { AttachmentsView(files: bubble.files) }
                 VStack(alignment: .trailing, spacing: LayoutMetrics.tight) {
@@ -136,10 +154,7 @@ struct MessageRow: View {
     /// The mark under the bubble: icon only, in the text colour (red when not delivered). Tap for details.
     private func mark(_ delivery: Delivery) -> some View {
         Button { markDetails = true } label: {
-            Image(systemName: delivery.symbol)
-                .symbolEffect(.rotate, isActive: delivery.inFlight && !reduceMotion)
-                .foregroundStyle(delivery.state == .notDelivered ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
-                .font(.caption)
+            DeliveryMark(delivery: delivery)
                 .padding(.vertical, LayoutMetrics.hair)
                 .padding(.leading, LayoutMetrics.inner)
                 .contentShape(Rectangle())
@@ -155,29 +170,32 @@ struct MessageRow: View {
     }
 
     @ViewBuilder private var answer: some View {
-        if let header {
-            let quote = Label {
-                Text(verbatim: "“\(header.text.replacingOccurrences(of: "\n", with: " "))”")
-                    .lineLimit(1)
-            } icon: {
-                Image(systemName: "arrowshape.turn.up.left")
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, LayoutMetrics.inner)
-            .padding(.vertical, LayoutMetrics.tight)
-            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: quoteRadius, style: .continuous))
-            if header.revealable {
-                Button(action: onShowRequest) { quote }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Show the request")
-                    .accessibilityValue(header.text)
-            } else {
-                quote.accessibilityLabel(Text("In reply to \(header.text)"))
-            }
-        }
+        if let header { quote(header) }
         MarkdownBlocks(bubble.text)
         if !bubble.files.isEmpty { AttachmentsView(files: bubble.files) }
+    }
+
+    /// The reply header: the quoted first line of the message this one answers, which scrolls to it when held.
+    @ViewBuilder private func quote(_ header: ReplyHeader) -> some View {
+        let quote = Label {
+            Text(verbatim: "“\(header.text.replacingOccurrences(of: "\n", with: " "))”")
+                .lineLimit(1)
+        } icon: {
+            Image(systemName: "arrowshape.turn.up.left")
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, LayoutMetrics.inner)
+        .padding(.vertical, LayoutMetrics.tight)
+        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: quoteRadius, style: .continuous))
+        if header.revealable {
+            Button(action: onShowRequest) { quote }
+                .buttonStyle(.plain)
+                .accessibilityLabel(bubble.user ? Text("Show the original message") : Text("Show the request"))
+                .accessibilityValue(header.text)
+        } else {
+            quote.accessibilityLabel(Text("In reply to \(header.text)"))
+        }
     }
 
     @ViewBuilder private var question: some View {
@@ -237,6 +255,95 @@ struct MessageRow: View {
     }
 }
 
+/// The mark under a user bubble, Signal-style: one dotted circle while Sending, one check circle once the relay has it
+/// (Sent), two overlapping check circles once the host has it (Delivered), two filled ones once read (Read), and the
+/// failure symbol in red. A custom component: it owns the overlap; its size follows the caption font.
+struct DeliveryMark: View {
+    let delivery: Delivery
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Half a caption-sized circle: the two circles overlap by about half.
+    @ScaledMetric(relativeTo: .caption) private var overlap: CGFloat = 6
+
+    var body: some View {
+        Group {
+            switch delivery.step {
+            case .sending:
+                Image(systemName: "circle.dotted")
+                    .symbolEffect(.rotate, isActive: delivery.inFlight && !reduceMotion)
+            case .sent:
+                Image(systemName: "checkmark.circle")
+            case .delivered:
+                pair("checkmark.circle")
+            case .read:
+                pair("checkmark.circle.fill")
+            case .notDelivered:
+                Image(systemName: "exclamationmark.circle")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(delivery.state == .notDelivered ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+        .accessibilityElement()
+        .accessibilityLabel(delivery.word)
+    }
+
+    /// The front circle knocks out the one behind it with a background-coloured disc, so the outlines do not cross.
+    private func pair(_ symbol: String) -> some View {
+        HStack(spacing: -overlap) {
+            Image(systemName: symbol)
+            Image(systemName: symbol)
+                .background { Image(systemName: "circle.fill").foregroundStyle(Color(.systemBackground)) }
+        }
+    }
+}
+
+/// Swipe left to right to reply, as in Messages: the row follows the finger (damped past the threshold), the reply
+/// symbol fades in behind it, and crossing the threshold taps lightly. Only a mostly-horizontal drag counts, decided
+/// once per drag, so vertical scrolling is untouched; the drag runs alongside the scroll view's own pan.
+private struct ReplySwipe: ViewModifier {
+    let enabled: Bool
+    @Binding var pull: CGFloat
+    @Binding var horizontal: Bool?
+    let threshold: CGFloat
+    let maxPull: CGFloat
+    let reduceMotion: Bool
+    let onReply: () -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .offset(x: pull)
+                .background(alignment: .leading) {
+                    Image(systemName: "arrowshape.turn.up.left")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .opacity(Double(min(pull / threshold, 1)))
+                        .scaleEffect(pull >= threshold ? 1.15 : 1)
+                        .offset(x: min(pull, threshold) - threshold + LayoutMetrics.inner)
+                        .accessibilityHidden(true)
+                }
+                .sensoryFeedback(.impact(weight: .light), trigger: pull >= threshold) { _, armed in armed }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 12)
+                        .onChanged { value in
+                            let dx = value.translation.width, dy = value.translation.height
+                            if horizontal == nil { horizontal = dx > 0 && abs(dx) > abs(dy) * 2 }
+                            guard horizontal == true else { return }
+                            let raw = max(dx, 0)
+                            pull = raw <= threshold ? raw : min(threshold + (raw - threshold) / 3, maxPull)
+                        }
+                        .onEnded { _ in
+                            if horizontal == true && pull >= threshold { onReply() }
+                            horizontal = nil
+                            withAnimation(reduceMotion ? nil : .spring(duration: 0.25)) { pull = 0 }
+                        }
+                )
+        } else {
+            content
+        }
+    }
+}
+
 /// VoiceOver's actions on a user bubble: Details, plus Resend and Delete when it was not delivered.
 private struct MarkActions: ViewModifier {
     let delivery: Delivery?
@@ -283,14 +390,14 @@ struct DeliveryRows: View {
         }
         row("Sent", delivery.sentAt)
         if let delivered = delivery.deliveredAt {
-            row("Delivered", delivered)
+            row("Accepted by relay", delivered)
             if let expires = delivery.expiresAt {
-                Text("Held by the relay until your Mac is online · expires \(MessageTime.exact.string(from: MessageTime.date(expires)))")
+                Text("Held by the relay until the host is online · expires \(MessageTime.exact.string(from: MessageTime.date(expires)))")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         } else if let received = delivery.receivedAt {
-            row("Received by Mac", received)
+            row("Received by host", received)
         }
         if let read = delivery.readAt { row("Read", read) }
         if delivery.delayed, let received = delivery.receivedAt {
