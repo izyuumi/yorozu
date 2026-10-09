@@ -69,4 +69,15 @@ enum PushNotices {
             if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
         }
     }
+
+    /// In the foreground the Mac is plainly back: its delivered back-online pushes (relay class `done`) go.
+    static func removeBackOnline() {
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let ids = await center.deliveredNotifications()
+                .filter { $0.request.content.userInfo["cls"] as? String == "done" }
+                .map(\.request.identifier)
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+        }
+    }
 }

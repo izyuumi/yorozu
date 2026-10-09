@@ -508,6 +508,7 @@ final class PhoneModel {
         backgroundTime?.end()
         backgroundTime = nil
         LocalNotices.clearWaiting()
+        PushNotices.removeBackOnline()
         expireOverdue()
         if let saved = savedStatus {
             savedStatus = nil
