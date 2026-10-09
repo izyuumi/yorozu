@@ -112,6 +112,7 @@ struct AdvancedSettings: View {
             } header: { Text("Models") } footer: {
                 Text("Allowed models come from the harness. Automatic picks again at launch and whenever settings change.").foregroundStyle(.secondary)
             }
+            IntegrationsSection(model: model)
             Section {
                 LabeledContent("Run mode") { Text(Self.mode(model.runtimeMode)) }
                 LabeledContent("Harness") { Text(model.harnessLabel ?? config.harness.kind.rawValue) }
@@ -133,7 +134,7 @@ struct AdvancedSettings: View {
                     if let file = model.configFile { Button("Show config.toml") { NSWorkspace.shared.activateFileViewerSelecting([file]) } }
                 } label: {
                     Text("MCP servers")
-                    Text(config.mcpServers.isEmpty ? String(localized: "None") : config.mcpServers.keys.sorted().joined(separator: ", ")).monospaced()
+                    Text(config.effectiveMCPServers.isEmpty ? String(localized: "None") : config.effectiveMCPServers.keys.sorted().joined(separator: ", ")).monospaced()
                 }
             } header: { Text("About this install") } footer: {
                 Text("MCP servers are edited in config.toml or by asking in the chat.").foregroundStyle(.secondary)
@@ -194,6 +195,58 @@ struct AdvancedSettings: View {
         case .fixture: String(localized: "Test fixture")
         case .offline: String(localized: "Offline")
         }
+    }
+}
+
+/// Settings › Advanced › Integrations: each integration's switch, its checks (run while this shows and on "Check again",
+/// never otherwise) and, after a check that is not OK, its fixes. Built-in titles come from the string catalog.
+struct IntegrationsSection: View {
+    @ObservedObject var model: AppModel
+    @State private var results: [String: [CheckResult]] = [:]
+    @State private var checking = false
+
+    var body: some View {
+        let list = model.config.integrations.values.sorted { $0.name < $1.name }
+        Section {
+            ForEach(list, id: \.name) { item in
+                Toggle(LocalizedStringKey(item.title), isOn: Binding(get: { item.enabled }, set: { on in model.writeSettings { $0.integrations[item.name]?.enabled = on } }))
+                ForEach(Array((results[item.name] ?? []).enumerated()), id: \.offset) { _, result in
+                    LabeledContent {
+                        switch result.status {
+                        case .ok: Label("OK", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        case .warning: Label("Needs attention", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        case .failed: Label("Not working", systemImage: "xmark.octagon.fill").foregroundStyle(.red)
+                        }
+                    } label: {
+                        Text(LocalizedStringKey(result.title))
+                        Text(verbatim: result.detail).monospaced().lineLimit(4).textSelection(.enabled)
+                    }
+                }
+                if results[item.name]?.contains(where: { $0.status != .ok }) == true {
+                    ForEach(Array(item.fixes.enumerated()), id: \.offset) { _, fix in
+                        switch fix {
+                        case .copy(let title, let command):
+                            LabeledContent { Button(LocalizedStringKey(title)) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(command, forType: .string) } } label: { Text(verbatim: command).monospaced().textSelection(.enabled) }
+                        case .open(let title, let url):
+                            LabeledContent { Button(LocalizedStringKey(title)) { NSWorkspace.shared.open(url) } } label: { Text(verbatim: url.absoluteString).textSelection(.enabled) }
+                        }
+                    }
+                }
+            }
+            LabeledContent {
+                Button(checking ? "Checking…" : "Check again") { Task { await check(list) } }.disabled(checking)
+            } label: { EmptyView() }
+        } header: { Text("Integrations") } footer: {
+            Text("Checks run only while Settings is open or when you click Check again. Yorozu never grants permissions itself: run the copied command in Terminal.").foregroundStyle(.secondary)
+        }
+        .task { await check(list) }
+    }
+
+    private func check(_ list: [Integration]) async {
+        checking = true; defer { checking = false }
+        var found: [String: [CheckResult]] = [:]
+        for item in list { found[item.name] = await item.runChecks() }
+        results = found
     }
 }
 
