@@ -126,7 +126,7 @@ Each item has a default that holds until the owner answers.
 
 Each limit is described where its mechanism is documented.
 
-- On OpenClaw, workers take a change after the current step; no live steer ([openclaw-integration.md](openclaw-integration.md#methods-used), `tools.invoke`).
+- On OpenClaw, live steer (`chat.send` with `queueMode: "steer"`) is not yet checked live; a runtime that cannot take injected input falls back to a follow-up turn after the step ([openclaw-integration.md](openclaw-integration.md#live-steer)).
 - On Hermes: MCP servers and the working folder are profile-wide (the task folder is a contract rule) (`yorozu-worker`), and a changed `[mcp_servers]` reaches Hermes only when the profile setup runs again (readiness warns "Hermes profiles need updating"; Yorozu does not write them on its own); Hermes's own core system prompt is always prepended to Yorozu's instructions; `GET /v1/toolsets` may not list MCP servers on 0.21.6, so the MCP projection cannot be confirmed; `/api/model/options` gives no context window, so every automatic role resolves to the primary model; after an app restart a run is reconciled by status, not re-attached to its event stream ([hermes-integration.md](hermes-integration.md#limits)).
 - A launch that falls back to the CLI transport shows sub-chat progress only when a step ends ([openclaw-integration.md](openclaw-integration.md#transport)).
 - The Mac shows no sub-chats except job sub-chats in Settings › Jobs; other topics, work and events are shown only on the phone, and only for the history window it holds. A phone search hit on a sub-chat step whose topic is not on the phone cannot open ([architecture.md](architecture.md#ios-app)).
