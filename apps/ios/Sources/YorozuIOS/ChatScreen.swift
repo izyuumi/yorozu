@@ -145,9 +145,9 @@ struct ChatScreen: View {
                 }
                 if !Self.hasSubtitle {
                     ToolbarItem(placement: .topBarLeading) {
-                        Circle()
-                            .fill(dotColor)
-                            .frame(width: Self.dot, height: Self.dot)
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: Self.dot))
+                            .foregroundStyle(dotColor)
                             .accessibilityElement()
                             .accessibilityLabel(model.shownStatus.label)
                     }
