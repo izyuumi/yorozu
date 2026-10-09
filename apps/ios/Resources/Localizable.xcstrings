@@ -14604,6 +14604,258 @@
           }
         }
       }
+    },
+    "Thinking" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "思考" } }
+      }
+    },
+    "Coding · Claude Code" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "コーディング · Claude Code" } }
+      }
+    },
+    "Coding · Codex" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "コーディング · Codex" } }
+      }
+    },
+    "Coding · Hermes" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "コーディング · Hermes" } }
+      }
+    },
+    "Script" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スクリプト" } }
+      }
+    },
+    "Applying a change" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "変更を反映中" } }
+      }
+    },
+    "Uncertain" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "結果不明" } }
+      }
+    },
+    "Replaced" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "置き換え済み" } }
+      }
+    },
+    "Status unknown until your Mac is connected." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac に接続するまで状態は不明です。" } }
+      }
+    },
+    "Needs attention" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "要対応" } }
+      }
+    },
+    "No sub-chats yet" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サブチャットはまだありません" } }
+      }
+    },
+    "Bigger work runs in a sub-chat on your Mac. It shows up here." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "時間のかかる作業は Mac のサブチャットで進み、ここに表示されます。" } }
+      }
+    },
+    "Sub-chats" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サブチャット" } }
+      }
+    },
+    "Status unknown" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "状態不明" } }
+      }
+    },
+    "%@ · %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ · %2$@" } }
+      }
+    },
+    "Failed: %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "失敗: %@" } }
+      }
+    },
+    "Done · %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "完了 · %@" } }
+      }
+    },
+    "Idle · %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "待機中 · %@" } }
+      }
+    },
+    "Not on this iPhone" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この iPhone にはありません" } }
+      }
+    },
+    "This sub-chat is older than what this iPhone keeps. Open it on your Mac." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このサブチャットは iPhone に保存される期間より古いものです。Mac で開いてください。" } }
+      }
+    },
+    "To change this work, write in the main chat." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この作業を変えるには、メインのチャットに書いてください。" } }
+      }
+    },
+    "Main Chat" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインへ" } }
+      }
+    },
+    "Inspect only" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "閲覧のみ" } }
+      }
+    },
+    "Amendment %lld · %@: %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "修正 %1$lld · %2$@: %3$@" } }
+      }
+    },
+    "added before start" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "開始前に追加" } }
+      }
+    },
+    "accepted" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "受付済み" } }
+      }
+    },
+    "applied" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "反映済み" } }
+      }
+    },
+    "waiting for the earlier run" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "前の実行を待機中" } }
+      }
+    },
+    "Activity · %lld steps" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "経過 · %lld 件" } }
+      }
+    },
+    "All" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべて" } }
+      }
+    },
+    "Main" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メイン" } }
+      }
+    },
+    "%lld results" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件" } }
+      }
+    },
+    "Search needs your Mac" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索には Mac との接続が必要です" } }
+      }
+    },
+    "Your Mac runs the search. Connect to it to search." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索は Mac で行います。Mac に接続してから検索してください。" } }
+      }
+    },
+    "Search everything" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべてを検索" } }
+      }
+    },
+    "The main chat and every sub-chat, on your Mac." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac にあるメインのチャットとすべてのサブチャットが対象です。" } }
+      }
+    },
+    "Couldn't search" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索できませんでした" } }
+      }
+    },
+    "Sub-chat" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サブチャット" } }
+      }
+    },
+    "Older than this iPhone keeps. Open it on your Mac." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "iPhone に保存される期間より古いものです。Mac で開いてください。" } }
+      }
+    },
+    "Search" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索" } }
+      }
+    },
+    "Close search" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索を閉じる" } }
+      }
+    },
+    "Couldn't load" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込めませんでした" } }
+      }
+    },
+    "In context" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "前後のメッセージ" } }
+      }
+    },
+    "%lld running" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件実行中" } }
+      }
+    },
+    "task.state.queued" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Queued" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "待機中" } }
+      }
+    },
+    "topics.section.recent" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最近" } }
+      }
+    },
+    "Status unknown until this iPhone has caught up with your Mac." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この iPhone が Mac に追いつくまで状態は不明です。" } }
+      }
+    },
+    "Show all %lld steps" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 件すべて表示" } }
+      }
+    },
+    "Load more" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "さらに読み込む" } }
+      }
+    },
+    "%lld loaded" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件を読み込み済み" } }
+      }
     }
   },
   "version" : "1.0"

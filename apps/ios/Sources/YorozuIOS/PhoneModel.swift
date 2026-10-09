@@ -130,13 +130,16 @@ final class PhoneModel {
     private var unreceipted: [YorozuEvent] = []
     /// `latestSeq` of the last reply page applied whole.
     private var cursor: Int?
-    private var catchingUp = false
+    /// A `sync_request` is out and its pages are not all in: the records may be stale.
+    private(set) var catchingUp = false
     /// The `afterSeq` of the `sync_request` awaiting its reply page; nil when none is.
     private var requestedAfter: Int?
     private var pageDeadline: Task<Void, Never>?
     private var chunks = ChunkAssembler()
     private var saveTask: Task<Void, Never>?
     private var searchRequestId: String?
+    /// The offset of the search page in flight, so a page is never asked for twice.
+    private var searchOffset: Int?
     private var heldRelease: Task<Void, Never>?
     private var savedStatus: SavedStatus?
 
@@ -145,6 +148,8 @@ final class PhoneModel {
     /// What the chat shows: the saved status for up to 3 s after a return or launch, then `status`.
     var shownStatus: ClientConnectionStatus { heldStatus ?? status }
     var canSend: Bool { state == .paired && !sending }
+    /// The Mac's work state is known: on the link and caught up.
+    var statusKnown: Bool { working != nil && !catchingUp }
     /// Stop and Retry: one in flight per task, only while `.paired`.
     func canControl(_ taskId: String) -> Bool { state == .paired && !controlling.contains(taskId) }
 
@@ -339,6 +344,7 @@ final class PhoneModel {
         working = nil
         routing = nil
         controlling = []
+        searchOffset = nil
         pageDeadline?.cancel()
         pageDeadline = nil
         requestedAfter = nil
@@ -353,6 +359,8 @@ final class PhoneModel {
         updateRequired = nil
         catchingUp = true
         requestSync()
+        // The relay dropped a page request that went out before the link fell: ask again.
+        if let page, page.bubbles.isEmpty, page.error == nil { Task { await requestPage() } }
         let events = unreceipted
         Task { [relay] in
             for event in events { try? await relay?.send(event) }
@@ -417,19 +425,28 @@ final class PhoneModel {
     @discardableResult
     func search(_ query: String, offset: Int? = nil) async -> Bool {
         guard state == .paired else { return false }
+        if offset != nil, offset == searchOffset { return false }
         let requestId = UUID().uuidString
         searchRequestId = requestId
+        searchOffset = offset
         if offset == nil { search = nil }
         return await sendNow(.searchRequest(SearchRequestData(requestId: requestId, query: query, offset: offset)))
     }
 
-    /// The page around one message (a search hit outside the cache), into `page`. Needs `.paired`.
+    /// The page around one message (a search hit outside the cache), into `page`. Needs `.paired`;
+    /// a request the relay dropped is asked again on the next `.paired`, one that did not go is forgotten.
     @discardableResult
     func loadPage(around messageId: String) async -> Bool {
         guard state == .paired else { return false }
-        let requestId = UUID().uuidString
-        page = PageReply(requestId: requestId, messageId: messageId)
-        return await sendNow(.pageRequest(PageRequestData(requestId: requestId, threadId: "main", messageId: messageId)))
+        page = PageReply(requestId: UUID().uuidString, messageId: messageId)
+        return await requestPage()
+    }
+
+    private func requestPage() async -> Bool {
+        guard let held = page else { return false }
+        let ok = await sendNow(.pageRequest(PageRequestData(requestId: held.requestId, threadId: "main", messageId: held.messageId)))
+        if !ok, page?.requestId == held.requestId { page = nil }
+        return ok
     }
 
     /// Moves the Mac's read cursor to the newest message seen. Only while `.paired`; not queued.
@@ -470,6 +487,7 @@ final class PhoneModel {
             controlling.remove(result.taskId)
             controlResults[result.taskId] = result
         case .searchResult(let result) where result.requestId == searchRequestId:
+            searchOffset = nil
             // A new query cleared `search`, so anything held is an earlier page of this one.
             if var held = search {
                 held.requestId = result.requestId
@@ -547,6 +565,8 @@ final class PhoneModel {
             if (tasks[task.id]?.seq ?? -1) < task.seq {
                 tasks[task.id] = task
                 controlling.remove(task.id)
+                // The result answered the record this replaces.
+                controlResults[task.id] = nil
             }
         case .amendment(let amendment):
             if (amendments[amendment.id]?.seq ?? -1) < amendment.seq { amendments[amendment.id] = amendment }

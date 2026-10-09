@@ -167,6 +167,7 @@ private struct StatusTracker: View {
             .onAppear { host.openSettingsAction = openSettings }
             .onChange(of: model.working, initial: true) { _, working in host.show(working: working) }
             .onChange(of: model.snapshot, initial: true) { _, snapshot in AttentionCenter.shared.ingest(snapshot) }
+            .onChange(of: model.readCursor, initial: true) { _, cursor in AttentionCenter.shared.readCursor = cursor }
             .onReceive(tick) { _ in if let spec = model.resolved?.config.general.globalShortcut { host.applyShortcut(spec, model: model) } }
     }
 }

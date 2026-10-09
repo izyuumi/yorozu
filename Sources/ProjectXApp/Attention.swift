@@ -7,6 +7,8 @@ import UserNotifications
 ///
 /// The popover drives what counts as seen: it calls `seen(upTo:)` for the newest message it has shown and keeps
 /// `popoverAtBottom` true while it is open and scrolled to the newest message; nothing is posted then (open question 4).
+/// The main read cursor counts too (#313): a message at or before it is seen, so reading on the phone clears the dot and
+/// the delivered notifications for what it read.
 /// A tapped notification calls `open(messageID:)`: the host shows the popover and `focusMessageID` names the message to scroll to.
 @MainActor final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = AttentionCenter()
@@ -20,6 +22,8 @@ import UserNotifications
     var popoverAtBottom = false { didSet { if popoverAtBottom { seenThrough = max(seenThrough, newest); refresh() } } }
     /// `[notifications] enabled` and destination, read at each post; the host wires it to the config.
     var notificationsEnabled: () -> Bool = { true }
+    /// The main thread's synced read cursor; the host sets it from each poll.
+    var readCursor: String? { didSet { if readCursor != oldValue { applyCursor(); refresh() } } }
     /// Shows the popover; set by the host.
     var onOpen: (() -> Void)?
 
@@ -44,6 +48,7 @@ import UserNotifications
 
     func ingest(_ snapshot: Snapshot) {
         messages = snapshot.messages
+        applyCursor()
         if popoverAtBottom { seenThrough = max(seenThrough, newest) }
         for m in messages where m.created > notifiedThrough && m.created > seenThrough { if let r = Self.reason(m) { post(m.id, r) } }
         notifiedThrough = max(notifiedThrough, newest)
@@ -61,6 +66,12 @@ import UserNotifications
         onOpen?()
         focusMessageID = messageID
         seen(upTo: messageID)
+    }
+
+    /// Forward only, like the cursor; a cursor not in the snapshot yet applies on the ingest that brings it.
+    private func applyCursor() {
+        guard let readCursor, let m = messages.first(where: { $0.id == readCursor }) else { return }
+        seenThrough = max(seenThrough, m.created)
     }
 
     private func refresh() {

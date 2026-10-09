@@ -7,6 +7,10 @@ import ServiceManagement
     let runtimeMode = RuntimeMode.from(ProcessInfo.processInfo.environment)
     @Published var fixtureAcknowledged = false
     @Published var snapshot = Snapshot()
+    /// The secretary is deciding how to handle a message (`Engine.routing`): the timeline shows the thinking bubble.
+    @Published var routing = false
+    /// The main thread's read cursor (`Store.readCursor`), moved here or by a phone's `read_state`.
+    @Published var readCursor: String?
     @Published var draft = ""
     /// The popover's one-line status: startup progress or the last error, cleared by the next success.
     @Published var status: String? = "Opening local workspace…"
@@ -145,6 +149,8 @@ import ServiceManagement
                         let next = try await engine.snapshot()
                         if notice != nil { if status == notice { status = nil }; notice = nil; failures = 0 }
                         if next != snapshot { snapshot = next; let topics = Set(((try? await store.jobRecords()) ?? []).map(\.topicID)); if topics != jobTopics { jobTopics = topics } }
+                        let routing = await engine.routing; if routing != self.routing { self.routing = routing }
+                        let cursor = try await store.readCursor(thread: "main"); if cursor != readCursor { readCursor = cursor }
                         if let relay, let bridge { await bridge.publish(next,to: relay) }
                     } catch {
                         failures += 1; notice = String(localized: "Couldn't read the chat, retrying: \(error.localizedDescription)"); status = notice
@@ -265,6 +271,12 @@ import ServiceManagement
         await ensureModels()
         do { try await engine.send(text); if draft == text { draft = "" }; status = nil; snapshot = try await engine.snapshot() }
         catch { status = error.localizedDescription }
+    }
+    /// The popover showed this message at its bottom: the main read cursor moves to it (forward only, in the Store); the
+    /// poll picks it up into `readCursor`, and the relay's next publish sends it to phones as `read_state`.
+    func markRead(_ id: String) {
+        guard id != readCursor, let store else { return }
+        Task { _ = try? await store.markRead(thread: "main", message: id) }
     }
     /// Chat search for the popover's ⌘F bar; the caller keeps only main-timeline message hits (open question 10).
     func search(_ query: String,limit: Int,offset: Int = 0) async throws -> (hits: [SearchHit], total: Int) {

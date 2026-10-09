@@ -200,3 +200,28 @@ struct DaySeparator: View {
         return day.formatted(sameYear ? .dateTime.weekday(.wide).day().month(.wide) : .dateTime.weekday(.wide).day().month(.wide).year())
     }
 }
+
+/// Where unread messages start, as of the popover's opening: an accent "Unread" between accent hairlines.
+struct UnreadDivider: View {
+    private enum Metrics { static let spacing: CGFloat = 8, hairline: CGFloat = 0.5 }
+    var body: some View {
+        HStack(spacing: Metrics.spacing) {
+            line; Text("Unread").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor).fixedSize(); line
+        }.accessibilityElement(children: .combine).accessibilityAddTraits(.isHeader)
+    }
+    private var line: some View { Rectangle().fill(Color.accentColor.opacity(0.6)).frame(height: Metrics.hairline) }
+}
+
+/// The secretary is deciding how to handle a message: a typing-style bubble on the answer side of the timeline.
+struct ThinkingBubble: View {
+    private enum Metrics { static let radius: CGFloat = 14, padH: CGFloat = 14, padV: CGFloat = 10, hairline: CGFloat = 0.5 }
+    var body: some View {
+        Image(systemName: "ellipsis").font(.title3.weight(.bold)).foregroundStyle(.secondary)
+            .symbolEffect(.variableColor.iterative.dimInactiveLayers)
+            .padding(.horizontal,Metrics.padH).padding(.vertical,Metrics.padV)
+            .background(.regularMaterial,in: RoundedRectangle(cornerRadius: Metrics.radius,style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: Metrics.radius,style: .continuous).strokeBorder(.separator,lineWidth: Metrics.hairline) }
+            .frame(maxWidth: .infinity,alignment: .leading)
+            .help("Thinking").accessibilityElement().accessibilityLabel("Thinking")
+    }
+}
