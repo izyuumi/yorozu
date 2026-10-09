@@ -176,8 +176,9 @@ event carries its row's `seq`.
 - **Upsert rule.** The phone keys records by kind and id and replaces a held record only with
   one of a higher `seq` (`worker_event` is insert-only; a known id is skipped). Records can
   arrive out of order across pages, live updates and page replies; this rule makes that safe.
-  Messages change after insert in 0.7 (topic, task and notice can be set later), so a stored
-  message must be replaced, not kept.
+  Messages change after insert in 0.7 (topic, task and notice can be set later, and a user
+  message changes once more when routing starts and sets `readAt`), so a stored message must be
+  replaced, not kept.
 - **Cursor.** The phone's cursor is the `latestSeq` of the last page it applied whole. It is
   kept in the cache.
 
@@ -214,17 +215,48 @@ The vendored v1 kinds `thread_read`, `interrupt`/`stop_status` and
 
 ```swift
 YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device",
-            payload: .message(MessageData(role: .user, text: text)))
+            payload: .message(MessageData(role: .user, text: text, admissionDeadline: nowMs + 86_400_000)))
 ```
 
 - `text` is 1-6000 UTF-8 bytes after the phone's own check. No attachments.
-- `sentAt` (`MessageData.sentAt`, epoch ms, phone clock) is when the user first sent the
-  message, kept the same on every resend, so a message held in the relay buffer or the phone's
-  outbox keeps its time. Optional.
-- `admissionDeadline`, `delivery`, `channelModel`, `readAt` and the other 0.7 metadata are not
-  sent and the host ignores them.
-- The phone keeps the event in a pending set until it gets a `receipt` or an
-  `admission_status` for that `id`, and resends every pending event on every `.paired`.
+- `ts` is the phone's send time; the Mac keeps it as the message's `sentAt`. Resend renews it.
+- `admissionDeadline` is always `ts` + 24 h, the relay buffer's lifetime. Resend renews it.
+- `delivery`, `channelModel`, `sentAt`, `readAt` and the other 0.7 metadata are not sent and the
+  host ignores them.
+
+#### The phone's outbox
+
+Every message goes into a persistent outbox first (`Outbox.swift`, one file per pairing, see
+`docs/setup.md`), so Send works with or without a link. Each item holds the event, its send time,
+the relay's `accepted` time and `buffered` flag, whether the Mac has stored it, and a refusal
+reason. The marks live beside the items in a forward-only id -> state map (below).
+
+- On every relay join (`.joined`, the Mac away), send the items still Sending. Items the relay
+  already holds (Delivered) are not sent again while the Mac is away.
+- On every `.paired`, send every item the Mac has not stored, Sending or Delivered. The Mac
+  dedupes by id (host check 4), so a resend is never a second message.
+- An item stops being sent on a `receipt` or when its stored copy arrives, never on `accepted`.
+  Its times stay until the stored copy carries `readAt`, then the item goes.
+- `admission_status` (`rejected` or `expired`) clears the item from the send queue: it is Not
+  delivered and is never resent on its own. **Resend** keeps the id with a new `ts` and
+  deadline; **Delete** removes the bubble and the item.
+- An item that never got `accepted` and whose deadline passed turns Not delivered on the phone
+  without the Mac ("This iPhone couldn't send it within 24 hours.").
+
+#### Marks
+
+| Mark | Symbol | Phone evidence |
+|---|---|---|
+| Sending | `circle.dotted` (spins while a frame is in flight) | in the outbox, no `accepted` or stored copy yet |
+| Delivered | `checkmark.circle` | `accepted`, a `receipt`, or the stored copy without `readAt` |
+| Read | `checkmark.circle.fill` | the stored copy has `readAt` |
+| Not delivered | `exclamationmark.circle`, red | `admission_status`, or the local deadline |
+
+States only move forward (Sending -> Delivered -> Read); a late `accepted` after Read is ignored.
+Not delivered goes back to Sending only through Resend, but a stored copy still lifts it to
+Delivered or Read, since that proves the Mac has it. Without a relay `accepted` (an old relay),
+the mark spins for at most 10 s per frame and stays Sending until the Mac's `receipt`. User
+messages typed on the Mac, and those in sub-chats, take their mark from the stored copy alone.
 
 Host checks, in this order, then acts:
 
@@ -233,11 +265,13 @@ Host checks, in this order, then acts:
 3. `RuntimeMode.permitsInput(fixtureAcknowledged: false)` is true (fixture mode never takes
    phone input), else `admission_status rejected`.
 4. If a v2 `Message` with that id exists: reply `receipt` only (duplicate or relay replay).
-5. `try await engine.send(text, id: event.id)`, then reply `receipt`.
+5. If `admissionDeadline` is set and has passed: reply `admission_status expired`; the message
+   is never stored or routed late.
+6. `try await engine.send(text, id: event.id, sentAt: ts / 1000)`, then reply `receipt`.
    If it throws: if a `Message` with that id now exists (a concurrent duplicate won), reply
    `receipt`; else reply `admission_status rejected` with `reason = error.localizedDescription`.
 
-The Engine is never told which device a message came from.
+The Engine is never told which device a message came from; it gets the send time only.
 
 ### `receipt` (Mac -> phone): the message is stored
 
@@ -246,8 +280,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
             payload: .receipt(ReceiptData(eventId: messageId)))
 ```
 
-The phone drops `messageId` from its pending set. The bubble stays; the stored copy arrives as a
-record with the same id and replaces it in place.
+The phone marks the item stored (Delivered) and stops sending it. The bubble stays; the stored
+copy arrives as a record with the same id and replaces it in place.
 
 ### `admission_status` (Mac -> phone): the message was refused
 
@@ -256,16 +290,18 @@ YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
             payload: .admissionStatus(AdmissionStatusData(eventId: messageId, status: .rejected, reason: reason)))
 ```
 
-Only `status: .rejected` is sent. `reason` is user-facing text the phone shows as is:
+`status` is `.rejected` or `.expired`. `reason` is user-facing text the phone shows as is:
 
-| Cause | `reason` |
-|---|---|
-| bad id | `"Invalid message id."` |
-| attachments | `"Attachments aren't supported yet."` |
-| fixture mode | `"This Mac is in fixture mode and doesn't take phone messages."` |
-| Engine error | `error.localizedDescription` (e.g. "Message must be 1–6000 UTF-8 bytes.") |
+| Cause | `status` | `reason` |
+|---|---|---|
+| bad id | `rejected` | `"Invalid message id."` |
+| attachments | `rejected` | `"Attachments aren't supported yet."` |
+| fixture mode | `rejected` | `"This Mac is in fixture mode and doesn't take phone messages."` |
+| Engine error | `rejected` | `error.localizedDescription` (e.g. "Message must be 1–6000 UTF-8 bytes.") |
+| past `admissionDeadline` | `expired` | `"Not delivered: your Mac was offline for more than 24 hours."` |
 
-The phone drops `messageId` from its pending set, marks that bubble failed and does not resend it.
+Either status clears `messageId` from the phone's send queue: the bubble shows Not delivered with
+the reason, Resend and Delete, and is not resent on its own.
 
 ### `sync_request` (phone -> Mac): catch up
 
@@ -359,9 +395,11 @@ MessageData(role: m.role == "user" ? .user : .agent, text: m.body, done: true,
 
 `kind` is the v2 message kind as text (`conversation`, `result`, `failure`, `question`,
 `acknowledgment`, ...); the phone treats an unknown kind like `conversation`. A user
-message also carries `readAt` (epoch ms, when the owner read it on the Mac; absent while unread)
-and `sentAt` (epoch ms, the phone's `sentAt` it was admitted with; absent for one typed on the
-Mac). Both are optional fields an older 0.7 peer ignores. Every message goes to the main timeline as on the Mac; `topicId` also files it in
+message also carries `readAt` (epoch ms, when the Mac started routing it, the Read mark; absent
+before that) and `sentAt` (epoch ms, the `ts` of the phone event it was admitted from; absent for
+one typed on the Mac). Both are optional fields an older 0.7 peer ignores; they shipped inside
+0.7 because 0.7 had not reached a phone yet (#314). The phone shows a delay line in a message's
+details when the Mac's `created` is more than 60 s after `sentAt`. Every message goes to the main timeline as on the Mac; `topicId` also files it in
 its sub-chat.
 
 **`topic`** (`TopicData`, upsert): `id`, `label`, `created`, `seq`.
@@ -535,8 +573,9 @@ Codes in 0.7: `question`, `question_topic`, `question_task`, `routing_failed`, `
   (step 1); each claim replaces the result, and one that is not compatible clears it.
 - Live updates come from `Store.changes(after:)` past the last published sequence and go out
   through `RelayHost.broadcast([YorozuEvent])` to every paired device, chunked when needed.
-- `Engine.send(_:id:)` / `Store.message(..., id:)` keep the phone's `id` as the v2 `Message.id`,
-  so the phone's bubble and the stored message are one entry.
+- `Engine.send(_:id:sentAt:)` / `Store.message(..., id:, sentAt:)` keep the phone's `id` as the
+  v2 `Message.id`, so the phone's bubble and the stored message are one entry, and its `ts` as
+  `Message.sentAt`.
 - Paired devices live in `relay-devices.json` (`RelayDevice`): keys, `pairedAt` and the channel
   counter, plus optional `name` (from the claim), `label` (renamed on the Mac with
   `RelayHost.rename(_:label:)`; blank clears it), `lastSeen` and `compatible` (above). Files
