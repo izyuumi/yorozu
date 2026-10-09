@@ -84,14 +84,14 @@ struct PairingFlowView: View {
         }
     }
 
-    /// The three things to do on the Mac.
+    /// The three steps, named as the Mac's pair sheet shows them.
     private var guide: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Pair with your Mac").font(.subheadline.weight(.semibold))
             VStack(alignment: .leading, spacing: 4) {
-                guideStep(1, "Open Yorozu on your Mac")
-                guideStep(2, "Show its pairing code")
-                guideStep(3, "Scan the code, or paste it here")
+                guideStep(1, "On your Mac, open Settings › Devices › Pair iPhone")
+                guideStep(2, "Scan its QR code, or paste the code shown beside it")
+                guideStep(3, "Check that the Mac key matches")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,7 +134,7 @@ struct PairView: View {
                         .autocorrectionDisabled()
                         .lineLimit(3...6)
                 } footer: {
-                    Text("Paste the code shown in Yorozu on your host Mac.")
+                    Text("Paste the Code from Settings › Devices › Pair iPhone on your Mac. Copy Link there copies it.")
                 }
                 if let error {
                     Section {

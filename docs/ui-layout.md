@@ -40,9 +40,10 @@ the platform withholds the width, use the platform view that has it (the system 
   v1's chat on `main` used a custom `.principal` title instead; on iOS 26 the bar gave it
   565 points on a 402-point screen and it ran under the toolbar buttons, and a
   `frame(maxWidth: 160)` cap hid that on one phone only.
-- The Mac's Pair iPhone sheet draws its QR code from one constant, `qrSide` in
-  `Sources/ProjectXApp/Relay/PairPhoneView.swift`, which sizes both the code and its
-  placeholder: a custom component owning its geometry.
+- The Mac's Pair iPhone sheet draws its QR code and its text column from two constants, `qrSide`
+  and `textWidth` in `Sources/ProjectXApp/Relay/PairPhoneView.swift`, which also size the
+  placeholder: a custom component owning its geometry. A sheet proposes no width, so without
+  `textWidth` the long pairing code would lay out on one line.
 - The Mac's chat popover is 420×744 points from one constant, `MenuBarHost.popoverSize` in
   `Sources/ProjectXApp/MenuBarHost.swift`: nothing proposes a size to an `NSPopover`, so the
   host that owns it sets it. Everything inside sizes from it; the composer grows with its text

@@ -22,7 +22,7 @@ struct ScannerView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    Text("On your Mac, open Yorozu and show its pairing code.")
+                    Text("On your Mac, open Settings › Devices › Pair iPhone and scan its QR code.")
                         .font(.headline)
                         .multilineTextAlignment(.center)
 

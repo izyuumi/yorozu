@@ -1163,11 +1163,6 @@ final class PhoneModel {
 
 extension QrPayload {
     var relayHost: String { URLComponents(string: relayUrl)?.host ?? relayUrl }
-    /// The Mac key's first 8 bytes as hex, to compare with the Mac's screen.
-    var fingerprint: String {
-        (Data(base64URLEncoded: macPubkey) ?? Data()).prefix(8)
-            .map { String(format: "%02x", $0) }.joined(separator: " ")
-    }
 }
 
 /// The chat's status when the app last went to the background.

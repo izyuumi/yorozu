@@ -29,10 +29,9 @@ struct RootView: View {
                 )
             }
         }
-        // `yorozu://pair?…` tapped anywhere takes the same road as a scan: the confirmation below.
-        .onOpenURL { url in
-            if url.host()?.lowercased() == "pair" { _ = model.pair(with: url.absoluteString) }
-        }
+        // A tapped `yorozu://pair?…` or the QR's `https://yorozu.yumi.to/pair#…` (the system Camera, via the
+        // associated domain) takes the same road as a scan: the confirmation below. `QrPayload.decode` refuses anything else.
+        .onOpenURL { _ = model.pair(with: $0.absoluteString) }
         .alert(
             model.pendingPairing?.repair == true ? String(localized: "Already connected") : String(localized: "Add host?"),
             isPresented: Binding(get: { model.pendingPairing != nil }, set: { if !$0 { model.pendingPairing = nil } }),

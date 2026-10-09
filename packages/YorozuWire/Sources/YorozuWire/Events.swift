@@ -1787,6 +1787,13 @@ public struct QrPayload: Codable, Equatable, Sendable {
     /// as the `yorozu://` form, in the fragment, so a browser never sends it anywhere.
     public static let link = "https://yorozu.yumi.to/pair"
 
+    /// The Mac key's first 8 bytes as uppercase hex in groups of two bytes ("3F9A 1C07 B2E4 55D0"): what both
+    /// the Mac's pair sheet and the phone's confirmation show, to compare.
+    public var fingerprint: String {
+        let hex = (Data(base64URLEncoded: macPubkey) ?? Data()).prefix(8).map { String(format: "%02X", $0) }
+        return stride(from: 0, to: hex.count, by: 2).map { hex[$0..<min($0 + 2, hex.count)].joined() }.joined(separator: " ")
+    }
+
     /// The one parser for every way a pairing arrives: the QR, a pasted string, a tapped
     /// `yorozu://` link or the web link the QR carries. Throws on anything that is not a v1
     /// pairing string.
