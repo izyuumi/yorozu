@@ -303,7 +303,7 @@ event carries its row's `seq`.
 | `topic` | Mac -> phone, in pages | `TopicData` | record, upsert |
 | `task` | Mac -> phone, in pages | `TaskData` | record, upsert |
 | `amendment` | Mac -> phone, in pages | `AmendmentData` | record, upsert |
-| `worker_event` | Mac -> phone, in pages | `WorkerEventData` | record, insert-only |
+| `worker_event` | Mac -> phone, in pages | `WorkerEventData` | record, upsert by `seq` (`files` added later) |
 | `read_state` | both | `ReadStateData` | read cursor; a record when Mac -> phone |
 | `task_control` | phone -> Mac | `TaskControlData` | Stop or Retry |
 | `task_control_result` | Mac -> phone | `TaskControlResultData` | its outcome |

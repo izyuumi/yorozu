@@ -18,8 +18,8 @@ struct DraftFile: Identifiable, Equatable {
     var isImage: Bool { UTType(mimeType: mime)?.conforms(to: .image) ?? false }
 
     /// At most this many files per message, each at most `byteLimit` as sent (owner decision).
-    static let countLimit = 10
-    static let byteLimit: Int64 = 50_000_000
+    static let countLimit = FileStore.maxFiles
+    static let byteLimit = FileStore.maxBytes
     static var byteLimitText: String { size(byteLimit) }
     static func size(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes,countStyle: .file) }
 
@@ -315,9 +315,4 @@ struct Thumbnail: View {
     }
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { url == nil ? 0 : 1 }
     func previewPanel(_ panel: QLPreviewPanel!,previewItemAt index: Int) -> (any QLPreviewItem)! { url as NSURL? }
-}
-
-// TEMPORARY: the at-store package adds `Engine.attachmentURL(_:)` to ProjectXCore. Delete this stub when it merges.
-extension Engine {
-    func attachmentURL(_ id: String) async -> URL? { nil }
 }

@@ -9,7 +9,7 @@ public struct FileStore: Sendable {
     public let root: URL
     /// Owner decision: at most 10 files per message, each at most 50 MB.
     public static let maxFiles = 10
-    public static let maxBytes: Int64 = 50 * 1024 * 1024
+    public static let maxBytes: Int64 = 50_000_000 // decimal, as Finder counts; the wire's MessageAttachment.maxBytes matches
 
     /// Refuses a root inside a git checkout or worktree (any ancestor holding `.git`), so files never land in a repo.
     public init(root: URL) throws {

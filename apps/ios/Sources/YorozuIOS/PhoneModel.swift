@@ -91,8 +91,11 @@ final class PhoneModel {
     let files = AttachmentFiles()
     /// The Mac takes attachments (its peer info); nil until it has said.
     private(set) var attachmentsSupported: Bool?
-    // WIRE: build the RelayClient-backed transport in `connect` and hand it to `files` too.
-    private var transport: any AttachmentTransport = UnwiredAttachmentTransport()
+    /// Uploads and downloads over the pairing's link (relay or direct), moving bytes only while `.paired`.
+    @ObservationIgnored private var transfers: AttachmentTransfers?
+    @ObservationIgnored private var transferUpdates: Task<Void, Never>?
+    /// Incoming events for the transfers, in arrival order.
+    @ObservationIgnored private var transferInbox: AsyncStream<YorozuEvent>.Continuation?
     /// Messages whose files are going up now, and how far, 0 to 1.
     private(set) var uploading: Set<String> = []
     private(set) var uploadProgress: [String: Double] = [:]
@@ -141,7 +144,9 @@ final class PhoneModel {
 
     /// The relay has accepted this phone, so the chat shows rather than the pairing screen.
     private(set) var linked = false
-    private(set) var state: TransportState = .closed
+    private(set) var state: TransportState = .closed {
+        didSet { if (state == .paired) != (oldValue == .paired) { transfersLive() } }
+    }
     private(set) var ownerOnline = false
     /// The link's failure; cleared by the next `.paired`.
     private(set) var failure: String? { didSet { noteError(failure) } }
@@ -270,7 +275,18 @@ final class PhoneModel {
             failure = error.localizedDescription
             return
         }
-        files.transport = transport
+        let transfers = AttachmentTransfers(send: { [relay] event in try await relay?.send(event) })
+        self.transfers = transfers
+        files.transfers = transfers
+        let (inbox, feed) = AsyncStream<YorozuEvent>.makeStream()
+        transferInbox = feed
+        transferUpdates = Task { [weak self] in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { for await event in inbox { await transfers.handle(event) } }
+                for await update in transfers.updates { self?.transferred(update) }
+                group.cancelAll()
+            }
+        }
         pairing = stored.pairing
         pairedAt = stored.pairedAt
         candidates = stored.directCandidates ?? []
@@ -298,6 +314,12 @@ final class PhoneModel {
         inFlight = []
         suspend()
         relay = nil
+        transferInbox?.finish()
+        transferInbox = nil
+        transferUpdates?.cancel()
+        transferUpdates = nil
+        transfers = nil
+        files.transfers = nil
         pairing = nil
         ownPub = nil
         linked = false
@@ -505,6 +527,8 @@ final class PhoneModel {
         case .failed(let reason):
             failure = reason
         case .event(let event):
+            // The transfers see every event first: attachment answers are theirs, and a receipt ends an upload.
+            transferInbox?.yield(event)
             receive(event)
         }
         releaseHeldIfSettled()
@@ -716,29 +740,56 @@ final class PhoneModel {
         finishBackgroundIfDone()
     }
 
-    /// Uploads one message's files from the offsets the Mac last confirmed; the Mac stores the message
-    /// once every file is in. A failure leaves it Sending for the next live session.
+    /// Hands one message's files to `AttachmentTransfers`, from the offsets the Mac last confirmed. The actor
+    /// uploads while `.paired`, then sends the commit; the usual `receipt` or `admission_status` settles it.
     private func upload(_ item: Outbox.Item, _ attached: [AttachmentInfo]) async {
         let id = item.id
-        guard UploadStore.exists(id, count: attached.count) else {
-            notDelivered(id, reason: String(localized: "The files are no longer on this iPhone."))
+        // A Mac that has not advertised attachments never sees an `attachment_*` kind; the message waits.
+        guard let transfers, attachmentsSupported == true, !uploading.contains(id), case .message(let message) = item.event.payload else { return }
+        let offsets = uploadOffsets[id] ?? UploadStore.offsets(id, count: attached.count)
+        let files = attached.enumerated().compactMap { index, info in
+            info.sha256.map {
+                AttachmentTransfers.Upload.File(url: UploadStore.url(id, index),
+                                                descriptor: AttachmentDescriptor(name: info.name, mime: info.mime, bytes: info.bytes, sha256: $0),
+                                                offset: offsets[index])
+            }
+        }
+        guard UploadStore.exists(id, count: attached.count), files.count == attached.count else {
+            notDelivered(id, reason: AttachmentLimits.reason(AttachmentTransfers.localFileMissing))
             return
         }
-        let offsets = uploadOffsets[id] ?? UploadStore.offsets(id, count: attached.count)
         uploadOffsets[id] = offsets
         uploadProgress[id] = Self.fraction(offsets, attached)
         uploading.insert(id)
-        defer { uploading.remove(id) }
-        let files = attached.enumerated().map { UploadFile(info: $1, url: UploadStore.url(id, $0)) }
-        do {
-            try await transport.upload(messageID: id, message: item.event, files: files, resumeFrom: offsets) { [weak self] index, next in
-                await self?.uploaded(id, index, next, attached)
-            }
-            stored(id, read: false)
-        } catch AttachmentTransportError.rejected(let reason) {
-            notDelivered(id, reason: reason)
-        } catch {
-            // Sending until the next live session.
+        await transfers.upload(AttachmentTransfers.Upload(messageId: id, threadId: item.event.threadId, ts: item.event.ts,
+                                                          text: message.text, admissionDeadline: item.deadline, files: files))
+    }
+
+    /// `AttachmentTransfers.updates`: offsets to persist, a failed upload, and downloads for the cache.
+    private func transferred(_ update: AttachmentTransfers.Update) {
+        switch update {
+        case .uploadProgress(let id, let index, let offset):
+            if let attached = outbox.first(where: { $0.id == id })?.files { uploaded(id, index, offset, attached) }
+        case .uploadCommitted:
+            break // Sending until the receipt or the stored copy.
+        case .uploadFailed(let id, let reason):
+            uploading.remove(id)
+            guard let item = outbox.first(where: { $0.id == id }), !item.stored else { return }
+            // A corrupt or expired staging starts over from zero on Resend.
+            uploadOffsets[id] = Array(repeating: 0, count: item.files?.count ?? 0)
+            UploadStore.setOffsets(id, uploadOffsets[id] ?? [])
+            notDelivered(id, reason: AttachmentLimits.reason(reason))
+        default:
+            files.apply(update)
+        }
+    }
+
+    /// Bytes move only on `.paired`; anything else stops the frames in flight until the next one.
+    private func transfersLive() {
+        if state != .paired { uploading = [] }
+        Task { [weak self] in
+            guard let self, let transfers = self.transfers else { return }
+            await transfers.setLive(self.state == .paired)
         }
     }
 
@@ -791,6 +842,7 @@ final class PhoneModel {
         // The relay no longer holds it, so it can no longer expire there.
         LocalNotices.cancelExpiry(id)
         // Its files are on the Mac: the outbox copies become cached files.
+        if uploading.remove(id) != nil { Task { [transfers] in await transfers?.cancelUpload(id) } }
         if let attached = outbox.first(where: { $0.id == id })?.files, uploadOffsets[id] != nil || UploadStore.exists(id, count: attached.count) {
             files.adopt(attached, from: id)
             UploadStore.remove(id)
@@ -810,6 +862,7 @@ final class PhoneModel {
 
     private func notDelivered(_ id: String, reason: String?) {
         inFlight.remove(id)
+        if uploading.remove(id) != nil { Task { [transfers] in await transfers?.cancelUpload(id) } }
         unconfirmed.remove(id)
         guard let index = outbox.firstIndex(where: { $0.id == id }), MarkState.allows(marks[id], .notDelivered) else { return }
         outbox[index].reason = reason
@@ -988,7 +1041,8 @@ final class PhoneModel {
         page = reply
     }
 
-    /// The upsert rule: a held record is replaced only by one with a higher `seq`; `worker_event` is insert-only.
+    /// The upsert rule: a held record is replaced only by one with a higher `seq` (a `worker_event` too: its shared
+    /// images arrive later, re-stamped).
     private func applyRecord(_ event: YorozuEvent) {
         switch event.payload {
         case .message(let message):
@@ -1008,7 +1062,7 @@ final class PhoneModel {
         case .amendment(let amendment):
             if (amendments[amendment.id]?.seq ?? -1) < amendment.seq { amendments[amendment.id] = amendment }
         case .workerEvent(let workerEvent):
-            if workerEvents[workerEvent.id] == nil { workerEvents[workerEvent.id] = workerEvent }
+            if (workerEvents[workerEvent.id]?.seq ?? -1) < workerEvent.seq { workerEvents[workerEvent.id] = workerEvent }
         case .readState(let read) where read.threadId == "main":
             if (readCursor?.seq ?? -1) < (read.seq ?? 0) { readCursor = read }
         default:

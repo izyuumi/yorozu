@@ -30,83 +30,38 @@ struct AttachmentInfo: Codable, Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-/// The owner's limits (#316 Decisions): 50 MB per file, 10 files per message.
+/// The owner's limits (#316 Decisions): 50 MB (decimal) per file, 10 files per message; the wire's.
 enum AttachmentLimits {
-    static let maxBytes = 50 * 1024 * 1024
-    static let maxCount = 10
-    /// The Mac's capability for attachments in contract 0.7.
-    // WIRE: the capability name the reworked YorozuWire advertises.
-    static let capability = "attachments-v1"
-}
+    static let maxBytes = MessageAttachment.maxBytes
+    static let maxCount = MessageAttachment.maxCount
+    /// The capability both sides advertise for attachments in contract 0.7.
+    static let capability = AttachmentDescriptor.capability
 
-// WIRE: descriptors on messages and worker events. Map the reworked YorozuWire descriptor
-// (id, name, mime, bytes, sha256) here; until then nothing on the wire carries one.
-extension MessageData {
-    var attachmentInfos: [AttachmentInfo] { [] }
-}
-
-// WIRE: see `MessageData.attachmentInfos`. Sub-chat images (intermediate images a worker shares).
-extension WorkerEventData {
-    var attachmentInfos: [AttachmentInfo] { [] }
-}
-
-// MARK: Transport
-
-enum AttachmentKind: String, Sendable {
-    case thumbnail, full
-}
-
-/// One file to upload: its descriptor and the protected copy in the outbox.
-struct UploadFile: Sendable {
-    let info: AttachmentInfo
-    let url: URL
-}
-
-enum AttachmentTransportError: LocalizedError, Equatable {
-    /// No live session with a Mac that takes attachments. The outbox tries again on the next one.
-    case notAvailable
-    /// The Mac no longer has the file (`attachment-unavailable`).
-    case unavailable
-    /// The Mac refused the message for good: Not delivered, with this reason.
-    case rejected(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notAvailable: String(localized: "Attachments aren’t available right now.")
-        case .unavailable: String(localized: "File no longer available")
-        case .rejected(let reason): reason
+    /// The bubble's Not delivered reason for an upload that cannot go on.
+    static func reason(_ code: String) -> String {
+        switch code {
+        case AttachmentTransfers.localFileMissing: String(localized: "The files are no longer on this iPhone.")
+        case AttachmentReason.expired: String(localized: "Your Mac was offline for more than 24 hours.")
+        case AttachmentReason.unsupported: String(localized: "Attachments aren’t available right now.")
+        default: String(localized: "Couldn’t send")
         }
     }
 }
 
-/// How attachments travel between the phone and the Mac, on whichever path is live (relay or direct).
-protocol AttachmentTransport: Sendable {
-    /// Uploads `message` (a user `message` event, its text possibly empty) with its files, each from
-    /// `resumeFrom[i]`. Calls `progress(index, nextOffset)` each time the Mac confirms a chunk, and
-    /// returns once the Mac has stored the message and every file. Throws `.rejected` when the Mac
-    /// refuses it for good; any other error leaves it for the next live session.
-    func upload(messageID: String, message: YorozuEvent, files: [UploadFile], resumeFrom: [Int],
-                progress: @escaping @Sendable (_ index: Int, _ nextOffset: Int) async -> Void) async throws
-
-    /// Downloads one attachment's thumbnail or full file to `to`, reporting `progress` from 0 to 1.
-    /// Throws `.unavailable` when the Mac no longer has the file.
-    func download(attachmentID: String, kind: AttachmentKind, to: URL,
-                  progress: @escaping @Sendable (Double) -> Void) async throws
+extension AttachmentInfo {
+    init(_ d: AttachmentDescriptor) {
+        self.init(id: d.id ?? d.sha256, name: d.name, mime: d.mime, bytes: d.bytes, sha256: d.sha256)
+    }
 }
 
-// WIRE: replace with a conformance over `RelayClient` (resumable `attachment_chunk` upload answered by
-// `attachment_progress.nextOffset`, idempotent `attachment_commit`, `attachment_download_request` for
-// the thumbnail or the full file), and build it in `PhoneModel.connect`.
-struct UnwiredAttachmentTransport: AttachmentTransport {
-    func upload(messageID: String, message: YorozuEvent, files: [UploadFile], resumeFrom: [Int],
-                progress: @escaping @Sendable (Int, Int) async -> Void) async throws {
-        throw AttachmentTransportError.notAvailable
-    }
+/// Descriptors on messages (user messages and results).
+extension MessageData {
+    var attachmentInfos: [AttachmentInfo] { (files ?? []).map(AttachmentInfo.init) }
+}
 
-    func download(attachmentID: String, kind: AttachmentKind, to: URL,
-                  progress: @escaping @Sendable (Double) -> Void) async throws {
-        throw AttachmentTransportError.notAvailable
-    }
+/// Sub-chat images (intermediate images a worker shares).
+extension WorkerEventData {
+    var attachmentInfos: [AttachmentInfo] { (files ?? []).map(AttachmentInfo.init) }
 }
 
 // MARK: Files on disk
@@ -210,7 +165,12 @@ final class AttachmentFiles {
     /// Files the Mac no longer has: "File no longer available".
     private(set) var missing: Set<String> = []
 
-    @ObservationIgnored var transport: any AttachmentTransport = UnwiredAttachmentTransport()
+    /// The pairing's transfers; nil while unpaired. Replacing them gives up on the old one's downloads.
+    @ObservationIgnored var transfers: AttachmentTransfers? {
+        didSet { if transfers !== oldValue { abandonDownloads() } }
+    }
+    @ObservationIgnored private var waiting: [AttachmentTransfers.DownloadKey: [CheckedContinuation<String?, Never>]] = [:]
+    @ObservationIgnored private var trackedKeys: [AttachmentTransfers.DownloadKey: String] = [:]
     /// Files still in the outbox, shown from there until the Mac has them.
     @ObservationIgnored private var local: [String: URL] = [:]
     @ObservationIgnored private var loading: Set<String> = []
@@ -243,7 +203,7 @@ final class AttachmentFiles {
         let candidates = [local[key], fullURL(info), thumbnailURL(info)].compactMap { $0 }
         var source = candidates.first { FileManager.default.fileExists(atPath: $0.path) }
         if source == nil {
-            guard await fetch(info, .thumbnail, to: thumbnailURL(info), tracked: false) else { return }
+            guard await fetch(info, thumbnail: true, to: thumbnailURL(info), tracked: false) else { return }
             source = thumbnailURL(info)
         }
         guard let source else { return }
@@ -259,7 +219,7 @@ final class AttachmentFiles {
         let target = fullURL(info)
         if FileManager.default.fileExists(atPath: target.path) { return target }
         guard progress[key] == nil, !missing.contains(key) else { return nil }
-        return await fetch(info, .full, to: target, tracked: true) ? target : nil
+        return await fetch(info, thumbnail: false, to: target, tracked: true) ? target : nil
     }
 
     func wipe() {
@@ -267,34 +227,48 @@ final class AttachmentFiles {
         progress = [:]
         missing = []
         local = [:]
+        abandonDownloads()
         try? FileManager.default.removeItem(at: Self.root)
     }
 
-    /// Downloads into a temporary file and moves it into place only once whole.
-    private func fetch(_ info: AttachmentInfo, _ kind: AttachmentKind, to target: URL, tracked: Bool) async -> Bool {
-        let key = info.cacheKey
-        let partial = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        if tracked { progress[key] = 0 }
-        defer {
-            if tracked { progress[key] = nil }
-            try? FileManager.default.removeItem(at: partial)
-        }
+    /// Streams the file (or the Mac's thumbnail) to `target` through `AttachmentTransfers`, which moves it into place
+    /// only once whole and verified; a full download resumes from its part. Waits out a dropped session.
+    private func fetch(_ info: AttachmentInfo, thumbnail: Bool, to target: URL, tracked: Bool) async -> Bool {
+        guard let transfers else { return false }
+        let key = AttachmentTransfers.DownloadKey(attachmentId: info.id, thumbnail: thumbnail)
         do {
-            try await transport.download(attachmentID: info.id, kind: kind, to: partial) { [weak self] value in
-                guard tracked else { return }
-                Task { @MainActor in if self?.progress[key] != nil { self?.progress[key] = value } }
-            }
             try makeProtectedDirectory(Self.root)
             try makeProtectedDirectory(folder(info))
-            try? FileManager.default.removeItem(at: target)
-            try FileManager.default.moveItem(at: partial, to: target)
-            return true
-        } catch AttachmentTransportError.unavailable {
-            missing.insert(key)
-            return false
-        } catch {
-            return false
+        } catch { return false }
+        if tracked { progress[info.cacheKey] = 0; trackedKeys[key] = info.cacheKey }
+        defer { if tracked { progress[info.cacheKey] = nil; trackedKeys[key] = nil } }
+        let expected = info.sha256.map { AttachmentDescriptor(id: info.id, name: info.name, mime: info.mime, bytes: info.bytes, sha256: $0) }
+        let reason = await withCheckedContinuation { (c: CheckedContinuation<String?, Never>) in
+            waiting[key, default: []].append(c)
+            Task { await transfers.download(key, expected: thumbnail ? nil : expected, to: target) }
         }
+        if reason == AttachmentReason.unavailable { missing.insert(info.cacheKey) }
+        return reason == nil
+    }
+
+    /// Download outcomes from `AttachmentTransfers.updates` (PhoneModel forwards them).
+    func apply(_ update: AttachmentTransfers.Update) {
+        switch update {
+        case .downloadProgress(let key, let received, let total):
+            if let cacheKey = trackedKeys[key], total > 0 { progress[cacheKey] = Double(received) / Double(total) }
+        case .downloaded(let key, _): finish(key, nil)
+        case .downloadFailed(let key, let reason): finish(key, reason)
+        default: break
+        }
+    }
+
+    private func abandonDownloads() {
+        let all = waiting; waiting = [:]
+        all.values.joined().forEach { $0.resume(returning: AttachmentTransfers.integrityFailed) }
+    }
+
+    private func finish(_ key: AttachmentTransfers.DownloadKey, _ reason: String?) {
+        waiting.removeValue(forKey: key)?.forEach { $0.resume(returning: reason) }
     }
 
     private func folder(_ info: AttachmentInfo) -> URL { Self.root.appending(path: info.cacheKey, directoryHint: .isDirectory) }

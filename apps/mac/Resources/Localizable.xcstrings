@@ -31,6 +31,16 @@
         }
       }
     },
+    "Attachments are off: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添付ファイルは使えません: %@"
+          }
+        }
+      }
+    },
     "Direct · %@" : {
       "localizations" : {
         "ja" : {
