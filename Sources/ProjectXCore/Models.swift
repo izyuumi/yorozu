@@ -40,7 +40,8 @@ public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, S
     public var state: String; public var revision: Int; public var runID: String?; public var controllerKey: String?
     public var sessionReady: Bool; public var suppressed: Bool; public var result: String?; public var error: String?
     public var outputRevision: Int?; public var created: Double
-    /// nil = thinking worker; otherwise the id of a coding executor the harness advertises (`Harness.executors`).
+    /// nil = a worker; `script` = a job's script step (#319). Rows from before #351 may name a retired coding executor
+    /// (`claude`, `codex`, `hermes`); new work never does.
     public var executor: String? = nil
     /// When a worker first took it (`Store.startWork`, #348); nil before it started and for rows from older builds.
     public var started: Double? = nil
@@ -182,13 +183,13 @@ public struct NoticeError: LocalizedError, Sendable {
 }
 public struct Decision: Codable, Sendable {
     public var action: String; public var topicID: String?; public var newTopic: String?; public var taskID: String?
-    public var instruction: String?; public var reply: String?; public var memoryID: String?; public var executor: String?
+    public var instruction: String?; public var reply: String?; public var memoryID: String?
     /// `approve` only: a pending job approval from `RoutingInput.approvals` (#319 open question 1).
     public var approvalID: String?
     /// `delegate`/`steer` only (#348): an existing topic the message's recent sub-chat belongs to.
     public var attachTo: String?
-    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, executor: String? = nil, approvalID: String? = nil, attachTo: String? = nil) {
-        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.executor = executor; self.approvalID = approvalID; self.attachTo = attachTo
+    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, approvalID: String? = nil, attachTo: String? = nil) {
+        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.approvalID = approvalID; self.attachTo = attachTo
     }
 }
 /// The secretary's slim view: only the fields routing needs, never database records. Long text is excerpted by bytes.
@@ -198,7 +199,7 @@ public struct RoutingInput: Codable, Sendable {
     /// A file the secretary may know about (#316): name, type, size and absolute path, never contents.
     public struct FileView: Codable, Sendable { public var name: String; public var type: String; public var size: String; public var path: String }
     public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String; public var files: [FileView]? = nil }
-    public struct WorkView: Codable, Sendable { public var id: String; public var topicID: String; public var state: String; public var executor: String?; public var instruction: String; public var error: String? }
+    public struct WorkView: Codable, Sendable { public var id: String; public var topicID: String; public var state: String; public var instruction: String; public var error: String? }
     public struct MemoryView: Codable, Sendable { public var id: String; public var title: String; public var excerpt: String }
     /// A scheduled job: its topic, name and the first line of its summary (#319).
     public struct JobView: Codable, Sendable { public var topicID: String; public var name: String; public var summary: String }
@@ -206,8 +207,6 @@ public struct RoutingInput: Codable, Sendable {
     public struct ApprovalView: Codable, Sendable { public var approvalID: String; public var topicID: String; public var job: String }
     public var jobs: [JobView] = []; public var approvals: [ApprovalView] = []
     /// Instructions, printed once above the context data and never encoded into it.
-    /// The offered coding executor ids, printed in the contract and never encoded.
-    public var executors: [String] = []
     public var policy: String = ""; public var message: String; public var recent: [MessageView]; public var topics: [TopicView]
     public var work: [WorkView]; public var latestTopic: String?; public var memory: [MemoryView]
     public var sourceMessageID: String? = nil
@@ -235,6 +234,8 @@ public struct WorkerInput: Codable, Sendable {
     public var history: [Turn]; public var memory: [Note]; public var followUp: String? = nil
     /// Files the work carries (#316): each goes to the worker as an `Attached document: <path>` line.
     public var attachments: [Attachment] = []
+    /// The task's folder in the workspace (#351), named in the contract; never on the wire. Nil without a workspace.
+    public var folder: URL? = nil
     /// What a thinking session is sent: slim views, never database records or harness session/controller keys (the topic
     /// is only `{id, label}`). The history bound measures this.
     public var wire: String { get throws {
@@ -249,8 +250,6 @@ public struct WorkerOutput: Codable, Sendable {
     /// Paths of files the worker returns (#316); Yorozu copies them into the file store and attaches them.
     public var files: [String]? = nil
     public init(text: String, appliedRevision: Int = 0, notable: Bool? = nil) { self.text = text; self.appliedRevision = appliedRevision; self.notable = notable }
-    /// A coding executor's free-text answer: notable when it carries `"notable": true` (in its final JSON or inline).
-    public init(coded text: String, appliedRevision: Int) { self.init(text: text,appliedRevision: appliedRevision,notable: text.range(of: #""notable"\s*:\s*true\b"#,options: .regularExpression) != nil) }
 }
 public struct RunHandle: Codable, Sendable {
     public var sessionKey: String; public var controllerKey: String; public var runID: String

@@ -20,6 +20,7 @@ struct StorageSettings: View {
             } footer: {
                 Text("Memory is plain Markdown you own; edit it with any app.").foregroundStyle(.secondary)
             }
+            WorkspaceSection(model: model)
             if model.config.general.showAdvanced { AboutInstallSection(model: model) }
         }
         .settingsForm()
@@ -59,6 +60,56 @@ struct StorageSettings: View {
             total += Int64(values.totalFileAllocatedSize ?? 0)
         }
         return total
+    }
+}
+
+/// Settings › Storage › Workspace (#351): where agents work, one folder per task, and whether they are limited to it.
+struct WorkspaceSection: View {
+    @ObservedObject var model: AppModel
+    /// A `restrict` change waiting for the user's confirmation (security-relevant).
+    @State private var restrictTo: Bool?
+
+    private var folder: URL? { model.dataRoot.map { model.config.workspace.url(dataRoot: $0, isolated: model.isolatedData) } }
+
+    var body: some View {
+        let config = model.config
+        Section {
+            LabeledContent {
+                Button("Choose…", action: choose)
+                if let folder { Button("Show in Finder") { show(folder) } }
+            } label: {
+                Text("Workspace")
+                if let folder { Text(tildePath(folder)).monospaced().textSelection(.enabled) }
+            }
+            Toggle(isOn: Binding(get: { config.workspace.restrict }, set: { if $0 != config.workspace.restrict { restrictTo = $0 } })) {
+                Text("Limit agents to the workspace")
+                Text("Coding agents start only inside it and run sandboxed, writing only there (Claude Code runs no shell commands, Codex has no network). Workers are told to stay inside it, which isn't enforced. Off: file access is not limited.")
+            }
+        } header: { Text("Workspace") } footer: {
+            Text("Each task gets its own folder here; downloaded files and cloned repositories go there.").foregroundStyle(.secondary)
+        }
+        .confirmationDialog(restrictTo == true ? "Limit agents to the workspace?" : "Stop limiting agents to the workspace?",
+                            isPresented: Binding(get: { restrictTo != nil }, set: { if !$0 { restrictTo = nil } })) {
+            Button(restrictTo == true ? "Limit" : "Stop Limiting") { if let on = restrictTo { model.writeSettings { $0.workspace.restrict = on } }; restrictTo = nil }
+            Button("Cancel", role: .cancel) { restrictTo = nil }
+        } message: {
+            Text(restrictTo == true ? "From the next task, coding agents write only inside the workspace, and agents without a sandboxed command won't run. Workers are told to stay inside it." : "From the next task, coding agents and workers may read and write files anywhere on the host.")
+        }
+    }
+
+    private func show(_ folder: URL) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
+    }
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true; panel.allowsMultipleSelection = false
+        panel.prompt = String(localized: "Choose")
+        panel.directoryURL = folder
+        guard panel.runModal() == .OK, let picked = panel.url else { return }
+        // The home folder itself stays absolute: its tilde form "~" is not a path `Config` accepts.
+        let url = picked.standardizedFileURL, home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        model.writeSettings { $0.workspace.path = url.path == home.path ? url.path : tildePath(url) }
     }
 }
 
@@ -115,9 +166,6 @@ struct HarnessSettingsView: View {
                 ModelRow(model: model, title: "Memory extraction", key: "models.extraction", path: \.extraction, choice: { $0.extraction })
                 ModelRow(model: model, title: "Workers", key: "models.worker", path: \.worker, choice: { $0.worker })
                 ModelRow(model: model, title: "Stronger review", key: "models.review", path: \.review, choice: { $0.review })
-                ForEach((model.harness?.executors ?? []).filter { $0.runtime != nil || config.models.coding[$0.id] != nil }, id: \.id) { executor in
-                    ModelRow(model: model, title: "Coding: \(executor.name)", key: "models.coding.\(executor.id)", path: \.coding[executor.id], choice: { $0.coding[executor.id] })
-                }
             } header: { Text("Models") } footer: {
                 Text("Allowed models come from the harness. Automatic picks again at launch and whenever settings change.").foregroundStyle(.secondary)
             }
@@ -172,59 +220,29 @@ struct HarnessSettingsView: View {
     }
 }
 
-/// Settings › Advanced (only while General › Show Advanced settings is on): coding workers and integrations.
+/// Settings › Advanced (only while General › Show Advanced settings is on): coding agents and integrations.
 struct AdvancedSettings: View {
     @ObservedObject var model: AppModel
-    /// Each coding tool's sign-in command, run by the user where the Gateway runs.
-    static let logins = ["claude": "claude auth login", "codex": "codex login"]
 
     var body: some View {
-        let config = model.config
         Form {
             ConfigProblems(model: model)
             Section {
-                let locked = model.override("harness.dev_repo")
-                Toggle(isOn: Binding(get: { !config.harness.devRepo.isEmpty }, set: { on in if on { chooseRepo() } else { model.writeSettings { $0.harness.devRepo = "" } } })) {
-                    Text("Allow coding work")
-                    Text("Coding workers change code only in this repository, each in its own worktree. Off: Yorozu says coding is off.")
-                }.disabled(locked != nil)
-                LabeledContent {
-                    Button("Choose…", action: chooseRepo)
-                } label: {
-                    Text("Repository")
-                    Text(config.harness.devRepo.isEmpty ? String(localized: "Not set: coding work is off.") : config.harness.devRepo).monospaced().textSelection(.enabled)
-                    if let note = overrideNote(locked) { note }
-                }.disabled(locked != nil)
-                ForEach(config.harness.kind.adapter(config, rpc: GatewayRPC()).executors(model.settingsBox.value), id: \.executor.id) { e in
+                ForEach(model.config.effectiveCodingAgents.map(CodingAgentStatus.init)) { agent in
                     LabeledContent {
-                        if e.path == nil { Text("Not found").foregroundStyle(.orange) } else { Text("Found") }
-                        if let login = Self.logins[e.executor.id] { Button("Copy Sign-In Command") { copyToClipboard(login) } }
+                        if agent.path == nil { Text("Not found").foregroundStyle(.orange) } else { Text("Found") }
+                        if let login = agent.login { Button("Copy Sign-In Command") { copyToClipboard(login) } }
                     } label: {
-                        Text(e.executor.name)
-                        Text(e.path.map { tildePath(URL(fileURLWithPath: $0)) } ?? String(localized: "Not on PATH, ~/.local/bin or Homebrew")).monospaced().textSelection(.enabled)
-                        if let login = Self.logins[e.executor.id] { Text("Sign in where the Gateway runs: `\(login)`") }
+                        Text(agent.title)
+                        Text(agent.path.map { tildePath(URL(fileURLWithPath: $0)) } ?? String(localized: "Not on PATH, ~/.local/bin or Homebrew")).monospaced().textSelection(.enabled)
                     }
                 }
-            } header: { Text("Coding workers") } footer: {
-                Text("Found means the tool is on this Mac. Yorozu can't tell whether it is signed in.").foregroundStyle(.secondary)
+            } header: { Text("Coding agents") } footer: {
+                Text("Workers run these on the host, each in its task's folder. Found means the tool is on the host; Yorozu can't tell whether it is signed in. Add your own as [coding_agents] in config.toml.").foregroundStyle(.secondary)
             }
             IntegrationsSection(model: model)
         }
         .settingsForm()
-    }
-
-    private func chooseRepo() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
-        panel.prompt = String(localized: "Choose")
-        if let current = model.config.harness.devRepoURL { panel.directoryURL = current }
-        guard panel.runModal() == .OK, let picked = panel.url else { return }
-        // The home folder itself stays absolute: its tilde form "~" is not a path `Config` accepts.
-        let url = picked.standardizedFileURL, home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
-        let path = url.path == home.path ? url.path : tildePath(url)
-        // An empty dev_base becomes the repo's current branch now; `resolvingBase` stays the fallback at run time.
-        let base = (try? HarnessSettings().resolvingBase(url).codingBaseBranch) ?? ""
-        model.writeSettings { $0.harness.devRepo = path; if $0.harness.devBase.isEmpty { $0.harness.devBase = base } }
     }
 }
 
@@ -369,6 +387,6 @@ struct ModelRow: View {
     private var automatic: ModelChoice? {
         var models = model.config.models; models[keyPath: path] = nil
         let meta = model.metadata ?? ([], nil)
-        return choice(ModelDefaults.resolve(meta.allowed, primary: meta.primary, explicit: models, runtimes: model.executorRuntimes))
+        return choice(ModelDefaults.resolve(meta.allowed, primary: meta.primary, explicit: models))
     }
 }

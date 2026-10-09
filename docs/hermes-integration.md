@@ -25,7 +25,7 @@ Yorozu owns two profiles and writes nothing else under `~/.hermes` (owner decisi
 | `agent.disabled_toolsets ["cronjob", "skills"]`: no cron jobs and no skill writes | ✓ | | |
 | `auth.adopt_external_logins false`: Hermes does not adopt, and by refreshing sign out, the user's Claude Code and Codex logins | ✓ | | |
 | `approvals.mode off`: no per-step approvals; the ask-first rules stay in Yorozu's prompts | | ✓ | |
-| `terminal.cwd`: `dev_repo`, else the home folder | | ✓ | |
+| `terminal.cwd`: the workspace (#351; an empty `[workspace] path` is `~/Yorozu/workspace`) | | ✓ | |
 | `compression.threshold_tokens`: half the usable window, 129,200 when none is known | | ✓ | |
 | `mcp_servers` (with `--force`): Yorozu's `[mcp_servers]`, `command` and `args` only, none marked `trust: untrusted` | | ✓ | |
 | An empty `work` folder as `terminal.cwd`, `platform_toolsets.api_server ["no_mcp"]`, `SOUL.md` with the role identity | | | ✓ |
@@ -46,7 +46,7 @@ With Hermes as the main harness, the setup engine's `harness` step offers the pr
 - What is on disk is read without Hermes: each profile's `config.yaml` (a line reader for the block YAML that Hermes 0.21.6 writes with ruamel round-trip, `utils.atomic_roundtrip_yaml_save`, comments and quotes kept; a file with a line it cannot classify, an unbalanced quote, a tab in the indent or a duplicate key counts as unreadable, and every key then shows as a change), `.env` (a key of 32+ characters), the Keychain item's fingerprint against that key (8 bytes of its SHA-256, which `apply` stores in the item's `kSecAttrGeneric`; only attributes are read, so no secret and no prompt; an item without one, or with another key's, counts as pending), `SOUL.md` against Yorozu's text, and the `work` folder.
 - Apply runs only on a click in the setup window (Continue on the step) or `setup answer hermes_setup apply:<plan_digest>`. It computes `pending` again and refuses when the changes differ from the ones shown, then runs `HermesProfiles.apply` on the pending writes only and evaluates again. With everything in place there is nothing to apply and the step is done.
 - The step is done when detection passes (including no staleness warning) and nothing is pending, or when the user skipped it. A skipped step whose profiles are missing or out of date still offers the write (`SetupStep.write`, beside the harness choice), so Fix… opens a step whose Apply Changes button applies it; `answer hermes_setup apply:<plan_digest>` takes it too. Choosing another harness clears the step's skip.
-- Staleness: once both profile folders exist, `HermesSetup.detect` compares `pending` with what is on disk and, when anything differs (a changed `[mcp_servers]`, an integration switched, `dev_repo`), adds the warning "Hermes profiles need updating" (`hermes.profiles`) with the change lines as detail and Fix… at the harness step. Yorozu never writes the profiles on its own. The app checks readiness again after each settings reload while Hermes is the launched harness.
+- Staleness: once both profile folders exist, `HermesSetup.detect` compares `pending` with what is on disk and, when anything differs (a changed `[mcp_servers]`, an integration switched, the workspace path), adds the warning "Hermes profiles need updating" (`hermes.profiles`) with the change lines as detail and Fix… at the harness step. Yorozu never writes the profiles on its own. The app checks readiness again after each settings reload while Hermes is the launched harness.
 - Settings › Harness has "Set Up Hermes Profiles…", which opens setup at the harness step.
 
 ## Readiness
@@ -85,7 +85,7 @@ All under `<root>/p/<profile>`.
 | `GET /health` | both, and the root | Readiness | No auth. The root is the default profile's own listener. |
 | `GET /v1/capabilities` | both | Readiness | Feature flags above. |
 | `GET /api/model/options` | both | Model metadata ([Models](#models)), readiness's provider check | |
-| `POST /api/sessions` | worker | Topic and coding sessions | `{id, title, source: "yorozu", provider, model, require_model_lock: true}`. 400 `invalid_title` retries without the title; 409 `session_exists` locks the existing session with `POST /api/sessions/{id}/model {provider, model}`. Once per session and model per app run. Hermes 0.21.6 keeps only its own source names and stores `source` as `api_server`. |
+| `POST /api/sessions` | worker | Topic sessions | `{id, title, source: "yorozu", provider, model, require_model_lock: true}`. 400 `invalid_title` retries without the title; 409 `session_exists` locks the existing session with `POST /api/sessions/{id}/model {provider, model}`. Once per session and model per app run. Hermes 0.21.6 keeps only its own source names and stores `source` as `api_server`. |
 | `GET /api/sessions/{id}/messages?limit=1` | worker | Compaction check | Reads `session_id`, the session's live id. |
 | `POST /v1/runs` | both | Every run | `{input, instructions, provider, model}` plus `session_id` for workers, header `Idempotency-Key`. 200 or 202 with `run_id` (the server's `run_<uuid>`). An identical retry within 24 h returns the original run (`Idempotency-Replayed`). A run without `session_id` gets a new session. A bare model name without a provider is ignored by Hermes, so Yorozu always sends both. |
 | `GET /v1/runs/{id}/events` | both | Progress and the terminal status | SSE ([Progress](#progress)). |
@@ -109,18 +109,19 @@ The secretary, the stronger review and extraction (owner default H6.1):
 
 ## Workers
 
-| | Thinking worker | Coding worker |
-|---|---|---|
-| Session | `yorozu-<topicID>`, title the topic label | `yorozu-<topicID>-hermes`, title "<label> · coding" |
-| Model | `models.worker` | `models.coding.hermes`, else the worker model |
-| Run input | `WorkerInput.wire` or a follow-up's amendments, plus one `Attached document: <path>` line per file the work carries (`Prompts.workerMessage`); or a memory result | `Prompts.codingTask`: task, run marker, the user's message verbatim with the work's `Attached document:` lines, recent topic conversation |
-| Run instructions | `Prompts.thinkingContract` plus a note that Hermes's own memory, skills and scheduled jobs are not the worker's to use (Yorozu's memory goes through `memoryCall`) | `Prompts.codingContract` with the worktree the worker creates |
-| Run id (`Idempotency-Key`) | `yorozu-run-<uuid>`, one per step | `yorozu-code-<uuid>` |
-| Steps | Up to 7: memory round trips are further runs in the same session | One run |
-| Result | The contract's JSON `{text, appliedRevision, files?}`; returned files from `files` and `MEDIA:` lines | The final text; no diffstat (open question 8 default); returned files from a `Files:` section and `MEDIA:` lines, relative paths resolved against the worktree |
+| | Worker |
+|---|---|
+| Session | `yorozu-<topicID>`, title the topic label |
+| Model | `models.worker` |
+| Run input | `WorkerInput.wire` or a follow-up's amendments, plus one `Attached document: <path>` line per file the work carries (`Prompts.workerMessage`); or a memory result |
+| Run instructions | `Prompts.thinkingContract` (with the task folder and the coding-agent command) plus a note that Hermes's own memory, skills and scheduled jobs are not the worker's to use (Yorozu's memory goes through `memoryCall`) |
+| Run id (`Idempotency-Key`) | `yorozu-run-<uuid>`, one per step |
+| Steps | Up to 7: memory round trips are further runs in the same session |
+| Result | The contract's JSON `{text, appliedRevision, files?}`; returned files from `files` and `MEDIA:` lines |
 
-- Coding (open question 2 default): one executor, `hermes` ("Hermes"), Hermes's own agent loop in `yorozu-worker`, with Yorozu's MCP servers and live steer; not ready while `dev_repo` is empty. Hermes has no per-session or per-request working folder and no managed worktrees, so the contract has the worker create `<dev repo>-yorozu-<label slug>-<topicID prefix>` on branch `yorozu/<label slug>-<topicID prefix>` from the base branch with `git worktree add`, reuse it on later turns, and run every command there. Claude Code and Codex are not offered through Hermes's bundled skills or its Codex runtime: that route has no progress or steer and writes `~/.codex/config.toml`.
-- Attachments (#316): attached files reach Hermes workers by path only; Yorozu sends Hermes no image input yet, whatever the model takes (inline images on Hermes are #318's to add). Returned files are copied into the file store as on OpenClaw ([architecture.md](architecture.md#attachments)); Hermes has no payload media, so only the JSON's `files`, `MEDIA:` lines and a coding reply's `Files:` section count. A `message.interim` progress message with a `MEDIA:` line naming an image shows that image in the sub-chat.
+- Working folder (#351): Hermes has no per-session or per-request working folder (`terminal.cwd` is profile-wide), so `yorozu-worker` starts in the workspace and the contract has the worker cd into its task folder and keep its files, downloads and clones there.
+- Coding (#351): no coding executor. A worker runs coding agents through Yorozu with `Yorozu agent run` in its `terminal` tool ([architecture.md](architecture.md#workspace-and-coding-agents)); Hermes runs a foreground command past its cap in the background and the worker can wait for it. A coding run from before #351 (session `yorozu-<topicID>-hermes`) still stops and reconciles by its server run id; a completed one reads as stopped, its reply no longer used.
+- Attachments (#316): attached files reach Hermes workers by path only; Yorozu sends Hermes no image input yet, whatever the model takes (inline images on Hermes are #318's to add). Returned files are copied into the file store as on OpenClaw ([architecture.md](architecture.md#attachments)); Hermes has no payload media, so only the JSON's `files` and `MEDIA:` lines count. A `message.interim` progress message with a `MEDIA:` line naming an image shows that image in the sub-chat.
 - Each step (`HermesHarness.step`): the size guard (`input` plus `instructions` within `workerGuard`, 32000 bytes) before anything is stamped; the run handle stamped with the Yorozu run id; `POST /v1/runs`; the server run id stored; the SSE stream followed; then the terminal status, the model check and the compaction check.
 - Controller key: `hermes:<Yorozu run id>:<server run id>` once Hermes answers, or `hermes:<Yorozu run id>:refused` when it answered and did not admit the run, so nothing ran. Steer, stop and reconcile take the server run id from it after a restart; within an app run it is also kept in memory. The topic's `sessionKey` column is unused under Hermes.
 - Submitting: a request receipt (`harness: "hermes"`) is written before the first attempt and fails closed; a dropped connection is retried twice, 2 s apart, with the identical body, which Hermes answers with the original run. The receipt then records `admitted`, `rejected`, `not-sent` or `uncertain`. A crash between the POST and its answer (open question 7 default) stores no body: the work becomes uncertain and the watch and reconcile path takes over.
@@ -149,7 +150,7 @@ Approvals are off in `yorozu-worker` (owner default H6.3), and Hermes's smart ap
 
 - Steer (live, owner default H6.2): `POST /v1/runs/{id}/steer`; 200 or 202 is admitted, applied by Hermes at the next tool boundary. A 409 (not `running`) or no known server run leaves the amendment for a follow-up turn. Text Hermes queued but never delivered comes back as `pending_steer` on the terminal status; the adapter lowers `appliedRevision` below the first undelivered revision, so `Store.finish` runs it as a follow-up turn.
 - Stop: no run id means nothing was dispatched (confirmed); an unknown server run id is not confirmed (Engine retries); `refused` is confirmed. Otherwise `POST /v1/runs/{id}/stop`, then poll the status once a second for about 30 s: terminal or 404 is confirmed.
-- Reconcile: `GET /v1/runs/{id}`. `completed` is delivered when the model check passes and the output parses (the contract's JSON for thinking work, the text for coding), else stopped; `cancelled`, `interrupted` and `failed` are stopped; `queued`, `running`, `stopping` and `waiting_for_approval` are running; 404 or no known server run is unknown. After an app restart the Engine's watch reconciles by status; the adapter does not re-attach to a run's SSE stream.
+- Reconcile: `GET /v1/runs/{id}`. `completed` is delivered when the model check passes and the output parses as the contract's JSON, else stopped; `cancelled`, `interrupted` and `failed` are stopped; `queued`, `running`, `stopping` and `waiting_for_approval` are running; 404 or no known server run is unknown. After an app restart the Engine's watch reconciles by status; the adapter does not re-attach to a run's SSE stream.
 
 ## Compaction
 
@@ -163,10 +164,9 @@ Hermes compacts a session itself once it passes `compression.threshold_tokens`, 
 
 - At most 10 runs at once across the server (429, `harness_busy`).
 - The SSE buffer is dropped 300 s after the last subscriber leaves; a run's status stays 1 h in memory and 24 h durably.
-- No per-session or per-request working folder: `terminal.cwd` is profile-wide, so thinking workers start in `dev_repo` (or home) and coding workers make their own worktree.
+- No per-session or per-request working folder: `terminal.cwd` is profile-wide (the workspace), so the contract names each task's folder.
 - MCP servers and toolsets are profile-wide: every `yorozu-worker` session gets the same servers, and a change needs the setup step again.
 - Hermes's core system prompt is always prepended to Yorozu's `instructions`.
-- No coding diffstat.
 - `GET /v1/toolsets` may not list MCP servers on 0.21.6.
 
 ## OpenClaw migration hazards

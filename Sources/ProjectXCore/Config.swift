@@ -17,21 +17,31 @@ public struct Config: Sendable, Equatable {
     public struct Relay: Sendable, Equatable { public var url = "wss://relay.yumi.to" }
     public struct Direct: Sendable, Equatable { public var enabled = true, port = 8738 }
     public struct HarnessSettings: Sendable, Equatable {
-        public var kind = HarnessKind.openclaw, agent = "yorozu", transport = Transport.native, gatewayURL = "ws://127.0.0.1:18789", hermesURL = "http://127.0.0.1:8642", devRepo = "", devBase = ""
-        /// nil when `dev_repo` is empty; `~/` is expanded.
-        public var devRepoURL: URL? { devRepo.isEmpty ? nil : URL(fileURLWithPath: (devRepo as NSString).expandingTildeInPath,isDirectory: true) }
+        public var kind = HarnessKind.openclaw, agent = "yorozu", transport = Transport.native, gatewayURL = "ws://127.0.0.1:18789", hermesURL = "http://127.0.0.1:8642"
     }
-    /// A nil role or a missing executor is automatic (`ModelDefaults`).
+    /// Where workers and coding agents work (#351): one folder per task under `path`. `restrict` keeps them inside it.
+    public struct Workspace: Sendable, Equatable {
+        /// Empty is the default: `~/Yorozu/workspace`, or `<data root>/workspace` under `PROJECTX_DATA` or in fixture mode.
+        public var path = "", restrict = false
+        /// The workspace folder: `path` with `~/` expanded, else the default for `dataRoot` (`isolated`: `PROJECTX_DATA` or fixture mode).
+        public func url(dataRoot: URL, isolated: Bool) -> URL {
+            if !path.isEmpty { return URL(fileURLWithPath: (path as NSString).expandingTildeInPath,isDirectory: true).standardizedFileURL }
+            return isolated ? dataRoot.appendingPathComponent("workspace",isDirectory: true) : FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/workspace",isDirectory: true)
+        }
+    }
+    /// A nil role is automatic (`ModelDefaults`).
     public struct Models: Sendable, Equatable {
-        public var secretary, extraction, worker, review: String?; public var coding: [String:String] = [:]; public var rules = Rules()
+        public var secretary, extraction, worker, review: String?; public var rules = Rules()
         public init() {}
     }
     public struct Rules: Sendable, Equatable { public var minContextTokens = 32000, minOutputTokens = 16000 }
     /// First-launch setup progress (`SetupEngine`): finished, and the steps the user answered or skipped.
     public struct SetupProgress: Sendable, Equatable { public var done = false, answered: [String] = [] }
-    public var general = General(), notifications = Notifications(), routing = Routing(), relay = Relay(), direct = Direct(), harness = HarnessSettings(), models = Models(), setup = SetupProgress()
+    public var general = General(), notifications = Notifications(), routing = Routing(), relay = Relay(), direct = Direct(), harness = HarnessSettings(), workspace = Workspace(), models = Models(), setup = SetupProgress()
     /// The user's own `[mcp_servers]`; workers get `effectiveMCPServers`.
     public var mcpServers: [String:MCPServer] = [:]
+    /// The user's own `[coding_agents.<name>]`; workers get `effectiveCodingAgents`.
+    public var codingAgents: [String:CodingAgent] = [:]
     /// Built-ins (`Integration.builtIn`) plus the user's `[integrations.<name>]`, by name.
     public var integrations = Dictionary(uniqueKeysWithValues: Integration.builtIn.map { ($0.name,$0) })
     /// Keys Yorozu does not know, kept and written back as data.
@@ -48,6 +58,11 @@ public struct Config: Sendable, Equatable {
     public var effectiveMCPServers: [String:MCPServer] {
         let off = Set(integrations.values.filter { !$0.enabled }.flatMap(\.mcpServers.keys))
         return enabledIntegrations.reduce(mcpServers.filter { !off.contains($0.key) }) { list,i in list.merging(i.mcpServers) { mine,_ in mine } }
+    }
+
+    /// The coding agents workers may run (#351): the built-ins plus `[coding_agents]`, an entry of the same name replacing a built-in, by name.
+    public var effectiveCodingAgents: [CodingAgent] {
+        CodingAgent.builtIn.filter { codingAgents[$0.name] == nil } + codingAgents.values.sorted { $0.name < $1.name }
     }
 
     public static func url(in root: URL) -> URL { root.appendingPathComponent("config.toml") }
@@ -126,8 +141,8 @@ public struct Config: Sendable, Equatable {
         field("harness.transport",\.harness.transport,"\"native\" (WebSocket client) or \"cli\" (openclaw CLI); applies after relaunch." + security),
         field("harness.gateway_url",\.harness.gatewayURL,"Gateway address, loopback only; applies after relaunch." + security),
         field("harness.hermes_url",\.harness.hermesURL,"Hermes Agent API server, loopback only with no path; applies after relaunch." + security),
-        field("harness.dev_repo",\.harness.devRepo,"Repository for coding work (absolute path or ~/…); empty turns coding work off." + security),
-        field("harness.dev_base",\.harness.devBase,"Branch of dev_repo that coding worktrees are cut from and merged into; empty is the branch checked out there when the work starts." + security),
+        field("workspace.path",\.workspace.path,"Folder where agents work, one subfolder per task; downloads and clones go there. Empty is ~/Yorozu/workspace (<data root>/workspace under PROJECTX_DATA or in fixture mode)." + security),
+        field("workspace.restrict",\.workspace.restrict,"Limit agents to the workspace: workers are told to stay inside it (not enforced), and coding agents start only in folders inside it and run their restricted_command, which sandboxes their writes. Off: file access is not limited." + security),
         field("models.secretary",\.models.secretary,"Secretary model (provider/model); leave out for automatic." + security),
         field("models.extraction",\.models.extraction,"Memory extraction model; leave out for automatic." + security),
         field("models.worker",\.models.worker,"Worker model; leave out for automatic." + security),
@@ -140,7 +155,8 @@ public struct Config: Sendable, Equatable {
     static let sections = [
         "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "Relay for client devices.", "direct": "Direct client connection over LAN or VPN.",
         "harness": "Harness connection.", "models": "Models per role; a missing role is chosen automatically from the harness's model metadata.",
-        "models.coding": "Coding executor id (OpenClaw: claude, codex; Hermes: hermes) = \"provider/model\"; a missing executor is automatic." + security,
+        "workspace": "Workspace for workers and coding agents.",
+        "coding_agents": "Coding agents workers run through Yorozu: [coding_agents.<name>] with command (the program and its arguments; the prompt is added as the last argument; it sets the agent's access: the built-ins run with full access), optional restricted_command (used while [workspace] restrict is on; it must sandbox the agent to its folder and \"{workspace}\"; without one the agent is refused then) and optional timeout (seconds, default 1500). Built-in: claude and codex, offered when found; an entry with the same name replaces it." + security,
         "models.rules": "Inputs of the automatic choice.", "setup": "First-launch setup progress (Yorozu setup, or the setup window).",
         "mcp_servers": "MCP servers workers may use: [mcp_servers.<name>] with command (absolute path) and args; env is not supported." + security,
         "integrations": "Integrations: MCP servers, worker rules, checks and fixes as data, each with enabled = true or false. Built-in: [integrations.cua] (computer use through CuaDriver). Your own [integrations.<name>] may also set title, rules (\"{session}\" is the per-run cua session label), checks = [{ title, file or socket = \"/path\" }], fixes = [{ title, copy = \"command\" or url }], [integrations.<name>.mcp_servers.<server>] and [integrations.<name>.settings]." + security,
@@ -149,7 +165,7 @@ public struct Config: Sendable, Equatable {
     static let order: [String] = fields.flatMap { field in
         let parts = field.key.split(separator: ".")
         return (1..<parts.count).map { parts.prefix($0).joined(separator: ".") } + [field.key]
-    }.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }.flatMap { $0 == "models.rules" ? ["models.coding",$0] : [$0] } + ["mcp_servers","integrations"]
+    }.reduce(into: []) { if !$0.contains($1) { $0.append($1) } } + ["mcp_servers","coding_agents","integrations"]
 
     // MARK: Read
     public static func parse(_ text: String, file: URL) throws -> Config {
@@ -169,13 +185,6 @@ public struct Config: Sendable, Equatable {
             guard let value = try take(&tree,field.key.split(separator: ".").map(String.init)[...],field.key) else { continue }
             guard field.set(&config,value) else { throw fail(field.key,"expected \(field.expected)") }
             config.fileKeys.insert(field.key)
-        }
-        if let coding = try take(&tree,["models","coding"],"models.coding") {
-            guard case .table(let table) = coding else { throw fail("models.coding","expected a table of executor = \"provider/model\"") }
-            for (executor,value) in table {
-                guard case .string(let model) = value else { throw fail("models.coding.\(executor)","expected a string") }
-                config.models.coding[executor] = model; config.fileKeys.insert("models.coding.\(executor)")
-            }
         }
         /// A `[<prefix>.<name>]` server list and each entry's unknown keys.
         func servers(_ raw: TOMLValue, _ prefix: String) throws -> ([String:MCPServer], [String:TOMLValue]) {
@@ -199,6 +208,20 @@ public struct Config: Sendable, Equatable {
             let (list,rest) = try servers(raw,"mcp_servers")
             config.mcpServers = list; config.fileKeys.insert("mcp_servers")
             if !rest.isEmpty { tree["mcp_servers"] = .table(rest) }
+        }
+        if let raw = try take(&tree,["coding_agents"],"coding_agents") {
+            guard case .table(let table) = raw else { throw fail("coding_agents","expected [coding_agents.<name>] tables") }
+            var rest: [String:TOMLValue] = [:]
+            for (name,value) in table {
+                let key = "coding_agents.\(name)"
+                guard case .table(var entry) = value, let raw = entry.removeValue(forKey: "command"), let command = [String](toml: raw) else { throw fail(key,"needs command = [\"program\", \"argument\", …]") }
+                var agent = CodingAgent(name: name,command: command)
+                if let raw = entry.removeValue(forKey: "restricted_command") { guard let c = [String](toml: raw) else { throw fail(key + ".restricted_command","expected [\"program\", \"argument\", …]") }; agent.restrictedCommand = c }
+                if let t = entry.removeValue(forKey: "timeout") { guard let seconds = Int(toml: t) else { throw fail(key + ".timeout","expected an integer") }; agent.timeout = seconds }
+                config.codingAgents[name] = agent; config.fileKeys.insert(key)
+                if !entry.isEmpty { rest[name] = .table(entry) }
+            }
+            if !rest.isEmpty { tree["coding_agents"] = .table(rest) }
         }
         if let raw = try take(&tree,["integrations"],"integrations") {
             guard case .table(let table) = raw else { throw fail("integrations","expected [integrations.<name>] tables") }
@@ -256,7 +279,7 @@ public struct Config: Sendable, Equatable {
     /// Dotted keys of security-relevant settings that differ from `old`, for the "Settings changed" notice.
     public func securityChanges(from old: Config) -> [String] {
         Self.fields.filter { $0.note.hasSuffix(Self.security) && $0.get(self) != $0.get(old) }.map(\.key)
-            + (models.coding != old.models.coding ? ["models.coding"] : []) + (mcpServers != old.mcpServers ? ["mcp_servers"] : [])
+            + (codingAgents != old.codingAgents ? ["coding_agents"] : []) + (mcpServers != old.mcpServers ? ["mcp_servers"] : [])
             + (integrations != old.integrations ? ["integrations"] : [])
     }
     /// The first invalid value as (dotted key, reason).
@@ -265,10 +288,16 @@ public struct Config: Sendable, Equatable {
         if h.agent.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return ("harness.agent","expected 1-64 letters, digits, - or _") }
         if !Self.isLoopbackGateway(h.gatewayURL) { return ("harness.gateway_url","expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789") }
         if !Self.isLoopbackHTTP(h.hermesURL) { return ("harness.hermes_url","expected a loopback http:// or https:// address with no path, such as http://127.0.0.1:8642") }
-        if !(h.devRepo.isEmpty || h.devRepo.hasPrefix("/") || h.devRepo.hasPrefix("~/")) { return ("harness.dev_repo","expected an absolute path, a ~/ path or \"\"") }
-        if !h.devBase.isEmpty, h.devBase.hasPrefix("-") || h.devBase.range(of: "^[A-Za-z0-9._/-]{1,200}$",options: .regularExpression) == nil { return ("harness.dev_base","expected a branch name or \"\"") }
+        if !(workspace.path.isEmpty || workspace.path.hasPrefix("/") || workspace.path.hasPrefix("~/")) { return ("workspace.path","expected an absolute path, a ~/ path or \"\"") }
+        for a in codingAgents.values.sorted(by: { $0.name < $1.name }) {
+            let key = "coding_agents.\(a.name)"
+            if a.name.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return (key,"expected a name of 1-64 letters, digits, - or _") }
+            if a.command.first?.isEmpty != false { return (key + ".command","expected a program and its arguments") }
+            if let r = a.restrictedCommand, r.first?.isEmpty != false { return (key + ".restricted_command","expected a program and its arguments") }
+            if a.timeout < 1 { return (key + ".timeout","expected a positive number of seconds") }
+        }
         if let url = URLComponents(string: relay.url), ["ws","wss"].contains(url.scheme ?? ""), !(url.host ?? "").isEmpty {} else { return ("relay.url","expected a ws:// or wss:// address") }
-        for (key,model) in [("secretary",models.secretary),("extraction",models.extraction),("worker",models.worker),("review",models.review)] + models.coding.map({ ("coding.\($0.key)",$0.value) }) where model?.isEmpty == true { return ("models.\(key)","expected \"provider/model\"; leave the key out for automatic") }
+        for (key,model) in [("secretary",models.secretary),("extraction",models.extraction),("worker",models.worker),("review",models.review)] where model?.isEmpty == true { return ("models.\(key)","expected \"provider/model\"; leave the key out for automatic") }
         if !(1024...65535).contains(direct.port) { return ("direct.port","expected a port from 1024 to 65535") }
         if routing.selfTopic.count > 80 { return ("routing.self_topic","expected at most 80 characters") }
         if routing.personalKnowledge.utf8.count > 200 { return ("routing.personal_knowledge","expected at most 200 bytes of UTF-8") }
@@ -325,7 +354,6 @@ public struct Config: Sendable, Equatable {
         }
         for section in Self.sections.keys.sorted() { put(&tree,section.split(separator: ".").map(String.init)[...],.table([:])) }
         for field in Self.fields { if let value = field.get(self) { put(&tree,field.key.split(separator: ".").map(String.init)[...],value) } }
-        for (executor,model) in models.coding { put(&tree,["models","coding",executor],.string(model)) }
         func servers(_ list: [String:MCPServer], _ path: [String]) {
             for (name,server) in list {
                 put(&tree,(path + [name,"command"])[...],.string(server.command))
@@ -333,6 +361,12 @@ public struct Config: Sendable, Equatable {
             }
         }
         servers(mcpServers,["mcp_servers"])
+        if case .table(let rest)? = tree["coding_agents"] { tree["coding_agents"] = .table(rest.filter { codingAgents[$0.key] != nil }) }
+        for (name,a) in codingAgents {
+            put(&tree,["coding_agents",name,"command"],.array(a.command.map { .string($0) }))
+            if let r = a.restrictedCommand { put(&tree,["coding_agents",name,"restricted_command"],.array(r.map { .string($0) })) }
+            if a.timeout != CodingAgent.defaultTimeout { put(&tree,["coding_agents",name,"timeout"],.integer(Int64(a.timeout))) }
+        }
         if case .table(let rest)? = tree["integrations"] { tree["integrations"] = .table(rest.filter { integrations[$0.key] != nil }) }
         for (name,i) in integrations {
             let path = ["integrations",name]
@@ -354,7 +388,7 @@ public struct Config: Sendable, Equatable {
         var out = "# Yorozu settings. Yorozu rewrites this file in this layout: unknown keys are kept, added comments are not.\n# PROJECTX_* environment variables override these values.\n"
         func emit(_ table: [String:TOMLValue], _ path: [String]) {
             let dot = path.isEmpty ? "" : path.joined(separator: ".") + "."
-            let rank = path.count == 2 && path[0] == "mcp_servers" || path.count == 4 && path[0] == "integrations" && path[2] == "mcp_servers" ? ["command","args"]
+            let rank = path.count == 2 && path[0] == "coding_agents" ? ["command","restricted_command","timeout"] : path.count == 2 && path[0] == "mcp_servers" || path.count == 4 && path[0] == "integrations" && path[2] == "mcp_servers" ? ["command","args"]
                 : path.count == 2 && path[0] == "integrations" ? ["enabled","title","rules","checks","fixes"] : Self.order.filter { $0.hasPrefix(dot) && !$0.dropFirst(dot.count).contains(".") }.map { String($0.dropFirst(dot.count)) }
             let keys = rank + table.keys.filter { !rank.contains($0) }.sorted()
             for key in keys {
@@ -413,9 +447,8 @@ public enum SettingSource: String, Sendable { case environment, file, automatic,
 public struct ResolvedSettings: Sendable, Equatable {
     public static let variables: [(String, [String])] = [
         ("PROJECTX_HARNESS",["harness.kind"]), ("PROJECTX_TRANSPORT",["harness.transport"]), ("PROJECTX_GATEWAY_URL",["harness.gateway_url"]), ("PROJECTX_AGENT",["harness.agent"]),
-        ("PROJECTX_DEV_REPO",["harness.dev_repo"]), ("PROJECTX_RELAY_URL",["relay.url"]),
+        ("PROJECTX_RELAY_URL",["relay.url"]),
         ("PROJECTX_SECRETARY_MODEL",["models.secretary","models.extraction"]), ("PROJECTX_MODEL",["models.worker"]), ("PROJECTX_REVIEW_MODEL",["models.review"]),
-        ("PROJECTX_CLAUDE_MODEL",["models.coding.claude"]), ("PROJECTX_CODEX_MODEL",["models.coding.codex"]),
     ]
     /// The file's values with environment overrides applied.
     public private(set) var config: Config
@@ -425,8 +458,7 @@ public struct ResolvedSettings: Sendable, Equatable {
         config = file
         for (name,keys) in Self.variables { guard let value = env[name] else { continue }
             for key in keys {
-                if key.hasPrefix("models.coding.") { config.models.coding[String(key.dropFirst(14))] = value }
-                else if let field = Config.fields.first(where: { $0.key == key }), !field.set(&config,.string(value)) { throw ProjectError.invalid("\(name): expected \(field.expected).") }
+                if let field = Config.fields.first(where: { $0.key == key }), !field.set(&config,.string(value)) { throw ProjectError.invalid("\(name): expected \(field.expected).") }
                 environment[key] = name
             }
         }
@@ -435,9 +467,8 @@ public struct ResolvedSettings: Sendable, Equatable {
     public func source(_ key: String) -> SettingSource {
         environment[key] != nil ? .environment : config.fileKeys.contains(key) ? .file : key.hasPrefix("models.") && !key.hasPrefix("models.rules.") ? .automatic : .default
     }
-    /// Per-role models from the harness's metadata; explicit choices (environment or file) win. `runtimes` maps the
-    /// harness's coding executors to their model runtimes (`Executor.runtime`).
-    public func models(_ available: [ModelInfo], primary: String?, runtimes: [String:String] = [:]) -> ModelChoices { ModelDefaults.resolve(available,primary: primary,explicit: config.models,runtimes: runtimes) }
+    /// Per-role models from the harness's metadata; explicit choices (environment or file) win.
+    public func models(_ available: [ModelInfo], primary: String?) -> ModelChoices { ModelDefaults.resolve(available,primary: primary,explicit: config.models) }
     public static func == (a: Self, b: Self) -> Bool { a.config == b.config && a.environment == b.environment }
 }
 

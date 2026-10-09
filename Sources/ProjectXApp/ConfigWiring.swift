@@ -18,19 +18,19 @@ extension AppModel {
     func harnessSettings() -> HarnessSettings {
         guard let resolved else { return HarnessSettings() }
         let c = resolved.config, meta = metadata ?? ([],nil)
-        let m = resolved.models(meta.allowed,primary: meta.primary,runtimes: executorRuntimes)
+        let m = resolved.models(meta.allowed,primary: meta.primary)
         var s = HarnessSettings()
         s.secretaryModel = m.secretary.id ?? ""; s.extractionModel = m.extraction.id ?? ""; s.workerModel = m.worker.id ?? ""; s.reviewModel = m.review.id ?? ""
-        s.codingModels = m.coding.compactMapValues(\.id)
-        s.mcpServers = c.effectiveMCPServers; s.integrations = c.enabledIntegrations; s.yolo = c.general.yolo; s.devRepo = c.harness.devRepoURL; s.codingBaseBranch = c.harness.devBase; s.configFile = configFile
+        s.mcpServers = c.effectiveMCPServers; s.integrations = c.enabledIntegrations; s.yolo = c.general.yolo; s.configFile = configFile
         s.personalKnowledge = c.routing.personalKnowledge; s.selfTopic = c.routing.selfTopic
         s.filesRoot = filesRoot
+        s.workspace = dataRoot.map { c.workspace.url(dataRoot: $0,isolated: isolatedData) }; s.restrict = c.workspace.restrict
+        s.codingAgents = c.effectiveCodingAgents
+        if let agentHost, let exe = Bundle.main.executablePath { s.agentCLI = (exe,agentHost.socket.path) }
         return s
     }
     /// Phone pushes (#320): `[notifications]` on with destination `phones`.
     var phoneAlerts: Bool { resolved.map { $0.config.notifications.enabled && $0.config.notifications.destination == .phones } ?? false }
-    /// Coding executor id → its model runtime, for the executors' automatic models.
-    var executorRuntimes: [String:String] { Dictionary((harness?.executors ?? []).compactMap { e in e.runtime.map { (e.id,$0) } }) { a,_ in a } }
     /// Reads the harness's model metadata, then recomputes the settings. A failed read keeps the last good metadata.
     @discardableResult func refreshModels() -> Task<Void,Never> {
         metadataAsked = Date()

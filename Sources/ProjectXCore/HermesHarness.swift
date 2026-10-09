@@ -63,21 +63,18 @@ public struct HermesSetup: HarnessSetup {
             d.items.append(Readiness.Item(id: "hermes.default_api_server",title: String(localized: "Turn on the API server in your default Hermes profile"),detail: text,severity: .warning,
                                           fix: .copy(title: String(localized: "Copy Commands"),command: text.components(separatedBy: .newlines).filter { $0.hasPrefix("hermes ") }.joined(separator: " && "))))
         }
-        // Profiles changed since setup ([mcp_servers], integrations, dev_repo): a warning, never an automatic write.
+        // Profiles changed since setup ([mcp_servers], integrations, the workspace): a warning, never an automatic write.
         if let profiles, HermesProfiles.profiles.allSatisfy({ FileManager.default.fileExists(atPath: HermesProfiles.profileDir($0,home).path) }),
            let pending = try? HermesProfiles.pending(profiles), !pending.isEmpty {
             d.items.append(Readiness.Item(id: "hermes.profiles",title: String(localized: "Hermes profiles need updating"),detail: pending.map(\.change.line).joined(separator: "\n"),severity: .warning,fix: .step("harness")))
         }
         return d
     }
-    public func executors(_ settings: HarnessSettings) -> [CodingExecutor] {
-        ((try? HermesHarness(url: url,agent: agent,settings: { settings }))?.executors ?? []).map { CodingExecutor(executor: $0,binary: "hermes",path: HermesHarness.launcher()) }
-    }
 }
 
 /// Nous Research's Hermes Agent through its loopback API server (#318; docs/hermes-integration.md). Roles run as fresh
 /// one-shot runs in profile `yorozu-roles`; workers run in `yorozu-worker`, one session per topic (`yorozu-<topic id>`)
-/// and one per topic for coding (`yorozu-<topic id>-hermes`). Every run names provider and model, and a run served by any
+/// (coding agents run through Yorozu, #351). Every run names provider and model, and a run served by any
 /// other pair is discarded.
 ///
 /// RunHandle mapping: `runID` is Yorozu's run id, stamped before the POST and sent as `Idempotency-Key`;
@@ -104,12 +101,6 @@ public struct HermesHarness: Harness {
     /// `url`: the Hermes API server root (loopback only); profiles are served under `/p/<profile>/`.
     public init(url: String = "http://127.0.0.1:8642", agent: String = "yorozu", audit: RequestAudit? = nil, settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) throws {
         client = try HermesClient(url); agentID = agent; self.audit = audit; self.settings = settings
-    }
-
-    public var executors: [Executor] {
-        [Executor(id: "hermes", name: "Hermes", appAccess: true, liveSteer: true, runtime: "hermes",
-                  routingNotes: "Hermes runs its own agent loop with Yorozu's MCP servers, so it can operate apps and browsers, takes changes mid-run, and works in its own git worktree of the dev repo. Claude Code and Codex are not available under Hermes.",
-                  notReady: settings().devRepo == nil ? "No repository is set for coding work." : nil)]
     }
 
     // MARK: Readiness
@@ -323,14 +314,11 @@ public struct HermesHarness: Harness {
 
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput {
         let s = settings()
-        if let executor = input.work.executor {
-            guard executors.contains(where: { $0.id == executor }) else { throw HarnessError.notReady("Hermes offers only the Hermes coding executor; \(executor) is not available.") }
-            return try await code(input, settings: s, update: update)
-        }
         let session = "yorozu-" + input.topic.id
         try await ensureSession(session, title: input.topic.label, model: s.workerModel)
-        // The contract goes in as instructions on every run, so only the wire (or follow-up) is input.
-        let instructions = Prompts.thinkingContract(s, topic: input.topic.id, cuaSession: "yorozu-" + identifier().prefix(8)) + " " + Self.workerRules
+        // The contract goes in as instructions on every run, so only the wire (or follow-up) is input. `terminal.cwd` is
+        // profile-wide (the workspace), so the contract names the task folder (#351).
+        let instructions = Prompts.thinkingContract(s, topic: input.topic.id, task: input.work.id, folder: input.folder, cuaSession: "yorozu-" + identifier().prefix(8)) + " " + Self.workerRules
         // Attached files go by path only: Hermes takes no image input from Yorozu yet.
         var wire = try Prompts.workerMessage(input, root: s.filesRoot)
         for i in 0...Prompts.memoryOperations {
@@ -478,33 +466,12 @@ public struct HermesHarness: Harness {
         switch run.status {
         case "completed":
             guard (try? Self.verify(run)) != nil, let text = run.output, !text.isEmpty else { return .stopped }
-            if work.executor != nil { return .completed(Self.applied(Prompts.coded(text, revision: work.revision), pendingSteer: run.pendingSteer, dispatched: work.revision)) }
+            if work.executor != nil { return .stopped } // a coding run from before #351: its reply is no longer read
             guard case .final(let output)? = try? Prompts.workerReply(text, step: 0) else { return .stopped }
             return .completed(Self.applied(output, pendingSteer: run.pendingSteer, dispatched: work.revision))
         case "cancelled", "interrupted", "failed": return .stopped
         default: return .running // queued, running, stopping, waiting_for_approval
         }
-    }
-
-    // MARK: Coding (open question 2)
-
-    func code(_ input: WorkerInput, settings s: HarnessSettings, update: @escaping @Sendable (StreamUpdate) async throws -> Void) async throws -> WorkerOutput {
-        guard let repo = s.devRepo else { throw ProjectError.blocked("No repository is set for coding work. Set a repository in Settings › Advanced.") }
-        let s = try s.resolvingBase(repo), executor = executors[0], session = "yorozu-\(input.topic.id)-\(executor.id)"
-        let model = s.codingModels[executor.id].flatMap { $0.isEmpty ? nil : $0 } ?? s.workerModel
-        try await ensureSession(session, title: input.topic.label + " · coding", model: model)
-        // No per-session working folder under Hermes (open question 2): the worker makes and reuses its own worktree.
-        let slug = input.topic.label.lowercased().unicodeScalars.map { ("a"..."z").contains($0) || ("0"..."9").contains($0) ? String($0) : "-" }
-            .joined().split(separator: "-").joined(separator: "-").prefix(32)
-        let name = (slug.isEmpty ? "" : slug + "-") + input.topic.id.prefix(6)
-        let tree = (repo.deletingLastPathComponent().appendingPathComponent(repo.lastPathComponent + "-yorozu-" + name).path, "yorozu/" + name)
-        let contract = Prompts.codingContract(executor: executor.name, repo: repo, settings: s, topic: input.topic.id, cuaSession: "yorozu-" + identifier().prefix(8), worktree: tree)
-        let runID = "yorozu-code-" + identifier()
-        let end = try await step(input, session: session, runID: runID, text: Prompts.codingTask(input, runID: runID, root: s.filesRoot), instructions: contract, model: model, update: update)
-        // No diffstat under Hermes (open question 8).
-        let text = end.output.flatMap { $0.isEmpty ? nil : $0 } ?? executor.name + " finished without a summary."
-        // Relative returned paths resolve against its worktree.
-        return Self.applied(Prompts.coded(text, revision: input.work.revision, base: URL(fileURLWithPath: tree.0)), pendingSteer: end.pendingSteer, dispatched: input.work.revision)
     }
 }
 

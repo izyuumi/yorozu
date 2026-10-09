@@ -1,28 +1,10 @@
 import Foundation
 import CryptoKit
 
-/// A coding executor a harness offers (#318 H4). `id` is stored in `work.executor`; an empty list means no coding.
-public struct Executor: Codable, Sendable, Equatable {
-    public var id: String, name: String
-    /// Gets Yorozu's MCP servers, so it can operate apps and browsers.
-    public var appAccess: Bool
-    /// Takes changes while a run is going; otherwise they wait for a follow-up turn.
-    public var liveSteer: Bool
-    /// Harness-specific routing guidance for the secretary policy.
-    public var routingNotes: String
-    /// Nil when ready; otherwise why not.
-    public var notReady: String?
-    /// The model runtime it runs on, matched against `ModelInfo.runtimes` for its automatic model; nil means none.
-    public var runtime: String?
-    public init(id: String, name: String, appAccess: Bool, liveSteer: Bool, runtime: String? = nil, routingNotes: String = "", notReady: String? = nil) { self.id = id; self.name = name; self.appAccess = appAccess; self.liveSteer = liveSteer; self.runtime = runtime; self.routingNotes = routingNotes; self.notReady = notReady }
-}
-
 public protocol Harness: Sendable {
     var name: String { get }
     /// Stable harness id: openclaw, hermes, fixture, offline.
     var id: String { get }
-    /// Coding executors this harness offers, in preference order.
-    var executors: [Executor] { get }
     /// The harness agent topic session keys carry (`agent:<agent>:projectx:<topic>`): `[harness] agent` for every harness,
     /// offline and fixture included, so topics keep one key prefix whatever the mode.
     var agentID: String { get }
@@ -43,7 +25,6 @@ public protocol Harness: Sendable {
 }
 public extension Harness {
     var agentID: String { Config.HarnessSettings().agent }
-    var executors: [Executor] { [] }
     var rawPromptCap: Int { ProjectXCore.rawPromptCap }
     var workerGuard: Int { 32000 }
     func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal] { [] }
@@ -53,20 +34,22 @@ public extension Harness {
 /// Settings the app can change while it runs (#312). The harness and the Engine read them through a closure at the start
 /// of each route, task or extraction, so a change applies from the next one without rebuilding either.
 public struct HarnessSettings: Sendable {
-    /// Role models as "<provider>/<model>"; `codingModels` is keyed by the harness's executor id. Empty means none set.
-    public var secretaryModel = "", extractionModel = "", workerModel = "", reviewModel = "", codingModels: [String:String] = [:]
+    /// Role models as "<provider>/<model>". Empty means none set.
+    public var secretaryModel = "", extractionModel = "", workerModel = "", reviewModel = ""
     /// Yorozu's MCP servers; nil leaves OpenClaw's own MCP setup untouched.
     public var mcpServers: [String:MCPServer]?
     /// Lifts the ask-first rules for requested outward-facing steps and the risky cua tools (owner, 2026-10-09).
     public var yolo = false
     /// Integrations whose worker rules go into both worker contracts (`Prompts.integrationRules`); disabled ones are skipped.
     public var integrations = Integration.builtIn
-    /// The dev checkout coding workers merge into; nil refuses coding work.
-    public var devRepo: URL?
-    /// `devRepo`'s branch coding worktrees are cut from and merged into (`[harness] dev_base`; empty is the repo's
-    /// current branch, read when the work starts: `resolvingBase`), and the command (relative to the main checkout) that
-    /// rebuilds and restarts the app; the coding contract names both.
-    public var codingBaseBranch = "", buildCommand = "scripts/build_native.sh --restart"
+    /// The workspace (#351): each task works in its own folder under it (`Workspace.folder`); nil gives workers no folder.
+    public var workspace: URL?
+    /// `[workspace] restrict`: workers are told to stay inside the workspace, and coding agents run only inside it.
+    public var restrict = false
+    /// Coding agents workers may run through Yorozu (`Config.effectiveCodingAgents`); only those whose binary is found are offered.
+    public var codingAgents: [CodingAgent] = []
+    /// The command line a worker runs them with (`Yorozu agent run`): the app's executable and its socket; nil offers none.
+    public var agentCLI: (executable: String, socket: String)?
     /// `config.toml`, named in the thinking contract so a worker can change settings when asked.
     public var configFile: URL?
     /// Routing hints: the user's knowledge source the secretary cannot read ("" drops it), and the topic for this app.
@@ -74,17 +57,6 @@ public struct HarnessSettings: Sendable {
     /// The file store root (#316): an attachment's file is `filesRoot` + `Attachment.path`. Nil: no store, so no file is available.
     public var filesRoot: URL?
     public init() {}
-    /// These settings with `codingBaseBranch` resolved: as set, else `repo`'s checked-out branch (`git rev-parse --abbrev-ref HEAD`).
-    public func resolvingBase(_ repo: URL) throws -> HarnessSettings {
-        guard codingBaseBranch.isEmpty else { return self }
-        let git = Process(), out = Pipe(); git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        git.arguments = ["-C",repo.path,"rev-parse","--abbrev-ref","HEAD"]; git.standardOutput = out; git.standardError = FileHandle.nullDevice
-        let ran = (try? git.run()) != nil
-        let branch = ran ? String(decoding: out.fileHandleForReading.readDataToEndOfFile(),as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) : ""
-        if ran { git.waitUntilExit() }
-        guard ran, git.terminationStatus == 0, !branch.isEmpty, branch != "HEAD" else { throw ProjectError.blocked("Couldn't read the current branch of \(repo.path) for coding work. Check out a branch there, or set dev_base in config.toml.") }
-        var s = self; s.codingBaseBranch = branch; return s
-    }
 }
 public struct OfflineHarness: Harness {
     public let id = "offline"
@@ -161,14 +133,14 @@ public struct GatewayRPC: Sendable {
         if s.contains("no such file") || s.contains("command not found") || s.contains("node.js") { return "executable-or-runtime" }
         return "unclassified-refusal-or-disconnect"
     }
-    /// `timeout` (ms, CLI transport only) shortens the CLI's 260 s wait, for setup and readiness probes.
+    /// `timeout` (ms) replaces the 260 s wait: shorter for setup and readiness probes, longer for a thinking step.
     public func call(_ method: String, _ params: [String:Any], final: Bool = false, sourceMessageID: String? = nil, timeout: Int? = nil) async throws -> [String:Any] {
         guard method == "agent", let id = params["idempotencyKey"] as? String else { return try await perform(method,params,final: final,timeout: timeout) }
         // Correlation log only. Raw model runs are stateless (no tools, no transcript), so a lost one never blocks the next.
         var receipt = RequestReceipt(requestID: id,harness: "openclaw",sessionKey: params["sessionKey"] as? String,sourceMessageID: sourceMessageID,rawModelRun: params["modelRun"] as? Bool == true,state: "submitted")
         try await audit?(receipt) // Durable before dispatch; fail closed if saving correlation fails.
         do {
-            let result = try await perform(method,params,final: final)
+            let result = try await perform(method,params,final: final,timeout: timeout)
             let status = result["status"] as? String ?? ""
             receipt.state = ["ok","error","timeout"].contains(status) ? "terminal" : status == "accepted" ? "admitted" : "uncertain"
             receipt.created = Date().timeIntervalSince1970; try await audit?(receipt); return result
@@ -203,7 +175,7 @@ public struct GatewayRPC: Sendable {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: params),as: UTF8.self)
         let text: String
         if let fixture { text = try await fixture(method,json,final) }
-        else if let native, !Self.needsAdmin(method,params) { text = try await native.call(method,json: json,final: final) }
+        else if let native, !Self.needsAdmin(method,params) { text = try await native.call(method,json: json,final: final,deadline: max(270,(timeout ?? 0) / 1000 + 10)) }
         else {
             let env = ProcessInfo.processInfo.environment
             try Self.enforceAttribution(env)
@@ -267,16 +239,6 @@ public struct OpenClawHarness: Harness {
     /// Models, MCP servers, YOLO, dev repo and config path, read at the start of each route, task or extraction.
     public var settings: @Sendable () -> HarnessSettings
     private let sessions = SessionCreations(); private let mcp = MCPMirror()
-    /// Claude Code (runtime claude-cli) and Codex (runtime codex), each in an OpenClaw-managed worktree. Neither takes
-    /// changes mid-run (unverified), so changes wait for a follow-up turn. Coding is opt-in: not ready while `dev_repo` is empty.
-    public var executors: [Executor] {
-        let off = settings().devRepo == nil ? "No repository is set for coding work." : nil
-        return [
-            Executor(id: "claude",name: "Claude Code",appAccess: false,liveSteer: false,runtime: "claude-cli",notReady: off),
-            Executor(id: "codex",name: "Codex",appAccess: true,liveSteer: false,runtime: "codex",
-                     routingNotes: "New coding work that also needs to operate an app or a browser (e.g. App Store Connect) uses executor \"codex\" unless the user names Claude Code.",notReady: off),
-        ]
-    }
     /// `agent` is `[harness] agent`. Session keys put the app namespace `projectx` after it (`agent:<agent>:projectx…`),
     /// so agent `projectx` keeps its existing keys byte for byte.
     public init(workspace: URL, agent: String = "yorozu", rpc: GatewayRPC = GatewayRPC(), settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) {
@@ -365,13 +327,16 @@ public struct OpenClawHarness: Harness {
     }
     /// An `agent` call; if OpenClaw refuses its inline images (`UnsupportedAttachmentError`, such as
     /// `unsupported-non-image`), it goes once more without them: the message still names every file by path.
-    private func dispatch(_ params: [String:Any], final: Bool = false, sourceMessageID: String?) async throws -> [String:Any] {
-        do { return try await rpc.call("agent",params,final: final,sourceMessageID: sourceMessageID) }
+    private func dispatch(_ params: [String:Any], final: Bool = false, sourceMessageID: String?, timeout: Int? = nil) async throws -> [String:Any] {
+        do { return try await rpc.call("agent",params,final: final,sourceMessageID: sourceMessageID,timeout: timeout) }
         catch where params["attachments"] != nil && error.localizedDescription.contains("UnsupportedAttachmentError") {
             var bare = params; bare["attachments"] = nil
-            return try await rpc.call("agent",bare,final: final,sourceMessageID: sourceMessageID)
+            return try await rpc.call("agent",bare,final: final,sourceMessageID: sourceMessageID,timeout: timeout)
         }
     }
+    /// A thinking step's run timeout (s): long enough for the longest coding agent the worker may run, plus 10 minutes
+    /// of its own work (#351); 2100 s with the default agents.
+    static func stepTimeout(_ s: HarnessSettings) -> Int { (s.codingAgents.map(\.timeout).max() ?? CodingAgent.defaultTimeout) + 600 }
     private func model(_ prompt: String, model: String, sourceMessageID: String? = nil) async throws -> String {
         guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Model input exceeds bounded context.") }
         guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this role; choose one in Settings › Harness.") }
@@ -399,12 +364,13 @@ public struct OpenClawHarness: Harness {
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput {
         guard input.topic.sessionKey.hasPrefix("agent:\(agent):projectx:") else { throw ProjectError.blocked("Workers must use app-owned sessions on the configured agent \(agent). No private session import.") }
         let s = settings()
-        if let executor = input.work.executor { return try await code(input,executor: executor,settings: s,update: update) }
         let key = input.topic.sessionKey; let controller = "agent:\(agent):projectx-control:\(input.topic.id)"
         // Workers run at full permission with the agent's default tools (owner, 2026-10-07). Creating once per topic per
         // app run also upgrades topic sessions created read-only before that. The CLI requests admin scope for "full".
         try await prepare(controller,model: s.workerModel,create: ["permissionMode":"guarded"],mcp: false)
-        try await prepare(key,model: s.workerModel,create: ["permissionMode":"full"],mcp: true)
+        // The task folder is the session's working directory (#351; `cwd` outside the agent workspace needs admin, which the
+        // CLI holds); the contract names it too, since an existing session takes it only from this app run's first create.
+        try await prepare(key,model: s.workerModel,create: ["permissionMode":"full"].merging(input.folder.map { ["cwd":$0.path] } ?? [:]) { $1 },mcp: true)
         _ = try await compactTopic(input,force: false,update: update)
         var wire = try Prompts.firstStep(input,settings: s,cuaSession: "yorozu-" + identifier().prefix(8))
         for step in 0...Prompts.memoryOperations {
@@ -418,9 +384,9 @@ public struct OpenClawHarness: Harness {
                 if let event = Self.publicEvent(raw,session: key,run: runID,task: input.work.id) { try? await update(.event(event)) }
             }
             let result: [String:Any]
-            var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":240,"idempotencyKey":runID]
+            var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":Self.stepTimeout(s),"idempotencyKey":runID]
             if !images.isEmpty { params["attachments"] = images }
-            do { result = try await dispatch(params,final: true,sourceMessageID: input.work.messageID) }
+            do { result = try await dispatch(params,final: true,sourceMessageID: input.work.messageID,timeout: (Self.stepTimeout(s) + 30) * 1000) }
             catch { if let listener { await rpc.native?.removeObserver(listener) }; throw error }
             if let listener { await rpc.native?.removeObserver(listener) }
             // The CLI cannot stream; committed public messages of this exact run are projected once it ends.
@@ -438,8 +404,6 @@ public struct OpenClawHarness: Harness {
         }; throw ProjectError.invalid("Worker invocation ended without an answer.")
     }
     public func steer(_ work: Work, topic: Topic, amendment: Amendment) async throws -> Bool {
-        // Coding runs take changes as a follow-up turn of the same task and session (mid-run steering unverified).
-        guard work.executor == nil else { return false }
         guard let controller = work.controllerKey else { return false }
         let result = try await rpc.call("tools.invoke",["name":"sessions_send","sessionKey":controller,"agentId":agent,"idempotencyKey":"\(work.id)-revision-\(amendment.revision)","args":["sessionKey":topic.sessionKey,"message":try encoded(amendment),"mode":"steer","timeoutSeconds":0,"watch":false]])
         let raw = result["output"] as? [String:Any] ?? [:]; let output = raw["details"] as? [String:Any] ?? raw
@@ -448,7 +412,8 @@ public struct OpenClawHarness: Harness {
     public func cancel(_ work: Work, topic: Topic) async throws -> Bool {
         guard let run = work.runID else { return true } // Never dispatched; setHandle refuses suppressed work.
         guard run.hasPrefix("projectx-") else { return true } // Another harness's run (a harness switch): nothing here to stop.
-        let key = work.executor.map { codingKey(topic,$0) } ?? topic.sessionKey
+        // A coding run from before #351 ran in `<topic key>-<executor>`.
+        let key = work.executor.map { topic.sessionKey + "-" + $0 } ?? topic.sessionKey
         let r = try await rpc.call("chat.abort",["sessionKey":key,"agentId":agent,"runId":run,"preserveSideRuns":true])
         // aborted:false means no active, queued or pending run has this ID: nothing is left running.
         return (r["runIds"] as? [String] ?? []).contains(run) || r["aborted"] as? Bool == false
@@ -456,7 +421,11 @@ public struct OpenClawHarness: Harness {
     public func reconcile(_ work: Work, topic: Topic) async throws -> RunStatus {
         guard let run = work.runID else { return .unknown }
         guard run.hasPrefix("projectx-") else { return .stopped } // Another harness's run: not reachable from here.
-        if let executor = work.executor { return try await reconcileCode(run,key: codingKey(topic,executor),revision: work.revision) }
+        // A coding run from before #351: still going, or over (its result is no longer read).
+        if work.executor != nil {
+            guard let r = try? await rpc.call("agent.wait",["runId":run,"timeoutMs":1]) else { return .unknown }
+            return r["status"] as? String == "pending" ? .running : .stopped
+        }
         let r = try await rpc.call("agent.wait",["runId":run,"timeoutMs":1])
         guard r["runId"] as? String == run else { return .unknown }
         if r["status"] as? String == "pending" { return .running }
@@ -474,7 +443,7 @@ public struct OpenClawHarness: Harness {
             return Date().timeIntervalSince1970 - (reply["timestamp"] as? Double ?? 0) / 1000 > 900 ? .stopped : .unknown
         }
         if ended { return .stopped }
-        // No reply. Never admitted => no "<run>:user" turn. Admitted but silent for 15 min => gone (worker timeout is 240 s).
+        // No reply. Never admitted => no "<run>:user" turn. Admitted, no longer pending and silent for 15 min => gone.
         guard let turn = messages.last(where: { $0["idempotencyKey"] as? String == run + ":user" }) else { return .stopped }
         return Date().timeIntervalSince1970 - (turn["timestamp"] as? Double ?? 0) / 1000 > 900 ? .stopped : .unknown
     }
@@ -624,7 +593,7 @@ extension OpenClawHarness {
         return (s["sessionId"] as? String, s["totalTokensFresh"] as? Bool == true ? s["totalTokens"] as? Int : nil, min(s["contextTokens"] as? Int ?? Self.usableWindow,Self.usableWindow))
     }
     /// At half the usable window (or when `force`d after an overflow), `sessions.compact` as its own call, never inside the
-    /// 240 s run. The Gateway refuses it while the session has an active or queued run. A compaction is noted in the
+    /// step's run. The Gateway refuses it while the session has an active or queued run. A compaction is noted in the
     /// sub-chat; a failure goes to the main timeline and the task continues. True when the session was compacted.
     func compactTopic(_ input: WorkerInput,force: Bool,update: @escaping @Sendable (StreamUpdate) async throws -> Void) async throws -> Bool {
         let key = input.topic.sessionKey; let before: Int?; let after: Int?
@@ -646,127 +615,8 @@ extension OpenClawHarness {
     }
 }
 
-// MARK: - R2 coding workers: Claude Code (claude-cli) or Codex inside openclaw sessions, each in a managed git worktree.
+// MARK: - Whole replies
 extension OpenClawHarness {
-    func codingKey(_ topic: Topic,_ executor: String) -> String { topic.sessionKey + "-" + executor }
-    /// Once per app run per topic and tool. Claude Code needs "full" (its guarded modes need an approval client PROJECTX
-    /// lacks); Codex "workspace" is seatbelt-confined to the worktree. Branch: openclaw/<label>-<id>-<tool>, from the base branch.
-    private func codingSession(_ topic: Topic,_ executor: String,model: String,base: String) async throws -> String {
-        let key = codingKey(topic,executor)
-        let slug = topic.label.lowercased().unicodeScalars.map { ("a"..."z").contains($0) || ("0"..."9").contains($0) ? String($0) : "-" }
-            .joined().split(separator: "-").joined(separator: "-").prefix(32)
-        let name = (slug.isEmpty ? "" : slug + "-") + topic.id.prefix(6) + "-" + executor
-        let (runtime,permission) = executor == "codex" ? ("codex","workspace") : ("claude-cli","full")
-        try await prepare(key,model: model,runtime: runtime,create: ["permissionMode":permission,"worktree":true,"worktreeBaseRef":base,"worktreeName":name],mcp: true)
-        return key
-    }
-    /// Async dispatch (no 240 s cap), then poll: agent.wait blocks up to 20 s per check; committed messages, commands and
-    /// output tails go to the sub-chat. The final reply plus the worktree diffstat is the result.
-    func code(_ input: WorkerInput,executor: String,settings s: HarnessSettings,update: @escaping @Sendable (StreamUpdate) async throws -> Void) async throws -> WorkerOutput {
-        // Open question 11: without a dev repo, coding work ends with a plain notice before anything is created or sent.
-        guard let repo = s.devRepo else { throw ProjectError.blocked("No repository is set for coding work. Set a repository in Settings › Advanced.") }
-        guard let tool = executors.first(where: { $0.id == executor })?.name else { throw HarnessError.notReady("OpenClaw offers no coding executor \"\(executor)\".") }
-        let s = try s.resolvingBase(repo)
-        let runID = "projectx-code-" + identifier(); let handle = RunHandle(sessionKey: codingKey(input.topic,executor),controllerKey: "",runID: runID)
-        // The run marker anchors reconcile to this run's own user turn in the session transcript.
-        let message = Prompts.codingMessage(input,contract: Prompts.codingContract(executor: tool,repo: repo,settings: s,topic: input.topic.id,cuaSession: "yorozu-" + identifier().prefix(8)),runID: runID,root: s.filesRoot)
-        // Contract ~5 KB + instruction and user message ≤ 6000 B each + history ≤ 6000 B. Checked before the handle is stamped.
-        guard message.utf8.count <= workerGuard else { throw ProjectError.overflow("The coding task message is \(message.utf8.count) bytes, over the \(workerGuard)-byte cap; shorten the request or start a new topic.") }
-        let model = s.codingModels[executor] ?? ""
-        let key = try await codingSession(input.topic,executor,model: model,base: s.codingBaseBranch)
-        // Claude Code gets inline images as local paths, Codex as data URLs (OpenClaw); both also get the paths.
-        let images = await inlineImages(input.attachments,model: model,root: s.filesRoot,message: message.utf8.count)
-        try await update(.handle(handle))
-        let earlier = Set(Self.messageIDs((try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":200])) ?? [:]))
-        let mark = try? await sessionMark(key)
-        var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":message,"deliver":false,"timeout":7200,"idempotencyKey":runID]
-        if !images.isEmpty { params["attachments"] = images }
-        let started = try await dispatch(params,sourceMessageID: input.work.messageID)
-        guard started["runId"] as? String == runID else { throw ProjectError.uncertain("\(tool) run start unconfirmed. Request ID: \(runID)") }
-        var lost = 0, failures = 0, unread = 0, shared = Set<String>() // events whose images went out already
-        while true {
-            try Task.checkCancellation()
-            // Re-asserting the handle throws once the work is suppressed, so a stop is noticed within one poll even if
-            // its first abort raced the run's admission; execute() then re-sends the abort and settles the stop.
-            try await update(.handle(handle))
-            // Gateway restarts and busy answers are transient while the run keeps going; only a long outage ends tracking.
-            guard let r = try? await rpc.call("agent.wait",["runId":runID,"timeoutMs":20000]) else {
-                failures += 1
-                if failures >= 40 { throw ProjectError.uncertain("Gateway unreachable for about 10 min while \(tool) was running; it may still be active. Its worktree keeps any uncommitted changes; ask to retry.") }
-                try await Task.sleep(for: .seconds(15)); continue
-            }
-            failures = 0
-            let fetched = try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":2000])
-            // Each poll re-reads the run's messages: an event's images go out once.
-            for event in Self.codingEvents(fetched ?? [:],task: input.work.id,skip: earlier) { try? await Prompts.emitProgress(event,media: shared.insert(event.id).inserted,update: update) }
-            if (r["endedAt"] as? Double ?? 0) > 0 {
-                // agent.wait carries only the error text, no kind: match the Gateway's overflow wording (packages/ai/src/utils/overflow.ts).
-                if r["status"] as? String != "ok", let error = r["error"] as? String, error.range(of: "context.*overflow|context window.*(too (large|long)|exceed|over|limit|max)|context.?length|prompt.*too (large|long)|maximum context|compaction fail|request_too_large|too many tokens|token limit exceeded",options: [.regularExpression,.caseInsensitive]) != nil, error.range(of: "too small",options: .caseInsensitive) == nil {
-                    throw ProjectError.overflow("\(tool)'s session ran out of context. Changes so far stay uncommitted in its worktree; start a new topic for this work.")
-                }
-                guard r["status"] as? String == "ok" else { throw ProjectError.invalid("\(tool) run ended: \(r["status"] as? String ?? "unknown"). Changes so far stay uncommitted in its worktree.") }
-                break
-            }
-            // A bare timeout is in-flight, unknown or forgotten; only a successfully read session state tells them apart.
-            guard let history = fetched else {
-                unread += 1
-                if unread >= 15 { throw ProjectError.uncertain("\(tool) run status unknown: session history unavailable. It may still be running; reconcile before retry.") }
-                continue
-            }
-            unread = 0
-            let info = history["sessionInfo"] as? [String:Any] ?? [:]
-            let active = r["status"] as? String == "pending" || (info["activeRunIds"] as? [String] ?? []).contains(runID) || info["hasActiveRun"] as? Bool == true
-            lost = active ? 0 : lost + 1
-            if lost >= 3 { throw ProjectError.uncertain("\(tool) run is no longer tracked by the Gateway. Its worktree keeps any uncommitted changes; ask to retry.") }
-        }
-        // Decision 5: the tool compacts its own session. OpenClaw exposes no compaction count, so a new transcript id or
-        // a smaller fresh token count than before the run is taken as one.
-        if let mark, let now = try? await sessionMark(key), (mark.id != nil && now.id != nil && now.id != mark.id) || (now.tokens ?? .max) < (mark.tokens ?? 0) {
-            let sizes = mark.tokens.flatMap { b in now.tokens.map { ": \(b) → \($0) tokens" } } ?? "."
-            try? await update(.event(WorkerEvent(id: input.work.id + ":" + runID + ":compaction",taskID: input.work.id,kind: "compaction",body: "\(tool) compacted its session" + sizes,created: Date().timeIntervalSince1970)))
-        }
-        let full = (try? await rpc.call("chat.history",["sessionKey":key,"limit":20,"maxChars":2000])) ?? [:]
-        let reply = try await finalText(full,key: key,skip: earlier) ?? "\(tool) finished without a summary."
-        // Only what the worker left uncommitted (the default scope compares to origin/main); a committed change reads as 0 files.
-        let diff = try? await rpc.call("sessions.diff",["sessionKey":key,"agentId":agent,"scope":"uncommitted"])
-        // Relative returned paths resolve against the worktree.
-        var output = Prompts.coded(reply,revision: input.work.revision,base: (diff?["root"] as? String).map { URL(fileURLWithPath: $0) })
-        if let diff {
-            let files = (diff["files"] as? [[String:Any]] ?? []).compactMap { $0["path"] as? String }
-            let line = "Worktree \(diff["root"] as? String ?? "?") (branch \(diff["branch"] as? String ?? "?"), uncommitted) · \(files.count) file(s) · +\(diff["additions"] as? Int ?? 0) −\(diff["deletions"] as? Int ?? 0)" + (diff["truncated"] as? Bool == true ? " (truncated)" : "")
-            try? await update(.event(WorkerEvent(id: input.work.id + ":" + runID + ":diff",taskID: input.work.id,kind: "diff",body: ([line] + files.prefix(20)).joined(separator: "\n"),created: Date().timeIntervalSince1970)))
-            output.text += "\n\n" + line
-        }
-        return output
-    }
-    /// Anchored to this run's own user turn (claude-cli transcripts carry no runId, and agent.wait forgets runs after
-    /// ~10 min), so a run that finished while the app was closed is delivered instead of re-run.
-    func reconcileCode(_ run: String,key: String,revision: Int) async throws -> RunStatus {
-        let r = (try? await rpc.call("agent.wait",["runId":run,"timeoutMs":1])) ?? [:]
-        if r["status"] as? String == "pending" { return .running }
-        // 8000 chars keep the "[run …]" marker, after the ~5 KB contract, in a user turn's preview.
-        guard let history = try? await rpc.call("chat.history",["sessionKey":key,"limit":200,"maxChars":8000]) else { return .unknown }
-        let info = history["sessionInfo"] as? [String:Any] ?? [:]
-        if (info["activeRunIds"] as? [String] ?? []).contains(run) || info["hasActiveRun"] as? Bool == true { return .running }
-        let messages = history["messages"] as? [[String:Any]] ?? []
-        guard let anchor = messages.lastIndex(where: { $0["idempotencyKey"] as? String == run + ":user" || ($0["role"] as? String == "user" && "\($0["content"] ?? "")".contains("[run \(run)]")) }) else { return .stopped }
-        let after = Array(messages[(anchor + 1)...])
-        if (r["endedAt"] as? Double ?? 0) > 0, r["status"] as? String != "ok" { return .stopped }
-        // Only a final turn (not a crashed run's mid-step narration) counts as this run's answer.
-        guard let last = after.last(where: { $0["role"] as? String == "assistant" }), !["toolUse","tool_use"].contains(last["stopReason"] as? String ?? ""),
-              let text = try await finalText(["messages":after],key: key,skip: []) else { return .stopped }
-        return .completed(Prompts.coded(text,revision: revision))
-    }
-    static func messageIDs(_ history: [String:Any]) -> [String] { (history["messages"] as? [[String:Any]] ?? []).compactMap(messageID) }
-    static func messageID(_ m: [String:Any]) -> String? {
-        (m["__openclaw"] as? [String:Any])?["id"] as? String ?? m["idempotencyKey"] as? String ?? (m["timestamp"] as? Double).map { "t\(Int($0))" }
-    }
-    /// The newest assistant reply with text, read whole: no Yorozu cut; past the Gateway's own caps its marker shows as is.
-    func finalText(_ history: [String:Any],key: String,skip: Set<String>) async throws -> String? {
-        let replyText = { (m: [String:Any]) in (m["content"] as? [[String:Any]] ?? []).filter { ($0["type"] as? String)?.lowercased() == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n") }
-        guard let reply = (history["messages"] as? [[String:Any]] ?? []).last(where: { $0["role"] as? String == "assistant" && !skip.contains(Self.messageID($0) ?? "") && !replyText($0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return nil }
-        return replyText(try await whole(reply,key: key))
-    }
     /// chat.history marks a preview `__openclaw.truncated` (text past maxChars ends "…(truncated)…"; a message over 128 KiB
     /// becomes a placeholder); chat.message.get returns it whole, up to 1,000,000 chars per text field. Else the preview.
     /// A failed fetch throws (status unknown, reconcile later) rather than passing a preview off as the answer; only the
@@ -778,29 +628,6 @@ extension OpenClawHarness {
         if let message = r["message"] as? [String:Any] { return message }
         if r["unavailableReason"] as? String == "oversized" { return m }
         throw ProjectError.uncertain("The full reply could not be read yet; its run finished. Reconcile before retry.")
-    }
-    /// Public progress only: assistant text, shell commands, tool names with paths, and output tails. Never reasoning.
-    static func codingEvents(_ history: [String:Any],task: String,skip: Set<String>) -> [WorkerEvent] {
-        var events: [WorkerEvent] = []
-        for message in history["messages"] as? [[String:Any]] ?? [] {
-            guard message["role"] as? String == "assistant", let id = messageID(message), !skip.contains(id) else { continue }
-            let created = (message["timestamp"] as? Double ?? 0) / 1000 // epoch ms
-            for (i,block) in (message["content"] as? [[String:Any]] ?? []).enumerated() {
-                let type = (block["type"] as? String ?? "").lowercased(); var body: String?; var kind = "message"
-                if type == "text" { body = block["text"] as? String }
-                else if ["toolcall","tool_use"].contains(type), block["parentToolCallId"] == nil {
-                    let args = block["arguments"] as? [String:Any] ?? block["input"] as? [String:Any] ?? [:]; let name = toolRow(String((block["name"] as? String ?? "tool").prefix(100)),args: args)
-                    if let command = args["command"] as? String { body = "$ " + String(command.prefix(2000)); kind = "command" }
-                    else { let path = (args["file_path"] ?? args["path"]) as? String; body = name + (path.map { " " + $0 } ?? ""); kind = "tool" }
-                } else if type == "tool_result" {
-                    let content = block["content"] as? String ?? (block["content"] as? [[String:Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
-                    body = String(content.suffix(2000)); kind = block["is_error"] as? Bool == true ? "error" : "output"
-                }
-                guard let text = body?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, !sensitive(text) else { continue }
-                events.append(WorkerEvent(id: task + ":" + id + ":\(i)",taskID: task,kind: kind,body: text,created: created))
-            }
-        }
-        return events
     }
 }
 

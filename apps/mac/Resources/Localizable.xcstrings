@@ -268,17 +268,6 @@
         }
       }
     },
-    "Coding (%@)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "コーディング（%@）"
-          }
-        }
-      }
-    },
     "Hermes's address in config.toml isn't usable" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -754,26 +743,6 @@
         }
       }
     },
-    "Allow coding work" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "コーディング作業を許可"
-          }
-        }
-      }
-    },
-    "Coding workers change code only in this repository, each in its own worktree. Off: Yorozu says coding is off." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "コーディングワーカーはこのリポジトリだけを、それぞれ専用のワークツリーで変更します。オフのとき、Yorozu はコーディングがオフだと伝えます。"
-          }
-        }
-      }
-    },
     "Found" : {
       "localizations" : {
         "ja" : {
@@ -810,26 +779,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "PATH、~/.local/bin、Homebrew にありません"
-          }
-        }
-      }
-    },
-    "Sign in where the Gateway runs: `%@`" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gateway が動いている環境でサインイン: `%@`"
-          }
-        }
-      }
-    },
-    "Found means the tool is on this Mac. Yorozu can't tell whether it is signed in." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「見つかりました」はツールがこの Mac にあるという意味です。サインイン済みかどうかは Yorozu には分かりません。"
           }
         }
       }
@@ -3452,26 +3401,6 @@
         }
       }
     },
-    "Coding workers" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "コーディングワーカー"
-          }
-        }
-      }
-    },
-    "Coding: %@" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "コーディング: %@"
-          }
-        }
-      }
-    },
     "Command line" : {
       "localizations" : {
         "ja" : {
@@ -3952,16 +3881,6 @@
         }
       }
     },
-    "Not set: coding work is off." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未設定: コーディング作業はオフです。"
-          }
-        }
-      }
-    },
     "Notifications" : {
       "localizations" : {
         "ja" : {
@@ -4198,16 +4117,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "名前を変更…"
-          }
-        }
-      }
-    },
-    "Repository" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "リポジトリ"
           }
         }
       }
@@ -5062,6 +4971,126 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "このジョブに送信"
+          }
+        }
+      }
+    },
+    "Coding agents" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コーディングエージェント"
+          }
+        }
+      }
+    },
+    "Workers run these on the host, each in its task's folder. Found means the tool is on the host; Yorozu can't tell whether it is signed in. Add your own as [coding_agents] in config.toml." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ワーカーがホスト上で、タスクごとのフォルダで実行します。「見つかりました」はツールがホストにあるという意味で、サインイン済みかどうかは Yorozu には分かりません。独自のエージェントは config.toml の [coding_agents] に追加できます。"
+          }
+        }
+      }
+    },
+    "Workspace" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ワークスペース"
+          }
+        }
+      }
+    },
+    "Limit agents to the workspace" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントをワークスペース内に制限"
+          }
+        }
+      }
+    },
+    "Each task gets its own folder here; downloaded files and cloned repositories go there." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "タスクごとにここにフォルダができ、ダウンロードしたファイルやクローンしたリポジトリはそこに入ります。"
+          }
+        }
+      }
+    },
+    "Limit agents to the workspace?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントをワークスペース内に制限しますか？"
+          }
+        }
+      }
+    },
+    "Stop limiting agents to the workspace?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントのワークスペース内への制限をやめますか？"
+          }
+        }
+      }
+    },
+    "Limit" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "制限する"
+          }
+        }
+      }
+    },
+    "Stop Limiting" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "制限をやめる"
+          }
+        }
+      }
+    },
+    "Coding agents start only inside it and run sandboxed, writing only there (Claude Code runs no shell commands, Codex has no network). Workers are told to stay inside it, which isn't enforced. Off: file access is not limited." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コーディングエージェントはその中でのみ起動し、サンドボックス内で実行されてその中にだけ書き込みます（Claude Code はシェルコマンドを実行せず、Codex はネットワークを使いません）。ワーカーにはその中にとどまるよう指示しますが、強制はされません。オフ：ファイルへのアクセスは制限されません。"
+          }
+        }
+      }
+    },
+    "From the next task, coding agents write only inside the workspace, and agents without a sandboxed command won't run. Workers are told to stay inside it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "次のタスクから、コーディングエージェントはワークスペース内にだけ書き込み、サンドボックス用のコマンドがないエージェントは実行されません。ワーカーにはその中にとどまるよう指示します。"
+          }
+        }
+      }
+    },
+    "From the next task, coding agents and workers may read and write files anywhere on the host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "次のタスクから、コーディングエージェントとワーカーはホスト上のどこでもファイルを読み書きできるようになります。"
           }
         }
       }

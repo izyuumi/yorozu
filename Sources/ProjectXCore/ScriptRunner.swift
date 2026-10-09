@@ -64,6 +64,12 @@ public final class ScriptRunner: @unchecked Sendable {
         let dir = try directory(job: job)
         let stamp = ISO8601DateFormatter.string(from: Date(),timeZone: .current,formatOptions: [.withFullDate,.withTime,.withColonSeparatorInTime]).replacingOccurrences(of: ":",with: "-")
         let log = dir.appendingPathComponent("runs/\(stamp)-\(work.prefix(8)).log")
+        // -f: no ~/.zshenv, so the environment stays exactly this one.
+        return try await spawn(work: work,argv: ["/bin/zsh","-f","-c",script],dir: dir,environment: Self.environment(job: job,dir: dir),timeout: timeout,log: log,started: started,output: output)
+    }
+    /// `run` for any program: `argv[0]` is an absolute path, run without a shell in `dir` with exactly `environment`, its
+    /// output logged to `log` (created 0600). Coding agents (#351) run through this too, keyed by their own run id.
+    public func spawn(work: String, argv args: [String], dir: URL, environment: [String:String], timeout: Int, log: URL, started: () async throws -> Void, output: @escaping @Sendable (String, String, String) async -> Void) async throws -> ScriptResult {
         guard FileManager.default.createFile(atPath: log.path,contents: nil,attributes: [.posixPermissions: 0o600]), let logFile = try? FileHandle(forWritingTo: log) else { throw ProjectError.invalid("Couldn't create the run log \(log.path).") }
         defer { try? logFile.close() }
         try await started()
@@ -81,12 +87,11 @@ public final class ScriptRunner: @unchecked Sendable {
         var none = sigset_t(), all = sigset_t(); sigemptyset(&none); sigfillset(&all)
         posix_spawnattr_setflags(&attr,Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
         posix_spawnattr_setpgroup(&attr,0); posix_spawnattr_setsigmask(&attr,&none); posix_spawnattr_setsigdefault(&attr,&all)
-        // -f: no ~/.zshenv, so the environment stays exactly this one.
-        let args = ["/bin/zsh","-f","-c",script], env = Self.environment(job: job,dir: dir).map { "\($0.key)=\($0.value)" }
+        let env = environment.map { "\($0.key)=\($0.value)" }
         var argv = args.map { strdup($0) } + [nil], envp = env.map { strdup($0) } + [nil]
         defer { for p in argv + envp { free(p) } }
         var spawnedPID: pid_t = 0
-        let spawned = posix_spawn(&spawnedPID,"/bin/zsh",&actions,&attr,&argv,&envp)
+        let spawned = posix_spawn(&spawnedPID,args[0],&actions,&attr,&argv,&envp)
         close(outPipe[1]); close(errPipe[1])
         guard spawned == 0 else { close(outPipe[0]); close(errPipe[0]); return failed(String(cString: strerror(spawned)),log: log) }
         let pid = spawnedPID

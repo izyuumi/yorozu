@@ -14,13 +14,12 @@ public struct ModelChoice: Sendable, Equatable {
     public var id: String?; public var reason: String; public var allowed = true; public var explicit = false
 }
 public struct ModelChoices: Sendable, Equatable {
-    public var secretary, extraction, worker, review: ModelChoice; public var coding: [String:ModelChoice]
+    public var secretary, extraction, worker, review: ModelChoice
 }
 
 /// Smart model defaults (#312): pure, recomputed at launch and on every config reload. Explicit choices always win.
 public enum ModelDefaults {
-    /// `runtimes`: coding executor id → the model runtime it runs on (`Executor.runtime`), from the harness.
-    public static func resolve(_ models: [ModelInfo], primary: String?, explicit: Config.Models, runtimes: [String:String] = [:]) -> ModelChoices {
+    public static func resolve(_ models: [ModelInfo], primary: String?, explicit: Config.Models) -> ModelChoices {
         let rules = explicit.rules, priced = models.filter { $0.price != nil }
         let k = { (n: Int) in n % 1000 == 0 ? "\(n / 1000)k" : "\(n)" }
         /// Most expensive; a model with no output cap is left out (open question 3).
@@ -46,17 +45,6 @@ public enum ModelDefaults {
             if let other = top(priced.filter { $0.id != secretary.id }) { return ModelChoice(id: other.id, reason: "most expensive allowed model other than the secretary's") }
             return ModelChoice(id: best.id, reason: "most expensive allowed model (no other priced model)")
         }
-        var coding: [String:ModelChoice] = [:]
-        for executor in Set(runtimes.keys).union(explicit.coding.keys) {
-            coding[executor] = pick(explicit.coding[executor]) {
-                guard let runtime = runtimes[executor] else { return ModelChoice(id: nil, reason: "unknown executor runtime") }
-                let able = models.filter { $0.runtimes.contains(runtime) }
-                if let primary, able.contains(where: { $0.id == primary }) { return ModelChoice(id: primary, reason: "the agent's primary model") }
-                if let best = top(able.filter { $0.price != nil }) { return ModelChoice(id: best.id, reason: "most expensive allowed model that runs on \(runtime)") }
-                let widest = able.max { ($0.contextTokens ?? 0, $1.id) < ($1.contextTokens ?? 0, $0.id) }
-                return ModelChoice(id: widest?.id, reason: widest == nil ? "no allowed model runs on \(runtime)" : "allowed model with the largest context that runs on \(runtime) (no priced model with an output cap)")
-            }
-        }
-        return ModelChoices(secretary: secretary, extraction: pick(explicit.extraction, cheap), worker: pick(explicit.worker, worker), review: review, coding: coding)
+        return ModelChoices(secretary: secretary, extraction: pick(explicit.extraction, cheap), worker: pick(explicit.worker, worker), review: review)
     }
 }

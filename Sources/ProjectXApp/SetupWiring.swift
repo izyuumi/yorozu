@@ -12,9 +12,9 @@ extension AppModel {
         guard recheckTask == nil else { recheckAgain = true; return }
         recheckTask = Task {
             defer { recheckTask = nil; if recheckAgain { recheckAgain = false; recheck() } }
-            // The launched harness, against the settings in force now: Hermes's profiles follow [mcp_servers] and dev_repo.
+            // The launched harness, against the settings in force now: Hermes's profiles follow [mcp_servers] and the workspace.
             var c = config
-            if let l = launched?.config.harness { let repo = c.harness.devRepo; c.harness = l; c.harness.devRepo = repo }
+            if let l = launched?.config.harness { c.harness = l }
             var r = runtimeMode == .live ? await Readiness.harness(c,rpc: gatewayRPC ?? GatewayRPC(target: c.harness.gatewayURL)) : Readiness()
             if let switchNotice { r.items.append(Readiness.Item(id: "harness.switch",title: switchNotice,severity: .warning,fix: .step("harness"))) }
             // A fixed title: phones get titles, never the raw error.

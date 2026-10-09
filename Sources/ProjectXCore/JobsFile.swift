@@ -116,7 +116,7 @@ public enum JobsFile {
     #   ai_when      when script output goes on to the instruction: "always", "changed" or a regular expression it must match
     #   instruction  the AI step
     #   timeout      script timeout in seconds, 1-86400 (default 600)
-    #   model, executor  optional: run the AI step on this model or executor
+    #   model        optional: run the AI step on this model (executor: accepted and ignored)
     #   topic        the job's topic, set by Yorozu
     # A job needs a script, an instruction or both. Unknown keys are errors.
 

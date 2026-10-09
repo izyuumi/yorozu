@@ -55,14 +55,17 @@ public struct HarnessDetection: Sendable, Equatable {
     public var items: [Readiness.Item] = []
 }
 
-/// A coding executor for display (Settings › Advanced): whether its tool's binary is found on the launch PATH, `~/.local/bin`
-/// or the Homebrew folders. Never a login state: no Gateway method reports one.
-public struct CodingExecutor: Sendable, Equatable {
-    public var executor: Executor; public var binary: String?; public var path: String?
+/// A coding agent for display (#351; Settings › Advanced shows found or not found): its program's path when found
+/// (`CodingAgent.executable`) and the sign-in command to copy. Never a login state: Yorozu can't tell whether the tool is signed in.
+public struct CodingAgentStatus: Sendable, Equatable, Identifiable {
+    public var name: String, title: String, path: String?, login: String?
+    public var id: String { name }
+    public init(_ agent: CodingAgent) { name = agent.name; title = Self.titles[agent.name] ?? agent.name; path = agent.executable; login = agent.login }
+    static let titles = ["claude": "Claude Code", "codex": "Codex"]
 }
 
 /// The setup seam each harness adapter fills in beside `Harness` (#317): read-only detection, its readiness checks, the setup
-/// steps it takes part in, and its coding executors for display.
+/// steps it takes part in.
 public protocol HarnessSetup: Sendable {
     var kind: Config.HarnessKind { get }
     var title: String { get }
@@ -72,8 +75,8 @@ public protocol HarnessSetup: Sendable {
     func detect() async -> HarnessDetection
     /// The setup steps (`SetupEngine.order`) this adapter takes part in beyond detection.
     var steps: [String] { get }
-    func executors(_ settings: HarnessSettings) -> [CodingExecutor]
 }
+
 
 public extension Config.HarnessKind {
     /// This kind's setup adapter for `config`; `rpc` is the Gateway client OpenClaw's checks go through.
