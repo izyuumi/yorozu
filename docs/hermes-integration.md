@@ -47,7 +47,7 @@ With Hermes as the main harness, the setup engine's `harness` step offers the pr
 - Apply runs only on a click in the setup window (Continue on the step) or `setup answer hermes_setup apply:<plan_digest>`. It computes `pending` again and refuses when the changes differ from the ones shown, then runs `HermesProfiles.apply` on the pending writes only and evaluates again. With everything in place there is nothing to apply and the step is done.
 - The step is done when detection passes (including no staleness warning) and nothing is pending, or when the user skipped it. A skipped step whose profiles are missing or out of date still offers the write (`SetupStep.write`, beside the harness choice), so Fix… opens a step whose Apply Changes button applies it; `answer hermes_setup apply:<plan_digest>` takes it too. Choosing another harness clears the step's skip.
 - Staleness: once both profile folders exist, `HermesSetup.detect` compares `pending` with what is on disk and, when anything differs (a changed `[mcp_servers]`, an integration switched, `dev_repo`), adds the warning "Hermes profiles need updating" (`hermes.profiles`) with the change lines as detail and Fix… at the harness step. Yorozu never writes the profiles on its own. The app checks readiness again after each settings reload while Hermes is the launched harness.
-- Settings › Advanced › Harness connection has "Set Up Hermes Profiles…", which opens setup at the harness step.
+- Settings › Harness has "Set Up Hermes Profiles…", which opens setup at the harness step.
 
 ## Readiness
 

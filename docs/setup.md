@@ -40,12 +40,12 @@ Setup runs in the setup window, which opens at launch until setup is done and ag
 |---|---|---|
 | `welcome` | none | `start` |
 | `harness` | The main harness's detection: `openclaw` and `node` found, the OpenClaw version, Gateway `health`, and that `[harness] agent` is not OpenClaw's default agent (`main`, or an entry with `default: true`), which blocks; then Yorozu's own agent entry and its shape ([openclaw-integration.md](openclaw-integration.md#assisted-setup)). For Hermes: the launcher, both Yorozu profiles answering with the required features (or a gateway restart they wait for) and a chosen AI provider, the default profile's API server, and whether the profiles match the plan ([hermes-integration.md](hermes-integration.md#setup-step)) | `harness` (which installed harness to use) when the main one is not installed but another is, and on the done step while several are installed; `openclaw_setup` (`apply:<plan_digest>`, `skip`) when the assisted write would add or change Yorozu's entry; `hermes_setup` (`apply:<plan_digest>`, `skip`) while Yorozu's Hermes profiles are missing or differ from the plan (on a skipped, done step the window offers it beside the harness choice); otherwise `check` or `skip` |
-| `gateway` | Native enrollment, for OpenClaw on the native transport | App-only (Settings › Advanced › Harness connection) |
+| `gateway` | Native enrollment, for OpenClaw on the native transport | App-only (Settings › Harness) |
 | `models` | Each role model usable (`models.list`) and its provider signed in (`models.authStatus`) | `openclaw_setup` when the write would only add allow-list items; otherwise `check` or `skip` |
 | `integrations` | Each enabled integration's checks | `integrations.<name>` (`on`, `off`) for the first one with a failed check |
 | `yolo` | none | `off` (default) or `on` |
 | `start_at_login` | none | `on` (default) or `off`; app-only (Settings › General › Start at login) |
-| `pair_iphone` | A paired phone | `paired` or `skip`; app-only (Settings › Devices › Pair iPhone) |
+| `pair_iphone` | A paired client device | `paired` or `skip`; app-only (Settings › Devices › Pair a Client Device) |
 | `path_link` | `~/.local/bin/yorozu` points to this binary | `no` (default) or `yes` ([The `yorozu` command](#the-yorozu-command)) |
 | `done` | Every step done | none |
 
@@ -76,7 +76,7 @@ The JSON is one object, keys sorted:
 {
   "steps": [
     {"id": "welcome", "title": "Welcome", "state": "done"},
-    {"id": "gateway", "title": "Connect to the Gateway", "state": "app", "where": "Settings › Advanced › Harness connection"}
+    {"id": "gateway", "title": "Connect to the Gateway", "state": "app", "where": "Settings › Harness"}
   ],
   "checks": [
     {"step": "harness", "id": "openclaw.gateway", "title": "…", "severity": "warning", "detail": "…",
@@ -162,11 +162,11 @@ Needed only with `[harness] kind = "hermes"`. Hermes runs its API server on loop
 
 4. Apply the Hermes profile step, which creates and configures `yorozu-worker` and `yorozu-roles` and stores their API keys in the Keychain ([Keychain items](#keychain-items)). With Hermes as the main harness (step 6, or `PROJECTX_HARNESS=hermes`), the setup window's Harness step lists every change and writes them when you click Continue; Settings › Advanced › Set Up Hermes Profiles… opens that step, and `Yorozu setup answer hermes_setup apply:<plan_digest>` does the same from a shell ([`Yorozu setup`](#yorozu-setup)). When `[mcp_servers]`, an integration or `dev_repo` changes later, readiness warns "Hermes profiles need updating" and nothing is written until you apply the step again ([hermes-integration.md](hermes-integration.md#setup-step)). Hermes picks the profiles it serves when its gateway starts, so after the first apply readiness warns "Restart Hermes so it serves Yorozu's profiles" with `hermes -p default gateway restart` to copy. Without a Hermes service (`hermes gateway install`, a launchd agent), that command runs the gateway in the foreground of its Terminal window, which then has to stay open.
 5. Connect a provider for both Yorozu profiles: Codex or Claude Code, never GitHub Copilot (owner decision). The Codex route: sign in once with `hermes auth login openai-codex` (a device code in the browser; answer N when it offers to import the Codex CLI's tokens), which Yorozu's profiles borrow from the default profile; then `hermes -p yorozu-worker config set model.provider openai-codex`, the same for `yorozu-roles`, and a Codex model for each (`hermes -p <profile> model`). While a profile has no provider chosen (`provider: auto` in its `/api/model/options`), readiness warns "Hermes isn't connected to an AI provider" with those commands to copy; a profile on GitHub Copilot blocks with "Hermes uses GitHub Copilot, which Yorozu doesn't use", and Yorozu starts no run on it. Provider keys stay in Hermes; Yorozu never reads them. The profiles do not adopt the Claude Code and Codex CLI logins (`auth.adopt_external_logins: false`), so Claude Code, which Hermes reaches only by borrowing that login, stays blocked there ([hermes-integration.md](hermes-integration.md#providers)).
-6. Choose Hermes Agent in the setup window's Harness step or in Settings › Advanced (`[harness] kind = "hermes"` in `config.toml`, or `PROJECTX_HARNESS=hermes` for one run) and relaunch. The status line shows "Hermes Agent" while Ready; otherwise the readiness banner names what is not ready, an untested version included.
+6. Choose Hermes Agent in the setup window's Harness step or in Settings › Harness (`[harness] kind = "hermes"` in `config.toml`, or `PROJECTX_HARNESS=hermes` for one run) and relaunch. The status line shows "Hermes Agent" while Ready; otherwise the readiness banner names what is not ready, an untested version included.
 
 ## Settings (`config.toml`)
 
-Yorozu's settings are one file, `config.toml`, in the data root in use ([Where data lives](#where-data-lives)), so fixture and `PROJECTX_DATA` runs each have their own and v1, which shares the bundle id, never sees it (`Config.swift`). A launch with no file writes one with the defaults below; no default is specific to one owner. Change it in the Settings window (⌘, or Settings… in the menu-bar menu; the Advanced tab shows while `general.show_advanced` is on, [architecture.md](architecture.md#mac-ui)), by hand, or by asking Yorozu in the chat, which has a worker edit it ([architecture.md](architecture.md#settings)). A row whose key is set by an environment variable is disabled in Settings and labelled "Set by `PROJECTX_…`" ([Precedence](#precedence)); `models.rules.*`, `routing.*`, `direct.*`, `mcp_servers` and user integrations' keys other than `enabled` have no Settings row (the harness popup and the integration switches are in Settings › Advanced), and `setup.*` is written by setup.
+Yorozu's settings are one file, `config.toml`, in the data root in use ([Where data lives](#where-data-lives)), so fixture and `PROJECTX_DATA` runs each have their own and v1, which shares the bundle id, never sees it (`Config.swift`). A launch with no file writes one with the defaults below; no default is specific to one owner. Change it in the Settings window (⌘, or Settings… in the menu-bar menu; the Harness and Advanced tabs show while `general.show_advanced` is on, [architecture.md](architecture.md#mac-ui)), by hand, or by asking Yorozu in the chat, which has a worker edit it ([architecture.md](architecture.md#settings)). A row whose key is set by an environment variable is disabled in Settings and labelled "Set by `PROJECTX_…`" ([Precedence](#precedence)); `models.rules.*`, `routing.*`, `direct.*`, `mcp_servers` and user integrations' keys other than `enabled` have no Settings row (the harness popup is in Settings › Harness and the integration switches in Settings › Advanced; `direct.enabled` is also a switch in the menu-bar menu), and `setup.*` is written by setup.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -176,7 +176,7 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `general.send_key` | `"cmd-enter"` | `"cmd-enter"` (Return is always a new line) or `"smart"` (Return sends a one-line draft); ⌘Return always sends ([architecture.md](architecture.md#mac-ui)) |
 | `general.global_shortcut` | `""` (off) | Shortcut that toggles the popover: modifiers and one key joined by `+`, such as `"option+space"`, `"cmd+shift+y"` or `"ctrl+f5"`; a key other than F1–F12 needs a modifier ([architecture.md](architecture.md#mac-ui)) |
 | `general.appearance` | `"system"` | `"system"`, `"light"` or `"dark"` |
-| `general.show_advanced` | `false` | Shows the Advanced tab |
+| `general.show_advanced` | `false` | Shows the Harness and Advanced tabs, and About this install in Storage |
 | `notifications.enabled` | `true` | Notifications for results, failures and questions; the menu-bar dot shows either way |
 | `notifications.destination` | `"mac"` | `"mac"` (macOS notifications) or `"phones"` (push to paired phones, [Push notifications](#push-notifications)); with `"phones"` the Mac posts none |
 | `routing.personal_knowledge` | `""` | The user's personal notes, named in the routing policy as a source only a worker can read; empty drops that clause; at most 200 bytes of UTF-8 |
@@ -188,7 +188,7 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `harness.agent` | `"yorozu"` | Harness agent id, 1–64 letters, digits, `-` or `_` ([Yorozu's agent](#yorozus-agent)) |
 | `harness.transport` | `"native"` | `"native"` or `"cli"`; a native launch still sends admin-scope calls through the CLI ([openclaw-integration.md](openclaw-integration.md#transport)) |
 | `harness.gateway_url` | `"ws://127.0.0.1:18789"` | Loopback `ws`/`wss` only, with no path, query or credentials |
-| `harness.hermes_url` | `"http://127.0.0.1:8642"` | Hermes API server root, loopback `http`/`https` only, with no path, query or credentials; profiles are reached under `/p/<profile>/`. Settings › Advanced › Harness connection › Hermes URL while Hermes is the main harness (applied on Return; "Relaunch to apply." while it differs from the launched value) |
+| `harness.hermes_url` | `"http://127.0.0.1:8642"` | Hermes API server root, loopback `http`/`https` only, with no path, query or credentials; profiles are reached under `/p/<profile>/`. Settings › Harness › Hermes URL while Hermes is the main harness (applied on Return; "Relaunch to apply." while it differs from the launched value) |
 | `harness.dev_repo` | `""` | Main checkout for coding work, an absolute or `~/` path; empty turns coding work off: the secretary offers no coding executor and says to choose a repository in Settings › Advanced |
 | `harness.dev_base` | `""` | Branch of `dev_repo` coding worktrees are cut from and merged into; empty is the branch checked out there when the work starts. The owner's file sets `dev_base = "projectx"` |
 | `models.secretary`, `models.extraction`, `models.worker`, `models.review` | absent (automatic) | `"provider/model"` ([Models](#models)) |
@@ -199,7 +199,7 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `setup.done` | `false` | Setup is finished; until then the app opens the setup window at launch ([First setup](#first-setup)) |
 | `setup.answered` | `[]` | Ids of the setup steps the user answered or skipped |
 
-`send_key`, `global_shortcut` and `notifications.*` are used by the popover (#311); `appearance` sets the app's appearance and `show_advanced` shows the Advanced tab (#312).
+`send_key`, `global_shortcut` and `notifications.*` are used by the popover (#311); `appearance` sets the app's appearance and `show_advanced` shows the Harness and Advanced tabs (#312).
 
 - **Format.** Yorozu writes the whole file in one canonical layout: known keys in a fixed order, each with Yorozu's own comment, absent model keys as commented examples, and unknown keys kept as data after them. Hand-written comments are not kept. Every write goes to a temporary file in the same folder, mode 0600, flushed to disk, then is renamed over `config.toml`; a write that would be invalid is refused. Writes from Settings are read-modify-write (`Config.update`), so a recent hand or worker edit survives, and are applied at once; a refused write shows in the Settings tab. Otherwise the app writes the file only to create it.
 - **Reload.** `ConfigWatcher` watches the folder with FSEvents, so in-place edits and atomic saves are both seen, and debounces for 300 ms: a saved change is applied within about a second. An unchanged file is ignored; the comparison starts from the file as read at launch, so an edit made while the app was starting is applied too.
@@ -281,7 +281,7 @@ args = ["mcp"]
 
 ### Direct connection
 
-Paired phones can reach the Mac without the relay when both are on the same LAN or the same private VPN (#315; wire in [ios-relay-contract.md](ios-relay-contract.md#direct-path)). The relay stays the fallback.
+Paired client devices can reach the host without the relay when both are on the same LAN or the same private VPN (#315; wire in [ios-relay-contract.md](ios-relay-contract.md#direct-path)). The relay stays the fallback.
 
 - Mac: with `[direct] enabled = true` (the default) the app listens for WebSockets on `[direct] port` (8738) and accepts connections only on Wi-Fi/Ethernet (`en*`) and `utun` interfaces; loopback, AWDL and bridges are refused, so `127.0.0.1` never gets in. Only a phone whose key is in `relay-devices.json` gets past the join: pairing still goes over the relay. The addresses phones are told are the Mac's private Wi-Fi/Ethernet addresses (`lan`) and its private `utun` addresses (`vpn`: RFC 1918, 100.64.0.0/10, ULA), never loopback or link-local. Settings › Connection › Direct connection shows the listener, the addresses, each phone's route and the last refused connection.
 - macOS firewall: when the application firewall is on, macOS asks whether Yorozu may accept incoming connections. An unsigned or ad hoc build asks again after each rebuild, since its signature changes; a Developer ID signed build may ask once. Deny keeps phones on the relay.

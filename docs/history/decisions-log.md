@@ -821,3 +821,13 @@ Source: owner feedback after testing 0.7.0.
 
 - A reply links to the replied message's topic without categorization.
 - Implementer readings (not owner decisions): clients send `MessageData.replyTo`; a reply to a message with a topic pins that topic's home (an attached sub-chat resolves to its target) for `delegate`, `reply` and `clarify`, and a `steer` of a task outside it becomes new work there; a `routing_pin` receipt records it; the Mac context menu has Reply, then Copy (it has no Share, Select Text or Show Details items).
+
+## 2026-10-09 — Host and client devices; Settings without scrolling; Mac feedback on 0.7.0
+Source: owner feedback after testing 0.7.0 on an iPad.
+
+- Client devices won't always be iPhones: iPads now, Macs as clients later, maybe non-Apple devices. User-facing text says **host** (the Mac running Yorozu) and **client devices** / **clients**, not "this Mac" or "iPhone(s)"; Settings › Devices lists "Client devices"; "Pair iPhone…" becomes "Pair a Client Device…".
+- Mac Settings shows all its information without scrolling, on every tab.
+- The pair sheet shows the result when a client device pairs: a checkmark, "Paired with “<name>”" and Done.
+- The menu-bar icon's menu offers Open Quick Chat, Pair a Client Device…, Direct Connection (LAN/VPN), Keep Host Awake, Settings… and Quit.
+- Mac icons are SF Symbols, except the menu-bar logo and the app icon; the delivery mark under the user's messages is two overlapping `checkmark.circle` symbols, filled once read.
+- Implementer readings (not owner decisions): Advanced was split into Harness (harness, connection, enrollment, models) and Advanced (coding workers, integrations), with About this install moved to Storage; config keys and values (`destination = "phones"`, `keep_mac_awake`, setup id `pair_iphone`) and wire fields are unchanged; Gateway-enrollment and coding-tool text keeps "this Mac", which is about macOS itself.
