@@ -37,9 +37,9 @@ public struct Readiness: Sendable, Equatable {
 
     /// The main harness's readiness: its detection, Gateway `health` included. The app runs it at launch and again after a
     /// Gateway call fails. A main harness that is not installed blocks only when no other harness is installed either.
-    public static func harness(_ settings: Config.HarnessSettings, rpc: GatewayRPC) async -> Readiness {
-        let main = settings.kind.adapter(settings,rpc: rpc), d = await main.detect()
-        guard !d.installed, Config.HarnessKind.allCases.contains(where: { $0 != settings.kind && $0.adapter(settings,rpc: rpc).installed }) else { return Readiness(items: d.items) }
+    public static func harness(_ config: Config, rpc: GatewayRPC) async -> Readiness {
+        let kind = config.harness.kind, d = await kind.adapter(config,rpc: rpc).detect()
+        guard !d.installed, Config.HarnessKind.allCases.contains(where: { $0 != kind && $0.adapter(config,rpc: rpc).installed }) else { return Readiness(items: d.items) }
         return Readiness(items: d.items.map { var i = $0; if i.severity == .blocking { i.severity = .warning; i.fix = .step("harness") }; return i })
     }
 }
@@ -76,11 +76,11 @@ public protocol HarnessSetup: Sendable {
 }
 
 public extension Config.HarnessKind {
-    /// This kind's setup adapter; `rpc` is the Gateway client OpenClaw's checks go through.
-    func adapter(_ settings: Config.HarnessSettings, rpc: GatewayRPC) -> any HarnessSetup {
+    /// This kind's setup adapter for `config`; `rpc` is the Gateway client OpenClaw's checks go through.
+    func adapter(_ config: Config, rpc: GatewayRPC) -> any HarnessSetup {
         switch self {
-        case .openclaw: OpenClawSetup(agent: settings.agent,rpc: rpc)
-        case .hermes: HermesSetup(url: settings.hermesURL,agent: settings.agent)
+        case .openclaw: OpenClawSetup(agent: config.harness.agent,rpc: rpc)
+        case .hermes: HermesSetup(url: config.harness.hermesURL,agent: config.harness.agent,profiles: .init(config: config))
         }
     }
 }

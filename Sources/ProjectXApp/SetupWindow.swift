@@ -187,11 +187,13 @@ struct SetupWindow: View {
         }
     }
 
-    /// The assisted OpenClaw write the step offers, as a diff of every path it changes.
+    /// The assisted write the step offers (OpenClaw's config, or Yorozu's Hermes profiles), as a diff of every path it changes.
     @ViewBuilder private func plan(_ s: SetupStep) -> some View {
-        if let plan = s.plan, s.question?.id == "openclaw_setup" {
+        if let plan = s.plan, let id = s.question?.id, SetupEngine.assisted.contains(id) {
+            let hermes = id == "hermes_setup"
             VStack(alignment: .leading, spacing: 6) {
-                Text(plan.needsConfirmation ? "Yorozu's agent entry in OpenClaw differs from what Yorozu expects. Continue asks before changing it:" : "Continue writes only Yorozu's own entries into OpenClaw's config:")
+                if hermes { Text("Continue writes only Yorozu's two Hermes profiles, yorozu-worker and yorozu-roles:") }
+                else { Text(plan.needsConfirmation ? "Yorozu's agent entry in OpenClaw differs from what Yorozu expects. Continue asks before changing it:" : "Continue writes only Yorozu's own entries into OpenClaw's config:") }
                 ForEach(Array(plan.changes.enumerated()), id: \.offset) { _, change in
                     VStack(alignment: .leading, spacing: 1) {
                         Text(verbatim: change.path).fontWeight(.medium)
@@ -199,7 +201,7 @@ struct SetupWindow: View {
                         if let new = change.new { Text(verbatim: "+ " + new).foregroundStyle(.green) }
                     }.font(.caption.monospaced()).lineLimit(3).textSelection(.enabled)
                 }
-                Text("Nothing else in OpenClaw's config changes.").font(.caption).foregroundStyle(.secondary)
+                Text(hermes ? "Your default Hermes profile and any other profile don't change." : "Nothing else in OpenClaw's config changes.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -267,7 +269,7 @@ struct SetupWindow: View {
         }
         guard let q = s.question else { if s.state == .done { model.setupStep = nil } else { Task { await refresh() } }; return }
         if q.id == "start_at_login", model.loginItemBlocker != nil { model.setupStep = nil; passed.insert(s.id); return } // nothing to record
-        if q.id == "openclaw_setup", let plan = s.plan { plan.needsConfirmation ? (confirming = plan) : apply(plan); return }
+        if SetupEngine.assisted.contains(q.id), let plan = s.plan { plan.needsConfirmation ? (confirming = plan) : apply(plan); return }
         if q.choices.contains("check") { return answer(q.id, "check") }
         if q.id.hasPrefix("integrations.") { return answer(q.id, model.config.integrations[String(q.id.dropFirst(13))]?.enabled == false ? "off" : "on") }
         answer(q.id, ["gateway": "connected", "pair_iphone": "paired"][q.id] ?? picks[q.id] ?? q.default)

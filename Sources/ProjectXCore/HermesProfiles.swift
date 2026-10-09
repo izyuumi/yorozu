@@ -72,6 +72,39 @@ public enum HermesProfiles {
         return steps
     }
 
+    /// The plan's writes not yet in place, read-only, each with its change line (what is on disk → what the write sets):
+    /// the harness step's diff and digest, and the staleness check. Empty once Yorozu's profiles are as planned.
+    public static func pending(_ settings: Settings) throws -> [(step: Step, change: OpenClawPlan.Change)] {
+        var configs: [String: Any] = [:]
+        func onDisk(_ p: String, _ key: String) -> String? {
+            if configs[p] == nil { configs[p] = yamlTree((try? String(contentsOf: profileDir(p, settings.home).appendingPathComponent("config.yaml"), encoding: .utf8)) ?? "") }
+            var node = configs[p]
+            for part in key.split(separator: ".") { node = (node as? [String:Any])?[String(part)] }
+            return node.map(canonical)
+        }
+        return try plan(settings).compactMap { step in
+            let dir = profileDir(step.profile, settings.home), change: OpenClawPlan.Change?
+            switch step {
+            case .createProfile(let p): change = .init(path: "profile \(p)", old: nil, new: "hermes profile create \(p) --no-alias --no-skills")
+            case let .setConfig(p,key,value,_):
+                let parsed = value.hasPrefix("[") || value.hasPrefix("{") ? (try? JSONSerialization.jsonObject(with: Data(value.utf8))) ?? value : value
+                let old = onDisk(p, key), new = canonical(parsed)
+                change = old == new ? nil : .init(path: "\(p): \(key)", old: old, new: new)
+            case .writeAPIKey(let p):
+                let key = ((try? String(contentsOf: dir.appendingPathComponent(".env"), encoding: .utf8)) ?? "").components(separatedBy: .newlines).compactMap(apiKeyValue).last
+                change = (key?.count ?? 0) >= 32 && keychainHas(p) ? nil
+                    : .init(path: "\(p)/.env: API_SERVER_KEY", old: key.map { $0.count < 32 ? "(shorter than 32 characters)" : "(not in the Keychain)" }, new: "(a key, also saved in the Keychain)")
+            case let .writeSOUL(p,text):
+                let old = try? String(contentsOf: dir.appendingPathComponent("SOUL.md"), encoding: .utf8)
+                change = old == text ? nil : .init(path: "\(p)/SOUL.md", old: old.map { _ in "(other text)" }, new: "(Yorozu's role identity)")
+            case let .makeFolder(p,name):
+                var folder: ObjCBool = false
+                change = FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).path, isDirectory: &folder) && folder.boolValue ? nil : .init(path: "\(p)/\(name)", old: nil, new: "(empty folder)")
+            }
+            return change.map { (step, $0) }
+        }
+    }
+
     /// Rewrites `mcp_servers` in `yorozu-worker` (Hermes reloads it within about a minute). No server gets `trust`, so
     /// none is `untrusted`. `--force` because `config set` refuses to replace an existing mapping section without it.
     public static func projectMCP(servers: [String:MCPServer]) throws -> Step {
@@ -204,7 +237,73 @@ public enum HermesProfiles {
         return found
     }
 
+    /// A profile's `config.yaml` as Hermes writes it (PyYAML `safe_dump`, block style): mappings, `- ` sequences at or below
+    /// their key, `[]`/`{}`, quoted and folded scalars. Every scalar is a string; anything else reads as different, so the
+    /// step shows it as a change rather than hiding one.
+    static func yamlTree(_ text: String) -> [String:Any] {
+        let lines = text.components(separatedBy: .newlines).filter { let t = $0.trimmingCharacters(in: .whitespaces); return !t.isEmpty && !t.hasPrefix("#") && t != "---" }
+        var i = 0
+        func indent(_ n: Int) -> Int { lines[n].prefix { $0 == " " }.count }
+        func item(_ n: Int, _ at: Int) -> Bool { let t = lines[n].dropFirst(at); return t == "-" || t.hasPrefix("- ") }
+        /// A scalar and its folded continuation lines (deeper than `at`).
+        func scalar(_ first: String, _ at: Int) -> Any {
+            var text = first
+            while i < lines.count, indent(i) > at { text += " " + lines[i].trimmingCharacters(in: .whitespaces); i += 1 }
+            switch text {
+            case "[]": return [Any]()
+            case "{}": return [String:Any]()
+            case _ where text.count >= 2 && text.hasPrefix("'") && text.hasSuffix("'"): return String(text.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'")
+            case _ where text.count >= 2 && text.hasPrefix("\"") && text.hasSuffix("\""): return String(text.dropFirst().dropLast()).replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\")
+            case _ where text.hasPrefix("[") && text.hasSuffix("]"): return text.dropFirst().dropLast().split(separator: ",").map { unquote(String($0)) }
+            default: return text
+            }
+        }
+        func node(_ at: Int) -> Any {
+            if item(i, at) {
+                var list: [Any] = []
+                while i < lines.count, indent(i) == at, item(i, at) {
+                    let rest = lines[i].dropFirst(at + 1).trimmingCharacters(in: .whitespaces); i += 1
+                    list.append(rest.isEmpty ? (i < lines.count && indent(i) > at ? node(indent(i)) : "") : scalar(rest, at))
+                }
+                return list
+            }
+            var map: [String:Any] = [:]
+            while i < lines.count, indent(i) == at, !item(i, at) {
+                let line = String(lines[i].dropFirst(at)); i += 1
+                guard let colon = line.range(of: ": ")?.lowerBound ?? (line.hasSuffix(":") ? line.index(before: line.endIndex) : nil) else { continue }
+                let key = unquote(String(line[..<colon])), rest = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                if !rest.isEmpty { map[key] = scalar(rest, at) }
+                else if i < lines.count, indent(i) > at || (indent(i) == at && item(i, at)) { map[key] = node(indent(i)) }
+                else { map[key] = "" }
+            }
+            return map
+        }
+        var root: [String:Any] = [:]
+        while i < lines.count { let before = i; if let m = node(indent(i)) as? [String:Any] { root.merge(m) { $1 } }; if i == before { i += 1 } }
+        return root
+    }
+    /// A value as comparable text: scalars as written, lists and mappings as sorted JSON of their scalars' text.
+    static func canonical(_ value: Any) -> String {
+        func plain(_ v: Any) -> Any {
+            switch v {
+            case let s as String: s
+            case let n as NSNumber: CFGetTypeID(n) == CFBooleanGetTypeID() ? (n.boolValue ? "true" : "false") : n.stringValue
+            case let a as [Any]: a.map(plain)
+            case let d as [String:Any]: d.mapValues(plain)
+            default: "\(v)"
+            }
+        }
+        let p = plain(value)
+        if let s = p as? String { return s }
+        return (try? JSONSerialization.data(withJSONObject: p, options: [.sortedKeys, .withoutEscapingSlashes])).map { String(decoding: $0, as: UTF8.self) } ?? "\(p)"
+    }
+
     // MARK: - Key and Keychain
+
+    /// Whether the profile's key is in the Keychain; reads no secret.
+    static func keychainHas(_ account: String) -> Bool {
+        SecItemCopyMatching([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: keychainService, kSecAttrAccount as String: account] as CFDictionary, nil) == errSecSuccess
+    }
 
     /// 32 random bytes as base64url: 43 characters.
     static func generateKey() throws -> String {

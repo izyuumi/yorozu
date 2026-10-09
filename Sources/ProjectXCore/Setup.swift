@@ -13,7 +13,8 @@ public struct SetupStep: Sendable, Equatable, Identifiable {
     public var checks: [Readiness.Item] = []
     /// What to ask for this step; also on a done step whose answer can still change (YOLO, the harness choice).
     public var question: Question?
-    /// The assisted OpenClaw write this step offers with question `openclaw_setup` (harness, models).
+    /// The assisted write this step offers: OpenClaw's with question `openclaw_setup` (harness, models), or Yorozu's Hermes
+    /// profiles with `hermes_setup` (harness).
     public var plan: OpenClawPlan?
     /// Where in the app to finish an app-only step.
     public var whereInApp: String?
@@ -31,8 +32,9 @@ public struct SetupReport: Sendable {
 }
 
 /// The one step engine behind the setup window and `Yorozu setup` (#317). Reads are read-only; `answer` applies one answer:
-/// `config.toml` through `Config.update` (atomic; the running app's watcher reloads it), the assisted OpenClaw write, or
-/// the `~/.local/bin/yorozu` link. An explicit answer is the user's word for a security-relevant key (the harness, YOLO).
+/// `config.toml` through `Config.update` (atomic; the running app's watcher reloads it), the assisted OpenClaw or Hermes
+/// profile write, or the `~/.local/bin/yorozu` link. An explicit answer is the user's word for a security-relevant key
+/// (the harness, YOLO).
 public struct SetupEngine: Sendable {
     public static let order = ["welcome","harness","gateway","models","integrations","yolo","start_at_login","pair_iphone","path_link","done"]
     public static let titles = ["welcome": String(localized: "Welcome"), "harness": String(localized: "Harness"), "gateway": String(localized: "Connect to the Gateway"), "models": String(localized: "Models"), "integrations": String(localized: "Computer use"), "yolo": String(localized: "YOLO"),
@@ -54,6 +56,8 @@ public struct SetupEngine: Sendable {
     public init(dataRoot: URL, environment: [String:String] = ProcessInfo.processInfo.environment, rpc: GatewayRPC? = nil, host: Host? = nil, executable: URL? = nil) {
         self.dataRoot = dataRoot; configFile = Config.url(in: dataRoot); self.environment = environment; self.rpc = rpc; self.host = host; self.executable = executable
     }
+    /// Questions that apply an assisted write, answered `apply:<plan digest>`.
+    public static let assisted: Set<String> = ["openclaw_setup","hermes_setup"]
     public static let link = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/yorozu")
 
     /// Every step's state, checks and question. Runs the read-only checks: harness detection, Gateway `health`, the OpenClaw
@@ -74,20 +78,27 @@ public struct SetupEngine: Sendable {
         steps.append(step("welcome",answered.contains("welcome") || finished ? .done : .needed,
                           .init(id: "welcome",text: "Yorozu checks this Mac and asks a few questions. It never installs software or signs in for you. Start setup?",choices: ["start"],default: "start")))
 
-        // Harness: the main one's detection; for OpenClaw also Yorozu's entry and the assisted write.
-        let main = c.harness.kind.adapter(c.harness,rpc: rpc), detection = await main.detect()
-        let installed = Config.HarnessKind.allCases.filter { $0 == c.harness.kind ? detection.installed : $0.adapter(c.harness,rpc: rpc).installed }
+        // Harness: the main one's detection; for OpenClaw also Yorozu's entry and the assisted write, for Hermes the profiles.
+        let main = c.harness.kind.adapter(c,rpc: rpc), detection = await main.detect()
+        let installed = Config.HarnessKind.allCases.filter { $0 == c.harness.kind ? detection.installed : $0.adapter(c,rpc: rpc).installed }
         let openclaw = main as? OpenClawSetup, gatewayChecks = openclaw != nil && detection.installed
         var inspection: OpenClawInspection?, inspectionError: Readiness.Item?
         if gatewayChecks, OpenClawSetup.gatewayAllowed, detection.reachable == true, !detection.items.contains(where: { $0.id == "openclaw.personal" }) {
             do { inspection = try await openclaw!.inspect(resolved,dataRoot: dataRoot) }
             catch { inspectionError = Readiness.Item(id: "openclaw.config",title: PlainError.describe(error)?.title ?? String(localized: "OpenClaw's config couldn't be read"),detail: error.localizedDescription,severity: .warning,fix: .step("harness")) }
         }
+        // Hermes: Yorozu's two profiles, what the write would change on disk (read-only).
+        var hermes: OpenClawPlan?, hermesError: Readiness.Item?
+        if main is HermesSetup, detection.installed {
+            do { let p = OpenClawPlan(changes: try HermesProfiles.pending(.init(config: c)).map(\.change)); hermes = p.isEmpty ? nil : p }
+            catch { hermesError = Readiness.Item(id: "hermes.profiles",title: String(localized: "Yorozu's Hermes profiles can't be planned"),detail: error.localizedDescription,severity: .warning,fix: .step("harness")) }
+        }
         let plan = inspection?.plan, entryPlan = plan?.changes.contains { !$0.path.hasSuffix(".modelPolicy.allow") } == true
-        let harnessChecks = detection.items + (inspection?.entry ?? []) + [inspection?.blocked,inspectionError].compactMap { $0 }
+        let write = entryPlan ? plan : hermes
+        let harnessChecks = detection.items + (inspection?.entry ?? []) + [inspection?.blocked,inspectionError,hermesError].compactMap { $0 }
         let choose = SetupStep.Question(id: "harness",text: "Which harness should Yorozu use?",choices: installed.map(\.rawValue),default: installed.contains(c.harness.kind) ? c.harness.kind.rawValue : installed.first?.rawValue ?? "")
         var harness: SetupStep
-        if detection.installed, passed(harnessChecks), !entryPlan || answered.contains("harness") {
+        if detection.installed, passed(harnessChecks), write == nil || answered.contains("harness") {
             harness = step("harness",.done,checks: harnessChecks,installed.count > 1 ? choose : nil)
         } else if answered.contains("harness") {
             harness = step("harness",.done,checks: harnessChecks)
@@ -95,11 +106,13 @@ public struct SetupEngine: Sendable {
             harness = step("harness",.needed,checks: harnessChecks,choose)
         } else if gatewayChecks, !OpenClawSetup.gatewayAllowed {
             harness = step("harness",.app,checks: harnessChecks); harness.whereInApp = String(localized: "Open Yorozu from Finder and finish setup there")
-        } else if let plan, entryPlan {
-            harness = step("harness",.needed,checks: harnessChecks,assist(plan)); harness.plan = plan
+        } else if let write {
+            harness = step("harness",.needed,checks: harnessChecks,assist(write,hermes: hermes != nil)); harness.plan = write
         } else {
             harness = step("harness",.needed,checks: harnessChecks,retry("harness"))
         }
+        // Skipped Hermes profiles that are missing or out of date: the done step still offers the write, for Fix….
+        if let hermes, harness.state == .done { harness.question = assist(hermes,hermes: true); harness.plan = hermes }
         steps.append(harness)
 
         // Native transport enrollment (app-only), for OpenClaw on the native transport.
@@ -157,8 +170,9 @@ public struct SetupEngine: Sendable {
     }
 
     /// Applying names the plan it was shown: `apply:<plan digest>`.
-    func assist(_ plan: OpenClawPlan) -> SetupStep.Question {
+    func assist(_ plan: OpenClawPlan, hermes: Bool = false) -> SetupStep.Question {
         let apply = "apply:" + plan.digest
+        if hermes { return .init(id: "hermes_setup",text: "Write Yorozu's two Hermes profiles, yorozu-worker and yorozu-roles, as listed? Your default profile and any other profile don't change.",choices: [apply,"skip"],default: apply) }
         return plan.needsConfirmation
             ? .init(id: "openclaw_setup",text: "Yorozu's agent entry in OpenClaw differs from what Yorozu expects. Apply the changes listed? Nothing else in OpenClaw's config changes.",choices: [apply,"skip"],default: "skip")
             : .init(id: "openclaw_setup",text: "Write Yorozu's own entries into OpenClaw's config, as listed: its agent, its allowed models and its yorozu-* MCP servers? Nothing else changes.",choices: [apply,"skip"],default: apply)
@@ -173,18 +187,19 @@ public struct SetupEngine: Sendable {
             throw ProjectError.blocked("Finish this in the Yorozu app: \(step.whereInApp ?? "the setup window").")
         }
         guard let step = report.steps.first(where: { $0.question?.id == id }), let question = step.question else { throw ProjectError.invalid("Nothing to answer for \"\(id)\" now. Known steps: " + Self.order.joined(separator: ", ") + ".") }
-        if id == "openclaw_setup", value.hasPrefix("apply"), !question.choices.contains(value) {
+        let assisted = Self.assisted.contains(id)
+        if assisted, value.hasPrefix("apply"), !question.choices.contains(value) {
             throw ProjectError.conflict("These aren't the changes Yorozu would make now. Run `yorozu setup --json` again, review the changes, and answer with its apply:<plan_digest>.")
         }
         guard question.choices.contains(value) else { throw ProjectError.invalid("\"\(value)\" isn't an answer to \(id); choose one of: " + question.choices.joined(separator: ", ") + ".") }
         let next: SetupReport
-        if id == "openclaw_setup", value.hasPrefix("apply"), let plan = step.plan { next = try await applyAssisted(plan) }
+        if assisted, value.hasPrefix("apply"), let plan = step.plan { next = try await applyAssisted(plan) }
         else if value == "check" { next = report }
         else {
             if id == "path_link", value == "yes", let executable { try Self.makeLink(to: executable) }
             try Config.update(configFile) { c in
                 defer { // choosing a harness is not skipping its checks
-                    let mark = id == "openclaw_setup" ? step.id : id
+                    let mark = assisted ? step.id : id
                     if !(id == "harness" && value != "skip"), !c.setup.answered.contains(mark) { c.setup.answered.append(mark) }
                 }
                 switch id {
@@ -201,11 +216,18 @@ public struct SetupEngine: Sendable {
         return next
     }
 
-    /// The assisted OpenClaw write for `plan` as the user saw it (a step's `plan`), confirmed by their click; refused when
-    /// OpenClaw's config changed since. Then evaluates again: a second run with nothing missing writes nothing.
+    /// The assisted write for `plan` as the user saw it (a step's `plan`), confirmed by their click: OpenClaw's `config.patch`,
+    /// or for Hermes `HermesProfiles.apply` of the pending steps. Refused when OpenClaw's config or the profiles changed since.
+    /// Then evaluates again: a second run with nothing missing writes nothing.
     @discardableResult public func applyAssisted(_ plan: OpenClawPlan) async throws -> SetupReport {
         let resolved = try ResolvedSettings(try Config.load(configFile),environment: environment), h = resolved.config.harness
-        try await OpenClawSetup(agent: h.agent,rpc: rpc ?? GatewayRPC(target: h.gatewayURL)).apply(plan,settings: resolved,dataRoot: dataRoot,confirmed: true)
+        if h.kind == .hermes {
+            let fresh = try HermesProfiles.pending(.init(config: resolved.config))
+            guard fresh.map(\.change) == plan.changes else { throw ProjectError.conflict("Yorozu's Hermes profiles changed since they were checked. Check again and review the changes.") }
+            try await HermesProfiles.apply(fresh.map(\.step))
+        } else {
+            try await OpenClawSetup(agent: h.agent,rpc: rpc ?? GatewayRPC(target: h.gatewayURL)).apply(plan,settings: resolved,dataRoot: dataRoot,confirmed: true)
+        }
         return try await evaluate()
     }
 

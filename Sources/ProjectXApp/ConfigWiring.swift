@@ -81,6 +81,7 @@ extension AppModel {
         else if runtimeMode == .live, let relay, (resolved ?? next).config.direct != old.config.direct { await relay.setDirect((resolved ?? next).config.direct) }
         // After the awaits a newer reload may have run: apply the settings in force now, not this reload's.
         applySystem((resolved ?? next).config.general)
+        if runtimeMode == .live, launched?.config.harness.kind == .hermes { recheck() } // the Hermes profiles may be out of date now
         if let launched {
             let h = (resolved ?? next).config.harness, l = launched.config.harness
             let pending = [("harness.kind",h.kind != l.kind),("harness.agent",h.agent != l.agent),("harness.transport",h.transport != l.transport),("harness.gateway_url",h.gatewayURL != l.gatewayURL),("harness.hermes_url",h.hermesURL != l.hermesURL)].filter(\.1).map(\.0)
