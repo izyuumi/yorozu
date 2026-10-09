@@ -64,7 +64,7 @@ struct ReplyHeader {
 }
 
 /// One timeline row: the user's vermilion bubble, an answer or question card in the system's
-/// grouped fill, or a compact system row for notices and failures. Long-press: Copy, Share, Show Details.
+/// grouped fill, or a compact system row for notices and failures. Long-press: Copy, Share, Show Details, Select Text.
 struct MessageRow: View {
     let bubble: PhoneModel.Bubble
     /// The reply header: the message this one answers, or a job's name.
@@ -78,6 +78,7 @@ struct MessageRow: View {
 
     @State private var expanded = false
     @State private var markDetails = false
+    @State private var selecting = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let bubbleRadius: CGFloat = 20
@@ -90,7 +91,9 @@ struct MessageRow: View {
                 Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = bubble.copyText }
                 ShareLink(item: bubble.copyText)
                 Button("Show Details", systemImage: "info.circle", action: onShowDetails)
+                Button("Select Text", systemImage: "selection.pin.in.out") { selecting = true }
             }
+            .sheet(isPresented: $selecting) { SelectTextSheet(text: bubble.copyText) }
     }
 
     @ViewBuilder private var content: some View {
@@ -349,5 +352,49 @@ struct MessageDetails: View {
         }
         .presentationDetents([.medium, .large])
         .yorozuTint()
+    }
+}
+
+/// Select Text: the message as plain text in a `UITextView`, where part of it can be selected
+/// (SwiftUI's `textSelection` copies a `Text` only whole).
+struct SelectTextSheet: View {
+    let text: String
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            SelectableText(text: text)
+                .navigationTitle("Select Text")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
+                }
+        }
+        .yorozuTint()
+    }
+}
+
+private struct SelectableText: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.isEditable = false
+        view.isSelectable = true
+        view.font = .preferredFont(forTextStyle: .body)
+        view.adjustsFontForContentSizeCategory = true
+        view.textColor = .label
+        view.backgroundColor = .clear
+        view.dataDetectorTypes = .link
+        view.textContainerInset = UIEdgeInsets(top: LayoutMetrics.gutter, left: LayoutMetrics.gutter,
+                                               bottom: LayoutMetrics.gutter, right: LayoutMetrics.gutter)
+        return view
+    }
+
+    func updateUIView(_ view: UITextView, context: Context) {
+        if view.text != text { view.text = text }
     }
 }

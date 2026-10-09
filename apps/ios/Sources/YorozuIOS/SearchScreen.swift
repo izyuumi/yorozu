@@ -245,6 +245,7 @@ struct PageScreen: View {
     let messageId: String
 
     @State private var position = ScrollPosition(edge: .top)
+    @State private var details: PhoneModel.Bubble?
 
     var body: some View {
         let reply = model.page?.messageId == messageId ? model.page : nil
@@ -253,7 +254,7 @@ struct PageScreen: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
                 ForEach(bubbles) { bubble in
-                    MessageRow(bubble: bubble, header: nil, onShowRequest: {}, onShowDetails: {})
+                    MessageRow(bubble: bubble, header: nil, onShowRequest: {}, onShowDetails: { details = bubble })
                         .padding(bubble.id == messageId ? LayoutMetrics.tight : 0)
                         .background {
                             if bubble.id == messageId {
@@ -290,5 +291,6 @@ struct PageScreen: View {
         }
         .navigationTitle("In context")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $details) { MessageDetails(bubble: $0) }
     }
 }

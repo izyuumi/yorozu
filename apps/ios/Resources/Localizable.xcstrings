@@ -522,6 +522,11 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "詳細を表示" } }
       }
     },
+    "Select Text" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "テキストを選択" } }
+      }
+    },
     "Details" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "詳細" } }
