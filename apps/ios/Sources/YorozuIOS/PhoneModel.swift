@@ -105,7 +105,10 @@ final class PhoneModel {
     // MARK: Mirror (the history window)
 
     /// Every message, by `ts`; `topicId` also files it in its sub-chat.
-    private(set) var bubbles: [Bubble] = [] { didSet { timeline = bubbles.filter { !Self.jobOnlyKinds.contains($0.kind ?? "") } } }
+    private(set) var bubbles: [Bubble] = [] { didSet { if !receiving { rebuildTimeline() } } }
+    /// A delta is being applied: the timeline is rebuilt once at its end, not per record.
+    @ObservationIgnored private var receiving = false
+    private func rebuildTimeline() { timeline = bubbles.filter { !Self.jobOnlyKinds.contains($0.kind ?? "") } }
     /// The main timeline: every message but those that stay in a job's sub-chat (#319), as on the Mac.
     private(set) var timeline: [Bubble] = []
     /// The Mac's job-only kinds (`Message.jobOnlyKinds`) that reach a phone with `jobs-v1`; the run trigger never does.
@@ -1075,6 +1078,8 @@ final class PhoneModel {
 
     /// The contract's phone rules for a reply page, a live update or a page reply.
     private func receive(_ delta: SyncDeltaData) {
+        receiving = true
+        defer { receiving = false; rebuildTimeline() }
         if let working = delta.workingThreadIds { self.working = working.contains("main") }
         if let routing = delta.routingThreadIds { self.routing = routing.contains("main") }
         if let requestId = delta.requestId {
