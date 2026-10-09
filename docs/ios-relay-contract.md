@@ -819,6 +819,8 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
 - Pause, Resume and Delete edit `jobs.toml` (`Engine.pauseJob`, `resumeJob`, `deleteJob`); the
   next `job_list` shows the change. Run now (`Engine.runJobNow`) runs under the no-overlap rule,
   also when paused; a skipped run is `rejected` with `"It didn't run: " + Engine.skipText(reason)`.
+  A control whose envelope `ts` is more than 120 s before the Mac's clock is `rejected` with "That
+  tap reached your Mac too late." and does nothing.
   Any Engine error, and fixture mode, is `rejected` with its text. Reasons are the Mac's English
   text, not localized on either side.
 - The phone sends one per tap, only while `.paired`, never queued, and keeps that job's actions

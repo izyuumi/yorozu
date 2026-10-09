@@ -72,7 +72,7 @@ actor EngineBridge: RelayBackend {
         case .searchRequest(let r): return [await search(r)]
         case .pageRequest(let r): return [await page(r)]
         case .threadList: return [.control(.threadList(ThreadListData(threads: [main])))]
-        case .jobControl(let c): return [await jobControl(c, id: e.id)]
+        case .jobControl(let c): return [await jobControl(c, id: e.id, ts: e.ts)]
         default: return []
         }
     }
@@ -139,10 +139,12 @@ actor EngineBridge: RelayBackend {
 
     /// Pause, Resume, Delete (through `jobs.toml`, so the next `job_list` shows the change) or Run now. Answered
     /// `accepted`, or `rejected` with the reason; a replayed event id gets its first answer again, never a second run.
-    private func jobControl(_ c: JobControlData, id: String) async -> YorozuEvent {
+    /// A tap sent (`ts`, epoch ms) more than 2 minutes ago is refused: the phone no longer shows what it acted on.
+    private func jobControl(_ c: JobControlData, id: String, ts: Int) async -> YorozuEvent {
         if let done = jobControls.last(where: { $0.eventId == id }) { return .control(.admissionStatus(done)) }
         var reason: String?
-        if !mode.permitsInput(fixtureAcknowledged: false) { reason = "This Mac is in fixture mode and doesn't take phone messages." }
+        if Self.now - ts > 120_000 { reason = "That tap reached your Mac too late." }
+        else if !mode.permitsInput(fixtureAcknowledged: false) { reason = "This Mac is in fixture mode and doesn't take phone messages." }
         else {
             do {
                 switch c.action {
