@@ -33,7 +33,7 @@ import ProjectXCore
     private(set) var relay: RelayHost?
     private var bridge: EngineBridge?
     @Published var relayStatus = RelayStatus()
-    // ATTENTION: popover hooks for the menu-bar host and attention center, wired at integration.
+    // Popover hooks, wired by MenuBarHost to AttentionCenter.
     /// Set by the host to bring a message into view; the timeline scrolls to it and clears it.
     @Published var focusMessageID: String?
     /// Set by the host from `popoverWillShow`/`popoverDidClose`; seen reports go out only while it is true.

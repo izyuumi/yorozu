@@ -1,12 +1,42 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ bytes. The limit is %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@バイト。上限は%2$@バイトです。"
+          }
+        }
+      }
+    },
     "%@ can’t take changes mid-run, so it gets this after its current run. Say stop to halt it now." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@は実行中に変更を受け取れないため、今の実行の後に渡します。今すぐ止めるには「stop」と送ってください。"
+          }
+        }
+      }
+    },
+    "%lld new" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新着%lld件"
+          }
+        }
+      }
+    },
+    "%lld new messages, scroll to bottom" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新着メッセージ%lld件、最下部へスクロール"
           }
         }
       }
@@ -91,12 +121,52 @@
         }
       }
     },
+    "Answer copied" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回答をコピーしました"
+          }
+        }
+      }
+    },
     "Approved. “%@” runs this script from its next run." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "承認しました。「%@」は次回の実行からこのスクリプトを使います。"
+          }
+        }
+      }
+    },
+    "Ask Yorozu anything" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuに何でも聞いてください"
+          }
+        }
+      }
+    },
+    "Code copied" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードをコピーしました"
+          }
+        }
+      }
+    },
+    "Collapsed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "折りたたみ"
           }
         }
       }
@@ -141,12 +211,42 @@
         }
       }
     },
+    "Copy answer" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回答をコピー"
+          }
+        }
+      }
+    },
     "Copy code" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "コードをコピー"
+          }
+        }
+      }
+    },
+    "Copy failed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コピーできませんでした"
+          }
+        }
+      }
+    },
+    "Copy link" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リンクをコピー"
           }
         }
       }
@@ -191,6 +291,46 @@
         }
       }
     },
+    "Enroll Yorozu with the local Gateway" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルGatewayにYorozuを登録"
+          }
+        }
+      }
+    },
+    "Expanded" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "展開"
+          }
+        }
+      }
+    },
+    "Find three quiet mechanical keyboards under ¥25,000 and pick one." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2万5千円以下の静かなメカニカルキーボードを3つ探して、1つ選んで。"
+          }
+        }
+      }
+    },
+    "For example" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "例"
+          }
+        }
+      }
+    },
     "Gateway" : {
       "localizations" : {
         "ja" : {
@@ -207,6 +347,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "一般"
+          }
+        }
+      }
+    },
+    "Global shortcut %@ is in use by another app" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "グローバルショートカット%@は別のアプリが使用中です"
+          }
+        }
+      }
+    },
+    "Global shortcut not recognized: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "グローバルショートカットを認識できません: %@"
           }
         }
       }
@@ -241,12 +401,32 @@
         }
       }
     },
+    "I understand: enable synthetic TEST input" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "理解しました: 合成TEST入力を有効にする"
+          }
+        }
+      }
+    },
     "It didn’t run again." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "再実行しませんでした。"
+          }
+        }
+      }
+    },
+    "It loses access to this Mac and has to pair again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このMacにアクセスできなくなり、もう一度ペアリングが必要になります。"
           }
         }
       }
@@ -339,6 +519,16 @@
         }
       }
     },
+    "More" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "その他"
+          }
+        }
+      }
+    },
     "Native Gateway not connected · using the CLI this launch" : {
       "localizations" : {
         "ja" : {
@@ -359,12 +549,42 @@
         }
       }
     },
+    "Next match" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "次の一致"
+          }
+        }
+      }
+    },
+    "No matches" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一致なし"
+          }
+        }
+      }
+    },
     "No results" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "結果なし"
+          }
+        }
+      }
+    },
+    "Note" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "お知らせ"
           }
         }
       }
@@ -399,12 +619,62 @@
         }
       }
     },
+    "Pairing QR code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング用QRコード"
+          }
+        }
+      }
+    },
+    "Pairing and the Gateway are available in live mode only." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングとGatewayはライブモードでのみ使えます。"
+          }
+        }
+      }
+    },
     "Previous" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "前へ"
+          }
+        }
+      }
+    },
+    "Previous match" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前の一致"
+          }
+        }
+      }
+    },
+    "Problem" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "問題"
+          }
+        }
+      }
+    },
+    "Put this in the message field" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "これをメッセージ欄に入れる"
           }
         }
       }
@@ -419,6 +689,16 @@
         }
       }
     },
+    "Quick questions are answered right here. Bigger work (research, writing, code) runs in the background, and the result comes back to this chat." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ちょっとした質問にはここですぐ答えます。調査・執筆・コードなどの大きな作業はバックグラウンドで進み、結果がこのチャットに届きます。"
+          }
+        }
+      }
+    },
     "Quit Yorozu" : {
       "localizations" : {
         "ja" : {
@@ -429,12 +709,52 @@
         }
       }
     },
+    "Remove" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除"
+          }
+        }
+      }
+    },
+    "Remove %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@を削除"
+          }
+        }
+      }
+    },
+    "Remove this iPhone?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このiPhoneを削除しますか？"
+          }
+        }
+      }
+    },
     "Removed that memory from Markdown and refreshed its index. The chat history is unchanged." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "そのメモリをMarkdownから削除し、索引を更新しました。チャット履歴はそのままです。"
+          }
+        }
+      }
+    },
+    "Remove…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除…"
           }
         }
       }
@@ -459,12 +779,52 @@
         }
       }
     },
+    "Scan with Yorozu on your iPhone. Each code works once." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhoneのYorozuで読み取ってください。各コードは1回だけ使えます。"
+          }
+        }
+      }
+    },
+    "Scroll to bottom" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最下部へスクロール"
+          }
+        }
+      }
+    },
     "Search" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "検索"
+          }
+        }
+      }
+    },
+    "Search (⌘F)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検索（⌘F）"
+          }
+        }
+      }
+    },
+    "Search failed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検索できませんでした"
           }
         }
       }
@@ -549,12 +909,42 @@
         }
       }
     },
+    "Shorten it to send it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信するには短くしてください。"
+          }
+        }
+      }
+    },
     "Show details" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "詳細を表示"
+          }
+        }
+      }
+    },
+    "Show pairing code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングコードを表示"
+          }
+        }
+      }
+    },
+    "Show the request" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "依頼を表示"
           }
         }
       }
@@ -595,6 +985,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ストレージ"
+          }
+        }
+      }
+    },
+    "Synthetic test message, no AI" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合成テストメッセージ（AIなし）"
           }
         }
       }
@@ -789,6 +1189,16 @@
         }
       }
     },
+    "This is a separate app device, not a model-provider login. The Gateway is loopback only. Enter its bootstrap token/password privately here; never put it in chat. Only Yorozu's own device token and generated key are saved in Keychain. A new device approval may be required. Leave blank to reconnect an enrolled device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "これはモデルプロバイダーへのログインではなく、別のアプリデバイスです。Gatewayはループバック専用です。ブートストラップのトークン/パスワードはここに非公開で入力し、チャットには絶対に書かないでください。キーチェーンに保存されるのはYorozu自身のデバイストークンと生成された鍵だけです。新しいデバイスの承認が必要になる場合があります。登録済みのデバイスに再接続するには空欄のままにしてください。"
+          }
+        }
+      }
+    },
     "Today" : {
       "localizations" : {
         "ja" : {
@@ -815,6 +1225,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "どのタスクのことですか？"
+          }
+        }
+      }
+    },
+    "Working" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作業中"
           }
         }
       }
@@ -889,6 +1309,16 @@
         }
       }
     },
+    "Yorozu remembers what matters on its own, in Markdown files you own." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuは大事なことを自分で覚え、あなたが持つMarkdownファイルに残します。"
+          }
+        }
+      }
+    },
     "Yorozu replied" : {
       "localizations" : {
         "ja" : {
@@ -905,6 +1335,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Yorozuが24時間以上閉じていました。まだ必要ならもう一度送ってください。"
+          }
+        }
+      }
+    },
+    "Yorozu, new result" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu、新しい結果"
+          }
+        }
+      }
+    },
+    "Yorozu, working" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu、作業中"
           }
         }
       }
@@ -975,16 +1425,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Yorozuの終了で「%@」のスクリプトが中断されました。自動では再実行しません。もう一度実行するには「retry」、片付けるには「stop」と送ってください。"
-          }
-        }
-      }
-    },
-    "↓ %lld new" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "↓ 新着%lld件"
           }
         }
       }

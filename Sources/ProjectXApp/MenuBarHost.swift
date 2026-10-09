@@ -15,6 +15,8 @@ import SwiftUI
     private let attention = AttentionCenter.shared
     private var shortcut: GlobalShortcut?
     private var watching: AnyCancellable?
+    private var focusing: AnyCancellable?
+    private weak var model: AppModel?
     private var working = false
     /// SwiftUI's `openSettings`, captured from a view because AppKit has no supported way to open a `Settings` scene.
     fileprivate var openSettingsAction: OpenSettingsAction?
@@ -23,6 +25,7 @@ import SwiftUI
 
     init(model: AppModel) {
         super.init()
+        self.model = model
         let content = NSHostingController(rootView: PopoverContent(model: model) { [weak self] in self?.showSettings() })
         content.sizingOptions = []
         popover.contentViewController = content
@@ -33,6 +36,12 @@ import SwiftUI
         menu.addItem(.separator())
         menu.addItem(withTitle: String(localized: "Quit Yorozu"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         attention.onOpen = { [weak self] in self?.open() }
+        model.onSeen = { AttentionCenter.shared.seen(upTo: $0) }
+        model.onBottomChanged = { AttentionCenter.shared.popoverAtBottom = $0 }
+        // A tapped notification's message goes to the timeline, which scrolls to it and clears the model's copy.
+        focusing = attention.$focusMessageID.compactMap { $0 }.receive(on: DispatchQueue.main).sink { [weak model] id in
+            MainActor.assumeIsolated { model?.focusMessageID = id; AttentionCenter.shared.focusMessageID = nil }
+        }
         attention.notificationsEnabled = { [weak model] in
             model?.resolved.map { $0.config.notifications.enabled && $0.config.notifications.destination == .mac } ?? true
         }
@@ -67,7 +76,9 @@ import SwiftUI
     /// The global shortcut: opens the popover, or closes it when it is shown.
     func toggle() { popover.isShown ? popover.performClose(nil) : open() }
 
-    func popoverDidClose(_ notification: Notification) { closedAt = Date(); attention.popoverAtBottom = false }
+    func popoverWillShow(_ notification: Notification) { model?.popoverShown = true }
+
+    func popoverDidClose(_ notification: Notification) { closedAt = Date(); model?.popoverShown = false; attention.popoverAtBottom = false }
 
     @objc private func showSettings() {
         popover.performClose(nil)

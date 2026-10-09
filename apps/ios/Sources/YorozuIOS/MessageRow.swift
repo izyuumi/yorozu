@@ -26,8 +26,8 @@ extension PhoneModel.Bubble {
         notice.map { NoticeText.text(code: $0.code, params: $0.params, fallback: text) } ?? text
     }
 
-    /// Raw error text of a failure notice, shown only under Details.
-    var errorDetail: String? { notice?.params["error"].flatMap { $0.isEmpty ? nil : $0 } }
+    /// Raw text of a notice (an error, a config problem, skipped files), shown only under Details.
+    var errorDetail: String? { notice.flatMap { NoticeText.details($0.params) } }
 
     /// What Copy and Share take: the answer only (never the reply header), plus a failure's details.
     var copyText: String { errorDetail.map { "\(shownText)\n\n\($0)" } ?? shownText }
@@ -48,14 +48,6 @@ enum MessageTime {
         f.doesRelativeDateFormatting = true
         return f
     }
-}
-
-// RENDERER: stand-in for the shared block renderer. Replace the body with `MarkdownBlocks(text)` once
-// `Sources/ProjectXApp/ChatMarkdown.swift` provides it.
-struct MessageMarkdown: View {
-    let text: String
-
-    var body: some View { Text(AttributedString(chatMarkdown: text)) }
 }
 
 /// One timeline row: the user's vermilion bubble, an answer or question card in the system's
@@ -134,14 +126,14 @@ struct MessageRow: View {
             .accessibilityLabel("Show the request")
             .accessibilityValue(request.shownText)
         }
-        MessageMarkdown(text: bubble.text)
+        MarkdownBlocks(bubble.text)
     }
 
     @ViewBuilder private var question: some View {
         Label("Question", systemImage: "questionmark.bubble")
             .font(.caption.weight(.semibold))
             .foregroundStyle(.tint)
-        MessageMarkdown(text: bubble.shownText)
+        MarkdownBlocks(bubble.shownText)
     }
 
     private func card(@ViewBuilder _ inner: () -> some View) -> some View {

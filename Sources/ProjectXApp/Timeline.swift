@@ -73,7 +73,8 @@ struct MainChat: View {
     }
 
     private func scroll(_ timeline: [Message]) -> some View {
-        let requests = Dictionary(timeline.map { ($0.id,$0) }) { a,_ in a }
+        // All messages, not just the timeline: a job result replies to its run trigger, which stays in the sub-chat.
+        let requests = Dictionary(model.snapshot.messages.map { ($0.id,$0) }) { a,_ in a }
         return ScrollView {
             LazyVStack(alignment: .leading,spacing: Metrics.rowSpacing) {
                 ForEach(TimelineItem.items(timeline)) { item in
@@ -118,7 +119,7 @@ struct MainChat: View {
 
     private func setBottom(_ bottom: Bool) {
         atBottom = bottom; intent.observe(atBottom: bottom,phase: phase)
-        model.popoverAtBottom = bottom // ATTENTION
+        model.popoverAtBottom = bottom
         if model.popoverShown { model.onBottomChanged?(bottom) }
         markSeen()
     }
@@ -127,7 +128,7 @@ struct MainChat: View {
     private func markSeen() {
         guard atBottom, let last = model.timeline.last?.id else { return }
         seenID = last
-        if model.popoverShown { model.onSeen?(last) } // ATTENTION: may repeat an id; the receiver treats it as idempotent
+        if model.popoverShown { model.onSeen?(last) } // may repeat an id; AttentionCenter treats it as idempotent
     }
 
     private func send() {

@@ -2,22 +2,8 @@ import SwiftUI
 import AppKit
 import ProjectXCore
 
-// RENDERER: integration swaps this for the shared block renderer, `MarkdownBlocks(text)`.
-/// An assistant message body: Markdown in one selectable `Text`, parsed once per distinct body.
-struct MessageBody: View {
-    let text: String
-    @MainActor private static var parsed: [String: AttributedString] = [:]
-    var body: some View {
-        Text(Self.attributed(text)).textSelection(.enabled).frame(maxWidth: .infinity,alignment: .leading)
-    }
-    @MainActor private static func attributed(_ text: String) -> AttributedString {
-        if let hit = parsed[text] { return hit }
-        let value = AttributedString(chatMarkdown: text); parsed[text] = value; return value
-    }
-}
-
-// NOTICE: integration swaps this for `NoticeText.text(code:params:fallback:)`, the notice in the user's language.
-func notice(_ m: Message) -> String { m.body }
+/// A notice in the user's language; any other message as stored.
+func notice(_ m: Message) -> String { m.notice.map { NoticeText.text(code: $0.code,params: $0.params,fallback: m.body) } ?? m.body }
 
 extension Message {
     /// How a row draws in the popover.
@@ -81,7 +67,7 @@ struct MessageRow: View {
         case .question:
             VStack(alignment: .leading,spacing: 4) {
                 Label("Question",systemImage: "questionmark.bubble").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
-                MessageBody(text: notice(message))
+                MarkdownBlocks(notice(message))
             }.card(radius: Metrics.cardRadius).overlay { ring(Metrics.cardRadius) }
         case .system, .failure: SystemRow(message: message).overlay { ring(Metrics.cardRadius / 2) }
         }
@@ -111,14 +97,14 @@ private struct AnswerCard: View {
         VStack(alignment: .leading,spacing: 8) {
             if let request {
                 Button { reveal(request.id) } label: {
-                    Label { Text("“\(request.body.split(separator: "\n").first.map(String.init) ?? request.body)”").lineLimit(1).truncationMode(.tail) }
+                    Label { Text(verbatim: "“\(request.body.split(separator: "\n").first.map(String.init) ?? request.body)”").lineLimit(1).truncationMode(.tail) }
                         icon: { Image(systemName: "arrowshape.turn.up.left") }
                         .font(.caption).foregroundStyle(.secondary)
                         .padding(.horizontal,7).padding(.vertical,3)
                         .background(.quaternary,in: RoundedRectangle(cornerRadius: Metrics.headerRadius,style: .continuous))
                 }.buttonStyle(.plain).help("Show the request").accessibilityLabel("Show the request")
             }
-            MessageBody(text: message.body)
+            MarkdownBlocks(message.body)
         }
         .card(radius: Metrics.radius)
         .overlay(alignment: .topTrailing) { if hovering { CopyButton(text: message.copyText).alignmentGuide(.top) { $0.height / 2 }.padding(.trailing,10) } }
@@ -133,7 +119,7 @@ private struct SystemRow: View {
     @State private var open = false
     private enum Metrics { static let detailRadius: CGFloat = 7 }
     var body: some View {
-        let failure = message.style == .failure, detail = message.notice?.params["error"]
+        let failure = message.style == .failure, detail = message.notice.flatMap { NoticeText.details($0.params) }
         VStack(alignment: .leading,spacing: 5) {
             HStack(alignment: .firstTextBaseline,spacing: 6) {
                 Image(systemName: failure ? "exclamationmark.triangle" : icon).foregroundStyle(failure ? ChatPalette.warning : .secondary)

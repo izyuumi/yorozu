@@ -731,7 +731,7 @@ extension Engine {
             let output = log.map { Self.excerpt($0,bytes: 4000) } ?? ""
             let shown = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Ran; no output." : sensitive(output) ? "The output looks like it holds a secret, so it stays in the log: \(log?.path ?? "")" : output
             let posted = spec.post == .always || changed
-            if let m = try? await store.message(role: "assistant",body: "Regarding “\(spec.name)”:\n\n" + shown,topic: topic.id,task: scriptWork,replyTo: trigger.id,kind: posted ? "result" : "job_result"), posted { enqueueExtraction(m) }
+            if let m = try? await store.message(role: "assistant",body: shown,topic: topic.id,task: scriptWork,replyTo: trigger.id,kind: posted ? "result" : "job_result"), posted { enqueueExtraction(m) }
             await finishRun(run.id,state: "done",notable: changed,posted: posted); return
         }
         // The AI step: the job topic's session on the thinking worker, or the job's executor when offered and ready.
@@ -783,15 +783,12 @@ extension Engine {
             if state == "failed" { r.notable = true; r.posted = true } // the failure notice is in the main timeline
         }
     }
-    /// The result kind and header of work in a job topic: a run's answer goes to the main timeline when the job posts
+    /// The result kind of work in a job topic: a run's answer goes to the main timeline when the job posts
     /// always or the answer is notable, else stays in the sub-chat (`job_result`), as does an answer to the job's input.
-    private func delivery(_ w: Work,_ output: WorkerOutput) async -> (kind: String,header: String)? {
+    private func delivery(_ w: Work,_ output: WorkerOutput) async -> String? {
         guard let m = try? await store.message(id: w.messageID), ["job_run","job_input"].contains(m.kind) else { return nil }
-        let spec = spec(topic: w.topicID)
-        let topicLabel: String? = (try? await store.topic(id: w.topicID))??.label
-        let name = spec?.name ?? topicLabel ?? "Job"
-        guard m.kind == "job_run" else { return ("job_result",name) }
-        return ((spec?.post ?? .always) == .always || output.notable == true ? "result" : "job_result",name)
+        guard m.kind == "job_run" else { return "job_result" }
+        return (spec(topic: w.topicID)?.post ?? .always) == .always || output.notable == true ? "result" : "job_result"
     }
 
     // MARK: Job input, approvals, summaries

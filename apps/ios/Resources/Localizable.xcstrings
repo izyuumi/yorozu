@@ -593,6 +593,22 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已展开" } }
       }
     },
+    "Code copied" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Código copiado"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードをコピーしました"
+          }
+        }
+      }
+    },
     "Collapsed" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Contraído" } },
