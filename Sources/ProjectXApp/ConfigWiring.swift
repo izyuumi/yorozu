@@ -73,7 +73,10 @@ extension AppModel {
         if let launched {
             let h = next.config.harness, l = launched.config.harness
             let pending = [("harness.kind",h.kind != l.kind),("harness.agent",h.agent != l.agent),("harness.transport",h.transport != l.transport),("harness.gateway_url",h.gatewayURL != l.gatewayURL),("harness.hermes_url",h.hermesURL != l.hermesURL)].filter(\.1).map(\.0)
-            if !pending.isEmpty { status = "Relaunch Yorozu to apply: " + pending.joined(separator: ", ") + (pending.contains("harness.kind") && working ? " (the harness switch waits until running work finishes)" : "") }
+            if !pending.isEmpty {
+                let keys = pending.joined(separator: ", ")
+                status = pending.contains("harness.kind") && working ? String(localized: "Relaunch Yorozu to apply: \(keys) (the harness switch waits until running work finishes)") : String(localized: "Relaunch Yorozu to apply: \(keys)")
+            }
         }
     }
     /// A `config_invalid` failure notice naming the file, the line when known, the key and the reason.
@@ -90,7 +93,7 @@ extension AppModel {
         guard runtimeMode != .fixture, environment["PROJECTX_DATA"] == nil, let marker = configFile?.deletingLastPathComponent().appendingPathComponent("login-item-registered") else { return }
         let me = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
         if let id = Bundle.main.bundleIdentifier, NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).contains(where: { $0.resolvingSymlinksInPath().standardizedFileURL.path != me }) {
-            if general.startAtLogin { status = "Start at login is off while another Yorozu with the same id is installed" }; return
+            if general.startAtLogin { status = String(localized: "Start at login is off while another Yorozu with the same id is installed") }; return
         }
         let service = SMAppService.mainApp, fm = FileManager.default
         do {
@@ -99,8 +102,8 @@ extension AppModel {
             case (false,.enabled),(false,.requiresApproval): if fm.fileExists(atPath: marker.path) { try service.unregister(); try? fm.removeItem(at: marker) }
             default: break
             }
-            if general.startAtLogin, service.status == .requiresApproval { status = "Start at login needs approval in System Settings › General › Login Items" }
-        } catch { status = "Start at login: \(error.localizedDescription)" }
+            if general.startAtLogin, service.status == .requiresApproval { status = String(localized: "Start at login needs approval in System Settings › General › Login Items") }
+        } catch { status = String(localized: "Start at login: \(error.localizedDescription)") }
     }
 }
 extension Task where Success == Void, Failure == Never {

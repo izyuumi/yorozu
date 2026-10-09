@@ -124,7 +124,8 @@ public enum Prompts {
 
     public static let extractionPolicy = "Automatically retain useful personal facts/preferences/decisions AND useful topic knowledge. ONLY JSON array of proposals: sourceID,quote(exact substring),title,body,knowledgeType(user_fact/user_preference/user_decision/user_belief/source_claim/generated_analysis/topic_synthesis/tentative_hypothesis),attribution(user/assistant/quoted_source),epistemicStatus(user_stated/unverified/tentative),replacesID(optional ONLY explicit same-type same-attribution correction). Source claims and assistant analysis are not user beliefs or verified facts. Useful hypotheses stay tentative. Never store credentials. No useful knowledge => []. Max 4 proposals."
     /// Existing memory as slim items within 4500 bytes, then the body excerpted (head and tail) to what is left of `cap`.
-    public static func extractionPrompt(_ message: Message, existing: [MemoryHit], cap: Int) throws -> String {
+    /// `context` (a result's question) goes in as at most 300 bytes, marked as context and not a source.
+    public static func extractionPrompt(_ message: Message, existing: [MemoryHit], context: String? = nil, cap: Int) throws -> String {
         let encoder = JSONEncoder(); encoder.outputFormatting = .withoutEscapingSlashes
         var slim: [[String:String]] = []
         for hit in existing {
@@ -132,10 +133,11 @@ public enum Prompts {
             if try encoder.encode(next).count > 4500 { break }; slim = next
         }
         let memory = String(decoding: try encoder.encode(slim),as: UTF8.self)
+        let question = try context.map { "\nIn reply to (context only, not a source; quote only from Source):" + String(decoding: try encoder.encode(utf8Excerpt($0,bytes: 300)),as: UTF8.self) } ?? ""
         var budget = message.body.utf8.count, prompt = ""
         for _ in 0..<4 { // JSON escaping can grow the body; shrink by the measured excess.
             var bounded = message; bounded.body = utf8Excerpt(message.body,bytes: budget)
-            prompt = extractionPolicy + "\nSource:" + String(decoding: try encoder.encode(bounded),as: UTF8.self) + "\nExisting relevant memory:" + memory
+            prompt = extractionPolicy + "\nSource:" + String(decoding: try encoder.encode(bounded),as: UTF8.self) + question + "\nExisting relevant memory:" + memory
             let excess = prompt.utf8.count - cap
             if excess <= 0 { break }; budget -= excess
             guard budget > 200 else { break }

@@ -14574,6 +14574,16 @@
           }
         }
       }
+    },
+    "In reply to %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」への返信"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

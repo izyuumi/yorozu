@@ -30,6 +30,8 @@ public protocol Harness: Sendable {
     func cancel(_ work: Work, topic: Topic) async throws -> Bool
     func reconcile(_ work: Work, topic: Topic) async throws -> RunStatus
     func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal]
+    /// `context`: for a `result`, an excerpt of the message it answers, so the model knows the question (never a quotable source).
+    func extract(_ message: Message, existing: [MemoryHit], context: String?) async throws -> [MemoryProposal]
     /// The models the harness's agent may use, and its primary model, for the smart role defaults (#312).
     func models() async throws -> (allowed: [ModelInfo], primary: String?)
     /// UTF-8 byte cap on a role run's final prompt (secretary, review, extraction); the Engine's routing trim measures against it.
@@ -43,6 +45,7 @@ public extension Harness {
     var rawPromptCap: Int { ProjectXCore.rawPromptCap }
     var workerGuard: Int { 32000 }
     func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal] { [] }
+    func extract(_ message: Message, existing: [MemoryHit], context: String?) async throws -> [MemoryProposal] { try await extract(message, existing: existing) }
     func models() async throws -> (allowed: [ModelInfo], primary: String?) { ([],nil) }
 }
 /// Settings the app can change while it runs (#312). The harness and the Engine read them through a closure at the start
@@ -165,7 +168,8 @@ public struct GatewayRPC: Sendable {
         case "config.patch", "sessions.compact": return true
         case "agent": return (params["message"] as? String)?.range(of: #"^/(new|reset)(\s|$)"#,options: [.regularExpression,.caseInsensitive]) != nil
         case "sessions.create":
-            return params["permissionMode"] as? String == "full" || params["toolOverrides"] != nil
+            // A worktree session also goes through the CLI: OpenClaw runs the worktree setup script only for admin callers (`sessions-create.ts`).
+            return params["permissionMode"] as? String == "full" || params["toolOverrides"] != nil || params["worktree"] as? Bool == true
         case "sessions.patch":
             let write: Set = ["key","agentId","expectedSessionId","expectedLifecycleRevision","expectedPermissionMode","expectedMarkedUnreadAt",
                               "label","autoLabel","icon","color","category","boardFace","boardPresentation","pinned","archived","snoozedUntil","unread",
@@ -390,9 +394,9 @@ public struct OpenClawHarness: Harness {
         guard let turn = messages.last(where: { $0["idempotencyKey"] as? String == run + ":user" }) else { return .stopped }
         return Date().timeIntervalSince1970 - (turn["timestamp"] as? Double ?? 0) / 1000 > 900 ? .stopped : .unknown
     }
-    public func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal] {
+    public func extract(_ message: Message, existing: [MemoryHit], context: String?) async throws -> [MemoryProposal] {
         if sensitive(message.body) { return [] }
-        let prompt = try Prompts.extractionPrompt(message,existing: existing,cap: rawPromptCap)
+        let prompt = try Prompts.extractionPrompt(message,existing: existing,context: context,cap: rawPromptCap)
         let reply = try await model(prompt,model: settings().extractionModel,sourceMessageID: message.id)
         do { return try JSONDecoder().decode([MemoryProposal].self,from: Data(reply.utf8)) }
         catch { throw ProjectError.invalid("Extraction reply is not a valid proposal array (\(reply.utf8.count) bytes): \(utf8Prefix(String(describing: error),bytes: 300))") }

@@ -144,7 +144,7 @@ The default in live mode (`[harness] transport = "native"`, the default; `AppMod
 The native client holds only `operator.read` and `operator.write`, so a native launch sends each call that needs `operator.admin` through the CLI, which requests admin, and keeps everything else native so live events still stream (`GatewayRPC.needsAdmin` in `Harness.swift`). Before phase B of #311 these calls went native too and failed for lack of the scope (a topic session is created with `permissionMode: "full"`); with them routed through the CLI, native is the default again. The list mirrors OpenClaw's own scope tables (`core-descriptors.ts` for static scopes, `method-scopes.ts` for `agent` reset commands, `shared/session-method-scopes-base.ts` for the param-dependent session methods):
 
 - `config.patch` and `sessions.compact`, always.
-- `sessions.create` with `permissionMode: "full"` or any `toolOverrides`.
+- `sessions.create` with `permissionMode: "full"`, any `toolOverrides`, or `worktree: true` (a coding session; OpenClaw runs the worktree setup script only for an admin caller, `sessions-create.ts`).
 - `sessions.patch` with `permissionMode: "full"` or any key outside the write set (`key`, `agentId`, the `expected*` guards, label and board fields, `model`, `agentRuntime`, `thinkingLevel`, `fastMode`, `permissionMode`); the MCP overlay's `toolOverrides` is one.
 - `agent` whose message starts with `/new` or `/reset`.
 

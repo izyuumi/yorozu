@@ -33,7 +33,7 @@ struct ChatScreen: View {
                                     .frame(maxWidth: .infinity)
                             }
                             MessageRow(
-                                bubble: row.bubble, request: request(for: row.bubble, in: byId),
+                                bubble: row.bubble, header: header(for: row.bubble, in: byId),
                                 onShowRequest: { show(row.bubble.replyTo) },
                                 onShowDetails: { details = row.bubble })
                         }
@@ -66,13 +66,10 @@ struct ChatScreen: View {
             }
             .onChange(of: model.bubbles.last?.id) { _, _ in
                 guard let last = model.bubbles.last else { return }
-                // A message this phone just sent: jump to it.
-                if last.user && last.seq == nil {
-                    withAnimation { position.scrollTo(edge: .bottom) }
-                } else if atBottom {
+                if atBottom {
                     position.scrollTo(edge: .bottom)
+                    seenId = last.id
                 }
-                if atBottom { seenId = last.id }
             }
             .overlay {
                 if model.bubbles.isEmpty && model.working != true {
@@ -104,6 +101,9 @@ struct ChatScreen: View {
                         .padding(.horizontal, LayoutMetrics.gutter)
                     }
                     Composer(text: $model.draft, working: model.working == true, enabled: model.canSend) {
+                        // Sending jumps to the bottom, so the sent message and its answer are followed.
+                        atBottom = true
+                        position.scrollTo(edge: .bottom)
                         Task { await model.send() }
                     }
                 }
@@ -161,11 +161,14 @@ struct ChatScreen: View {
         }
     }
 
-    /// The request an answer replies to. Old results that still carry the stored
+    /// The reply header of an answer: the request when the phone holds it, else the topic's label (a job result
+    /// replies to its run trigger, which the Mac never sends). Old results that still carry the stored
     /// `Regarding “…”:` prefix are shown as stored, without a header.
-    private func request(for bubble: PhoneModel.Bubble, in byId: [String: PhoneModel.Bubble]) -> PhoneModel.Bubble? {
-        guard RowStyle(bubble) == .answer, !bubble.text.hasPrefix("Regarding “"), let id = bubble.replyTo else { return nil }
-        return byId[id]
+    private func header(for bubble: PhoneModel.Bubble, in byId: [String: PhoneModel.Bubble]) -> ReplyHeader? {
+        let stored = bubble.text.hasPrefix("Regarding “") && bubble.text.contains("”:\n\n")
+        guard RowStyle(bubble) == .answer, !stored, let id = bubble.replyTo else { return nil }
+        if let request = byId[id] { return ReplyHeader(text: request.shownText, revealable: true) }
+        return bubble.topicId.flatMap { model.topics[$0]?.label }.map { ReplyHeader(text: $0, revealable: false) }
     }
 
     private func show(_ id: String?) {

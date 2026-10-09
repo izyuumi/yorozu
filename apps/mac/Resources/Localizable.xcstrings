@@ -1428,6 +1428,226 @@
           }
         }
       }
+    },
+    "⌘↩ to send · ↩ for a new line" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘↩で送信 · ↩で改行"
+          }
+        }
+      }
+    },
+    "↩ to send · ⇧↩ for a new line" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "↩で送信 · ⇧↩で改行"
+          }
+        }
+      }
+    },
+    "Couldn't read the chat, retrying: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャットを読み込めませんでした。再試行しています: %@"
+          }
+        }
+      }
+    },
+    "Native Gateway connected · model response not yet verified" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ネイティブGatewayに接続済み · モデルの応答は未確認"
+          }
+        }
+      }
+    },
+    "Native Gateway connected · Yorozu uses it from the next launch" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ネイティブGatewayに接続済み · 次回の起動から使用します"
+          }
+        }
+      }
+    },
+    "Native Gateway enrolled · quit and reopen Yorozu to use it" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ネイティブGatewayを登録済み · 使うにはYorozuを終了して開き直してください"
+          }
+        }
+      }
+    },
+    "Relaunch Yorozu to apply: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "反映するにはYorozuを再起動してください: %@"
+          }
+        }
+      }
+    },
+    "Relaunch Yorozu to apply: %@ (the harness switch waits until running work finishes)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "反映するにはYorozuを再起動してください: %@（ハーネスの切り替えは実行中の作業が終わるまで待ちます）"
+          }
+        }
+      }
+    },
+    "Start at login is off while another Yorozu with the same id is installed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同じIDの別のYorozuがインストールされているため、ログイン時の起動はオフです"
+          }
+        }
+      }
+    },
+    "Start at login needs approval in System Settings › General › Login Items" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ログイン時の起動には「システム設定 › 一般 › ログイン項目」での許可が必要です"
+          }
+        }
+      }
+    },
+    "Start at login: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ログイン時の起動: %@"
+          }
+        }
+      }
+    },
+    "Yorozu — TEST FIXTURE (no AI)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu — テストフィクスチャ（AIなし）"
+          }
+        }
+      }
+    },
+    "Yorozu — OFFLINE (no AI)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu — オフライン（AIなし）"
+          }
+        }
+      }
+    },
+    "TEST FIXTURE — NO AI / NO LLM" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テストフィクスチャ — AI・LLMなし"
+          }
+        }
+      }
+    },
+    "OFFLINE — NO AI CONNECTED" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフライン — AI未接続"
+          }
+        }
+      }
+    },
+    "LIVE — local agent harness" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ライブ — ローカルのエージェントハーネス"
+          }
+        }
+      }
+    },
+    "For synthetic workflow testing only. Replies are scripted test output, not AI answers. Do not use this window for real requests. Your fixture history is preserved separately." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合成ワークフローのテスト専用です。返信はスクリプト化されたテスト出力で、AIの回答ではありません。実際の依頼にはこのウィンドウを使わないでください。フィクスチャの履歴は別に保存されます。"
+          }
+        }
+      }
+    },
+    "This app is not connected to a model. Messages are saved locally only; it cannot answer or perform your requests. Offline mode was explicitly selected or the requested mode was invalid." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このアプリはモデルに接続されていません。メッセージはこのMacに保存されるだけで、回答も依頼の実行もできません。オフラインモードが明示的に選ばれたか、指定されたモードが無効でした。"
+          }
+        }
+      }
+    },
+    "Replies come from real models through the main harness (OpenClaw or Hermes Agent, set in config.toml). Messages, results and memory are saved locally. Changes to running work apply right after its current step." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返信はメインのハーネス（OpenClawまたはHermes Agent、config.tomlで設定）を通じて実際のモデルから届きます。メッセージ、結果、メモリはこのMacに保存されます。実行中の作業への変更は、今のステップの直後に反映されます。"
+          }
+        }
+      }
+    },
+    "Send test message" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テストメッセージを送信"
+          }
+        }
+      }
+    },
+    "Save offline" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフラインで保存"
+          }
+        }
+      }
+    },
+    "In reply to %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」への返信"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

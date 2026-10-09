@@ -75,13 +75,14 @@ struct MainChat: View {
     private func scroll(_ timeline: [Message]) -> some View {
         // All messages, not just the timeline: a job result replies to its run trigger, which stays in the sub-chat.
         let requests = Dictionary(model.snapshot.messages.map { ($0.id,$0) }) { a,_ in a }
+        let shown = Set(timeline.map(\.id)), labels = Dictionary(model.snapshot.topics.map { ($0.id,$0.label) }) { a,_ in a }
         return ScrollView {
             LazyVStack(alignment: .leading,spacing: Metrics.rowSpacing) {
                 ForEach(TimelineItem.items(timeline)) { item in
                     switch item {
                     case .day(let day): DaySeparator(day: day)
                     case .message(let m):
-                        MessageRow(message: m,request: m.replyTo.flatMap { requests[$0] },highlighted: flashed == m.id || search.shown && search.current == m.id,reveal: reveal)
+                        MessageRow(message: m,header: m.replyTo.flatMap { requests[$0] }.map { ReplyHeader($0,shown: shown,labels: labels) },highlighted: flashed == m.id || search.shown && search.current == m.id,reveal: reveal)
                     }
                 }
             }.scrollTargetLayout().padding(.horizontal,14).padding(.vertical,12)
@@ -119,7 +120,6 @@ struct MainChat: View {
 
     private func setBottom(_ bottom: Bool) {
         atBottom = bottom; intent.observe(atBottom: bottom,phase: phase)
-        model.popoverAtBottom = bottom
         if model.popoverShown { model.onBottomChanged?(bottom) }
         markSeen()
     }

@@ -27,6 +27,8 @@ import Carbon.HIToolbox
         }
         let id = EventHotKeyID(signature: OSType(0x59525A55), id: 1) // "YRZU"
         guard RegisterEventHotKey(key, modifiers, id, GetApplicationEventTarget(), 0, &hotKey) == noErr else {
+            // Forget the spec, so the next update retries (the other app may let go) and keeps showing the problem.
+            self.spec = ""
             return String(localized: "Global shortcut \(spec) is in use by another app")
         }
         return nil

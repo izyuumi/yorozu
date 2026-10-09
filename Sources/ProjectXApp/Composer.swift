@@ -36,7 +36,7 @@ struct Composer: View {
                         .foregroundStyle(canSend ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
                 }.buttonStyle(.plain).disabled(!canSend).help(model.runtimeMode.sendLabel).accessibilityLabel(model.runtimeMode.sendLabel)
             }
-            Text(model.sendKey == .cmdEnter || model.draft.contains("\n") ? "⌘↩ to send · ↩ for a new line" : "↩ to send · ⇧↩ for a new line")
+            Text(model.sendKey == .cmdEnter || model.draft.contains("\n") ? String(localized: "⌘↩ to send · ↩ for a new line") : String(localized: "↩ to send · ⇧↩ for a new line"))
                 .font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity,alignment: .trailing).padding(.trailing,Metrics.sendSide + 6)
         }
         .padding(.horizontal,10).padding(.vertical,8)

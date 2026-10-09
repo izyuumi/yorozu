@@ -25,7 +25,8 @@ enum ChatMarkdown {
     private typealias Run = (text: AttributedString, path: ArraySlice<PresentationIntent.IntentType>)
     private final class Box { let blocks: [MarkdownBlock]; init(_ blocks: [MarkdownBlock]) { self.blocks = blocks } }
     /// Keyed by the source text, so a view rebuilt for the same message never parses twice. NSCache is thread-safe.
-    nonisolated(unsafe) private static let cache = NSCache<NSString, Box>()
+    /// Bounded, so a long chat does not keep every parsed message.
+    nonisolated(unsafe) private static let cache = { let c = NSCache<NSString, Box>(); c.countLimit = 200; return c }()
 
     static func blocks(_ text: String) -> [MarkdownBlock] {
         if let hit = cache.object(forKey: text as NSString) { return hit.blocks }
@@ -96,7 +97,8 @@ enum ChatMarkdown {
         }
         for run in runs {
             guard let url = run.text.imageURL else { text += run.text; continue }
-            let alt = String(run.text.characters)
+            // The parser can leave U+FFFC (object replacement) in an image run; it is not alt text.
+            let alt = String(run.text.characters).replacingOccurrences(of: "\u{FFFC}", with: "")
             if let file = localFile(url) { flush(); blocks.append(.image(file, alt: alt)); continue }
             var link = AttributedString(alt.isEmpty ? url.absoluteString : alt)
             link.link = url

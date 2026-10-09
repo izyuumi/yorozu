@@ -157,9 +157,9 @@ public struct HermesHarness: Harness {
         return try JSONDecoder().decode(Decision.self, from: Data(reply.utf8))
     }
 
-    public func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal] {
+    public func extract(_ message: Message, existing: [MemoryHit], context: String?) async throws -> [MemoryProposal] {
         if sensitive(message.body) { return [] }
-        let prompt = try Prompts.extractionPrompt(message, existing: existing, cap: rawPromptCap)
+        let prompt = try Prompts.extractionPrompt(message, existing: existing, context: context, cap: rawPromptCap)
         let reply = try await role(prompt, instructions: Self.roleRules, model: settings().extractionModel, source: message.id)
         do { return try JSONDecoder().decode([MemoryProposal].self, from: Data(reply.utf8)) }
         catch { throw ProjectError.invalid("Extraction reply is not a valid proposal array (\(reply.utf8.count) bytes): \(utf8Prefix(String(describing: error), bytes: 300))") }

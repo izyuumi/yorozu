@@ -12,7 +12,7 @@ enum RowStyle {
             self = .question
         } else if bubble.failed {
             self = .failure
-        } else if bubble.notice != nil {
+        } else if bubble.notice != nil || ["acknowledgment", "memory_receipt", "approval_request"].contains(bubble.kind ?? "") {
             self = .system
         } else {
             self = .answer
@@ -50,12 +50,19 @@ enum MessageTime {
     }
 }
 
+/// The quoted line above an answer: the request, which scrolls to it, or, when the request is not on the phone (a
+/// job run's trigger stays on the Mac), the topic's label, which for a job is its name, as plain text.
+struct ReplyHeader {
+    let text: String
+    let revealable: Bool
+}
+
 /// One timeline row: the user's vermilion bubble, an answer or question card in the system's
 /// grouped fill, or a compact system row for notices and failures. Long-press: Copy, Share, Show Details.
 struct MessageRow: View {
     let bubble: PhoneModel.Bubble
-    /// The message this one answers, when held: drawn as the reply header.
-    let request: PhoneModel.Bubble?
+    /// The reply header: the message this one answers, or a job's name.
+    let header: ReplyHeader?
     let onShowRequest: () -> Void
     let onShowDetails: () -> Void
 
@@ -108,23 +115,26 @@ struct MessageRow: View {
     }
 
     @ViewBuilder private var answer: some View {
-        if let request {
-            Button(action: onShowRequest) {
-                Label {
-                    Text(verbatim: "“\(request.shownText.replacingOccurrences(of: "\n", with: " "))”")
-                        .lineLimit(1)
-                } icon: {
-                    Image(systemName: "arrowshape.turn.up.left")
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, LayoutMetrics.inner)
-                .padding(.vertical, LayoutMetrics.tight)
-                .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: quoteRadius, style: .continuous))
+        if let header {
+            let quote = Label {
+                Text(verbatim: "“\(header.text.replacingOccurrences(of: "\n", with: " "))”")
+                    .lineLimit(1)
+            } icon: {
+                Image(systemName: "arrowshape.turn.up.left")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Show the request")
-            .accessibilityValue(request.shownText)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, LayoutMetrics.inner)
+            .padding(.vertical, LayoutMetrics.tight)
+            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: quoteRadius, style: .continuous))
+            if header.revealable {
+                Button(action: onShowRequest) { quote }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Show the request")
+                    .accessibilityValue(header.text)
+            } else {
+                quote.accessibilityLabel(Text("In reply to \(header.text)"))
+            }
         }
         MarkdownBlocks(bubble.text)
     }

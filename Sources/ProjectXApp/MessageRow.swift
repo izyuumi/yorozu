@@ -25,6 +25,17 @@ extension Message {
     var date: Date { Date(timeIntervalSince1970: created) }
 }
 
+/// The quoted line above an answer. `target` is the request to reveal, set only when it is on the main timeline; a job
+/// run's trigger stays in the sub-chat, so a job result is headed by its topic's label (the job's name) and does nothing.
+struct ReplyHeader {
+    let text: String, target: String?
+    init(_ request: Message,shown: Set<String>,labels: [String:String]) {
+        target = shown.contains(request.id) ? request.id : nil
+        if request.kind == "job_run", let topic = request.topicID, let label = labels[topic] { text = label }
+        else { text = request.body.split(separator: "\n").first.map(String.init) ?? request.body }
+    }
+}
+
 /// The popover's colours that the system has no name for: the user bubble and the failure amber (approved design).
 enum ChatPalette {
     /// Vermilion that keeps white text legible in dark mode, where the accent itself is lighter.
@@ -41,8 +52,8 @@ enum ChatPalette {
 /// One message in the main timeline, drawn by its style. `reveal` scrolls to another message (the request a reply answers).
 struct MessageRow: View {
     let message: Message
-    /// The request this answer replies to, when it is on the timeline.
-    let request: Message?
+    /// The reply header of an answer, when `replyTo` names a message.
+    let header: ReplyHeader?
     let highlighted: Bool
     let reveal: (String) -> Void
     private enum Metrics {
@@ -52,7 +63,7 @@ struct MessageRow: View {
     var body: some View {
         content
             .help(Text(message.date,format: .dateTime.weekday(.wide).day().month(.wide).year().hour().minute().second()))
-            .contextMenu { Button("Copy") { _ = Pasteboard.copy(message.style == .answer ? message.copyText : message.body) } }
+            .contextMenu { Button("Copy") { _ = Pasteboard.copy(message.style == .answer ? message.copyText : notice(message)) } }
     }
     @ViewBuilder private var content: some View {
         switch message.style {
@@ -63,7 +74,7 @@ struct MessageRow: View {
                 .overlay { ring(Metrics.bubbleRadius) }
                 .containerRelativeFrame(.horizontal,alignment: .trailing) { width,_ in width * Metrics.bubbleShare }
                 .frame(maxWidth: .infinity,alignment: .trailing)
-        case .answer: AnswerCard(message: message,request: message.hasStoredHeader ? nil : request,reveal: reveal).overlay { ring(Metrics.cardRadius) }
+        case .answer: AnswerCard(message: message,header: message.hasStoredHeader ? nil : header,reveal: reveal).overlay { ring(Metrics.cardRadius) }
         case .question:
             VStack(alignment: .leading,spacing: 4) {
                 Label("Question",systemImage: "questionmark.bubble").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
@@ -86,23 +97,24 @@ private extension View {
     }
 }
 
-/// An answer: a quoted reply header that jumps to the request, the body, and a Copy pill on hover.
+/// An answer: a quoted reply header (which jumps to the request when it is on the timeline), the body, and a Copy pill on hover.
 private struct AnswerCard: View {
     let message: Message
-    let request: Message?
+    let header: ReplyHeader?
     let reveal: (String) -> Void
     @State private var hovering = false
     private enum Metrics { static let radius: CGFloat = 14, headerRadius: CGFloat = 7 }
     var body: some View {
         VStack(alignment: .leading,spacing: 8) {
-            if let request {
-                Button { reveal(request.id) } label: {
-                    Label { Text(verbatim: "“\(request.body.split(separator: "\n").first.map(String.init) ?? request.body)”").lineLimit(1).truncationMode(.tail) }
-                        icon: { Image(systemName: "arrowshape.turn.up.left") }
-                        .font(.caption).foregroundStyle(.secondary)
-                        .padding(.horizontal,7).padding(.vertical,3)
-                        .background(.quaternary,in: RoundedRectangle(cornerRadius: Metrics.headerRadius,style: .continuous))
-                }.buttonStyle(.plain).help("Show the request").accessibilityLabel("Show the request")
+            if let header {
+                let label = Label { Text(verbatim: "“\(header.text)”").lineLimit(1).truncationMode(.tail) }
+                    icon: { Image(systemName: "arrowshape.turn.up.left") }
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal,7).padding(.vertical,3)
+                    .background(.quaternary,in: RoundedRectangle(cornerRadius: Metrics.headerRadius,style: .continuous))
+                if let target = header.target {
+                    Button { reveal(target) } label: { label }.buttonStyle(.plain).help("Show the request").accessibilityLabel("Show the request")
+                } else { label.accessibilityLabel(Text("In reply to \(header.text)")) }
             }
             MarkdownBlocks(message.body)
         }
@@ -166,7 +178,7 @@ enum Pasteboard {
     @MainActor static func copy(_ text: String) -> Bool {
         let board = NSPasteboard.general; board.clearContents()
         let ok = board.setString(text,forType: .string)
-        NSAccessibility.post(element: NSApp as Any,notification: .announcementRequested,userInfo: [.announcement: ok ? "Copied" : "Copy failed",.priority: NSAccessibilityPriorityLevel.high.rawValue])
+        NSAccessibility.post(element: NSApp as Any,notification: .announcementRequested,userInfo: [.announcement: ok ? String(localized: "Copied") : String(localized: "Copy failed"),.priority: NSAccessibilityPriorityLevel.high.rawValue])
         return ok
     }
 }

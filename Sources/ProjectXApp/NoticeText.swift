@@ -34,7 +34,8 @@ enum NoticeText {
         case "change_sent": return String(localized: "Sent that change to the running task.")
         case "change_held":
             // The executor sentence only when the body has it: a live-steer executor that missed the step has the plain one.
-            if let executor = params["executor"], fallback.contains("can't take changes") { return String(localized: "\(executor) can’t take changes mid-run, so it gets this after its current run. Say stop to halt it now.") }
+            // The executor's display name, else the id that older messages stored.
+            if let executor = params["executorName"] ?? params["executor"], fallback.contains("can't take changes") { return String(localized: "\(executor) can’t take changes mid-run, so it gets this after its current run. Say stop to halt it now.") }
             return String(localized: "I’ll apply that right after the current step.")
         case "change_after_finish": return String(localized: "The earlier run finished before your change, so I’m applying it now.")
         case "not_running": return String(localized: "That isn’t running.")

@@ -38,8 +38,6 @@ import ProjectXCore
     @Published var focusMessageID: String?
     /// Set by the host from `popoverWillShow`/`popoverDidClose`; seen reports go out only while it is true.
     @Published var popoverShown = false
-    /// Whether the open popover shows the newest message; kept current by the timeline.
-    var popoverAtBottom = true
     /// The newest message the reader has seen at the bottom of the open popover.
     var onSeen: ((String) -> Void)?
     /// The open popover reached or left the newest message.
@@ -136,7 +134,7 @@ import ProjectXCore
                         if next != snapshot { snapshot = next; let topics = Set(((try? await store.jobRecords()) ?? []).map(\.topicID)); if topics != jobTopics { jobTopics = topics } }
                         if let relay, let bridge { await bridge.publish(next,to: relay) }
                     } catch {
-                        failures += 1; notice = "Couldn't read the chat, retrying: \(error.localizedDescription)"; status = notice
+                        failures += 1; notice = String(localized: "Couldn't read the chat, retrying: \(error.localizedDescription)"); status = notice
                     }
                     try await Task.sleep(for: .milliseconds(failures == 0 ? 350 : min(350 << min(failures,7),30_000)))
                 }
@@ -192,7 +190,7 @@ import ProjectXCore
             do { try await client.connect(timeout: .seconds(3)) } catch { await client.close(); throw error }
             return client
         } catch {
-            nativeNotice = "Native Gateway not connected · using the CLI this launch"; nativeNoticeDetail = error.localizedDescription
+            nativeNotice = String(localized: "Native Gateway not connected · using the CLI this launch"); nativeNoticeDetail = error.localizedDescription
             return nil
         }
     }
@@ -239,9 +237,9 @@ import ProjectXCore
         do {
             try await nativeClient.connect(bootstrapSecret: secret.isEmpty ? nil : secret)
             // The harness took its transport at launch, so a fallback launch keeps the CLI until the next one.
-            enrollmentNotice = nativeNotice == nil ? "Native Gateway connected · model response not yet verified" : "Native Gateway connected · Yorozu uses it from the next launch"
+            enrollmentNotice = nativeNotice == nil ? String(localized: "Native Gateway connected · model response not yet verified") : String(localized: "Native Gateway connected · Yorozu uses it from the next launch")
             // A fallback launch stays on the CLI: say so, and don't keep an unused client redialing.
-            if nativeNotice != nil { nativeNotice = "Native Gateway enrolled · quit and reopen Yorozu to use it"; await nativeClient.close() }
+            if nativeNotice != nil { nativeNotice = String(localized: "Native Gateway enrolled · quit and reopen Yorozu to use it"); await nativeClient.close() }
         } catch { enrollmentNotice = error.localizedDescription }
     }
     func send() async {
