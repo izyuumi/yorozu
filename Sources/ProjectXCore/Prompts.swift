@@ -33,7 +33,7 @@ public enum Prompts {
         "Attached document lines name files the user attached, by absolute path; read them with your tools (an image the model already received needs no reading). Write files you make for the user, other than code changes, in \(scratchDirectory(topic: topic).path) (it may not exist yet; create it), never in a repo checkout or worktree unless the user asks for that. To show an image in the task's progress, put a standalone MEDIA:<absolute path> line in a progress message."
     }
     /// An attachment's file, or nil without a store root.
-    public static func fileURL(_ a: Attachment, root: URL?) -> URL? { root.map { $0.appendingPathComponent(a.path) } }
+    public static func fileURL(_ a: Attachment, root: URL?) -> URL? { a.path.hasPrefix("/") ? URL(fileURLWithPath: a.path) : root.map { $0.appendingPathComponent(a.path) } } // the Engine hands workers absolute paths
     /// One `Attached document: <path>` line per file; a file gone since it was attached gets a line saying so.
     public static func attachmentLines(_ attachments: [Attachment], root: URL?) -> String {
         attachments.map { a in
