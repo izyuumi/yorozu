@@ -66,6 +66,15 @@ extension View {
         }
     }
 
+    /// The system subtitle under the navigation title on iOS 26; nothing before it.
+    @ViewBuilder func navigationSubtitleIfAvailable(_ text: String) -> some View {
+        if #available(iOS 26, *) {
+            navigationSubtitle(text)
+        } else {
+            self
+        }
+    }
+
     /// Applies Yorozu's action colour without replacing semantic warning/error colours.
     func yorozuTint() -> some View {
         tint(YorozuPalette.vermilion)

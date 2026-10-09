@@ -15,15 +15,23 @@ struct ChatScreen: View {
     @State private var atBottom = true
     /// The newest message on screen the last time the view was at the bottom: the pill counts past it.
     @State private var seenId: String?
+    @State private var path: [ChatRoute] = []
+    /// The read cursor the unread divider is drawn from. It follows the Mac's cursor when another
+    /// device moves it, and stays put while this one reads, so the divider does not vanish under the reader.
+    @State private var unreadAfter: String?
+    /// The last message this phone sent as read.
+    @State private var sentRead: String?
+    @Environment(\.scenePhase) private var scenePhase
 
     /// How far above the end the view still counts as at the bottom.
     private static let bottomSlack: CGFloat = 24
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
                     let byId = Dictionary(model.bubbles.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+                    let firstUnread = firstUnread
                     ForEach(rows) { row in
                         VStack(spacing: LayoutMetrics.stack) {
                             if let day = row.day {
@@ -32,6 +40,7 @@ struct ChatScreen: View {
                                     .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity)
                             }
+                            if row.id == firstUnread { UnreadDivider() }
                             MessageRow(
                                 bubble: row.bubble, header: header(for: row.bubble, in: byId),
                                 onShowRequest: { show(row.bubble.replyTo) },
@@ -39,10 +48,14 @@ struct ChatScreen: View {
                         }
                         .id(row.id)
                     }
+                    if model.routing == true {
+                        ThinkingRow()
+                    }
                     if model.working == true {
                         ProgressView().accessibilityLabel("Working…")
                     }
                 }
+                .scrollTargetLayout()
                 .padding(LayoutMetrics.gutter)
                 // Prose stops at a reading width; a no-op on a phone.
                 .frame(maxWidth: LayoutMetrics.readingWidth)
@@ -110,18 +123,45 @@ struct ChatScreen: View {
             }
             .navigationTitle("Yorozu")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationSubtitleIfAvailable(model.shownStatus.label)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Circle()
-                        .fill(dotColor)
-                        .frame(width: Self.dot, height: Self.dot)
-                        .accessibilityElement()
-                        .accessibilityLabel(model.shownStatus.label)
+                    SubChatsButton(running: model.working == nil ? 0 : model.runningTopics) { path = [.topics] }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                if !Self.hasSubtitle {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Circle()
+                            .fill(dotColor)
+                            .frame(width: Self.dot, height: Self.dot)
+                            .accessibilityElement()
+                            .accessibilityLabel(model.shownStatus.label)
+                    }
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button("Search", systemImage: "magnifyingglass") { path = [.search] }
                     Button("Settings", systemImage: "gearshape") { settings = true }
                 }
             }
+            .navigationDestination(for: ChatRoute.self) { route in
+                switch route {
+                case .topics:
+                    TopicsScreen(model: model)
+                case .topic(let id, let focus):
+                    TopicScreen(model: model, topicId: id, focus: focus) { path = [] }
+                case .search:
+                    SearchScreen(model: model, onOpen: open) { path.removeLast() }
+                case .page(let id):
+                    PageScreen(model: model, messageId: id)
+                }
+            }
+            // The Mac's cursor moved by another device (or first loaded) moves the divider; this phone's own does not.
+            .onChange(of: model.readCursor?.messageId, initial: true) { _, id in
+                if id != sentRead { unreadAfter = id }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { unreadAfter = model.readCursor?.messageId }
+            }
+            .onChange(of: readTarget, initial: true) { _, id in markRead(id) }
             .sheet(isPresented: $settings) {
                 SettingsSheet(model: model) {
                     settings = false
@@ -174,6 +214,108 @@ struct ChatScreen: View {
     private func show(_ id: String?) {
         guard let id else { return }
         withAnimation { position.scrollTo(id: id, anchor: .top) }
+    }
+
+    private static let hasSubtitle: Bool = {
+        if #available(iOS 26, *) { return true } else { return false }
+    }()
+
+    /// The first message from Yorozu after the read cursor: the user's own messages are never unread.
+    private var firstUnread: String? {
+        guard let after = unreadAfter, let index = model.bubbles.firstIndex(where: { $0.id == after }) else { return nil }
+        return model.bubbles[(index + 1)...].first { !$0.user }?.id
+    }
+
+    /// The newest stored message, while it is on screen: the app active, the chat shown, the view at the bottom.
+    private var readTarget: String? {
+        guard scenePhase == .active, path.isEmpty, !settings, details == nil, atBottom, model.state == .paired else { return nil }
+        return model.bubbles.last { $0.seq != nil }?.id
+    }
+
+    /// Forward only: never a message at or before the Mac's cursor.
+    private func markRead(_ id: String?) {
+        guard let id, id != sentRead, id != model.readCursor?.messageId else { return }
+        if let cursor = model.readCursor?.messageId,
+           let held = model.bubbles.firstIndex(where: { $0.id == cursor }),
+           let new = model.bubbles.firstIndex(where: { $0.id == id }), new <= held { return }
+        sentRead = id
+        Task { await model.markRead(id) }
+    }
+
+    /// A search hit: the main timeline scrolls to it; a sub-chat opens over the search; a message
+    /// outside the cache loads its page from the Mac first.
+    private func open(_ hit: SearchHitData) {
+        switch model.target(of: hit) {
+        case .main(let id):
+            path = []
+            atBottom = false
+            withAnimation { position.scrollTo(id: id, anchor: .center) }
+        case .topic(let topicId, let focus):
+            path.append(.topic(topicId, focus: focus))
+        case .page(let id):
+            path.append(.page(id))
+            Task { await model.loadPage(around: id) }
+        case .none:
+            break
+        }
+    }
+}
+
+/// Sub-chats, with the number of running topics.
+private struct SubChatsButton: View {
+    let running: Int
+    let action: () -> Void
+
+    private let badgeOffset: CGFloat = 8
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .overlay(alignment: .topTrailing) {
+                    if running > 0 {
+                        Text(verbatim: "\(running)")
+                            .font(.caption2.weight(.bold))
+                            .monospacedDigit()
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, LayoutMetrics.tight)
+                            .background(YorozuPalette.bubble, in: Capsule())
+                            .offset(x: badgeOffset, y: -badgeOffset)
+                    }
+                }
+        }
+        .accessibilityLabel("Sub-chats")
+        .accessibilityValue(running > 0 ? String(localized: "\(running) running") : "")
+    }
+}
+
+/// "Unread": above the first message from Yorozu after the read cursor.
+private struct UnreadDivider: View {
+    var body: some View {
+        HStack(spacing: LayoutMetrics.inner) {
+            line
+            Text("Unread").font(.caption.weight(.semibold))
+            line
+        }
+        .foregroundStyle(.tint)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var line: some View {
+        Rectangle().fill(.tint).frame(height: 1).frame(maxWidth: .infinity).accessibilityHidden(true)
+    }
+}
+
+/// The secretary is reading a message: a typing-style bubble until it answers or hands the work on.
+private struct ThinkingRow: View {
+    var body: some View {
+        Image(systemName: "ellipsis")
+            .font(.title3.weight(.bold))
+            .foregroundStyle(.secondary)
+            .symbolEffect(.variableColor.iterative.dimInactiveLayers)
+            .padding(.horizontal, LayoutMetrics.stack)
+            .padding(.vertical, LayoutMetrics.stack)
+            .background(Color(.secondarySystemBackground), in: Capsule())
+            .accessibilityLabel("Thinking…")
     }
 }
 
