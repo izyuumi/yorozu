@@ -10,6 +10,35 @@ public struct HermesReadiness: Sendable, Equatable {
     public var ready: Bool { problems.isEmpty }
 }
 
+/// Hermes's setup seam (#317): `HermesHarness.readiness()` as readiness items. Its setup steps are #318's
+/// (`HermesProfiles`); here only detection.
+public struct HermesSetup: HarnessSetup {
+    public var kind: Config.HarnessKind { .hermes }
+    public var title: String { "Hermes Agent" }
+    public var steps: [String] { ["harness"] }
+    public var url: String, agent: String
+    public init(url: String, agent: String) { self.url = url; self.agent = agent }
+    public var installed: Bool { HermesHarness.launcher() != nil }
+    public func detect() async -> HarnessDetection {
+        var d = HarnessDetection(kind: kind,title: title)
+        guard let harness = try? HermesHarness(url: url,agent: agent) else {
+            d.items = [Readiness.Item(id: "hermes.url",title: "Hermes's address in config.toml isn't usable",detail: url,severity: .warning,fix: .step("harness"))]; return d
+        }
+        let r = await harness.readiness()
+        d.installed = r.launcher != nil; d.version = r.version; d.reachable = d.installed ? r.version != nil : nil
+        guard let launcher = r.launcher else {
+            d.items = [Readiness.Item(id: "hermes.installed",title: "Hermes Agent isn't installed",detail: r.problems.joined(separator: "\n"),severity: .blocking,fix: .open(title: "How to install Hermes Agent",url: URL(string: "https://hermes-agent.nousresearch.com")!))]; return d
+        }
+        d.items = [Readiness.Item(id: "hermes.installed",title: "Hermes Agent is installed",detail: launcher + (r.version.map { " " + $0 } ?? ""),severity: .ok)]
+            + r.problems.enumerated().map { Readiness.Item(id: "hermes.problem.\($0.offset)",title: $0.element,detail: $0.element,severity: .warning,fix: .step("harness")) }
+            + r.warnings.enumerated().map { Readiness.Item(id: "hermes.warning.\($0.offset)",title: $0.element,detail: $0.element,severity: .warning) }
+        return d
+    }
+    public func executors(_ settings: HarnessSettings) -> [CodingExecutor] {
+        ((try? HermesHarness(url: url,agent: agent,settings: { settings }))?.executors ?? []).map { CodingExecutor(executor: $0,binary: "hermes",path: HermesHarness.launcher()) }
+    }
+}
+
 /// Nous Research's Hermes Agent through its loopback API server (#318; docs/hermes-integration.md). Roles run as fresh
 /// one-shot runs in profile `yorozu-roles`; workers run in `yorozu-worker`, one session per topic (`yorozu-<topic id>`)
 /// and one per topic for coding (`yorozu-<topic id>-hermes`). Every run names provider and model, and a run served by any
@@ -49,11 +78,15 @@ public struct HermesHarness: Harness {
 
     // MARK: Readiness
 
+    /// The hermes launcher on PATH or at `~/.local/bin/hermes`.
+    static func launcher() -> String? {
+        let fm = FileManager.default, path = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { URL(fileURLWithPath: String($0)).appendingPathComponent("hermes").path }
+        return (path + [fm.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/hermes").path]).first { fm.isExecutableFile(atPath: $0) }
+    }
     public func readiness() async -> HermesReadiness {
         var r = HermesReadiness(), fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser, hermes = home.appendingPathComponent(".hermes")
-        let path = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { URL(fileURLWithPath: String($0)).appendingPathComponent("hermes").path }
-        r.launcher = (path + [home.appendingPathComponent(".local/bin/hermes").path]).first { fm.isExecutableFile(atPath: $0) }
+        let hermes = fm.homeDirectoryForCurrentUser.appendingPathComponent(".hermes")
+        r.launcher = Self.launcher()
         if r.launcher == nil { r.problems.append("The hermes launcher was not found on PATH or at ~/.local/bin/hermes. Install Hermes Agent.") }
         if !fm.fileExists(atPath: hermes.path) { r.problems.append("~/.hermes does not exist. Install Hermes Agent.") }
         for p in [Self.workerProfile, Self.rolesProfile] {

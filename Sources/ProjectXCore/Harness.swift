@@ -158,8 +158,9 @@ public struct GatewayRPC: Sendable {
         if s.contains("no such file") || s.contains("command not found") || s.contains("node.js") { return "executable-or-runtime" }
         return "unclassified-refusal-or-disconnect"
     }
-    public func call(_ method: String, _ params: [String:Any], final: Bool = false, sourceMessageID: String? = nil) async throws -> [String:Any] {
-        guard method == "agent", let id = params["idempotencyKey"] as? String else { return try await perform(method,params,final: final) }
+    /// `timeout` (ms, CLI transport only) shortens the CLI's 260 s wait, for setup and readiness probes.
+    public func call(_ method: String, _ params: [String:Any], final: Bool = false, sourceMessageID: String? = nil, timeout: Int? = nil) async throws -> [String:Any] {
+        guard method == "agent", let id = params["idempotencyKey"] as? String else { return try await perform(method,params,final: final,timeout: timeout) }
         // Correlation log only. Raw model runs are stateless (no tools, no transcript), so a lost one never blocks the next.
         var receipt = RequestReceipt(requestID: id,harness: "openclaw",sessionKey: params["sessionKey"] as? String,sourceMessageID: sourceMessageID,rawModelRun: params["modelRun"] as? Bool == true,state: "submitted")
         try await audit?(receipt) // Durable before dispatch; fail closed if saving correlation fails.
@@ -195,7 +196,7 @@ public struct GatewayRPC: Sendable {
         default: return false
         }
     }
-    private func perform(_ method: String, _ params: [String:Any], final: Bool) async throws -> [String:Any] {
+    private func perform(_ method: String, _ params: [String:Any], final: Bool, timeout: Int? = nil) async throws -> [String:Any] {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: params),as: UTF8.self)
         let text: String
         if let fixture { text = try await fixture(method,json,final) }
@@ -208,7 +209,8 @@ public struct GatewayRPC: Sendable {
             text = try await Task.detached(priority: .utility) {
                 let process = Process(); let pipe = Pipe(); let errors = Pipe()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = ["openclaw","gateway","call",method,"--json","--expect-url",target,"--timeout","260000","--params",json] + (final ? ["--expect-final"] : [])
+                let ms = timeout ?? 260000
+                process.arguments = ["openclaw","gateway","call",method,"--json","--expect-url",target,"--timeout","\(ms)","--params",json] + (final ? ["--expect-final"] : [])
                 var childEnvironment = env // Never strip runtime attribution markers.
                 // Finder's PATH often omits Homebrew; append standard executable locations, never change identity/auth homes.
                 childEnvironment["PATH"] = (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin") + ":/opt/homebrew/bin:/usr/local/bin"
@@ -224,7 +226,7 @@ public struct GatewayRPC: Sendable {
                     return captured
                 }
                 let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 270,execute: deadline)
+                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(ms + 10_000),execute: deadline)
                 defer { deadline.cancel() }
                 var data = Data()
                 while true {
@@ -280,7 +282,11 @@ public struct OpenClawHarness: Harness {
     /// `models.providers.<provider>.models[]`; models.list strips cost, and bundled provider catalogs are not exposed.
     public func models() async throws -> (allowed: [ModelInfo], primary: String?) {
         let rows = try await rpc.call("models.list",["agentId":agent,"view":"configured","includeDetails":true])["models"] as? [[String:Any]] ?? []
-        let providers = (((try? await rpc.call("config.get",[:]))?["config"] as? [String:Any])?["models"] as? [String:Any])?["providers"] as? [String:Any] ?? [:]
+        return Self.models(rows,config: (try? await rpc.call("config.get",[:]))?["config"] as? [String:Any])
+    }
+    /// `models()` from a `models.list` answer and the `config` of a `config.get` answer.
+    static func models(_ rows: [[String:Any]], config: [String:Any]?) -> (allowed: [ModelInfo], primary: String?) {
+        let providers = (config?["models"] as? [String:Any])?["providers"] as? [String:Any] ?? [:]
         var primary: String?, allowed: [ModelInfo] = []
         for m in rows {
             guard let id = m["id"] as? String, let provider = m["provider"] as? String else { continue }
@@ -539,16 +545,8 @@ extension OpenClawHarness {
             let snapshot = try await rpc.call("config.get",[:])
             guard let hash = snapshot["hash"] as? String else { throw ProjectError.uncertain("OpenClaw config hash unavailable; MCP servers not set up.") }
             let configured = ((snapshot["config"] as? [String:Any])?["mcp"] as? [String:Any])?["servers"] as? [String:Any] ?? [:]
-            var patch: [String:Any] = [:], replace: [String] = []
-            for (name,server) in list {
-                let key = "yorozu-" + name, entry: [String:Any] = ["command":server.command,"args":server.args ?? [],"enabled":false]
-                guard !NSDictionary(dictionary: entry).isEqual(configured[key] as? [String:Any] ?? [:]) else { continue }
-                patch[key] = entry
-            }
-            for key in configured.keys where key.hasPrefix("yorozu-") && list[String(key.dropFirst(7))] == nil { patch[key] = NSNull() }
+            let (patch,replace) = Self.mcpPatch(list,configured: configured)
             if !patch.isEmpty {
-                // A merge patch; OpenClaw refuses to shrink or drop an array unless its exact path is in replacePaths.
-                for key in patch.keys { replace += Self.arrayPaths(configured[key] as Any,"mcp.servers." + key) }
                 // No `note`: it would leave a restart sentinel that wakes the owner's main agent on the next Gateway start.
                 // A concurrent config edit fails the hash check; the next use retries.
                 let raw = String(decoding: try JSONSerialization.data(withJSONObject: ["mcp":["servers":patch]]),as: UTF8.self)
@@ -560,7 +558,21 @@ extension OpenClawHarness {
             return overlay
         }
     }
-    private static func arrayPaths(_ value: Any,_ path: String) -> [String] {
+    /// The `mcp.servers` merge patch that brings OpenClaw's `yorozu-*` entries to `list` (changed ones written with
+    /// enabled:false, stale ones removed), and the array paths it replaces: OpenClaw refuses to shrink or drop an array
+    /// unless its exact path is in replacePaths. Empty when nothing differs.
+    static func mcpPatch(_ list: [String:MCPServer], configured: [String:Any]) -> (patch: [String:Any], replace: [String]) {
+        var patch: [String:Any] = [:], replace: [String] = []
+        for (name,server) in list {
+            let key = "yorozu-" + name, entry: [String:Any] = ["command":server.command,"args":server.args ?? [],"enabled":false]
+            guard !NSDictionary(dictionary: entry).isEqual(configured[key] as? [String:Any] ?? [:]) else { continue }
+            patch[key] = entry
+        }
+        for key in configured.keys where key.hasPrefix("yorozu-") && list[String(key.dropFirst(7))] == nil { patch[key] = NSNull() }
+        for key in patch.keys { replace += arrayPaths(configured[key] as Any,"mcp.servers." + key) }
+        return (patch,replace)
+    }
+    static func arrayPaths(_ value: Any,_ path: String) -> [String] {
         value is [Any] ? [path] : (value as? [String:Any])?.flatMap { arrayPaths($0.value,path + "." + $0.key) } ?? []
     }
     /// Before each use of a topic, controller or coding session: bring it to `model` (and `runtime`) with sessions.patch

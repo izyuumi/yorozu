@@ -27,7 +27,9 @@ public struct Config: Sendable, Equatable {
         public init() {}
     }
     public struct Rules: Sendable, Equatable { public var minContextTokens = 32000, minOutputTokens = 16000 }
-    public var general = General(), notifications = Notifications(), routing = Routing(), relay = Relay(), direct = Direct(), harness = HarnessSettings(), models = Models()
+    /// First-launch setup progress (`SetupEngine`): finished, and the steps the user answered or skipped.
+    public struct SetupProgress: Sendable, Equatable { public var done = false, answered: [String] = [] }
+    public var general = General(), notifications = Notifications(), routing = Routing(), relay = Relay(), direct = Direct(), harness = HarnessSettings(), models = Models(), setup = SetupProgress()
     /// The user's own `[mcp_servers]`; workers get `effectiveMCPServers`.
     public var mcpServers: [String:MCPServer] = [:]
     /// Built-ins (`Integration.builtIn`) plus the user's `[integrations.<name>]`, by name.
@@ -49,6 +51,13 @@ public struct Config: Sendable, Equatable {
     }
 
     public static func url(in root: URL) -> URL { root.appendingPathComponent("config.toml") }
+    /// The data root holding `config.toml`: `PROJECTX_DATA`, else `~/Library/Application Support/<bundle id>` (its
+    /// `Fixture` folder in fixture mode). `support` is that Application Support folder whatever `PROJECTX_DATA` says.
+    public static func dataRoot(_ environment: [String:String], bundleID: String) throws -> (root: URL, support: URL, explicit: Bool) {
+        let support = try FileManager.default.url(for: .applicationSupportDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID,isDirectory: true)
+        if let dir = environment["PROJECTX_DATA"] { return (URL(fileURLWithPath: dir,isDirectory: true),support,true) }
+        return (RuntimeMode.from(environment) == .fixture ? support.appendingPathComponent("Fixture",isDirectory: true) : support,support,false)
+    }
 
     /// The validated file. A missing file is written with the defaults, plus the entries of a retired
     /// `mcp-servers.json` in the same folder.
@@ -118,12 +127,14 @@ public struct Config: Sendable, Equatable {
         field("models.review",\.models.review,"Stronger review model; leave out for automatic." + security),
         field("models.rules.min_context_tokens",\.models.rules.minContextTokens,"Smallest context window for the automatic secretary and extraction model."),
         field("models.rules.min_output_tokens",\.models.rules.minOutputTokens,"Smallest output cap for the automatic secretary and extraction model."),
+        field("setup.done",\.setup.done,"Setup is finished; until it is, Yorozu opens the setup window at launch."),
+        field("setup.answered",\.setup.answered,"Setup steps answered or skipped, by id."),
     ]
     static let sections = [
         "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "iPhone relay.", "direct": "Direct iPhone connection over LAN or VPN.",
         "harness": "Harness connection.", "models": "Models per role; a missing role is chosen automatically from the harness's model metadata.",
         "models.coding": "Coding executor id (OpenClaw: claude, codex; Hermes: hermes) = \"provider/model\"; a missing executor is automatic." + security,
-        "models.rules": "Inputs of the automatic choice.",
+        "models.rules": "Inputs of the automatic choice.", "setup": "First-launch setup progress (Yorozu setup, or the setup window).",
         "mcp_servers": "MCP servers workers may use: [mcp_servers.<name>] with command (absolute path) and args; env is not supported." + security,
         "integrations": "Integrations: MCP servers, worker rules, checks and fixes as data, each with enabled = true or false. Built-in: [integrations.cua] (computer use through CuaDriver). Your own [integrations.<name>] may also set title, rules (\"{session}\" is the per-run cua session label), checks = [{ title, file or socket = \"/path\" }], fixes = [{ title, copy = \"command\" or url }], [integrations.<name>.mcp_servers.<server>] and [integrations.<name>.settings]." + security,
     ]
@@ -435,6 +446,10 @@ extension Bool: TOMLScalar {
 extension Int: TOMLScalar {
     init?(toml: TOMLValue) { guard case .integer(let i) = toml, let n = Int(exactly: i) else { return nil }; self = n }
     var toml: TOMLValue? { .integer(Int64(self)) }; static var expected: String { "an integer" }
+}
+extension Array: TOMLScalar where Element == String {
+    init?(toml: TOMLValue) { guard case .array(let items) = toml else { return nil }; let s = items.compactMap { if case .string(let s) = $0 { s } else { nil } }; guard s.count == items.count else { return nil }; self = s }
+    var toml: TOMLValue? { .array(map { .string($0) }) }; static var expected: String { "an array of strings" }
 }
 extension Optional: TOMLScalar where Wrapped: TOMLScalar {
     init?(toml: TOMLValue) { guard let w = Wrapped(toml: toml) else { return nil }; self = w }

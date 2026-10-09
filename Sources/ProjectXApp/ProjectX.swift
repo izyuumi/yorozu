@@ -113,9 +113,7 @@ import YorozuWire
                 // Private app state: ~/Library/Application Support/<bundle id>; rebuildable index: ~/Library/Caches/<bundle id>.
                 // User-owned Markdown memory: visible ~/Yorozu/memory (owner decision). Fixtures and PROJECTX_DATA keep all in one root.
                 let fm = FileManager.default; let bundleID = Bundle.main.bundleIdentifier ?? "to.yumi.yorozu"
-                let explicit = env["PROJECTX_DATA"].map { URL(fileURLWithPath: $0,isDirectory: true) }
-                let support = try fm.url(for: .applicationSupportDirectory,in: .userDomainMask,appropriateFor: nil,create: true).appendingPathComponent(bundleID,isDirectory: true)
-                let root = explicit ?? (runtimeMode == .fixture ? support.appendingPathComponent("Fixture",isDirectory: true) : support)
+                let (root,support,isExplicit) = try Config.dataRoot(env,bundleID: bundleID), explicit = isExplicit ? root : nil
                 // An unreadable or invalid file runs this launch on the code defaults plus the environment and is left as it is;
                 // the watcher still starts, so fixing the file applies.
                 let configFile = Config.url(in: root); var text: Data?, file = Config()
@@ -258,7 +256,7 @@ import YorozuWire
             }
         }
     }
-    /// The Mac readiness model (#317) calls this on every change; phones get it now and after each handshake.
+    /// The Mac readiness model (#317) calls this on every change (`ReadinessData(readiness)`); phones get it now and after each handshake.
     func publishReadiness(_ readiness: ReadinessData) async {
         self.readiness = readiness
         await relay?.publishReadiness(readiness)
@@ -341,9 +339,17 @@ import YorozuWire
     /// A menu-bar host: closing Settings leaves the engine, relay and model running until Quit.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
-@main struct ProjectXApp: App {
+/// Started by `Main` unless the binary runs as `Yorozu setup …` (SetupCLI.swift).
+struct ProjectXApp: App {
     @NSApplicationDelegateAdaptor(Delegate.self) var delegate
     var body: some Scene {
         Settings { SettingsView(model: delegate.model) }
+    }
+}
+extension ReadinessData {
+    /// Core's readiness for phones: the overall state, the count and each item's title, severity and fix hint.
+    init(_ r: Readiness) {
+        let state: State = switch r.state { case .ready: .ready; case .attention: .attention; case .blocked: .blocked }
+        self.init(state: state,count: r.count,items: r.items.map { Item(id: $0.id,title: $0.title,severity: Item.Severity(rawValue: $0.severity.rawValue)!,fix: $0.fix?.hint) })
     }
 }
