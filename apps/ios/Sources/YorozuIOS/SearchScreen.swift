@@ -4,6 +4,8 @@ import YorozuWire
 /// Where the chat's navigation stack can go.
 enum ChatRoute: Hashable {
     case topics
+    /// The job list (#319), while the Mac takes `jobs-v1`.
+    case jobs
     /// `focus`: a message or task to scroll to.
     case topic(String, focus: String?)
     case search

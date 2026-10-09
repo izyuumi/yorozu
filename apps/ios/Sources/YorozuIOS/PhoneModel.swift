@@ -104,8 +104,12 @@ final class PhoneModel {
 
     // MARK: Mirror (the history window)
 
-    /// The main timeline, by `ts`. Every message goes here; `topicId` also files it in its sub-chat.
-    private(set) var bubbles: [Bubble] = []
+    /// Every message, by `ts`; `topicId` also files it in its sub-chat.
+    private(set) var bubbles: [Bubble] = [] { didSet { timeline = bubbles.filter { !Self.jobOnlyKinds.contains($0.kind ?? "") } } }
+    /// The main timeline: every message but those that stay in a job's sub-chat (#319), as on the Mac.
+    private(set) var timeline: [Bubble] = []
+    /// The Mac's job-only kinds (`Message.jobOnlyKinds`) that reach a phone with `jobs-v1`; the run trigger never does.
+    static let jobOnlyKinds: Set = ["job_run", "job_input", "job_result", "job_note"]
     private(set) var topics: [String: TopicData] = [:]
     private(set) var tasks: [String: TaskData] = [:]
     private(set) var amendments: [String: AmendmentData] = [:]
@@ -125,6 +129,22 @@ final class PhoneModel {
     /// The latest search's hits, pages appended; a result for an older request is ignored.
     private(set) var search: SearchResultData?
     private(set) var page: PageReply?
+
+    // MARK: Jobs (#319)
+
+    /// The Mac negotiated `jobs-v1`; nil until it has said. Jobs stay hidden unless true.
+    private(set) var jobsSupported: Bool?
+    /// The Mac's latest `job_list`.
+    private(set) var jobs: [JobListData.Job] = []
+    /// `job_control` events awaiting their answer: event id -> job id. Those jobs' actions stay disabled.
+    private(set) var jobControls: [String: String] = [:]
+    /// The latest refusal per job.
+    private(set) var jobRefusals: [String: String] = [:]
+    /// The cache was filled with `jobs-v1`, so it holds the job-only messages; without it a cursor skips them.
+    private var cacheHasJobs = false
+    /// Sub-chats that belong to jobs: reached through Jobs, not the topic list.
+    var jobTopicIds: Set<String> { jobsSupported == true ? Set(jobs.compactMap(\.topicId)) : [] }
+    func canControlJob(_ id: String) -> Bool { state == .paired && !jobControls.values.contains(id) }
 
     // MARK: Outbox (#314)
 
@@ -310,7 +330,8 @@ final class PhoneModel {
                 // Files still in the outbox show from there.
                 for (index, info) in (item.files ?? []).enumerated() { files.register(UploadStore.url(item.id, index), for: info) }
                 if case .message(let message) = item.event.payload, !bubbles.contains(where: { $0.id == item.id }) {
-                    merge(Bubble(id: item.id, user: true, ts: item.event.ts, text: message.text, attachments: item.files ?? []))
+                    merge(Bubble(id: item.id, user: true, ts: item.event.ts, text: message.text, kind: message.jobId.map { _ in "job_input" },
+                                 topicId: item.topicId, attachments: item.files ?? []))
                 }
             }
             expireOverdue()
@@ -342,6 +363,10 @@ final class PhoneModel {
         uploadProgress = [:]
         uploadOffsets = [:]
         attachmentsSupported = nil
+        jobsSupported = nil
+        jobs = []
+        jobRefusals = [:]
+        cacheHasJobs = false
         draftFiles.forEach { $0.discard() }
         draftFiles = []
         failure = nil
@@ -533,6 +558,14 @@ final class PhoneModel {
             } else {
                 updateRequired = nil
             }
+            if case .compatible(_, let capabilities) = compatibility {
+                jobsSupported = capabilities.contains(JobListData.capability)
+                // A cache filled without `jobs-v1` has a cursor past the job-only messages: fill it again from the window.
+                if jobsSupported == true, !cacheHasJobs {
+                    cacheHasJobs = true
+                    cursor = nil
+                }
+            }
         case .failed(let reason):
             failure = reason
         case .event(let event):
@@ -549,6 +582,7 @@ final class PhoneModel {
         routing = nil
         readiness = nil
         controlling = []
+        jobControls = [:]
         searchOffset = nil
         pageDeadline?.cancel()
         pageDeadline = nil
@@ -613,13 +647,43 @@ final class PhoneModel {
         }
         let event = YorozuEvent(id: id, threadId: "main", ts: ts, agentId: "device",
                                 payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime)))
-        outbox.append(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos))
-        setMark(event.id, .sending)
-        merge(Bubble(id: event.id, user: true, ts: ts, text: text, attachments: infos))
         draft = ""
         draftFiles = []
+        enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos), Bubble(id: id, user: true, ts: ts, text: text, attachments: infos))
+    }
+
+    /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only.
+    func send(_ text: String, toJob job: String, topic: String) {
+        guard canSend, jobsSupported == true, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let ts = Self.now
+        let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: ts, agentId: "device",
+                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, jobId: job)))
+        enqueue(Outbox.Item(event: event, sentAt: ts, topicId: topic),
+                Bubble(id: event.id, user: true, ts: ts, text: text, kind: "job_input", topicId: topic))
+    }
+
+    private func enqueue(_ item: Outbox.Item, _ bubble: Bubble) {
+        outbox.append(item)
+        setMark(item.id, .sending)
+        merge(bubble)
         saveOutbox()
         queued()
+    }
+
+    /// Pause, Resume, Run now or Delete one job. One at a time per job, only while `.paired`, never queued; the
+    /// Mac's `admission_status` for the event ends it, and a refusal is kept for the job's row.
+    func control(job: String, _ action: JobControlData.Action) async {
+        guard canControlJob(job) else { return }
+        let id = UUID().uuidString
+        jobControls[id] = job
+        jobRefusals[job] = nil
+        guard let relay else { jobControls[id] = nil; return }
+        do {
+            try await relay.send(YorozuEvent(id: id, threadId: "main", ts: Self.now, agentId: "device",
+                                             payload: .jobControl(JobControlData(jobId: job, action: action))))
+        } catch {
+            jobControls[id] = nil
+        }
     }
 
     /// "Send as Text File": a draft over the message limit goes as a `.txt` file, with any staged files.
@@ -973,6 +1037,10 @@ final class PhoneModel {
             // A long set is progress: the reply deadline restarts with each chunk.
             if requestedAfter != nil { armDeadline() }
             if let whole = chunks.add(chunk) { receive(whole) }
+        case .admissionStatus(let status) where jobControls[status.eventId] != nil:
+            if let job = jobControls.removeValue(forKey: status.eventId), status.status == .rejected { jobRefusals[job] = status.reason }
+        case .jobList(let list):
+            jobs = list.jobs
         case .receipt(let receipt):
             stored(receipt.eventId, read: false)
         case .admissionStatus(let status) where status.status == .expired:
@@ -1111,6 +1179,7 @@ final class PhoneModel {
         tasks = Dictionary(snapshot.tasks.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         amendments = Dictionary(snapshot.amendments.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         workerEvents = Dictionary(snapshot.workerEvents.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+        cacheHasJobs = snapshot.jobs == true
         trim()
     }
 
@@ -1133,7 +1202,7 @@ final class PhoneModel {
         MirrorCache.shared.save(MirrorCache.Snapshot(
             owner: ownPub, cursor: cursor, readCursor: readCursor,
             messages: bubbles.filter { $0.seq != nil }, topics: Array(topics.values), tasks: Array(tasks.values),
-            amendments: Array(amendments.values), workerEvents: Array(workerEvents.values)))
+            amendments: Array(amendments.values), workerEvents: Array(workerEvents.values), jobs: cacheHasJobs))
     }
 
     /// The history window by the phone's clock and count: the newest 500 stored messages plus every

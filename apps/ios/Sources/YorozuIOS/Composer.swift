@@ -14,6 +14,8 @@ struct Composer: View {
     let attachments: Bool
     let working: Bool
     let enabled: Bool
+    /// False for text-only input (a job's own input, #319): no attach menu and no "Send as Text File".
+    var allowsFiles = true
     let onSend: () -> Void
     let onSendAsTextFile: () -> Void
 
@@ -44,12 +46,15 @@ struct Composer: View {
                     .padding(.horizontal, LayoutMetrics.stack)
             }
             HStack(alignment: .bottom, spacing: LayoutMetrics.tight) {
-                AttachMenu(remaining: AttachmentLimits.maxCount - files.count, available: attachments, loading: $loading) {
-                    files += $0
+                if allowsFiles {
+                    AttachMenu(remaining: AttachmentLimits.maxCount - files.count, available: attachments, loading: $loading) {
+                        files += $0
+                    }
                 }
                 ComposerTextView(text: $text, placeholder: String(localized: "Message"), onSubmit: send)
                     // Centred on the send button while single-line; grows past it.
                     .frame(minHeight: controlTarget)
+                    .padding(.leading, allowsFiles ? 0 : LayoutMetrics.inner)
                 sendButton
             }
         }
@@ -76,26 +81,28 @@ struct Composer: View {
             Label {
                 VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                     Text("\(bytes.formatted()) bytes. The limit is \(Self.maxBytes.formatted()).").fontWeight(.semibold)
-                    Text("Shorten it, or send it as a text file.").foregroundStyle(.secondary)
+                    (allowsFiles ? Text("Shorten it, or send it as a text file.") : Text("Shorten it.")).foregroundStyle(.secondary)
                 }
             } icon: {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
             }
             .font(.footnote)
             .accessibilityElement(children: .combine)
-            Button {
-                onSendAsTextFile()
-                sends += 1
-            } label: {
-                Label("Send as Text File", systemImage: "doc.text")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, LayoutMetrics.stack)
-                    .frame(minHeight: controlTarget)
-                    .background(.fill.tertiary, in: Capsule())
+            if allowsFiles {
+                Button {
+                    onSendAsTextFile()
+                    sends += 1
+                } label: {
+                    Label("Send as Text File", systemImage: "doc.text")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, LayoutMetrics.stack)
+                        .frame(minHeight: controlTarget)
+                        .background(.fill.tertiary, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+                .disabled(!enabled || !attachments || loading || files.count >= AttachmentLimits.maxCount)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.tint)
-            .disabled(!enabled || !attachments || loading || files.count >= AttachmentLimits.maxCount)
         }
     }
 

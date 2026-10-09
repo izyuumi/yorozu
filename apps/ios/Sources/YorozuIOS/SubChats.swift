@@ -64,7 +64,7 @@ extension PhoneModel {
     /// A result message repeats its task's result, which the task card already shows: the topic hides it,
     /// unless it carries files the card does not.
     func hidesInTopic(_ bubble: Bubble) -> Bool {
-        bubble.kind == "result" && bubble.files.isEmpty && bubble.taskId.flatMap { tasks[$0]?.result } != nil
+        ["result", "job_result"].contains(bubble.kind ?? "") && bubble.files.isEmpty && bubble.taskId.flatMap { tasks[$0]?.result } != nil
     }
 
     /// nil while off the link or catching up: the Mac's state is unknown, never idle. `list`: the
@@ -91,9 +91,10 @@ extension PhoneModel {
         return latest
     }
 
+    /// Job runs do not count, as the Mac's working flag ignores them.
     var runningTopics: Int {
-        let byTopic = tasksByTopic
-        return topics.keys.filter { status(of: $0, tasks: byTopic[$0] ?? []) == .running }.count
+        let byTopic = tasksByTopic, jobs = jobTopicIds
+        return topics.keys.filter { !jobs.contains($0) && status(of: $0, tasks: byTopic[$0] ?? []) == .running }.count
     }
 }
 
@@ -109,8 +110,11 @@ struct TopicsScreen: View {
 
     var body: some View {
         let facts = Facts(tasks: model.tasksByTopic, activity: model.lastActivities())
-        let ids = model.topics.keys.sorted { facts.activity[$0, default: 0] > facts.activity[$1, default: 0] }
+        let jobTopics = model.jobTopicIds
+        let ids = model.topics.keys.filter { !jobTopics.contains($0) }.sorted { facts.activity[$0, default: 0] > facts.activity[$1, default: 0] }
+        let showsJobs = model.jobsSupported == true
         List {
+            if showsJobs { JobsRow(jobs: model.jobs) }
             if !model.statusKnown {
                 Section {
                     ForEach(ids, id: \.self) { row($0, nil, facts) }
@@ -131,7 +135,7 @@ struct TopicsScreen: View {
         }
         .listStyle(.insetGrouped)
         .overlay {
-            if ids.isEmpty {
+            if ids.isEmpty && !showsJobs {
                 ContentUnavailableView("No sub-chats yet", systemImage: "bubble.left.and.bubble.right",
                                        description: Text("Bigger work runs in a sub-chat on your Mac. It shows up here."))
             }
@@ -228,6 +232,9 @@ struct TopicScreen: View {
     @State private var position = ScrollPosition(edge: .bottom)
     /// Tasks whose activity is toggled from its default (open while active).
     @State private var toggled: Set<String> = []
+    /// A job's own input (#319); other sub-chats are inspect only.
+    @State private var draft = ""
+    @State private var noFiles: [DraftFile] = []
 
     private enum Item: Identifiable {
         case message(PhoneModel.Bubble)
@@ -256,13 +263,15 @@ struct TopicScreen: View {
         let events = Dictionary(grouping: model.workerEvents.values.filter { taskIds.contains($0.taskId) }, by: \.taskId)
         let amendments = Dictionary(grouping: model.amendments.values.filter { taskIds.contains($0.taskId) }, by: \.taskId)
         let items = (messages.map(Item.message) + tasks.map(Item.task)).sorted { $0.ts < $1.ts }
+        let job = model.jobsSupported == true ? model.jobs.first { $0.topicId == topicId } : nil
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
                 ForEach(items) { item in
                     switch item {
                     case .message(let bubble):
                         MessageRow(bubble: bubble, header: nil, delivery: model.delivery(of: bubble),
-                                   onShowRequest: {}, onShowDetails: {})
+                                   onShowRequest: {}, onShowDetails: {},
+                                   onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
                             .id(bubble.id)
                     case .task(let task):
                         TaskCard(model: model, task: task, events: events[task.id] ?? [], amendments: amendments[task.id] ?? [],
@@ -282,7 +291,7 @@ struct TopicScreen: View {
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .background(Color(.systemGroupedBackground))
         .overlay {
-            if model.topics[topicId] == nil {
+            if model.topics[topicId] == nil && job == nil {
                 ContentUnavailableView("Not on this iPhone", systemImage: "bubble.left.and.bubble.right",
                                        description: Text("This sub-chat is older than what this iPhone keeps. Open it on your Mac."))
             }
@@ -299,29 +308,41 @@ struct TopicScreen: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                HStack(spacing: LayoutMetrics.inner) {
-                    Text("To change this work, write in the main chat.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Main Chat", action: onMainChat)
-                        .font(.subheadline.weight(.semibold))
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.capsule)
+                if let job {
+                    Composer(text: $draft, files: $noFiles, attachments: false, working: false, enabled: model.canSend, allowsFiles: false) {
+                        model.send(draft, toJob: job.id, topic: topicId)
+                        draft = ""
+                        position.scrollTo(edge: .bottom)
+                    } onSendAsTextFile: {}
+                } else {
+                    inspectOnly
                 }
-                .padding(.leading, LayoutMetrics.gutter)
-                .padding(.trailing, LayoutMetrics.inner)
-                .padding(.vertical, LayoutMetrics.inner)
-                .yorozuGlass(in: Capsule())
             }
-            .padding(.horizontal, LayoutMetrics.stack)
-            .padding(.vertical, LayoutMetrics.inner)
-            .frame(maxWidth: LayoutMetrics.composerWidth)
-            .frame(maxWidth: .infinity)
         }
-        .navigationTitle(model.topics[topicId]?.label ?? "")
+        .navigationTitle(job?.name ?? model.topics[topicId]?.label ?? "")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationSubtitleIfAvailable(String(localized: "Inspect only"))
+        .navigationSubtitleIfAvailable(job.map(\.schedule) ?? String(localized: "Inspect only"))
+    }
+
+    private var inspectOnly: some View {
+        HStack(spacing: LayoutMetrics.inner) {
+            Text("To change this work, write in the main chat.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Main Chat", action: onMainChat)
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+        }
+        .padding(.leading, LayoutMetrics.gutter)
+        .padding(.trailing, LayoutMetrics.inner)
+        .padding(.vertical, LayoutMetrics.inner)
+        .yorozuGlass(in: Capsule())
+        .padding(.horizontal, LayoutMetrics.stack)
+        .padding(.vertical, LayoutMetrics.inner)
+        .frame(maxWidth: LayoutMetrics.composerWidth)
+        .frame(maxWidth: .infinity)
     }
 }
 

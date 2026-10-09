@@ -15326,6 +15326,137 @@
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件を読み込み済み" } }
       }
+    },
+    "Jobs" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブ" } }
+      }
+    },
+    "^[%lld job](inflect: true)" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件" } }
+      }
+    },
+    "^[%lld job](inflect: true) · %lld need attention" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$lld件 · %2$lld件要対応" } }
+      }
+    },
+    "To create or change a job, ask Yorozu in the main chat. Tap a job to open its sub-chat." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブの作成や変更はメインのチャットで頼んでください。ジョブをタップするとサブチャットが開きます。" } }
+      }
+    },
+    "No jobs yet" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブはまだありません" } }
+      }
+    },
+    "To create a job, ask Yorozu in the main chat." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブを作るには、メインのチャットで Yorozu に頼んでください。" } }
+      }
+    },
+    "Delete “%@”?" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「%@」を削除しますか？" } }
+      }
+    },
+    "It stops running. Its sub-chat stays on your Mac." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "実行されなくなります。サブチャットは Mac に残ります。" } }
+      }
+    },
+    "Run Now" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "今すぐ実行" } }
+      }
+    },
+    "Resume" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再開" } }
+      }
+    },
+    "Pause" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一時停止" } }
+      }
+    },
+    "Job actions" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ジョブの操作" } }
+      }
+    },
+    "job.badge.paused" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Paused" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "停止中" } }
+      }
+    },
+    "Paused" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一時停止中" } }
+      }
+    },
+    "Not scheduled" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "予定なし" } }
+      }
+    },
+    "Next: %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "次回: %@" } }
+      }
+    },
+    "Open to retry or stop" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "開いて再試行または停止" } }
+      }
+    },
+    "Its script waits for your yes. Open to answer." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スクリプトがあなたの承認を待っています。開いて答えてください。" } }
+      }
+    },
+    "Running since %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ から実行中" } }
+      }
+    },
+    "No change · %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "変化なし · %@" } }
+      }
+    },
+    "Failed · %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "失敗 · %@" } }
+      }
+    },
+    "Stopped · %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "停止 · %@" } }
+      }
+    },
+    "Uncertain · %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "不明 · %@" } }
+      }
+    },
+    "Not run yet" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "未実行" } }
+      }
+    },
+    "Last: %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "前回: %@" } }
+      }
+    },
+    "Shorten it." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "短くしてください。" } }
+      }
     }
   },
   "version" : "1.0"
