@@ -333,6 +333,8 @@ final class PhoneModel {
             }
         case .failed(let reason):
             failure = reason
+        case .accepted:
+            break // Delivered marks arrive with the outbox (#314, rc-ios).
         case .event(let event):
             receive(event)
         }

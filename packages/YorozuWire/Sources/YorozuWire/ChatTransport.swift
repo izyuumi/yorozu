@@ -107,5 +107,8 @@ public enum TransportUpdate: Sendable {
     /// Supplied only after validating the authenticated, encrypted peer exchange.
     case peerInfo(PeerInfoData)
     case compatibility(PeerCompatibility)
+    /// The relay took the frame that carried event `eventId`: forwarded to the Mac's live socket,
+    /// or, with `buffered`, stored durably for it. Relay transport only; once per sent frame.
+    case accepted(eventId: String, buffered: Bool)
     case failed(String)
 }

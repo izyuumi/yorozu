@@ -701,7 +701,7 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var interrupted: Bool?
     /// Photos and files the user sent with this message. Only set on a `user` message.
     public var attachments: [MessageAttachment]
-    /// Encrypted initial-admission deadline, exactly 30 minutes after the event timestamp.
+    /// Encrypted initial-admission deadline, exactly 24 hours after the event timestamp.
     public var admissionDeadline: Int?
     /// Host-owned execution association; absent on a client submission.
     public var runId: String?
@@ -719,6 +719,11 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var notice: NoticeData?
     /// 0.7, Mac -> phone: the Mac's change sequence of this row (docs/ios-relay-contract.md, "Change sequence").
     public var seq: Int?
+    /// 0.7, Mac -> phone: when the owner read this user message on the Mac, epoch ms. Absent while unread.
+    public var readAt: Int?
+    /// 0.7: when the phone first sent this user message, epoch ms. Set by the phone on a
+    /// submission and echoed by the Mac, so a message delayed in the relay buffer keeps its time.
+    public var sentAt: Int?
 
     public init(
         role: Role,
@@ -738,8 +743,12 @@ public struct MessageData: Codable, Equatable, Sendable {
         taskId: String? = nil,
         replyTo: String? = nil,
         notice: NoticeData? = nil,
-        seq: Int? = nil
+        seq: Int? = nil,
+        readAt: Int? = nil,
+        sentAt: Int? = nil
     ) {
+        self.readAt = readAt
+        self.sentAt = sentAt
         self.kind = kind
         self.topicId = topicId
         self.taskId = taskId
@@ -760,7 +769,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -785,6 +794,8 @@ public struct MessageData: Codable, Equatable, Sendable {
         replyTo = try c.decodeIfPresent(String.self, forKey: .replyTo)
         notice = try c.decodeIfPresent(NoticeData.self, forKey: .notice)
         seq = try c.decodeIfPresent(Int.self, forKey: .seq)
+        readAt = try c.decodeIfPresent(Int.self, forKey: .readAt)
+        sentAt = try c.decodeIfPresent(Int.self, forKey: .sentAt)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -807,6 +818,8 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(replyTo, forKey: .replyTo)
         try c.encodeIfPresent(notice, forKey: .notice)
         try c.encodeIfPresent(seq, forKey: .seq)
+        try c.encodeIfPresent(readAt, forKey: .readAt)
+        try c.encodeIfPresent(sentAt, forKey: .sentAt)
     }
 }
 

@@ -14,7 +14,7 @@ holds a cache of the [history window](#history-window), catches up by
 [change sequence](#change-sequence), can Stop or Retry a task, moves the read cursor, searches the
 Mac's full history and removes its own pairing.
 
-Out of scope for 0.7: APNs/`notify`, attachments, delivery marks and the outbox, direct paths,
+Out of scope for 0.7: APNs/`notify`, attachments, direct paths,
 typing in sub-chats, multiple threads (the thread id is carried everywhere and never hard-wired
 beyond the one thread `"main"`).
 
@@ -32,6 +32,17 @@ beyond the one thread `"main"`).
   persisted before sending and before acting on a received box.
 - The relay buffers phone -> Mac frames (replayed with `seq`) but never Mac -> phone frames.
   So the host must be idempotent on replays, and the phone catches up with `sync_request`.
+- `accepted`: the relay answers every phone frame with `{"type":"accepted","sig":…,"buffered":bool}`
+  once it has forwarded the frame to the Mac's live socket (`buffered: false`) or stored it
+  durably for the Mac (`buffered: true`); `sig` is the frame's own signature. `RelayClient`
+  maps each sent event's frame signature to its event id, per socket (forgotten when the socket
+  changes), and yields `TransportUpdate.accepted(eventId:buffered:)` for a known one; the
+  handshake frames are not mapped. No `accepted` on the direct path.
+- Sending while the Mac is away: `RelayClient.send` works once joined, before `.paired`, when
+  the channel is replay-protected: the Mac answered in the current format on this socket, or
+  this pairing has completed the peer-info exchange before (`ChannelCounter.peerInfoRequired`).
+  The channel keys come from the pairing, so such a box is one the relay buffers and the Mac
+  opens when it returns. Otherwise `send` throws until `.paired`, as before.
 
 ### Relay limits and pacing
 
@@ -207,8 +218,11 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device
 ```
 
 - `text` is 1-6000 UTF-8 bytes after the phone's own check. No attachments.
-- `admissionDeadline`, `delivery`, `channelModel` and the 0.7 metadata are not sent and the host
-  ignores them.
+- `sentAt` (`MessageData.sentAt`, epoch ms, phone clock) is when the user first sent the
+  message, kept the same on every resend, so a message held in the relay buffer or the phone's
+  outbox keeps its time. Optional.
+- `admissionDeadline`, `delivery`, `channelModel`, `readAt` and the other 0.7 metadata are not
+  sent and the host ignores them.
 - The phone keeps the event in a pending set until it gets a `receipt` or an
   `admission_status` for that `id`, and resends every pending event on every `.paired`.
 
@@ -344,8 +358,10 @@ MessageData(role: m.role == "user" ? .user : .agent, text: m.body, done: true,
 ```
 
 `kind` is the v2 message kind as text (`conversation`, `result`, `failure`, `question`,
-`acknowledgment`, ...); the phone treats an unknown kind like `conversation`. `readAt` never
-leaves the Mac. Every message goes to the main timeline as on the Mac; `topicId` also files it in
+`acknowledgment`, ...); the phone treats an unknown kind like `conversation`. A user
+message also carries `readAt` (epoch ms, when the owner read it on the Mac; absent while unread)
+and `sentAt` (epoch ms, the phone's `sentAt` it was admitted with; absent for one typed on the
+Mac). Both are optional fields an older 0.7 peer ignores. Every message goes to the main timeline as on the Mac; `topicId` also files it in
 its sub-chat.
 
 **`topic`** (`TopicData`, upsert): `id`, `label`, `created`, `seq`.
