@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 import YorozuWire
 
 /// The one conversation: the Mac's main chat with day separators, a working indicator while it has
@@ -174,6 +175,9 @@ struct ChatScreen: View {
                 if phase == .active { unreadAfter = model.readCursor?.messageId }
             }
             .onChange(of: readTarget, initial: true) { _, id in markRead(id) }
+            .onChange(of: mainShown, initial: true) { _, shown in model.mainShown = shown }
+            .onDisappear { model.mainShown = false }
+            .task(id: model.pushOpen?.id) { await openPush() }
             .sheet(isPresented: $settings) {
                 SettingsSheet(model: model) {
                     settings = false
@@ -251,6 +255,34 @@ struct ChatScreen: View {
     private var readTarget: String? {
         guard scenePhase == .active, path.isEmpty, !settings, details == nil, atBottom, model.state == .paired else { return nil }
         return model.timeline.last { $0.seq != nil }?.id
+    }
+
+    /// The main timeline is on screen: pushes show no banner.
+    private var mainShown: Bool { scenePhase == .active && path.isEmpty && !settings && details == nil }
+
+    /// A tapped push: back to the main timeline, at its message once caught up (up to 10 s), else at the bottom.
+    private func openPush() async {
+        guard let request = model.pushOpen else { return }
+        path = []
+        settings = false
+        details = nil
+        var id: String?
+        if let ref = request.ref {
+            let end = ContinuousClock.now + .seconds(10)
+            while true {
+                id = model.messageId(ref: ref)
+                guard id == nil, model.state != .paired || model.catchingUp, ContinuousClock.now < end,
+                      (try? await Task.sleep(for: .milliseconds(250))) != nil else { break }
+            }
+        }
+        model.pushOpen = nil
+        if let id {
+            atBottom = false
+            withAnimation { position.scrollTo(id: id, anchor: .center) }
+        } else {
+            atBottom = true
+            position.scrollTo(edge: .bottom)
+        }
     }
 
     /// `id` is this phone's last sent read or a message before it, in timeline order.
@@ -418,7 +450,9 @@ private struct SettingsSheet: View {
 
     @State private var removing = false
     @State private var copied = false
+    @State private var notifications: UNAuthorizationStatus?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -466,6 +500,16 @@ private struct SettingsSheet: View {
                 } footer: {
                     Text("Connects straight to your Mac on the same Wi-Fi or over Tailscale, and falls back to the relay.")
                 }
+                Section {
+                    LabeledContent("Notifications") { Text(LocalizedStringKey(notificationsName)) }
+                    if notifications == .denied {
+                        Button("Open Settings") {
+                            if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
+                        }
+                    }
+                }
+                // Read again on the way back from the Settings app.
+                .task(id: scenePhase) { notifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
                 Section {
                     LabeledContent("Mac version", value: model.macVersion ?? String(localized: "Unknown"))
                     LabeledContent("iPhone version", value: Self.version)
@@ -524,7 +568,19 @@ private struct SettingsSheet: View {
             "Direct candidates: \(model.candidates.isEmpty ? "none" : model.candidates.map(\.label).joined(separator: ", "))",
             "Last direct error: \(model.directReport.lastError ?? "none")",
             "Local Network access: \(model.directReport.localNetworkDenied ? "denied" : "not denied")",
+            "Notifications: \(notificationsName)",
+            "Push registration: \(model.pushRegistration ?? "pending")",
         ].joined(separator: "\n")
+    }
+
+    /// English, as Copy diagnostics writes it; Settings shows it through the string catalog.
+    private var notificationsName: String {
+        switch notifications {
+        case .denied: "Off"
+        case .notDetermined: "Not asked yet"
+        case nil: "Unknown"
+        default: "On"
+        }
     }
 
     private static let version: String = {

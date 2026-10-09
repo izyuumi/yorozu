@@ -2,16 +2,18 @@ import SwiftUI
 
 @main
 struct YorozuApp: App {
+    @UIApplicationDelegateAdaptor private var delegate: AppDelegate
+
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootView(model: delegate.model)
         }
     }
 }
 
 /// The pairing screen until the relay has accepted this phone, then the chat.
 struct RootView: View {
-    @State private var model = PhoneModel()
+    let model: PhoneModel
     /// Settings' Repair: the pairing screen again, over a chat that keeps running until a new code is confirmed.
     @State private var repairing = false
     @Environment(\.scenePhase) private var scenePhase

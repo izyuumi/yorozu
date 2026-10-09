@@ -165,6 +165,26 @@ final class PhoneModel {
     /// Background time held while messages are still Sending.
     private var backgroundTime: BackgroundTask?
 
+    // MARK: Push (#320)
+
+    /// A tapped push: the main timeline opens at the message its `event` ref names, else at the bottom.
+    struct PushOpen: Equatable {
+        let id = UUID()
+        let ref: String?
+    }
+
+    /// The APNs token from `AppDelegate`, given to every `RelayClient` this model makes.
+    private var pushToken: String?
+    /// For Copy diagnostics: nil until iOS answers, then "registered" or the failure.
+    private(set) var pushRegistration: String?
+    var pushOpen: PushOpen?
+    /// The main timeline is on screen: `willPresent` shows no banner.
+    @ObservationIgnored var mainShown = false
+    /// A silent push's catch-up is running: going to the background leaves the link to it.
+    @ObservationIgnored private var waking = false
+    /// The read cursor the delivered pushes were last cleared to.
+    @ObservationIgnored private var clearedTo: String?
+
     // MARK: Link
 
     /// The relay has accepted this phone, so the chat shows rather than the pairing screen.
@@ -297,12 +317,14 @@ final class PhoneModel {
 
     private func connect(_ stored: PairingStore.Stored) {
         let identity = stored.identity.sessionPublicKey
+        let pushKey = "\(Self.pushKey).\(identity.base64URLEncodedString())"
         do {
             relay = try RelayClient(
                 pairing: stored.pairing, identity: stored.identity, paired: stored.paired == true,
                 counters: PairingCounterStorage(ownPublicKey: identity), direct: directEnabled,
                 candidates: stored.directCandidates ?? [], deviceName: DeviceModel.name,
-                onPaired: { PairingStore.markPaired(expectedIdentity: identity) })
+                onPaired: { PairingStore.markPaired(expectedIdentity: identity) },
+                onPushSent: { UserDefaults.standard.set($0, forKey: pushKey) })
         } catch {
             failure = error.localizedDescription
             return
@@ -324,6 +346,7 @@ final class PhoneModel {
         candidates = stored.directCandidates ?? []
         ownPub = identity.base64URLEncodedString()
         linked = stored.paired == true
+        applyPush()
         if let ownPub, let snapshot = MirrorCache.shared.load(owner: ownPub) { restore(snapshot) }
         if let ownPub, let saved = Outbox.file.load(Outbox.self), saved.owner == ownPub {
             outbox = saved.items
@@ -357,6 +380,7 @@ final class PhoneModel {
         ownPub = nil
         linked = false
         outbox.forEach { LocalNotices.cancelExpiry($0.id) }
+        PushNotices.update(badge: 0, read: nil)
         outbox = []
         marks = [:]
         Outbox.file.wipe()
@@ -446,7 +470,7 @@ final class PhoneModel {
         savedStatus?.save()
         flush()
         inBackground = true
-        guard sendingCount > 0 else { return suspend() }
+        guard sendingCount > 0 else { return waking ? () : suspend() }
         backgroundTime = BackgroundTask("Yorozu outbox") { [weak self] in self?.backgroundExpired() }
         flushOutbox(all: state == .paired)
     }
@@ -461,7 +485,7 @@ final class PhoneModel {
 
     /// In the background, once nothing is Sending: hang up, then give the time back.
     private func finishBackgroundIfDone() {
-        guard inBackground, let held = backgroundTime, sendingCount == 0 else { return }
+        guard inBackground, !waking, let held = backgroundTime, sendingCount == 0 else { return }
         backgroundTime = nil
         suspend()
         let closing = closing
@@ -502,6 +526,63 @@ final class PhoneModel {
     }
 
     private static let directKey = "directPathEnabledV2"
+
+    // MARK: Push
+
+    func registerPush(_ token: String) {
+        pushToken = token
+        pushRegistration = "registered"
+        applyPush()
+    }
+
+    func pushFailed(_ reason: String) { pushRegistration = "failed: \(reason)" }
+
+    /// The relay learns the token on every relay join; a direct session joins the relay once for a token it has not heard.
+    private func applyPush() {
+        guard let pushToken, let relay, let ownPub else { return }
+        let known = UserDefaults.standard.string(forKey: "\(Self.pushKey).\(ownPub)") == pushToken
+        Task { await relay.registerPush(deviceToken: pushToken, relayKnows: known) }
+    }
+
+    /// The token the relay last heard, per pairing.
+    private static let pushKey = "pushTokenOnRelayV2"
+
+    /// A silent push while not active: dial unless a link is up, catch up into the cache, let the outbox resend,
+    /// set the badge and hang up, within about 25 s. A foreground or held background link is left up. True when
+    /// something new arrived.
+    func wake() async -> Bool {
+        guard relay != nil, linked, !waking else { return false }
+        let before = cursor
+        waking = true
+        start()
+        let end = ContinuousClock.now + .seconds(20)
+        while ContinuousClock.now < end, state != .paired || catchingUp || sendingCount > 0 {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        waking = false
+        flush()
+        updateBadge()
+        if UIApplication.shared.applicationState != .active {
+            // #314's background time, if held, hangs up when its sends are done; else hang up now.
+            if backgroundTime == nil { suspend() } else { finishBackgroundIfDone() }
+            await closing?.value
+        }
+        return cursor != before
+    }
+
+    func open(pushEvent ref: String?) { pushOpen = PushOpen(ref: ref) }
+
+    /// The main-timeline message a push's `event` ref names.
+    func messageId(ref: String) -> String? { timeline.last { YorozuCrypto.threadRef($0.id) == ref }?.id }
+
+    /// The badge is Yorozu's messages after the read cursor (`readTo`: this phone's read, before the Mac echoes it).
+    /// When the cursor moves, the delivered pushes for messages at or before it go.
+    private func updateBadge(readTo id: String? = nil) {
+        guard let id = id ?? readCursor?.messageId, let index = timeline.firstIndex(where: { $0.id == id }) else { return }
+        let read = id == clearedTo ? nil : Set(timeline[...index].map { YorozuCrypto.threadRef($0.id) })
+        clearedTo = id
+        PushNotices.update(badge: timeline[(index + 1)...].filter { !$0.user }.count, read: read)
+    }
 
     private func hold(_ status: ClientConnectionStatus) {
         heldStatus = status
@@ -1019,6 +1100,7 @@ final class PhoneModel {
     /// Moves the Mac's read cursor to the newest message seen. Only while `.paired`; not queued.
     func markRead(_ messageId: String) async {
         guard state == .paired else { return }
+        updateBadge(readTo: messageId)
         _ = await sendNow(.readState(ReadStateData(threadId: "main", messageId: messageId)))
     }
 
@@ -1079,7 +1161,7 @@ final class PhoneModel {
     /// The contract's phone rules for a reply page, a live update or a page reply.
     private func receive(_ delta: SyncDeltaData) {
         receiving = true
-        defer { receiving = false; rebuildTimeline() }
+        defer { receiving = false; rebuildTimeline(); updateBadge() }
         if let working = delta.workingThreadIds { self.working = working.contains("main") }
         if let routing = delta.routingThreadIds { self.routing = routing.contains("main") }
         if let requestId = delta.requestId {

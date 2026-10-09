@@ -153,6 +153,11 @@ public actor RelayClient: ChatTransport {
 
     /// Where this device can be woken, kept so every relay join can say it again.
     private var deviceToken: String?
+    /// The relay has not heard `deviceToken` yet. A direct session (#315) never joins the relay, so it opens
+    /// one relay socket only to say `push`, then hangs it up.
+    private var pushOwed = false
+    private var pushLeg: Leg?
+    private let onPushSent: (@Sendable (String) -> Void)?
 
     /// The leg the session runs on; set at its `joined`.
     private var current: Leg?
@@ -209,6 +214,7 @@ public actor RelayClient: ChatTransport {
     ///   - candidates: the direct addresses the Mac last advertised, as the caller stored them.
     ///   - onPaired: called once, the first time the relay accepts this device, so the caller
     ///     can persist that fact. Called off the main actor.
+    ///   - onPushSent: called with the device token each time it was said to the relay, off the main actor.
     public init(
         pairing: QrPayload,
         identity: PhoneIdentity,
@@ -218,7 +224,8 @@ public actor RelayClient: ChatTransport {
         direct: Bool = false,
         candidates: [DirectCandidate] = [],
         deviceName: String? = nil,
-        onPaired: (@Sendable () -> Void)? = nil
+        onPaired: (@Sendable () -> Void)? = nil,
+        onPushSent: (@Sendable (String) -> Void)? = nil
     ) throws {
         guard let url = URL(string: pairing.relayUrl), url.scheme?.hasPrefix("ws") == true else {
             throw YorozuCrypto.CryptoError.malformed(String(localized: "relay URL is not a websocket URL"))
@@ -246,6 +253,7 @@ public actor RelayClient: ChatTransport {
         self.dial = dial
         self.paired = paired
         self.onPaired = onPaired
+        self.onPushSent = onPushSent
         self.directEnabled = direct
         self.candidates = Array(candidates.filter(\.isValid).prefix(DirectCandidate.maxCount))
         // The phone's model name rides in the claim's `computerName`; one that would fail validation is left out.
@@ -343,6 +351,7 @@ public actor RelayClient: ChatTransport {
 
     public func close() {
         stopped = true
+        if let pushLeg { endPushLeg(pushLeg) }
         dropAll()
         retry?.cancel()
         peerExchange?.cancel()
@@ -570,6 +579,7 @@ public actor RelayClient: ChatTransport {
             armPhaseDeadline(String(localized: "host handshake timed out"), on: leg)
             startPings(every: .seconds(10))
             Task { await self.sayHello(on: leg) }
+            Task { await self.sendPush() }
             return
         }
         if leg.ownerOnline { armPhaseDeadline(String(localized: "host handshake timed out"), on: leg) }
@@ -921,7 +931,7 @@ public actor RelayClient: ChatTransport {
     /// connect nonce instead — the same challenge the Mac answers — which is what lets the phone
     /// come back after a background, a network change or a relaunch without pairing again.
     private func join(_ leg: Leg) async {
-        guard tracked(leg) else { return }
+        guard tracked(leg) || leg === pushLeg else { return }
         do {
             let rejoin = paired || codeSpent
             let challenge = rejoin ? leg.nonce : pairing.token
@@ -942,17 +952,62 @@ public actor RelayClient: ChatTransport {
         }
     }
 
-    /// The app's own APNs device token, which alerts are addressed to.
-    public func registerPush(deviceToken: String) async {
+    /// The app's own APNs device token, which alerts are addressed to. `relayKnows`: `onPushSent` reported
+    /// this token before, so a direct session need not join the relay to say it.
+    public func registerPush(deviceToken: String, relayKnows: Bool = false) async {
         self.deviceToken = deviceToken
+        pushOwed = !relayKnows
         await sendPush()
     }
 
     /// Where this device can be woken, said again. Nothing to say until APNs has answered with
-    /// a token, and nothing to say it on until a relay socket carries the session.
+    /// a token, and nothing to say it on until a session is up: a relay one carries it, a direct
+    /// one joins the relay once if the relay has not heard this token.
     private func sendPush() async {
-        guard let leg = current, leg.route == .relay, let deviceToken else { return }
-        try? await send(["type": "push", "deviceToken": deviceToken], on: leg)
+        guard let leg = current, let deviceToken else { return }
+        guard leg.route == .relay else { return pushOwed ? startPushLeg() : () }
+        if (try? await send(["type": "push", "deviceToken": deviceToken], on: leg)) != nil { pushSent(deviceToken) }
+    }
+
+    private func pushSent(_ token: String) {
+        guard token == deviceToken else { return }
+        pushOwed = false
+        onPushSent?(token)
+    }
+
+    /// A relay socket beside a direct session: join (as a known device), say `push`, hang up.
+    private func startPushLeg() {
+        guard pushLeg == nil, paired, !stopped else { return }
+        let task = session.webSocketTask(with: dial)
+        let leg = Leg(route: .relay, socket: RelaySocket(task))
+        pushLeg = leg
+        task.resume()
+        leg.deadline = Task {
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled else { return }
+            self.endPushLeg(leg)
+        }
+        Task {
+            defer { self.endPushLeg(leg) }
+            while self.pushLeg === leg, let text = try? await leg.socket.receive() {
+                guard let message = try? JSONDecoder().decode(Inbound.self, from: Data(text.utf8)) else { continue }
+                if message.type == "nonce", !leg.joined {
+                    leg.nonce = message.nonce ?? ""
+                    await self.join(leg)
+                } else if message.type == "joined", let token = self.deviceToken {
+                    leg.joined = true
+                    if (try? await self.send(["type": "push", "deviceToken": token], on: leg)) != nil { self.pushSent(token) }
+                    return
+                }
+            }
+        }
+    }
+
+    private func endPushLeg(_ leg: Leg) {
+        guard pushLeg === leg else { return }
+        pushLeg = nil
+        leg.deadline?.cancel()
+        leg.socket.close(code: URLSessionWebSocketTask.CloseCode.normalClosure.rawValue)
     }
 
     /// Asks the relay whether the room's Mac holds a socket right now. The reply is an ordinary
