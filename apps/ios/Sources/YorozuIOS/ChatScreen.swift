@@ -569,7 +569,7 @@ private struct SettingsSheet: View {
             "Last direct error: \(model.directReport.lastError ?? "none")",
             "Local Network access: \(model.directReport.localNetworkDenied ? "denied" : "not denied")",
             "Notifications: \(notificationsName)",
-            "Push registration: \(model.pushRegistration ?? "pending")",
+            "Push registration: \(model.pushRegistration ?? "pending"); relay \(model.pushOnRelay ? "has the token" : "has not stored the token")",
         ].joined(separator: "\n")
     }
 

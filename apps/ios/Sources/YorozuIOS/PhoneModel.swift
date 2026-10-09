@@ -175,7 +175,7 @@ final class PhoneModel {
 
     /// The APNs token from `AppDelegate`, given to every `RelayClient` this model makes.
     private var pushToken: String?
-    /// For Copy diagnostics: nil until iOS answers, then "registered" or the failure.
+    /// For Copy diagnostics: nil until iOS answers, then "token from Apple" or the failure.
     private(set) var pushRegistration: String?
     var pushOpen: PushOpen?
     /// The main timeline is on screen: `willPresent` shows no banner.
@@ -536,7 +536,7 @@ final class PhoneModel {
 
     func registerPush(_ token: String) {
         pushToken = token
-        pushRegistration = "registered"
+        pushRegistration = "token from Apple"
         applyPush()
     }
 
@@ -544,13 +544,19 @@ final class PhoneModel {
 
     /// The relay learns the token on every relay join; a direct session joins the relay once for a token it has not heard.
     private func applyPush() {
-        guard let pushToken, let relay, let ownPub else { return }
-        let known = UserDefaults.standard.string(forKey: "\(Self.pushKey).\(ownPub)") == pushToken
+        guard let pushToken, let relay else { return }
+        let known = pushOnRelay
         Task { await relay.registerPush(deviceToken: pushToken, relayKnows: known) }
     }
 
     /// The token the relay last heard, per pairing.
     private static let pushKey = "pushTokenOnRelayV2"
+
+    /// The relay has stored this pairing's current token (`onPushSent`).
+    var pushOnRelay: Bool {
+        guard let pushToken, let ownPub else { return false }
+        return UserDefaults.standard.string(forKey: "\(Self.pushKey).\(ownPub)") == pushToken
+    }
 
     /// A silent push in the background: dial unless a link is up, catch up into the cache, let the outbox resend and
     /// set the badge, within about 25 s. Back in the background it hangs up a link it dialled itself (or one left to it
