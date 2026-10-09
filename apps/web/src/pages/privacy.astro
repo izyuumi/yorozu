@@ -25,7 +25,7 @@ import Base from '../layouts/Base.astro';
     <li><strong>Public keys</strong> of paired devices and a random room identifier, kept until you unpair the device.</li>
     <li><strong>One-time pairing tokens</strong>, which expire after 10 minutes.</li>
     <li><strong>Your iPhone's Apple push token</strong>, so the relay can wake the app, kept until you unpair the device or Apple reports the token is no longer valid.</li>
-    <li><strong>Metadata</strong>: when devices connect, message sizes and timing, and a notification type (reply, approval, done or failed) with an opaque thread reference. Connection logs never contain message content or keys.</li>
+    <li><strong>Metadata</strong>: when devices connect, message sizes and timing, and a notification type (reply, approval, done or failed) with opaque thread and event references. Connection logs never contain message content or keys.</li>
     <li><strong>IP addresses</strong>, which Cloudflare processes to deliver traffic, under <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare's privacy policy</a>.</li>
   </ul>
 
@@ -49,7 +49,7 @@ import Base from '../layouts/Base.astro';
   <p>Yorozu is not directed to children under 13, and we do not knowingly collect their data.</p>
 
   <h2>Your choices</h2>
-  <p>Unpairing a device deletes its keys and push token from the relay. Deleting the apps removes local data; files in your <code>~/Yorozu</code> folder stay until you delete them. Because we hold no account or readable content, there is nothing else to export or delete. For questions, email <a href="mailto:contact@yumi.to">contact@yumi.to</a>.</p>
+  <p>Unpairing a device deletes its keys and push token from the relay. Deleting the iPhone app removes its data. On the Mac, also delete <code>~/Yorozu</code> and Yorozu's folder in <code>~/Library/Application Support/</code>. Because we hold no account or readable content, there is nothing else to export or delete. For questions, email <a href="mailto:contact@yumi.to">contact@yumi.to</a>.</p>
 
   <h2>Changes</h2>
   <p>We will post changes here and update the date above.</p>

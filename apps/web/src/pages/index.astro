@@ -1,8 +1,9 @@
 ---
 import Base from '../layouts/Base.astro';
 const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
+const build = 'https://github.com/izyuumi/yorozu/blob/projectx/README.md#build';
 ---
-<Base title="Yorozu — Your Mac's assistant, from the menu bar and your iPhone" description="Yorozu is one conversation with an assistant on your own Mac. It hands real work to OpenClaw, or Hermes Agent, and reaches your iPhone end-to-end encrypted through a relay that cannot read your messages.">
+<Base title="Yorozu — Your Mac's assistant, from the menu bar and your iPhone" description="Yorozu is one conversation with an assistant on your own Mac. It hands real work to OpenClaw (Hermes Agent support is experimental) and reaches your iPhone end-to-end encrypted through a relay that cannot read your messages.">
   <Fragment slot="head">
     <script is:inline src="/copy.js" defer></script>
     <meta property="og:title" content="Yorozu">
@@ -14,12 +15,12 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
     <div class="hero-inner">
       <div class="hero-copy">
         <h1 id="title">Your Mac's agent.<br><em>In your pocket.</em></h1>
-        <p class="lede">Yorozu <span class="kana" lang="ja">(よろず)</span> is one conversation with an assistant that lives on your Mac. It answers quick questions itself and hands bigger work to background workers through OpenClaw, or Hermes Agent. Ask from the menu bar or your iPhone, follow each topic in its own sub-chat, and read the result wherever you are.</p>
+        <p class="lede">Yorozu <span class="kana" lang="ja">(よろず)</span> is one conversation with an assistant that lives on your Mac. It answers quick questions itself and hands bigger work to background workers through OpenClaw. Ask from the menu bar or your iPhone, follow each topic in its own sub-chat, and read the result wherever you are.</p>
         <div class="actions">
           <a class="button" href="/mac">Download v1 for Mac</a>
           <a class="button ghost" href="/iphone">Join v1 on TestFlight</a>
         </div>
-        <p class="fine">Both buttons install Yorozu v1, the current public release. Yorozu 0.7.0, described on this page, builds from source for now: <a href={guide}>setup guide</a>.<br>Mac: macOS 15+ · iPhone: iOS 18+ · <a href="#setup-with-an-agent">Set up with an agent</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
+        <p class="fine">Both buttons install Yorozu v1, the current public release. Yorozu 0.7.0, described on this page, builds from source on the Mac for now (<a href={build}>build</a>, <a href={guide}>setup guide</a>); its iPhone app is in internal testing only.<br>Mac: macOS 15+ · iPhone: iOS 18+ · <a href="#setup-with-an-agent">Set up with an agent</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
       </div>
     </div>
   </section>
@@ -47,7 +48,7 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
     <h2 id="mac-title">It lives in your menu bar.</h2>
     <dl class="facts">
       <div><dt>A quick chat</dt><dd>Click the Yorozu icon for the main timeline and a composer. Type, or drop in a file.</dd></div>
-      <div><dt>Search with ⌘F</dt><dd>Find anything you have said, with next, previous and a count.</dd></div>
+      <div><dt>Search with ⌘F</dt><dd>Search the main timeline, with next, previous and a count.</dd></div>
       <div><dt>Always running</dt><dd>The icon shows when work is running or something needs you. Yorozu keeps working after you close the popover.</dd></div>
       <div><dt>A Settings window</dt><dd>General, Devices, Connection, Storage and Jobs, plus Advanced when you want it. Or change a setting by asking in the chat.</dd></div>
     </dl>
@@ -55,6 +56,7 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
 
   <section class="more" aria-labelledby="phone-title">
     <h2 id="phone-title">Your iPhone is the full client.</h2>
+    <p class="steps-intro">The 0.7.0 iPhone app is in internal TestFlight testing only; the public TestFlight installs v1.</p>
     <dl class="facts">
       <div><dt>A sub-chat for every topic</dt><dd>See what is running, what needs your attention and what finished, and look inside each task as it works.</dd></div>
       <div><dt>Stop and Retry</dt><dd>Stop a task that went the wrong way, or retry one that failed, right from its sub-chat.</dd></div>
@@ -66,19 +68,19 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
   <section class="more" aria-labelledby="harness-title">
     <h2 id="harness-title">It works through the agent you already run.</h2>
     <dl class="facts">
-      <div><dt>OpenClaw, or Hermes Agent</dt><dd>Yorozu drives one harness on your Mac through its local API, with the providers and models you set up there. Setup detects which one you have. Hermes Agent support is newer and has had less use than OpenClaw.</dd></div>
+      <div><dt>OpenClaw first</dt><dd>Yorozu drives one harness on your Mac through its local API, with the providers and models you set up there. OpenClaw is the tested harness. Hermes Agent support is experimental: built, but not yet tested live. Setup detects which one you have.</dd></div>
       <div><dt>Coding when you want it</dt><dd>Coding is opt-in: choose one repository in Settings › Advanced, and the harness runs its coding executors there, such as Claude Code or Codex through OpenClaw.</dd></div>
-      <div><dt>Computer use, optional</dt><dd>With <a href="https://cua.ai">CuaDriver</a> installed, workers can operate apps on your Mac in the background. It is an integration you can turn off in Settings.</dd></div>
-      <div><dt>YOLO mode</dt><dd>Off by default. Turn it on and workers stop asking first before steps you requested. Settings changes, actions you did not ask for and new job scripts still need your yes.</dd></div>
+      <div><dt>Computer use, optional</dt><dd>With <a href="https://cua.ai">CuaDriver</a> installed, workers can operate apps on your Mac in the background. You can turn it off in Settings › Advanced, shown after “Show Advanced settings”.</dd></div>
+      <div><dt>YOLO mode</dt><dd>Off by default. Turn it on and Yorozu tells workers to stop asking first before steps you requested, but still to ask before settings changes and actions you did not ask for. A new job script always needs your yes; Yorozu enforces that one.</dd></div>
     </dl>
   </section>
 
   <section class="more" aria-labelledby="delivery-title">
     <h2 id="delivery-title">Send now, even if the Mac is asleep.</h2>
     <dl class="facts">
-      <div><dt>Files, both ways</dt><dd>Attach photos, camera shots, files or anything you paste, up to 10 files of 50 MB each. Workers can hand files back with their results.</dd></div>
+      <div><dt>Files, both ways</dt><dd>Attach photos, camera shots, files or anything you paste, up to 10 files of 50 MB each. Workers can hand files back with their results. While the Mac is away, files wait on your phone until it is back.</dd></div>
       <div><dt>Delivery marks</dt><dd>Every message moves from Sending to Delivered to Read. One that never arrives says so, with Resend and Delete.</dd></div>
-      <div><dt>A 24-hour buffer</dt><dd>While your Mac is offline, the relay holds your messages for up to 24 hours. Your phone tells you if one expires before the Mac picks it up.</dd></div>
+      <div><dt>A 24-hour buffer</dt><dd>While your Mac is offline, the relay holds your text messages for up to 24 hours. Your phone tells you if one expires before the Mac picks it up.</dd></div>
       <div><dt>Direct at home, if you like</dt><dd>Turn on Direct connection on the phone and it talks to the Mac over your LAN or Tailscale, with the relay as the fallback. It is off by default.</dd></div>
     </dl>
   </section>
@@ -104,8 +106,8 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
     </figure>
     <dl class="facts">
       <div><dt>Keys never leave your devices</dt><dd>An X25519 exchange at pairing time. The relay stores public keys and a room id, nothing it could open.</dd></div>
-      <div><dt>No Yorozu account</dt><dd>No email, no password, no analytics. Your provider logins stay in your harness, OpenClaw or Hermes Agent, on the Mac.</dd></div>
-      <div><dt>Run it yourself if you like</dt><dd>The relay is a few hundred lines. Put it on a Mac mini over Tailscale and set its URL in Settings › Connection. Every paired phone then pairs again.</dd></div>
+      <div><dt>No Yorozu account</dt><dd>No email, no password, no analytics. Your provider logins stay in your harness on the Mac.</dd></div>
+      <div><dt>Run it yourself if you like</dt><dd>The relay is small. Put it on a Mac mini over Tailscale and set its URL in Settings › Connection. Every paired phone then pairs again.</dd></div>
     </dl>
   </section>
 
@@ -117,8 +119,8 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
     <div class="installation-options">
       <article>
         <h3>Yorozu 0.7.0, from source</h3>
-        <p>Developers can build the 0.7.0 Mac and iPhone apps with Xcode and Tuist from the repository's <code>projectx</code> branch. The setup guide lists what you need, and the iPhone app needs your own signing team.</p>
-        <a href={guide}>Open the 0.7.0 setup guide</a>
+        <p>Developers can build the 0.7.0 Mac app from the repository's <code>projectx</code> branch with <code>mise install</code> and <code>scripts/build_native.sh</code>; the <a href={guide}>setup guide</a> lists what else you need. The 0.7.0 iPhone app is not available outside internal TestFlight yet: the iPhone project is tied to the owner's team, and a self-signed build loses Camera pairing and alerts.</p>
+        <a href={build}>Open the build instructions</a>
       </article>
       <article>
         <h3>Mac, v1</h3>
@@ -135,12 +137,12 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
 
   <section class="steps" id="pair" aria-labelledby="steps-title">
     <h2 id="steps-title">Then pair once.</h2>
-    <p class="steps-intro">These steps are for Yorozu 0.7.0. You’ll need a Mac with macOS 15 or later and <a href="https://docs.openclaw.ai/install">OpenClaw</a> or <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a> set up, and an iPhone with iOS 18 or later. Keep the Mac awake and online to reach it from your phone.</p>
+    <p class="steps-intro">These steps are for Yorozu 0.7.0. You’ll need a Mac with macOS 15 or later and <a href="https://docs.openclaw.ai/install">OpenClaw</a> set up (or, experimentally, <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a>), and an iPhone with iOS 18 or later and the 0.7.0 app, which is in internal testing for now. Keep the Mac awake and online to reach it from your phone.</p>
     <ol>
       <li>
         <span class="num" aria-hidden="true">1</span>
         <h3>Set up the Mac</h3>
-        <p>Open Yorozu from the menu bar. The setup window walks you through the harness, models, integrations and YOLO mode, and skips whatever is already in place.</p>
+        <p>Open Yorozu; the setup window opens at first launch. It walks you through the harness, models, integrations and YOLO mode, and skips whatever is already in place.</p>
       </li>
       <li>
         <span class="num" aria-hidden="true">2</span>

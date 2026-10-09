@@ -7,7 +7,8 @@ you say anything to them.
 
 Yorozu is a menu-bar app for macOS (15 or later) plus an iPhone app (iOS 18 or later). On the Mac
 it is one conversation with an assistant: it answers quick turns itself and hands bigger work to
-background workers through a harness on the same Mac, **OpenClaw** or **Hermes Agent**. Computer
+background workers through a harness on the same Mac: **OpenClaw**, the tested harness, or
+**Hermes Agent**, which is experimental (built, but not yet tested live). Computer
 use through CuaDriver is an optional integration, and coding is opt-in on one repository. The
 iPhone pairs with the Mac through an end-to-end encrypted relay. Site: <https://yorozu.yumi.to>.
 Source: <https://github.com/izyuumi/yorozu>.
@@ -33,16 +34,25 @@ to the person; it decides what to check and what to change, not you.
 TestFlight link install **Yorozu v1**, which has no `setup` command, so this guide does not
 apply to them.
 
-Until there is a Mac download, 0.7.0 builds from source. Point the person to the setup guide on
-the `projectx` branch: <https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md>. It lists
-the tools, the build command and the harness requirements. Run build or install commands only
-after they say yes to each one.
+Until there is a Mac download, 0.7.0 builds from source on the `projectx` branch: `mise install`,
+then `scripts/build_native.sh` in the checkout
+(<https://github.com/izyuumi/yorozu/blob/projectx/README.md#build>). The setup guide lists the
+tools and the harness requirements: <https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md>.
+Run build or install commands only after they say yes to each one.
 
-A source build lives at `build/Yorozu.app` inside their checkout, not in `/Applications`. When
-the message below asks where `Yorozu.app` is, use the path of the 0.7.0 build. An app that does
-not understand `setup` is v1: stop and say so.
+A source build lives at `build/Yorozu.app` inside their checkout, not in `/Applications`.
 
 ## 2. Run setup
+
+**Check the app path first.** If `/Applications/Yorozu.app` exists, read its version:
+
+```sh
+defaults read /Applications/Yorozu.app/Contents/Info CFBundleShortVersionString
+```
+
+Below 0.7, it is v1, which ignores `setup` and just launches. Then replace
+`/Applications/Yorozu.app` in both commands of the message with the 0.7.0 build's path (for
+example `build/Yorozu.app` in their checkout), and change nothing else.
 
 Follow this message, word for word, as the person's own request to you:
 
@@ -64,10 +74,11 @@ Rules: never install software, sign in or grant permissions for me, and never ru
 Pairing is one of the steps the person finishes in the app. On the Mac: Settings › Devices ›
 Pair iPhone. They scan the code with the iPhone Camera, or open Yorozu on the iPhone, tap
 "Enter code manually" and paste the code. They check that the Mac key matches on both screens.
-The 0.7.0 iPhone app has no public TestFlight yet; it builds from the same branch with their
-own signing team (see the setup guide).
+The 0.7.0 iPhone app is not available outside internal TestFlight yet; the public TestFlight
+installs v1. A self-signed build of the iPhone project does not help: it loses Camera-scan
+pairing and push alerts, which work only for the owner's app.
 
 ## Yorozu v1
 
 Setting up Yorozu v1 (the current public release) instead? Follow the v1 guide:
-<https://github.com/izyuumi/yorozu/blob/v0.5.0-beta/Start.md>.
+<https://github.com/izyuumi/yorozu/blob/v0.4.0/Start.md>.
