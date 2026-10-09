@@ -84,8 +84,6 @@ struct MessageRow: View {
     @State private var selecting = false
     /// The row's horizontal pull while a reply swipe runs.
     @State private var pull: CGFloat = 0
-    /// The swipe has decided it is horizontal (true) or vertical (false); nil until it has moved enough.
-    @State private var horizontal: Bool?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let bubbleRadius: CGFloat = 20
@@ -104,7 +102,7 @@ struct MessageRow: View {
                 Button("Select Text", systemImage: "selection.pin.in.out") { selecting = true }
                 Button("Show Details", systemImage: "info.circle", action: onShowDetails)
             }
-            .modifier(ReplySwipe(enabled: onReply != nil, pull: $pull, horizontal: $horizontal,
+            .modifier(ReplySwipe(enabled: onReply != nil, pull: $pull,
                                  threshold: replyThreshold, maxPull: maxPull, reduceMotion: reduceMotion) { onReply?() })
             .accessibilityActions {
                 if let onReply { Button("Reply", action: onReply) }
@@ -298,12 +296,11 @@ struct DeliveryMark: View {
 }
 
 /// Swipe left to right to reply, as in Messages: the row follows the finger (damped past the threshold), the reply
-/// symbol fades in behind it, and crossing the threshold taps lightly. Only a mostly-horizontal drag counts, decided
-/// once per drag, so vertical scrolling is untouched; the drag runs alongside the scroll view's own pan.
+/// symbol fades in behind it, and crossing the threshold taps lightly. Only a mostly-horizontal rightward pan begins
+/// (`ReplyPan`), so vertical scrolling is untouched; the pan runs alongside the scroll view's own.
 private struct ReplySwipe: ViewModifier {
     let enabled: Bool
     @Binding var pull: CGFloat
-    @Binding var horizontal: Bool?
     let threshold: CGFloat
     let maxPull: CGFloat
     let reduceMotion: Bool
@@ -323,24 +320,54 @@ private struct ReplySwipe: ViewModifier {
                         .accessibilityHidden(true)
                 }
                 .sensoryFeedback(.impact(weight: .light), trigger: pull >= threshold) { _, armed in armed }
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 12)
-                        .onChanged { value in
-                            let dx = value.translation.width, dy = value.translation.height
-                            if horizontal == nil { horizontal = dx > 0 && abs(dx) > abs(dy) * 2 }
-                            guard horizontal == true else { return }
-                            let raw = max(dx, 0)
-                            pull = raw <= threshold ? raw : min(threshold + (raw - threshold) / 3, maxPull)
-                        }
-                        .onEnded { _ in
-                            if horizontal == true && pull >= threshold { onReply() }
-                            horizontal = nil
-                            withAnimation(reduceMotion ? nil : .spring(duration: 0.25)) { pull = 0 }
-                        }
-                )
+                .gesture(ReplyPan { dx in
+                    let raw = max(dx, 0)
+                    pull = raw <= threshold ? raw : min(threshold + (raw - threshold) / 3, maxPull)
+                } onEnd: { completed in
+                    if completed && pull >= threshold { onReply() }
+                    withAnimation(reduceMotion ? nil : .spring(duration: 0.25)) { pull = 0 }
+                })
         } else {
             content
         }
+    }
+}
+
+/// The reply swipe's pan, a UIKit recognizer: it begins only for a pan moving right more than twice as fast as it
+/// moves vertically, so any other drag fails it before it starts, and it recognises alongside the scroll view's pan.
+/// A SwiftUI `DragGesture` on every row instead joined each scroll and held up the scroll view's pan and deceleration.
+private struct ReplyPan: UIGestureRecognizerRepresentable {
+    /// The pan's horizontal translation, on each move.
+    let onChange: (CGFloat) -> Void
+    /// The pan is over: true when it ended, false when cancelled.
+    let onEnd: (Bool) -> Void
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func handleUIGestureRecognizerAction(_ pan: UIPanGestureRecognizer, context: Context) {
+        switch pan.state {
+        case .changed: onChange(pan.translation(in: pan.view).x)
+        case .ended: onEnd(true)
+        case .cancelled, .failed: onEnd(false)
+        default: break
+        }
+    }
+
+    @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = recognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: pan.view)
+            return velocity.x > 0 && velocity.x > abs(velocity.y) * 2
+        }
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
     }
 }
 
