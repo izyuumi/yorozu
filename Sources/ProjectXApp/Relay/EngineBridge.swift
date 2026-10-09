@@ -29,7 +29,7 @@ actor EngineBridge: RelayBackend {
 
     func handle(_ e: YorozuEvent) async -> [YorozuEvent] {
         switch e.payload {
-        case .message(let m): return [await admit(m, id: e.id)]
+        case .message(let m): return [await admit(m, id: e.id, ts: e.ts)]
         case .syncRequest(let r): return [await reply(r, thread: r.threadId ?? (e.threadId.isEmpty ? "main" : e.threadId))]
         case .readState(let r):
             // Forward-only in the Store; a cursor that moved reaches every phone as a record in the next live update.
@@ -83,7 +83,8 @@ actor EngineBridge: RelayBackend {
 
     // MARK: Requests
 
-    private func admit(_ m: MessageData, id: String) async -> YorozuEvent {
+    /// `ts` (the phone's send time, epoch ms) is kept as the message's `sentAt` (#314).
+    private func admit(_ m: MessageData, id: String, ts: Int) async -> YorozuEvent {
         func reject(_ reason: String) -> YorozuEvent { .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .rejected, reason: reason))) }
         let receipt = YorozuEvent.control(.receipt(ReceiptData(eventId: id)))
         guard id.range(of: #"^[A-Za-z0-9-]{1,64}\z"#, options: .regularExpression) != nil else { return reject("Invalid message id.") }
@@ -91,9 +92,13 @@ actor EngineBridge: RelayBackend {
         guard mode.permitsInput(fixtureAcknowledged: false) else { return reject("This Mac is in fixture mode and doesn't take phone messages.") }
         // A resend or a relay replay of something already stored: the receipt is all it needs.
         if await exists(id) { return receipt }
+        // Past its deadline (the phone sets send time + 24 h): never routed late, the phone shows Not delivered (#314).
+        if let deadline = m.admissionDeadline, deadline < Self.now {
+            return .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .expired, reason: "Your Mac was offline for more than 24 hours.")))
+        }
         await prepare()
-        // Text and id only: no model may learn which device a message came from (#313).
-        do { try await engine.send(m.text, id: id); return receipt }
+        // Text, id and send time only: no model may learn which device a message came from (#313).
+        do { try await engine.send(m.text, id: id, sentAt: Double(ts) / 1000); return receipt }
         catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
     }
 
@@ -193,7 +198,8 @@ actor EngineBridge: RelayBackend {
         case .message(let m):
             e = event(m.id, thread, ms(m.created), .message(MessageData(role: m.role == "user" ? .user : .agent, text: m.body, done: true,
                 failed: m.kind == "failure" ? true : nil, kind: m.kind, topicId: m.topicID, taskId: m.taskID, replyTo: m.replyTo,
-                notice: m.notice.map(notice), seq: seq)))
+                notice: m.notice.map(notice), seq: seq,
+                readAt: m.role == "user" ? m.readAt.map(ms) : nil, sentAt: m.sentAt.map(ms))))
         case .topic(let t): e = event(t.id, thread, ms(t.created), .topic(TopicData(id: t.id, label: t.label, created: ms(t.created), seq: seq)))
         case .work(let w):
             e = event(w.id, thread, ms(w.created), .task(TaskData(id: w.id, topicId: w.topicID, messageId: w.messageID, instruction: w.instruction,

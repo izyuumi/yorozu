@@ -88,6 +88,8 @@ public actor Store {
             CREATE TRIGGER work_topic_au AFTER UPDATE OF topicID ON work WHEN new.topicID IS NOT old.topicID BEGIN \(touch) END;
             """)
         }
+        // #314. Nullable: the phone's send time, set only for messages that came from a phone (older builds name their columns).
+        migration.registerMigration("receipts-sent-at") { db in try db.execute(sql: "ALTER TABLE messages ADD COLUMN sentAt DOUBLE") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -118,8 +120,8 @@ public actor Store {
         let id = identifier(); let t = Topic(id: id, label: label, sessionKey: "agent:\(agent):projectx:\(id)", created: Date().timeIntervalSince1970)
         try db.write { try t.insert($0) }; return t
     }
-    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation", id: String = identifier(), notice: Notice? = nil) throws -> Message {
-        let m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970, notice: notice)
+    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation", id: String = identifier(), notice: Notice? = nil, sentAt: Double? = nil) throws -> Message {
+        let m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970, notice: notice, sentAt: sentAt)
         try db.write { try m.insert($0) }; return m
     }
     /// Newest first over message bodies and sub-chat worker event bodies (results are `result` messages; a superseded

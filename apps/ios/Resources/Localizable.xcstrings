@@ -1,6 +1,99 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Sending" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "送信中" } }
+      }
+    },
+    "Waiting for connection" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続を待っています" } }
+      }
+    },
+    "Delivered" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "配信済み" } }
+      }
+    },
+    "Read" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "既読" } }
+      }
+    },
+    "Not delivered" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "未配信" } }
+      }
+    },
+    "Not delivered: %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "未配信：%@" } }
+      }
+    },
+    "Message not delivered" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メッセージを配信できませんでした" } }
+      }
+    },
+    "This iPhone couldn’t send it within 24 hours." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このiPhoneから24時間以内に送信できませんでした。" } }
+      }
+    },
+    "Your Mac was offline for more than 24 hours." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macが24時間以上オフラインでした。" } }
+      }
+    },
+    "A message to your Mac expired without being read." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macへのメッセージが読まれないまま期限切れになりました。" } }
+      }
+    },
+    "%lld messages waiting to send" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : { "stringUnit" : { "state" : "translated", "value" : "%lld message waiting to send" } },
+              "other" : { "stringUnit" : { "state" : "translated", "value" : "%lld messages waiting to send" } }
+            }
+          }
+        },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "送信待ちのメッセージが%lld件あります" } }
+      }
+    },
+    "You: %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "あなた：%@" } }
+      }
+    },
+    "Resend" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再送信" } }
+      }
+    },
+    "Delete" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除" } }
+      }
+    },
+    "Received by Mac" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macが受信" } }
+      }
+    },
+    "Held by the relay until your Mac is online · expires %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macがオンラインになるまでリレーが保管します · 期限 %@" } }
+      }
+    },
+    "Sent %@ · delivered %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "送信 %1$@ · 配信 %2$@" } }
+      }
+    },
     "Last error" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "最後のエラー" } }

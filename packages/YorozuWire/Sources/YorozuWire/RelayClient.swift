@@ -64,6 +64,9 @@ private struct Inbound: Decodable {
     var online: Bool?
     var flowControl: Bool?
     var flowBytes: Int?
+    /// `accepted`: the signature of the frame the relay took, and whether it was buffered.
+    var sig: String?
+    var buffered: Bool?
 }
 
 /// Phone side of the blind relay: join a room with the one-time token from the pairing QR,
@@ -114,6 +117,9 @@ public actor RelayClient: ChatTransport {
     private var deviceToken: String?
 
     private var socket: URLSessionWebSocketTask?
+    /// Frame signature -> event ID for this socket's sent events, so the relay's `accepted`
+    /// reply can be matched to its event. Cleared when the socket changes.
+    private var sentSigs: [String: String] = [:]
     private var intentionalRedial: URLSessionWebSocketTask?
     /// The host's opt-in direct address, learned sealed and kept per host key. Dialled first;
     /// the relay is the fallback, and stays the only way to pair and to be woken.
@@ -372,6 +378,7 @@ public actor RelayClient: ChatTransport {
             onDirect = direct != nil
             let socket = session.webSocketTask(with: direct ?? dial)
             self.socket = socket
+            sentSigs = [:]
             socket.resume()
             armPhaseDeadline(String(localized: "relay connection timed out"), on: socket)
             await receiveLoop(socket, generation: generation)
@@ -439,11 +446,15 @@ public actor RelayClient: ChatTransport {
     /// Seals `event` under the device->mac key, numbered, and sends it as one signed frame.
     /// The counter is persisted before the frame leaves: a `seq` that went out and was then
     /// forgotten would be reused after a relaunch, and the Mac would drop the reuse as a replay.
+    ///
+    /// Allowed before the handshake once joined on a replay-protected channel: the channel keys
+    /// are fixed by the pairing, so a box sealed while the Mac is away is one the relay buffers
+    /// and the Mac opens when it comes back. A legacy or not-yet-known channel still waits.
     public func send(_ event: YorozuEvent) async throws {
-        guard ready, !incompatible else {
+        guard !incompatible, ready || (joined && sealFormat == .current) else {
             throw YorozuCrypto.CryptoError.malformed(String(localized: "Host compatibility has not been established"))
         }
-        try await sendEncrypted(event)
+        try await sendEncrypted(event, track: true)
         // A send is when a silently dead socket costs the user something, so it asks the relay
         // now rather than waiting out the idle ping. One probe covers a burst of sends.
         if pongDeadline == nil {
@@ -452,16 +463,24 @@ public actor RelayClient: ChatTransport {
         }
     }
 
-    private func sendEncrypted(_ event: YorozuEvent) async throws {
+    /// The format this socket seals in: the one the Mac answered in, or, while it has not answered
+    /// on this socket, the current one if this pairing ever completed the 0.7 peer exchange.
+    private var sealFormat: ChannelFormat? {
+        channelFormat ?? (counter.peerInfoRequired == true ? .current : nil)
+    }
+
+    /// `track` maps the frame's signature to `event.id` for the relay's `accepted` reply.
+    private func sendEncrypted(_ event: YorozuEvent, track: Bool = false) async throws {
         try Task.checkCancellation()
         guard !stopped, !incompatible else { throw YorozuCrypto.CryptoError.malformed(String(localized: "Host connection is closed")) }
-        guard let channelFormat else {
+        guard let format = sealFormat else {
             throw YorozuCrypto.CryptoError.malformed(String(localized: "Mac has not answered pairing"))
         }
-        if channelFormat == .legacy {
+        let eventId = track ? event.id : nil
+        if format == .legacy {
             let box = try YorozuCrypto.seal(key: legacyKey, plaintext: JSONEncoder().encode(event))
             try await sendFrame(FrameBody(t: "box", n: box.nonce.base64URLEncodedString(),
-                c: box.ciphertext.base64URLEncodedString()))
+                c: box.ciphertext.base64URLEncodedString()), eventId: eventId)
             return
         }
         let envelope = ChannelEnvelope(seq: counter.next(), event: event)
@@ -474,7 +493,8 @@ public actor RelayClient: ChatTransport {
                 t: "box",
                 n: box.nonce.base64URLEncodedString(),
                 c: box.ciphertext.base64URLEncodedString()
-            )
+            ),
+            eventId: eventId
         )
     }
 
@@ -538,6 +558,11 @@ public actor RelayClient: ChatTransport {
         case "pong":
             pongDeadline?.cancel()
             pongDeadline = nil
+        case "accepted":
+            // Only frames this socket sent carry a known signature; anything else is ignored.
+            if let sig = message.sig, let eventId = sentSigs.removeValue(forKey: sig) {
+                updates?.yield(.accepted(eventId: eventId, buffered: message.buffered == true))
+            }
         case "owner":
             if message.online == true {
                 updates?.yield(.ownerOnline(true))
@@ -796,17 +821,21 @@ public actor RelayClient: ChatTransport {
     }
 
     /// The relay verifies the signature over the base64url `payload` string itself.
-    private func sendFrame(_ body: FrameBody) async throws {
+    /// With `eventId`, the signature is mapped to it before the frame leaves, so an `accepted`
+    /// that arrives before the send completes still finds it.
+    private func sendFrame(_ body: FrameBody, eventId: String? = nil) async throws {
         let payload = try JSONEncoder().encode(body).base64URLEncodedString()
-        let signature = try YorozuCrypto.signFrame(
+        let sig = try YorozuCrypto.signFrame(
             priv: identity.signingPrivateKey,
             data: Data(payload.utf8)
-        )
-        try await send([
-            "type": "frame",
-            "payload": payload,
-            "sig": signature.base64URLEncodedString(),
-        ])
+        ).base64URLEncodedString()
+        if let eventId { sentSigs[sig] = eventId }
+        do {
+            try await send(["type": "frame", "payload": payload, "sig": sig])
+        } catch {
+            if eventId != nil { sentSigs[sig] = nil }
+            throw error
+        }
     }
 
     private func send(_ message: [String: String]) async throws {

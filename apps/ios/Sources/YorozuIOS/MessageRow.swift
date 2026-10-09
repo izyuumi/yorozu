@@ -41,6 +41,12 @@ enum MessageTime {
 
     static func date(_ ts: Int) -> Date { Date(timeIntervalSince1970: TimeInterval(ts) / 1000) }
 
+    /// The delay line's times: the time today, with the date on any other day (as on the Mac).
+    static func short(_ ts: Int) -> String {
+        let date = date(ts)
+        return date.formatted(date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated, time: .shortened)
+    }
+
     private static func formatter(time: DateFormatter.Style) -> DateFormatter {
         let f = DateFormatter()
         f.dateStyle = .medium
@@ -63,10 +69,16 @@ struct MessageRow: View {
     let bubble: PhoneModel.Bubble
     /// The reply header: the message this one answers, or a job's name.
     let header: ReplyHeader?
+    /// A user message's mark (#314).
+    var delivery: Delivery?
     let onShowRequest: () -> Void
     let onShowDetails: () -> Void
+    var onResend: () -> Void = {}
+    var onDelete: () -> Void = {}
 
     @State private var expanded = false
+    @State private var markDetails = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let bubbleRadius: CGFloat = 20
     private let cardRadius: CGFloat = 22
@@ -102,15 +114,34 @@ struct MessageRow: View {
                     .padding(.horizontal, LayoutMetrics.stack)
                     .padding(.vertical, LayoutMetrics.inner)
                     .background(YorozuPalette.bubble, in: RoundedRectangle(cornerRadius: bubbleRadius, style: .continuous))
-                // Refused by the Mac: why, as it said.
-                if bubble.failed {
-                    Label { Text(bubble.reason ?? String(localized: "Failed")) } icon: {
-                        Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
-                    }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                }
+                if let delivery { mark(delivery) }
             }
+            // One element: "You: <text>", the status word as its value, the mark's choices as actions.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text("You: \(bubble.text)"))
+            .accessibilityValue(delivery?.word ?? "")
+            .modifier(MarkActions(delivery: delivery, onDetails: { markDetails = true }, onResend: onResend, onDelete: onDelete))
+        }
+    }
+
+    /// The mark under the bubble: icon only, in the text colour (red when not delivered). Tap for details.
+    private func mark(_ delivery: Delivery) -> some View {
+        Button { markDetails = true } label: {
+            Image(systemName: delivery.symbol)
+                .symbolEffect(.rotate, isActive: delivery.inFlight && !reduceMotion)
+                .foregroundStyle(delivery.state == .notDelivered ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+                .font(.caption)
+                .padding(.vertical, LayoutMetrics.hair)
+                .padding(.leading, LayoutMetrics.inner)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $markDetails) {
+            VStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                DeliveryRows(delivery: delivery, onResend: onResend, onDelete: onDelete)
+            }
+            .padding(LayoutMetrics.gutter)
+            .presentationCompactAdaptation(.popover)
         }
     }
 
@@ -196,9 +227,85 @@ struct MessageRow: View {
     }
 }
 
-/// Show Details: the message and its exact time. #314 adds delivery and read times.
+/// VoiceOver's actions on a user bubble: Details, plus Resend and Delete when it was not delivered.
+private struct MarkActions: ViewModifier {
+    let delivery: Delivery?
+    let onDetails: () -> Void
+    let onResend: () -> Void
+    let onDelete: () -> Void
+
+    func body(content: Content) -> some View {
+        if let delivery {
+            if delivery.state == .notDelivered {
+                content
+                    .accessibilityAction(named: Text("Details"), onDetails)
+                    .accessibilityAction(named: Text("Resend"), onResend)
+                    .accessibilityAction(named: Text("Delete"), onDelete)
+            } else {
+                content.accessibilityAction(named: Text("Details"), onDetails)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// A user message's states with their times, and Resend / Delete when it was not delivered: the
+/// mark's popover and the Details sheet.
+struct DeliveryRows: View {
+    let delivery: Delivery
+    let onResend: () -> Void
+    let onDelete: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        if delivery.state == .sending {
+            Label(delivery.word, systemImage: delivery.symbol).foregroundStyle(.secondary)
+        }
+        row("Sent", delivery.sentAt)
+        if let delivered = delivery.deliveredAt {
+            row("Delivered", delivered)
+            if let expires = delivery.expiresAt {
+                Text("Held by the relay until your Mac is online · expires \(MessageTime.exact.string(from: MessageTime.date(expires)))")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } else if let received = delivery.receivedAt {
+            row("Received by Mac", received)
+        }
+        if let read = delivery.readAt { row("Read", read) }
+        if delivery.delayed, let received = delivery.receivedAt {
+            Text("Sent \(MessageTime.short(delivery.sentAt)) · delivered \(MessageTime.short(received))")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        if delivery.state == .notDelivered {
+            Label { Text(delivery.notDelivered) } icon: {
+                Image(systemName: delivery.symbol).foregroundStyle(.red)
+            }
+            Button("Resend", systemImage: "arrow.clockwise") {
+                onResend()
+                dismiss()
+            }
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                onDelete()
+                dismiss()
+            }
+        }
+    }
+
+    private func row(_ title: LocalizedStringKey, _ ts: Int) -> some View {
+        LabeledContent(title, value: MessageTime.exact.string(from: MessageTime.date(ts)))
+    }
+}
+
+/// Show Details: the message and its exact time; a user message's states, times and choices.
 struct MessageDetails: View {
     let bubble: PhoneModel.Bubble
+    var delivery: Delivery?
+    var onResend: () -> Void = {}
+    var onDelete: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
 
@@ -209,8 +316,12 @@ struct MessageDetails: View {
                     Text(bubble.shownText).lineLimit(6)
                 }
                 Section {
-                    LabeledContent(bubble.user ? String(localized: "Sent") : String(localized: "Time"),
-                                   value: MessageTime.exact.string(from: MessageTime.date(bubble.ts)))
+                    if let delivery {
+                        DeliveryRows(delivery: delivery, onResend: onResend, onDelete: onDelete)
+                    } else {
+                        LabeledContent(bubble.user ? String(localized: "Sent") : String(localized: "Time"),
+                                       value: MessageTime.exact.string(from: MessageTime.date(bubble.ts)))
+                    }
                 }
             }
             .navigationTitle("Details")

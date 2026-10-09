@@ -260,7 +260,8 @@ struct TopicScreen: View {
                 ForEach(items) { item in
                     switch item {
                     case .message(let bubble):
-                        MessageRow(bubble: bubble, header: nil, onShowRequest: {}, onShowDetails: {})
+                        MessageRow(bubble: bubble, header: nil, delivery: model.delivery(of: bubble),
+                                   onShowRequest: {}, onShowDetails: {})
                             .id(bubble.id)
                     case .task(let task):
                         TaskCard(model: model, task: task, events: events[task.id] ?? [], amendments: amendments[task.id] ?? [],

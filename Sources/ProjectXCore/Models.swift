@@ -13,6 +13,11 @@ public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable
     public var notice: Notice? = nil
     /// When routing of a user message started (`Engine.route`); nil = never started. Never sent to a model.
     public var readAt: Double? = nil
+    /// The phone's send time (its event `ts`) for a message that came from a phone; nil for one typed on the Mac (#314).
+    /// Never sent to a model; only the age of a delayed message is (`RoutingInput.messageAge`).
+    public var sentAt: Double? = nil
+    /// Seconds between the phone's send and the Mac storing it, when over 60 s (#314 open question 2); else nil.
+    public var delay: Double? { sentAt.map { created - $0 }.flatMap { $0 > 60 ? $0 : nil } }
 }
 public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "work"
@@ -182,11 +187,13 @@ public struct RoutingInput: Codable, Sendable {
     public var sourceMessageID: String? = nil
     /// "N older interrupted tasks and M less active topics omitted" once the routing trim drops blocking work or topics.
     public var omitted: String? = nil
-    enum CodingKeys: String, CodingKey { case message, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
+    /// How long ago the user sent a delayed message ("7 h 16 min"); nil unless it reached the Mac over 60 s late (#314).
+    public var messageAge: String? = nil
+    enum CodingKeys: String, CodingKey { case message, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
     /// Empty job lists are left out, so a workspace without jobs sends the pre-#319 context unchanged.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(message,forKey: .message); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
+        try c.encode(message,forKey: .message); try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
         try c.encodeIfPresent(latestTopic,forKey: .latestTopic); try c.encode(memory,forKey: .memory); try c.encodeIfPresent(sourceMessageID,forKey: .sourceMessageID); try c.encodeIfPresent(omitted,forKey: .omitted)
         if !jobs.isEmpty { try c.encode(jobs,forKey: .jobs) }; if !approvals.isEmpty { try c.encode(approvals,forKey: .approvals) }
     }

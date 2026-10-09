@@ -563,3 +563,38 @@ Source: the PR C plan comment on issue #313 (branch `mirror-ui`), built on the a
 - Retry stays 再試行 in Japanese, the catalog's existing translation.
 - The unread divider stays where it was drawn while the user reads: on the Mac until the popover opens again, on the phone until another device moves the cursor or the app returns to the foreground. Reading moves the cursor right away; only the divider waits.
 - The Mac's menu-bar dot follows the synced read cursor as well as what the open popover shows, forward only, so a phone reading a result clears the dot and its delivered notification.
+
+## 2026-10-09 — Delivery marks and offline sending
+Source: owner decisions recorded in issue #314 ("projectx: delivery marks, outbox and offline sending"), Decisions section.
+
+- Marks on every user message, on the phone and in the Mac's chat: **Delivered** means the relay (or the Mac) has the phone's message; **Read** means the host Mac received it and started processing it, that is, routing started (`Engine.route`). A message typed on the Mac shows Delivered once stored and Read once routing starts.
+- States only move forward: Sending, then Delivered, then Read. Not delivered follows the 24-hour deadline or a rejection; Resend moves Not delivered back to Sending.
+- SF Symbols in the text colour (no blue), icon only: Sending `circle.dotted` (spins while a frame is in flight, still while waiting for a connection; the details say "Waiting for connection" or "Sending"), Delivered `checkmark.circle`, Read `checkmark.circle.fill`, Not delivered a red `exclamationmark.circle` with the reason, Resend and Delete. Tapping the mark opens details with each state's time. Final visuals come from the Claude Design pass in #311.
+- The Mac records a read time per message in one new column; existing history is marked Read.
+- Copy Signal's system, not its icon files (AGPL-3.0). VoiceOver reads the state as part of the bubble.
+- While the Mac is unreachable the relay buffers messages (24 hours, 5 MiB per room, drained on Mac reconnect until acked); the phone does not need to stay connected. Late messages are delivered normally; the Mac timeline shows the delay ("sent 02:14 from phone, delivered 09:30") and the secretary is told the message's age, never its device. After 24 hours without delivery a message becomes Not delivered, with Resend.
+- The phone keeps a persistent outbox. Going to the background with a non-empty outbox, it uses iOS background time to keep trying, then posts a local notification ("1 message waiting to send") for what is still unsent. When a message is delivered, the phone schedules a local notification for 24 hours later ("A message to your Mac expired without being read"); Read cancels it. Permission is asked the first time a message is queued. The draft clears as soon as Send is tapped.
+- The relay replies `{"type":"accepted","sig":<frame sig>,"buffered":true|false}` after forwarding or durably buffering a phone frame. The owner reviews and deploys it after confirming the deployed relay matches `main`. A new phone on an old relay gets Delivered from the Mac's receipt instead.
+- Shared with #313, built there: relay-replayed messages are never dropped and acked; messages stored but never routed before a quit are routed at launch when under 24 hours old; the 3-second last-known connection status.
+
+## 2026-10-09 — Delivery marks: implementer readings (not owner decisions)
+Source: the app-side plan comment on issue #314 (branch `receipts`, built as `rc-mac`, `rc-wire` and `rc-ios`), after the relay part merged on `main` in #332 and was deployed. The open questions were taken at their proposed defaults; the owner has not answered them, and [status.md](../status.md#open-items) keeps them as open items.
+
+1. The phone's send time is a second nullable column, `messages.sentAt`, in its own migration `receipts-sent-at`, set from the phone event's `ts` only for messages that arrive from a phone, and synced to the phone as the optional `MessageData.sentAt`.
+2. A message is delayed when the Mac stored it more than 60 s after `sentAt` (`Message.delay`); the same rule drives the delay line and the secretary's age.
+3. The secretary gets an optional `RoutingInput.messageAge` ("7 h 16 min", or "16 min" under an hour), only for a delayed message, plus one policy sentence: read "now", "today" and similar words from when it was sent, and mention the delay only if it changes the answer. It counts against the routing trim like the rest of the input. `sentAt` and `readAt` are stripped from extraction prompts and never reach a worker.
+4. Notification permission (`.alert`, `.sound`, `.badge` in one request) is asked the first time a message has to wait in the outbox: sent while the relay is out of reach, or a send that fails.
+5. The expiry notification runs 24 hours from Delivered, as decided, though the Mac's deadline runs from the send time.
+6. A stored, unrouted message older than 24 hours at launch keeps #313's `closed_too_long` notice; the phone keeps showing Delivered.
+7. #313's fix (a replayed frame is acked only once the Engine stored or refused it) is unchanged; the live checks cover it.
+8. The Node relay mirrors `accepted`, with a conformance scenario, in the same PR on `main` (#332).
+9. `readAt` and `sentAt` ship inside contract 0.7, since 0.7 had not reached a phone yet.
+
+Added in implementation:
+- An outbox item's mark is not stored in the item: marks live in a separate id -> state map, persisted in the same file, which applies the forward-only rule, because `merge()` replaces bubbles wholesale. Items hold the event, its send time, the relay's `accepted` time, `buffered`, whether the Mac has stored it and a refusal reason.
+- A stored copy lifts Not delivered back to Delivered or Read without a Resend, since it proves the Mac has the message.
+- On a relay without `accepted`, the Sending mark spins for at most 10 s after a frame leaves, then stays still on Sending until the Mac's receipt.
+- On the phone the delay line ("Sent … · delivered …", without "from phone") is shown only in the message's details, not under the bubble; the Mac draws it under the bubble.
+- Resend gives the message a new `ts`, so the Mac's `sentAt` and the delay line count from the last resend.
+- A message the phone never got `accepted` for and whose deadline passed turns Not delivered on the phone with "This iPhone couldn't send it within 24 hours."; one that was accepted waits for the Mac's answer on `.paired`.
+- A stored outbox item whose message leaves the history window is dropped with its times.
