@@ -71,6 +71,8 @@ actor RelayHost {
     /// so a phone stays online until this socket drops.
     private var online: Set<String> = []
     private var main = ThreadSummary.main(0)
+    /// The Mac's readiness (#317): sent to each phone that takes `readiness-v1` after its claim, and on every change.
+    private var readiness: ReadinessData?
     private var state = RelayStatus().state
     private var link: String?
     private var pairing = false
@@ -196,6 +198,17 @@ actor RelayHost {
     /// The `main` summary the handshake's thread lists carry, kept current by the bridge so the
     /// handshake never waits on the Engine.
     func setMain(_ main: ThreadSummary) { self.main = main }
+
+    /// A new readiness goes to every served phone that takes it now; each handshake sends the latest again.
+    func publishReadiness(_ readiness: ReadinessData) {
+        guard readiness != self.readiness else { return }
+        self.readiness = readiness
+        deliver(peers.keys.filter(takesReadiness).map { ($0, .control(.readiness(readiness))) })
+    }
+
+    private func takesReadiness(_ pub: String) -> Bool {
+        if case .compatible(_, let capabilities)? = peers[pub]?.compatibility { capabilities.contains(ReadinessData.capability) } else { false }
+    }
 
     /// A fresh one-time code for the pair sheet. Minted again after each phone pairs, until `endPairing`.
     func mintPairing() {
@@ -485,6 +498,7 @@ actor RelayHost {
         handshake([(pub, .control(.threadList(ThreadListData(threads: [main], peerInfoReplyTo: String(id.prefix(128))))))])
         // Boxes held for this claim are served after the reply, or dropped for a phone that must update.
         if case .compatible = result { release(pub, serve: true) } else { release(pub, serve: false) }
+        if let readiness, takesReadiness(pub) { deliver([(pub, .control(.readiness(readiness)))]) }
     }
 
     /// Handshake thread lists leave at once, ahead of any frames waiting for the phone, so a long chunk set

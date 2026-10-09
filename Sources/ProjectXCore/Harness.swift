@@ -23,6 +23,8 @@ public protocol Harness: Sendable {
     var id: String { get }
     /// Coding executors this harness offers, in preference order.
     var executors: [Executor] { get }
+    /// The harness agent topic session keys carry (`agent:<agent>:projectx:<topic>`): `[harness] agent` for every harness,
+    /// offline and fixture included, so topics keep one key prefix whatever the mode.
     var agentID: String { get }
     func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision
     func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput
@@ -40,7 +42,7 @@ public protocol Harness: Sendable {
     var workerGuard: Int { get }
 }
 public extension Harness {
-    var agentID: String { "projectx" }
+    var agentID: String { Config.HarnessSettings().agent }
     var executors: [Executor] { [] }
     var rawPromptCap: Int { ProjectXCore.rawPromptCap }
     var workerGuard: Int { 32000 }
@@ -57,11 +59,14 @@ public struct HarnessSettings: Sendable {
     public var mcpServers: [String:MCPServer]?
     /// Lifts the ask-first rules for requested outward-facing steps and the risky cua tools (owner, 2026-10-09).
     public var yolo = false
+    /// Integrations whose worker rules go into both worker contracts (`Prompts.integrationRules`); disabled ones are skipped.
+    public var integrations = Integration.builtIn
     /// The dev checkout coding workers merge into; nil refuses coding work.
     public var devRepo: URL?
-    /// `devRepo`'s branch coding worktrees are cut from and merged into, and the command (relative to the main checkout)
-    /// that rebuilds and restarts the app; the coding contract names both.
-    public var codingBaseBranch = "projectx", buildCommand = "scripts/build_native.sh --restart"
+    /// `devRepo`'s branch coding worktrees are cut from and merged into (`[harness] dev_base`; empty is the repo's
+    /// current branch, read when the work starts: `resolvingBase`), and the command (relative to the main checkout) that
+    /// rebuilds and restarts the app; the coding contract names both.
+    public var codingBaseBranch = "", buildCommand = "scripts/build_native.sh --restart"
     /// `config.toml`, named in the thinking contract so a worker can change settings when asked.
     public var configFile: URL?
     /// Routing hints: the user's knowledge source the secretary cannot read ("" drops it), and the topic for this app.
@@ -69,11 +74,23 @@ public struct HarnessSettings: Sendable {
     /// The file store root (#316): an attachment's file is `filesRoot` + `Attachment.path`. Nil: no store, so no file is available.
     public var filesRoot: URL?
     public init() {}
+    /// These settings with `codingBaseBranch` resolved: as set, else `repo`'s checked-out branch (`git rev-parse --abbrev-ref HEAD`).
+    public func resolvingBase(_ repo: URL) throws -> HarnessSettings {
+        guard codingBaseBranch.isEmpty else { return self }
+        let git = Process(), out = Pipe(); git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        git.arguments = ["-C",repo.path,"rev-parse","--abbrev-ref","HEAD"]; git.standardOutput = out; git.standardError = FileHandle.nullDevice
+        let ran = (try? git.run()) != nil
+        let branch = ran ? String(decoding: out.fileHandleForReading.readDataToEndOfFile(),as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        if ran { git.waitUntilExit() }
+        guard ran, git.terminationStatus == 0, !branch.isEmpty, branch != "HEAD" else { throw ProjectError.blocked("Couldn't read the current branch of \(repo.path) for coding work. Check out a branch there, or set dev_base in config.toml.") }
+        var s = self; s.codingBaseBranch = branch; return s
+    }
 }
 public struct OfflineHarness: Harness {
     public let id = "offline"
     public let name = "Offline · no model calls"
-    public init() {}
+    public let agentID: String
+    public init(agent: String = Config().harness.agent) { agentID = agent }
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision { throw ProjectError.offline }
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput { throw ProjectError.offline }
     public func steer(_ work: Work, topic: Topic, amendment: Amendment) async throws -> Bool { false }
@@ -85,8 +102,9 @@ public struct OfflineHarness: Harness {
 public actor FixtureHarness: Harness {
     nonisolated public let id = "fixture"
     nonisolated public let name = "Synthetic fixture · NOT a live model"
+    nonisolated public let agentID: String
     private var states: [String: RunStatus] = [:]; private var revisions: [String: Int] = [:]; private var cancelled = Set<String>()
-    public init() {}
+    public init(agent: String = Config().harness.agent) { agentID = agent }
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision {
         let text = input.message.trimmingCharacters(in: .whitespacesAndNewlines)
         let latest = input.latestTopic ?? input.topics.last?.id
@@ -143,8 +161,9 @@ public struct GatewayRPC: Sendable {
         if s.contains("no such file") || s.contains("command not found") || s.contains("node.js") { return "executable-or-runtime" }
         return "unclassified-refusal-or-disconnect"
     }
-    public func call(_ method: String, _ params: [String:Any], final: Bool = false, sourceMessageID: String? = nil) async throws -> [String:Any] {
-        guard method == "agent", let id = params["idempotencyKey"] as? String else { return try await perform(method,params,final: final) }
+    /// `timeout` (ms, CLI transport only) shortens the CLI's 260 s wait, for setup and readiness probes.
+    public func call(_ method: String, _ params: [String:Any], final: Bool = false, sourceMessageID: String? = nil, timeout: Int? = nil) async throws -> [String:Any] {
+        guard method == "agent", let id = params["idempotencyKey"] as? String else { return try await perform(method,params,final: final,timeout: timeout) }
         // Correlation log only. Raw model runs are stateless (no tools, no transcript), so a lost one never blocks the next.
         var receipt = RequestReceipt(requestID: id,harness: "openclaw",sessionKey: params["sessionKey"] as? String,sourceMessageID: sourceMessageID,rawModelRun: params["modelRun"] as? Bool == true,state: "submitted")
         try await audit?(receipt) // Durable before dispatch; fail closed if saving correlation fails.
@@ -180,7 +199,7 @@ public struct GatewayRPC: Sendable {
         default: return false
         }
     }
-    private func perform(_ method: String, _ params: [String:Any], final: Bool) async throws -> [String:Any] {
+    private func perform(_ method: String, _ params: [String:Any], final: Bool, timeout: Int? = nil) async throws -> [String:Any] {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: params),as: UTF8.self)
         let text: String
         if let fixture { text = try await fixture(method,json,final) }
@@ -193,7 +212,8 @@ public struct GatewayRPC: Sendable {
             text = try await Task.detached(priority: .utility) {
                 let process = Process(); let pipe = Pipe(); let errors = Pipe()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = ["openclaw","gateway","call",method,"--json","--expect-url",target,"--timeout","260000","--params",json] + (final ? ["--expect-final"] : [])
+                let ms = timeout ?? 260000
+                process.arguments = ["openclaw","gateway","call",method,"--json","--expect-url",target,"--timeout","\(ms)","--params",json] + (final ? ["--expect-final"] : [])
                 var childEnvironment = env // Never strip runtime attribution markers.
                 // Finder's PATH often omits Homebrew; append standard executable locations, never change identity/auth homes.
                 childEnvironment["PATH"] = (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin") + ":/opt/homebrew/bin:/usr/local/bin"
@@ -209,7 +229,7 @@ public struct GatewayRPC: Sendable {
                     return captured
                 }
                 let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 270,execute: deadline)
+                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(ms + 10_000),execute: deadline)
                 defer { deadline.cancel() }
                 var data = Data()
                 while true {
@@ -221,10 +241,14 @@ public struct GatewayRPC: Sendable {
                 process.waitUntilExit()
                 let stderr = await errorReader.value
                 guard process.terminationStatus == 0 else {
-                    let category = Self.diagnosticCategory(String(decoding: stderr + data.prefix(32768),as: UTF8.self))
+                    var category = Self.diagnosticCategory(String(decoding: stderr + data.prefix(32768),as: UTF8.self))
+                    // The CLI refuses a `--expect-url` other than its own configured Gateway, whether or not anything listens there.
+                    if category == "gateway-target-mismatch" { category += ", target=" + target }
                     // Gateway refusals arrive as a JSON envelope on stdout; its code/message is safe to show unless secret-shaped.
                     let refusal = (try? JSONSerialization.jsonObject(with: data) as? [String:Any])?["error"] as? [String:Any]
-                    let detail = (refusal?["message"] as? String).flatMap { sensitive($0) ? nil : ": \(refusal?["code"] as? String ?? "error") \($0.prefix(300))" } ?? ""
+                    // Else the CLI's own words from stderr (such as "Start it with `openclaw gateway run`"), for Details (`PlainError`).
+                    let hint = String(decoding: stderr,as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let detail = (refusal?["message"] as? String).flatMap { sensitive($0) ? nil : ": \(refusal?["code"] as? String ?? "error") \($0.prefix(300))" } ?? (hint.isEmpty || sensitive(hint) ? "" : ": " + utf8Prefix(hint,bytes: 300))
                     throw ProjectError.uncertain("Gateway CLI failed [exit=\(process.terminationStatus), category=\(category)]\(detail). No automatic replay; reconcile any admitted run before retry.")
                 }
                 return String(decoding: data,as: UTF8.self)
@@ -244,13 +268,18 @@ public struct OpenClawHarness: Harness {
     public var settings: @Sendable () -> HarnessSettings
     private let sessions = SessionCreations(); private let mcp = MCPMirror()
     /// Claude Code (runtime claude-cli) and Codex (runtime codex), each in an OpenClaw-managed worktree. Neither takes
-    /// changes mid-run (unverified), so changes wait for a follow-up turn.
-    public var executors: [Executor] { [
-        Executor(id: "claude",name: "Claude Code",appAccess: false,liveSteer: false,runtime: "claude-cli"),
-        Executor(id: "codex",name: "Codex",appAccess: true,liveSteer: false,runtime: "codex",
-                 routingNotes: "New coding work that also needs to operate an app or a browser (e.g. App Store Connect) uses executor \"codex\" unless the user names Claude Code."),
-    ] }
-    public init(workspace: URL, agent: String = "projectx", rpc: GatewayRPC = GatewayRPC(), settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) {
+    /// changes mid-run (unverified), so changes wait for a follow-up turn. Coding is opt-in: not ready while `dev_repo` is empty.
+    public var executors: [Executor] {
+        let off = settings().devRepo == nil ? "No repository is set for coding work." : nil
+        return [
+            Executor(id: "claude",name: "Claude Code",appAccess: false,liveSteer: false,runtime: "claude-cli",notReady: off),
+            Executor(id: "codex",name: "Codex",appAccess: true,liveSteer: false,runtime: "codex",
+                     routingNotes: "New coding work that also needs to operate an app or a browser (e.g. App Store Connect) uses executor \"codex\" unless the user names Claude Code.",notReady: off),
+        ]
+    }
+    /// `agent` is `[harness] agent`. Session keys put the app namespace `projectx` after it (`agent:<agent>:projectx…`),
+    /// so agent `projectx` keeps its existing keys byte for byte.
+    public init(workspace: URL, agent: String = "yorozu", rpc: GatewayRPC = GatewayRPC(), settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) {
         self.workspace = workspace; self.agent = agent; self.rpc = rpc; self.settings = settings
     }
     /// `models.list` (operator.read, view "configured" with details): the agent's allowed models, its primary (tag
@@ -258,7 +287,11 @@ public struct OpenClawHarness: Harness {
     /// `models.providers.<provider>.models[]`; models.list strips cost, and bundled provider catalogs are not exposed.
     public func models() async throws -> (allowed: [ModelInfo], primary: String?) {
         let rows = try await rpc.call("models.list",["agentId":agent,"view":"configured","includeDetails":true])["models"] as? [[String:Any]] ?? []
-        let providers = (((try? await rpc.call("config.get",[:]))?["config"] as? [String:Any])?["models"] as? [String:Any])?["providers"] as? [String:Any] ?? [:]
+        return Self.models(rows,config: (try? await rpc.call("config.get",[:]))?["config"] as? [String:Any])
+    }
+    /// `models()` from a `models.list` answer and the `config` of a `config.get` answer.
+    static func models(_ rows: [[String:Any]], config: [String:Any]?) -> (allowed: [ModelInfo], primary: String?) {
+        let providers = (config?["models"] as? [String:Any])?["providers"] as? [String:Any] ?? [:]
         var primary: String?, allowed: [ModelInfo] = []
         for m in rows {
             guard let id = m["id"] as? String, let provider = m["provider"] as? String else { continue }
@@ -340,13 +373,12 @@ public struct OpenClawHarness: Harness {
         }
     }
     private func model(_ prompt: String, model: String, sourceMessageID: String? = nil) async throws -> String {
-        guard agent == "projectx" else { throw ProjectError.blocked("Live R1 requires the dedicated projectx agent; personal agents are not an app backend.") }
         guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Model input exceeds bounded context.") }
         guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this role; choose one in Settings › Advanced.") }
         // Public CLI `agent` connects with operator.write; per-turn model overrides require admin.
         // Select the role model through supported session creation, then run without an override.
         let selection = SHA256.hash(data: Data((workspace.path + "|" + model).utf8)).map { String(format: "%02x",$0) }.joined()
-        let key = "agent:projectx:projectx-model:" + selection
+        let key = "agent:\(agent):projectx-model:" + selection
         for _ in 0..<2 {
             try await sessions.ensure(key) { [rpc, agent] in
                 let created = try await rpc.call("sessions.create",["key":key,"agentId":agent,"model":model,"permissionMode":"read-only"])
@@ -365,7 +397,7 @@ public struct OpenClawHarness: Harness {
         return try JSONDecoder().decode(Decision.self,from: Data(try await model(prompt,model: stronger ? settings().reviewModel : settings().secretaryModel,sourceMessageID: input.sourceMessageID).utf8))
     }
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput {
-        guard agent == "projectx", input.topic.sessionKey.hasPrefix("agent:projectx:projectx:") else { throw ProjectError.blocked("R1 workers must use app-owned sessions on the dedicated projectx agent. No private session import.") }
+        guard input.topic.sessionKey.hasPrefix("agent:\(agent):projectx:") else { throw ProjectError.blocked("Workers must use app-owned sessions on the configured agent \(agent). No private session import.") }
         let s = settings()
         if let executor = input.work.executor { return try await code(input,executor: executor,settings: s,update: update) }
         let key = input.topic.sessionKey; let controller = "agent:\(agent):projectx-control:\(input.topic.id)"
@@ -518,16 +550,8 @@ extension OpenClawHarness {
             let snapshot = try await rpc.call("config.get",[:])
             guard let hash = snapshot["hash"] as? String else { throw ProjectError.uncertain("OpenClaw config hash unavailable; MCP servers not set up.") }
             let configured = ((snapshot["config"] as? [String:Any])?["mcp"] as? [String:Any])?["servers"] as? [String:Any] ?? [:]
-            var patch: [String:Any] = [:], replace: [String] = []
-            for (name,server) in list {
-                let key = "yorozu-" + name, entry: [String:Any] = ["command":server.command,"args":server.args ?? [],"enabled":false]
-                guard !NSDictionary(dictionary: entry).isEqual(configured[key] as? [String:Any] ?? [:]) else { continue }
-                patch[key] = entry
-            }
-            for key in configured.keys where key.hasPrefix("yorozu-") && list[String(key.dropFirst(7))] == nil { patch[key] = NSNull() }
+            let (patch,replace) = Self.mcpPatch(list,configured: configured)
             if !patch.isEmpty {
-                // A merge patch; OpenClaw refuses to shrink or drop an array unless its exact path is in replacePaths.
-                for key in patch.keys { replace += Self.arrayPaths(configured[key] as Any,"mcp.servers." + key) }
                 // No `note`: it would leave a restart sentinel that wakes the owner's main agent on the next Gateway start.
                 // A concurrent config edit fails the hash check; the next use retries.
                 let raw = String(decoding: try JSONSerialization.data(withJSONObject: ["mcp":["servers":patch]]),as: UTF8.self)
@@ -539,7 +563,21 @@ extension OpenClawHarness {
             return overlay
         }
     }
-    private static func arrayPaths(_ value: Any,_ path: String) -> [String] {
+    /// The `mcp.servers` merge patch that brings OpenClaw's `yorozu-*` entries to `list` (changed ones written with
+    /// enabled:false, stale ones removed), and the array paths it replaces: OpenClaw refuses to shrink or drop an array
+    /// unless its exact path is in replacePaths. Empty when nothing differs.
+    static func mcpPatch(_ list: [String:MCPServer], configured: [String:Any]) -> (patch: [String:Any], replace: [String]) {
+        var patch: [String:Any] = [:], replace: [String] = []
+        for (name,server) in list {
+            let key = "yorozu-" + name, entry: [String:Any] = ["command":server.command,"args":server.args ?? [],"enabled":false]
+            guard !NSDictionary(dictionary: entry).isEqual(configured[key] as? [String:Any] ?? [:]) else { continue }
+            patch[key] = entry
+        }
+        for key in configured.keys where key.hasPrefix("yorozu-") && list[String(key.dropFirst(7))] == nil { patch[key] = NSNull() }
+        for key in patch.keys { replace += arrayPaths(configured[key] as Any,"mcp.servers." + key) }
+        return (patch,replace)
+    }
+    static func arrayPaths(_ value: Any,_ path: String) -> [String] {
         value is [Any] ? [path] : (value as? [String:Any])?.flatMap { arrayPaths($0.value,path + "." + $0.key) } ?? []
     }
     /// Before each use of a topic, controller or coding session: bring it to `model` (and `runtime`) with sessions.patch
@@ -628,6 +666,7 @@ extension OpenClawHarness {
         // Open question 11: without a dev repo, coding work ends with a plain notice before anything is created or sent.
         guard let repo = s.devRepo else { throw ProjectError.blocked("No repository is set for coding work. Set a repository in Settings › Advanced.") }
         guard let tool = executors.first(where: { $0.id == executor })?.name else { throw HarnessError.notReady("OpenClaw offers no coding executor \"\(executor)\".") }
+        let s = try s.resolvingBase(repo)
         let runID = "projectx-code-" + identifier(); let handle = RunHandle(sessionKey: codingKey(input.topic,executor),controllerKey: "",runID: runID)
         // The run marker anchors reconcile to this run's own user turn in the session transcript.
         let message = Prompts.codingMessage(input,contract: Prompts.codingContract(executor: tool,repo: repo,settings: s,topic: input.topic.id,cuaSession: "yorozu-" + identifier().prefix(8)),runID: runID,root: s.filesRoot)

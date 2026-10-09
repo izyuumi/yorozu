@@ -66,11 +66,26 @@ struct AdvancedSettings: View {
     @ObservedObject var model: AppModel
     @State private var gateway = ""
     @State private var enrolled = false
+    /// A harness switch waiting for the user's confirmation.
+    @State private var switchTo: Config.HarnessKind?
+    /// Each coding tool's sign-in command, run by the user where the Gateway runs.
+    static let logins = ["claude": "claude auth login", "codex": "codex login"]
 
     var body: some View {
         let config = model.config, launched = model.launched?.config.harness
         Form {
             ConfigProblems(model: model)
+            Section {
+                let locked = model.override("harness.kind")
+                Picker(selection: Binding(get: { config.harness.kind }, set: { if $0 != config.harness.kind { switchTo = $0 } })) {
+                    ForEach(Config.HarnessKind.allCases, id: \.self) { Text(Self.harnessTitle($0)).tag($0) }
+                } label: {
+                    Text("Main harness")
+                    if let note = overrideNote(locked) { note }
+                    else if let launched, launched.kind != config.harness.kind { Text("Relaunch to apply.") }
+                    else { Text("Answers every message and runs the workers.") }
+                }.disabled(locked != nil)
+            }
             if config.harness.kind == .openclaw {
                 Section("Harness connection") {
                     Picker(selection: model.setting(\.harness.transport)) {
@@ -86,20 +101,31 @@ struct AdvancedSettings: View {
                     if model.runtimeMode == .live, model.nativeSelected { enrollment }
                 }
             }
-            Section("Coding workers") {
+            Section {
+                let locked = model.override("harness.dev_repo")
+                Toggle(isOn: Binding(get: { !config.harness.devRepo.isEmpty }, set: { on in if on { chooseRepo() } else { model.writeSettings { $0.harness.devRepo = "" } } })) {
+                    Text("Allow coding work")
+                    Text("Coding workers change code only in this repository, each in its own worktree. Off: Yorozu says coding is off.")
+                }.disabled(locked != nil)
                 LabeledContent {
                     Button("Choose…", action: chooseRepo)
-                    if !config.harness.devRepo.isEmpty { Button("Clear") { model.writeSettings { $0.harness.devRepo = "" } } }
                 } label: {
                     Text("Repository")
-                    Text(config.harness.devRepo.isEmpty ? String(localized: "Not set: coding work ends with a notice.") : config.harness.devRepo).monospaced().textSelection(.enabled)
-                    if let note = overrideNote(model.override("harness.dev_repo")) { note }
-                }.disabled(model.override("harness.dev_repo") != nil)
-                ForEach(model.harness?.executors ?? [], id: \.id) { executor in
-                    LabeledContent(executor.name) {
-                        if let why = executor.notReady { Text(why).foregroundStyle(.secondary) } else { Text("Ready") }
+                    Text(config.harness.devRepo.isEmpty ? String(localized: "Not set: coding work is off.") : config.harness.devRepo).monospaced().textSelection(.enabled)
+                    if let note = overrideNote(locked) { note }
+                }.disabled(locked != nil)
+                ForEach(config.harness.kind.adapter(config.harness, rpc: GatewayRPC()).executors(model.settingsBox.value), id: \.executor.id) { e in
+                    LabeledContent {
+                        if e.path == nil { Text("Not found").foregroundStyle(.orange) } else { Text("Found") }
+                        if let login = Self.logins[e.executor.id] { Button("Copy Sign-In Command") { copyToClipboard(login) } }
+                    } label: {
+                        Text(e.executor.name)
+                        Text(e.path.map { tildePath(URL(fileURLWithPath: $0)) } ?? String(localized: "Not on PATH, ~/.local/bin or Homebrew")).monospaced().textSelection(.enabled)
+                        if let login = Self.logins[e.executor.id] { Text("Sign in where the Gateway runs: `\(login)`") }
                     }
                 }
+            } header: { Text("Coding workers") } footer: {
+                Text("Found means the tool is on this Mac. Yorozu can't tell whether it is signed in.").foregroundStyle(.secondary)
             }
             Section {
                 ModelRow(model: model, title: "Secretary", key: "models.secretary", path: \.secretary, choice: { $0.secretary })
@@ -112,6 +138,7 @@ struct AdvancedSettings: View {
             } header: { Text("Models") } footer: {
                 Text("Allowed models come from the harness. Automatic picks again at launch and whenever settings change.").foregroundStyle(.secondary)
             }
+            IntegrationsSection(model: model)
             Section {
                 LabeledContent("Run mode") { Text(Self.mode(model.runtimeMode)) }
                 LabeledContent("Harness") { Text(model.harnessLabel ?? config.harness.kind.rawValue) }
@@ -133,7 +160,7 @@ struct AdvancedSettings: View {
                     if let file = model.configFile { Button("Show config.toml") { NSWorkspace.shared.activateFileViewerSelecting([file]) } }
                 } label: {
                     Text("MCP servers")
-                    Text(config.mcpServers.isEmpty ? String(localized: "None") : config.mcpServers.keys.sorted().joined(separator: ", ")).monospaced()
+                    Text(config.effectiveMCPServers.isEmpty ? String(localized: "None") : config.effectiveMCPServers.keys.sorted().joined(separator: ", ")).monospaced()
                 }
             } header: { Text("About this install") } footer: {
                 Text("MCP servers are edited in config.toml or by asking in the chat.").foregroundStyle(.secondary)
@@ -144,6 +171,16 @@ struct AdvancedSettings: View {
         .onChange(of: config.harness.gatewayURL) { _, new in gateway = new }
         .onChange(of: model.connecting) { _, busy in if !busy { enrolled = model.nativeEnrolled } }
         .onDisappear { model.bootstrapSecret = "" }
+        .alert("Switch the main harness?", isPresented: Binding(get: { switchTo != nil }, set: { if !$0 { switchTo = nil } }), presenting: switchTo) { kind in
+            Button("Switch to \(Self.harnessTitle(kind))") { model.writeSettings { $0.harness.kind = kind } }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Your messages, memory excerpts and workers' tasks then go to this harness. The switch applies at the next launch, once running work finishes.")
+        }
+    }
+
+    static func harnessTitle(_ kind: Config.HarnessKind) -> String {
+        switch kind { case .openclaw: "OpenClaw"; case .hermes: "Hermes Agent" }
     }
 
     @ViewBuilder private func gatewayRow(_ config: Config, launched: Config.HarnessSettings?) -> some View {
@@ -185,7 +222,9 @@ struct AdvancedSettings: View {
         // The home folder itself stays absolute: its tilde form "~" is not a path `Config` accepts.
         let url = picked.standardizedFileURL, home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
         let path = url.path == home.path ? url.path : tildePath(url)
-        model.writeSettings { $0.harness.devRepo = path }
+        // An empty dev_base becomes the repo's current branch now; `resolvingBase` stays the fallback at run time.
+        let base = (try? HarnessSettings().resolvingBase(url).codingBaseBranch) ?? ""
+        model.writeSettings { $0.harness.devRepo = path; if $0.harness.devBase.isEmpty { $0.harness.devBase = base } }
     }
 
     static func mode(_ mode: RuntimeMode) -> String {
@@ -194,6 +233,68 @@ struct AdvancedSettings: View {
         case .fixture: String(localized: "Test fixture")
         case .offline: String(localized: "Offline")
         }
+    }
+}
+
+/// Settings › Advanced › Integrations: each integration's switch, its checks (run while this shows and on "Check again",
+/// never otherwise) and, after a check that is not OK, its fixes. Built-in titles come from the string catalog.
+struct IntegrationsSection: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Section {
+            IntegrationRows(model: model)
+        } header: { Text("Integrations") } footer: {
+            Text("Checks run only while Settings is open or when you click Check again. Yorozu never grants permissions itself: run the copied command in Terminal.").foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// The integrations' rows, shared by Settings › Advanced and the setup window's Computer use step: checks run when the
+/// rows appear and on "Check again".
+struct IntegrationRows: View {
+    @ObservedObject var model: AppModel
+    @State private var results: [String: [CheckResult]] = [:]
+    @State private var checking = false
+
+    var body: some View {
+        let list = model.config.integrations.values.sorted { $0.name < $1.name }
+        ForEach(list, id: \.name) { item in
+            Toggle(LocalizedStringKey(item.title), isOn: Binding(get: { item.enabled }, set: { on in model.writeSettings { $0.integrations[item.name]?.enabled = on } }))
+            ForEach(Array((results[item.name] ?? []).enumerated()), id: \.offset) { _, result in
+                LabeledContent {
+                    switch result.status {
+                    case .ok: Label("OK", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    case .warning: Label("Needs attention", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    case .failed: Label("Not working", systemImage: "xmark.octagon.fill").foregroundStyle(.red)
+                    }
+                } label: {
+                    Text(LocalizedStringKey(result.title))
+                    Text(verbatim: result.detail).monospaced().lineLimit(4).textSelection(.enabled)
+                }
+            }
+            if results[item.name]?.contains(where: { $0.status != .ok }) == true {
+                ForEach(Array(item.fixes.enumerated()), id: \.offset) { _, fix in
+                    switch fix {
+                    case .copy(let title, let command):
+                        LabeledContent { Button(LocalizedStringKey(title)) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(command, forType: .string) } } label: { Text(verbatim: command).monospaced().textSelection(.enabled) }
+                    case .open(let title, let url):
+                        LabeledContent { Button(LocalizedStringKey(title)) { NSWorkspace.shared.open(url) } } label: { Text(verbatim: url.absoluteString).textSelection(.enabled) }
+                    }
+                }
+            }
+        }
+        LabeledContent {
+            Button(checking ? "Checking…" : "Check again") { Task { await check(list) } }.disabled(checking)
+        } label: { EmptyView() }
+        .task { await check(list) }
+    }
+
+    private func check(_ list: [Integration]) async {
+        checking = true; defer { checking = false }
+        var found: [String: [CheckResult]] = [:]
+        for item in list { found[item.name] = await item.runChecks() }
+        results = found
     }
 }
 

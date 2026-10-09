@@ -32,7 +32,7 @@ public struct PeerInfoData: Codable, Equatable, Sendable {
         // Protocol 2 = contract 0.7: a 0.6.x peer (protocol 1) no longer overlaps. A feature added within 0.7
         // adds a capability here; a breaking change raises the protocol (docs/ios-relay-contract.md, "Versioning").
         return PeerInfoData(appVersion: boundedText(version, maxBytes: 64) ? version : "unknown",
-            protocolMin: 2, protocolMax: 2, capabilities: ["peer-info", "host-name", "channel-sequence", "yorozu-v2", DirectCandidate.capability, AttachmentDescriptor.capability],
+            protocolMin: 2, protocolMax: 2, capabilities: ["peer-info", "host-name", "channel-sequence", "yorozu-v2", DirectCandidate.capability, AttachmentDescriptor.capability, ReadinessData.capability],
             requiredCapabilities: ["channel-sequence", "yorozu-v2"])
     }
 

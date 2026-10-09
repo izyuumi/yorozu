@@ -124,7 +124,8 @@ public actor Store {
             return s
         }
     }
-    public func topic(label: String, agent: String = "projectx") throws -> Topic {
+    /// Session key `agent:<agent>:projectx:<id>`: `projectx` is the app's namespace, fixed so existing keys keep their shape.
+    public func topic(label: String, agent: String = "yorozu") throws -> Topic {
         guard !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, label.count <= 80 else { throw ProjectError.invalid("Topic label must be 1–80 characters.") }
         let id = identifier(); let t = Topic(id: id, label: label, sessionKey: "agent:\(agent):projectx:\(id)", created: Date().timeIntervalSince1970)
         try db.write { try t.insert($0) }; return t

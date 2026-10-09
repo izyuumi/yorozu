@@ -7,12 +7,27 @@ R3 is cua (https://cua.ai) integration so Yorozu can operate the user's computer
 Workers operate the Mac through the **cua-driver MCP server**, under rules in their prompts (owner decisions, 2026-10-08):
 
 - **CuaDriver is a separate install** (`/Applications/CuaDriver.app`). Yorozu neither bundles it nor starts its daemon: `cua-driver mcp` is a proxy that launches the daemon through LaunchServices (`open -n -g -a CuaDriver --args serve`) when the socket is not answering, so the TCC grants stay with `com.trycua.driver`. The installer registers no MCP client; its `~/.local/bin/cua-driver` link is optional.
-- **Yorozu lists it as an MCP server** in its own list (`[mcp_servers]` in `config.toml`, [setup.md](setup.md#mcp-servers)), which the harness adapter mirrors into OpenClaw as `yorozu-cua-driver` ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). Yorozu adds no process and no Swift dependency.
+- **It is optional.** Computer use is the built-in `cua` integration ([Integration](#integration)), on by default and switched with `[integrations.cua] enabled`. Its `cua-driver` server joins the MCP list workers get ([setup.md](setup.md#mcp-servers)), which the harness adapter mirrors into OpenClaw as `yorozu-cua-driver` ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). Yorozu adds no process and no Swift dependency.
 - **Routing**: "operate my Mac / use app X" goes to a thinking worker (no executor), and new coding work that needs an app or a browser goes to Codex unless the user names Claude Code (continuing work keeps its executor). Thinking and Codex workers get the tools; Claude Code does not (an OpenClaw gap the owner left as is, [openclaw-integration.md](openclaw-integration.md#mcp-servers)).
-- **Rules** live in `Prompts.cuaRules(session, yolo:)` (`Prompts.swift`), included in both worker contracts. They follow [Worker rules](#worker-rules) below, with the [YOLO](#yolo-mode) variant when `general.yolo` is on. There is no separate executor or lane, so tasks in different topics or with different executors can run at once, even on the same app; see [Concurrency](#concurrency).
+- **Rules** live in the built-in `cua` integration (`Integration.cua` in `Integration.swift`, `{session}` filled per run) and reach both worker contracts through `Prompts.integrationRules` while `[integrations.cua] enabled` is true (the default). They follow [Worker rules](#worker-rules) below, with the [YOLO](#yolo-mode) variant when `general.yolo` is on. There is no separate executor or lane, so tasks in different topics or with different executors can run at once, even on the same app; see [Concurrency](#concurrency).
 
 The `cua` CLI and the cua SDK manage sandboxes, Spaces and VMs; use them for isolated computers, not for driving the host desktop.
 
+## Integration
+
+`Integration.cua` (`Integration.swift`) is data, like any integration ([architecture.md](architecture.md#mcp-servers-and-computer-use)):
+
+| Part | Value |
+|---|---|
+| MCP server | `cua-driver`: `/Applications/CuaDriver.app/Contents/MacOS/cua-driver mcp` |
+| Rules | The [worker rules](#worker-rules), with the [YOLO](#yolo-mode) variant, `{session}` replaced by the run's cua session label |
+| Checks | `/Applications/CuaDriver.app` exists; `cua-driver permissions status --json` (the app's binary, else `~/.local/bin/cua-driver`), documented upstream as read-only with no prompt, run without a shell with a 5 s timeout; a top-level `false` or `"unknown"` in its JSON is "needs attention" and names those keys |
+| Fix | Copy `cua-driver permissions grant`, for the user to run in Terminal ([Permissions](#permissions)) |
+| Switch | `[integrations.cua] enabled`, default `true` |
+
+- Checks run only during setup (the `integrations` step), while Settings › Advanced shows its Integrations section, and on Check again; nothing runs them in the background, and they never prompt. The setup step asks to keep cua on or turn it off when a check fails, defaulting to off when CuaDriver is not installed.
+- Off: `yorozu-cua-driver` is removed at the next session setup (also when an older `[mcp_servers]` still lists `cua-driver`), and the rules leave both worker contracts from the next task. On restores both.
+- A `config.toml` from before integrations whose `[mcp_servers]` had no `cua-driver` entry loads with cua off ([setup.md](setup.md#mcp-servers)).
 ## Host check (2026-10-08, read-only)
 
 | Item | Finding |
@@ -41,7 +56,7 @@ The `cua` CLI and the cua SDK manage sandboxes, Spaces and VMs; use them for iso
 ## Permissions
 
 - TCC grants belong to the CuaDriver.app daemon (`com.trycua.driver`): Accessibility for AX reads and actions, Screen Recording for screenshots and pixel actions, and direct-capture consent on Tahoe. Yorozu.app, OpenClaw and worker shells need none of them, because every action goes through the daemon socket. Starting the daemon through LaunchServices (`open -n -g -a CuaDriver --args serve`) makes macOS attribute the grants to CuaDriver rather than to the calling terminal ([quickstart][qs]).
-- `cua-driver permissions grant` is the only command that prompts. It is the owner's to run.
+- `cua-driver permissions grant` is the only command that prompts. It is the user's to run: Yorozu only offers it to copy. It needs `cua-driver` on `PATH` (the installer's optional `~/.local/bin` link); without it, run `/Applications/CuaDriver.app/Contents/MacOS/cua-driver permissions grant`.
 - Without Accessibility, stop. Without only Screen Recording, a worker may continue with AX-only actions: `get_window_state` with `include_screenshot: false`, then element-token actions.
 
 ## Targeting one window
@@ -75,7 +90,7 @@ Limits, from upstream docs and `describe` output, not yet exercised on the host:
 
 ### YOLO mode
 
-`general.yolo` in `config.toml` (owner decision, 2026-10-09; off by default, offered during onboarding with #317 and switchable in Settings › General with phase B of #312). With it on, from the next task:
+`general.yolo` in `config.toml` (owner decision, 2026-10-09; off by default, offered as a setup step (#317) and switchable in Settings › General with phase B of #312). With it on, from the next task:
 
 - Lifted: the ask-first rule for outward-facing steps the request asks for in an app (sending, posting, purchasing, deleting, submitting), and for the approval-per-use tools `kill_app`, `clipboard_write`, `set_config`, `replay_trajectory`, `start_recording`, `install_ffmpeg`, `browser_download` and `browser_set_input_files`. The worker does them when the task needs them.
 - Still asked: changing settings or credentials, and any step the request did not ask for.

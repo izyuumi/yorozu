@@ -675,3 +675,44 @@ Added in implementation:
 - On 2026-10-09 `models.list` for agent `projectx` listed `image` in the input of every configured model, the worker default `openai-pool/gpt-6-astra` included ([setup.md](../setup.md#models)).
 
 - Worker-returned files: `FileStore.adopt` refuses private folders (`~/.ssh`, `~/.gnupg`, `~/Library/Keychains`, `~/.appstoreconnect`, `~/.openclaw`, `~/.hermes`, `~/.aws`, `~/.config/gh`, the app support folder and data root) and key-like names (`*.pem`, `*.p8`, `*.key`, extensionless `id_*`). A narrowing of "any readable path is accepted" for safety: a prompt-injected worker could otherwise name a secret that then syncs to the phone. Files the user attaches are not filtered.
+
+## 2026-10-09 — Onboarding, readiness and integrations
+Source: owner decisions recorded in issue #317 ("projectx: onboarding"), Decisions section.
+
+- Audience: onboarding is designed for a new person. The owner and existing v1 users use the same flow, which skips what is already in place. Owner specifics come from `config.toml`.
+- Assisted setup: when the user clicks, Yorozu writes only its own entries into the harness config. For OpenClaw these are its agent entry, its model allow-list entries and its `yorozu-*` MCP entries, all through `config.patch`. It never touches other agents' entries, providers or logins. Installing software and logging in to providers stay manual, and Yorozu gives instructions.
+- Agent id: a new person gets the generic `yorozu`. The owner keeps `projectx` through `config.toml`.
+- Setup CLI: a Swift subcommand of the app binary (`Yorozu.app/Contents/MacOS/Yorozu setup …`), with an optional `yorozu` link on PATH. `yorozu setup --json` prints the next step: what it checked, plus any question with id, text, choices and default. The agent asks the user, then runs `yorozu setup answer <id> <value>`; the CLI applies the step and prints the next one. The website hosts a short message users paste into their existing agent (Claude Code, Codex, OpenClaw…), which then drives the CLI and asks the questions; #317 writes it in docs/setup.md and #321 publishes it. One step engine backs the CLI and the in-app window. The app-download step joins once Mac distribution (notarization) exists.
+- Declarative integrations: a plugin system without code loading; "no plugin loaders" stays. Each integration is data: its MCP servers, its worker rules, its setup steps and readiness checks, its settings and an on/off switch. CuaDriver becomes an optional integration. New integrations are added as data, shipped with the app or written in `config.toml`.
+- Harness choice: Yorozu detects the harnesses installed on the host, and each adapter declares its own read-only detection. Onboarding asks which harness is the main one; the user can switch later in Settings, a security-relevant change.
+- Block or warn: block the composer only when nothing could answer (no harness at all), with a plain reason and a "Fix…" button. Partial problems show a warning banner with "Fix…". Errors become plain language. The phone shows the same Mac readiness (0.7 contract).
+- First-launch setup window: welcome → harness → models → integrations → YOLO → start at login → pair iPhone → done. Completed steps are skipped. It reopens from Settings › General ("Run setup again…"), next to a status row ("Ready" / "N items need attention").
+- Pairing: v2 claims the https pairing link again (`applinks:yorozu.yumi.to`), so the system Camera opens Yorozu; v1 and v2 share the iOS bundle id, so the website's AASA already covers v2. The Mac shows the key fingerprint and the code as text. Wording matches on both devices.
+- Integration checks: each integration declares read-only checks the app may run: a file or app exists, a socket answers, or a status command explicitly marked read-only (such as `cua-driver permissions status --json`). Checks run only during setup, while Settings is open, and on "Check again". Grants stay manual, with a copy button for `cua-driver permissions grant`.
+- Migration of v1 users to v2 is a separate future issue (#322); onboarding assumes a fresh install.
+- Coding workers: opt-in under Settings › Advanced, on one configured repository (`dev_repo` in `config.toml`, empty by default), with today's contract. Settings › Advanced also shows the harness's coding executors and their readiness. Coding on any repository is a future issue.
+- YOLO and start at login are onboarding steps; the settings themselves come from #312.
+- Setup completion is stored in `config.toml`, never in v1's `onboardingCompleted` UserDefaults key.
+
+## 2026-10-09 — Onboarding: implementer readings (not owner decisions)
+Source: the plan comment on issue #317 (branch `onboarding`, built as `ob-agent`, `ob-integrations`, `ob-ios`, then the setup core). The open questions were taken at their proposed defaults; the owner has not answered them, and [status.md](../status.md#open-items) keeps them as an open item.
+
+1. Role models: usable means listed by `models.list {agentId, view: "configured"}` and not `available: false`. A role model OpenClaw knows but the agent's policy does not allow is added to Yorozu's own `agents.entries.<agent>.modelPolicy.allow`, seeded from the policy in force (the entry's own list, else `agents.defaults.modelPolicy.allow`), since an explicit per-agent list replaces the defaults for that agent. An empty policy, which allows every model, gets no list. `agents.defaults` is never written. Whether `sessions.create` with each role model passes on the running build has not been checked live.
+2. The agent workspace while coding is off: an empty Yorozu-owned folder, `<data root>/openclaw-workspace` (mode 0700, created just before the write). Once `dev_repo` is set, the workspace is that repository.
+3. The base branch: `[harness] dev_base`, set to `projectx` in the owner's file; empty means the branch checked out in `dev_repo` when the coding work starts.
+4. Coding requests while coding is off: the routing policy offers no executor and tells the secretary to reply that coding is off and can be turned on in Settings › Advanced; a coding decision is refused with that notice.
+5. An installed harness whose Gateway is down warns rather than blocks: the message is still stored, and the failure shows in plain language.
+6. Readiness timing: the main harness's detection plus Gateway `health`, once at launch and again after any Gateway call fails. Integration checks run only during setup, while Settings is open, and on "Check again".
+7. The phone composer while the Mac is Blocked follows the Mac rule: off.
+8. CLI steps that need the Gateway while the OpenClaw exec markers are set: the CLI does not attempt them and reports "finish this in the Yorozu app" with where. The markers are never worked around.
+9. The PATH link is `~/.local/bin/yorozu` (user-writable, no sudo, the folder CuaDriver uses), created only after the user says yes.
+10. User-defined integrations in `config.toml` get file and socket checks only; command checks stay limited to built-in integrations.
+11. Executor readiness: "found" or "not found" for each binary from the launch PATH plus `~/.local/bin` and the Homebrew folders, provider auth from `models.authStatus`, and the sign-in commands with copy buttons. An executor is never called "logged in".
+
+Added in implementation:
+- The pairing code is the full pairing link (`https://yorozu.yumi.to/pair#…`, the QR's own content), which the phone's manual entry takes; there is no short-code protocol.
+- The Mac key fingerprint (`QrPayload.fingerprint`) is the Mac key's first 8 bytes in uppercase hex, in groups of two bytes (`3F9A 1C07 B2E4 55D0`), the same on both devices.
+- Roster ownership: OpenClaw accepts a second agent entry only in an explicit agent list. When Yorozu's entry is missing and the list is not explicit (`agents.ownership` is not `"explicit"` and no entry has `default: true`), Yorozu writes nothing, never writes `agents.ownership`, and offers `openclaw agents add <agent> --non-interactive --workspace <folder>` to copy.
+- Integrations and `[mcp_servers]` coexist: workers get `[mcp_servers]` minus the servers of disabled integrations, plus the servers of enabled integrations, with `[mcp_servers]` winning on a name clash. A legacy `config.toml` whose `[mcp_servers]` has no `cua-driver` entry and that sets no `[integrations.cua] enabled` loads with cua off, since removing that entry used to mean computer use off.
+- An existing agent entry that differs from the expected shape is shown as a list of changes and written only after the user confirms; the write is refused if OpenClaw's config changed since the user saw it.
+- The setup CLI exits 2 for usage, an unknown id, an invalid value or an app-only step, and 1 for other failures, with `{"error": …}` under `--json`.

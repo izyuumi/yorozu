@@ -10,6 +10,35 @@ public struct HermesReadiness: Sendable, Equatable {
     public var ready: Bool { problems.isEmpty }
 }
 
+/// Hermes's setup seam (#317): `HermesHarness.readiness()` as readiness items. Its setup steps are #318's
+/// (`HermesProfiles`); here only detection.
+public struct HermesSetup: HarnessSetup {
+    public var kind: Config.HarnessKind { .hermes }
+    public var title: String { "Hermes Agent" }
+    public var steps: [String] { ["harness"] }
+    public var url: String, agent: String
+    public init(url: String, agent: String) { self.url = url; self.agent = agent }
+    public var installed: Bool { HermesHarness.launcher() != nil }
+    public func detect() async -> HarnessDetection {
+        var d = HarnessDetection(kind: kind,title: title)
+        guard let harness = try? HermesHarness(url: url,agent: agent) else {
+            d.items = [Readiness.Item(id: "hermes.url",title: String(localized: "Hermes's address in config.toml isn't usable"),detail: url,severity: .warning,fix: .step("harness"))]; return d
+        }
+        let r = await harness.readiness()
+        d.installed = r.launcher != nil; d.version = r.version; d.reachable = d.installed ? r.version != nil : nil
+        guard let launcher = r.launcher else {
+            d.items = [Readiness.Item(id: "hermes.installed",title: String(localized: "Hermes Agent isn't installed"),detail: r.problems.joined(separator: "\n"),severity: .blocking,fix: .open(title: String(localized: "How to install Hermes Agent"),url: URL(string: "https://hermes-agent.nousresearch.com")!))]; return d
+        }
+        d.items = [Readiness.Item(id: "hermes.installed",title: String(localized: "Hermes Agent is installed"),detail: launcher + (r.version.map { " " + $0 } ?? ""),severity: .ok)]
+            + r.problems.enumerated().map { Readiness.Item(id: "hermes.problem.\($0.offset)",title: String(localized: "Hermes Agent isn't ready"),detail: $0.element,severity: .warning,fix: .step("harness")) }
+            + r.warnings.enumerated().map { Readiness.Item(id: "hermes.warning.\($0.offset)",title: String(localized: "This Hermes Agent version hasn't been tested with Yorozu"),detail: $0.element,severity: .warning) }
+        return d
+    }
+    public func executors(_ settings: HarnessSettings) -> [CodingExecutor] {
+        ((try? HermesHarness(url: url,agent: agent,settings: { settings }))?.executors ?? []).map { CodingExecutor(executor: $0,binary: "hermes",path: HermesHarness.launcher()) }
+    }
+}
+
 /// Nous Research's Hermes Agent through its loopback API server (#318; docs/hermes-integration.md). Roles run as fresh
 /// one-shot runs in profile `yorozu-roles`; workers run in `yorozu-worker`, one session per topic (`yorozu-<topic id>`)
 /// and one per topic for coding (`yorozu-<topic id>-hermes`). Every run names provider and model, and a run served by any
@@ -34,9 +63,11 @@ public struct HermesHarness: Harness {
     let audit: RequestAudit?
     private let state = HermesState()
 
+    /// `[harness] agent`, only for topic keys, so topics made here continue after a switch to OpenClaw.
+    public let agentID: String
     /// `url`: the Hermes API server root (loopback only); profiles are served under `/p/<profile>/`.
-    public init(url: String = "http://127.0.0.1:8642", audit: RequestAudit? = nil, settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) throws {
-        client = try HermesClient(url); self.audit = audit; self.settings = settings
+    public init(url: String = "http://127.0.0.1:8642", agent: String = "yorozu", audit: RequestAudit? = nil, settings: @escaping @Sendable () -> HarnessSettings = { HarnessSettings() }) throws {
+        client = try HermesClient(url); agentID = agent; self.audit = audit; self.settings = settings
     }
 
     public var executors: [Executor] {
@@ -47,11 +78,15 @@ public struct HermesHarness: Harness {
 
     // MARK: Readiness
 
+    /// The hermes launcher on PATH or at `~/.local/bin/hermes`.
+    static func launcher() -> String? {
+        let fm = FileManager.default, path = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { URL(fileURLWithPath: String($0)).appendingPathComponent("hermes").path }
+        return (path + [fm.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/hermes").path]).first { fm.isExecutableFile(atPath: $0) }
+    }
     public func readiness() async -> HermesReadiness {
         var r = HermesReadiness(), fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser, hermes = home.appendingPathComponent(".hermes")
-        let path = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { URL(fileURLWithPath: String($0)).appendingPathComponent("hermes").path }
-        r.launcher = (path + [home.appendingPathComponent(".local/bin/hermes").path]).first { fm.isExecutableFile(atPath: $0) }
+        let hermes = fm.homeDirectoryForCurrentUser.appendingPathComponent(".hermes")
+        r.launcher = Self.launcher()
         if r.launcher == nil { r.problems.append("The hermes launcher was not found on PATH or at ~/.local/bin/hermes. Install Hermes Agent.") }
         if !fm.fileExists(atPath: hermes.path) { r.problems.append("~/.hermes does not exist. Install Hermes Agent.") }
         for p in [Self.workerProfile, Self.rolesProfile] {
@@ -399,7 +434,7 @@ public struct HermesHarness: Harness {
 
     func code(_ input: WorkerInput, settings s: HarnessSettings, update: @escaping @Sendable (StreamUpdate) async throws -> Void) async throws -> WorkerOutput {
         guard let repo = s.devRepo else { throw ProjectError.blocked("No repository is set for coding work. Set a repository in Settings › Advanced.") }
-        let executor = executors[0], session = "yorozu-\(input.topic.id)-\(executor.id)"
+        let s = try s.resolvingBase(repo), executor = executors[0], session = "yorozu-\(input.topic.id)-\(executor.id)"
         let model = s.codingModels[executor.id].flatMap { $0.isEmpty ? nil : $0 } ?? s.workerModel
         try await ensureSession(session, title: input.topic.label + " · coding", model: model)
         // No per-session working folder under Hermes (open question 2): the worker makes and reuses its own worktree.

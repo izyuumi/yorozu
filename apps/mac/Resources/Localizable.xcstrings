@@ -1,6 +1,1201 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Yorozu needs its own OpenClaw agent, not your main one. Set [harness] agent to a dedicated id." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu にはメインとは別の専用の OpenClaw エージェントが必要です。[harness] agent に専用の ID を設定してください。"
+          }
+        }
+      }
+    },
+    "Nothing answers at %@; check [harness] gateway_url" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ で応答がありません。[harness] gateway_url を確認してください"
+          }
+        }
+      }
+    },
+    "OpenClaw's command line isn't found; setup writes and some features are unavailable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw のコマンドラインが見つかりません。セットアップの書き込みと一部の機能は使えません"
+          }
+        }
+      }
+    },
+    "Yorozu's agent %@ is set up in OpenClaw" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のエージェント %@ は OpenClaw に設定済みです"
+          }
+        }
+      }
+    },
+    "Yorozu's agent %@ differs from what Yorozu expects" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のエージェント %@ の設定が想定と異なります"
+          }
+        }
+      }
+    },
+    "Add Yorozu's agent with OpenClaw first" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "先に OpenClaw で Yorozu のエージェントを追加してください"
+          }
+        }
+      }
+    },
+    "OpenClaw's config couldn't be read" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw の設定を読み込めませんでした"
+          }
+        }
+      }
+    },
+    "OpenClaw's models couldn't be read" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw のモデルを読み込めませんでした"
+          }
+        }
+      }
+    },
+    "OpenClaw doesn't allow %@ for Yorozu" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw は Yorozu に %@ を許可していません"
+          }
+        }
+      }
+    },
+    "No model is set for %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ のモデルが設定されていません"
+          }
+        }
+      }
+    },
+    "%@: %@ can't be used right now" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@: %2$@ は今は使えません"
+          }
+        }
+      }
+    },
+    "%@: signed in" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: サインイン済み"
+          }
+        }
+      }
+    },
+    "%@: sign-in expires soon" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: まもなくサインインの期限が切れます"
+          }
+        }
+      }
+    },
+    "%@: sign-in expired" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: サインインの期限切れ"
+          }
+        }
+      }
+    },
+    "%@: not signed in" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: サインインしていません"
+          }
+        }
+      }
+    },
+    "Worker" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ワーカー"
+          }
+        }
+      }
+    },
+    "Review" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "レビュー"
+          }
+        }
+      }
+    },
+    "Coding (%@)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コーディング（%@）"
+          }
+        }
+      }
+    },
+    "Hermes's address in config.toml isn't usable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "config.toml の Hermes のアドレスが使えません"
+          }
+        }
+      }
+    },
+    "Hermes Agent isn't ready" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes Agent の準備ができていません"
+          }
+        }
+      }
+    },
+    "This Hermes Agent version hasn't been tested with Yorozu" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Hermes Agent のバージョンは Yorozu で未検証です"
+          }
+        }
+      }
+    },
+    "%@ is off" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ はオフです"
+          }
+        }
+      }
+    },
+    "%@: needs attention" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: 要対応"
+          }
+        }
+      }
+    },
+    "%@: not found" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@: 見つかりません"
+          }
+        }
+      }
+    },
+    "Open Yorozu from Finder and finish setup there" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finder から Yorozu を開いて、そこでセットアップを完了してください"
+          }
+        }
+      }
+    },
+    "Welcome" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ようこそ"
+          }
+        }
+      }
+    },
+    "Computer use" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コンピュータ操作"
+          }
+        }
+      }
+    },
+    "YOLO" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "YOLO"
+          }
+        }
+      }
+    },
+    "yorozu command" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "yorozu コマンド"
+          }
+        }
+      }
+    },
+    "Settings › Advanced › Harness connection" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 › 詳細設定 › ハーネス接続"
+          }
+        }
+      }
+    },
+    "Settings › General › Start at login" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 › 一般 › ログイン時に起動"
+          }
+        }
+      }
+    },
+    "Settings › Devices › Pair iPhone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 › デバイス › iPhone をペアリング"
+          }
+        }
+      }
+    },
+    "Setup › %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "セットアップ › %@"
+          }
+        }
+      }
+    },
+    "Yorozu was started from an agent's shell; open it from Finder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu がエージェントのシェルから起動されました。Finder から開いてください"
+          }
+        }
+      }
+    },
+    "Yorozu is already running" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu はすでに起動しています"
+          }
+        }
+      }
+    },
+    "Attachments are off this launch" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今回の起動では添付ファイルは使えません"
+          }
+        }
+      }
+    },
+    "Still on %@: work started there is running. Relaunch Yorozu once it finishes to switch to %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだ %1$@ を使っています。そこで始めた作業が実行中です。終わったら Yorozu を再起動すると %2$@ に切り替わります。"
+          }
+        }
+      }
+    },
+    "Checking" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認中"
+          }
+        }
+      }
+    },
+    "Blocked" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用不可"
+          }
+        }
+      }
+    },
+    "Blocking" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用不可"
+          }
+        }
+      }
+    },
+    "Current step" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "現在のステップ"
+          }
+        }
+      }
+    },
+    "To do" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未完了"
+          }
+        }
+      }
+    },
+    "Set up Yorozu" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のセットアップ"
+          }
+        }
+      }
+    },
+    "A few checks before the first message. Anything already in place is skipped." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最初のメッセージの前にいくつか確認します。すでに済んでいる項目は飛ばします。"
+          }
+        }
+      }
+    },
+    "Connect to the Gateway" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway に接続"
+          }
+        }
+      }
+    },
+    "Pair your iPhone" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone をペアリング"
+          }
+        }
+      }
+    },
+    "Skip for Now" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "あとで"
+          }
+        }
+      }
+    },
+    "Continue" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "続ける"
+          }
+        }
+      }
+    },
+    "Step %lld of %lld" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%2$lld ステップ中 %1$lld"
+          }
+        }
+      }
+    },
+    "Optional" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "任意"
+          }
+        }
+      }
+    },
+    "Main harness" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メインのハーネス"
+          }
+        }
+      }
+    },
+    "Answers every message and runs the workers." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "すべてのメッセージに答え、ワーカーを動かします。"
+          }
+        }
+      }
+    },
+    "Switch the main harness?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メインのハーネスを切り替えますか？"
+          }
+        }
+      }
+    },
+    "Switch to %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ に切り替える"
+          }
+        }
+      }
+    },
+    "Your messages, memory excerpts and workers' tasks then go to this harness. The switch applies at the next launch, once running work finishes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以後、メッセージ、メモリの抜粋、ワーカーのタスクはこのハーネスに送られます。切り替えは次回の起動時、実行中の作業が終わってから適用されます。"
+          }
+        }
+      }
+    },
+    "Allow coding work" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コーディング作業を許可"
+          }
+        }
+      }
+    },
+    "Coding workers change code only in this repository, each in its own worktree. Off: Yorozu says coding is off." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コーディングワーカーはこのリポジトリだけを、それぞれ専用のワークツリーで変更します。オフのとき、Yorozu はコーディングがオフだと伝えます。"
+          }
+        }
+      }
+    },
+    "Found" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "見つかりました"
+          }
+        }
+      }
+    },
+    "Not found" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "見つかりません"
+          }
+        }
+      }
+    },
+    "Copy Sign-In Command" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "サインインコマンドをコピー"
+          }
+        }
+      }
+    },
+    "Not on PATH, ~/.local/bin or Homebrew" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PATH、~/.local/bin、Homebrew にありません"
+          }
+        }
+      }
+    },
+    "Sign in where the Gateway runs: `%@`" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway が動いている環境でサインイン: `%@`"
+          }
+        }
+      }
+    },
+    "Found means the tool is on this Mac. Yorozu can't tell whether it is signed in." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「見つかりました」はツールがこの Mac にあるという意味です。サインイン済みかどうかは Yorozu には分かりません。"
+          }
+        }
+      }
+    },
+    "Run Setup Again…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "セットアップをもう一度実行…"
+          }
+        }
+      }
+    },
+    "Setup: Ready" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "セットアップ: 準備完了"
+          }
+        }
+      }
+    },
+    "Setup: checking…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "セットアップ: 確認中…"
+          }
+        }
+      }
+    },
+    "1 item needs attention" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 件の項目に対応が必要です"
+          }
+        }
+      }
+    },
+    "%lld items need attention" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 件の項目に対応が必要です"
+          }
+        }
+      }
+    },
+    "Checking %@…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ を確認中…"
+          }
+        }
+      }
+    },
+    "Fix…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修正…"
+          }
+        }
+      }
+    },
+    "Open setup at this step" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この手順でセットアップを開く"
+          }
+        }
+      }
+    },
+    "Change Yorozu's agent entry in OpenClaw?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw の Yorozu のエージェント設定を変更しますか？"
+          }
+        }
+      }
+    },
+    "Apply Changes" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "変更を適用"
+          }
+        }
+      }
+    },
+    "Go to Step" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この手順へ"
+          }
+        }
+      }
+    },
+    "Yorozu talks to the Gateway directly once this Mac is enrolled, with live progress and tool names. Until then it uses the openclaw command line." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac を登録すると、Yorozu は Gateway と直接やり取りし、進行状況やツール名をリアルタイムで表示します。それまでは openclaw コマンドラインを使います。"
+          }
+        }
+      }
+    },
+    "Gateway bootstrap secret" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway のブートストラップシークレット"
+          }
+        }
+      }
+    },
+    "Used once to enroll this Mac. Not saved and never sent to a model." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac の登録に一度だけ使います。保存されず、モデルにも送られません。"
+          }
+        }
+      }
+    },
+    "Enrolling needs a live run on the native transport (Settings › Advanced)." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "登録にはネイティブ接続でのライブ実行が必要です（設定 › 詳細）。"
+          }
+        }
+      }
+    },
+    "Approve this Mac in OpenClaw" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw でこの Mac を承認"
+          }
+        }
+      }
+    },
+    "OpenClaw may ask you to approve the new device: list pending devices with `openclaw devices list`, then approve Yorozu's." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw が新しいデバイスの承認を求めることがあります。`openclaw devices list` で承認待ちのデバイスを表示し、Yorozu のものを承認してください。"
+          }
+        }
+      }
+    },
+    "Off by default, which is safer. When on, workers take the outward-facing steps you ask for (sending, posting, buying, deleting) without asking first. Change it any time in Settings › General." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "既定ではオフで、そのほうが安全です。オンにすると、ワーカーは依頼された外向きの操作（送信、投稿、購入、削除）を確認せずに実行します。設定 › 一般 でいつでも変更できます。"
+          }
+        }
+      }
+    },
+    "On by default, so paired phones and scheduled jobs can reach Yorozu after a restart." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "既定ではオンです。再起動後もペアリングした iPhone やスケジュールされたジョブが Yorozu に届きます。"
+          }
+        }
+      }
+    },
+    "Scan the code with the iPhone Camera. You can also pair later in Settings › Devices." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone のカメラでコードを読み取ります。あとで 設定 › デバイス からペアリングすることもできます。"
+          }
+        }
+      }
+    },
+    "Yorozu's agent entry in OpenClaw differs from what Yorozu expects. Continue asks before changing it:" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw の Yorozu のエージェント設定が想定と異なります。「続ける」を押すと、変更前に確認します:"
+          }
+        }
+      }
+    },
+    "Continue writes only Yorozu's own entries into OpenClaw's config:" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「続ける」を押すと、OpenClaw の設定に Yorozu 自身の項目だけを書き込みます:"
+          }
+        }
+      }
+    },
+    "Nothing else in OpenClaw's config changes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw の設定のほかの部分は変わりません。"
+          }
+        }
+      }
+    },
+    "Add" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "追加"
+          }
+        }
+      }
+    },
+    "Not Now" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今はしない"
+          }
+        }
+      }
+    },
+    "yorozu command (optional)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "yorozu コマンド（任意）"
+          }
+        }
+      }
+    },
+    "Adds ~/.local/bin/yorozu, so Terminal and agents can run `yorozu setup`." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "~/.local/bin/yorozu を追加し、ターミナルやエージェントから `yorozu setup` を実行できるようにします。"
+          }
+        }
+      }
+    },
+    "OpenClaw or Node.js isn't installed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw または Node.js がインストールされていません"
+          }
+        }
+      }
+    },
+    "The OpenClaw Gateway isn't running. Start it with `openclaw gateway run`." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw Gateway が起動していません。`openclaw gateway run` で起動してください。"
+          }
+        }
+      }
+    },
+    "The OpenClaw Gateway isn't answering" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw Gateway が応答していません"
+          }
+        }
+      }
+    },
+    "The OpenClaw Gateway is running" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw Gateway は動作しています"
+          }
+        }
+      }
+    },
+    "OpenClaw is installed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw はインストール済みです"
+          }
+        }
+      }
+    },
+    "Yorozu's agent isn't set up in OpenClaw" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のエージェントが OpenClaw に設定されていません"
+          }
+        }
+      }
+    },
+    "Yorozu's agent has the expected settings" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のエージェントは想定どおりに設定されています"
+          }
+        }
+      }
+    },
+    "This Mac is connected to the Gateway directly" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac は Gateway に直接接続しています"
+          }
+        }
+      }
+    },
+    "This Mac isn't enrolled with the Gateway yet" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac はまだ Gateway に登録されていません"
+          }
+        }
+      }
+    },
+    "Gateway checks are left to the Yorozu app" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway の確認は Yorozu アプリで行います"
+          }
+        }
+      }
+    },
+    "Models are checked once the harness answers" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルはハーネスが応答してから確認します"
+          }
+        }
+      }
+    },
+    "Models are checked once Yorozu's agent is set up" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルは Yorozu のエージェントを設定してから確認します"
+          }
+        }
+      }
+    },
+    "Hermes Agent isn't installed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes Agent がインストールされていません"
+          }
+        }
+      }
+    },
+    "Hermes Agent is installed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes Agent はインストール済みです"
+          }
+        }
+      }
+    },
+    "Copy start command" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "起動コマンドをコピー"
+          }
+        }
+      }
+    },
+    "Copy sign-in command" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "サインインコマンドをコピー"
+          }
+        }
+      }
+    },
+    "How to install OpenClaw" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw のインストール方法"
+          }
+        }
+      }
+    },
+    "How to install Hermes Agent" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes Agent のインストール方法"
+          }
+        }
+      }
+    },
+    "Copy command" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コマンドをコピー"
+          }
+        }
+      }
+    },
+    "OpenClaw doesn’t allow %@ for Yorozu." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw は Yorozu に %@ の使用を許可していません。"
+          }
+        }
+      }
+    },
+    "OpenClaw or Node.js isn’t installed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw または Node.js がインストールされていません。"
+          }
+        }
+      }
+    },
+    "The OpenClaw Gateway isn’t running. Start it with `openclaw gateway run`." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw Gateway が起動していません。`openclaw gateway run` で起動してください。"
+          }
+        }
+      }
+    },
+    "Yorozu is already running." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu はすでに起動しています。"
+          }
+        }
+      }
+    },
+    "Yorozu was started from an agent’s shell; open it from Finder." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu がエージェントのシェルから起動されました。Finder から開いてください。"
+          }
+        }
+      }
+    },
+    "Yorozu’s agent isn’t set up in OpenClaw." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のエージェントが OpenClaw に設定されていません。"
+          }
+        }
+      }
+    },
+    "Yorozu’s memory can’t load %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のメモリが %@ を読み込めません。"
+          }
+        }
+      }
+    },
     "Off" : {
       "localizations" : {
         "ja" : {
@@ -27,16 +1222,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "アドレス"
-          }
-        }
-      }
-    },
-    "Attachments are off: %@" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "添付ファイルは使えません: %@"
           }
         }
       }
@@ -537,16 +1722,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "コピーできませんでした"
-          }
-        }
-      }
-    },
-    "Copy link" : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "リンクをコピー"
           }
         }
       }
@@ -1055,16 +2230,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "このスクリプトをこのまま承認するには「yes」と送ってください。"
-          }
-        }
-      }
-    },
-    "Scan with Yorozu on your iPhone. Each code works once." : {
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iPhoneのYorozuで読み取ってください。各コードは1回だけ使えます。"
           }
         }
       }
@@ -2529,12 +3694,12 @@
         }
       }
     },
-    "Not set: coding work ends with a notice." : {
+    "Not set: coding work is off." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未設定: コーディング作業はお知らせを出して終了します。"
+            "value" : "未設定: コーディング作業はオフです。"
           }
         }
       }
@@ -3215,6 +4380,170 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ファイルはもう利用できません"
+          }
+        }
+      }
+    },
+    "Scan with the iPhone Camera" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone のカメラで読み取ってください"
+          }
+        }
+      }
+    },
+    "Or open Yorozu on the iPhone, tap Enter code manually, and paste the code. Check that the Mac key matches what the phone shows." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "または iPhone の Yorozu で「コードを手動入力」をタップしてコードを貼り付けます。Mac の鍵が iPhone の表示と一致することを確認してください。"
+          }
+        }
+      }
+    },
+    "Code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コード"
+          }
+        }
+      }
+    },
+    "Mac key" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac の鍵"
+          }
+        }
+      }
+    },
+    "Copy Link" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リンクをコピー"
+          }
+        }
+      }
+    },
+    "Integrations" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "連携"
+          }
+        }
+      }
+    },
+    "Computer use (CuaDriver)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コンピュータ操作（CuaDriver）"
+          }
+        }
+      }
+    },
+    "CuaDriver app" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CuaDriver アプリ"
+          }
+        }
+      }
+    },
+    "CuaDriver permissions" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CuaDriver の権限"
+          }
+        }
+      }
+    },
+    "Copy grant command" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "許可コマンドをコピー"
+          }
+        }
+      }
+    },
+    "OK" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "Needs attention" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要対応"
+          }
+        }
+      }
+    },
+    "Not working" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "動作していません"
+          }
+        }
+      }
+    },
+    "Check again" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再確認"
+          }
+        }
+      }
+    },
+    "Checking…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認中…"
+          }
+        }
+      }
+    },
+    "Checks run only while Settings is open or when you click Check again. Yorozu never grants permissions itself: run the copied command in Terminal." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認は設定を開いている間と「再確認」をクリックしたときだけ実行します。Yorozu が権限を許可することはありません。コピーしたコマンドをターミナルで実行してください。"
           }
         }
       }

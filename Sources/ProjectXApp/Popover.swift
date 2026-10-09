@@ -8,7 +8,6 @@ struct PopoverContent: View {
     @ObservedObject var model: AppModel
     let openSettings: () -> Void
     @StateObject private var search = ChatSearch()
-    private enum Metrics { static let dot: CGFloat = 6 }
     var body: some View {
         VStack(alignment: .leading,spacing: 0) {
             header
@@ -24,9 +23,18 @@ struct PopoverContent: View {
                 }.frame(maxWidth: .infinity,alignment: .leading).padding(12)
                     .background(Color.orange.opacity(0.18)).accessibilityElement(children: .contain)
             }
-            if let notice = model.harnessNotice {
-                Text(notice).font(.callout).foregroundStyle(ChatPalette.warning).lineLimit(2).truncationMode(.tail).help(notice)
-                    .textSelection(.enabled).padding(.horizontal).padding(.bottom,6)
+            // Warnings: the first item in plain words with Fix…; Blocked shows in the composer instead.
+            if let r = model.readiness, case .attention = r.state, let item = r.problem {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(ChatPalette.warning).accessibilityHidden(true)
+                    VStack(alignment: .leading,spacing: 2) {
+                        Text(verbatim: item.title).lineLimit(2).truncationMode(.tail).help(item.detail.isEmpty ? item.title : item.detail)
+                        if r.count > 1 { Text(r.summary).font(.caption).foregroundStyle(.secondary) }
+                    }.frame(maxWidth: .infinity,alignment: .leading)
+                    if let fix = item.fix { FixButton(model: model,fix: fix).controlSize(.small) } // the files notice has nothing to fix
+                }
+                .font(.callout).padding(.horizontal,12).padding(.vertical,8)
+                .background(ChatPalette.warning.opacity(0.12)).accessibilityElement(children: .contain)
             }
             if search.shown { SearchBar(search: search).padding(.horizontal,10).padding(.bottom,8) }
             Divider()
@@ -61,7 +69,8 @@ struct PopoverContent: View {
         }.padding(.leading,16).padding(.trailing,10).padding(.top,10).padding(.bottom,2)
     }
 
-    /// One caption line: the CLI fallback with Connect…, else startup progress or the last error, else the harness in use.
+    /// One caption line: the CLI fallback with Connect…, else startup progress or the last error, else the readiness dot
+    /// with the harness in use when Ready, or the readiness summary.
     @ViewBuilder private var statusLine: some View {
         HStack(spacing: 6) {
             if let notice = model.nativeNotice {
@@ -70,10 +79,11 @@ struct PopoverContent: View {
                 Spacer()
                 Button("Connect…") { model.showEnrollment(); openSettings() }.buttonStyle(.link)
             } else if let status = model.status {
-                Text(status).lineLimit(1).truncationMode(.tail).help(status).textSelection(.enabled)
+                Text(status).lineLimit(1).truncationMode(.tail).help(model.statusDetail ?? status).textSelection(.enabled)
             } else if let label = model.harnessLabel {
-                Circle().fill(.green).frame(width: Metrics.dot,height: Metrics.dot).accessibilityHidden(true)
-                Text(label).lineLimit(1).truncationMode(.tail)
+                let r = model.readiness
+                ReadinessDot(state: r?.state)
+                Text(r.map { $0.state == .ready ? label : $0.summary } ?? String(localized: "Checking \(label)…")).lineLimit(1).truncationMode(.tail)
             }
         }.font(.caption).foregroundStyle(.secondary).padding(.horizontal,16).padding(.bottom,8)
     }
