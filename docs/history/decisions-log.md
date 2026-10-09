@@ -632,3 +632,44 @@ Added in implementation:
 - The phone's candidates refresh only at the next peer-info exchange: a Mac whose addresses change publishes them in its own diagnostics at once but sends nothing until a phone's next session.
 - Close codes 4000 sleeping, 4001 unauthorized, 4002 superseded, 4003 over 1 MiB; at most 8 connections wait for a join on the Mac, each for 10 s; a failed listener restarts from 2 s, doubling to 60 s.
 - The phone's toggle uses the new `UserDefaults` key `directPathEnabledV2`, never v1's `directConnectionEnabled`; its candidates live in the Keychain pairing record.
+
+## 2026-10-09 — Attachments in both directions
+Source: owner decisions recorded in issue #316 ("projectx: attachments in both directions"), Decisions section. This supersedes the 2026-10-07 16:27 JST R1 input scope ("conversation and pasted text only"; document import outside scope).
+
+- Any file type. Both directions in one issue, built in this order: user → agents, then workers → user. Phone and Mac together, in the 0.7 contract.
+- Limits: 50 MB per file, 10 files per message. Photos are downscaled to 2048 px by default, with a "Send original" option.
+- Mac offline: text uses the relay buffer. Attachments wait on the phone and upload when the Mac is reachable (the buffer is only 5 MiB).
+- Files reach workers as paths: one line `Attached document: <path>` per file in the worker input. Images also go in as direct model input when the worker's model supports images; the per-call `models.list` `input` check is the source of truth, otherwise the path alone.
+- Storage: visible, at `~/Yorozu/files/<YYYY-MM>/<YYYY-MM-DD_HHMMSS>_<sanitized original name>`, with a `_2` suffix on a clash. Never in the repo checkout or in worktrees.
+- Workers return files flexibly, in any of three forms: a `files` array in the thinking worker's final JSON, a `Files:` section in a coding reply, or OpenClaw `MEDIA:<path>` lines. Any readable path is accepted. Yorozu copies each file into `~/Yorozu/files/` with the dated name and attaches it to the result, under the same limits.
+- Phone downloads: previews (thumbnails, file rows) download automatically. Full files download on tap and open in Quick Look or the share sheet. Opened files stay in the phone cache.
+- Secretary: sees only a description (name, type, size, path), never contents. Attachment-only messages are allowed; the secretary acts when the context is clear, or asks one short question.
+- Privacy: no extra step. Attachments are treated like typed text.
+- Memory: only through the conversation. Extraction reads message text; a note may cite an attached file as its source.
+- Retention: files are kept forever and deleted by hand in Finder. A missing file shows "File no longer available".
+- Sub-chat images: a sub-chat may show intermediate images that workers choose to share, synced to the phone. Screen content never goes into memory. This amends the cua rule that kept screen content out of progress messages; accessibility-tree dumps and clipboard contents stay out.
+- OpenClaw's own media copies are left alone (no `attachments.ttlHours`).
+- Composer methods now: on the Mac, drag-and-drop, paste and a file picker; on the phone, photo library, camera, Files and paste. The iPhone share sheet is a separate future issue (#322).
+- Long text: the 6,000-byte message cap stays. A longer draft offers "Send as text file" (#311 Q12).
+
+## 2026-10-09 — Attachments: implementer readings (not owner decisions)
+Source: the plan comment on issue #316 (branch `attachments`, built as `at-store`, `at-harness`, `at-wire`, `at-macui` and `at-ios`). The open questions were taken at their proposed defaults; the owner has not answered them, and [status.md](../status.md#open-items) keeps them as an open item.
+
+1. The text of a message with files waits on the phone with its files, as one unit, so the secretary never routes a caption without its file. It goes as `attachment_commit` once the files are uploaded, never as a `message` through the relay buffer; a later text-only message may go first.
+2. No per-message total beyond 10 files of 50 MB each.
+3. The 2048 px downscale applies to every image, picked from Files or Finder or dropped as well as photos, camera shots and pasted images, each with its own "Send original". PNG, JPEG, GIF and WebP within 2048 px go as they are; anything larger, and HEIC or TIFF at any size, becomes a JPEG at quality 0.85 with the EXIF orientation applied.
+4. Workers write files they make for the user in a scratch folder outside any repo, `$TMPDIR/yorozu-scratch/<topic id>/` (the app's temporary folder, named as an absolute path in both contracts), because a Codex `workspace` sandbox can write only its worktree and the temporary folders. Yorozu copies returned files into its store, so nothing there needs to last.
+5. `~/Yorozu/files` is not added to OpenClaw's allowed media roots; workers get inline images plus the path, and a thinking worker's shell reads any path.
+6. Intermediate sub-chat images are standalone `MEDIA:<absolute path>` lines in a worker's committed progress messages, images only; the lines leave the event body ("Shared an image." when nothing else is left) and the images are attached to that worker event.
+
+Added in implementation:
+- 50 MB is decimal (50,000,000 bytes, as Finder counts), the same on both devices and on the wire.
+- The file store refuses a root that resolves inside a git checkout or worktree; attachments are then off for that launch and the status line says why. Directories are 0700 and files 0600. `PROJECTX_DATA` and fixture runs keep files in `<data root>/files/`.
+- A returned file past the 10th, over 50 MB, missing or unreadable is skipped with a one-line note at the end of the result. Returned-file references are stripped from the stored text ("See the attached file." when nothing else is left); URLs stay text, and a relative path in a coding reply resolves against its worktree. A result superseded by a follow-up turn keeps its files on the `superseded_result` event.
+- Images go inline only as PNG, JPEG, GIF or WebP of at most 6 MiB, within an encoded-params budget of 7,600,000 bytes on the native transport and 600,000 on the CLI transport; memory steps send none. Hermes gets paths only.
+- A steer's files are linked to the work and their `Attached document:` lines ride in the amendment text, so a live steer and a follow-up turn both get them. A correction moves the mistaken work's files to the intended work.
+- The wire adds capability `attachments-v1` inside contract 0.7, with no protocol change; a phone or Mac without it never sees an `attachment_*` kind, and a phone message with files waits until the Mac advertises it. A 0.7 `message` with inline v1 attachments is refused with "Update Yorozu on this iPhone to send attachments."
+- Mac upload staging holds at most 1 GB (two complete messages) and 64 messages, prunes folders untouched for 48 h, and keeps a refused commit's staging so Resend commits without uploading again.
+- Phone previews are the Mac's own 512 px JPEG thumbnails; downloads go 160 KiB a chunk, at most two requests in flight per phone. A `worker_event` record becomes an upsert by `seq`, since attaching shared images re-stamps it.
+- The Mac stores sub-chat images but shows none: it has no sub-chat UI.
+- On 2026-10-09 `models.list` for agent `projectx` listed `image` in the input of every configured model, the worker default `openai-pool/gpt-6-astra` included ([setup.md](../setup.md#models)).
