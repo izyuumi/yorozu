@@ -31,7 +31,7 @@ let project = Project(
                 "LSUIElement": true, // Menu-bar host: no Dock icon, no main window.
             ]),
             sources: ["../../Sources/ProjectXApp/**"],
-            resources: ["Resources/Yorozu.icns", "Resources/Accent.xcassets"],
+            resources: ["Resources/Yorozu.icns", "Resources/Accent.xcassets", "Resources/Localizable.xcstrings"],
             entitlements: "Yorozu.entitlements",
             dependencies: [.package(product: "ProjectXCore"), .package(product: "YorozuWire")],
             settings: .settings(base: [

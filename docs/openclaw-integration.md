@@ -4,7 +4,7 @@ How the Mac app calls the local OpenClaw Gateway when OpenClaw is the main harne
 
 ## Transport
 
-Live mode uses the native WebSocket client by default ([Native transport](#native-transport)). The CLI transport runs when `[harness] transport = "cli"` ([setup.md](setup.md#settings-configtoml); `PROJECTX_TRANSPORT` overrides it), and for any launch whose native client is not enrolled or does not connect within 3 s. It runs the CLI once per call (`GatewayRPC.perform` in `Harness.swift`):
+Live mode uses the native WebSocket client by default ([Native transport](#native-transport)). The CLI transport runs when `[harness] transport = "cli"` ([setup.md](setup.md#settings-configtoml); `PROJECTX_TRANSPORT` overrides it), for any launch whose native client is not enrolled or does not connect within 3 s, and, on a native launch, for each call that needs `operator.admin` ([Admin-scope calls](#admin-scope-calls)). It runs the CLI once per call (`GatewayRPC.perform` in `Harness.swift`):
 
 ```sh
 /usr/bin/env openclaw gateway call <method> --json --expect-url <target> --timeout 260000 --params '<json>' [--expect-final]
@@ -129,7 +129,7 @@ Every `agent` call writes a `request` receipt with `harness: "openclaw"` (`Reque
 
 ## Native transport
 
-The default in live mode (`[harness] transport = "native"`, the default; `AppModel.connectNative` in `ProjectX.swift`). It dials `[harness] gateway_url`.
+The default in live mode (`[harness] transport = "native"`, the default; `AppModel.connectNative` in `ProjectX.swift`). It dials `[harness] gateway_url`. Admin-scope calls still go through the CLI ([Admin-scope calls](#admin-scope-calls)), so the CLI must work on a native launch too.
 
 - At launch: with no stored device token (`NativeGatewayClient.isEnrolled`, a Keychain read), the client does not dial, since a connect would store a fresh key and fail. With a token it connects with a 3 s handshake deadline instead of the usual 15 s. Either failure makes that launch use the CLI, and the popover shows "Native Gateway not connected · using the CLI this launch" with the error as its tooltip and a "Connect…" link to Settings. The composer is never blocked for it.
 - Enrollment is the Gateway tab of the Settings window, shown in live mode while the native transport is selected. After a fallback launch a successful enrollment says "Yorozu uses it from the next launch".
@@ -138,6 +138,17 @@ The default in live mode (`[harness] transport = "native"`, the default; `AppMod
 - Bootstrap: the Gateway's shared token or password is typed into a `SecureField`, used once and never stored. The Gateway may answer `PAIRING_REQUIRED`; approve that exact request on the host (`openclaw devices list`), then connect again. Only the app's key and the issued device token are kept ([Keychain items](setup.md#keychain-items)).
 - It calls only methods the Gateway advertises, with a 270 s deadline per call. A disconnect fails pending calls as uncertain; nothing is replayed.
 - Only this transport delivers live `agent` lifecycle and tool events, which the thinking worker projects into the sub-chat as they happen ([Tool rows](#tool-rows); never arguments or text deltas).
+
+### Admin-scope calls
+
+The native client holds only `operator.read` and `operator.write`, so a native launch sends each call that needs `operator.admin` through the CLI, which requests admin, and keeps everything else native so live events still stream (`GatewayRPC.needsAdmin` in `Harness.swift`). Before phase B of #311 these calls went native too and failed for lack of the scope (a topic session is created with `permissionMode: "full"`); with them routed through the CLI, native is the default again. The list mirrors OpenClaw's own scope tables (`core-descriptors.ts` for static scopes, `method-scopes.ts` for `agent` reset commands, `shared/session-method-scopes-base.ts` for the param-dependent session methods):
+
+- `config.patch` and `sessions.compact`, always.
+- `sessions.create` with `permissionMode: "full"`, any `toolOverrides`, or `worktree: true` (a coding session; OpenClaw runs the worktree setup script only for an admin caller, `sessions-create.ts`).
+- `sessions.patch` with `permissionMode: "full"` or any key outside the write set (`key`, `agentId`, the `expected*` guards, label and board fields, `model`, `agentRuntime`, `thinkingLevel`, `fastMode`, `permissionMode`); the MCP overlay's `toolOverrides` is one.
+- `agent` whose message starts with `/new` or `/reset`.
+
+A model change (`sessions.patch {key, agentId, model}`, plus `agentRuntime`) stays native. When OpenClaw changes a method's scope, update the list.
 
 ## Tool rows
 

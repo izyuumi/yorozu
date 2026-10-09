@@ -525,3 +525,21 @@ Source: PR B of issue #313 (contract 0.7 and iOS, branch `sync-07`). These are r
 - Connection status grace: the status shown on going to the background is saved in `UserDefaults` (`lastConnectionStatus`, the status and its time, no chat content) and shown for up to 3 s on return and on launch, or until the link is connected or failed. A link still `.paired` on return is not redialed.
 - "Status unknown": off `.paired` the working and routing flags are unknown (nil), and the chat's status line reads "<status> · Status unknown". A Mac that refuses the phone shows "Update required: <reason>" in that line instead.
 - The phone's `task_control`, `search_request`, `page_request` and `read_state` calls exist in `PhoneModel` for PR C and are sent only while `.paired`, never queued.
+
+## 2026-10-09 — UI design approved
+Source: owner approval recorded in issue #311 (the phase B plan comment).
+
+- The owner approved the Claude Design mockups for #311, with one change: the menu-bar icon is the Yorozu logo, not the placeholder speech bubble. This approves the ten proposals in the mockup comment: one popover size of 420×744 pt; vermilion user bubbles, full-width answer cards and question cards with a "Question" label; amber, not red, for failures; no inline time on rows (hover or long-press); a header menu with Search, Settings… and Quit; the Settings tab list with "Notify on" defaulting to this Mac; the iPhone layout for sub-chats, jobs and search; newest-first sub-chat tasks with Stop and Retry capsules; and notification text without message content.
+
+## 2026-10-09 — UI phase B: implementer readings (not owner decisions)
+Source: the phase B plan comment on issue #311. The remaining open questions were taken at their proposed defaults; [status.md](../status.md#open-items) keeps them as open items.
+
+- Open questions taken at their defaults: notification text is fixed and carries no message content ("Yorozu replied", "A task failed", "Yorozu has a question"; 3); permission is asked the first time a notification would be posted, and nothing is posted while the popover is open and scrolled to the newest message (4); the progress and transport limits stay (6, 7); only local image files are drawn, remote ones stay links (9); ⌘F on the Mac searches the main timeline only (10); the issue closes when Part 1 is merged (11).
+- The menu-bar icon draws the newer Yorozu mark, the two crossed loops around a center dot from the app icon (`apps/ios/Resources/AppIcon.icon`), as an 18-point template image. Working dims the center dot; attention cuts a notch in the top-right for a vermilion dot drawn over the template, so the logo still adapts to light and dark menu bars.
+- The reply header looks up `replyTo` across all messages, not only the main timeline: a job result replies to its hidden `job_run` trigger, which stays in the sub-chat, and its header quotes that trigger ("Scheduled run of “…” for …"). Phones do not hold job triggers, so on the phone a job result has no header.
+- The dot follows what the open popover has shown (from launch; older messages never raise it), not yet the synced read cursor of #313. Offline-mode failures raise neither the dot nor a notification.
+- Notifications post only when `[notifications] enabled` is true and `destination` is `"mac"`; with `"phones"` the Mac posts none until push (#320). The dot has no switch.
+- The global shortcut is a Carbon hot key, which needs no Accessibility permission. It is re-read from the config every 2 s, and an unrecognized or taken shortcut is reported in the status line.
+- Job results drop the `Regarding “<job name>”:` header too, so `Store.finish` takes only the result kind.
+- Native as the default: the native client holds only `operator.read` and `operator.write`, so each call that needs `operator.admin` (`config.patch`, `sessions.compact`, `sessions.create` or `sessions.patch` with `permissionMode: "full"` or `toolOverrides`, an `agent` run of `/new` or `/reset`) goes through the CLI, and everything else stays native so live events stream. The list mirrors OpenClaw's scope tables.
+- "Send as text file" is not built: the over-limit hint asks the user to shorten the draft.

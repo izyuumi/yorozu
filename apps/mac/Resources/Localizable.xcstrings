@@ -1,0 +1,1654 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%@ bytes. The limit is %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@バイト。上限は%2$@バイトです。"
+          }
+        }
+      }
+    },
+    "%@ can’t take changes mid-run, so it gets this after its current run. Say stop to halt it now." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@は実行中に変更を受け取れないため、今の実行の後に渡します。今すぐ止めるには「stop」と送ってください。"
+          }
+        }
+      }
+    },
+    "%lld new" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新着%lld件"
+          }
+        }
+      }
+    },
+    "%lld new messages, scroll to bottom" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新着メッセージ%lld件、最下部へスクロール"
+          }
+        }
+      }
+    },
+    "%lld of %lld" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld / %2$lld"
+          }
+        }
+      }
+    },
+    "(The full script is in jobs.toml.)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（スクリプト全体はjobs.tomlにあります。）"
+          }
+        }
+      }
+    },
+    "A task failed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "タスクが失敗しました"
+          }
+        }
+      }
+    },
+    "Added that to the task before it starts." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始前のタスクに追加しました。"
+          }
+        }
+      }
+    },
+    "Advanced" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "詳細設定"
+          }
+        }
+      }
+    },
+    "An earlier run was interrupted and its state is unknown. Say retry or stop about it to resume the schedule." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前の実行が中断され、状態が不明です。その実行に「retry」か「stop」と送ると、スケジュールを再開します。"
+          }
+        }
+      }
+    },
+    "An earlier task here is still running, so I haven’t started this, to avoid running it twice. Say stop to end it, or send this again once it finishes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ここの前のタスクがまだ実行中のため、二重に実行しないようこれは開始していません。「stop」で止めるか、終わってからもう一度送ってください。"
+          }
+        }
+      }
+    },
+    "An earlier task here stopped with a saved change that never ran. Say retry to apply it first, then send this again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ここの前のタスクは、保存した変更を実行しないまま停止しました。先に「retry」でその変更を適用してから、もう一度送ってください。"
+          }
+        }
+      }
+    },
+    "Answer copied" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回答をコピーしました"
+          }
+        }
+      }
+    },
+    "Approved. “%@” runs this script from its next run." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "承認しました。「%@」は次回の実行からこのスクリプトを使います。"
+          }
+        }
+      }
+    },
+    "Ask Yorozu anything" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuに何でも聞いてください"
+          }
+        }
+      }
+    },
+    "Code copied" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードをコピーしました"
+          }
+        }
+      }
+    },
+    "Collapsed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "折りたたみ"
+          }
+        }
+      }
+    },
+    "Connection" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続"
+          }
+        }
+      }
+    },
+    "Connect…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続…"
+          }
+        }
+      }
+    },
+    "Copied" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コピーしました"
+          }
+        }
+      }
+    },
+    "Copy" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コピー"
+          }
+        }
+      }
+    },
+    "Copy answer" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回答をコピー"
+          }
+        }
+      }
+    },
+    "Copy code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードをコピー"
+          }
+        }
+      }
+    },
+    "Copy failed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コピーできませんでした"
+          }
+        }
+      }
+    },
+    "Copy link" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リンクをコピー"
+          }
+        }
+      }
+    },
+    "Copy message text" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージのテキストをコピー"
+          }
+        }
+      }
+    },
+    "Details" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "詳細"
+          }
+        }
+      }
+    },
+    "Devices" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デバイス"
+          }
+        }
+      }
+    },
+    "Done" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完了"
+          }
+        }
+      }
+    },
+    "Enroll Yorozu with the local Gateway" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルGatewayにYorozuを登録"
+          }
+        }
+      }
+    },
+    "Expanded" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "展開"
+          }
+        }
+      }
+    },
+    "Find three quiet mechanical keyboards under ¥25,000 and pick one." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2万5千円以下の静かなメカニカルキーボードを3つ探して、1つ選んで。"
+          }
+        }
+      }
+    },
+    "For example" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "例"
+          }
+        }
+      }
+    },
+    "Gateway" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway"
+          }
+        }
+      }
+    },
+    "General" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一般"
+          }
+        }
+      }
+    },
+    "Global shortcut %@ is in use by another app" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "グローバルショートカット%@は別のアプリが使用中です"
+          }
+        }
+      }
+    },
+    "Global shortcut not recognized: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "グローバルショートカットを認識できません: %@"
+          }
+        }
+      }
+    },
+    "Got it, moving that to the right topic." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "了解しました。正しいテーマに移します。"
+          }
+        }
+      }
+    },
+    "Got it, moving that to the right topic. Stopping the earlier task (not confirmed yet)." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "了解しました。正しいテーマに移します。前のタスクを停止しています（まだ確認できていません）。"
+          }
+        }
+      }
+    },
+    "I can’t confirm whether an earlier task here is still running, so I haven’t started this, to avoid running it twice. Say stop to end it, or try again in a few minutes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ここの前のタスクがまだ実行中か確認できないため、二重に実行しないようこれは開始していません。「stop」で止めるか、数分後にもう一度お試しください。"
+          }
+        }
+      }
+    },
+    "I understand: enable synthetic TEST input" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "理解しました: 合成TEST入力を有効にする"
+          }
+        }
+      }
+    },
+    "It didn’t run again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再実行しませんでした。"
+          }
+        }
+      }
+    },
+    "It loses access to this Mac and has to pair again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このMacにアクセスできなくなり、もう一度ペアリングが必要になります。"
+          }
+        }
+      }
+    },
+    "Its script waits for your yes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スクリプトがあなたの承認を待っています。"
+          }
+        }
+      }
+    },
+    "I’ll apply that right after the current step." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今のステップが終わったらすぐに適用します。"
+          }
+        }
+      }
+    },
+    "Jobs" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ジョブ"
+          }
+        }
+      }
+    },
+    "Jobs can’t run here right now." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今はここでジョブを実行できません。"
+          }
+        }
+      }
+    },
+    "Jobs not updated: jobs.toml has a problem. The last valid jobs keep running until the file is fixed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ジョブを更新していません：jobs.tomlに問題があります。ファイルが直るまで、最後に有効だったジョブが動き続けます。"
+          }
+        }
+      }
+    },
+    "Memory skipped %lld note files that are too large or unreadable." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Memory skipped %lld note file that is too large or unreadable."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Memory skipped %lld note files that are too large or unreadable."
+                }
+              }
+            }
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "大きすぎるか読み込めないノート%lld件をメモリに取り込みませんでした。"
+          }
+        }
+      }
+    },
+    "Message Yorozu…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuにメッセージ…"
+          }
+        }
+      }
+    },
+    "More" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "その他"
+          }
+        }
+      }
+    },
+    "Native Gateway not connected · using the CLI this launch" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ネイティブGatewayに未接続 · 今回はCLIを使用中"
+          }
+        }
+      }
+    },
+    "Next" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "次へ"
+          }
+        }
+      }
+    },
+    "Next match" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "次の一致"
+          }
+        }
+      }
+    },
+    "No matches" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一致なし"
+          }
+        }
+      }
+    },
+    "No results" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "結果なし"
+          }
+        }
+      }
+    },
+    "Note" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "お知らせ"
+          }
+        }
+      }
+    },
+    "Offline mode: the message was saved, and no model was called." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフラインモード：メッセージは保存されました。モデルは呼び出していません。"
+          }
+        }
+      }
+    },
+    "Only failed or stopped work can be retried. Active work isn’t run twice." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再試行できるのは失敗または停止した作業だけです。実行中の作業を二重に実行することはありません。"
+          }
+        }
+      }
+    },
+    "Pair iPhone" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhoneをペアリング"
+          }
+        }
+      }
+    },
+    "Pairing QR code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング用QRコード"
+          }
+        }
+      }
+    },
+    "Pairing and the Gateway are available in live mode only." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングとGatewayはライブモードでのみ使えます。"
+          }
+        }
+      }
+    },
+    "Previous" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前へ"
+          }
+        }
+      }
+    },
+    "Previous match" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前の一致"
+          }
+        }
+      }
+    },
+    "Problem" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "問題"
+          }
+        }
+      }
+    },
+    "Put this in the message field" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "これをメッセージ欄に入れる"
+          }
+        }
+      }
+    },
+    "Question" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "質問"
+          }
+        }
+      }
+    },
+    "Quick questions are answered right here. Bigger work (research, writing, code) runs in the background, and the result comes back to this chat." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ちょっとした質問にはここですぐ答えます。調査・執筆・コードなどの大きな作業はバックグラウンドで進み、結果がこのチャットに届きます。"
+          }
+        }
+      }
+    },
+    "Quit Yorozu" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuを終了"
+          }
+        }
+      }
+    },
+    "Remove" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除"
+          }
+        }
+      }
+    },
+    "Remove %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@を削除"
+          }
+        }
+      }
+    },
+    "Remove this iPhone?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このiPhoneを削除しますか？"
+          }
+        }
+      }
+    },
+    "Removed that memory from Markdown and refreshed its index. The chat history is unchanged." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "そのメモリをMarkdownから削除し、索引を更新しました。チャット履歴はそのままです。"
+          }
+        }
+      }
+    },
+    "Remove…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除…"
+          }
+        }
+      }
+    },
+    "Saved that on the intended task, but its earlier run status is unknown. Say retry to check it and continue." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動先のタスクに保存しましたが、前の実行の状態が不明です。「retry」と送ると確認して続行します。"
+          }
+        }
+      }
+    },
+    "Say yes to approve this exact script." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このスクリプトをこのまま承認するには「yes」と送ってください。"
+          }
+        }
+      }
+    },
+    "Scan with Yorozu on your iPhone. Each code works once." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhoneのYorozuで読み取ってください。各コードは1回だけ使えます。"
+          }
+        }
+      }
+    },
+    "Scroll to bottom" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最下部へスクロール"
+          }
+        }
+      }
+    },
+    "Search" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検索"
+          }
+        }
+      }
+    },
+    "Search (⌘F)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検索（⌘F）"
+          }
+        }
+      }
+    },
+    "Search failed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検索できませんでした"
+          }
+        }
+      }
+    },
+    "Send" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信"
+          }
+        }
+      }
+    },
+    "Send as text file" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テキストファイルとして送信"
+          }
+        }
+      }
+    },
+    "Sent that change to the running task." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行中のタスクに変更を送りました。"
+          }
+        }
+      }
+    },
+    "Settings changed: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定を変更しました：%@"
+          }
+        }
+      }
+    },
+    "Settings not applied: config.toml has a problem. The last valid settings stay in force." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定を適用していません：config.tomlに問題があります。最後に有効だった設定のままです。"
+          }
+        }
+      }
+    },
+    "Settings not applied: config.toml has a problem. Yorozu runs on its default settings until the file is fixed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定を適用していません：config.tomlに問題があります。ファイルが直るまで、Yorozuは既定の設定で動きます。"
+          }
+        }
+      }
+    },
+    "Settings…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定…"
+          }
+        }
+      }
+    },
+    "Share" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共有"
+          }
+        }
+      }
+    },
+    "Shorten it to send it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信するには短くしてください。"
+          }
+        }
+      }
+    },
+    "Show details" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "詳細を表示"
+          }
+        }
+      }
+    },
+    "Show pairing code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングコードを表示"
+          }
+        }
+      }
+    },
+    "Show the request" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "依頼を表示"
+          }
+        }
+      }
+    },
+    "Skipped the run at %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@の実行をスキップしました。"
+          }
+        }
+      }
+    },
+    "Stopped." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止しました。"
+          }
+        }
+      }
+    },
+    "Stopping it; not confirmed yet." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止しています。まだ確認できていません。"
+          }
+        }
+      }
+    },
+    "Storage" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ストレージ"
+          }
+        }
+      }
+    },
+    "Synthetic test message, no AI" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合成テストメッセージ（AIなし）"
+          }
+        }
+      }
+    },
+    "That isn’t running." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "それは実行中ではありません。"
+          }
+        }
+      }
+    },
+    "That job no longer exists, so its script can’t run again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "そのジョブはもう存在しないため、スクリプトを再実行できません。"
+          }
+        }
+      }
+    },
+    "That script changed after the request, so it wasn’t approved. A new request shows the current script." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "依頼の後にスクリプトが変わったため、承認していません。新しい依頼に現在のスクリプトを表示します。"
+          }
+        }
+      }
+    },
+    "That task failed. Say retry to try again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "そのタスクは失敗しました。「retry」と送ると再試行します。"
+          }
+        }
+      }
+    },
+    "That task is too large for the model’s context, so retrying it unchanged would fail the same way. Start a new topic or shorten the request." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "そのタスクはモデルのコンテキストに収まりません。そのまま再試行しても同じように失敗します。新しいテーマで始めるか、依頼を短くしてください。"
+          }
+        }
+      }
+    },
+    "That task was interrupted by a restart. Say retry to continue." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "そのタスクは再起動で中断されました。「retry」と送ると続行します。"
+          }
+        }
+      }
+    },
+    "The earlier run finished before your change, so I’m applying it now." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前の実行は変更の前に終わったため、今適用しています。"
+          }
+        }
+      }
+    },
+    "The earlier run is active or its status is unknown, so retry hasn’t started. That avoids running it twice." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前の実行が続いているか状態が不明なため、再試行は開始していません。二重に実行しないためです。"
+          }
+        }
+      }
+    },
+    "The earlier task here finished before your saved change, so I’m applying that change now. Send this again once it’s done, or tell me to add it to that task." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ここの前のタスクは保存した変更の前に終わったため、今その変更を適用しています。終わったらもう一度送るか、そのタスクに追加するよう伝えてください。"
+          }
+        }
+      }
+    },
+    "The earlier task here stopped without finishing, so I closed it and started your new request. Its history stays in this topic." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ここの前のタスクは終わらずに停止したため、閉じて新しい依頼を開始しました。履歴はこのテーマに残ります。"
+          }
+        }
+      }
+    },
+    "The harness asked to approve a step, but approvals are off for Yorozu’s workers, so Yorozu denied it and stopped the task. Check the worker’s approvals setting, then say retry." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ハーネスがステップの承認を求めましたが、Yorozuのワーカーでは承認がオフのため、拒否してタスクを停止しました。ワーカーの承認設定を確認してから「retry」と送ってください。"
+          }
+        }
+      }
+    },
+    "The harness is busy, so nothing was started. Try again shortly." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ハーネスが混み合っているため、何も開始していません。少ししてからお試しください。"
+          }
+        }
+      }
+    },
+    "The harness or the executor isn’t ready for this." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ハーネスまたは実行環境の準備ができていません。"
+          }
+        }
+      }
+    },
+    "The harness ran another model than the one set, so its output wasn’t used." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ハーネスが設定と別のモデルで実行したため、その出力は使っていません。"
+          }
+        }
+      }
+    },
+    "The intended topic is still stopping earlier work. Your correction is kept in its history, and nothing was started twice." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移動先のテーマでは前の作業をまだ停止中です。訂正は履歴に残してあり、二重には開始していません。"
+          }
+        }
+      }
+    },
+    "The job is paused." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ジョブは一時停止中です。"
+          }
+        }
+      }
+    },
+    "The previous run is still going." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前の実行がまだ続いています。"
+          }
+        }
+      }
+    },
+    "The run ended before it finished. Say retry to run it again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行は完了前に終わりました。「retry」と送るともう一度実行します。"
+          }
+        }
+      }
+    },
+    "The task finished without confirming your latest change. Its answer is in the sub-chat." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "タスクは最新の変更を確認しないまま終わりました。回答はサブチャットにあります。"
+          }
+        }
+      }
+    },
+    "This is a separate app device, not a model-provider login. The Gateway is loopback only. Enter its bootstrap token/password privately here; never put it in chat. Only Yorozu's own device token and generated key are saved in Keychain. A new device approval may be required. Leave blank to reconnect an enrolled device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "これはモデルプロバイダーへのログインではなく、別のアプリデバイスです。Gatewayはループバック専用です。ブートストラップのトークン/パスワードはここに非公開で入力し、チャットには絶対に書かないでください。キーチェーンに保存されるのはYorozu自身のデバイストークンと生成された鍵だけです。新しいデバイスの承認が必要になる場合があります。登録済みのデバイスに再接続するには空欄のままにしてください。"
+          }
+        }
+      }
+    },
+    "Today" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今日"
+          }
+        }
+      }
+    },
+    "Which subject should this belong to?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "どのテーマに入れますか？"
+          }
+        }
+      }
+    },
+    "Which task do you mean?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "どのタスクのことですか？"
+          }
+        }
+      }
+    },
+    "Working" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作業中"
+          }
+        }
+      }
+    },
+    "Working on it" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作業中"
+          }
+        }
+      }
+    },
+    "Yesterday" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "昨日"
+          }
+        }
+      }
+    },
+    "Yorozu couldn’t compact this topic’s session." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuはこのテーマのセッションを圧縮できませんでした。"
+          }
+        }
+      }
+    },
+    "Yorozu couldn’t do that for the task." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuはそのタスクに対してその操作を行えませんでした。"
+          }
+        }
+      }
+    },
+    "Yorozu couldn’t handle that message. Send it again to retry." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuはそのメッセージを処理できませんでした。もう一度送ると再試行します。"
+          }
+        }
+      }
+    },
+    "Yorozu has a question" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuから質問があります"
+          }
+        }
+      }
+    },
+    "Yorozu menu" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuメニュー"
+          }
+        }
+      }
+    },
+    "Yorozu remembers what matters on its own, in Markdown files you own." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuは大事なことを自分で覚え、あなたが持つMarkdownファイルに残します。"
+          }
+        }
+      }
+    },
+    "Yorozu replied" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuが返信しました"
+          }
+        }
+      }
+    },
+    "Yorozu was closed for more than 24 hours. Send this again if it still applies." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuが24時間以上閉じていました。まだ必要ならもう一度送ってください。"
+          }
+        }
+      }
+    },
+    "Yorozu, new result" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu、新しい結果"
+          }
+        }
+      }
+    },
+    "Yorozu, working" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu、作業中"
+          }
+        }
+      }
+    },
+    "iPhone" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone"
+          }
+        }
+      }
+    },
+    "“%@” failed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」が失敗しました。"
+          }
+        }
+      }
+    },
+    "“%@” failed: its script ended with an error. Its output is in the job’s chat." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」が失敗しました：スクリプトがエラーで終了しました。出力はジョブのチャットにあります。"
+          }
+        }
+      }
+    },
+    "“%@” failed: its script ran past its time limit and was stopped. Its output is in the job’s chat." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」が失敗しました：スクリプトが制限時間を超えたため停止しました。出力はジョブのチャットにあります。"
+          }
+        }
+      }
+    },
+    "“%@” has a changed script that needs your yes before it runs. YOLO doesn’t lift this." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」のスクリプトが変更されました。実行前にあなたの承認が必要です。YOLOでもこれは省略されません。"
+          }
+        }
+      }
+    },
+    "“%@” has a new script that needs your yes before it runs. YOLO doesn’t lift this." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」に新しいスクリプトがあります。実行前にあなたの承認が必要です。YOLOでもこれは省略されません。"
+          }
+        }
+      }
+    },
+    "“%@”’s script was interrupted when Yorozu quit, and it won’t run again by itself. Say retry to run it again or stop to clear it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuの終了で「%@」のスクリプトが中断されました。自動では再実行しません。もう一度実行するには「retry」、片付けるには「stop」と送ってください。"
+          }
+        }
+      }
+    },
+    "⌘↩ to send · ↩ for a new line" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘↩で送信 · ↩で改行"
+          }
+        }
+      }
+    },
+    "↩ to send · ⇧↩ for a new line" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "↩で送信 · ⇧↩で改行"
+          }
+        }
+      }
+    },
+    "Couldn't read the chat, retrying: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャットを読み込めませんでした。再試行しています: %@"
+          }
+        }
+      }
+    },
+    "Native Gateway connected · model response not yet verified" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ネイティブGatewayに接続済み · モデルの応答は未確認"
+          }
+        }
+      }
+    },
+    "Native Gateway connected · Yorozu uses it from the next launch" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ネイティブGatewayに接続済み · 次回の起動から使用します"
+          }
+        }
+      }
+    },
+    "Native Gateway enrolled · quit and reopen Yorozu to use it" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ネイティブGatewayを登録済み · 使うにはYorozuを終了して開き直してください"
+          }
+        }
+      }
+    },
+    "Relaunch Yorozu to apply: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "反映するにはYorozuを再起動してください: %@"
+          }
+        }
+      }
+    },
+    "Relaunch Yorozu to apply: %@ (the harness switch waits until running work finishes)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "反映するにはYorozuを再起動してください: %@（ハーネスの切り替えは実行中の作業が終わるまで待ちます）"
+          }
+        }
+      }
+    },
+    "Start at login is off while another Yorozu with the same id is installed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同じIDの別のYorozuがインストールされているため、ログイン時の起動はオフです"
+          }
+        }
+      }
+    },
+    "Start at login needs approval in System Settings › General › Login Items" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ログイン時の起動には「システム設定 › 一般 › ログイン項目」での許可が必要です"
+          }
+        }
+      }
+    },
+    "Start at login: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ログイン時の起動: %@"
+          }
+        }
+      }
+    },
+    "Yorozu — TEST FIXTURE (no AI)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu — テストフィクスチャ（AIなし）"
+          }
+        }
+      }
+    },
+    "Yorozu — OFFLINE (no AI)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu — オフライン（AIなし）"
+          }
+        }
+      }
+    },
+    "TEST FIXTURE — NO AI / NO LLM" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テストフィクスチャ — AI・LLMなし"
+          }
+        }
+      }
+    },
+    "OFFLINE — NO AI CONNECTED" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフライン — AI未接続"
+          }
+        }
+      }
+    },
+    "LIVE — local agent harness" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ライブ — ローカルのエージェントハーネス"
+          }
+        }
+      }
+    },
+    "For synthetic workflow testing only. Replies are scripted test output, not AI answers. Do not use this window for real requests. Your fixture history is preserved separately." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "合成ワークフローのテスト専用です。返信はスクリプト化されたテスト出力で、AIの回答ではありません。実際の依頼にはこのウィンドウを使わないでください。フィクスチャの履歴は別に保存されます。"
+          }
+        }
+      }
+    },
+    "This app is not connected to a model. Messages are saved locally only; it cannot answer or perform your requests. Offline mode was explicitly selected or the requested mode was invalid." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このアプリはモデルに接続されていません。メッセージはこのMacに保存されるだけで、回答も依頼の実行もできません。オフラインモードが明示的に選ばれたか、指定されたモードが無効でした。"
+          }
+        }
+      }
+    },
+    "Replies come from real models through the main harness (OpenClaw or Hermes Agent, set in config.toml). Messages, results and memory are saved locally. Changes to running work apply right after its current step." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返信はメインのハーネス（OpenClawまたはHermes Agent、config.tomlで設定）を通じて実際のモデルから届きます。メッセージ、結果、メモリはこのMacに保存されます。実行中の作業への変更は、今のステップの直後に反映されます。"
+          }
+        }
+      }
+    },
+    "Send test message" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テストメッセージを送信"
+          }
+        }
+      }
+    },
+    "Save offline" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフラインで保存"
+          }
+        }
+      }
+    },
+    "In reply to %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」への返信"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

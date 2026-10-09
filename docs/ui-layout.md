@@ -43,8 +43,16 @@ the platform withholds the width, use the platform view that has it (the system 
 - The Mac's Pair iPhone sheet draws its QR code from one constant, `qrSide` in
   `Sources/ProjectXApp/Relay/PairPhoneView.swift`, which sizes both the code and its
   placeholder: a custom component owning its geometry.
-- The Mac's chat popover is 420×640 points from one constant, `MenuBarHost.popoverSize` in
+- The Mac's chat popover is 420×744 points from one constant, `MenuBarHost.popoverSize` in
   `Sources/ProjectXApp/MenuBarHost.swift`: nothing proposes a size to an `NSPopover`, so the
-  host that owns it sets it. Everything inside sizes from it; the composer takes a fifth of
-  the height through `containerRelativeFrame(.vertical)` rather than a fixed `minHeight`.
+  host that owns it sets it. Everything inside sizes from it; the composer grows with its text
+  up to a third of the popover's height, measured with `onGeometryChange` in
+  `Sources/ProjectXApp/Timeline.swift`, then scrolls, rather than taking a fixed `minHeight`.
+  The user bubble takes four fifths of the row through `containerRelativeFrame(.horizontal)`.
   The Settings window's width is likewise one constant in `SettingsView`.
+- The menu-bar icon is a custom component: `Logo.side` (18 points) and the notch position in
+  `Sources/ProjectXApp/MenuBarHost.swift` draw the template image, and `AttentionDot.radius`
+  sizes the dot that sits in the notch. The button centers the image; nothing else is fixed.
+- The shared block renderer keeps its spacing, insets and radii in one `MarkdownMetrics`
+  enum in `Sources/ProjectXApp/ChatMarkdown.swift`; its width always comes from the row. A
+  wide code block or table scrolls sideways instead of setting a width.

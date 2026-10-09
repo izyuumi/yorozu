@@ -70,18 +70,18 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `general.start_at_login` | `true` | Login item ([Start at login and keep awake](#start-at-login-and-keep-awake)) |
 | `general.keep_mac_awake` | `false` | No idle sleep while Yorozu runs |
 | `general.yolo` | `false` | YOLO mode ([architecture.md](architecture.md#mcp-servers-and-computer-use)) |
-| `general.send_key` | `"smart"` | `"smart"` or `"cmd-enter"` |
-| `general.global_shortcut` | `""` (off) | Shortcut that opens the popover |
+| `general.send_key` | `"smart"` | `"smart"` (Return sends a one-line draft) or `"cmd-enter"` (Return is always a new line); ⌘Return always sends ([architecture.md](architecture.md#mac-ui)) |
+| `general.global_shortcut` | `""` (off) | Shortcut that toggles the popover: modifiers and one key joined by `+`, such as `"option+space"`, `"cmd+shift+y"` or `"ctrl+f5"`; a key other than F1–F12 needs a modifier ([architecture.md](architecture.md#mac-ui)) |
 | `general.appearance` | `"system"` | `"system"`, `"light"` or `"dark"` |
 | `general.show_advanced` | `false` | Shows the Advanced tab |
-| `notifications.enabled` | `true` | |
-| `notifications.destination` | `"mac"` | `"mac"` or `"phones"` |
+| `notifications.enabled` | `true` | macOS notifications for results, failures and questions; the menu-bar dot shows either way |
+| `notifications.destination` | `"mac"` | `"mac"` or `"phones"`; with `"phones"` the Mac posts none, and phone push comes with #320 |
 | `routing.personal_knowledge` | `""` | The user's personal notes, named in the routing policy as a source only a worker can read; empty drops that clause; at most 200 bytes of UTF-8 |
 | `routing.self_topic` | `"Yorozu"` | The topic that holds work on Yorozu itself; at most 80 characters |
 | `relay.url` | `"wss://relay.yumi.to"` | Relay for the iPhone app, `ws://` or `wss://` with a host |
 | `harness.kind` | `"openclaw"` | Main harness: `"openclaw"` or `"hermes"`; applies at the next launch, and only once no work is active or uncertain ([architecture.md](architecture.md#harness-seam)) |
 | `harness.agent` | `"yorozu"` | Harness agent id, 1–64 letters, digits, `-` or `_` ([The `projectx` agent](#the-projectx-agent)) |
-| `harness.transport` | `"native"` | `"native"` or `"cli"` ([openclaw-integration.md](openclaw-integration.md#transport)) |
+| `harness.transport` | `"native"` | `"native"` or `"cli"`; a native launch still sends admin-scope calls through the CLI ([openclaw-integration.md](openclaw-integration.md#transport)) |
 | `harness.gateway_url` | `"ws://127.0.0.1:18789"` | Loopback `ws`/`wss` only, with no path, query or credentials |
 | `harness.hermes_url` | `"http://127.0.0.1:8642"` | Hermes API server root, loopback `http`/`https` only, with no path, query or credentials; profiles are reached under `/p/<profile>/` |
 | `harness.dev_repo` | `""` | Main checkout for coding work, an absolute or `~/` path; empty ends coding work with a notice |
@@ -90,13 +90,13 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `models.rules.min_context_tokens`, `models.rules.min_output_tokens` | `32000`, `16000` | Inputs of the automatic secretary and extraction choice |
 | `mcp_servers.<name>` | `cua-driver` ([MCP servers](#mcp-servers)) | `command` and `args` |
 
-`send_key`, `global_shortcut`, `appearance`, `show_advanced` and `notifications.*` are validated and kept, but nothing uses them until phase B.
+`send_key`, `global_shortcut` and `notifications.*` are used by the popover (#311); `appearance` and `show_advanced` are validated and kept, but nothing uses them until phase B of #312.
 
 - **Format.** Yorozu writes the whole file in one canonical layout: known keys in a fixed order, each with Yorozu's own comment, absent model keys as commented examples, and unknown keys kept as data after them. Hand-written comments are not kept. Every write goes to a temporary file in the same folder, mode 0600, flushed to disk, then is renamed over `config.toml`; a write that would be invalid is refused. Writes from Settings (phase B) are read-modify-write (`Config.update`), so a recent hand or worker edit survives. In phase A the app writes the file only to create it.
 - **Reload.** `ConfigWatcher` watches the folder with FSEvents, so in-place edits and atomic saves are both seen, and debounces for 300 ms: a saved change is applied within about a second. An unchanged file is ignored; the comparison starts from the file as read at launch, so an edit made while the app was starting is applied too.
 - **Invalid edits.** A file that does not parse or validate, or is missing, leaves the last valid settings in force and posts one `failure` notice per distinct problem, code `config_invalid`, naming the file, the line when known, the key and the reason: "Settings not applied: config.toml line 12 (relay.url): expected a ws:// or wss:// address. The last valid settings stay in force." An invalid or unreadable file at launch is left untouched: that run uses the code defaults plus the environment, posts the same notice ending "Yorozu runs on its default settings until the file is fixed.", and applies the file once it is fixed. In live mode the default agent `yorozu` still stops that launch unless `PROJECTX_AGENT=projectx` is set (until #317).
 - **Security-relevant keys.** `general.yolo`, `relay.url`, every `harness.*` key, every `models.*` role and `models.coding` key, and `mcp_servers`. Their comments say "Security-relevant: ask the user before changing it", and a worker asks for the user's yes in the chat before changing them. A reload that changes any of them posts an `acknowledgment` notice, code `settings_changed`: "Settings changed: relay.url". Direct connection joins the list with #315.
-- **When a change applies.** Models, YOLO, routing hints and `dev_repo` from the next route, task or extraction; automatic models after the model metadata is read again. MCP servers when the next worker session is prepared ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). `relay.url` restarts the relay host on the new relay with the same keys and devices; every phone must pair again, since its pairing names the old relay. `keep_mac_awake` and `start_at_login` at once. `harness.kind`, `agent`, `transport`, `gateway_url` and `hermes_url` only at the next launch; the status line says "Relaunch Yorozu to apply: …", adding that a harness switch waits until running work finishes.
+- **When a change applies.** Models, YOLO, routing hints and `dev_repo` from the next route, task or extraction; automatic models after the model metadata is read again. MCP servers when the next worker session is prepared ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). `relay.url` restarts the relay host on the new relay with the same keys and devices; every phone must pair again, since its pairing names the old relay. `keep_mac_awake`, `start_at_login`, `send_key` and `notifications.*` at once; `global_shortcut` within 2 s. `harness.kind`, `agent`, `transport`, `gateway_url` and `hermes_url` only at the next launch; the status line says "Relaunch Yorozu to apply: …", adding that a harness switch waits until running work finishes.
 
 ### Precedence
 

@@ -337,9 +337,8 @@ public actor Store {
     /// session, atomically with completion. Returns the work to run again, or the delivered result.
     /// `requeue` hands the follow-up to the worker queue (retry of a reconciled run) instead of the running executor.
     /// `from`: deliver only if the work is still in that state and unsuppressed, else nothing (a concurrent reconcile won).
-    /// `delivery`: a job topic's result kind (`result` in the main timeline, `job_result` in the sub-chat only) and the
-    /// job name for its header; nil is an ordinary `result`.
-    public func finish(task: String, output: WorkerOutput, requeue: Bool = false, from state: String? = nil, delivery: (kind: String, header: String)? = nil) throws -> (reply: Message?, followUp: Work?) {
+    /// `delivery`: a job topic's result kind (`result` in the main timeline, `job_result` in the sub-chat only). Nil is an ordinary `result`.
+    public func finish(task: String, output: WorkerOutput, requeue: Bool = false, from state: String? = nil, delivery: String? = nil) throws -> (reply: Message?, followUp: Work?) {
         try db.write { db in
             if let state { guard let w = try Work.fetchOne(db,key: task), w.state == state, !w.suppressed else { return (nil,nil) } }
             if var w = try Work.fetchOne(db,key: task), !w.suppressed {
@@ -357,7 +356,7 @@ public actor Store {
             return (try Self.complete(db,task: task,output: output,delivery: delivery),nil)
         }
     }
-    private static func complete(_ db: Database, task: String, output: WorkerOutput, delivery: (kind: String, header: String)? = nil) throws -> Message? {
+    private static func complete(_ db: Database, task: String, output: WorkerOutput, delivery: String? = nil) throws -> Message? {
         guard var w = try Work.fetchOne(db, key: task) else { throw ProjectError.invalid("Unknown task.") }
         w.result = output.text; w.outputRevision = output.appliedRevision
         let pending = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM amendments WHERE taskID=? AND state NOT IN ('accepted','applied','queued_input')", arguments: [task]) ?? 0
@@ -372,9 +371,8 @@ public actor Store {
         w.state = "done"; w.error = nil; try w.update(db)
         try db.execute(sql: "UPDATE amendments SET state='applied' WHERE taskID=?", arguments: [task])
         if try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind IN ('result','job_result')", arguments: [task]) ?? 0 > 0 { return nil }
-        let source = try Message.fetchOne(db, key: w.messageID)
-        let text = "Regarding “\(delivery?.header ?? String((source?.body ?? w.instruction).prefix(100)))”:\n\n\(output.text)"
-        let m = Message(id: identifier(), role: "assistant", body: text, topicID: w.topicID, taskID: task, replyTo: w.messageID, kind: delivery?.kind ?? "result", created: Date().timeIntervalSince1970)
+        // The answer alone (#311): the UI draws the reply header from `replyTo`; results stored before keep their "Regarding" prefix.
+        let m = Message(id: identifier(), role: "assistant", body: output.text, topicID: w.topicID, taskID: task, replyTo: w.messageID, kind: delivery ?? "result", created: Date().timeIntervalSince1970)
         try m.insert(db); return m
     }
     // MARK: Jobs (#319)
