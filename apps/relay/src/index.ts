@@ -483,8 +483,11 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           }
 
           if (conn.role === "phone") {
-            if (conn.room.mac) conn.room.mac.send(raw);
+            const mac = conn.room.mac;
+            if (mac) mac.send(raw);
             else bufferFrame(conn.room, raw, now);
+            // Mirrors the Worker: the phone hears its frame was forwarded or buffered.
+            ws.send(JSON.stringify({ type: "accepted", sig: frames[0]!.sig, buffered: !mac }));
           } else {
             // Not buffered: a phone that is away catches up by asking the Mac on its next
             // join, which holds the whole history. The relay is only ever the fast path down.

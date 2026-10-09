@@ -7,7 +7,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startRelay, type Relay } from "@yorozu/relay";
-import { connectPhone, keypair, rejoinPhone } from "@yorozu/relay/dist/testing.js";
+import * as relayClient from "@yorozu/relay/dist/testing.js";
+import { keypair, type Client } from "@yorozu/relay/dist/testing.js";
 import {
   decodeEnvelope,
   decodeNotificationPreview,
@@ -76,6 +77,29 @@ const sse = (text: string) =>
   );
 
 const frameBody = (payload: string) => JSON.parse(Buffer.from(payload, "base64url").toString());
+
+/**
+ * The relay answers each phone frame with `accepted`. These tests read what the Mac sends, so
+ * their phones skip it, as a phone that does not know the type does.
+ */
+function skipAccepted(phone: Client): Client {
+  const next = phone.next;
+  phone.next = async () => {
+    for (;;) {
+      const msg = await next();
+      if (msg?.type !== "accepted") return msg;
+    }
+  };
+  return phone;
+}
+
+const connectPhone = async (...args: Parameters<typeof relayClient.connectPhone>) => {
+  const joined = await relayClient.connectPhone(...args);
+  return { ...joined, phone: skipAccepted(joined.phone) };
+};
+
+const rejoinPhone = async (...args: Parameters<typeof relayClient.rejoinPhone>) =>
+  skipAccepted(await relayClient.rejoinPhone(...args));
 
 const encodeBody = (body: unknown) => toBase64Url(Buffer.from(JSON.stringify(body)));
 

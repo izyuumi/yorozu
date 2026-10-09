@@ -142,7 +142,13 @@ close the connection. The limits live in `apps/relay/src/protocol.ts`:
 
 While the Mac is offline, phone frames are buffered per room and replayed in order on reconnect,
 each tagged with a `seq` the Mac acks; an unacked frame is replayed to the next registration
-rather than lost. Mac frames are never buffered: the phone treats the socket as a fast path only,
+rather than lost. After forwarding or buffering a phone frame, the relay answers that phone with
+`{"type":"accepted","sig":<the frame's sig>,"buffered":true|false}`: `false` means it went to an
+open Mac socket, `true` means it is in the offline buffer. The hosted relay sends it after the
+buffer write, and a Durable Object holds outgoing messages until earlier writes are durable, so
+`buffered: true` means stored. `accepted` costs no rate-limit token and says nothing about the Mac
+having received the frame; only the Mac's own receipt does. Clients ignore message types they do
+not know, so older phones skip it. Mac frames are never buffered: the phone treats the socket as a fast path only,
 and on every join asks the Mac for the thread list, a sync, and the devices, so nothing depends
 on the socket having been up. The relay tells the Mac how many phones hold a socket — in
 `registered`, then `{"type":"phones","count":…}` on every join and close — and the Mac sends no
