@@ -417,8 +417,103 @@ Added in implementation:
 - The 0.6 wire has no error page, so a `sync_request` the Mac cannot answer gets an empty final page: the phone's catch-up ends, its cursor stays, and its next `.paired` asks again.
 - A failed snapshot read no longer ends the poll loop: the status line says so and the poll backs off from 0.7 s, doubling to 30 s, until a read succeeds.
 
+## 2026-10-09 — Hermes Agent harness and harness-provided coding executors
+Source: owner decisions recorded in issue #318 ("projectx: Hermes Agent harness adapter and harness-provided coding executors"), Decisions section.
+
+- Stack (H1): Hermes Agent (Nous Research, MIT, Python) is allowed as an external, separately installed harness, like OpenClaw (Node). The adapter is Swift inside Yorozu and talks HTTP: no Python in the repo, no Rust and no separate Yorozu process. The stack decision is reworded to "a Swift client that drives separately installed harnesses (OpenClaw, Hermes Agent)". Yorozu still never becomes an agent harness: it never runs MCP servers or tool calls itself.
+- One main harness (H2): one at a time, detected and chosen in onboarding (#317) and switchable in Settings. Switching keeps Yorozu's data; topic workers start fresh on the other harness. Several harnesses at once is future work (#322), linked to multiple threads, where a thread is bound to a harness.
+- Interface (H3): Hermes's gateway HTTP API (`127.0.0.1:8642`, an API key of at least 16 characters, `/api/sessions`, `/v1/runs` with stop, steer and approval, SSE events, idempotency keys). Runs survive Yorozu restarts and are reconciled. ACP is a candidate for a future generic adapter. Each harness and each integration declares its own detection. Remote harnesses (e.g. over SSH) are future work.
+- Coding executors (H4): each harness decides how coding is done and its adapter advertises its coding executors: Claude Code and Codex for OpenClaw, whatever Hermes is configured to do for Hermes. The secretary's policy is built from that list, so "use Codex" works only if Codex is offered. Harness-specific rules move into the adapters: "coding that needs an app goes to Codex" becomes an OpenClaw-adapter rule, because OpenClaw does not pass Yorozu's MCP servers to Claude Code. The coding contract stays Yorozu's. The `claude`/`codex` values baked into Engine, Store and UI become names the harness provides.
+- Profiles (H5): Yorozu owns two dedicated Hermes profiles and writes only their config: `yorozu-worker` (default tools, Yorozu's MCP servers, a working folder) and `yorozu-roles` (secretary and extraction, no tools). Hermes's own memory, background self-review, skill creation and cron are off in both. The user's own profiles stay untouched; the user installs Hermes and configures providers.
+- Defaults (H6, accepted):
+  1. Roles run in `yorozu-roles` as fresh one-shot runs. The routing replay (21 real messages) is redone on Hermes before Hermes can be main. The serving model is verified on every run, and a fallback model fails closed.
+  2. One session per topic (`yorozu-<topic id>`). Runs are keyed by Yorozu run ids. Live progress comes from SSE, and steering is live.
+  3. Workers run at full permission. Hermes's per-step approvals are off in `yorozu-worker`. The "ask first" rules and YOLO mode stay in Yorozu's prompts.
+  4. Providers and keys are configured in Hermes. The gateway API key is generated at setup, written to Yorozu's profile config and kept in the Keychain.
+  5. Integrations' MCP servers are written into the `yorozu-worker` config.
+  6. #310 compaction maps onto Hermes's compaction at the same threshold, and the same session id continues.
+  7. OpenClaw and Hermes may both be installed. Yorozu records the Hermes versions it was tested with and warns on untested ones. Yorozu never updates Hermes.
+- Binding from related issues: the harness choice and the MCP list live in `config.toml`; changing the harness is security-relevant, so a worker asks for the user's yes first; role models get smart defaults from harness metadata (#312). Assisted setup writes only Yorozu's own entries; installs and logins stay manual (#317). Yorozu sets no output caps of its own (#311). Yorozu runs scheduled jobs itself, through the active harness (#319).
+
+## 2026-10-09 — Hermes adapter: implementer readings (not owner decisions)
+Source: the plan comment on issue #318, which builds the harness seam, the Hermes adapter and the profile writer on branch `hermes-adapter`, against Hermes's documented API at v0.21.6, verified by compiling only because Hermes is not installed on the host. It takes the issue's open questions 1–9 at their proposed defaults. The owner has not answered them; [status.md](../status.md#open-items) keeps them as open items, marked as defaults taken.
+
+1. Serving the profiles: Yorozu's profiles are served under multiplexing at `/p/yorozu-worker/` and `/p/yorozu-roles/`, which needs the default profile's API server on. Setup checks this read-only and shows the exact commands; Yorozu never edits the default profile.
+2. Coding on Hermes: one executor, `hermes` ("Hermes"), Hermes's own agent loop in `yorozu-worker`. With no per-session working folder, the coding contract has the worker create its own worktree and branch from the dev repo's base branch and work only there. Claude Code and Codex are not offered through Hermes's bundled skills or its Codex runtime.
+3. `terminal.cwd` of `yorozu-worker` is `dev_repo` when set, otherwise the home folder.
+4. Profile keys are written with Hermes's own `hermes -p <profile> config set`; `SOUL.md` and `.env` are written directly. No YAML library.
+5. Both profiles get `auth.adopt_external_logins: false`; no MCP server is marked `trust: untrusted`; the setup docs recommend installing Hermes with `--skip-computer-use`.
+6. An unexpected `approval.request` is answered `deny`, the run is stopped and the step fails with a plain error.
+7. A crash between `POST /v1/runs` and its response stores no body: the work becomes `uncertain` and the watch and reconcile path takes over.
+8. No coding diffstat under Hermes.
+9. A harness switch applies only when no work is active or uncertain; until then the app stays on the previous harness and says so. Switching back to a harness used before resumes its earlier topic sessions.
+
+Added in implementation:
+- A Hermes run's controller key is `hermes:<Yorozu run id>:<server run id>` once Hermes answers, or `hermes:<Yorozu run id>:refused` when Hermes refused the run outright, so nothing ran and reconcile reports it stopped. Yorozu's run id is the `Idempotency-Key`.
+- The `skills` toolset is disabled in both profiles together with `cronjob`, because Hermes 0.21.6 has no separate switch for skill writes; the curator is off too.
+- Sessions are created with `source: "yorozu"`, which Hermes 0.21.6 stores as `api_server`, since it keeps only its own source names.
+- The serving-model check is an exact match of `runtime.provider` and `runtime.model` against the pair requested.
+- `GET /api/model/options` carries prices but no context window or input kinds, so Hermes models have no window for the automatic choice and the compaction threshold falls back to 129,200 tokens.
+- The data folder is bound to the run mode (live, fixture) instead of the harness's display name; the old OpenClaw and fixture names read as their mode, so existing data opens without a migration.
+
+## 2026-10-09 — Scheduled jobs run by Yorozu
+Source: owner decisions recorded in issue #319 ("projectx: Cron jobs run by Yorozu (jobs.toml, one topic per job, scripts and AI steps)"), Decisions section.
+
+- Runner: Yorozu is the runner, with its own scheduler in the Mac app. Work runs through whichever harness is active. Users create, edit, customize and remove jobs in natural language.
+- Storage: job definitions are data in `jobs.toml`, next to `config.toml`. The file can be edited by hand, by a worker, or through Settings and the UI. The app watches the file and validates it.
+- One topic per job: each job has its own topic, a sub-chat plus a persistent worker session, so runs build on each other. When the user talks about a job in the main chat, the message is routed to that job's agent.
+- Schedules are time-based: intervals, calendar rules and one-shots. A one-shot retires after it runs. All are stored as cron expressions and evaluated by Yorozu's own scheduler, never by the system `cron`. The time zone follows the Mac. Condition watchers come later.
+- Always running: the Mac app is assumed always running. There is no missed-run handling.
+- Posting: the user decides per job whether results always go to the main timeline or only when they are notable; if the user did not say so when creating the job, the job's agent asks. The full output of every run stays in the job's sub-chat.
+- Three forms: a pure script (no AI), an AI task, or a script whose output goes to an AI step (for example only when the output changed or matches a condition). AI is always optional.
+- Scripts: Yorozu runs them itself as child processes, like cron, as the user's account, in `~/Yorozu/jobs/<job>/`, with a timeout, their output captured to the sub-chat. Script runs do not depend on the harness. A new or changed script needs the user's yes in chat, even in YOLO mode.
+- Jobs list: the phone and Mac Settings each get one. Each row shows the name, the schedule in plain words, the next run and the last result, with Pause/Resume, Run now and Delete. Tapping a job opens its sub-chat.
+- Spec and summary: each job has an exact spec in `jobs.toml` (schedule, script, instruction, posting mode); a user-facing summary is generated from it and kept in sync.
+- Job input: each job's screen has an input that talks directly to that job's agent, with no secretary routing; the conversation stays in the job's sub-chat. Sub-chats of other topics stay inspect-only. This is an exception to "one main timeline is the only place to type".
+- Defaults (accepted): AI runs use the job topic's thinking worker on the worker model, and a job can be told to use another model or executor. Runs never overlap: while the previous run is still going, the next slot is skipped and a note is added. Failed runs count as notable. The script timeout is 10 minutes by default and can be changed per job.
+- OpenClaw automations (`openclaw automations` / `cron`) are reference material only; Yorozu does not use them.
+
+## 2026-10-09 — Jobs phase A: implementer readings (not owner decisions)
+Source: the plan comment on issue #319, which builds phase A (core, scheduler and app wiring) on branch `jobs` now, because it does not need contract 0.7: the job wire events (`job_list`, `job_control`, a message to a job) follow #329, and the Jobs list and job screens on the Mac and the phone follow the #311 design approval. It takes the issue's open questions 1–16 at their proposed defaults. The owner has not answered them; [status.md](../status.md#open-items) keeps them as open items, marked as defaults taken.
+
+1. A yes to a script is recorded by Yorozu against the script's SHA-256 in its own database, never by a worker. The request is a message in the main timeline and the job's sub-chat; pending approvals go to the secretary as data; the secretary action `approve` (with the approval id) counts only for a user message sent after the request and only for that exact hash. In a job's own input, one raw secretary-model check runs while an approval for that job is pending.
+2. A new job's topic: the secretary delegates "create a job" with `newTopic` set to the job's name, and the worker writes `topic = "<its topic id>"` into the new entry. An entry without `topic` gets a new topic named after the job. The binding lives in Yorozu's database.
+3. Notable without AI: a script-only run is notable when it failed (non-zero exit, timeout, launch error) or its output differs from the previous run's. An AI run is notable when its answer says so (it is asked to mark answers that ask the user something or report a failure), or when it failed.
+4. The gate before an AI step: `ai_when` is `always`, `changed` or a regular expression the output must match; closed, the run ends after the script.
+5. Posting before the user answers: `always`.
+6. Script environment: `HOME`, `USER`, `LANG`, `TZ`, `YOROZU_JOB`, `YOROZU_JOB_DIR` and `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`; never `PROJECTX_*` or app secrets.
+7. Intervals one cron line cannot express: `schedule` is a list of cron expressions, and a slot fires when any matches.
+8. Late slots: a slot reached more than 60 s late is skipped silently and the next one is computed from now. A local time a daylight-saving change skips is skipped; one that repeats runs once.
+9. A run left `uncertain` by a restart blocks later slots, which are skipped with a note until the user retries or stops it; the Jobs list will show "Needs attention".
+10. Work the user sends goes ahead of queued job runs in the lanes. Job runs do not count toward the 32-item send cap and do not turn on the main working indicator.
+11. Only job results posted to the main timeline go through memory extraction.
+12. A message typed in the job input while the job's AI run is active waits, then runs as the next turn in the same session.
+13. Delete removes the entry from `jobs.toml`; the topic, its history and the job folder stay. The confirmation belongs to the UI (not yet built).
+14. The job sub-chat on the Mac will be the detail pane of a Settings › Jobs tab, with the job input (UI not yet built).
+15. The summary lives in Yorozu's database, keyed by the spec's hash; a changed spec gets one raw run on the secretary model. "Next run" is computed exactly.
+16. The scheduler runs in live and fixture mode, each on its own data root; fixture AI steps get scripted replies; offline mode lists jobs and runs none.
+
+Added in implementation:
+- A message typed in a job's input is stored as kind `job_input`, not `conversation`, so the main timeline, phones, the secretary's context, `latestTopic` and memory extraction never see it; the job's worker gets it in its history like a conversation message. Its answer is a `job_result` that stays in the sub-chat.
+- The hidden kinds `job_run`, `job_input`, `job_result` and `job_note` are filtered out where the main timeline is built: the Mac's main chat and, since contract 0.7 (PR B of #313), every record `EngineBridge` sends to phones (live updates, catch-up and page replies; the skipped ones leave gaps in `seq`, which the cursor passes) and phone search. Skipped-slot notes and a `jobs.toml` problem that one job's entry causes are `job_note`s in that job's sub-chat.
+- The working indicator (Mac spinner, menu-bar icon, the phones' working flag) leaves out work in job topics, recognised by the topic ids bound in the `jobs` table, deleted jobs included. On 0.6 phones got no job-topic work; on 0.7 the task records of job topics travel like any topic's, and only the flag leaves them out.
+- Scripts run with `/bin/zsh -f`, so `~/.zshenv` cannot add to the environment of open question 6.
+- `model` is parsed and validated but not yet applied to the AI step, which runs on the worker model; per-job models are a TODO. A job's `executor` is used when the active harness offers it ready.
+- Approval requests are their own message kind, `approval_request`, filed in the job's topic and shown in the main timeline.
+- A one-shot retires only once a run actually starts; a slot skipped for approval or overlap leaves it armed.
+- The skipped-slot note is posted once per streak with the same reason, so a job skipped every minute does not flood its sub-chat.
+- The output hash is the SHA-256 of the two streams' own hashes, so stdout and stderr interleaving never makes a run look changed.
+- At quit, running scripts get SIGTERM and 2 s before SIGKILL (the timeout and Stop keep 5 s), so the app can exit promptly.
+- A script still running when the app quits ends as interrupted, never failed: its work and run are left for the next launch.
+- A script run ends when its leader process exits, not when its output pipes close; the rest of its group is then killed, and a child that left the group is abandoned after 2 s. A timeout counts only when it fired before the leader exited.
+- The sub-chat gets the first 2 MB of a run's output; the log keeps all of it.
+- One topic per job: an entry's `topic` already bound to another job is ignored.
+- A slot runs the Engine's current definition of the job; a scheduler copy that differs from it skips the slot.
+- A coding executor's answer is notable only when it carries `"notable": true`.
+- A queued script step found at launch is failed, not started; a stamped one becomes `uncertain`, is never re-run and gets a `job_interrupted` notice. Retrying it starts a new run of its job.
+
 ## 2026-10-09 — Phone sync PR B: implementer readings (not owner decisions)
-Source: PR B of issue #313 (contract 0.7 and iOS, branch `sync-07`), which stays open until the owner chooses when the Mac moves to 0.7. These are readings of the owner's #313 decisions and the plan comment where they leave a detail open; the wire is in [ios-relay-contract.md](../ios-relay-contract.md).
+Source: PR B of issue #313 (contract 0.7 and iOS, branch `sync-07`). These are readings of the owner's #313 decisions and the plan comment where they leave a detail open; the wire is in [ios-relay-contract.md](../ios-relay-contract.md).
 
 - Versioning: 0.7 is protocol 2 and `version.txt` 0.7.0. A protocol mismatch names the side to update: the Mac tells a 0.6.x phone "Update Yorozu on this iPhone to talk to this Mac.", and a phone that computes the mismatch itself reads "Update Yorozu on the Mac to talk to this iPhone.". Existing pairings carry over without pairing again.
 - `device_remove` goes out on Remove host and on confirming any new pairing, which covers Repair and also a code for a different Mac: the old Mac forgets the phone either way. It is sent only while the link is `.paired`, gets no reply, and the phone wipes its pairing and cache whether or not it went.

@@ -6,6 +6,8 @@ import YorozuWire
 /// The v2 Engine behind the relay (docs/ios-relay-contract.md, 0.7): `message`, `sync_request`, `read_state`,
 /// `task_control`, `search_request`, `page_request` and the plain `thread_list` in; `receipt`, `admission_status`,
 /// `sync_delta`, `task_control_result` and `search_result` out. Records travel by change sequence (`Store.changes`).
+/// Messages of the kinds that stay in a job's sub-chat (#319) never reach phones, and the working flag ignores work in
+/// job topics (open question 10).
 actor EngineBridge: RelayBackend {
     /// The threads this Mac has: one, `main`, holding every v2 message as the Mac's main chat shows them.
     static let threads: Set<String> = ["main"]
@@ -51,8 +53,9 @@ actor EngineBridge: RelayBackend {
     /// Called on every poll with the latest snapshot: live updates for the changes past the last published sequence,
     /// or a flag-only one when the working or routing flag moved. The first call only sets the starting point.
     func publish(_ s: Snapshot, to host: RelayHost) async {
-        let working = s.work.contains { $0.active }, routing = await engine.routing
-        main = .main((s.messages.last?.created ?? 0) * 1000)
+        let jobs = Set(((try? await engine.store.jobRecords()) ?? []).map(\.topicID))
+        let working = s.work.contains { $0.active && !jobs.contains($0.topicID) }, routing = await engine.routing
+        main = .main((s.messages.last(where: \.onMainTimeline)?.created ?? 0) * 1000)
         await host.setMain(main)
         guard let bounds = try? await engine.store.cursorBounds() else { return }
         guard var after = published else { published = bounds.latest; self.working = working; self.routing = routing; return }
@@ -94,6 +97,7 @@ actor EngineBridge: RelayBackend {
         catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
     }
 
+    /// Only after a failed send: a keyed lookup of the id.
     private func exists(_ id: String) async -> Bool { ((try? await engine.store.message(id: id)) ?? nil) != nil }
 
     /// A reply page: the window's changes after the phone's cursor, or the window from its start (`reset`) when the
@@ -121,7 +125,7 @@ actor EngineBridge: RelayBackend {
             guard let changes = try await engine.store.page(around: r.messageId) else {
                 return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: "Message not found.")
             }
-            let page = delta(changes.map { Self.record($0, thread: r.threadId).event }, thread: r.threadId, routing: routing, requestId: r.requestId)
+            let page = delta(changes.filter(Self.sent).map { Self.record($0, thread: r.threadId).event }, thread: r.threadId, routing: routing, requestId: r.requestId)
             // 101 capped records could still pass what 256 chunks carry.
             guard (try? JSONEncoder().encode(page).count).map({ $0 <= Self.hardCap }) == true else {
                 return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: "That part of the chat is too large to send.")
@@ -159,15 +163,23 @@ actor EngineBridge: RelayBackend {
 
     /// The longest prefix of `p` within 200 records and `ChunkData.budget` of encoded events (at least one record), the
     /// next cursor (the last record's seq when changes remain, else `p.latest`) and whether changes remain.
+    /// Job-only messages are skipped but still consumed, so the cursor passes them (a gap in `seq` is fine).
     private static func fit(_ p: ChangePage, thread: String) -> (events: [YorozuEvent], next: Int64, more: Bool) {
-        var events: [YorozuEvent] = [], bytes = 0
+        var events: [YorozuEvent] = [], bytes = 0, used = 0
         for change in p.changes {
+            guard sent(change) else { used += 1; continue }
             let r = record(change, thread: thread)
             if !events.isEmpty && (events.count == 200 || bytes + r.size > ChunkData.budget) { break }
-            events.append(r.event); bytes += r.size
+            events.append(r.event); bytes += r.size; used += 1
         }
-        let more = p.more || events.count < p.changes.count
-        return (events, more ? p.changes[events.count - 1].seq : p.latest, more)
+        let more = p.more || used < p.changes.count
+        return (events, more ? p.changes[used - 1].seq : p.latest, more)
+    }
+
+    /// Everything but messages that stay in a job's sub-chat (#319).
+    private static func sent(_ change: Change) -> Bool {
+        if case .message(let m) = change.record { return m.onMainTimeline }
+        return true
     }
 
     /// The largest record sent: what 256 chunks carry, less room for the page around it. Worker output has no size

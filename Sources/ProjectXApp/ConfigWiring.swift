@@ -17,7 +17,9 @@ extension AppModel {
     /// Runtime settings from the resolved config and the last model metadata read that succeeded.
     func harnessSettings() -> HarnessSettings {
         guard let resolved else { return HarnessSettings() }
-        let c = resolved.config, meta = metadata ?? ([],nil), m = resolved.models(meta.allowed,primary: meta.primary)
+        let c = resolved.config, meta = metadata ?? ([],nil)
+        let runtimes = Dictionary((harness?.executors ?? []).compactMap { e in e.runtime.map { (e.id,$0) } }) { a,_ in a }
+        let m = resolved.models(meta.allowed,primary: meta.primary,runtimes: runtimes)
         var s = HarnessSettings()
         s.secretaryModel = m.secretary.id ?? ""; s.extractionModel = m.extraction.id ?? ""; s.workerModel = m.worker.id ?? ""; s.reviewModel = m.review.id ?? ""
         s.codingModels = m.coding.compactMapValues(\.id)
@@ -70,8 +72,8 @@ extension AppModel {
         applySystem(next.config.general)
         if let launched {
             let h = next.config.harness, l = launched.config.harness
-            let pending = [("harness.kind",h.kind != l.kind),("harness.agent",h.agent != l.agent),("harness.transport",h.transport != l.transport),("harness.gateway_url",h.gatewayURL != l.gatewayURL)].filter(\.1).map(\.0)
-            if !pending.isEmpty { status = "Relaunch Yorozu to apply: " + pending.joined(separator: ", ") }
+            let pending = [("harness.kind",h.kind != l.kind),("harness.agent",h.agent != l.agent),("harness.transport",h.transport != l.transport),("harness.gateway_url",h.gatewayURL != l.gatewayURL),("harness.hermes_url",h.hermesURL != l.hermesURL)].filter(\.1).map(\.0)
+            if !pending.isEmpty { status = "Relaunch Yorozu to apply: " + pending.joined(separator: ", ") + (pending.contains("harness.kind") && working ? " (the harness switch waits until running work finishes)" : "") }
         }
     }
     /// A `config_invalid` failure notice naming the file, the line when known, the key and the reason.

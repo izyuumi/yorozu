@@ -281,7 +281,7 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "main",
 Fields:
 
 - `events`: record events in `seq` order (see the record kinds below).
-- `workingThreadIds`: threads with any `Work.active`; the global working spinner. Always present.
+- `workingThreadIds`: threads with any `Work.active` outside job topics; the global working spinner. Always present.
 - `routingThreadIds`: threads whose secretary is routing a message (`Engine.routing`); the
   thinking bubble. Always present.
 - `afterSeq`: the cursor these changes continue from.

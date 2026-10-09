@@ -8,7 +8,7 @@ public struct Config: Sendable, Equatable {
     public enum Appearance: String, CaseIterable, Sendable { case system, light, dark }
     public enum Destination: String, CaseIterable, Sendable { case mac, phones }
     public enum Transport: String, CaseIterable, Sendable { case native, cli }
-    public enum HarnessKind: String, CaseIterable, Sendable { case openclaw }
+    public enum HarnessKind: String, CaseIterable, Sendable { case openclaw, hermes }
     public struct General: Sendable, Equatable {
         public var startAtLogin = true, keepMacAwake = false, yolo = false, sendKey = SendKey.smart, globalShortcut = "", appearance = Appearance.system, showAdvanced = false
     }
@@ -16,7 +16,7 @@ public struct Config: Sendable, Equatable {
     public struct Routing: Sendable, Equatable { public var personalKnowledge = "", selfTopic = "Yorozu" }
     public struct Relay: Sendable, Equatable { public var url = "wss://relay.yumi.to" }
     public struct HarnessSettings: Sendable, Equatable {
-        public var kind = HarnessKind.openclaw, agent = "yorozu", transport = Transport.native, gatewayURL = "ws://127.0.0.1:18789", devRepo = ""
+        public var kind = HarnessKind.openclaw, agent = "yorozu", transport = Transport.native, gatewayURL = "ws://127.0.0.1:18789", hermesURL = "http://127.0.0.1:8642", devRepo = ""
         /// nil when `dev_repo` is empty; `~/` is expanded.
         public var devRepoURL: URL? { devRepo.isEmpty ? nil : URL(fileURLWithPath: (devRepo as NSString).expandingTildeInPath,isDirectory: true) }
     }
@@ -89,10 +89,11 @@ public struct Config: Sendable, Equatable {
         field("routing.personal_knowledge",\.routing.personalKnowledge,"Where the user's personal notes live, named in the routing policy; empty drops that hint."),
         field("routing.self_topic",\.routing.selfTopic,"Topic that holds work on Yorozu itself."),
         field("relay.url",\.relay.url,"Relay for the iPhone app (ws:// or wss://). After a change every phone must pair again." + security),
-        field("harness.kind",\.harness.kind,"Main harness: \"openclaw\"." + security),
+        field("harness.kind",\.harness.kind,"Main harness: \"openclaw\" or \"hermes\"; applies after relaunch, and only once no work is running." + security),
         field("harness.agent",\.harness.agent,"Harness agent id Yorozu runs on." + security),
         field("harness.transport",\.harness.transport,"\"native\" (WebSocket client) or \"cli\" (openclaw CLI); applies after relaunch." + security),
         field("harness.gateway_url",\.harness.gatewayURL,"Gateway address, loopback only; applies after relaunch." + security),
+        field("harness.hermes_url",\.harness.hermesURL,"Hermes Agent API server, loopback only with no path; applies after relaunch." + security),
         field("harness.dev_repo",\.harness.devRepo,"Repository for coding work (absolute path or ~/…); empty ends coding work with a notice." + security),
         field("models.secretary",\.models.secretary,"Secretary model (provider/model); leave out for automatic." + security),
         field("models.extraction",\.models.extraction,"Memory extraction model; leave out for automatic." + security),
@@ -104,7 +105,7 @@ public struct Config: Sendable, Equatable {
     static let sections = [
         "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "iPhone relay.",
         "harness": "Harness connection.", "models": "Models per role; a missing role is chosen automatically from the harness's model metadata.",
-        "models.coding": "Coding executor (claude, codex) = \"provider/model\"; a missing executor is automatic." + security,
+        "models.coding": "Coding executor id (OpenClaw: claude, codex; Hermes: hermes) = \"provider/model\"; a missing executor is automatic." + security,
         "models.rules": "Inputs of the automatic choice.",
         "mcp_servers": "MCP servers workers may use: [mcp_servers.<name>] with command (absolute path) and args; env is not supported." + security,
     ]
@@ -172,6 +173,7 @@ public struct Config: Sendable, Equatable {
         let h = harness
         if h.agent.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return ("harness.agent","expected 1-64 letters, digits, - or _") }
         if !Self.isLoopbackGateway(h.gatewayURL) { return ("harness.gateway_url","expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789") }
+        if !Self.isLoopbackHTTP(h.hermesURL) { return ("harness.hermes_url","expected a loopback http:// or https:// address with no path, such as http://127.0.0.1:8642") }
         if !(h.devRepo.isEmpty || h.devRepo.hasPrefix("/") || h.devRepo.hasPrefix("~/")) { return ("harness.dev_repo","expected an absolute path, a ~/ path or \"\"") }
         if let url = URLComponents(string: relay.url), ["ws","wss"].contains(url.scheme ?? ""), !(url.host ?? "").isEmpty {} else { return ("relay.url","expected a ws:// or wss:// address") }
         for (key,model) in [("secretary",models.secretary),("extraction",models.extraction),("worker",models.worker),("review",models.review)] + models.coding.map({ ("coding.\($0.key)",$0.value) }) where model?.isEmpty == true { return ("models.\(key)","expected \"provider/model\"; leave the key out for automatic") }
@@ -184,8 +186,16 @@ public struct Config: Sendable, Equatable {
     }
     /// The Gateway URL rule the CLI transport enforces: loopback host, ws or wss, no credentials, path, query or fragment.
     public static func isLoopbackGateway(_ target: String) -> Bool {
+        isLoopback(target,schemes: ["ws","wss"])
+    }
+    /// The Hermes URL rule: loopback host, http or https, no credentials, path, query or fragment.
+    public static func isLoopbackHTTP(_ target: String) -> Bool {
+        isLoopback(target,schemes: ["http","https"])
+    }
+    /// IPv6 loopback may come back bracketed ("[::1]") from `URLComponents.host`; port 0 is never a listening port.
+    static func isLoopback(_ target: String,schemes: Set<String>) -> Bool {
         guard let url = URLComponents(string: target) else { return false }
-        return ["ws","wss"].contains(url.scheme ?? "") && ["127.0.0.1","::1","localhost"].contains(url.host ?? "") && url.user == nil && url.password == nil && url.query == nil && url.fragment == nil && ["","/"].contains(url.path)
+        return schemes.contains(url.scheme ?? "") && ["127.0.0.1","::1","[::1]","localhost"].contains(url.host ?? "") && url.port != 0 && url.user == nil && url.password == nil && url.query == nil && url.fragment == nil && ["","/"].contains(url.path)
     }
     /// Best effort: the line that sets `key` (or its table header).
     static func line(of key: String, in text: String) -> Int? {
@@ -280,7 +290,7 @@ public enum SettingSource: String, Sendable { case environment, file, automatic,
 /// `PROJECTX_MODE` and `PROJECTX_DATA` stay environment-only (`RuntimeMode`, the data root).
 public struct ResolvedSettings: Sendable, Equatable {
     public static let variables: [(String, [String])] = [
-        ("PROJECTX_TRANSPORT",["harness.transport"]), ("PROJECTX_GATEWAY_URL",["harness.gateway_url"]), ("PROJECTX_AGENT",["harness.agent"]),
+        ("PROJECTX_HARNESS",["harness.kind"]), ("PROJECTX_TRANSPORT",["harness.transport"]), ("PROJECTX_GATEWAY_URL",["harness.gateway_url"]), ("PROJECTX_AGENT",["harness.agent"]),
         ("PROJECTX_DEV_REPO",["harness.dev_repo"]), ("PROJECTX_RELAY_URL",["relay.url"]),
         ("PROJECTX_SECRETARY_MODEL",["models.secretary","models.extraction"]), ("PROJECTX_MODEL",["models.worker"]), ("PROJECTX_REVIEW_MODEL",["models.review"]),
         ("PROJECTX_CLAUDE_MODEL",["models.coding.claude"]), ("PROJECTX_CODEX_MODEL",["models.coding.codex"]),
@@ -303,8 +313,9 @@ public struct ResolvedSettings: Sendable, Equatable {
     public func source(_ key: String) -> SettingSource {
         environment[key] != nil ? .environment : config.fileKeys.contains(key) ? .file : key.hasPrefix("models.") && !key.hasPrefix("models.rules.") ? .automatic : .default
     }
-    /// Per-role models from the harness's metadata; explicit choices (environment or file) win.
-    public func models(_ available: [ModelInfo], primary: String?) -> ModelChoices { ModelDefaults.resolve(available,primary: primary,explicit: config.models) }
+    /// Per-role models from the harness's metadata; explicit choices (environment or file) win. `runtimes` maps the
+    /// harness's coding executors to their model runtimes (`Executor.runtime`).
+    public func models(_ available: [ModelInfo], primary: String?, runtimes: [String:String] = [:]) -> ModelChoices { ModelDefaults.resolve(available,primary: primary,explicit: config.models,runtimes: runtimes) }
     public static func == (a: Self, b: Self) -> Bool { a.config == b.config && a.environment == b.environment }
 }
 

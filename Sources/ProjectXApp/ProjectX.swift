@@ -12,6 +12,12 @@ import ProjectXCore
     /// Set when the native transport was selected but this launch fell back to the CLI.
     @Published var nativeNotice: String?
     @Published var nativeNoticeDetail = ""
+    /// The main harness in use ("OpenClaw Gateway · projectx", "Hermes Agent 0.21.6"); nil outside live mode.
+    @Published var harnessLabel: String?
+    /// What is wrong with the harness (not ready, untested version, a held switch); a send does not clear it.
+    @Published var harnessNotice: String?
+    /// Set at launch when a harness switch waits for running work (open question 9).
+    var switchNotice: String?
     /// Feedback for the enrollment form in Settings.
     @Published var enrollmentNotice = ""
     @Published var ready = false
@@ -52,7 +58,18 @@ import ProjectXCore
     /// The next start of a relay host that failed to start.
     private var relayRetry: Task<Void,Never>?
     var awake: NSObjectProtocol?
-    var working: Bool { snapshot.work.contains { $0.active } }
+    // Jobs (#319), in JobsWiring.swift.
+    var jobRunner: ScriptRunner?
+    var jobScheduler: JobScheduler?
+    var jobsWatcher: JobsWatcher?
+    var jobsConsumer: Task<Void,Never>?
+    var jobObservers: [(NotificationCenter, NSObjectProtocol)] = []
+    var lastJobsError: ConfigError?
+    /// Topics bound to jobs, deleted ones included: their work never turns on the working indicator (open question 10).
+    @Published var jobTopics = Set<String>()
+    var working: Bool { snapshot.work.contains { $0.active && !jobTopics.contains($0.topicID) } }
+    /// The main chat: everything but the messages that stay in a job's sub-chat.
+    var timeline: [Message] { snapshot.messages.filter(\.onMainTimeline) }
     func start() {
         guard observation == nil else { return }
         observation = Task {
@@ -82,26 +99,21 @@ import ProjectXCore
                 if !skipped.isEmpty { let files = skipped.prefix(10).joined(separator: ", "); _ = try await store.message(role: "assistant",body: "Memory skipped \(skipped.count) oversized or unreadable note file(s): " + files,kind: "failure",notice: Notice(.memorySkipped,["count": "\(skipped.count)","files": files])) }
                 let box = settingsBox; box.value = harnessSettings()
                 let harness: any Harness
-                switch runtimeMode.rawValue {
-                case "fixture": harness = FixtureHarness()
-                case "live":
-                    // Native launch is NOT an escape from an inherited exec restriction.
-                    try GatewayRPC.enforceAttribution(env)
-                    let h = resolved.config.harness
-                    guard h.agent == "projectx" else { throw ProjectError.blocked("\(resolved.environment["harness.agent"] ?? "[harness] agent in config.toml") is \"\(h.agent)\"; this build runs only on the dedicated projectx agent, never personal agents. Set it to \"projectx\".") }
-                    nativeSelected = h.transport == .native
-                    let native = nativeSelected ? await connectNative(h.gatewayURL) : nil
-                    harness = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: h.agent,rpc: GatewayRPC(native: native,audit: { try await store.gatewayReceipt($0) },target: h.gatewayURL),settings: { box.value })
-                default: harness = OfflineHarness()
+                switch runtimeMode {
+                case .fixture: harness = FixtureHarness()
+                case .live: harness = try await liveHarness(resolved,root: root,store: store)
+                case .offline: harness = OfflineHarness()
                 }
                 // Queued work resumes with the automatic models, unless the first metadata read takes more than 10 s.
                 self.harness = harness; await refreshModels().value(upTo: .seconds(10))
                 let engine = Engine(store: store,memory: memory,harness: harness,settings: { box.value }); self.engine = engine
                 await engine.resume()
+                await startJobs(engine,root: root,scripts: explicit != nil || runtimeMode == .fixture ? root.appendingPathComponent("jobs",isDirectory: true) : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/jobs",isDirectory: true))
                 // Keys and device counters live as long as each other, so the device file stays in the support root whatever PROJECTX_DATA says.
                 devicesFile = support.appendingPathComponent("relay-devices.json")
                 if runtimeMode == .live { await startRelay(engine,url: resolved.config.relay.url) }
                 status = nil; ready = true
+                Task { await checkHarness() }
                 applySystem(resolved.config.general)
                 watchConfig()
                 // Polls keep reading, but the UI hears only about a changed snapshot. The bridge hears every poll: it checks
@@ -112,7 +124,7 @@ import ProjectXCore
                     do {
                         let next = try await engine.snapshot()
                         if notice != nil { if status == notice { status = nil }; notice = nil; failures = 0 }
-                        if next != snapshot { snapshot = next }
+                        if next != snapshot { snapshot = next; let topics = Set(((try? await store.jobRecords()) ?? []).map(\.topicID)); if topics != jobTopics { jobTopics = topics } }
                         if let relay, let bridge { await bridge.publish(next,to: relay) }
                     } catch {
                         failures += 1; notice = "Couldn't read the chat, retrying: \(error.localizedDescription)"; status = notice
@@ -122,6 +134,45 @@ import ProjectXCore
             } catch is CancellationError { }
             catch { status = error.localizedDescription; ready = false }
         }
+    }
+    /// The main harness from `[harness] kind` (`PROJECTX_HARNESS` overrides it), after that adapter's launch guard.
+    /// Open question 9: a switch waits while work is active or uncertain, so that work stays on the harness it started on.
+    private func liveHarness(_ resolved: ResolvedSettings,root: URL,store: Store) async throws -> any Harness {
+        let h = resolved.config.harness, box = settingsBox
+        let previous = try await store.lastHarness().flatMap(Config.HarnessKind.init(rawValue:)) ?? .openclaw
+        var kind = h.kind
+        if kind != previous, try await store.snapshot().work.contains(where: { $0.active || $0.state == "uncertain" }) { // suppressed too, until its stop is confirmed
+            kind = previous
+            switchNotice = "Still on \(previous.rawValue): work started there is running. Relaunch Yorozu once it finishes to switch to \(h.kind.rawValue)."
+        }
+        let harness: any Harness
+        switch kind {
+        case .openclaw:
+            // Native launch is NOT an escape from an inherited exec restriction.
+            try GatewayRPC.enforceAttribution(environment)
+            guard h.agent == "projectx" else { throw ProjectError.blocked("\(resolved.environment["harness.agent"] ?? "[harness] agent in config.toml") is \"\(h.agent)\"; this build runs only on the dedicated projectx agent, never personal agents. Set it to \"projectx\".") }
+            nativeSelected = h.transport == .native
+            let native = nativeSelected ? await connectNative(h.gatewayURL) : nil
+            harness = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: h.agent,rpc: GatewayRPC(native: native,audit: { try await store.requestReceipt($0) },target: h.gatewayURL),settings: { box.value })
+            harnessLabel = "OpenClaw Gateway · " + h.agent
+        case .hermes:
+            // Not ready still launches: messages are saved and the status line says what to fix (`checkHarness`).
+            harness = try HermesHarness(url: h.hermesURL,audit: { try await store.requestReceipt($0) },settings: { box.value })
+            harnessLabel = "Hermes Agent"
+        }
+        try await store.recordHarness(harness.id)
+        return harness
+    }
+    /// The harness's readiness for the status line: Hermes's read-only check (problems, then an untested-version
+    /// warning), plus a held harness switch. Runs at launch and before each message while something is wrong.
+    func checkHarness() async {
+        var notes = [switchNotice].compactMap { $0 }
+        if let hermes = harness as? HermesHarness {
+            let r = await hermes.readiness()
+            harnessLabel = "Hermes Agent" + (r.version.map { " " + $0 } ?? "")
+            notes += r.ready ? r.warnings : ["Hermes is not ready: " + r.problems.joined(separator: " ")]
+        }
+        harnessNotice = notes.isEmpty ? nil : notes.joined(separator: " ")
     }
     /// The native client when its stored device token connects; otherwise nil, so this launch uses the CLI and says so.
     private func connectNative(_ target: String) async -> NativeGatewayClient? {
@@ -171,7 +222,7 @@ import ProjectXCore
         }
         relayRestart = task; await task.value
     }
-    func stop() { observation?.cancel(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
+    func stop() { observation?.cancel(); stopJobs(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
     func enroll() async {
         guard let nativeClient, !connecting else { return }
         connecting = true; let secret = bootstrapSecret; bootstrapSecret = ""
@@ -188,6 +239,7 @@ import ProjectXCore
         guard let engine, !submitting, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return }
         submitting = true; defer { submitting = false }
         let text = draft
+        if harnessNotice != nil { Task { await checkHarness() } }
         await ensureModels()
         do { try await engine.send(text); if draft == text { draft = "" }; status = nil; snapshot = try await engine.snapshot() }
         catch { status = error.localizedDescription }
@@ -227,13 +279,14 @@ struct MessageCard: View {
 struct MainChat: View {
     @ObservedObject var model: AppModel
     var body: some View {
+        let timeline = model.timeline
         VStack(spacing: 0) {
             ScrollViewReader { reader in
                 ScrollView { LazyVStack(alignment: .leading,spacing: 14) {
-                    if model.snapshot.messages.isEmpty { Text("One conversation. Background thinking in topic sub-chats.").foregroundStyle(.secondary).padding(.vertical,30) }
-                    ForEach(model.snapshot.messages) { MessageCard(message: $0,text: model.text($0)).id($0.id) }
+                    if timeline.isEmpty { Text("One conversation. Background thinking in topic sub-chats.").foregroundStyle(.secondary).padding(.vertical,30) }
+                    ForEach(timeline) { MessageCard(message: $0,text: model.text($0)).id($0.id) }
                 }.padding() }
-                .onChange(of: model.snapshot.messages.count) { _,_ in if let last = model.snapshot.messages.last { reader.scrollTo(last.id,anchor: .bottom) } }
+                .onChange(of: timeline.count) { _,_ in if let last = timeline.last { reader.scrollTo(last.id,anchor: .bottom) } }
             }
             Divider()
             HStack(alignment: .bottom) {
@@ -254,6 +307,7 @@ struct PopoverContent: View {
         VStack(alignment: .leading,spacing: 0) {
             HStack {
                 Text(model.runtimeMode.windowTitle).font(.headline)
+                if let label = model.harnessLabel { Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                 Spacer()
                 if model.working { ProgressView().controlSize(.small).help("Working on it") }
                 Menu {
@@ -281,6 +335,10 @@ struct PopoverContent: View {
                     Spacer()
                     Button("Connect…",action: openSettings).buttonStyle(.link)
                 }.font(.callout).padding(.horizontal).padding(.vertical,6)
+            }
+            if let notice = model.harnessNotice {
+                Text(notice).font(.callout).foregroundStyle(.orange).lineLimit(2).truncationMode(.tail).help(notice)
+                    .textSelection(.enabled).padding(.horizontal).padding(.vertical,6)
             }
             if let status = model.status {
                 Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail).help(status)
