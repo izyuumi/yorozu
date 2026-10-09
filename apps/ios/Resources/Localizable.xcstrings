@@ -471,6 +471,27 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "iPhoneのバージョン" } }
       }
     },
+    "On" : {
+      "comment" : "Settings › Notifications: the permission state.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オン" } }
+      }
+    },
+    "Off" : {
+      "comment" : "Settings › Notifications: the permission state.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オフ" } }
+      }
+    },
+    "Not asked yet" : {
+      "comment" : "Settings › Notifications: the permission state.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "未確認" } }
+      }
+    },
     "Unknown" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "不明" } }
@@ -5795,35 +5816,16 @@
       }
     },
     "Yorozu finished." : {
-      "extractionState" : "stale",
+      "comment" : "Push body: the relay's fixed loc-key.",
+      "extractionState" : "manual",
       "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yorozu ha terminado."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yorozu が完了しました。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yorozu가 완료했습니다."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yorozu 已完成。"
-          }
-        }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your Mac is back online." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macがオンラインに戻りました。" } }
       }
     },
     "Yorozu needs attention." : {
+      "comment" : "Push body: the relay's fixed loc-key.",
+      "extractionState" : "manual",
       "localizations" : {
         "es" : {
           "stringUnit" : {
@@ -5852,32 +5854,11 @@
       }
     },
     "Yorozu needs your approval." : {
-      "extractionState" : "stale",
+      "comment" : "Push body: the relay's fixed loc-key.",
+      "extractionState" : "manual",
       "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yorozu necesita tu aprobación."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yorozu が承認を求めています。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yorozu가 승인을 요청합니다."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yorozu 需要您的批准。"
-          }
-        }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu has a question for you." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuから質問があります。" } }
       }
     },
     "Yorozu noticed you always allow this. Make it a rule?" : {
@@ -5910,7 +5891,8 @@
       }
     },
     "Yorozu replied." : {
-      "extractionState" : "stale",
+      "comment" : "Push body: the relay's fixed loc-key.",
+      "extractionState" : "manual",
       "localizations" : {
         "es" : {
           "stringUnit" : {

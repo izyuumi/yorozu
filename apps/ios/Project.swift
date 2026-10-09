@@ -34,6 +34,8 @@ let project = Project(
                 // "Save Image" in the share sheet of a file opened from a message.
                 "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
                 "NSLocalNetworkUsageDescription": "Yorozu connects straight to your Mac on the same network when Direct connection is on.",
+                // The relay's silent push: a few seconds to catch up over the sealed channel (`AppDelegate`).
+                "UIBackgroundModes": ["remote-notification"],
                 // `yorozu://pair?…` is the pairing string itself: tapping one opens the app.
                 "CFBundleURLTypes": [
                     [
@@ -50,8 +52,12 @@ let project = Project(
                 "Resources/Localizable.xcstrings",
                 "Resources/PrivacyInfo.xcprivacy",
             ],
-            // The QR's web link opens the app (the site's AASA lists `/pair`).
-            entitlements: .dictionary(["com.apple.developer.associated-domains": ["applinks:yorozu.yumi.to"]]),
+            entitlements: .dictionary([
+                // TestFlight is production APNs, the only environment the relay talks to.
+                "aps-environment": "production",
+                // The QR's web link opens the app (the site's AASA lists `/pair`).
+                "com.apple.developer.associated-domains": ["applinks:yorozu.yumi.to"],
+            ]),
             dependencies: [.package(product: "YorozuWire")],
             // Automatic signing plus `xcodebuild -allowProvisioningUpdates` and an App Store Connect key:
             // Xcode issues the distribution certificate and the App Store profile itself.
