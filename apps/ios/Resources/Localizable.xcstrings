@@ -5820,7 +5820,10 @@
       "extractionState" : "manual",
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Your Mac is back online." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macがオンラインに戻りました。" } }
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tu Mac vuelve a estar en línea." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macがオンラインに戻りました。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Mac이 다시 온라인 상태입니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你的 Mac 已重新上线。" } }
       }
     },
     "Yorozu needs attention." : {
@@ -5836,7 +5839,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Yorozu necesita atención."
+            "value" : "Una tarea ha fallado."
           }
         },
         "ja" : {
@@ -5848,13 +5851,13 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Yorozu에 주의가 필요합니다."
+            "value" : "작업이 실패했습니다."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Yorozu 需要处理。"
+            "value" : "有一项任务失败了。"
           }
         }
       }
@@ -5864,7 +5867,10 @@
       "extractionState" : "manual",
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu has a question for you." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuから質問があります。" } }
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu tiene una pregunta para ti." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuから質問があります。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu가 질문을 보냈습니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu 有个问题想问你。" } }
       }
     },
     "Yorozu noticed you always allow this. Make it a rule?" : {
