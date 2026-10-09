@@ -130,7 +130,7 @@ actor EngineBridge: RelayBackend {
         if await exists(id) { return receipt }
         // Past its deadline (the phone sets send time + 24 h): never routed late, the phone shows Not delivered (#314).
         if let deadline = m.admissionDeadline, deadline < Self.now {
-            return .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .expired, reason: "Your Mac was offline for more than 24 hours.")))
+            return .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .expired, reason: "The host was offline for more than 24 hours.")))
         }
         await prepare()
         // Text, id and send time only: no model may learn which device a message came from (#313). A job's own input
@@ -154,7 +154,7 @@ actor EngineBridge: RelayBackend {
     private func jobControl(_ c: JobControlData, id: String, ts: Int) async -> YorozuEvent {
         if let done = jobControls.last(where: { $0.eventId == id }) { return .control(.admissionStatus(done)) }
         var reason: String?
-        if Self.now - ts > 120_000 { reason = "That tap reached your Mac too late." }
+        if Self.now - ts > 120_000 { reason = "That tap reached the host too late." }
         else if !mode.permitsInput(fixtureAcknowledged: false) { reason = "The host is in fixture mode and doesn't take messages from client devices." }
         else {
             do {
@@ -212,7 +212,7 @@ actor EngineBridge: RelayBackend {
         if await exists(id) { staging.remove(device: device, message: id); return receipt }
         if c.admissionDeadline < Self.now {
             staging.remove(device: device, message: id)
-            return .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .expired, reason: "Your Mac was offline for more than 24 hours.")))
+            return .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .expired, reason: "The host was offline for more than 24 hours.")))
         }
         switch staging.assemble(c.attachments, device: device, message: id) {
         case .failed(let reason): return .control(.attachmentProgress(AttachmentProgressData(requestId: id, messageId: id, index: 0, nextOffset: 0, reason: reason)))
