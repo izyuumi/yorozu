@@ -3,17 +3,25 @@ import Base from '../layouts/Base.astro';
 ---
 <Base title="Privacy Policy — Yorozu" description="What Yorozu collects, what its relay can see, and what it cannot." mainClass="legal">
   <h1>Privacy Policy</h1>
-  <p class="effective">Effective September 22, 2026</p>
+  <p class="effective">Effective October 9, 2026</p>
 
-  <p>Yorozu is a Mac app and an iPhone app made by Yumi Izumi ("we"). This policy explains what data Yorozu handles. In short: <strong>we don't run accounts, analytics or advertising, and we can't read your conversations.</strong></p>
+  <p>Yorozu is a Mac app and an iPhone app made by Yumi Izumi ("we"). This policy explains what data Yorozu handles. It covers Yorozu 0.7.0 and Yorozu v1, the current public release; where they differ, it says so. In short: <strong>we don't run accounts, analytics or advertising, and we can't read your conversations.</strong></p>
 
   <h2>What stays on your devices</h2>
-  <p>Your messages, threads, files, agent output, pairing keys and settings are stored on your Mac and iPhone. Private keys are stored in the macOS and iOS Keychain. We never receive your Claude, OpenAI, OpenClaw or other provider credentials. Those stay with the tools that use them on your Mac.</p>
+  <p>Your messages, threads, files, agent output, pairing keys and settings are stored on your Mac and iPhone. Private keys are stored in the macOS and iOS Keychain. We never receive your Claude, OpenAI, OpenClaw, Hermes Agent or other provider credentials. Those stay with the tools that use them on your Mac.</p>
+  <p>Yorozu 0.7.0 keeps these files on your Mac:</p>
+  <ul>
+    <li><strong>Attachments</strong> you send or that agents return, in <code>~/Yorozu/files/</code>. They are kept until you delete them in Finder.</li>
+    <li><strong>Memory</strong>, as Markdown files in <code>~/Yorozu/memory/</code>.</li>
+    <li><strong>Settings and jobs</strong>, in <code>config.toml</code> and <code>jobs.toml</code> in the app's data folder under <code>~/Library/Application Support/</code>, and each scheduled job's folder under <code>~/Yorozu/jobs/</code>.</li>
+  </ul>
+  <p>On your iPhone, Yorozu 0.7.0 keeps a cache of recent history, messages waiting to send and the files you open, encrypted at rest by iOS and excluded from backups. Deleting the app removes them.</p>
 
   <h2>The relay</h2>
   <p>Your iPhone reaches your Mac through a relay we operate on Cloudflare at <code>relay.yumi.to</code>. You can also run your own. Everything you send is end-to-end encrypted (X25519 key agreement, ChaCha20-Poly1305) before it reaches the relay, and the relay has no key to decrypt it. The relay does handle:</p>
   <ul>
-    <li><strong>Encrypted messages</strong>, held for up to 24 hours while the receiving device is offline, then deleted.</li>
+    <li><strong>Encrypted messages</strong>, held for up to 24 hours while the receiving device is offline, then deleted. When your iPhone sends a message, the relay replies that it has received it and whether it is holding it until your Mac comes online.</li>
+    <li><strong>Encrypted attachments</strong> (Yorozu 0.7.0), sent in end-to-end encrypted chunks through the relay or the direct connection. The relay sees their size and timing. It does not hold files: while your Mac is offline, files wait on your iPhone, and only text uses the 24-hour hold.</li>
     <li><strong>Public keys</strong> of paired devices and a random room identifier, kept until you unpair the device.</li>
     <li><strong>One-time pairing tokens</strong>, which expire after 10 minutes.</li>
     <li><strong>Your iPhone's Apple push token</strong>, so the relay can wake the app, kept until you unpair the device or Apple reports the token is no longer valid.</li>
@@ -21,23 +29,27 @@ import Base from '../layouts/Base.astro';
     <li><strong>IP addresses</strong>, which Cloudflare processes to deliver traffic, under <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare's privacy policy</a>.</li>
   </ul>
 
+  <h2>Direct connection</h2>
+  <p>Yorozu 0.7.0 can also connect your iPhone straight to your Mac on the same local network or over Tailscale. It is optional and off by default; turning it on asks for iOS Local Network permission. To find each other, your Mac sends its local network and Tailscale addresses to your iPhone inside the end-to-end encrypted channel, so the relay cannot see them. Traffic on the direct connection does not pass through us.</p>
+
   <h2>Notifications</h2>
-  <p>Push notifications are delivered by Apple. The notification Apple carries holds generic text and an encrypted preview that only your iPhone can open.</p>
+  <p>Push notifications are delivered by Apple. In Yorozu 0.7.0, the notification Apple carries holds only fixed text, such as "Yorozu replied.", and no preview of your messages. In Yorozu v1, it holds generic text and an encrypted preview that only your iPhone can open. Yorozu 0.7.0 also shows notifications created on your iPhone itself, which do not pass through Apple or us: one when a message is still waiting to send, and one when the relay's 24-hour hold expires before your Mac receives it.</p>
 
   <h2>Third-party services you connect</h2>
-  <p>Yorozu sends your requests to software on your Mac: OpenClaw, Claude Code or Codex. Those tools send data to their model providers (for example Anthropic or OpenAI) under their own privacy policies and your agreements with those providers. We are not a party to that and don't receive that data.</p>
+  <p>Yorozu sends your requests to software on your Mac. Yorozu 0.7.0 uses a harness, OpenClaw or Hermes Agent, which runs its own workers and coding tools such as Claude Code or Codex. Yorozu v1 uses OpenClaw, Claude Code or Codex directly. Those tools send data to their model providers (for example Anthropic or OpenAI) under their own privacy policies and your agreements with those providers. We are not a party to that and don't receive that data.</p>
+  <p>If you install CuaDriver, Yorozu 0.7.0 lets workers use it to operate apps on your Mac. Images that workers choose to share from that work appear in their sub-chats and reach your iPhone end-to-end encrypted, like any other message.</p>
 
   <h2>Updates and downloads</h2>
-  <p>The Mac app checks <code>yorozu.yumi.to</code> for updates, and the app and its updates are downloaded from GitHub, which reveals your IP address and app version to Cloudflare and GitHub under their privacy policies. No system profile is sent. This website uses no cookies, analytics or trackers.</p>
+  <p>Yorozu v1 for Mac checks <code>yorozu.yumi.to</code> for updates, and the app and its updates are downloaded from GitHub, which reveals your IP address and app version to Cloudflare and GitHub under their privacy policies. No system profile is sent. Yorozu 0.7.0 does not check for updates. This website uses no cookies, analytics or trackers.</p>
 
   <h2>Permissions</h2>
-  <p>Yorozu asks for macOS or iOS permissions (such as the camera to scan the pairing code) only for the feature that needs them. Data accessed through permissions is used on your devices and is not sent to us.</p>
+  <p>Yorozu asks for macOS or iOS permissions only for the feature that needs them: for example, the camera to scan the pairing code, the camera and photos to attach or save pictures, Local Network for the direct connection, and notifications for alerts. Data accessed through permissions is used on your devices and is not sent to us.</p>
 
   <h2>Children</h2>
   <p>Yorozu is not directed to children under 13, and we do not knowingly collect their data.</p>
 
   <h2>Your choices</h2>
-  <p>Unpairing a device deletes its keys and push token from the relay. Deleting the apps removes local data. Because we hold no account or readable content, there is nothing else to export or delete. For questions, email <a href="mailto:contact@yumi.to">contact@yumi.to</a>.</p>
+  <p>Unpairing a device deletes its keys and push token from the relay. Deleting the apps removes local data; files in your <code>~/Yorozu</code> folder stay until you delete them. Because we hold no account or readable content, there is nothing else to export or delete. For questions, email <a href="mailto:contact@yumi.to">contact@yumi.to</a>.</p>
 
   <h2>Changes</h2>
   <p>We will post changes here and update the date above.</p>

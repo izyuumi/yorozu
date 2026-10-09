@@ -33,7 +33,7 @@ const pages = [['/', 'Home'], ['/privacy/', 'Privacy'], ['/terms/', 'Terms']];
       <a href="/privacy/" aria-current={current('/privacy/')}>Privacy</a>
       <a href="/terms/" aria-current={current('/terms/')}>Terms</a>
       <a href="https://github.com/izyuumi/yorozu">GitHub</a>
-      {home && <a class="button small" href="/mac">Download for Mac</a>}
+      {home && <a class="button small" href="/mac">Download v1 for Mac</a>}
     </nav>
   </header>
 
@@ -42,7 +42,7 @@ const pages = [['/', 'Home'], ['/privacy/', 'Privacy'], ['/terms/', 'Terms']];
   </main>
 
   <footer class="site">
-    <span>© 2026 Yumi Izumi{home && '. Yorozu is not affiliated with OpenClaw, Anthropic or OpenAI.'}</span>
+    <span>© 2026 Yumi Izumi{home && '. Yorozu is not affiliated with OpenClaw, Nous Research (Hermes Agent), Cua (CuaDriver), Anthropic or OpenAI.'}</span>
     <nav aria-label="Footer">
       {pages.filter(([href]) => href !== path).map(([href, label]) => <a href={href}>{label}</a>)}
       <a href="https://github.com/izyuumi/yorozu">GitHub</a>
