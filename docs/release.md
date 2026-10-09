@@ -32,6 +32,7 @@ The Mac app shares v1's bundle id, so a copy placed in `/Applications` would rep
 - Without `--confirm` it exits 64.
 - It numbers the build from App Store Connect (highest build of this version plus one). If that would reach 10000 it stops with exit 65: bump `version.txt` instead. `BUILD=<n>` skips both the lookup and that check.
 - `apps/ios/ExportOptions.plist` makes the export step the upload, internal testing only.
+- The archive embeds the notification service extension (`to.yumi.yorozu.ios.notification-service`), which carries the app's version pair; automatic signing issues its App Store profile beside the app's ([setup.md](setup.md#push-notifications)).
 - The build reaches the Internal TestFlight group once App Store Connect has processed it.
 
 ## iOS: compile check without uploading
