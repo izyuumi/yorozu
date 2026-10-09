@@ -167,7 +167,7 @@ actor RelayHost {
 
     func start() {
         guard loop == nil else { return }
-        activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Yorozu serves paired phones")
+        activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Yorozu serves client devices")
         publish()
         loop = Task { await run() }
         restartListener()
@@ -843,7 +843,7 @@ actor RelayHost {
     private func message(_ data: Data, on id: Int) {
         guard let link = links[id] else { return }
         guard let message = try? JSONDecoder().decode(DirectMessage.self, from: data) else {
-            return link.signer == nil ? refuse(id, String(localized: "A connection sent something other than a probe and a join.")) : drop(id, .unauthorized, error: String(localized: "The phone sent a malformed message."))
+            return link.signer == nil ? refuse(id, String(localized: "A connection sent something other than a probe and a join.")) : drop(id, .unauthorized, error: String(localized: "The client device sent a malformed message."))
         }
         guard let signer = link.signer else {
             switch message {
@@ -884,7 +884,7 @@ actor RelayHost {
             return refuse(id, String(localized: "Refused a malformed join."))
         }
         guard let pub = peers.first(where: { $0.value.record.signingPub == signer })?.key, let key = Data(base64URLEncoded: signer) else {
-            return refuse(id, String(localized: "Refused a key that is not paired with this Mac."))
+            return refuse(id, String(localized: "Refused a key that is not paired with this host."))
         }
         guard DirectProof.verifyJoin(pub: key, room: room, macNonce: nonce, signature: sig) else {
             directErrors[pub] = String(localized: "Its join signature did not verify.")
@@ -923,7 +923,7 @@ actor RelayHost {
     private func sleeping(_ asleep: Bool) {
         self.asleep = asleep
         guard asleep else { return }
-        for id in links.keys { drop(id, .sleeping, error: String(localized: "This Mac went to sleep.")) }
+        for id in links.keys { drop(id, .sleeping, error: String(localized: "The host went to sleep.")) }
     }
 
     /// Closes a connection that never named a paired phone.

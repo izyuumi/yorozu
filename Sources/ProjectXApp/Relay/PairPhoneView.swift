@@ -19,10 +19,10 @@ struct PairPhoneView: View {
                     Image(nsImage: qr).interpolation(.none).resizable().frame(width: qrSide, height: qrSide)
                         .accessibilityLabel("Pairing QR code")
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Scan with the iPhone Camera").font(.headline)
-                        Text("Or open Yorozu on the iPhone, tap Enter code manually, and paste the code. Check that the Mac key matches what the phone shows.")
+                        Text("Scan with the client device's camera").font(.headline)
+                        Text("Or open Yorozu on the client device, choose Enter code manually, and paste the code. Check that the host key matches what the device shows.")
                             .foregroundStyle(.secondary)
-                        field("Mac key", (try? QrPayload.decode(link))?.fingerprint ?? "")
+                        field("Host key", (try? QrPayload.decode(link))?.fingerprint ?? "")
                         field("Code", link)
                     }
                     .frame(width: textWidth, alignment: .leading)

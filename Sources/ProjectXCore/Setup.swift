@@ -41,9 +41,9 @@ public struct SetupReport: Sendable {
 public struct SetupEngine: Sendable {
     public static let order = ["welcome","harness","gateway","models","integrations","yolo","start_at_login","pair_iphone","path_link","done"]
     public static let titles = ["welcome": String(localized: "Welcome"), "harness": String(localized: "Harness"), "gateway": String(localized: "Connect to the Gateway"), "models": String(localized: "Models"), "integrations": String(localized: "Computer use"), "yolo": String(localized: "YOLO"),
-                                "start_at_login": String(localized: "Start at login"), "pair_iphone": String(localized: "Pair your iPhone"), "path_link": String(localized: "yorozu command"), "done": String(localized: "Done")]
+                                "start_at_login": String(localized: "Start at login"), "pair_iphone": String(localized: "Pair a client device"), "path_link": String(localized: "yorozu command"), "done": String(localized: "Done")]
     /// Steps only the running app can do, and where.
-    public static let appOnly = ["gateway": String(localized: "Settings › Advanced › Harness connection"), "start_at_login": String(localized: "Settings › General › Start at login"), "pair_iphone": String(localized: "Settings › Devices › Pair iPhone")]
+    public static let appOnly = ["gateway": String(localized: "Settings › Advanced › Harness connection"), "start_at_login": String(localized: "Settings › General › Start at login"), "pair_iphone": String(localized: "Settings › Devices › Pair a Client Device")]
     /// What only the running app knows. Nil outside the app: app-only steps are then left to it.
     public struct Host: Sendable {
         public var enrolled: Bool, paired: Bool
@@ -164,7 +164,7 @@ public struct SetupEngine: Sendable {
         steps.append(step("start_at_login",answered.contains("start_at_login") ? .done : .needed,
                           .init(id: "start_at_login",text: "Open Yorozu when you log in? It's on by default.",choices: ["on","off"],default: c.general.startAtLogin ? "on" : "off")))
         steps.append(step("pair_iphone",answered.contains("pair_iphone") || host?.paired == true ? .done : .needed,
-                          .init(id: "pair_iphone",text: "Pair your iPhone: scan the code in Settings › Devices with the iPhone's Camera, or skip for now.",choices: ["paired","skip"],default: "skip")))
+                          .init(id: "pair_iphone",text: "Pair a client device: scan the code in Settings › Devices with its camera, or skip for now.",choices: ["paired","skip"],default: "skip")))
         let linked = executable.map { (try? FileManager.default.destinationOfSymbolicLink(atPath: Self.link.path)) == $0.path } ?? true
         steps.append(step("path_link",linked || answered.contains("path_link") ? .done : .needed,
                           .init(id: "path_link",text: "Add a `yorozu` command at ~/.local/bin/yorozu, so Terminal and agents can run `yorozu setup`?",choices: ["no","yes"],default: "no")))

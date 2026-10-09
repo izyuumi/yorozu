@@ -124,8 +124,8 @@ actor EngineBridge: RelayBackend {
         func reject(_ reason: String) -> YorozuEvent { .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .rejected, reason: reason))) }
         let receipt = YorozuEvent.control(.receipt(ReceiptData(eventId: id)))
         guard id.range(of: #"^[A-Za-z0-9-]{1,64}\z"#, options: .regularExpression) != nil else { return reject("Invalid message id.") }
-        guard m.attachments.isEmpty else { return reject("Update Yorozu on this iPhone to send attachments.") }
-        guard mode.permitsInput(fixtureAcknowledged: false) else { return reject("This Mac is in fixture mode and doesn't take phone messages.") }
+        guard m.attachments.isEmpty else { return reject("Update Yorozu on this device to send attachments.") }
+        guard mode.permitsInput(fixtureAcknowledged: false) else { return reject("The host is in fixture mode and doesn't take messages from client devices.") }
         // A resend or a relay replay of something already stored: the receipt is all it needs.
         if await exists(id) { return receipt }
         // Past its deadline (the phone sets send time + 24 h): never routed late, the phone shows Not delivered (#314).
@@ -151,7 +151,7 @@ actor EngineBridge: RelayBackend {
         if let done = jobControls.last(where: { $0.eventId == id }) { return .control(.admissionStatus(done)) }
         var reason: String?
         if Self.now - ts > 120_000 { reason = "That tap reached your Mac too late." }
-        else if !mode.permitsInput(fixtureAcknowledged: false) { reason = "This Mac is in fixture mode and doesn't take phone messages." }
+        else if !mode.permitsInput(fixtureAcknowledged: false) { reason = "The host is in fixture mode and doesn't take messages from client devices." }
         else {
             do {
                 switch c.action {
@@ -204,7 +204,7 @@ actor EngineBridge: RelayBackend {
         guard (1...MessageAttachment.maxCount).contains(c.attachments.count), c.attachments.allSatisfy({ $0.isValid && $0.id == nil }) else {
             return reject("Up to \(MessageAttachment.maxCount) files of at most 50 MB each.")
         }
-        guard mode.permitsInput(fixtureAcknowledged: false) else { return reject("This Mac is in fixture mode and doesn't take phone messages.") }
+        guard mode.permitsInput(fixtureAcknowledged: false) else { return reject("The host is in fixture mode and doesn't take messages from client devices.") }
         if await exists(id) { staging.remove(device: device, message: id); return receipt }
         if c.admissionDeadline < Self.now {
             staging.remove(device: device, message: id)
@@ -287,7 +287,7 @@ actor EngineBridge: RelayBackend {
             return delta(events, thread: thread, after: r.afterSeq.map(Int64.init), latest: next, more: more, reset: reset, routing: routing)
         } catch {
             Self.log.error("sync_request unreadable: \(error.localizedDescription, privacy: .public)")
-            return delta([], thread: thread, after: r.afterSeq.map(Int64.init), routing: routing, error: "Couldn't read the chat on this Mac: \(error.localizedDescription)")
+            return delta([], thread: thread, after: r.afterSeq.map(Int64.init), routing: routing, error: "Couldn't read the chat on the host: \(error.localizedDescription)")
         }
     }
 
@@ -307,7 +307,7 @@ actor EngineBridge: RelayBackend {
             }
             return page
         } catch {
-            return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: "Couldn't read the chat on this Mac: \(error.localizedDescription)")
+            return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: "Couldn't read the chat on the host: \(error.localizedDescription)")
         }
     }
 
@@ -405,7 +405,7 @@ actor EngineBridge: RelayBackend {
     }
 
     private static func head(_ s: String, _ ratio: Double) -> String {
-        utf8Prefix(s, bytes: Int(Double(s.utf8.count) * ratio)) + "\n\n…(truncated; the full text is on the Mac)"
+        utf8Prefix(s, bytes: Int(Double(s.utf8.count) * ratio)) + "\n\n…(truncated; the full text is on the host)"
     }
 
     private static func event(_ id: String, _ thread: String, _ ts: Int, _ payload: YorozuEvent.Payload) -> YorozuEvent {

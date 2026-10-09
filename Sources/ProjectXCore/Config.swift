@@ -115,11 +115,11 @@ public struct Config: Sendable, Equatable {
         field("general.appearance",\.general.appearance,"\"system\", \"light\" or \"dark\"."),
         field("general.show_advanced",\.general.showAdvanced,"Show the Advanced tab in Settings."),
         field("notifications.enabled",\.notifications.enabled,"Post notifications."),
-        field("notifications.destination",\.notifications.destination,"Where notifications appear: \"mac\" or \"phones\"."),
+        field("notifications.destination",\.notifications.destination,"Where notifications appear: \"mac\" (the host) or \"phones\" (client devices)."),
         field("routing.personal_knowledge",\.routing.personalKnowledge,"Where the user's personal notes live, named in the routing policy; empty drops that hint."),
         field("routing.self_topic",\.routing.selfTopic,"Topic that holds work on Yorozu itself."),
-        field("relay.url",\.relay.url,"Relay for the iPhone app (ws:// or wss://). After a change every phone must pair again." + security),
-        field("direct.enabled",\.direct.enabled,"Let paired phones connect straight to this Mac over the local network or a VPN (Tailscale/WireGuard); a phone tries only after its own Direct connection setting is on." + security),
+        field("relay.url",\.relay.url,"Relay for client devices (ws:// or wss://). After a change every client device must pair again." + security),
+        field("direct.enabled",\.direct.enabled,"Let client devices connect straight to the host over the local network or a VPN (Tailscale/WireGuard); a client tries only after its own Direct connection setting is on." + security),
         field("direct.port",\.direct.port,"TCP port the direct listener uses on Wi-Fi, Ethernet and VPN interfaces (1024-65535)." + security),
         field("harness.kind",\.harness.kind,"Main harness: \"openclaw\" or \"hermes\"; applies after relaunch, and only once no work is running." + security),
         field("harness.agent",\.harness.agent,"Harness agent id Yorozu runs on." + security),
@@ -138,7 +138,7 @@ public struct Config: Sendable, Equatable {
         field("setup.answered",\.setup.answered,"Setup steps answered or skipped, by id."),
     ]
     static let sections = [
-        "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "iPhone relay.", "direct": "Direct iPhone connection over LAN or VPN.",
+        "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "Relay for client devices.", "direct": "Direct client connection over LAN or VPN.",
         "harness": "Harness connection.", "models": "Models per role; a missing role is chosen automatically from the harness's model metadata.",
         "models.coding": "Coding executor id (OpenClaw: claude, codex; Hermes: hermes) = \"provider/model\"; a missing executor is automatic." + security,
         "models.rules": "Inputs of the automatic choice.", "setup": "First-launch setup progress (Yorozu setup, or the setup window).",

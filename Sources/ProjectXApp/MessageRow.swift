@@ -113,7 +113,7 @@ private struct ReceiptLine: View {
     var body: some View {
         HStack(spacing: Metrics.spacing) {
             if message.delay != nil, let sent = message.sentAt {
-                Text("sent \(Self.stamp(sent)) from phone · delivered \(Self.stamp(message.created))")
+                Text("sent \(Self.stamp(sent)) from a client device · delivered \(Self.stamp(message.created))")
             }
             Button { open.toggle() } label: {
                 Image(systemName: message.readAt == nil ? "checkmark.circle" : "checkmark.circle.fill").foregroundStyle(.secondary)

@@ -12,7 +12,7 @@ struct DevicesSettings: View {
     var body: some View {
         Form {
             Section {
-                if model.relayStatus.devices.isEmpty { Text("No paired phones yet.").foregroundStyle(.secondary) }
+                if model.relayStatus.devices.isEmpty { Text("No client devices yet.").foregroundStyle(.secondary) }
                 ForEach(model.relayStatus.devices) { device in
                     LabeledContent {
                         Button("Rename…") { name = device.label ?? device.name ?? ""; renaming = device }
@@ -24,31 +24,31 @@ struct DevicesSettings: View {
                         Text(Self.detail(device))
                     }
                 }
-            } header: { Text("Paired phones") } footer: {
-                Text("Removing a phone revokes its key at the relay. It has to pair again to connect.").foregroundStyle(.secondary)
+            } header: { Text("Client devices") } footer: {
+                Text("Removing a client device revokes its key at the relay. It has to pair again to connect.").foregroundStyle(.secondary)
             }
-            Section("Pair iPhone") {
+            Section("Pair a Client Device") {
                 LabeledContent {
-                    Button("Pair iPhone…") { pairing = true }.disabled(model.relay == nil)
+                    Button("Pair a Client Device…") { pairing = true }.disabled(model.relay == nil)
                 } label: {
-                    Text("Pair a new iPhone")
+                    Text("Pair a new client device")
                     Text(model.runtimeMode == .live ? "A code is created only when you press this. Each code works once." : "Pairing works in live mode only.")
                 }
             }
         }
         .formStyle(.grouped)
         .sheet(isPresented: $pairing) { PairPhoneView(model: model) }
-        .alert("Rename iPhone", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { device in
+        .alert("Rename Client Device", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { device in
             TextField("Name", text: $name)
             Button("Rename") { let label = name; Task { await model.relay?.rename(device.pub, label: label) } }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Leave it empty to use the name the phone sends.")
+            Text("Leave it empty to use the name the device sends.")
         }
-        .confirmationDialog("Remove this iPhone?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { device in
+        .confirmationDialog("Remove this client device?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { device in
             Button("Remove", role: .destructive) { Task { await model.relay?.removeDevice(device.pub) } }
         } message: { _ in
-            Text("It loses access to this Mac and has to pair again.")
+            Text("It loses access to this host and has to pair again.")
         }
     }
 
@@ -86,7 +86,7 @@ struct ConnectionSettings: View {
                 .onSubmit { if valid, url != current { confirming = true } }
                 LabeledContent {
                     Button("Change Relay…") { confirming = true }.disabled(locked != nil || !valid || url == current)
-                } label: { Text("Every paired phone has to pair again after a change.") }
+                } label: { Text("Every client device has to pair again after a change.") }
             }
             if model.runtimeMode == .live { DirectDiagnostics(status: model.relayStatus) }
             if let notice = model.nativeNotice {
@@ -107,7 +107,7 @@ struct ConnectionSettings: View {
             Button("Change Relay", role: .destructive) { let next = url; model.writeSettings { $0.relay.url = next } }
             Button("Cancel", role: .cancel) { url = current }
         } message: {
-            Text("All paired phones must pair again.")
+            Text("All client devices must pair again.")
         }
     }
 }
@@ -141,7 +141,7 @@ struct DirectDiagnostics: View {
                 LabeledContent("Last refused") { Text(refusal).textSelection(.enabled) }
             }
         } header: { Text("Direct connection") } footer: {
-            Text("Phones on the same Wi-Fi or VPN connect straight to this Mac once their Direct connection setting is on. Set `[direct] enabled` and `port` in config.toml.").foregroundStyle(.secondary)
+            Text("Client devices on the same Wi-Fi or VPN connect straight to the host once their Direct connection setting is on. Set `[direct] enabled` and `port` in config.toml.").foregroundStyle(.secondary)
         }
     }
 

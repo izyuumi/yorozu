@@ -147,15 +147,15 @@ struct SetupWindow: View {
             // Off and disabled while this run leaves the login item alone, as in Settings › General.
             Toggle(isOn: model.loginItemBlocker == nil ? toggle(s.question) : .constant(false)) {
                 Text("Start at login")
-                Text("On by default, so paired phones and scheduled jobs can reach Yorozu after a restart.")
+                Text("On by default, so client devices and scheduled jobs can reach Yorozu after a restart.")
                 if let blocker = model.loginItemBlocker { Text(blocker) }
             }.disabled(model.loginItemBlocker != nil)
         case "pair_iphone":
             LabeledContent {
-                Button("Pair iPhone…") { pairing = true }.disabled(model.relay == nil)
+                Button("Pair a Client Device…") { pairing = true }.disabled(model.relay == nil)
             } label: {
-                Text("No paired phones yet.")
-                Text(model.runtimeMode == .live ? "Scan the code with the iPhone Camera. You can also pair later in Settings › Devices." : "Pairing works in live mode only.")
+                Text("No client devices yet.")
+                Text(model.runtimeMode == .live ? "Scan the code with the client device's camera. You can also pair later in Settings › Devices." : "Pairing works in live mode only.")
             }
         default: EmptyView()
         }
@@ -300,7 +300,7 @@ struct SetupWindow: View {
         case "integrations": "Computer use (CuaDriver)"
         case "yolo": "YOLO mode"
         case "start_at_login": "Start at login"
-        case "pair_iphone": "Pair your iPhone"
+        case "pair_iphone": "Pair a client device"
         default: LocalizedStringKey(id)
         }
     }

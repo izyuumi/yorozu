@@ -34,7 +34,7 @@ struct GeneralSettings: View {
                 }
                 Toggle(isOn: model.setting(\.general.keepMacAwake)) {
                     Text("Keep this Mac awake")
-                    Text("Workers and paired phones need the Mac awake. A closed lid still sleeps.")
+                    Text("Workers and client devices need the host awake. A closed lid still sleeps.")
                 }
             }
             Section("Notifications") {
@@ -43,11 +43,11 @@ struct GeneralSettings: View {
                     Text("For results, failures and questions. Nothing is shown while you are reading the latest message.")
                 }
                 Picker(selection: model.setting(\.notifications.destination)) {
-                    Text("This Mac").tag(Config.Destination.mac)
+                    Text("This host").tag(Config.Destination.mac)
                     Text("Phones").tag(Config.Destination.phones)
                 } label: {
                     Text("Notify on")
-                    if model.config.notifications.destination == .phones { Text("Each phone must allow notifications from Yorozu.") }
+                    if model.config.notifications.destination == .phones { Text("Each client device must allow notifications from Yorozu.") }
                 }.disabled(!model.config.notifications.enabled)
             }
             Section("Keyboard") {
