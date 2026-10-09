@@ -29,10 +29,15 @@ final class PhoneModel {
         var readAt: Int?
         /// A user message from a phone: the phone's send time (epoch ms).
         var sentAt: Int?
+        /// Its files (#316). Optional so a cache written before attachments still loads.
+        var attachments: [AttachmentInfo]?
+
+        var files: [AttachmentInfo] { attachments ?? [] }
 
         init(id: String, user: Bool, ts: Int, text: String, failed: Bool = false,
              kind: String? = nil, topicId: String? = nil, taskId: String? = nil, replyTo: String? = nil,
-             notice: NoticeData? = nil, seq: Int? = nil, readAt: Int? = nil, sentAt: Int? = nil) {
+             notice: NoticeData? = nil, seq: Int? = nil, readAt: Int? = nil, sentAt: Int? = nil,
+             attachments: [AttachmentInfo] = []) {
             self.id = id
             self.user = user
             self.ts = ts
@@ -40,6 +45,7 @@ final class PhoneModel {
             self.failed = failed
             self.readAt = readAt
             self.sentAt = sentAt
+            self.attachments = attachments.isEmpty ? nil : attachments
             self.kind = kind
             self.topicId = topicId
             self.taskId = taskId
@@ -51,7 +57,7 @@ final class PhoneModel {
         init(record id: String, ts: Int, _ m: MessageData) {
             self.init(id: id, user: m.role == .user, ts: ts, text: m.text, failed: m.failed == true || m.kind == "failure",
                       kind: m.kind, topicId: m.topicId, taskId: m.taskId, replyTo: m.replyTo, notice: m.notice, seq: m.seq,
-                      readAt: m.readAt, sentAt: m.sentAt)
+                      readAt: m.readAt, sentAt: m.sentAt, attachments: m.attachmentInfos)
         }
     }
 
@@ -75,7 +81,26 @@ final class PhoneModel {
     }
 
     var draft = ""
+    /// Files staged in the composer (#316).
+    var draftFiles: [DraftFile] = []
     var pendingPairing: PendingPairing?
+
+    // MARK: Attachments (#316)
+
+    /// Thumbnails and opened files.
+    let files = AttachmentFiles()
+    /// The Mac takes attachments (its peer info); nil until it has said.
+    private(set) var attachmentsSupported: Bool?
+    /// Uploads and downloads over the pairing's link (relay or direct), moving bytes only while `.paired`.
+    @ObservationIgnored private var transfers: AttachmentTransfers?
+    @ObservationIgnored private var transferUpdates: Task<Void, Never>?
+    /// Incoming events for the transfers, in arrival order.
+    @ObservationIgnored private var transferInbox: AsyncStream<YorozuEvent>.Continuation?
+    /// Messages whose files are going up now, and how far, 0 to 1.
+    private(set) var uploading: Set<String> = []
+    private(set) var uploadProgress: [String: Double] = [:]
+    /// The offsets the Mac confirmed, per message and file; mirrored in `UploadStore`.
+    private var uploadOffsets: [String: [Int]] = [:]
 
     // MARK: Mirror (the history window)
 
@@ -119,7 +144,9 @@ final class PhoneModel {
 
     /// The relay has accepted this phone, so the chat shows rather than the pairing screen.
     private(set) var linked = false
-    private(set) var state: TransportState = .closed
+    private(set) var state: TransportState = .closed {
+        didSet { if (state == .paired) != (oldValue == .paired) { transfersLive() } }
+    }
     private(set) var ownerOnline = false
     /// The link's failure; cleared by the next `.paired`.
     private(set) var failure: String? { didSet { noteError(failure) } }
@@ -183,6 +210,7 @@ final class PhoneModel {
     /// Loads the pairing and its cache; the first `resume()` dials.
     init() {
         savedStatus = SavedStatus.load()
+        DraftFile.clearAll()
         do {
             if let stored = try PairingStore.loadRequired() { connect(stored) }
         } catch {
@@ -247,6 +275,18 @@ final class PhoneModel {
             failure = error.localizedDescription
             return
         }
+        let transfers = AttachmentTransfers(send: { [relay] event in try await relay?.send(event) })
+        self.transfers = transfers
+        files.transfers = transfers
+        let (inbox, feed) = AsyncStream<YorozuEvent>.makeStream()
+        transferInbox = feed
+        transferUpdates = Task { [weak self] in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { for await event in inbox { await transfers.handle(event) } }
+                for await update in transfers.updates { self?.transferred(update) }
+                group.cancelAll()
+            }
+        }
         pairing = stored.pairing
         pairedAt = stored.pairedAt
         candidates = stored.directCandidates ?? []
@@ -257,9 +297,11 @@ final class PhoneModel {
             outbox = saved.items
             marks = saved.marks
             // The cache keeps stored messages only: draw the rest from the outbox.
-            for item in outbox where !item.stored && !bubbles.contains(where: { $0.id == item.id }) {
-                if case .message(let message) = item.event.payload {
-                    merge(Bubble(id: item.id, user: true, ts: item.event.ts, text: message.text))
+            for item in outbox where !item.stored {
+                // Files still in the outbox show from there.
+                for (index, info) in (item.files ?? []).enumerated() { files.register(UploadStore.url(item.id, index), for: info) }
+                if case .message(let message) = item.event.payload, !bubbles.contains(where: { $0.id == item.id }) {
+                    merge(Bubble(id: item.id, user: true, ts: item.event.ts, text: message.text, attachments: item.files ?? []))
                 }
             }
             expireOverdue()
@@ -272,6 +314,12 @@ final class PhoneModel {
         inFlight = []
         suspend()
         relay = nil
+        transferInbox?.finish()
+        transferInbox = nil
+        transferUpdates?.cancel()
+        transferUpdates = nil
+        transfers = nil
+        files.transfers = nil
         pairing = nil
         ownPub = nil
         linked = false
@@ -279,6 +327,14 @@ final class PhoneModel {
         outbox = []
         marks = [:]
         Outbox.file.wipe()
+        UploadStore.wipe()
+        files.wipe()
+        uploading = []
+        uploadProgress = [:]
+        uploadOffsets = [:]
+        attachmentsSupported = nil
+        draftFiles.forEach { $0.discard() }
+        draftFiles = []
         failure = nil
         updateRequired = nil
         hostName = nil
@@ -452,6 +508,7 @@ final class PhoneModel {
         case .peerInfo(let info):
             hostName = info.computerName
             macVersion = info.appVersion
+            attachmentsSupported = info.capabilities.contains(AttachmentLimits.capability)
             let advertised = info.directCandidates ?? []
             if advertised != candidates, let ownPub, let identity = Data(base64URLEncoded: ownPub) {
                 candidates = advertised
@@ -470,6 +527,8 @@ final class PhoneModel {
         case .failed(let reason):
             failure = reason
         case .event(let event):
+            // The transfers see every event first: attachment answers are theirs, and a receipt ends an upload.
+            transferInbox?.yield(event)
             receive(event)
         }
         releaseHeldIfSettled()
@@ -522,20 +581,52 @@ final class PhoneModel {
     // MARK: Sending
 
     /// Into the outbox: the bubble shows at once with Sending, the draft clears, and the flush sends it
-    /// now if the relay is reachable.
+    /// now if the relay is reachable. A message with files keeps their protected copies in `UploadStore`,
+    /// and its text waits with them as one unit.
     func send() {
         let text = draft
-        guard canSend, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let picked = draftFiles
+        guard canSend, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !picked.isEmpty else { return }
         let ts = Self.now
-        let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: ts, agentId: "device",
+        let id = UUID().uuidString
+        var infos: [AttachmentInfo] = []
+        if !picked.isEmpty {
+            do {
+                infos = try UploadStore.store(picked, for: id)
+            } catch {
+                attachFailure = String(localized: "Couldn’t keep the files for sending. Try again.")
+                return
+            }
+            for (index, info) in infos.enumerated() { files.register(UploadStore.url(id, index), for: info) }
+            uploadOffsets[id] = Array(repeating: 0, count: infos.count)
+            UploadStore.setOffsets(id, uploadOffsets[id] ?? [])
+        }
+        let event = YorozuEvent(id: id, threadId: "main", ts: ts, agentId: "device",
                                 payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime)))
-        outbox.append(Outbox.Item(event: event, sentAt: ts))
+        outbox.append(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos))
         setMark(event.id, .sending)
-        merge(Bubble(id: event.id, user: true, ts: ts, text: text))
+        merge(Bubble(id: event.id, user: true, ts: ts, text: text, attachments: infos))
         draft = ""
+        draftFiles = []
         saveOutbox()
         queued()
     }
+
+    /// "Send as Text File": a draft over the message limit goes as a `.txt` file, with any staged files.
+    func sendAsTextFile() {
+        guard draftFiles.count < AttachmentLimits.maxCount else { return }
+        do {
+            draftFiles.append(try DraftFile.textFile(draft))
+        } catch {
+            attachFailure = String(localized: "Couldn’t keep the files for sending. Try again.")
+            return
+        }
+        draft = ""
+        send()
+    }
+
+    /// Why the last send with files did not go; the composer shows it.
+    var attachFailure: String?
 
     /// Not delivered → Sending: the same id with a new `ts` and deadline.
     func resend(_ id: String) {
@@ -568,6 +659,9 @@ final class PhoneModel {
         marks[id] = nil
         bubbles.removeAll { $0.id == id && $0.seq == nil }
         LocalNotices.cancelExpiry(id)
+        UploadStore.remove(id)
+        uploadOffsets[id] = nil
+        uploadProgress[id] = nil
         saveOutbox()
     }
 
@@ -587,12 +681,14 @@ final class PhoneModel {
         }
         let stored = bubble.seq != nil
         let sentAt = item?.sentAt ?? bubble.sentAt ?? bubble.ts
+        let uploading = state == .sending && uploading.contains(bubble.id)
         return Delivery(
-            state: state, inFlight: state == .sending && inFlight.contains(bubble.id),
-            sent: state == .sending && (inFlight.contains(bubble.id) || unconfirmed.contains(bubble.id)), sentAt: sentAt,
+            state: state, inFlight: state == .sending && inFlight.contains(bubble.id) || uploading,
+            sent: state == .sending && (inFlight.contains(bubble.id) || unconfirmed.contains(bubble.id)) || uploading, sentAt: sentAt,
             deliveredAt: item?.deliveredAt,
             expiresAt: item?.buffered == true && !stored && item?.stored == false ? sentAt + Outbox.lifetime : nil,
-            receivedAt: stored ? bubble.ts : nil, readAt: bubble.readAt, reason: item?.reason)
+            receivedAt: stored ? bubble.ts : nil, readAt: bubble.readAt, reason: item?.reason,
+            files: item?.files?.count ?? 0, upload: uploading ? uploadProgress[bubble.id] ?? 0 : nil)
     }
 
     /// A message has to wait in the outbox when the relay is out of reach: the moment to ask for
@@ -624,6 +720,13 @@ final class PhoneModel {
             guard self.relay === relay, state == .joined || state == .paired else { break }
             guard let item = outbox.first(where: { $0.id == id }), !item.stored,
                   marks[id] == .sending || marks[id] == .delivered else { continue }
+            if let attached = item.files, !attached.isEmpty {
+                // Only over a live session with the Mac: the relay's buffer is too small for files.
+                guard state == .paired else { continue }
+                // A later text message may go first: it never waits behind an upload that cannot run.
+                await upload(item, attached)
+                continue
+            }
             inFlight.insert(id)
             do {
                 try await relay.send(item.event)
@@ -635,6 +738,73 @@ final class PhoneModel {
             }
         }
         finishBackgroundIfDone()
+    }
+
+    /// Hands one message's files to `AttachmentTransfers`, from the offsets the Mac last confirmed. The actor
+    /// uploads while `.paired`, then sends the commit; the usual `receipt` or `admission_status` settles it.
+    private func upload(_ item: Outbox.Item, _ attached: [AttachmentInfo]) async {
+        let id = item.id
+        // A Mac that has not advertised attachments never sees an `attachment_*` kind; the message waits.
+        guard let transfers, attachmentsSupported == true, !uploading.contains(id), case .message(let message) = item.event.payload else { return }
+        let offsets = uploadOffsets[id] ?? UploadStore.offsets(id, count: attached.count)
+        let files = attached.enumerated().compactMap { index, info in
+            info.sha256.map {
+                AttachmentTransfers.Upload.File(url: UploadStore.url(id, index),
+                                                descriptor: AttachmentDescriptor(name: info.name, mime: info.mime, bytes: info.bytes, sha256: $0),
+                                                offset: offsets[index])
+            }
+        }
+        guard UploadStore.exists(id, count: attached.count), files.count == attached.count else {
+            notDelivered(id, reason: AttachmentLimits.reason(AttachmentTransfers.localFileMissing))
+            return
+        }
+        uploadOffsets[id] = offsets
+        uploadProgress[id] = Self.fraction(offsets, attached)
+        uploading.insert(id)
+        await transfers.upload(AttachmentTransfers.Upload(messageId: id, threadId: item.event.threadId, ts: item.event.ts,
+                                                          text: message.text, admissionDeadline: item.deadline, files: files))
+    }
+
+    /// `AttachmentTransfers.updates`: offsets to persist, a failed upload, and downloads for the cache.
+    private func transferred(_ update: AttachmentTransfers.Update) {
+        switch update {
+        case .uploadProgress(let id, let index, let offset):
+            if let attached = outbox.first(where: { $0.id == id })?.files { uploaded(id, index, offset, attached) }
+        case .uploadCommitted:
+            break // Sending until the receipt or the stored copy.
+        case .uploadFailed(let id, let reason):
+            uploading.remove(id)
+            guard let item = outbox.first(where: { $0.id == id }), !item.stored else { return }
+            // A corrupt or expired staging starts over from zero on Resend.
+            uploadOffsets[id] = Array(repeating: 0, count: item.files?.count ?? 0)
+            UploadStore.setOffsets(id, uploadOffsets[id] ?? [])
+            notDelivered(id, reason: AttachmentLimits.reason(reason))
+        default:
+            files.apply(update)
+        }
+    }
+
+    /// Bytes move only on `.paired`; anything else stops the frames in flight until the next one.
+    private func transfersLive() {
+        if state != .paired { uploading = [] }
+        Task { [weak self] in
+            guard let self, let transfers = self.transfers else { return }
+            await transfers.setLive(self.state == .paired)
+        }
+    }
+
+    /// The Mac confirmed a chunk: the offset is fsynced before the next one goes.
+    private func uploaded(_ id: String, _ index: Int, _ next: Int, _ attached: [AttachmentInfo]) {
+        guard var offsets = uploadOffsets[id], offsets.indices.contains(index) else { return }
+        offsets[index] = next
+        uploadOffsets[id] = offsets
+        UploadStore.setOffsets(id, offsets)
+        uploadProgress[id] = Self.fraction(offsets, attached)
+    }
+
+    private static func fraction(_ offsets: [Int], _ attached: [AttachmentInfo]) -> Double {
+        let total = attached.reduce(0) { $0 + $1.bytes }
+        return total > 0 ? Double(zip(offsets, attached).reduce(0) { $0 + min($1.0, $1.1.bytes) }) / Double(total) : 0
     }
 
     /// An old relay never answers `accepted`: the mark stops spinning after 10 s and stays Sending,
@@ -671,6 +841,14 @@ final class PhoneModel {
         unconfirmed.remove(id)
         // The relay no longer holds it, so it can no longer expire there.
         LocalNotices.cancelExpiry(id)
+        // Its files are on the Mac: the outbox copies become cached files.
+        if uploading.remove(id) != nil { Task { [transfers] in await transfers?.cancelUpload(id) } }
+        if let attached = outbox.first(where: { $0.id == id })?.files, uploadOffsets[id] != nil || UploadStore.exists(id, count: attached.count) {
+            files.adopt(attached, from: id)
+            UploadStore.remove(id)
+            uploadOffsets[id] = nil
+            uploadProgress[id] = nil
+        }
         if read {
             marks[id] = nil
             outbox.removeAll { $0.id == id }
@@ -684,6 +862,7 @@ final class PhoneModel {
 
     private func notDelivered(_ id: String, reason: String?) {
         inFlight.remove(id)
+        if uploading.remove(id) != nil { Task { [transfers] in await transfers?.cancelUpload(id) } }
         unconfirmed.remove(id)
         guard let index = outbox.firstIndex(where: { $0.id == id }), MarkState.allows(marks[id], .notDelivered) else { return }
         outbox[index].reason = reason
@@ -862,7 +1041,8 @@ final class PhoneModel {
         page = reply
     }
 
-    /// The upsert rule: a held record is replaced only by one with a higher `seq`; `worker_event` is insert-only.
+    /// The upsert rule: a held record is replaced only by one with a higher `seq` (a `worker_event` too: its shared
+    /// images arrive later, re-stamped).
     private func applyRecord(_ event: YorozuEvent) {
         switch event.payload {
         case .message(let message):
@@ -882,7 +1062,7 @@ final class PhoneModel {
         case .amendment(let amendment):
             if (amendments[amendment.id]?.seq ?? -1) < amendment.seq { amendments[amendment.id] = amendment }
         case .workerEvent(let workerEvent):
-            if workerEvents[workerEvent.id] == nil { workerEvents[workerEvent.id] = workerEvent }
+            if (workerEvents[workerEvent.id]?.seq ?? -1) < workerEvent.seq { workerEvents[workerEvent.id] = workerEvent }
         case .readState(let read) where read.threadId == "main":
             if (readCursor?.seq ?? -1) < (read.seq ?? 0) { readCursor = read }
         default:

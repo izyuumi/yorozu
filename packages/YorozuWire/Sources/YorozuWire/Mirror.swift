@@ -80,7 +80,8 @@ public struct AmendmentData: Codable, Equatable, Sendable {
     }
 }
 
-/// `worker_event` (Mac -> phone, insert-only): one step of a task's activity.
+/// `worker_event` (Mac -> phone, upsert by `seq`): one step of a task's activity. Only `files` changes after
+/// insert: images a worker shared are attached after the event is stored, and that re-stamps its `seq`.
 public struct WorkerEventData: Codable, Equatable, Sendable {
     public var id: String
     public var taskId: String
@@ -88,13 +89,16 @@ public struct WorkerEventData: Codable, Equatable, Sendable {
     public var body: String
     public var created: Int
     public var seq: Int
-    public init(id: String, taskId: String, kind: String, body: String, created: Int, seq: Int) {
+    /// 0.7 `attachments-v1`: descriptors of the images the worker shared in this step. Never bytes.
+    public var files: [AttachmentDescriptor]?
+    public init(id: String, taskId: String, kind: String, body: String, created: Int, seq: Int, files: [AttachmentDescriptor]? = nil) {
         self.id = id
         self.taskId = taskId
         self.kind = kind
         self.body = body
         self.created = created
         self.seq = seq
+        self.files = files
     }
 }
 

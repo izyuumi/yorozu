@@ -59,6 +59,10 @@ public struct TaskOutcome: Sendable, Equatable {
 public struct Snapshot: Sendable, Equatable {
     public var topics: [Topic] = []; public var messages: [Message] = []; public var work: [Work] = []; public var events: [WorkerEvent] = []
     public var amendments: [Amendment] = []
+    /// Files attached to messages and worker events (#316).
+    public var attachments: [Attachment] = []
+    /// Files each work carries (work id → attachment ids, in link order; `workAttachments`).
+    public var workFiles: [String:[String]] = [:]
     public init() {}
 }
 public enum ProjectError: Error, LocalizedError, Sendable {
@@ -171,7 +175,9 @@ public struct Decision: Codable, Sendable {
 /// The secretary's slim view: only the fields routing needs, never database records. Long text is excerpted by bytes.
 public struct RoutingInput: Codable, Sendable {
     public struct TopicView: Codable, Sendable { public var id: String; public var label: String }
-    public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String }
+    /// A file the secretary may know about (#316): name, type, size and absolute path, never contents.
+    public struct FileView: Codable, Sendable { public var name: String; public var type: String; public var size: String; public var path: String }
+    public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String; public var files: [FileView]? = nil }
     public struct WorkView: Codable, Sendable { public var id: String; public var topicID: String; public var state: String; public var executor: String?; public var instruction: String; public var error: String? }
     public struct MemoryView: Codable, Sendable { public var id: String; public var title: String; public var excerpt: String }
     /// A scheduled job: its topic, name and the first line of its summary (#319).
@@ -189,11 +195,13 @@ public struct RoutingInput: Codable, Sendable {
     public var omitted: String? = nil
     /// How long ago the user sent a delayed message ("7 h 16 min"); nil unless it reached the Mac over 60 s late (#314).
     public var messageAge: String? = nil
-    enum CodingKeys: String, CodingKey { case message, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
+    /// The current message's attached files (#316); left out when it has none.
+    public var files: [FileView] = []
+    enum CodingKeys: String, CodingKey { case message, files, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
     /// Empty job lists are left out, so a workspace without jobs sends the pre-#319 context unchanged.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(message,forKey: .message); try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
+        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
         try c.encodeIfPresent(latestTopic,forKey: .latestTopic); try c.encode(memory,forKey: .memory); try c.encodeIfPresent(sourceMessageID,forKey: .sourceMessageID); try c.encodeIfPresent(omitted,forKey: .omitted)
         if !jobs.isEmpty { try c.encode(jobs,forKey: .jobs) }; if !approvals.isEmpty { try c.encode(approvals,forKey: .approvals) }
     }
@@ -205,6 +213,8 @@ public struct WorkerInput: Codable, Sendable {
     public struct Note: Codable, Sendable { public var path: String; public var title: String; public var attribution: String; public var epistemicStatus: String; public var body: String }
     public var policy: String; public var topic: Topic; public var work: Work; public var current: Message
     public var history: [Turn]; public var memory: [Note]; public var followUp: String? = nil
+    /// Files the work carries (#316): each goes to the worker as an `Attached document: <path>` line.
+    public var attachments: [Attachment] = []
     /// What a thinking session is sent: slim views, never database records or harness session/controller keys (the topic
     /// is only `{id, label}`). The history bound measures this.
     public var wire: String { get throws {
@@ -216,6 +226,8 @@ public struct WorkerOutput: Codable, Sendable {
     public var text: String; public var appliedRevision: Int
     /// Scheduled job runs only (#319): whether the answer needs the user's attention.
     public var notable: Bool? = nil
+    /// Paths of files the worker returns (#316); Yorozu copies them into the file store and attaches them.
+    public var files: [String]? = nil
     public init(text: String, appliedRevision: Int = 0, notable: Bool? = nil) { self.text = text; self.appliedRevision = appliedRevision; self.notable = notable }
     /// A coding executor's free-text answer: notable when it carries `"notable": true` (in its final JSON or inline).
     public init(coded text: String, appliedRevision: Int) { self.init(text: text,appliedRevision: appliedRevision,notable: text.range(of: #""notable"\s*:\s*true\b"#,options: .regularExpression) != nil) }
@@ -226,8 +238,24 @@ public struct RunHandle: Codable, Sendable {
 }
 public enum RunStatus: Sendable { case running, stopped, completed(WorkerOutput), unknown }
 /// `notice`: a short failure note for the main timeline (e.g. a failed compaction), outside the task's result.
-public enum StreamUpdate: Sendable { case handle(RunHandle), event(WorkerEvent), notice(String) }
+/// `media`: image files a worker shared in a progress message (#316); the Engine copies them into the store and attaches them to that event.
+public enum StreamUpdate: Sendable { case handle(RunHandle), event(WorkerEvent), notice(String), media(eventID: String, paths: [String]) }
 /// The one cap on a raw model run's final prompt, in UTF-8 bytes. Every raw-run budget measures against it.
 public let rawPromptCap = 20_000
 public func identifier() -> String { UUID().uuidString.lowercased() }
 public func encoded<T: Encodable>(_ value: T) throws -> String { String(decoding: try JSONEncoder().encode(value), as: UTF8.self) }
+
+/// A stored file attached to a message or a worker event (#316). `path` is relative to the file store root.
+public struct Attachment: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
+    public static let databaseTableName = "attachments"
+    public var id: String; public var messageID: String?; public var eventID: String?
+    public var path: String; public var name: String; public var mime: String; public var bytes: Int64; public var sha256: String; public var created: Double
+    public init(id: String = identifier(), messageID: String? = nil, eventID: String? = nil, path: String, name: String, mime: String, bytes: Int64, sha256: String, created: Double = Date().timeIntervalSince1970) {
+        self.id = id; self.messageID = messageID; self.eventID = eventID; self.path = path; self.name = name; self.mime = mime; self.bytes = bytes; self.sha256 = sha256; self.created = created
+    }
+}
+/// A file handed to `Engine.send` before it is copied into the store (#316).
+public struct PendingFile: Sendable, Equatable {
+    public var url: URL; public var name: String; public var mime: String
+    public init(url: URL, name: String, mime: String) { self.url = url; self.name = name; self.mime = mime }
+}

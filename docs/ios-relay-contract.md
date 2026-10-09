@@ -14,7 +14,7 @@ holds a cache of the [history window](#history-window), catches up by
 [change sequence](#change-sequence), can Stop or Retry a task, moves the read cursor, searches the
 Mac's full history and removes its own pairing.
 
-Out of scope for 0.7: APNs/`notify`, attachments,
+Out of scope for 0.7: APNs/`notify`,
 typing in sub-chats, multiple threads (the thread id is carried everywhere and never hard-wired
 beyond the one thread `"main"`).
 
@@ -68,6 +68,10 @@ phone. So every frame the Mac sends counts against every phone's 2 MiB window.
   `sync_request`. The phone catches up from its cursor.
 - A phone the relay still drops redials, gets `.paired` again and asks from its cursor; the
   page that was cut off is sent again whole.
+- Attachment transfers are request-driven too ([Attachments](#attachments)): one
+  `attachment_download_chunk` (at most 160 KiB of file, never split into `chunk`s) per request, at most
+  two requests in flight per phone, and the Mac drops a download chunk for a phone that already has two
+  waiting behind the bucket. Phone -> Mac, one upload chunk is in flight at a time.
 
 ## Direct path
 
@@ -218,7 +222,7 @@ next `.paired` catches up. A device that had finished the exchange stays served 
 
 The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15 s deadline,
 `RelayClient.swift`). Both ends advertise `PeerInfoData.local`: protocol 2 (`protocolMin` =
-`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2"]`,
+`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1"]`,
 required `["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update
 required". Until a device's exchange succeeds, the host passes none of its other events to the
 backend; a known device whose last result on file is compatible counts as succeeded (Mac-side
@@ -277,7 +281,8 @@ insert and update (topic assignment, task state, amendment state, routing start)
 event carries its row's `seq`.
 
 - **Upsert rule.** The phone keys records by kind and id and replaces a held record only with
-  one of a higher `seq` (`worker_event` is insert-only; a known id is skipped). Records can
+  one of a higher `seq`. A `worker_event` changes after insert only when the images a worker shared
+  in it are attached ([Attachments](#attachments)), which re-stamps its `seq`. Records can
   arrive out of order across pages, live updates and page replies; this rule makes that safe.
   Messages change after insert in 0.7 (topic, task and notice can be set later, and a user
   message changes once more when routing starts and sets `readAt`), so a stored message must be
@@ -298,7 +303,7 @@ event carries its row's `seq`.
 | `topic` | Mac -> phone, in pages | `TopicData` | record, upsert |
 | `task` | Mac -> phone, in pages | `TaskData` | record, upsert |
 | `amendment` | Mac -> phone, in pages | `AmendmentData` | record, upsert |
-| `worker_event` | Mac -> phone, in pages | `WorkerEventData` | record, insert-only |
+| `worker_event` | Mac -> phone, in pages | `WorkerEventData` | record, upsert by `seq` (`files` added later) |
 | `read_state` | both | `ReadStateData` | read cursor; a record when Mac -> phone |
 | `task_control` | phone -> Mac | `TaskControlData` | Stop or Retry |
 | `task_control_result` | Mac -> phone | `TaskControlResultData` | its outcome |
@@ -308,6 +313,11 @@ event carries its row's `seq`.
 | `device_remove` | phone -> Mac | `DeviceRemoveData` | remove the sender's own record |
 | `chunk` | Mac -> phone | `ChunkData` | one slice of an oversized event |
 | `thread_list` | both | `ThreadListData` | peer-info only (handshake) |
+| `attachment_chunk` | phone -> Mac | `AttachmentChunkData` | upload bytes ([Attachments](#attachments)) |
+| `attachment_progress` | Mac -> phone | `AttachmentProgressData` | what is staged |
+| `attachment_commit` | phone -> Mac | `AttachmentCommitData` | send a message with files |
+| `attachment_download_request` | phone -> Mac | `AttachmentDownloadRequestData` | a file or thumbnail chunk |
+| `attachment_download_chunk` | Mac -> phone | `AttachmentDownloadChunkData` | its answer |
 
 Record kinds travel only inside `sync_delta.events`. Everything else is a top-level event. The
 host ignores every other kind (no reply, no receipt); the phone ignores kinds it does not show.
@@ -321,7 +331,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device
             payload: .message(MessageData(role: .user, text: text, admissionDeadline: nowMs + 86_400_000)))
 ```
 
-- `text` is 1-6000 UTF-8 bytes after the phone's own check. No attachments.
+- `text` is 1-6000 UTF-8 bytes after the phone's own check. `attachments` stays empty: a message
+  with files is an [`attachment_commit`](#attachments) instead, text and files as one unit.
 - `ts` is the phone's send time; the Mac keeps it as the message's `sentAt`. Resend renews it.
 - `admissionDeadline` is always `ts` + 24 h, the relay buffer's lifetime. Resend renews it.
 - `delivery`, `channelModel`, `sentAt`, `readAt` and the other 0.7 metadata are not sent and the
@@ -365,7 +376,7 @@ messages typed on the Mac, and those in sub-chats, take their mark from the stor
 Host checks, in this order, then acts:
 
 1. `id` matches `^[A-Za-z0-9-]{1,64}$`, else `admission_status rejected`.
-2. `attachments` is empty, else `admission_status rejected`.
+2. `attachments` (v1 inline files) is empty, else `admission_status rejected`.
 3. `RuntimeMode.permitsInput(fixtureAcknowledged: false)` is true (fixture mode never takes
    phone input), else `admission_status rejected`.
 4. If a v2 `Message` with that id exists: reply `receipt` only (duplicate or relay replay).
@@ -400,7 +411,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "", ts: nowMs, agentId: "main",
 | Cause | `status` | `reason` |
 |---|---|---|
 | bad id | `rejected` | `"Invalid message id."` |
-| attachments | `rejected` | `"Attachments aren't supported yet."` |
+| inline v1 attachments | `rejected` | `"Update Yorozu on this iPhone to send attachments."` |
+| bad commit files | `rejected` | `"Up to 10 files of at most 50 MB each."` |
 | fixture mode | `rejected` | `"This Mac is in fixture mode and doesn't take phone messages."` |
 | Engine error | `rejected` | `error.localizedDescription` (e.g. "Message must be 1–6000 UTF-8 bytes.") |
 | past `admissionDeadline` | `expired` | `"Your Mac was offline for more than 24 hours."` |
@@ -505,7 +517,8 @@ before that) and `sentAt` (epoch ms, the `ts` of the phone event it was admitted
 one typed on the Mac). Both are optional fields an older 0.7 peer ignores; they shipped inside
 0.7 because 0.7 had not reached a phone yet (#314). The phone shows a delay line in a message's
 details when the Mac's `created` is more than 60 s after `sentAt`. Every message goes to the main timeline as on the Mac; `topicId` also files it in
-its sub-chat.
+its sub-chat. A message with files (a user message or a result alike) carries `files`, their
+[descriptors](#descriptors), in order; absent when it has none.
 
 **`topic`** (`TopicData`, upsert): `id`, `label`, `created`, `seq`.
 
@@ -517,8 +530,8 @@ derives a topic's status with the Mac's rule (`docs/architecture.md`).
 **`amendment`** (`AmendmentData`, upsert): `id`, `taskId`, `messageId`, `revision`,
 `instruction`, `state`, `seq`.
 
-**`worker_event`** (`WorkerEventData`, insert-only): `id`, `taskId`, `kind`, `body`, `created`,
-`seq`.
+**`worker_event`** (`WorkerEventData`, upsert): `id`, `taskId`, `kind`, `body`, `created`,
+`seq`, and `files` for the images a worker shared in that step (absent when none).
 
 **`read_state`** (`ReadStateData`): `threadId`, `messageId`, `seq` (below).
 
@@ -628,6 +641,102 @@ runs `0..<count`, `count` is 2...256 and `data` is base64 of up to 192 KiB
   `"\n\n…(truncated; the full text is on the Mac)"`, and the Mac logs it. An event that still
   cannot be chunked is logged and not sent.
 
+## Attachments
+
+Capability `attachments-v1` (`AttachmentDescriptor.capability`). A phone sends files and fetches
+them only when the negotiated capabilities include it; a peer without it ignores `files` and never
+sees an `attachment_*` kind. Types and limits are in `packages/YorozuWire/Sources/YorozuWire/Attachments.swift`.
+
+- Limits (`MessageAttachment`): at most 10 files a message (`maxCount`), each at most 50 MB
+  (`maxBytes` = 50,000,000, as Finder counts), no total beyond that. Upload chunks carry at most
+  256 KiB (`chunkBytes`), download chunks at most 160 KiB (`downloadChunkBytes`), so a download chunk
+  event stays under `ChunkData.budget` and is never split.
+- Sync never carries bytes: records carry descriptors, and the bytes move only through the kinds
+  below, over whichever path the session runs on (relay or direct), and only while `.paired`. Files
+  never go into the relay's 5 MiB buffer: while the Mac is away, a message with files waits on the
+  phone, text included, and goes as one unit once the Mac is reachable.
+- Ids (`messageId`, `attachmentId`) match `^[A-Za-z0-9-]{1,64}$`; hashes are lowercase hex sha256.
+
+### Descriptors
+
+`AttachmentDescriptor{id?, name, mime, bytes, sha256}`, of the whole file: on `message` records (user
+messages and results) and `worker_event` records as `files`, and in `attachment_commit` (without
+`id`). `id` is the Mac's attachment id. A name is 1-255 UTF-8 bytes and a type 1-128, neither with
+control characters; an empty file has the empty sha256 (`AttachmentDescriptor.emptySHA256`).
+`AttachmentDescriptor.make(file:name:mime:)` builds one.
+
+Images a worker shares in a progress message are attached to that worker event after it is stored;
+the Store re-stamps the event's `seq` then, so the event reaches the phone again with `files` (the
+[upsert rule](#change-sequence)).
+
+### Upload
+
+1. For each file in order, the phone sends `attachment_chunk{messageId, index, offset, totalBytes,
+   sha256, deadline, data}` (event id = a fresh request id; `deadline` = the message's
+   `admissionDeadline`; `data` = base64 of up to 256 KiB at `offset`). One chunk is in flight at a
+   time across all uploads, and the next goes only after the reply, so phone -> Mac bytes in flight
+   stay near 460 KB on the wire. Empty `data` asks only where the file stands.
+2. The Mac stages it in `~/Library/Application Support/<bundle id>/uploads/<device X25519 key>/<messageId>/<index>-<sha256>-<totalBytes>.part`
+   (directories 0700, files 0600; a chunk with another `sha256` or `totalBytes` starts that file over), checks the offset against what is staged, writes and fsyncs, and
+   answers `attachment_progress{requestId, messageId, index, nextOffset}`:
+   - `offset` past the staged size: nothing written, `nextOffset` = the staged size (the phone goes back).
+   - `offset` inside it: matching bytes are kept, different ones replace the rest; `nextOffset` = the new size.
+   - A file whose last chunk landed is hashed; a wrong hash drops it, `nextOffset` 0, `reason`
+     `attachment-corrupt`.
+   - A chunk for a message the Mac already stored (a replay after the commit) answers `nextOffset` =
+     `totalBytes` and stages nothing.
+   The phone continues from `nextOffset`, which is authoritative; it persists the offsets it gets,
+   but a stale offset only costs one reply. Both sides resume after a disconnect or relaunch:
+   staging lives on disk, the phone keeps its file copies and offsets in its outbox.
+3. Once every file is staged, the phone sends `attachment_commit{text, attachments, admissionDeadline}`
+   with event id = the message id and `ts` = the send time (renewed by Resend, like a `message`).
+   The Mac applies the `message` [host checks](#message-phone---mac-send-a-user-message) (id, fixture
+   mode, duplicate -> `receipt`, past deadline -> `expired` and the staging removed) plus: 1-10
+   descriptors, each valid and without `id`, else `rejected`. Then each file must be staged whole
+   under its descriptor's `sha256` and `bytes` and hash to that `sha256` (a staged file that does not
+   is dropped and asked for from offset 0); the first that is not gets `attachment_progress{requestId: messageId, index, nextOffset}` and the
+   phone resumes from there. Otherwise the Mac calls `Engine.send(text, attachments: [PendingFile],
+   id: messageId, sentAt: ts / 1000)`, which copies the files into the store, removes the staging and
+   replies `receipt`; an Engine error is `rejected` with its text (staging is kept, so Resend commits
+   again without uploading). The text may be empty when files are attached. Idempotent by message id:
+   a replayed or resent commit gets the `receipt` again.
+4. The bubble stays Sending (upload progress in its details) until the `receipt` or the stored copy,
+   then follows the usual [marks](#marks).
+
+Reasons in `attachment_progress` (`AttachmentReason`): `attachment-storage-full` and
+`attachment-storage-failed` are transient (the phone waits 10 s and goes on); any other
+(`invalid-attachment-chunk`, `attachment-expired`, `attachment-corrupt`) ends the upload: the
+bubble shows Not delivered with Resend.
+
+Staging caps: 1 GB staged in all (two complete messages; each file counts at least its claimed
+`totalBytes`, so open uploads cannot claim past the cap) and 64 messages; past either, a new file
+gets `attachment-storage-full`. A message folder untouched for 48 h is pruned (checked at most every
+10 minutes, on chunks).
+
+### Download
+
+`attachment_download_request{attachmentId, offset, thumbnail?}` asks for the next chunk of a file,
+or with `thumbnail: true` of the Mac's JPEG preview of it (at most 512 px on its long edge, made with
+ImageIO for images and QuickLookThumbnailing for anything else, cached in
+`~/Library/Caches/<bundle id>/thumbs/<attachmentId>.jpg`). The answer is one
+`attachment_download_chunk{attachmentId, thumbnail?, offset, totalBytes, sha256, data, reason?}`:
+`data` up to 160 KiB from `offset`; `totalBytes` and `sha256` are the file's (the thumbnail's own for
+a thumbnail). The phone writes chunks in order to a partial file, verifies size and sha256 at the
+end (for a full file, against the record's descriptor too) and resumes a full file from its partial
+size. It keeps at most two requests in flight and asks again after 20 s without an answer.
+
+Reasons: `attachment-unavailable` (the attachment is unknown, its file is gone or no longer the size
+on record: "File no longer available"), `thumbnail-unavailable` (no preview for that type; show a
+file row), `invalid-attachment-chunk`.
+
+### Phone helper
+
+`AttachmentTransfers` (an actor in `YorozuWire`) runs both directions for `PhoneModel`: it sends
+through `RelayClient.send`, is fed every incoming event through `handle(_:)`, moves bytes only
+between `setLive(true)` (on `.paired`) and `setLive(false)`, and reports through its `updates`
+stream (upload progress to persist, commit sent, upload failed, download progress, downloaded,
+download failed).
+
 ## Notice codes
 
 A `message` record or `task_control_result` may carry `notice{code, params}`, the Mac's
@@ -646,13 +755,18 @@ Codes in 0.7: `question`, `question_topic`, `question_task`, `routing_failed`, `
 
 ## Mac-side seams
 
-- `RelayBackend` (`YorozuWire/RelayBackend.swift`): `func handle(_ e: YorozuEvent) async -> [YorozuEvent]`.
+- `RelayBackend` (`YorozuWire/RelayBackend.swift`): `func handle(_ e: YorozuEvent, from device: String) async -> [YorozuEvent]`,
+  `device` being the sender's X25519 key (base64url), used only to key its upload staging.
   `RelayHost` passes it each decrypted phone event other than the peer-info `thread_list`, one at
   a time in arrival order and off the receive path (so hellos and claims never wait on the
   Engine), and seals the returned events back to that same device only. `EngineBridge`
   implements it (`message`, `sync_request`, `read_state`, `task_control`, `search_request`,
-  `page_request` in; `receipt`, `admission_status`, `sync_delta`, `task_control_result`,
-  `search_result` out). `device_remove` needs the sender's key, so `RelayHost` handles it.
+  `page_request`, `attachment_chunk`, `attachment_commit`, `attachment_download_request` in;
+  `receipt`, `admission_status`, `sync_delta`, `task_control_result`, `search_result`,
+  `attachment_progress`, `attachment_download_chunk` out).
+- Descriptors on records come from `Snapshot.attachments`, read after the page's records (attachment
+  rows are written with their owner, or re-stamp it). Downloads resolve a path with
+  `Engine.attachmentURL(_:)`. `device_remove` needs the sender's key, so `RelayHost` handles it.
 - Duplicate check (host check 4): `Store.message(id:)`, a keyed lookup.
 - Acks for replayed frames: the ack is cumulative, so the host sends `ack{seq}` for a replayed
   frame only after the backend has handled it and every phone event before it, that is once the

@@ -24,6 +24,7 @@ extension AppModel {
         s.codingModels = m.coding.compactMapValues(\.id)
         s.mcpServers = c.mcpServers; s.yolo = c.general.yolo; s.devRepo = c.harness.devRepoURL; s.configFile = configFile
         s.personalKnowledge = c.routing.personalKnowledge; s.selfTopic = c.routing.selfTopic
+        s.filesRoot = filesRoot
         return s
     }
     /// Coding executor id → its model runtime, for the executors' automatic models.

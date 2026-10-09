@@ -108,19 +108,25 @@ struct MessageRow: View {
             // A bubble stops short of the far edge, so its side says who spoke even when it is long.
             Spacer(minLength: LayoutMetrics.section * 2)
             VStack(alignment: .trailing, spacing: LayoutMetrics.tight) {
-                Text(bubble.text)
-                    .foregroundStyle(.white)
-                    .tint(.white)
-                    .padding(.horizontal, LayoutMetrics.stack)
-                    .padding(.vertical, LayoutMetrics.inner)
-                    .background(YorozuPalette.bubble, in: RoundedRectangle(cornerRadius: bubbleRadius, style: .continuous))
-                if let delivery { mark(delivery) }
+                // Files above the text, each its own element: they open on tap.
+                if !bubble.files.isEmpty { AttachmentsView(files: bubble.files) }
+                VStack(alignment: .trailing, spacing: LayoutMetrics.tight) {
+                    if !bubble.text.isEmpty {
+                        Text(bubble.text)
+                            .foregroundStyle(.white)
+                            .tint(.white)
+                            .padding(.horizontal, LayoutMetrics.stack)
+                            .padding(.vertical, LayoutMetrics.inner)
+                            .background(YorozuPalette.bubble, in: RoundedRectangle(cornerRadius: bubbleRadius, style: .continuous))
+                    }
+                    if let delivery { mark(delivery) }
+                }
+                // One element: "You: <text>", the status word as its value, the mark's choices as actions.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(bubble.text.isEmpty ? Text("You sent ^[\(bubble.files.count) file](inflect: true)") : Text("You: \(bubble.text)"))
+                .accessibilityValue(delivery?.word ?? "")
+                .modifier(MarkActions(delivery: delivery, onDetails: { markDetails = true }, onResend: onResend, onDelete: onDelete))
             }
-            // One element: "You: <text>", the status word as its value, the mark's choices as actions.
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text("You: \(bubble.text)"))
-            .accessibilityValue(delivery?.word ?? "")
-            .modifier(MarkActions(delivery: delivery, onDetails: { markDetails = true }, onResend: onResend, onDelete: onDelete))
         }
     }
 
@@ -168,6 +174,7 @@ struct MessageRow: View {
             }
         }
         MarkdownBlocks(bubble.text)
+        if !bubble.files.isEmpty { AttachmentsView(files: bubble.files) }
     }
 
     @ViewBuilder private var question: some View {
@@ -261,7 +268,15 @@ struct DeliveryRows: View {
 
     var body: some View {
         if delivery.state == .sending {
-            Label(delivery.word, systemImage: delivery.symbol).foregroundStyle(.secondary)
+            if let upload = delivery.upload {
+                ProgressView(value: upload) {
+                    Label("Uploading ^[\(delivery.files) file](inflect: true)", systemImage: "arrow.up.circle")
+                } currentValueLabel: {
+                    Text(upload, format: .percent.precision(.fractionLength(0)))
+                }
+            } else {
+                Label(delivery.word, systemImage: delivery.symbol).foregroundStyle(.secondary)
+            }
         }
         row("Sent", delivery.sentAt)
         if let delivered = delivery.deliveredAt {

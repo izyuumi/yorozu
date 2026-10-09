@@ -12,6 +12,9 @@ import ServiceManagement
     /// The main thread's read cursor (`Store.readCursor`), moved here or by a phone's `read_state`.
     @Published var readCursor: String?
     @Published var draft = ""
+    /// The composer's files (#316), sent with the draft; `fileNotice` says why one was refused.
+    @Published var files: [DraftFile] = []
+    @Published var fileNotice: String?
     /// The popover's one-line status: startup progress or the last error, cleared by the next success.
     @Published var status: String? = "Opening local workspace…"
     /// Set when the native transport was selected but this launch fell back to the CLI.
@@ -23,6 +26,10 @@ import ServiceManagement
     @Published var harnessNotice: String?
     /// Set at launch when a harness switch waits for running work (open question 9).
     var switchNotice: String?
+    /// The file store (#316) could not open (a root inside a git checkout): attachments are off this launch.
+    var filesNotice: String?
+    /// The file store's root, for `HarnessSettings.filesRoot`; nil without a store.
+    var filesRoot: URL?
     /// Feedback for the enrollment form in Settings.
     @Published var enrollmentNotice = ""
     @Published var ready = false
@@ -121,6 +128,13 @@ import ServiceManagement
                 // Bad note files are skipped, not fatal; say which, once per launch.
                 let skipped = await memory.skipped
                 if !skipped.isEmpty { let files = skipped.prefix(10).joined(separator: ", "); _ = try await store.message(role: "assistant",body: "Memory skipped \(skipped.count) oversized or unreadable note file(s): " + files,kind: "failure",notice: Notice(.memorySkipped,["count": "\(skipped.count)","files": files])) }
+                // Visible attachments (#316): ~/Yorozu/files; fixtures and PROJECTX_DATA keep them in <data root>/files.
+                var files: FileStore?
+                do {
+                    files = try FileStore(root: explicit != nil || runtimeMode == .fixture ? root.appendingPathComponent("files",isDirectory: true)
+                                                                                            : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/files",isDirectory: true),dataRoot: root)
+                } catch { filesNotice = String(localized: "Attachments are off: \(error.localizedDescription)") }
+                filesRoot = files?.root
                 let box = settingsBox; box.value = harnessSettings()
                 let harness: any Harness
                 switch runtimeMode {
@@ -130,7 +144,7 @@ import ServiceManagement
                 }
                 // Queued work resumes with the automatic models, unless the first metadata read takes more than 10 s.
                 self.harness = harness; await refreshModels().value(upTo: .seconds(10))
-                let engine = Engine(store: store,memory: memory,harness: harness,settings: { box.value }); self.engine = engine
+                let engine = Engine(store: store,memory: memory,harness: harness,files: files,settings: { box.value }); self.engine = engine
                 await engine.resume()
                 await startJobs(engine,root: root,scripts: explicit != nil || runtimeMode == .fixture ? root.appendingPathComponent("jobs",isDirectory: true) : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/jobs",isDirectory: true))
                 // Keys and device counters live as long as each other, so the device file stays in the support root whatever PROJECTX_DATA says.
@@ -192,7 +206,7 @@ import ServiceManagement
     /// The harness's readiness for the status line: Hermes's read-only check (problems, then an untested-version
     /// warning), plus a held harness switch. Runs at launch and before each message while something is wrong.
     func checkHarness() async {
-        var notes = [switchNotice].compactMap { $0 }
+        var notes = [switchNotice,filesNotice].compactMap { $0 }
         if let hermes = harness as? HermesHarness {
             let r = await hermes.readiness()
             harnessLabel = "Hermes Agent" + (r.version.map { " " + $0 } ?? "")
@@ -266,11 +280,28 @@ import ServiceManagement
     func send() async {
         guard let engine, !submitting, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return }
         submitting = true; defer { submitting = false }
-        let text = draft
+        let text = draft, sent = files
         if harnessNotice != nil { Task { await checkHarness() } }
         await ensureModels()
-        do { try await engine.send(text); if draft == text { draft = "" }; status = nil; snapshot = try await engine.snapshot() }
+        // Downscaling reads and re-encodes images, so it runs off the main actor; its scratch copies go once the Engine has
+        // copied them into the file store (or failed).
+        let prepared: (pending: [PendingFile], scratch: [URL])
+        do { prepared = try await Task.detached { try DraftFile.prepare(sent) }.value; fileNotice = nil }
+        catch { fileNotice = error.localizedDescription; return }
+        defer { prepared.scratch.forEach(DraftFile.discard) }
+        do {
+            try await engine.send(text,attachments: prepared.pending)
+            if draft == text { draft = "" }
+            let ids = Set(sent.map(\.id)); files.removeAll { ids.contains($0.id) }
+            sent.filter(\.temporary).forEach { DraftFile.discard($0.url) }
+            status = nil; snapshot = try await engine.snapshot()
+        }
         catch { status = error.localizedDescription }
+    }
+    /// Where a stored attachment is now, or nil when it is gone (deleted in Finder).
+    func attachmentURL(_ file: Attachment) async -> URL? {
+        guard let url = await engine?.attachmentURL(file.id), FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
     }
     /// The popover showed this message at its bottom: the main read cursor moves to it (forward only, in the Store); the
     /// poll picks it up into `readCursor`, and the relay's next publish sends it to phones as `read_state`.

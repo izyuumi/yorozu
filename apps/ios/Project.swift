@@ -30,7 +30,9 @@ let project = Project(
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
                 "LSApplicationCategoryType": "public.app-category.productivity",
-                "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac.",
+                "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message.",
+                // "Save Image" in the share sheet of a file opened from a message.
+                "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
                 "NSLocalNetworkUsageDescription": "Yorozu connects straight to your Mac on the same network when Direct connection is on.",
                 // `yorozu://pair?…` is the pairing string itself: tapping one opens the app.
                 "CFBundleURLTypes": [

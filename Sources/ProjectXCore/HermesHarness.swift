@@ -239,8 +239,9 @@ public struct HermesHarness: Harness {
         let session = "yorozu-" + input.topic.id
         try await ensureSession(session, title: input.topic.label, model: s.workerModel)
         // The contract goes in as instructions on every run, so only the wire (or follow-up) is input.
-        let instructions = Prompts.thinkingContract(s, cuaSession: "yorozu-" + identifier().prefix(8)) + " " + Self.workerRules
-        var wire = try Prompts.followUp(input) ?? input.wire
+        let instructions = Prompts.thinkingContract(s, topic: input.topic.id, cuaSession: "yorozu-" + identifier().prefix(8)) + " " + Self.workerRules
+        // Attached files go by path only: Hermes takes no image input from Yorozu yet.
+        var wire = try Prompts.workerMessage(input, root: s.filesRoot)
         for i in 0...Prompts.memoryOperations {
             let end = try await step(input, session: session, runID: "yorozu-run-" + identifier(), text: wire, instructions: instructions, model: s.workerModel, update: update)
             switch try Prompts.workerReply(end.output ?? "", step: i) {
@@ -283,7 +284,7 @@ public struct HermesHarness: Harness {
                 _ = try? await client.call(p, "POST", "/v1/runs/\(server)/stop")
                 throw HarnessError.approvalRequested("Hermes asked to approve a step, but approvals are off for Yorozu's workers. Yorozu denied it and stopped the task; check the yorozu-worker profile's approvals setting, then say retry.")
             }
-            if let event = Self.event(e, task: task, run: server) { try? await update(.event(event)) }
+            if let event = Self.event(e, task: task, run: server) { try? await Prompts.emitProgress(event, update: update) }
         }
         guard end.status == "completed" else { throw try failure(end, input: input, update: update) }
         try Self.verify(end, provider: provider, model: name)
@@ -386,8 +387,8 @@ public struct HermesHarness: Harness {
         switch run.status {
         case "completed":
             guard (try? Self.verify(run)) != nil, let text = run.output, !text.isEmpty else { return .stopped }
-            if work.executor != nil { return .completed(Self.applied(WorkerOutput(coded: text, appliedRevision: work.revision), pendingSteer: run.pendingSteer, dispatched: work.revision)) }
-            guard let output = try? JSONDecoder().decode(WorkerOutput.self, from: Data(text.utf8)), !output.text.isEmpty, output.appliedRevision >= 0 else { return .stopped }
+            if work.executor != nil { return .completed(Self.applied(Prompts.coded(text, revision: work.revision), pendingSteer: run.pendingSteer, dispatched: work.revision)) }
+            guard case .final(let output)? = try? Prompts.workerReply(text, step: 0) else { return .stopped }
             return .completed(Self.applied(output, pendingSteer: run.pendingSteer, dispatched: work.revision))
         case "cancelled", "interrupted", "failed": return .stopped
         default: return .running // queued, running, stopping, waiting_for_approval
@@ -406,12 +407,13 @@ public struct HermesHarness: Harness {
             .joined().split(separator: "-").joined(separator: "-").prefix(32)
         let name = (slug.isEmpty ? "" : slug + "-") + input.topic.id.prefix(6)
         let tree = (repo.deletingLastPathComponent().appendingPathComponent(repo.lastPathComponent + "-yorozu-" + name).path, "yorozu/" + name)
-        let contract = Prompts.codingContract(executor: executor.name, repo: repo, settings: s, cuaSession: "yorozu-" + identifier().prefix(8), worktree: tree)
+        let contract = Prompts.codingContract(executor: executor.name, repo: repo, settings: s, topic: input.topic.id, cuaSession: "yorozu-" + identifier().prefix(8), worktree: tree)
         let runID = "yorozu-code-" + identifier()
-        let end = try await step(input, session: session, runID: runID, text: Prompts.codingTask(input, runID: runID), instructions: contract, model: model, update: update)
+        let end = try await step(input, session: session, runID: runID, text: Prompts.codingTask(input, runID: runID, root: s.filesRoot), instructions: contract, model: model, update: update)
         // No diffstat under Hermes (open question 8).
         let text = end.output.flatMap { $0.isEmpty ? nil : $0 } ?? executor.name + " finished without a summary."
-        return Self.applied(WorkerOutput(coded: text, appliedRevision: input.work.revision), pendingSteer: end.pendingSteer, dispatched: input.work.revision)
+        // Relative returned paths resolve against its worktree.
+        return Self.applied(Prompts.coded(text, revision: input.work.revision, base: URL(fileURLWithPath: tree.0)), pendingSteer: end.pendingSteer, dispatched: input.work.revision)
     }
 }
 

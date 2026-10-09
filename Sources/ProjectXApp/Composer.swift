@@ -1,32 +1,55 @@
 import SwiftUI
 import AppKit
 import ProjectXCore
+import UniformTypeIdentifiers
 
-/// The message field, the send button, the key hint and the over-limit hint (approved design).
+/// The message field, the attach and send buttons, the key hint, the composer's files and the over-limit hint (approved design).
 struct Composer: View {
     @ObservedObject var model: AppModel
-    /// The tallest the field grows before it scrolls, from the popover's height.
+    /// The tallest the field grows before it scrolls, from the popover's height; the file list shares it.
     let maxHeight: CGFloat
     let send: () -> Void
-    /// `Engine.send` takes 1–6,000 UTF-8 bytes.
+    /// `Engine.send` takes up to 6,000 UTF-8 bytes (none when files are attached).
     static let byteLimit = 6_000
-    private enum Metrics { static let fieldRadius: CGFloat = 15, sendSide: CGFloat = 28 }
+    private enum Metrics { static let fieldRadius: CGFloat = 15, sendSide: CGFloat = 28, buttonRadius: CGFloat = 7 }
     var body: some View {
         let bytes = model.draft.utf8.count, enabled = model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged)
-        let canSend = model.ready && !model.submitting && enabled && bytes <= Self.byteLimit && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasContent = !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.files.isEmpty
+        let canSend = model.ready && !model.submitting && enabled && bytes <= Self.byteLimit && hasContent && model.files.count <= DraftFile.countLimit
         VStack(alignment: .leading,spacing: 6) {
             if bytes > Self.byteLimit {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(ChatPalette.warning).accessibilityHidden(true)
                     VStack(alignment: .leading) {
                         Text("\(bytes.formatted()) bytes. The limit is \(Self.byteLimit.formatted()).").fontWeight(.semibold)
-                        Text("Shorten it to send it.").foregroundStyle(.secondary)
+                        Text("Shorten it, or send it as a text file.").foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity,alignment: .leading).accessibilityElement(children: .combine)
+                    Button { model.draftToTextFile() } label: { Label("Send as Text File",systemImage: "doc.text") }
+                        .controlSize(.small).disabled(!enabled)
+                }.font(.callout)
+            }
+            if let notice = model.fileNotice {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(ChatPalette.warning).accessibilityHidden(true)
+                    Text(notice).frame(maxWidth: .infinity,alignment: .leading)
+                    Button { model.fileNotice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Dismiss")
+                }.font(.callout)
+            }
+            if !model.files.isEmpty {
+                let rows = VStack(spacing: 4) {
+                    ForEach($model.files) { $file in
+                        DraftFileRow(file: file,sendOriginal: $file.sendOriginal) { model.removeFile(file.id) }
                     }
-                }.font(.callout).accessibilityElement(children: .combine)
+                }
+                ViewThatFits(in: .vertical) { rows; ScrollView { rows } }.frame(maxHeight: maxHeight)
             }
             HStack(alignment: .bottom,spacing: 6) {
+                Button { model.pickFiles() } label: {
+                    Image(systemName: "paperclip").fontWeight(.semibold).frame(width: Metrics.sendSide,height: Metrics.sendSide).contentShape(Circle())
+                }.buttonStyle(.plain).foregroundStyle(.secondary).disabled(!enabled).help("Attach files").accessibilityLabel("Attach files")
                 ComposerField(text: $model.draft,placeholder: model.runtimeMode == .fixture ? String(localized: "Synthetic test message, no AI") : String(localized: "Message Yorozu"),
-                              enabled: enabled,maxHeight: maxHeight,sendKey: { [model] in model.sendKey },submit: { if canSend { send() }; return canSend })
+                              enabled: enabled,maxHeight: maxHeight,sendKey: { [model] in model.sendKey },submit: { if canSend { send() }; return canSend },
+                              take: { [model] board in enabled && model.attach(from: board) })
                     .padding(.horizontal,12).padding(.vertical,6)
                     .background(.background,in: RoundedRectangle(cornerRadius: Metrics.fieldRadius,style: .continuous))
                     .overlay { RoundedRectangle(cornerRadius: Metrics.fieldRadius,style: .continuous).strokeBorder(.separator,lineWidth: 0.5) }
@@ -54,6 +77,8 @@ struct ComposerField: NSViewRepresentable {
     let sendKey: () -> Config.SendKey
     /// Returns whether the message went; an Enter that sends nothing is swallowed.
     let submit: () -> Bool
+    /// A paste or drop with files or image data: returns whether it became an attachment (else the text view takes it).
+    let take: (NSPasteboard) -> Bool
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
@@ -73,7 +98,7 @@ struct ComposerField: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView,context: Context) {
         guard let view = scroll.documentView as? ComposerTextView else { return }
         context.coordinator.text = $text
-        view.sendKey = sendKey; view.submit = submit
+        view.sendKey = sendKey; view.submit = submit; view.take = take
         if view.string != text, !view.hasMarkedText() { view.string = text; view.needsDisplay = true }
         if view.placeholder != placeholder { view.placeholder = placeholder; view.setAccessibilityLabel(placeholder); view.needsDisplay = true }
         view.isEditable = enabled
@@ -105,6 +130,7 @@ final class ComposerTextView: NSTextView {
     var placeholder = ""
     var sendKey: () -> Config.SendKey = { .smart }
     var submit: () -> Bool = { false }
+    var take: (NSPasteboard) -> Bool = { _ in false }
     private var keyObserver: NSObjectProtocol?
 
     override func keyDown(with event: NSEvent) {
@@ -115,6 +141,15 @@ final class ComposerTextView: NSTextView {
         if modifiers == .command || (modifiers.isEmpty && enterSends) { _ = submit(); return }
         if modifiers == .shift { return insertNewline(nil) }
         super.keyDown(with: event)
+    }
+
+    // Files and images pasted or dropped onto the field attach instead of inserting a path (#316).
+    override func paste(_ sender: Any?) { if !take(.general) { super.paste(sender) } }
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool { take(sender.draggingPasteboard) || super.performDragOperation(sender) }
+    /// A plain-text view disables Paste for a pasteboard holding only an image; attaching makes it useful.
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), isEditable, NSPasteboard.general.canReadItem(withDataConformingToTypes: [UTType.fileURL.identifier,UTType.image.identifier]) { return true }
+        return super.validateUserInterfaceItem(item)
     }
 
     override func didChangeText() { super.didChangeText(); needsDisplay = true }

@@ -109,11 +109,16 @@ struct ChatScreen: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    Composer(text: $model.draft, working: model.working == true, enabled: model.canSend) {
+                    Composer(text: $model.draft, files: $model.draftFiles, attachments: model.attachmentsSupported != false,
+                             working: model.working == true, enabled: model.canSend) {
                         // Sending jumps to the bottom, so the sent message and its answer are followed.
                         atBottom = true
                         position.scrollTo(edge: .bottom)
                         model.send()
+                    } onSendAsTextFile: {
+                        atBottom = true
+                        position.scrollTo(edge: .bottom)
+                        model.sendAsTextFile()
                     }
                 }
             }
@@ -169,7 +174,13 @@ struct ChatScreen: View {
                 MessageDetails(bubble: bubble, delivery: model.delivery(of: bubble),
                                onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
             }
+            .alert("Couldn’t send", isPresented: Binding(get: { model.attachFailure != nil }, set: { if !$0 { model.attachFailure = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(model.attachFailure ?? "")
+            }
         }
+        .environment(model.files)
         .yorozuTint()
     }
 

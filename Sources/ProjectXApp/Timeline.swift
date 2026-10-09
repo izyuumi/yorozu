@@ -62,12 +62,15 @@ struct MainChat: View {
     /// A message briefly ringed after a jump to it.
     @State private var flashed: String?
     @State private var height: CGFloat = 0
+    /// Files are being dragged over the chat.
+    @State private var dropping = false
     private enum Metrics {
         /// How near the end still counts as the bottom.
         static let bottomSlack: CGFloat = 24
         static let rowSpacing: CGFloat = 10
         /// The composer grows to at most this share of the popover's height.
         static let composerShare: CGFloat = 1.0 / 3
+        static let dropRing: CGFloat = 2, dropRadius: CGFloat = 10
     }
     var body: some View {
         let timeline = model.timeline
@@ -80,6 +83,9 @@ struct MainChat: View {
             Composer(model: model,maxHeight: height * Metrics.composerShare,send: send)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        // Files or images dropped anywhere on the chat attach to the draft (#316).
+        .onDrop(of: [.fileURL,.image],isTargeted: $dropping) { model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged) && model.attach(dropped: $0) }
+        .overlay { if dropping { RoundedRectangle(cornerRadius: Metrics.dropRadius,style: .continuous).strokeBorder(Color.accentColor,lineWidth: Metrics.dropRing).padding(Metrics.dropRing).allowsHitTesting(false) } }
         .onChange(of: model.popoverShown,initial: true) { _,shown in
             guard shown else { return }
             unreadFrom = TimelineItem.firstUnread(model.timeline,all: model.snapshot.messages,cursor: model.readCursor)
@@ -91,6 +97,7 @@ struct MainChat: View {
         // All messages, not just the timeline: a job result replies to its run trigger, which stays in the sub-chat.
         let requests = Dictionary(model.snapshot.messages.map { ($0.id,$0) }) { a,_ in a }
         let shown = Set(timeline.map(\.id)), labels = Dictionary(model.snapshot.topics.map { ($0.id,$0.label) }) { a,_ in a }
+        let files = Dictionary(grouping: model.snapshot.attachments.filter { $0.messageID != nil }) { $0.messageID! }
         return ScrollView {
             LazyVStack(alignment: .leading,spacing: Metrics.rowSpacing) {
                 ForEach(TimelineItem.items(timeline,unreadFrom: unreadFrom)) { item in
@@ -98,7 +105,8 @@ struct MainChat: View {
                     case .day(let day): DaySeparator(day: day)
                     case .unread: UnreadDivider()
                     case .message(let m):
-                        MessageRow(message: m,header: m.replyTo.flatMap { requests[$0] }.map { ReplyHeader($0,shown: shown,labels: labels) },highlighted: flashed == m.id || search.shown && search.current == m.id,reveal: reveal)
+                        MessageRow(message: m,header: m.replyTo.flatMap { requests[$0] }.map { ReplyHeader($0,shown: shown,labels: labels) },highlighted: flashed == m.id || search.shown && search.current == m.id,reveal: reveal,
+                                   files: files[m.id] ?? [],locate: { [model] in await model.attachmentURL($0) })
                     }
                 }
                 if model.routing { ThinkingBubble() }
