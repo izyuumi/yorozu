@@ -737,12 +737,13 @@ extension Engine {
 
     /// A message typed in the job's own input: filed in its topic as `job_input` and delegated there without the
     /// secretary. During the job's run or an earlier answer it waits and runs as the next turn (open question 12).
-    @discardableResult public func sendToJob(jobID: String, body: String, id: String = identifier()) async throws -> String {
+    /// `id` and `sentAt` as in `send`: a phone keeps its bubble's id and its send time (#319).
+    @discardableResult public func sendToJob(jobID: String, body: String, id: String = identifier(), sentAt: Double? = nil) async throws -> String {
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, body.utf8.count <= 6000 else { throw ProjectError.invalid("Message must be 1–6000 UTF-8 bytes.") }
         guard let spec = specs.first(where: { $0.id == jobID }) else { throw ProjectError.invalid("Unknown job.") }
         try await bindRuntime()
         let topic = try await bindTopic(spec)
-        let m = try await store.message(role: "user",body: body,topic: topic.id,kind: "job_input",id: id)
+        let m = try await store.message(role: "user",body: body,topic: topic.id,kind: "job_input",id: id,sentAt: sentAt)
         Task { await self.jobInput(m,spec: spec,topic: topic) }
         return m.id
     }
@@ -901,6 +902,7 @@ extension Engine {
         if let last = ((try? await store.jobRuns(job: spec.id,limit: 1)) ?? []).first, last.state == "running" { return }
         guard let topic = (try? await store.topic(id: id)) ?? nil, let open = try? await store.openWork(topic: id), !open.contains(where: { $0.executor == executor && $0.active }),
               let m = ((try? await store.undelegatedJobInput(topic: id)) ?? []).first else { return }
+        _ = try? await store.startRouting(m.id) // the job's agent takes it now: the Read mark (#314)
         do { try await delegate(m,topic: topic,instruction: "The user wrote this in this job's own chat. Answer them as the job's agent, in their language.",executor: executor) }
         catch {
             let coded = error as? NoticeError
@@ -984,7 +986,7 @@ extension Engine {
         if let last = (try? await store.lastMessage(topic: topic)) ?? nil, last.kind == "job_note", last.notice?.params["reason"] == reason.rawValue { return }
         _ = try? await store.message(role: "assistant",body: "Skipped the run at \(Self.iso(slot)): " + Self.skipText(reason),topic: topic,kind: "job_note",notice: Notice(.jobSkipped,["job": spec.id,"name": spec.name,"reason": reason.rawValue,"slot": Self.iso(slot)]))
     }
-    static func skipText(_ reason: JobRunOutcome.Skip) -> String {
+    public static func skipText(_ reason: JobRunOutcome.Skip) -> String {
         switch reason {
         case .overlap: "the previous run is still going."
         case .uncertain: "an earlier run was interrupted and its state is unknown. Say retry or stop about it to resume the schedule."
