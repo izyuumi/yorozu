@@ -70,8 +70,10 @@ struct ChatScreen: View {
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .scrollDismissesKeyboard(.interactively)
             .onScrollGeometryChange(for: ScrollEdge.self) { geometry in
+                // `containerSize` is the bounds less the insets and the offset is -top at the top, so the end
+                // sits at content - container - top (measured on iOS 26 and 27, with the bars' insets).
                 ScrollEdge(offset: geometry.contentOffset.y,
-                           maxOffset: geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height)
+                           maxOffset: geometry.contentSize.height - geometry.containerSize.height - geometry.contentInsets.top)
             } action: { old, new in
                 if new.offset == old.offset, new.maxOffset > old.maxOffset {
                     // Content grew (a message, a longer answer, the keyboard): follow it only from the bottom.
@@ -96,6 +98,8 @@ struct ChatScreen: View {
             .overlay(alignment: .bottom) {
                 if !atBottom && newCount > 0 {
                     NewMessagesPill(count: newCount) {
+                        atBottom = true
+                        seenId = model.timeline.last?.id
                         withAnimation { position.scrollTo(edge: .bottom) }
                     }
                     .padding(.bottom, LayoutMetrics.inner)
