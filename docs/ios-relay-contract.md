@@ -344,6 +344,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device
 - `ts` is the phone's send time; the Mac keeps it as the message's `sentAt`. Resend renews it.
 - `admissionDeadline` is always `ts` + 24 h, the relay buffer's lifetime. Resend renews it.
 - `jobId` (`jobs-v1` only) makes it that job's own input ([Jobs](#jobs)); absent for the main chat.
+- `replyTo`, set when the user replied to a stored main-timeline message, is that message's id; the host files the
+  reply with its target's topic. Absent otherwise.
 - `delivery`, `channelModel`, `sentAt`, `readAt` and the other 0.7 metadata are not sent and the
   host ignores them.
 

@@ -380,7 +380,7 @@ final class PhoneModel {
                 for (index, info) in (item.files ?? []).enumerated() { files.register(UploadStore.url(item.id, index), for: info) }
                 if case .message(let message) = item.event.payload, !bubbles.contains(where: { $0.id == item.id }) {
                     merge(Bubble(id: item.id, user: true, ts: item.event.ts, text: message.text, kind: message.jobId.map { _ in "job_input" },
-                                 topicId: item.topicId, attachments: item.files ?? []))
+                                 topicId: item.topicId, replyTo: message.replyTo, attachments: item.files ?? []))
                 }
             }
             expireOverdue()
@@ -423,6 +423,7 @@ final class PhoneModel {
         cacheHasJobs = false
         draftFiles.forEach { $0.discard() }
         draftFiles = []
+        replyingTo = nil
         failure = nil
         updateRequired = nil
         hostName = nil
@@ -766,10 +767,12 @@ final class PhoneModel {
             UploadStore.setOffsets(id, uploadOffsets[id] ?? [])
         }
         let event = YorozuEvent(id: id, threadId: "main", ts: ts, agentId: "device",
-                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime)))
+                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, replyTo: replyingTo)))
         draft = ""
         draftFiles = []
-        enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos), Bubble(id: id, user: true, ts: ts, text: text, attachments: infos))
+        enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos),
+                Bubble(id: id, user: true, ts: ts, text: text, replyTo: replyingTo, attachments: infos))
+        replyingTo = nil
     }
 
     /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only.
@@ -818,6 +821,9 @@ final class PhoneModel {
         draft = ""
         send()
     }
+
+    /// The main-timeline message the next `send()` replies to (`MessageData.replyTo`); the host files the reply with it.
+    var replyingTo: String?
 
     /// Why the last send with files did not go; the composer shows it.
     var attachFailure: String?

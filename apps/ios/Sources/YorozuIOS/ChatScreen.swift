@@ -48,7 +48,8 @@ struct ChatScreen: View {
                                 onShowRequest: { show(row.bubble.replyTo) },
                                 onShowDetails: { details = row.bubble },
                                 onResend: { model.resend(row.bubble.id) },
-                                onDelete: { model.delete(row.bubble.id) })
+                                onDelete: { model.delete(row.bubble.id) },
+                                onReply: canReply(row.bubble) ? { model.replyingTo = row.bubble.id } : nil)
                         }
                         .readableRow()
                         .id(row.id)
@@ -121,7 +122,8 @@ struct ChatScreen: View {
                         .foregroundStyle(.secondary)
                     }
                     Composer(text: $model.draft, files: $model.draftFiles, attachments: model.attachmentsSupported != false,
-                             working: model.working == true, enabled: model.canSend) {
+                             working: model.working == true, enabled: model.canSend,
+                             replyQuote: replyQuote, onCancelReply: { model.replyingTo = nil }) {
                         // Sending jumps to the bottom, so the sent message and its answer are followed.
                         atBottom = true
                         position.scrollTo(edge: .bottom)
@@ -235,10 +237,32 @@ struct ChatScreen: View {
     /// replies to its run trigger, which the Mac never sends). Old results that still carry the stored
     /// `Regarding “…”:` prefix are shown as stored, without a header.
     private func header(for bubble: PhoneModel.Bubble, in byId: [String: PhoneModel.Bubble]) -> ReplyHeader? {
+        // The user's own reply: the message it answers, when held.
+        if bubble.user {
+            return bubble.replyTo.flatMap { byId[$0] }.map { ReplyHeader(text: Self.firstLine($0), revealable: true) }
+        }
         let stored = bubble.text.hasPrefix("Regarding “") && bubble.text.contains("”:\n\n")
         guard RowStyle(bubble) == .answer, !stored, let id = bubble.replyTo else { return nil }
         if let request = byId[id] { return ReplyHeader(text: request.shownText, revealable: true) }
         return bubble.topicId.flatMap { model.topics[$0]?.label }.map { ReplyHeader(text: $0, revealable: false) }
+    }
+
+    /// The user's own messages and the agent's answers and questions, once the host has stored them (so it holds the
+    /// target); not notices or failures.
+    private func canReply(_ bubble: PhoneModel.Bubble) -> Bool {
+        bubble.seq != nil && [.user, .answer, .question].contains(RowStyle(bubble))
+    }
+
+    /// The composer's quote bar: the first line of the message being replied to.
+    private var replyQuote: String? {
+        guard let id = model.replyingTo, let target = model.timeline.first(where: { $0.id == id }) else { return nil }
+        return Self.firstLine(target)
+    }
+
+    /// A quoted message's first non-empty line, its Markdown markers dropped.
+    private static func firstLine(_ bubble: PhoneModel.Bubble) -> String {
+        let line = bubble.shownText.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map(String.init) ?? ""
+        return (try? AttributedString(markdown: line)).map { String($0.characters) } ?? line
     }
 
     /// Moves to `route` with the keyboard down first. A field still first responder when its screen is covered is

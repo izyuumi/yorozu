@@ -15556,6 +15556,21 @@
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "リレーが受理" } }
       }
+    },
+    "Cancel Reply" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "返信をやめる" } }
+      }
+    },
+    "Replying to %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「%@」への返信" } }
+      }
+    },
+    "Show the original message" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "元のメッセージを表示" } }
+      }
     }
   },
   "version" : "1.0"
