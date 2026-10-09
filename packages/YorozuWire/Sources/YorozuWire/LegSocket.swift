@@ -11,6 +11,8 @@ protocol LegSocket: AnyObject, Sendable {
     func close(code: Int?)
     /// What the peer said when it closed, for diagnostics; nil while open or when it said nothing.
     var closeReason: String? { get }
+    /// The peer's WebSocket close code; nil while open or when it sent none.
+    var closeCode: Int? { get }
 }
 
 final class RelaySocket: LegSocket, @unchecked Sendable {
@@ -37,6 +39,7 @@ final class RelaySocket: LegSocket, @unchecked Sendable {
     }
 
     var closeReason: String? { task.closeReason.flatMap { String(data: $0, encoding: .utf8) } }
+    var closeCode: Int? { task.closeCode == .invalid ? nil : task.closeCode.rawValue }
 }
 
 /// A direct WebSocket to the Mac's listener (`NWConnection` + `NWProtocolWebSocket`): no ATS question, and
@@ -155,4 +158,5 @@ final class DirectSocket: LegSocket, @unchecked Sendable {
     }
 
     var closeReason: String? { lock.withLock { closedCode }.map { Closed(code: $0).localizedDescription } }
+    var closeCode: Int? { lock.withLock { closedCode } }
 }

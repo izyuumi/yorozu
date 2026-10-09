@@ -77,9 +77,9 @@ private final class Leg: @unchecked Sendable {
 
     let route: Route
     let socket: any LegSocket
-    /// The relay's connect challenge, or the Mac's direct `nonce`.
+    /// The relay's connect challenge, or the nonce in the Mac's direct `joined`.
     var nonce = ""
-    /// Direct: the nonce this phone sent in `join`, which the Mac's `joined` signs.
+    /// Direct: the nonce this phone sent in `probe`, which the Mac's `joined` signs.
     var phoneNonce = ""
     var joined = false
     /// Direct: the Mac's Ed25519 key from a verified `joined`; frames are checked against it.
@@ -496,6 +496,10 @@ public actor RelayClient: ChatTransport {
         box.leg = leg
         racing.append(leg)
         socket.start()
+        // The probe names the room and a nonce, nothing of this phone; NWConnection holds it until the socket is up.
+        leg.phoneNonce = DirectProof.newNonce()
+        guard let room = pairing.roomId, let probe = try? DirectMessage.probe(room: room, nonce: leg.phoneNonce).text() else { return drop(leg) }
+        socket.send(probe) { _ in }
         leg.deadline = Task {
             try? await Task.sleep(for: .seconds(10))
             guard !Task.isCancelled else { return }
@@ -639,7 +643,8 @@ public actor RelayClient: ChatTransport {
 
     /// A leg ended on its own or missed a deadline. A direct candidate backs off (or, refused Local Network
     /// access, is skipped); a relay failure is the user's to see. A lost direct session re-races at once; a
-    /// lost relay session, or a race nobody won, waits out the backoff.
+    /// lost relay session, or a race nobody won, waits out the backoff. The Mac's close codes: 4000 (asleep)
+    /// backs off every candidate, so the race goes to the relay; 4002 (superseded) backs off none.
     private func fail(_ leg: Leg, _ reason: String) {
         guard tracked(leg) else { return }
         let wasCurrent = current === leg
@@ -650,13 +655,17 @@ public actor RelayClient: ChatTransport {
             if !stopped { updates?.yield(.state(.connecting)) }
         }
         if let candidate = leg.candidate {
-            if leg.localNetworkDenied {
+            let code = leg.socket.closeCode.flatMap(DirectCloseCode.init(rawValue:))
+            if code == .superseded {
+                // Not a failure: a newer session of ours took the route, and the next race finds it.
+            } else if code == .sleeping {
+                for other in candidates { backOff(other) }
+                setReport(lastError: "\(candidate.host): \(reason)")
+            } else if leg.localNetworkDenied {
                 denied.insert(candidate)
                 setReport(lastError: String(localized: "Local Network access is off"), localNetworkDenied: true)
             } else {
-                let failures = (backoff[candidate]?.failures ?? 0) + 1
-                let delay = min(600, 30 * pow(2, Double(failures - 1)))
-                backoff[candidate] = (failures, ContinuousClock.now + .seconds(delay))
+                backOff(candidate)
                 setReport(lastError: "\(candidate.host): \(reason)")
             }
         } else if !stopped {
@@ -677,6 +686,13 @@ public actor RelayClient: ChatTransport {
         } else if current?.route == .relay {
             scheduleUpgrade()
         }
+    }
+
+    /// 30 s, doubling per failure to 10 minutes.
+    private func backOff(_ candidate: DirectCandidate) {
+        let failures = (backoff[candidate]?.failures ?? 0) + 1
+        let delay = min(600, 30 * pow(2, Double(failures - 1)))
+        backoff[candidate] = (failures, ContinuousClock.now + .seconds(delay))
     }
 
     private func setReport(lastError: String? = nil, localNetworkDenied: Bool? = nil) {
@@ -948,32 +964,29 @@ public actor RelayClient: ChatTransport {
 
     // MARK: Direct
 
-    /// The direct handshake (docs/ios-relay-contract.md, "Direct path"): answer the Mac's `nonce` with a
-    /// signed `join` and a nonce of our own; accept `joined` only from the key the QR's room is the hash
-    /// of, signed over our nonce. After that, frames signed by that key.
+    /// The direct handshake (docs/ios-relay-contract.md, "Direct path"): `probe` went out on connect; accept
+    /// `joined` only from the key the QR's room is the hash of, signed over the probe's nonce, and only then
+    /// name this phone in a signed `join` over the Mac's nonce. After that, frames signed by that key.
     private func handleDirect(_ text: String, on leg: Leg) {
         guard let message = DirectMessage.decode(text), let room = pairing.roomId else { return }
         switch message {
-        case .nonce(let nonce):
-            guard !leg.joined, leg.nonce.isEmpty, !nonce.isEmpty else { return }
-            leg.nonce = nonce
-            leg.phoneNonce = DirectProof.newNonce()
-            do {
-                let sig = try DirectProof.signJoin(priv: identity.signingPrivateKey, room: room, macNonce: nonce)
-                let join = DirectMessage.join(room: room, pub: identity.signingPublicKey.base64URLEncodedString(),
-                                              sig: sig.base64URLEncodedString(), nonce: leg.phoneNonce)
-                Task { try? await self.transmit(join.text(), on: leg) }
-            } catch {
-                fail(leg, error.localizedDescription)
-            }
-        case .joined(let pub, let sig):
+        case .joined(let pub, let sig, let nonce):
             guard !leg.joined, !leg.phoneNonce.isEmpty else { return }
             guard let key = Data(base64URLEncoded: pub), let signature = Data(base64URLEncoded: sig),
                   DirectProof.verifyJoined(pub: key, room: room, phoneNonce: leg.phoneNonce, signature: signature) else {
                 return fail(leg, String(localized: "The direct listener is not this Mac"))
             }
+            guard Data(base64URLEncoded: nonce)?.count == 32,
+                  let proof = try? DirectProof.signJoin(priv: identity.signingPrivateKey, room: room, macNonce: nonce),
+                  let join = try? DirectMessage.join(room: room, pub: identity.signingPublicKey.base64URLEncodedString(),
+                                                     sig: proof.base64URLEncodedString()).text() else {
+                return fail(leg, String(localized: "The direct listener is not this Mac"))
+            }
+            leg.nonce = nonce
             leg.joined = true
             leg.macKey = key
+            // Enqueued before `won` sends `hello`, so the Mac sees the join first; a join it refuses closes with 4001.
+            leg.socket.send(join) { _ in }
             won(leg)
         case .frame(let payload, let sig):
             guard current === leg, let key = leg.macKey, let signature = Data(base64URLEncoded: sig),
@@ -983,7 +996,7 @@ public actor RelayClient: ChatTransport {
             guard current === leg else { return }
             pongDeadline?.cancel()
             pongDeadline = nil
-        case .join, .ping:
+        case .probe, .join, .ping:
             break
         }
     }

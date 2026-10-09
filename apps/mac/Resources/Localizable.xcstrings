@@ -131,12 +131,22 @@
         }
       }
     },
-    "A connection sent something other than a join." : {
+    "A connection sent something other than a probe and a join." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "join 以外のメッセージを送った接続を拒否しました。"
+            "value" : "probe と join 以外のメッセージを送った接続を拒否しました。"
+          }
+        }
+      }
+    },
+    "Refused a probe for another Mac." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "別の Mac 宛ての probe を拒否しました。"
           }
         }
       }

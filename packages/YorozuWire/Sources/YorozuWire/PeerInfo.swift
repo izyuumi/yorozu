@@ -120,10 +120,28 @@ public struct DirectCandidate: Codable, Sendable, Equatable, Hashable {
     /// The most candidates one peer info may carry.
     public static let maxCount = 8
 
-    /// An IPv4 or IPv6 literal without a zone, and a port in 1–65535.
+    /// A port in 1–65535 and a private IP literal without a zone that ``allows(_:kind:)`` its kind: dotted-quad
+    /// IPv4 exactly as written (no `10.1` or `010.0.0.1` shorthands), or IPv6. Loopback, unspecified,
+    /// link-local and public addresses never pass.
     public var isValid: Bool {
-        (1...65_535).contains(port) && host.utf8.count <= 45 && !host.contains("%")
-            && (IPv4Address(host) != nil || IPv6Address(host) != nil)
+        guard (1...65_535).contains(port), host.utf8.count <= 45, !host.contains("%") else { return false }
+        if let v4 = IPv4Address(host) { return "\(v4)" == host && Self.allows([UInt8](v4.rawValue), kind: kind) }
+        if let v6 = IPv6Address(host) { return Self.allows([UInt8](v6.rawValue), kind: kind) }
+        return false
+    }
+
+    /// Whether an address (4 or 16 raw bytes) may stand as a candidate of `kind`: RFC 1918 or ULA fc00::/7, and
+    /// for `vpn` also 100.64.0.0/10. The Mac applies the same test to what it advertises and accepts.
+    public static func allows(_ b: [UInt8], kind: Kind) -> Bool {
+        switch b.count {
+        case 4:
+            return b[0] == 10 || (b[0] == 172 && b[1] & 0xf0 == 16) || (b[0] == 192 && b[1] == 168)
+                || (kind == .vpn && b[0] == 100 && b[1] & 0xc0 == 64)
+        case 16:
+            return b[0] & 0xfe == 0xfc
+        default:
+            return false
+        }
     }
 
     /// Tailscale's ranges (100.64.0.0/10, fd7a:115c:a1e0::/48): the only addresses diagnostics call "Tailscale".

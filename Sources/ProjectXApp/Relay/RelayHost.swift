@@ -48,9 +48,13 @@ actor RelayHost {
     /// `accepted` is the channel seq accepted in memory, for ordering; `record.counter.recv` on file
     /// moves only once a frame has been handled, so a frame lost to a quit is accepted again on replay.
     private struct Peer { var record: RelayDevice; let keys: (send: SymmetricKey, recv: SymmetricKey); var compatibility: PeerCompatibility?; var accepted: Int; var route = Route.relay }
-    /// A direct WebSocket. `kind` is known once it is ready, `signer` (the phone's paired Ed25519 key) once
-    /// its join verified; `heard` is when its last message arrived.
-    private struct Link { let connection: NWConnection; var kind: DirectKind?; var nonce = ""; var signer: String?; var heard = ContinuousClock.now }
+    /// A direct WebSocket. `kind` is known once it is ready, `nonce` (ours, in `joined`) once its probe named
+    /// this room, `signer` (the phone's paired Ed25519 key) once its join verified; `heard` is when its last
+    /// message arrived, `helloAt` when its last `hello` did.
+    private struct Link {
+        let connection: NWConnection; var kind: DirectKind?; var nonce = ""; var signer: String?
+        var heard = ContinuousClock.now; var helloAt: ContinuousClock.Instant?
+    }
     /// A box from a phone with no result yet, with the relay seq it came with, if replayed.
     private typealias Held = (relay: Int?, channel: Int, event: YorozuEvent)
 
@@ -114,6 +118,8 @@ actor RelayHost {
     private var directErrors: [String: String] = [:]
     private var sweeper: Task<Void, Never>?
     private var sleepWatch: Task<Void, Never>?
+    /// Between `willSleep` and `didWake`: every new direct connection is closed with 4000.
+    private var asleep = false
     private var pathMonitor: NWPathMonitor?
     /// Keeps App Nap off while the host runs; idle sleep is still allowed (Keep Mac awake is separate).
     private var activity: (any NSObjectProtocol)?
@@ -147,7 +153,14 @@ actor RelayHost {
             while !Task.isCancelled { try? await Task.sleep(for: .seconds(5)); await self?.sweep() }
         }
         sleepWatch = Task { [weak self] in
-            for await _ in NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.willSleepNotification) { await self?.sleeping() }
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    for await _ in NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.willSleepNotification) { await self?.sleeping(true) }
+                }
+                group.addTask {
+                    for await _ in NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.didWakeNotification) { await self?.sleeping(false) }
+                }
+            }
         }
         // Advertised addresses follow the network.
         let monitor = NWPathMonitor(); pathMonitor = monitor
@@ -317,8 +330,13 @@ actor RelayHost {
     /// phone a direct link already proved, so its box is opened with that phone's key alone.
     private func frame(_ body: FrameBody, relay: Int?, from: String? = nil) throws {
         if body.t == "hello" {
-            // A hello the relay buffered while this Mac was away is older than a live direct link: it leaves the route alone.
-            if relay != nil, let pub = body.pub, case .direct? = peers[pub]?.route { return }
+            if let pub = body.pub, case .direct(let id)? = peers[pub]?.route {
+                // A hello the relay buffered while this Mac was away is older than a live direct link: it leaves the route alone.
+                if relay != nil { return }
+                // So is a live relay hello overtaken by the direct link's own (make-before-break): one within
+                // 2 s of the direct hello, from a link still heard since, would otherwise supersede it.
+                if let link = links[id], let at = link.helloAt, at.duration(to: .now) < .seconds(2), link.heard >= at { return }
+            }
             return try hello(body, route: .relay)
         }
         guard body.t == "box", let nonce = body.n.flatMap(Data.init(base64URLEncoded:)),
@@ -669,7 +687,7 @@ actor RelayHost {
         }
     }
 
-    /// At most `maxPending` connections wait for a join, each for 10 s.
+    /// At most `maxPending` connections wait for a join, each for 10 s from here.
     private func accept(_ connection: NWConnection, generation: Int) {
         guard generation == listenerGeneration, direct.enabled, links.count < Self.maxLinks,
               links.values.filter({ $0.signer == nil }).count < Self.maxPending else { return connection.cancel() }
@@ -690,15 +708,16 @@ actor RelayHost {
         }
     }
 
-    /// Only Wi-Fi/Ethernet and `utun` interfaces: anything else (loopback, AWDL, bridges) is closed unheard.
+    /// Only private addresses on Wi-Fi/Ethernet and `utun` interfaces: anything else (loopback, public, AWDL,
+    /// bridges) is closed unheard. Asleep, every connection is closed with 4000. The phone speaks first.
     private func ready(_ id: Int) {
         guard let connection = links[id]?.connection else { return }
-        guard let kind = DirectInterfaces.kind(local: connection.currentPath?.localEndpoint) else {
+        if asleep { return drop(id, .sleeping) }
+        let path = connection.currentPath
+        guard let kind = DirectInterfaces.kind(local: path?.localEndpoint, interface: path?.availableInterfaces.first?.type) else {
             return refuse(id, String(localized: "Refused a connection on an interface other than Wi-Fi, Ethernet or VPN."))
         }
-        let nonce = DirectProof.newNonce()
-        links[id]?.kind = kind; links[id]?.nonce = nonce; links[id]?.heard = .now
-        sendDirect(.nonce(nonce), on: id)
+        links[id]?.kind = kind; links[id]?.heard = .now
         Task { await read(id) }
     }
 
@@ -717,13 +736,14 @@ actor RelayHost {
     private func message(_ data: Data, on id: Int) {
         guard let link = links[id] else { return }
         guard let message = try? JSONDecoder().decode(DirectMessage.self, from: data) else {
-            return link.signer == nil ? refuse(id, String(localized: "A connection sent something other than a join.")) : drop(id, .unauthorized, error: String(localized: "The phone sent a malformed message."))
+            return link.signer == nil ? refuse(id, String(localized: "A connection sent something other than a probe and a join.")) : drop(id, .unauthorized, error: String(localized: "The phone sent a malformed message."))
         }
         guard let signer = link.signer else {
-            guard case .join(let room, let pub, let sig, let nonce) = message else {
-                return refuse(id, String(localized: "A connection sent something other than a join."))
+            switch message {
+            case .probe(let room, let nonce) where link.nonce.isEmpty: return probe(room: room, phoneNonce: nonce, on: id)
+            case .join(let room, let pub, let sig) where !link.nonce.isEmpty: return join(room: room, pub: pub, sig: sig, on: id)
+            default: return refuse(id, String(localized: "A connection sent something other than a probe and a join."))
             }
-            return join(room: room, pub: pub, sig: sig, phoneNonce: nonce, on: id)
         }
         switch message {
         case .ping(let t): sendDirect(.pong(t: t), on: id)
@@ -734,15 +754,26 @@ actor RelayHost {
                 return drop(id, .unauthorized, error: String(localized: "A frame's signature did not verify."))
             }
             directFrame(body, signer: signer, on: id)
-        case .nonce, .join, .joined, .pong: break
+        case .probe, .join, .joined, .pong: break
         }
     }
 
-    /// The phone proves it holds a paired Ed25519 key (signing this room and our nonce); the Mac answers with
-    /// its own proof over the phone's nonce. Unknown keys are refused: a phone pairs over the relay only.
-    private func join(room joinRoom: String, pub signer: String, sig: String, phoneNonce: String, on id: Int) {
-        guard let nonce = links[id]?.nonce, joinRoom == room, let sig = Data(base64URLEncoded: sig),
-              Data(base64URLEncoded: phoneNonce)?.count == 32 else {
+    /// The phone's probe names this room and a nonce: the Mac proves its key first, over that nonce, and sends
+    /// a nonce of its own for the join. A probe for another room is closed unanswered.
+    private func probe(room probeRoom: String, phoneNonce: String, on id: Int) {
+        guard probeRoom == room, Data(base64URLEncoded: phoneNonce)?.count == 32 else {
+            return refuse(id, String(localized: "Refused a probe for another Mac."))
+        }
+        guard let proof = try? DirectProof.signJoined(priv: identity.signingPrivateKey, room: room, phoneNonce: phoneNonce) else { return drop(id, nil) }
+        let nonce = DirectProof.newNonce()
+        links[id]?.nonce = nonce
+        sendDirect(.joined(pub: identity.signingPublicKey.base64URLEncodedString(), sig: proof.base64URLEncodedString(), nonce: nonce), on: id)
+    }
+
+    /// The phone proves it holds a paired Ed25519 key, signing this room and our `joined` nonce. Unknown keys
+    /// are refused: a phone pairs over the relay only.
+    private func join(room joinRoom: String, pub signer: String, sig: String, on id: Int) {
+        guard let nonce = links[id]?.nonce, joinRoom == room, let sig = Data(base64URLEncoded: sig) else {
             return refuse(id, String(localized: "Refused a malformed join."))
         }
         guard let pub = peers.first(where: { $0.value.record.signingPub == signer })?.key, let key = Data(base64URLEncoded: signer) else {
@@ -752,9 +783,7 @@ actor RelayHost {
             directErrors[pub] = String(localized: "Its join signature did not verify.")
             return drop(id, .unauthorized)
         }
-        guard let proof = try? DirectProof.signJoined(priv: identity.signingPrivateKey, room: room, phoneNonce: phoneNonce) else { return drop(id, nil) }
         links[id]?.signer = signer
-        sendDirect(.joined(pub: identity.signingPublicKey.base64URLEncodedString(), sig: proof.base64URLEncodedString()), on: id)
         publish()
     }
 
@@ -765,6 +794,7 @@ actor RelayHost {
             guard body.spub == signer, body.pub == pub else {
                 return drop(id, .unauthorized, error: String(localized: "Its hello named another key than its join."))
             }
+            links[id]?.helloAt = .now
             // The key is already on file, so nothing is written and nothing throws.
             try? hello(body, route: .direct(id))
             return
@@ -781,8 +811,11 @@ actor RelayHost {
         }
     }
 
-    /// The Mac is going to sleep: phones move to the relay, which keeps their messages until it wakes.
-    private func sleeping() {
+    /// The Mac is going to sleep: phones move to the relay, which keeps their messages until it wakes, and new
+    /// connections are closed with 4000 until `didWake`.
+    private func sleeping(_ asleep: Bool) {
+        self.asleep = asleep
+        guard asleep else { return }
         for id in links.keys { drop(id, .sleeping, error: String(localized: "This Mac went to sleep.")) }
     }
 

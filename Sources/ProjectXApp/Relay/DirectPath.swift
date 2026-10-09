@@ -44,21 +44,22 @@ enum DirectInterfaces {
         return nil
     }
 
-    /// The candidates `hostInfo` advertises: private Wi-Fi/Ethernet addresses as `lan`, private `utun` addresses
-    /// (RFC 1918, 100.64.0.0/10, ULA) as `vpn`; never loopback or link-local. LAN first, IPv4 first, at most 8.
+    /// The candidates `hostInfo` advertises (`DirectCandidate.allows`): RFC 1918/ULA Wi-Fi/Ethernet addresses as
+    /// `lan`, RFC 1918/100.64.0.0/10/ULA `utun` addresses as `vpn`; never loopback, link-local or public. LAN first, IPv4 first, at most 8.
     static func candidates(port: Int) -> [(candidate: DirectCandidate, kind: DirectKind)] {
         var seen = Set<String>()
         return addresses().compactMap { address -> (DirectCandidate, DirectKind, Int)? in
-            guard let kind = kind(interface: address.name, bytes: address.bytes), !isLinkLocal(address.bytes),
-                  kind == .lan ? isPrivate(address.bytes, cgnat: false) : isPrivate(address.bytes, cgnat: true),
+            guard let kind = kind(interface: address.name, bytes: address.bytes), DirectCandidate.allows(address.bytes, kind: kind.wire),
                   seen.insert(address.text).inserted else { return nil }
             return (DirectCandidate(host: address.text, port: port, kind: kind.wire), kind, (kind == .lan ? 0 : 2) + (address.bytes.count == 4 ? 0 : 1))
         }.sorted { $0.2 < $1.2 }.prefix(DirectCandidate.maxCount).map { ($0.0, $0.1) }
     }
 
-    /// The interface a connection arrived on, from its local address; nil when it is none of the Mac's
-    /// addresses or not on an allowed interface. IPv4-mapped IPv6 counts as the IPv4 address.
-    static func kind(local endpoint: NWEndpoint?) -> DirectKind? {
+    /// The interface a connection arrived on, from its local address and its path's interface type; nil unless
+    /// the address is one the Mac would advertise (`candidates`' test: RFC 1918/ULA on `en*`, plus
+    /// 100.64.0.0/10 on `utun*`) and the type matches (Wi-Fi/Ethernet for `lan`, `.other` for `utun`).
+    /// IPv4-mapped IPv6 counts as the IPv4 address.
+    static func kind(local endpoint: NWEndpoint?, interface type: NWInterface.InterfaceType?) -> DirectKind? {
         guard case .hostPort(let host, _)? = endpoint else { return nil }
         let bytes: [UInt8]
         switch host {
@@ -66,17 +67,14 @@ enum DirectInterfaces {
         case .ipv6(let a): bytes = a.asIPv4.map { Array($0.rawValue) } ?? Array(a.rawValue)
         default: return nil
         }
-        guard !isLoopback(bytes), let address = addresses().first(where: { $0.bytes == bytes }) else { return nil }
-        return kind(interface: address.name, bytes: bytes)
+        guard let address = addresses().first(where: { $0.bytes == bytes }),
+              let kind = kind(interface: address.name, bytes: bytes), DirectCandidate.allows(bytes, kind: kind.wire) else { return nil }
+        switch (kind, type) {
+        case (.lan, .wifi?), (.lan, .wiredEthernet?), (.vpn, .other?), (.tailscale, .other?): return kind
+        default: return nil
+        }
     }
 
-    static func isLoopback(_ b: [UInt8]) -> Bool { b.count == 4 ? b[0] == 127 : b == [UInt8](repeating: 0, count: 15) + [1] }
-    static func isLinkLocal(_ b: [UInt8]) -> Bool { b.count == 4 ? b[0] == 169 && b[1] == 254 : b[0] == 0xfe && b[1] & 0xc0 == 0x80 }
-    /// RFC 1918 (and 100.64.0.0/10 when `cgnat`) for IPv4; ULA fc00::/7 for IPv6.
-    static func isPrivate(_ b: [UInt8], cgnat: Bool) -> Bool {
-        guard b.count == 4 else { return b[0] & 0xfe == 0xfc }
-        return b[0] == 10 || (b[0] == 172 && b[1] & 0xf0 == 16) || (b[0] == 192 && b[1] == 168) || (cgnat && b[0] == 100 && b[1] & 0xc0 == 64)
-    }
     /// Tailscale's ranges: 100.64.0.0/10 and fd7a:115c:a1e0::/48.
     static func isTailscale(_ b: [UInt8]) -> Bool {
         b.count == 4 ? b[0] == 100 && b[1] & 0xc0 == 64 : Array(b.prefix(6)) == [0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0]

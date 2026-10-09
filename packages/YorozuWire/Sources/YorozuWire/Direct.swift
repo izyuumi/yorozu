@@ -2,18 +2,19 @@ import Foundation
 
 /// One JSON text frame on the direct path (docs/ios-relay-contract.md, "Direct path"):
 ///
-/// 1. Mac -> phone on connect: `nonce`.
-/// 2. phone -> Mac: `join` — the room, the phone's Ed25519 key, its ``DirectProof/signJoin(priv:room:macNonce:)``
-///    signature and a fresh phone nonce.
-/// 3. Mac -> phone: `joined` — the Mac's Ed25519 key and ``DirectProof/signJoined(priv:room:phoneNonce:)``.
-/// 4. Both ways after `joined`: `frame`, carrying exactly the signed `{payload, sig}` the relay carries.
+/// 1. phone -> Mac on connect: `probe` — the room and a fresh phone nonce; nothing that names the phone.
+/// 2. Mac -> phone: `joined` — the Mac's Ed25519 key, ``DirectProof/signJoined(priv:room:phoneNonce:)`` and a
+///    fresh Mac nonce. The phone checks it before it reveals anything.
+/// 3. phone -> Mac: `join` — the room, the phone's Ed25519 key and its
+///    ``DirectProof/signJoin(priv:room:macNonce:)`` signature.
+/// 4. Both ways after `join`: `frame`, carrying exactly the signed `{payload, sig}` the relay carries.
 /// 5. Phone heartbeat: `ping` every 10 s, answered by `pong` with the same `t`.
 ///
 /// Binary strings are base64url without padding. Decoding is strict: an unknown `type` throws.
 public enum DirectMessage: Codable, Equatable, Sendable {
-    case nonce(String)
-    case join(room: String, pub: String, sig: String, nonce: String)
-    case joined(pub: String, sig: String)
+    case probe(room: String, nonce: String)
+    case joined(pub: String, sig: String, nonce: String)
+    case join(room: String, pub: String, sig: String)
     /// `payload`: base64url frame-body JSON (`{t:"hello"…}` or `{t:"box",n,c}`); `sig`: the sender's Ed25519
     /// signature over the `payload` string's UTF-8, as on the relay.
     case frame(payload: String, sig: String)
@@ -32,11 +33,13 @@ public enum DirectMessage: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .type) {
-        case "nonce": self = .nonce(try c.decode(String.self, forKey: .nonce))
+        case "probe": self = .probe(room: try c.decode(String.self, forKey: .room), nonce: try c.decode(String.self, forKey: .nonce))
+        case "joined":
+            self = .joined(pub: try c.decode(String.self, forKey: .pub), sig: try c.decode(String.self, forKey: .sig),
+                           nonce: try c.decode(String.self, forKey: .nonce))
         case "join":
             self = .join(room: try c.decode(String.self, forKey: .room), pub: try c.decode(String.self, forKey: .pub),
-                         sig: try c.decode(String.self, forKey: .sig), nonce: try c.decode(String.self, forKey: .nonce))
-        case "joined": self = .joined(pub: try c.decode(String.self, forKey: .pub), sig: try c.decode(String.self, forKey: .sig))
+                         sig: try c.decode(String.self, forKey: .sig))
         case "frame":
             let frame = try c.decode(Frame.self, forKey: .frame)
             self = .frame(payload: frame.payload, sig: frame.sig)
@@ -50,13 +53,14 @@ public enum DirectMessage: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .nonce(let nonce):
-            try c.encode("nonce", forKey: .type); try c.encode(nonce, forKey: .nonce)
-        case .join(let room, let pub, let sig, let nonce):
-            try c.encode("join", forKey: .type); try c.encode(room, forKey: .room); try c.encode(pub, forKey: .pub)
-            try c.encode(sig, forKey: .sig); try c.encode(nonce, forKey: .nonce)
-        case .joined(let pub, let sig):
+        case .probe(let room, let nonce):
+            try c.encode("probe", forKey: .type); try c.encode(room, forKey: .room); try c.encode(nonce, forKey: .nonce)
+        case .joined(let pub, let sig, let nonce):
             try c.encode("joined", forKey: .type); try c.encode(pub, forKey: .pub); try c.encode(sig, forKey: .sig)
+            try c.encode(nonce, forKey: .nonce)
+        case .join(let room, let pub, let sig):
+            try c.encode("join", forKey: .type); try c.encode(room, forKey: .room); try c.encode(pub, forKey: .pub)
+            try c.encode(sig, forKey: .sig)
         case .frame(let payload, let sig):
             try c.encode("frame", forKey: .type); try c.encode(Frame(payload: payload, sig: sig), forKey: .frame)
         case .ping(let t):
@@ -78,11 +82,11 @@ public enum DirectMessage: Codable, Equatable, Sendable {
 
 /// WebSocket close codes on the direct path.
 public enum DirectCloseCode: Int, Sendable {
-    /// The Mac is going to sleep.
+    /// The Mac is going to sleep, or has not woken yet. The phone backs off every candidate and takes the relay.
     case sleeping = 4000
-    /// The join did not verify, or came from an unknown key.
+    /// The probe named another room, or the join did not verify or came from an unknown key.
     case unauthorized = 4001
-    /// A newer session for this device took the route.
+    /// A newer session for this device took the route. The phone re-races at once, with no backoff.
     case superseded = 4002
     /// A message over ``DirectMessage/maxBytes``.
     case tooLarge = 4003

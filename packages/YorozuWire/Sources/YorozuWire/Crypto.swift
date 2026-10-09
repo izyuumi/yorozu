@@ -138,9 +138,9 @@ public enum YorozuCrypto {
     }
 }
 
-/// The direct path's mutual, domain-separated handshake (docs/ios-relay-contract.md, "Direct path"). The phone
-/// signs the Mac's connect nonce under `yorozu-direct-v2`, the Mac signs the phone's under `yorozu-direct-v2-host`,
-/// both with the Ed25519 keys the relay already knows them by. The prefixes keep either signature from
+/// The direct path's mutual, domain-separated handshake (docs/ios-relay-contract.md, "Direct path"). The Mac
+/// signs the phone's probe nonce under `yorozu-direct-v2-host` first; only then does the phone sign the Mac's
+/// nonce under `yorozu-direct-v2`, both with the Ed25519 keys the relay already knows them by. The prefixes keep either signature from
 /// standing for the other, or for a relay join, which signs a bare nonce.
 public enum DirectProof {
     public static func joinMessage(room: String, nonce: String) -> Data { Data("yorozu-direct-v2|\(room)|\(nonce)".utf8) }
