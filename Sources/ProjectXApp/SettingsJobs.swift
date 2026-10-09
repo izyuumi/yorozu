@@ -105,6 +105,7 @@ private extension JobStatus {
         case .paused: (String(localized: "Paused"),"pause.circle")
         case .needsApproval: (String(localized: "Needs approval"),"hand.raised")
         case .needsAttention: (String(localized: "Needs attention"),"exclamationmark.triangle")
+        case .finished: (String(localized: "Finished"),"checkmark.circle")
         case .idle: nil
         }
     }

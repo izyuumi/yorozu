@@ -138,6 +138,7 @@ struct JobsScreen: View {
         case "needsApproval": tag(String(localized: "Needs approval"), YorozuPalette.warning)
         case "needsAttention": tag(String(localized: "Needs attention"), YorozuPalette.warning)
         case "running": tag(String(localized: "Running"), YorozuPalette.vermilion)
+        case "finished": tag(String(localized: "Finished"), YorozuPalette.sage)
         default: EmptyView()
         }
     }

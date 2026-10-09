@@ -15398,6 +15398,11 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "一時停止中" } }
       }
     },
+    "Finished" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "完了" } }
+      }
+    },
     "Not scheduled" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "予定なし" } }

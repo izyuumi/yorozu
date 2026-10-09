@@ -251,7 +251,7 @@ public struct JobListData: Codable, Equatable, Sendable {
         /// The last finished run: `done`, `failed`, `stopped` or `uncertain`, as text so a new value still decodes.
         public var lastResult: String?
         public var lastNotable: Bool?
-        /// `running`, `paused`, `needsApproval`, `needsAttention` or `idle`, as text so a new state still decodes.
+        /// `running`, `paused`, `needsApproval`, `needsAttention`, `finished` (a one-shot that ran) or `idle`, as text so a new state still decodes.
         public var state: String
         /// The job's sub-chat; nil until the Mac has bound one.
         public var topicId: String?

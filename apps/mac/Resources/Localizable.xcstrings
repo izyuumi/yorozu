@@ -4622,6 +4622,16 @@
         }
       }
     },
+    "Finished" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完了"
+          }
+        }
+      }
+    },
     "Not working" : {
       "localizations" : {
         "ja" : {

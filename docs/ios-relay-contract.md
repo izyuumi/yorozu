@@ -797,7 +797,8 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
   `nextRun`, `lastRun` are epoch ms, `nextRun` nil while paused or retired (or with no next slot),
   `lastRun` the latest run's start. `lastResult` is `uncertain` while the latest run is, else the
   last finished run's state (`done`, `failed`, `stopped`), and `lastNotable` whether it was notable.
-  `state` is `running`, `paused`, `needsApproval`, `needsAttention` or `idle`; `state` and
+  `state` is `running`, `paused`, `needsApproval`, `needsAttention`, `finished` (a one-shot that
+  ran) or `idle`; `state` and
   `lastResult` are text so a new value still decodes. `topicId` is the job's sub-chat.
 - Always the whole list. The Mac sends the latest after each compatible claim and to every served
   phone when it changes. `EngineBridge` reads it on its snapshot poll only when the change sequence
