@@ -200,7 +200,6 @@ actor RelayHost {
     func setMain(_ main: ThreadSummary) { self.main = main }
 
     /// A new readiness goes to every served phone that takes it now; each handshake sends the latest again.
-    /// Not called yet: the Mac readiness model (#317) sets it through `AppModel.publishReadiness`.
     func publishReadiness(_ readiness: ReadinessData) {
         guard readiness != self.readiness else { return }
         self.readiness = readiness

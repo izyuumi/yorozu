@@ -28,10 +28,10 @@ struct PopoverContent: View {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(ChatPalette.warning).accessibilityHidden(true)
                     VStack(alignment: .leading,spacing: 2) {
-                        Text(LocalizedStringKey(item.title)).lineLimit(2).truncationMode(.tail).help(item.detail.isEmpty ? item.title : item.detail)
-                        if r.count > 1 { Text(r.localizedSummary).font(.caption).foregroundStyle(.secondary) }
+                        Text(verbatim: item.title).lineLimit(2).truncationMode(.tail).help(item.detail.isEmpty ? item.title : item.detail)
+                        if r.count > 1 { Text(r.summary).font(.caption).foregroundStyle(.secondary) }
                     }.frame(maxWidth: .infinity,alignment: .leading)
-                    if let fix = item.fix { FixButton(model: model,fix: fix).controlSize(.small) }
+                    if let fix = item.fix { FixButton(model: model,fix: fix).controlSize(.small) } // the files notice has nothing to fix
                 }
                 .font(.callout).padding(.horizontal,12).padding(.vertical,8)
                 .background(ChatPalette.warning.opacity(0.12)).accessibilityElement(children: .contain)
@@ -83,7 +83,7 @@ struct PopoverContent: View {
             } else if let label = model.harnessLabel {
                 let r = model.readiness
                 ReadinessDot(state: r?.state)
-                Text(r.map { $0.state == .ready ? label : $0.localizedSummary } ?? String(localized: "Checking \(label)…")).lineLimit(1).truncationMode(.tail)
+                Text(r.map { $0.state == .ready ? label : $0.summary } ?? String(localized: "Checking \(label)…")).lineLimit(1).truncationMode(.tail)
             }
         }.font(.caption).foregroundStyle(.secondary).padding(.horizontal,16).padding(.bottom,8)
     }

@@ -19,7 +19,7 @@ struct GeneralSettings: View {
                 } label: {
                     HStack(spacing: 6) {
                         ReadinessDot(state: model.readiness?.state)
-                        if let r = model.readiness { Text(r.state == .ready ? String(localized: "Setup: Ready") : r.localizedSummary) } else { Text("Setup: checking…") }
+                        if let r = model.readiness { Text(r.state == .ready ? String(localized: "Setup: Ready") : r.summary) } else { Text("Setup: checking…") }
                     }
                 }
             }

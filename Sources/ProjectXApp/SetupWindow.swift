@@ -49,6 +49,7 @@ struct SetupWindow: View {
         .frame(minHeight: Metrics.minHeight)
         .task { await refresh() }
         .onChange(of: model.setupRequests) { _, _ in Task { await refresh() } }
+        .onChange(of: model.config) { _, _ in Task { await refresh() } } // an answer from `Yorozu setup`, or a Settings change
         .onDisappear { model.setupStep = nil; model.bootstrapSecret = "" }
         .sheet(isPresented: $pairing, onDismiss: { Task { await refresh() } }) { PairPhoneView(model: model) }
         .alert("Change Yorozu's agent entry in OpenClaw?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), presenting: confirming) { plan in
@@ -84,8 +85,8 @@ struct SetupWindow: View {
             StepGlyph(kind: current ? .current : s.state == .done ? .done : optional ? .optional : .todo)
             VStack(alignment: .leading, spacing: 2) {
                 Text(Self.title(s.id)).fontWeight(current ? .semibold : .regular)
-                if let note { Text(LocalizedStringKey(note.title)).font(.caption).foregroundStyle(.secondary) }
-                if let link { Link(LocalizedStringKey(link.title), destination: link.url).font(.caption) }
+                if let note { Text(verbatim: note.title).font(.caption).foregroundStyle(.secondary) }
+                if let link { Link(link.title, destination: link.url).font(.caption) }
             }.frame(maxWidth: .infinity, alignment: .leading)
             if s.state == .done, !current { Text("Done").foregroundStyle(.secondary) } else if optional { Text("Optional").foregroundStyle(.secondary) }
         }
@@ -106,7 +107,7 @@ struct SetupWindow: View {
                 }
             }
             plan(s)
-            if s.state == .app, let place = s.whereInApp { Text(place).foregroundStyle(.secondary) }
+            if s.state == .app, let place = s.whereInApp { Text(verbatim: place).foregroundStyle(.secondary) }
         case "gateway":
             Text("Yorozu talks to the Gateway directly once this Mac is enrolled, with live progress and tool names. Until then it uses the openclaw command line.").foregroundStyle(.secondary)
             if model.runtimeMode == .live, model.nativeSelected {
@@ -143,11 +144,12 @@ struct SetupWindow: View {
                 Text("Off by default, which is safer. When on, workers take the outward-facing steps you ask for (sending, posting, buying, deleting) without asking first. Change it any time in Settings › General.")
             }
         case "start_at_login":
-            Toggle(isOn: toggle(s.question)) {
+            // Off and disabled while this run leaves the login item alone, as in Settings › General.
+            Toggle(isOn: model.loginItemBlocker == nil ? toggle(s.question) : .constant(false)) {
                 Text("Start at login")
                 Text("On by default, so paired phones and scheduled jobs can reach Yorozu after a restart.")
                 if let blocker = model.loginItemBlocker { Text(blocker) }
-            }
+            }.disabled(model.loginItemBlocker != nil)
         case "pair_iphone":
             LabeledContent {
                 Button("Pair iPhone…") { pairing = true }.disabled(model.relay == nil)
@@ -164,19 +166,19 @@ struct SetupWindow: View {
         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
             LabeledContent {
                 switch item.fix {
-                case .copy(let title, let command)?: Button(LocalizedStringKey(title)) { copyToClipboard(command) }.help(command)
-                case .open(let title, let url)?: Link(LocalizedStringKey(title), destination: url)
+                case .copy(let title, let command)?: Button(title) { copyToClipboard(command) }.help(command)
+                case .open(let title, let url)?: Link(title, destination: url)
                 case .step(let id)? where id != current?.id: Button("Go to Step") { model.setupStep = id }
                 default: EmptyView()
                 }
             } label: {
                 Label {
-                    Text(LocalizedStringKey(item.title))
+                    Text(verbatim: item.title)
                 } icon: {
                     switch item.severity {
-                    case .ok: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    case .warning: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    case .blocking: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                    case .ok: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("OK")
+                    case .warning: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityLabel("Needs attention")
+                    case .blocking: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red).accessibilityLabel("Blocking")
                     }
                 }
                 if case .copy(_, let command)? = item.fix { Text(verbatim: command).monospaced().textSelection(.enabled) }
@@ -217,7 +219,7 @@ struct SetupWindow: View {
     private func summary(_ r: Readiness) -> some View {
         Section("Done") {
             LabeledContent {
-                Text(r.localizedSummary)
+                Text(r.summary)
             } label: {
                 HStack(spacing: 6) { ReadinessDot(state: r.state); Text("Status") }
             }
@@ -227,7 +229,7 @@ struct SetupWindow: View {
 
     private func footer(_ current: SetupStep?) -> some View {
         HStack {
-            if let current, let i = Self.rows.firstIndex(of: current.id) { Text("Step \(i + 1) of 7").foregroundStyle(.secondary) }
+            if let current, let i = Self.rows.firstIndex(of: current.id) { Text("Step \(i + 1) of \(Self.rows.count)").foregroundStyle(.secondary) }
             Spacer()
             if busy { ProgressView().controlSize(.small) }
             if let current { Button("Skip for Now") { skip(current) }.disabled(busy) }
@@ -264,6 +266,7 @@ struct SetupWindow: View {
             return
         }
         guard let q = s.question else { if s.state == .done { model.setupStep = nil } else { Task { await refresh() } }; return }
+        if q.id == "start_at_login", model.loginItemBlocker != nil { model.setupStep = nil; passed.insert(s.id); return } // nothing to record
         if q.id == "openclaw_setup", let plan = s.plan { plan.needsConfirmation ? (confirming = plan) : apply(plan); return }
         if q.choices.contains("check") { return answer(q.id, "check") }
         if q.id.hasPrefix("integrations.") { return answer(q.id, model.config.integrations[String(q.id.dropFirst(13))]?.enabled == false ? "off" : "on") }
@@ -273,7 +276,7 @@ struct SetupWindow: View {
     /// Skip for Now: records a skip where the step has one, keeps the current value of a switch, else passes the step over.
     private func skip(_ s: SetupStep) {
         model.setupStep = nil
-        guard s.state != .done, let q = s.question else { passed.insert(s.id); return }
+        guard s.state != .done, let q = s.question, !(q.id == "start_at_login" && model.loginItemBlocker != nil) else { passed.insert(s.id); return }
         if q.choices.contains("skip") { answer(q.id, "skip") }
         else if ["yolo", "start_at_login"].contains(q.id) || q.id.hasPrefix("integrations.") { answer(q.id, q.default) }
         else { passed.insert(s.id) }
@@ -308,6 +311,7 @@ struct StepGlyph: View {
     enum Kind { case done, current, todo, optional }
     let kind: Kind
     private static let side: CGFloat = 16, line: CGFloat = 1.5, dot: CGFloat = 6
+    private var label: LocalizedStringKey { switch kind { case .done: "Done"; case .current: "Current step"; case .todo: "To do"; case .optional: "Optional" } }
     var body: some View {
         ZStack {
             switch kind {
@@ -319,6 +323,7 @@ struct StepGlyph: View {
             case .optional: Circle().strokeBorder(.tertiary, style: StrokeStyle(lineWidth: Self.line, dash: [2, 2]))
             }
         }
-        .frame(width: Self.side, height: Self.side).accessibilityHidden(true)
+        .frame(width: Self.side, height: Self.side)
+        .accessibilityElement(children: .ignore).accessibilityLabel(label)
     }
 }

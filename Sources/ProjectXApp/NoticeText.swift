@@ -107,6 +107,8 @@ enum NoticeText {
         case "openclaw_missing": String(localized: "OpenClaw or Node.js isn’t installed.")
         case "gateway_down": String(localized: "The OpenClaw Gateway isn’t running. Start it with `openclaw gateway run`.")
         case "agent_missing": String(localized: "Yorozu’s agent isn’t set up in OpenClaw.")
+        case "personal_agent": String(localized: "Yorozu needs its own OpenClaw agent, not your main one. Set [harness] agent to a dedicated id.")
+        case "gateway_target": subject.map { String(localized: "Nothing answers at \($0); check [harness] gateway_url") }
         case "model_not_allowed": subject.map { String(localized: "OpenClaw doesn’t allow \($0) for Yorozu.") }
         case "exec_markers": String(localized: "Yorozu was started from an agent’s shell; open it from Finder.")
         case "already_running": String(localized: "Yorozu is already running.")

@@ -222,7 +222,9 @@ struct AdvancedSettings: View {
         // The home folder itself stays absolute: its tilde form "~" is not a path `Config` accepts.
         let url = picked.standardizedFileURL, home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
         let path = url.path == home.path ? url.path : tildePath(url)
-        model.writeSettings { $0.harness.devRepo = path }
+        // An empty dev_base becomes the repo's current branch now; `resolvingBase` stays the fallback at run time.
+        let base = (try? HarnessSettings().resolvingBase(url).codingBaseBranch) ?? ""
+        model.writeSettings { $0.harness.devRepo = path; if $0.harness.devBase.isEmpty { $0.harness.devBase = base } }
     }
 
     static func mode(_ mode: RuntimeMode) -> String {

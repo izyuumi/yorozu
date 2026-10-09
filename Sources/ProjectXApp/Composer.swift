@@ -22,8 +22,8 @@ struct Composer: View {
             if let blocked {
                 HStack(spacing: 8) {
                     Image(systemName: "xmark.octagon.fill").foregroundStyle(.red).accessibilityHidden(true)
-                    Text(LocalizedStringKey(blocked.title)).frame(maxWidth: .infinity,alignment: .leading).help(blocked.detail.isEmpty ? blocked.title : blocked.detail)
-                    FixButton(model: model,fix: blocked.fix ?? .step("harness")).controlSize(.small)
+                    Text(verbatim: blocked.title).frame(maxWidth: .infinity,alignment: .leading).help(blocked.detail.isEmpty ? blocked.title : blocked.detail)
+                    FixButton(model: model,fix: blocked.fix).controlSize(.small)
                 }.font(.callout)
             }
             if bytes > Self.byteLimit {

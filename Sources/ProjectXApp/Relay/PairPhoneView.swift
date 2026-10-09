@@ -9,12 +9,12 @@ import YorozuWire
 struct PairPhoneView: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    /// The QR's side and the text column's width, the sizes this sheet owns.
-    private let qrSide: CGFloat = 220, textWidth: CGFloat = 300
+    /// The QR's side, the gap beside it and the text column's width, the sizes this sheet owns.
+    private let qrSide: CGFloat = 220, gap: CGFloat = 20, textWidth: CGFloat = 300
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 16) {
-            HStack(alignment: .top, spacing: 20) {
+            HStack(alignment: .top, spacing: gap) {
                 if let link = model.relayStatus.link, let qr = Self.qr(link) {
                     Image(nsImage: qr).interpolation(.none).resizable().frame(width: qrSide, height: qrSide)
                         .accessibilityLabel("Pairing QR code")
@@ -30,7 +30,7 @@ struct PairPhoneView: View {
                     VStack(spacing: 8) {
                         if model.relay != nil { ProgressView() }
                         Text(model.relayStatus.state).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    }.frame(width: qrSide + 20 + textWidth, height: qrSide)
+                    }.frame(width: qrSide + gap + textWidth, height: qrSide)
                 }
             }
             HStack {

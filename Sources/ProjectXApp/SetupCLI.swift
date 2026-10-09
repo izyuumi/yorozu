@@ -54,7 +54,7 @@ enum SetupCLI {
         if let next = r.next, let q = next.question {
             out["step"] = next.id
             out["question"] = ["id": q.id,"text": q.text,"choices": q.choices,"default": q.default]
-            if let plan = next.plan, q.id == "openclaw_setup" { out["changes"] = plan.changes.map { ["path": $0.path,"old": $0.old as Any? ?? NSNull(),"new": $0.new as Any? ?? NSNull()] as [String:Any] }; out["confirm"] = plan.needsConfirmation }
+            if let plan = next.plan, q.id == "openclaw_setup" { out["changes"] = plan.changes.map { ["path": $0.path,"old": $0.old as Any? ?? NSNull(),"new": $0.new as Any? ?? NSNull()] as [String:Any] }; out["confirm"] = plan.needsConfirmation; out["plan_digest"] = plan.digest }
         } else {
             out["done"] = true
             let left = r.inApp
@@ -73,7 +73,7 @@ enum SetupCLI {
             }
         }
         if let next = r.next, let q = next.question {
-            if let plan = next.plan, q.id == "openclaw_setup" { lines += ["","Changes to OpenClaw's config:"] + plan.changes.map { "  " + $0.line } }
+            if let plan = next.plan, q.id == "openclaw_setup" { lines += ["","Changes to OpenClaw's config (plan \(plan.digest)):"] + plan.changes.map { "  " + $0.line } + ["To apply exactly these changes, answer apply:\(plan.digest); if they change before then, setup refuses and asks you to look again."] }
             lines += ["",q.text,"Choices: " + q.choices.joined(separator: ", ") + " (default: \(q.default))","Answer with: Yorozu setup answer \(q.id) <choice>"]
         } else {
             lines += ["","Setup is done here."]

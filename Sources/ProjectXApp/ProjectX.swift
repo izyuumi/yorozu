@@ -39,7 +39,7 @@ import YorozuWire
     var lastFailureID: String?
     /// Set at launch when a harness switch waits for running work (open question 9).
     var switchNotice: String?
-    /// The file store (#316) could not open (a root inside a git checkout): attachments are off this launch.
+    /// Why the file store (#316) could not open (a root inside a git checkout), raw: attachments are off this launch.
     var filesNotice: String?
     /// The file store's root, for `HarnessSettings.filesRoot`; nil without a store.
     var filesRoot: URL?
@@ -146,14 +146,14 @@ import YorozuWire
                 do {
                     files = try FileStore(root: explicit != nil || runtimeMode == .fixture ? root.appendingPathComponent("files",isDirectory: true)
                                                                                             : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/files",isDirectory: true),dataRoot: root)
-                } catch { filesNotice = String(localized: "Attachments are off: \(error.localizedDescription)") }
+                } catch { filesNotice = error.localizedDescription }
                 filesRoot = files?.root
                 let box = settingsBox; box.value = harnessSettings()
                 let harness: any Harness
                 switch runtimeMode {
-                case .fixture: harness = FixtureHarness()
+                case .fixture: harness = FixtureHarness(agent: resolved.config.harness.agent)
                 case .live: harness = try await liveHarness(resolved,root: root,store: store)
-                case .offline: harness = OfflineHarness()
+                case .offline: harness = OfflineHarness(agent: resolved.config.harness.agent)
                 }
                 // Queued work resumes with the automatic models, unless the first metadata read takes more than 10 s.
                 self.harness = harness; await refreshModels().value(upTo: .seconds(10))
@@ -203,13 +203,15 @@ import YorozuWire
         var kind = h.kind
         if kind != previous, try await store.snapshot().work.contains(where: { $0.active || $0.state == "uncertain" }) { // suppressed too, until its stop is confirmed
             kind = previous
-            switchNotice = "Still on \(previous.rawValue): work started there is running. Relaunch Yorozu once it finishes to switch to \(h.kind.rawValue)."
+            switchNotice = String(localized: "Still on \(previous.rawValue): work started there is running. Relaunch Yorozu once it finishes to switch to \(h.kind.rawValue).")
         }
         let harness: any Harness
         switch kind {
         case .openclaw:
             // Native launch is NOT an escape from an inherited exec restriction.
             try GatewayRPC.enforceAttribution(environment)
+            // Workers never run on the user's personal agent; an entry marked default is caught by readiness and setup.
+            guard !OpenClawSetup.personal(h.agent,config: nil) else { throw ProjectError.blocked(OpenClawSetup.personalAgent) }
             nativeSelected = h.transport == .native
             let native = nativeSelected ? await connectNative(h.gatewayURL) : nil
             let rpc = GatewayRPC(native: native,audit: { try await store.requestReceipt($0) },target: h.gatewayURL); gatewayRPC = rpc
