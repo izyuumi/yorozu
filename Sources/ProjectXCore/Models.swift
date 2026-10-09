@@ -129,7 +129,7 @@ public enum JobRunOutcome: Sendable, Equatable {
 }
 /// One row of the Jobs list (#319). `nextRun` comes from the scheduler.
 public struct JobStatus: Sendable, Equatable {
-    public enum State: String, Sendable { case running, paused, needsApproval, needsAttention, idle }
+    public enum State: String, Sendable { case running, paused, needsApproval, needsAttention, finished, idle }
     public var id: String; public var name: String; public var topicID: String?; public var summary: String?
     public var nextRun: Date?; public var lastRun: Date?
     /// The last finished run's state (done|failed|stopped|uncertain) and whether it was notable.

@@ -5,7 +5,7 @@ import SwiftUI
 /// The `Settings` scene (⌘, and Settings… in the menus): native grouped forms over `config.toml` (#312). Advanced shows
 /// only while General › Show Advanced settings is on.
 struct SettingsView: View {
-    enum Tab: Hashable { case general, devices, connection, storage, advanced }
+    enum Tab: Hashable { case general, devices, connection, storage, jobs, advanced }
     @ObservedObject var model: AppModel
     /// The window's width, the one size this pane owns: nothing proposes a width to a Settings window.
     private let width: CGFloat = 560
@@ -16,6 +16,7 @@ struct SettingsView: View {
             ConnectionSettings(model: model) { model.showEnrollment() }
                 .tabItem { Label("Connection", systemImage: "network") }.tag(Tab.connection)
             StorageSettings(model: model).tabItem { Label("Storage", systemImage: "internaldrive") }.tag(Tab.storage)
+            JobsSettings(model: model).tabItem { Label("Jobs", systemImage: "clock") }.tag(Tab.jobs)
             if model.config.general.showAdvanced {
                 AdvancedSettings(model: model).tabItem { Label("Advanced", systemImage: "gearshape.2") }.tag(Tab.advanced)
             }

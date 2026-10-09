@@ -15,7 +15,7 @@ holds a cache of the [history window](#history-window), catches up by
 Mac's full history and removes its own pairing.
 
 Out of scope for 0.7: APNs/`notify`,
-typing in sub-chats, multiple threads (the thread id is carried everywhere and never hard-wired
+typing in sub-chats (other than a job's own input, [Jobs](#jobs)), multiple threads (the thread id is carried everywhere and never hard-wired
 beyond the one thread `"main"`).
 
 ## Transport (unchanged v1 relay)
@@ -227,7 +227,7 @@ next `.paired` catches up. A device that had finished the exchange stays served 
 
 The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15 s deadline,
 `RelayClient.swift`). Both ends advertise `PeerInfoData.local`: protocol 2 (`protocolMin` =
-`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1"]`,
+`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1","jobs-v1"]`,
 required `["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update
 required". Until a device's exchange succeeds, the host passes none of its other events to the
 backend; a known device whose last result on file is compatible counts as succeeded (Mac-side
@@ -262,8 +262,8 @@ since the phone is where they are read).
 
 ## History window
 
-The phone caches, and catch-up serves, the **history window**: the newest 500 messages plus every
-message younger than 30 days (the union), with the topics, tasks, amendments, worker events and
+The phone caches, and catch-up serves, the **history window**: the newest 500 main-timeline messages plus every
+message younger than 30 days (the union; a job sub-chat's own messages only the latter), with the topics, tasks, amendments, worker events and
 read cursors that belong to it. Older history is reached only through
 [search and page requests](#search_request--search_result-search).
 
@@ -324,6 +324,8 @@ event carries its row's `seq`.
 | `attachment_download_request` | phone -> Mac | `AttachmentDownloadRequestData` | a file or thumbnail chunk |
 | `attachment_download_chunk` | Mac -> phone | `AttachmentDownloadChunkData` | its answer |
 | `readiness` | Mac -> phone | `ReadinessData` | whether the Mac can answer ([`readiness`](#readiness-mac---phone-can-the-mac-answer)) |
+| `job_list` | Mac -> phone | `JobListData` | every scheduled job ([Jobs](#jobs)) |
+| `job_control` | phone -> Mac | `JobControlData` | Pause, Resume, Run now or Delete one job; answered with `admission_status` |
 
 Record kinds travel only inside `sync_delta.events`. Everything else is a top-level event. The
 host ignores every other kind (no reply, no receipt); the phone ignores kinds it does not show.
@@ -341,6 +343,7 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device
   with files is an [`attachment_commit`](#attachments) instead, text and files as one unit.
 - `ts` is the phone's send time; the Mac keeps it as the message's `sentAt`. Resend renews it.
 - `admissionDeadline` is always `ts` + 24 h, the relay buffer's lifetime. Resend renews it.
+- `jobId` (`jobs-v1` only) makes it that job's own input ([Jobs](#jobs)); absent for the main chat.
 - `delivery`, `channelModel`, `sentAt`, `readAt` and the other 0.7 metadata are not sent and the
   host ignores them.
 
@@ -388,7 +391,8 @@ Host checks, in this order, then acts:
 4. If a v2 `Message` with that id exists: reply `receipt` only (duplicate or relay replay).
 5. If `admissionDeadline` is set and has passed: reply `admission_status expired`; the message
    is never stored or routed late.
-6. `try await engine.send(text, id: event.id, sentAt: ts / 1000)`, then reply `receipt`.
+6. `try await engine.send(text, id: event.id, sentAt: ts / 1000)` (with `jobId`:
+   `engine.sendToJob(jobID:body:id:sentAt:)`), then reply `receipt`.
    If it throws: if a `Message` with that id now exists (a concurrent duplicate won), reply
    `receipt`; else reply `admission_status rejected` with `reason = error.localizedDescription`.
 
@@ -523,7 +527,9 @@ before that) and `sentAt` (epoch ms, the `ts` of the phone event it was admitted
 one typed on the Mac). Both are optional fields an older 0.7 peer ignores; they shipped inside
 0.7 because 0.7 had not reached a phone yet (#314). The phone shows a delay line in a message's
 details when the Mac's `created` is more than 60 s after `sentAt`. Every message goes to the main timeline as on the Mac; `topicId` also files it in
-its sub-chat. A message with files (a user message or a result alike) carries `files`, their
+its sub-chat. The exception is the job-only kinds (`job_input`, `job_result`, `job_note`), which
+stay in their job's sub-chat and reach only a phone that negotiated `jobs-v1`; a job run's trigger
+(`job_run`) reaches no phone ([Jobs](#jobs)). A message with files (a user message or a result alike) carries `files`, their
 [descriptors](#descriptors), in order; absent when it has none.
 
 **`topic`** (`TopicData`, upsert): `id`, `label`, `created`, `seq`.
@@ -772,6 +778,71 @@ between `setLive(true)` (on `.paired`) and `setLive(false)`, and reports through
 stream (upload progress to persist, commit sent, upload failed, download progress, downloaded,
 download failed).
 
+## Jobs
+
+Capability `jobs-v1` (`JobListData.capability`, #319). The Mac sends `job_list` and the job-only
+messages only to a phone that negotiated it, and that phone sends `job_control` and job input only
+to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
+
+### `job_list` (Mac -> phone): every job
+
+```json
+{"kind":"job_list","threadId":"","agentId":"main","id":"…","ts":0,
+ "data":{"jobs":[{"id":"backup-check","name":"Backup check","summary":"Every day at 07:00 · script, then AI if it changed\n…",
+   "nextRun":1760000000000,"lastRun":1759913000000,"lastResult":"done","lastNotable":false,"state":"idle","topicId":"…"}]}}
+```
+
+- One row per job of the Mac's current valid set (`Engine.jobStatus(nextRuns:)` with
+  `JobScheduler.nextRuns`). `summary`'s first line is the schedule in words; it is nil until written.
+  `nextRun`, `lastRun` are epoch ms, `nextRun` nil while paused or retired (or with no next slot),
+  `lastRun` the latest run's start. `lastResult` is `uncertain` while the latest run is, else the
+  last finished run's state (`done`, `failed`, `stopped`), and `lastNotable` whether it was notable.
+  `state` is `running`, `paused`, `needsApproval`, `needsAttention`, `finished` (a one-shot that
+  ran) or `idle`; `state` and
+  `lastResult` are text so a new value still decodes. `topicId` is the job's sub-chat.
+- Always the whole list. The Mac sends the latest after each compatible claim and to every served
+  phone when it changes. `EngineBridge` reads it on its snapshot poll only when the change sequence
+  or the next runs moved, or 5 s passed, and `RelayHost.publishJobs(_:)` sends it only when it
+  differs from the last one.
+- The phone keeps the latest in memory (not in its cache). Its Sub-chats list shows a Jobs row
+  ("N jobs · M need attention", counting `needsAttention` and `needsApproval`) and leaves job
+  topics out of the list and of the running count.
+
+### `job_control` (phone -> Mac): one action
+
+```swift
+.jobControl(JobControlData(jobId: job.id, action: .pause /* .resume, .runNow ("run_now"), .delete */))
+// answered with
+.admissionStatus(AdmissionStatusData(eventId: controlEventId, status: .accepted /* or .rejected */, reason: reason))
+```
+
+- Pause, Resume and Delete edit `jobs.toml` (`Engine.pauseJob`, `resumeJob`, `deleteJob`); the
+  next `job_list` shows the change. Run now (`Engine.runJobNow`) runs under the no-overlap rule,
+  also when paused; a skipped run is `rejected` with `"It didn't run: " + Engine.skipText(reason)`.
+  A control whose envelope `ts` is more than 120 s before the Mac's clock is `rejected` with "That
+  tap reached your Mac too late." and does nothing.
+  Any Engine error, and fixture mode, is `rejected` with its text. Reasons are the Mac's English
+  text, not localized on either side.
+- The phone sends one per tap, only while `.paired`, never queued, and keeps that job's actions
+  disabled until the answer (or until it leaves `.paired`); a refusal shows under the job's row.
+  Delete asks for confirmation first. A replayed event id (among the Mac's last 64) gets its first
+  answer again and never runs twice.
+
+### A job's own input and its sub-chat
+
+- A tap on a job opens its sub-chat (`TopicScreen`) with an input at the bottom; every other
+  sub-chat stays inspect only. The input sends a [`message`](#message-phone---mac-send-a-user-message)
+  with `jobId`, text only (1-6000 UTF-8 bytes), through the outbox with the usual marks; the item
+  keeps the job's `topicId` so its bubble shows in the sub-chat until the stored copy arrives.
+- The Mac admits it with the usual host checks and `Engine.sendToJob`, which stores it as a
+  `job_input` message in the job's topic (idempotent by id) and sets `readAt` once the job's agent
+  takes it (the Read mark). An unknown job is `rejected` with "Unknown job.".
+- Job-only messages (`job_input`, `job_result`, `job_note`) travel as ordinary `message` records,
+  but only to `jobs-v1` phones, which keep them out of the main timeline. A job run's trigger
+  (`job_run`) reaches no phone; its tasks and worker events are ordinary records.
+- A cache filled without `jobs-v1` has a cursor past the job-only messages, so the first
+  `jobs-v1` handshake asks from no cursor (a window start); the cache records that it holds them.
+
 ## Notice codes
 
 A `message` record or `task_control_result` may carry `notice{code, params}`, the Mac's
@@ -786,7 +857,9 @@ Codes in 0.7: `question`, `question_topic`, `question_task`, `routing_failed`, `
 `change_held`, `change_after_finish`, `not_running`, `stopped`, `stopping`, `moved`,
 `moved_stopping`, `correction_saved`, `earlier_retired`, `memory_forgotten`,
 `amendment_unconfirmed`, `closed_too_long`, `task_control_failed`, `config_invalid`,
-`settings_changed`. A new code needs no capability: the fallback covers it.
+`settings_changed`, and for jobs (#319) `job_approval_requested`, `job_approved`,
+`job_approval_stale`, `job_failed`, `job_interrupted` and `job_skipped` (params in
+[architecture.md](architecture.md#state-names)). A new code needs no capability: the fallback covers it.
 
 ## Mac-side seams
 
@@ -798,8 +871,9 @@ Codes in 0.7: `question`, `question_topic`, `question_task`, `routing_failed`, `
   implements it (`message`, `sync_request`, `read_state`, `task_control`, `search_request`,
   `page_request`, `attachment_chunk`, `attachment_commit`, `attachment_download_request` in;
   `receipt`, `admission_status`, `sync_delta`, `task_control_result`, `search_result`,
-  `attachment_progress`, `attachment_download_chunk` out).
-  `readiness` is not a reply: `RelayHost` sends it itself (above).
+  `attachment_progress`, `attachment_download_chunk` out; `job_control` in, `admission_status` out).
+  `readiness` and `job_list` are not replies: `RelayHost` sends them itself (above), and it strips
+  the job-only message records from every `sync_delta` for a phone without `jobs-v1`.
 - Descriptors on records come from `Snapshot.attachments`, read after the page's records (attachment
   rows are written with their owner, or re-stamp it). Downloads resolve a path with
   `Engine.attachmentURL(_:)`. `device_remove` needs the sender's key, so `RelayHost` handles it.

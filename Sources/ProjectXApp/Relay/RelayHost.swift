@@ -73,6 +73,8 @@ actor RelayHost {
     private var main = ThreadSummary.main(0)
     /// The Mac's readiness (#317): sent to each phone that takes `readiness-v1` after its claim, and on every change.
     private var readiness: ReadinessData?
+    /// The job list (#319): sent to each phone that takes `jobs-v1` after its claim, and on every change.
+    private var jobs: JobListData?
     private var state = RelayStatus().state
     private var link: String?
     private var pairing = false
@@ -203,11 +205,27 @@ actor RelayHost {
     func publishReadiness(_ readiness: ReadinessData) {
         guard readiness != self.readiness else { return }
         self.readiness = readiness
-        deliver(peers.keys.filter(takesReadiness).map { ($0, .control(.readiness(readiness))) })
+        deliver(peers.keys.filter { takes(ReadinessData.capability, $0) }.map { ($0, .control(.readiness(readiness))) })
     }
 
-    private func takesReadiness(_ pub: String) -> Bool {
-        if case .compatible(_, let capabilities)? = peers[pub]?.compatibility { capabilities.contains(ReadinessData.capability) } else { false }
+    /// A changed job list goes to every served phone that takes it now; each handshake sends the latest again.
+    func publishJobs(_ jobs: JobListData) {
+        guard jobs != self.jobs else { return }
+        self.jobs = jobs
+        deliver(peers.keys.filter { takes(JobListData.capability, $0) }.map { ($0, .control(.jobList(jobs))) })
+    }
+
+    private func takes(_ capability: String, _ pub: String) -> Bool {
+        if case .compatible(_, let capabilities)? = peers[pub]?.compatibility { capabilities.contains(capability) } else { false }
+    }
+
+    /// Job-only messages (#319) reach only phones that take `jobs-v1`; any other phone would show them in its main chat.
+    private func strip(_ event: YorozuEvent, for pub: String) -> YorozuEvent {
+        guard case .syncDelta(var delta) = event.payload, !takes(JobListData.capability, pub) else { return event }
+        delta.events.removeAll { if case .message(let m) = $0.payload { Message.jobOnlyKinds.contains(m.kind ?? "") } else { false } }
+        var event = event
+        event.payload = .syncDelta(delta)
+        return event
     }
 
     /// A fresh one-time code for the pair sheet. Minted again after each phone pairs, until `endPairing`.
@@ -498,7 +516,8 @@ actor RelayHost {
         handshake([(pub, .control(.threadList(ThreadListData(threads: [main], peerInfoReplyTo: String(id.prefix(128))))))])
         // Boxes held for this claim are served after the reply, or dropped for a phone that must update.
         if case .compatible = result { release(pub, serve: true) } else { release(pub, serve: false) }
-        if let readiness, takesReadiness(pub) { deliver([(pub, .control(.readiness(readiness)))]) }
+        if let readiness, takes(ReadinessData.capability, pub) { deliver([(pub, .control(.readiness(readiness)))]) }
+        if let jobs, takes(JobListData.capability, pub) { deliver([(pub, .control(.jobList(jobs)))]) }
     }
 
     /// Handshake thread lists leave at once, ahead of any frames waiting for the phone, so a long chunk set
@@ -523,7 +542,7 @@ actor RelayHost {
             // dropped and its request times out and comes again, so downloads never pile up behind the bucket.
             if case .attachmentDownloadChunk = event.payload,
                outbox.lazy.filter({ if $0.pub == pub, case .attachmentDownloadChunk = $0.event.payload { true } else { false } }).count >= 2 { continue }
-            let event = stamp(event, for: peer)
+            let event = stamp(strip(event, for: pub), for: peer)
             let parts: [YorozuEvent]
             do { parts = try event.chunked() } catch {
                 // The bridge caps records well below this; nothing else gets this large.

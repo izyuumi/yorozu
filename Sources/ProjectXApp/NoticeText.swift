@@ -126,7 +126,7 @@ enum NoticeText {
         return params["files"]
     }
 
-    private static func skipReason(_ reason: String?) -> String? {
+    static func skipReason(_ reason: String?) -> String? {
         switch reason {
         case "overlap": String(localized: "The previous run is still going.")
         case "uncertain": String(localized: "An earlier run was interrupted and its state is unknown. Say retry or stop about it to resume the schedule.")

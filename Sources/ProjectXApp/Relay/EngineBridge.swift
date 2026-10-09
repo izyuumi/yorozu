@@ -7,8 +7,9 @@ import YorozuWire
 /// `task_control`, `search_request`, `page_request`, the plain `thread_list` and the `attachment_*` requests in; `receipt`,
 /// `admission_status`, `sync_delta`, `task_control_result`, `search_result`, `attachment_progress` and
 /// `attachment_download_chunk` out. Records travel by change sequence (`Store.changes`) with their files' descriptors.
-/// Messages of the kinds that stay in a job's sub-chat (#319) never reach phones, and the working flag ignores work in
-/// job topics (open question 10).
+/// Jobs (#319, `jobs-v1`): `job_control` and job-targeted `message` in, `job_list` out through `RelayHost.publishJobs`.
+/// A job run's trigger (`job_run`) never reaches phones; the other job-only kinds go only to phones that take `jobs-v1`
+/// (`RelayHost` strips them for the rest), and the working flag ignores work in job topics (open question 10).
 actor EngineBridge: RelayBackend {
     /// The threads this Mac has: one, `main`, holding every v2 message as the Mac's main chat shows them.
     static let threads: Set<String> = ["main"]
@@ -22,6 +23,13 @@ actor EngineBridge: RelayBackend {
     private var main = ThreadSummary.main(0)
     /// The last 64 `task_control` results, oldest first, for replays of the same `requestId`.
     private var controlled: [TaskControlResultData] = []
+    /// The last 64 `job_control` answers, keyed by event id, for replays.
+    private var jobControls: [AdmissionStatusData] = []
+    /// Next runs for `job_list`; nil before jobs start.
+    private let scheduler: JobScheduler?
+    /// What the last job list was read at (change sequence, next runs) and when: read again only when either moved or
+    /// 5 s passed (summaries and pauses of unscheduled jobs move neither).
+    private var jobsRead: (latest: Int64, next: [String: Date], at: ContinuousClock.Instant)?
 
     /// Awaited before a phone message reaches the Engine (the model metadata retry, #312).
     private let prepare: @Sendable () async -> Void
@@ -34,8 +42,8 @@ actor EngineBridge: RelayBackend {
 
     /// The relay runs in live mode only, so staging and thumbnails sit beside the live data:
     /// `~/Library/Application Support/<bundle id>/uploads` and `~/Library/Caches/<bundle id>/thumbs`.
-    init(engine: Engine, mode: RuntimeMode, prepare: @escaping @Sendable () async -> Void = {}) {
-        self.engine = engine; self.mode = mode; self.prepare = prepare
+    init(engine: Engine, mode: RuntimeMode, scheduler: JobScheduler?, prepare: @escaping @Sendable () async -> Void = {}) {
+        self.engine = engine; self.mode = mode; self.scheduler = scheduler; self.prepare = prepare
         let fm = FileManager.default, bundle = Bundle.main.bundleIdentifier ?? "to.yumi.yorozu"
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundle, isDirectory: true)
         staging = UploadStaging(root: support.appendingPathComponent("uploads", isDirectory: true))
@@ -64,6 +72,7 @@ actor EngineBridge: RelayBackend {
         case .searchRequest(let r): return [await search(r)]
         case .pageRequest(let r): return [await page(r)]
         case .threadList: return [.control(.threadList(ThreadListData(threads: [main])))]
+        case .jobControl(let c): return [await jobControl(c, id: e.id, ts: e.ts)]
         default: return []
         }
     }
@@ -77,6 +86,7 @@ actor EngineBridge: RelayBackend {
         main = .main((s.messages.last(where: \.onMainTimeline)?.created ?? 0) * 1000)
         await host.setMain(main)
         guard let bounds = try? await engine.store.cursorBounds() else { return }
+        await publishJobs(latest: bounds.latest, to: host)
         guard var after = published else { published = bounds.latest; self.working = working; self.routing = routing; return }
         guard bounds.latest != after || working != self.working || routing != self.routing else { return }
         let flags = (self.working, self.routing)
@@ -116,9 +126,52 @@ actor EngineBridge: RelayBackend {
             return .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .expired, reason: "Your Mac was offline for more than 24 hours.")))
         }
         await prepare()
-        // Text, id and send time only: no model may learn which device a message came from (#313).
-        do { try await engine.send(m.text, id: id, sentAt: Double(ts) / 1000); return receipt }
-        catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
+        // Text, id and send time only: no model may learn which device a message came from (#313). A job's own input
+        // goes to that job's sub-chat without the secretary (#319).
+        do {
+            if let job = m.jobId { try await engine.sendToJob(jobID: job, body: m.text, id: id, sentAt: Double(ts) / 1000) }
+            else { try await engine.send(m.text, id: id, sentAt: Double(ts) / 1000) }
+            return receipt
+        } catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
+    }
+
+    // MARK: Jobs (#319)
+
+    /// Pause, Resume, Delete (through `jobs.toml`, so the next `job_list` shows the change) or Run now. Answered
+    /// `accepted`, or `rejected` with the reason; a replayed event id gets its first answer again, never a second run.
+    /// A tap sent (`ts`, epoch ms) more than 2 minutes ago is refused: the phone no longer shows what it acted on.
+    private func jobControl(_ c: JobControlData, id: String, ts: Int) async -> YorozuEvent {
+        if let done = jobControls.last(where: { $0.eventId == id }) { return .control(.admissionStatus(done)) }
+        var reason: String?
+        if Self.now - ts > 120_000 { reason = "That tap reached your Mac too late." }
+        else if !mode.permitsInput(fixtureAcknowledged: false) { reason = "This Mac is in fixture mode and doesn't take phone messages." }
+        else {
+            do {
+                switch c.action {
+                case .pause: try await engine.pauseJob(c.jobId)
+                case .resume: try await engine.resumeJob(c.jobId)
+                case .delete: try await engine.deleteJob(c.jobId)
+                case .runNow: if case .skipped(let why) = try await engine.runJobNow(c.jobId) { reason = "It didn't run: " + Engine.skipText(why) }
+                }
+            } catch { reason = error.localizedDescription }
+        }
+        let status = AdmissionStatusData(eventId: id, status: reason == nil ? .accepted : .rejected, reason: reason)
+        jobControls = Array((jobControls + [status]).suffix(64))
+        return .control(.admissionStatus(status))
+    }
+
+    /// The job list from `Engine.jobStatus` and the scheduler's next runs, read when the change sequence or the next runs
+    /// moved, or 5 s passed; `RelayHost` sends it only when it differs from the last one.
+    private func publishJobs(latest: Int64, to host: RelayHost) async {
+        guard let scheduler else { return }
+        let next = await scheduler.nextRuns
+        if let read = jobsRead, read.latest == latest, read.next == next, read.at.duration(to: .now) < .seconds(5) { return }
+        jobsRead = (latest, next, .now)
+        let ms = { (d: Date) in Int(d.timeIntervalSince1970 * 1000) }
+        await host.publishJobs(JobListData(jobs: await engine.jobStatus(nextRuns: next).map {
+            JobListData.Job(id: $0.id, name: $0.name, summary: $0.summary, nextRun: $0.nextRun.map(ms), lastRun: $0.lastRun.map(ms),
+                            lastResult: $0.lastResult, lastNotable: $0.lastNotable, state: $0.state.rawValue, topicId: $0.topicID)
+        }))
     }
 
     /// Only after a failed send: a keyed lookup of the id.
@@ -278,7 +331,7 @@ actor EngineBridge: RelayBackend {
 
     /// The longest prefix of `p` within 200 records and `ChunkData.budget` of encoded events (at least one record), the
     /// next cursor (the last record's seq when changes remain, else `p.latest`) and whether changes remain.
-    /// Job-only messages are skipped but still consumed, so the cursor passes them (a gap in `seq` is fine).
+    /// Run triggers are skipped but still consumed, so the cursor passes them (a gap in `seq` is fine).
     private static func fit(_ p: ChangePage, thread: String, files: [String: [AttachmentDescriptor]]) -> (events: [YorozuEvent], next: Int64, more: Bool) {
         var events: [YorozuEvent] = [], bytes = 0, used = 0
         for change in p.changes {
@@ -296,9 +349,9 @@ actor EngineBridge: RelayBackend {
         changes.contains { switch $0.record { case .message, .event: true; default: false } }
     }
 
-    /// Everything but messages that stay in a job's sub-chat (#319).
+    /// Everything but a job run's trigger (#319); `RelayHost` strips the other job-only kinds for phones without `jobs-v1`.
     private static func sent(_ change: Change) -> Bool {
-        if case .message(let m) = change.record { return m.onMainTimeline }
+        if case .message(let m) = change.record { return m.kind != "job_run" }
         return true
     }
 
