@@ -30,7 +30,7 @@ The user does these, on the Mac that runs the Gateway:
 4. Sign in to each provider the role models use: `openclaw models auth login --agent <agent> --provider <provider>`; setup lists the providers that are not signed in.
 5. In the app, connect the native transport once and approve this Mac's device on the host (`openclaw devices list`, [openclaw-integration.md](openclaw-integration.md#native-transport)).
 6. Optional, computer use: install CuaDriver and run `cua-driver permissions grant` ([cua-integration.md](cua-integration.md#permissions)), or turn the `cua` integration off.
-7. Optional, coding: install Claude Code and Codex and sign in to both where the Gateway runs (OpenClaw runs them, not Yorozu), then choose a git repository in Settings › Advanced › Coding (`harness.dev_repo`; `dev_base` optional, [Settings](#settings-configtoml)). Coding stays off until a repository is set.
+7. Optional, coding: install Claude Code and Codex and sign in to both where the Gateway runs (OpenClaw runs them, not Yorozu), then choose a git repository in Settings › Advanced › Coding workers (`harness.dev_repo`; `dev_base`, filled with the repository's current branch when empty, [Settings](#settings-configtoml)). Coding stays off until a repository is set.
 
 Hermes Agent as the main harness has its own steps ([Hermes Agent](#hermes-agent)).
 
@@ -39,8 +39,8 @@ Setup runs in the setup window, which opens at launch until setup is done and ag
 | Step | Checks (read-only) | Question |
 |---|---|---|
 | `welcome` | none | `start` |
-| `harness` | The main harness's detection: `openclaw` and `node` found, the OpenClaw version, Gateway `health`; then Yorozu's own agent entry and its shape ([openclaw-integration.md](openclaw-integration.md#assisted-setup)) | `harness` (which installed harness to use) when the main one is not installed but another is, and on the done step while several are installed; `openclaw_setup` (`apply`, `skip`) when the assisted write would add or change Yorozu's entry; otherwise `check` or `skip` |
-| `gateway` | Native enrollment, for OpenClaw on the native transport | App-only (Settings › Advanced › Gateway) |
+| `harness` | The main harness's detection: `openclaw` and `node` found, the OpenClaw version, Gateway `health`, and that `[harness] agent` is not OpenClaw's default agent (`main`, or an entry with `default: true`), which blocks; then Yorozu's own agent entry and its shape ([openclaw-integration.md](openclaw-integration.md#assisted-setup)) | `harness` (which installed harness to use) when the main one is not installed but another is, and on the done step while several are installed; `openclaw_setup` (`apply:<plan_digest>`, `skip`) when the assisted write would add or change Yorozu's entry; otherwise `check` or `skip` |
+| `gateway` | Native enrollment, for OpenClaw on the native transport | App-only (Settings › Advanced › Harness connection) |
 | `models` | Each role model usable (`models.list`) and its provider signed in (`models.authStatus`) | `openclaw_setup` when the write would only add allow-list items; otherwise `check` or `skip` |
 | `integrations` | Each enabled integration's checks | `integrations.<name>` (`on`, `off`) for the first one with a failed check |
 | `yolo` | none | `off` (default) or `on` |
@@ -49,7 +49,7 @@ Setup runs in the setup window, which opens at launch until setup is done and ag
 | `path_link` | `~/.local/bin/yorozu` points to this binary | `no` (default) or `yes` ([The `yorozu` command](#the-yorozu-command)) |
 | `done` | Every step done | none |
 
-- A step is done when its checks pass or the user answered or skipped it (`setup.answered`). The CLI asks only steps still needed; the window may still offer a done step's question (the harness choice, YOLO) so the answer can change. `check` re-runs the checks, and `apply` makes the assisted write and checks again; `skip` and the other answers record the step. Choosing a harness is not a skip: its checks still have to pass.
+- A step is done when its checks pass or the user answered or skipped it (`setup.answered`). The CLI asks only steps still needed; the window may still offer a done step's question (the harness choice, YOLO) so the answer can change. `check` re-runs the checks, and `apply:<plan_digest>` makes the assisted write the user reviewed and checks again; `skip` and the other answers record the step. Choosing a harness is not a skip: its checks still have to pass.
 - App-only steps need the running app. Outside it they show as `app` with where to finish them, and answering one is refused.
 - When every step is done, setup writes `setup.done = true` and the window stops opening at launch. Completion lives only in `config.toml`, never in v1's `onboardingCompleted` key.
 - Each answer is one read-modify-write of `config.toml` (`Config.update`, atomic), or the assisted OpenClaw write, or the PATH link. A running app picks up the file through its watcher. An explicit answer is the user's word for a security-relevant key (the harness, YOLO).
@@ -65,7 +65,7 @@ The app binary doubles as the setup CLI (`SetupCLI.swift`):
 
 - It opens no window, shows no Dock icon, takes no `app.lock` and never opens the Store, so it works while the app runs. It uses the app's data root (`PROJECTX_DATA`, `PROJECTX_MODE`) and the `PROJECTX_*` overrides, and writes `config.toml` with the defaults when it is missing.
 - It talks to the Gateway over the CLI transport. Started with the OpenClaw exec markers set (from an OpenClaw agent's shell, [openclaw-integration.md](openclaw-integration.md#launch-environment)), it makes no Gateway call: the `harness` and `models` steps show as `app` with "Open Yorozu from Finder and finish setup there".
-- `<id>` is the question's `id` (`openclaw_setup` and `integrations.<name>` differ from their step ids); `<value>` is one of its `choices`.
+- `<id>` is the question's `id` (`openclaw_setup` and `integrations.<name>` differ from their step ids); `<value>` is one of its `choices`. For `openclaw_setup` the apply choice is `apply:<plan_digest>`: it names the exact changes printed with it, and a digest that no longer matches the current plan (OpenClaw's config or Yorozu's settings changed since) is refused with an error asking to run `setup --json` again. Plain `apply` is refused too.
 - Exit codes: `0` a step was printed; `2` usage, an id with no question now, a value outside the choices, or an app-only step ("Finish this in the Yorozu app: <where>."); `1` anything else, such as an invalid `config.toml` or OpenClaw's config changing since it was checked.
 - Errors: with `--json`, `{"error": "<message>"}` on stdout; without, `error: <message>` on stderr.
 - Without `--json` the same content prints as plain text, ending with the question, its choices and the `setup answer` line to run.
@@ -76,22 +76,23 @@ The JSON is one object, keys sorted:
 {
   "steps": [
     {"id": "welcome", "title": "Welcome", "state": "done"},
-    {"id": "gateway", "title": "Connect to the Gateway", "state": "app", "where": "Settings › Advanced › Gateway"}
+    {"id": "gateway", "title": "Connect to the Gateway", "state": "app", "where": "Settings › Advanced › Harness connection"}
   ],
   "checks": [
     {"step": "harness", "id": "openclaw.gateway", "title": "…", "severity": "warning", "detail": "…",
      "fix": {"title": "Copy start command", "copy": "openclaw gateway run"}}
   ],
   "step": "harness",
-  "question": {"id": "openclaw_setup", "text": "…", "choices": ["apply", "skip"], "default": "apply"},
+  "question": {"id": "openclaw_setup", "text": "…", "choices": ["apply:3f9c2a71b0de", "skip"], "default": "apply:3f9c2a71b0de"},
   "changes": [{"path": "agents.entries.yorozu.contextInjection", "old": null, "new": "\"never\""}],
-  "confirm": false
+  "confirm": false,
+  "plan_digest": "3f9c2a71b0de"
 }
 ```
 
 - `steps`: every step with `state` `done`, `needed` or `app` (plus `where`).
 - `checks`: every check with its step, `severity` (`ok`, `warning`, `blocking`), the raw `detail` when there is one, and a `fix`: `{"step": <id>}`, `{"title", "copy": <command>}` or `{"title", "open": <url>}`.
-- `step` and `question`: the first step with something to ask. For `openclaw_setup`, `changes` lists each config path with its old and new value as JSON text (`null` when absent), and `confirm` is true when Yorozu's existing entry would change.
+- `step` and `question`: the first step with something to ask. For `openclaw_setup`, `changes` lists each config path with its old and new value as JSON text (`null` when absent), `confirm` is true when Yorozu's existing entry would change (its shape or its allow list), and `plan_digest` is 12 hex digits of SHA-256 over those changes, the digest the apply choice carries. Plain text prints the digest with the changes.
 - With nothing left to ask, `"done": true` replaces `step` and `question`, plus `finish_in_app`, `[{"id", "title", "where"}]`, for app-only steps still open.
 
 ### The `yorozu` command
@@ -107,7 +108,7 @@ Help me set up Yorozu on this Mac. Yorozu has a setup command: you run it, and I
 
 1. Run: "/Applications/Yorozu.app/Contents/MacOS/Yorozu" setup --json
    If Yorozu.app is somewhere else, ask me where it is.
-2. Read the JSON. Show me the checks that are not "ok", with their fix commands. If there is a "question", ask me its text with its choices and default. If there are "changes", show them to me before I answer.
+2. Read the JSON. Show me the checks that are not "ok", with their fix commands. If there is a "question", ask me its text with its choices and default. If there are "changes", show them to me before I answer; to apply them, answer with the "apply:…" choice exactly as given, which names those changes. If that answer is refused because the changes differ, start again from step 1.
 3. Run: "/Applications/Yorozu.app/Contents/MacOS/Yorozu" setup answer <question id> <my answer> --json
    Then go back to step 2 with its output.
 4. Stop when the output has "done": true. Tell me each "finish_in_app" item and where in the Yorozu app to finish it.
@@ -161,11 +162,11 @@ Needed only with `[harness] kind = "hermes"`. Hermes runs its API server on loop
 
 4. Run the Hermes setup step, which creates and configures `yorozu-worker` and `yorozu-roles` and stores their API keys in the Keychain ([Keychain items](#keychain-items)). The step is `HermesProfiles.plan` and `apply`; it has no caller yet: the #317 setup steps cover Hermes only through its detection (`HermesSetup`); Hermes setup steps are not built yet.
 5. Configure providers and logins for both Yorozu profiles in Hermes, for example `hermes -p yorozu-worker model` and `hermes -p yorozu-roles model`. Provider keys stay in Hermes; Yorozu never reads them. The profiles do not adopt the Claude Code and Codex logins (`auth.adopt_external_logins: false`).
-6. Set `[harness] kind = "hermes"` in `config.toml` (or `PROJECTX_HARNESS=hermes` for one run) and relaunch. The popover header shows "Hermes Agent <version>", and an orange line lists anything not ready or an untested version.
+6. Choose Hermes Agent in the setup window's Harness step or in Settings › Advanced (`[harness] kind = "hermes"` in `config.toml`, or `PROJECTX_HARNESS=hermes` for one run) and relaunch. The status line shows "Hermes Agent" while Ready; otherwise the readiness banner names what is not ready, an untested version included.
 
 ## Settings (`config.toml`)
 
-Yorozu's settings are one file, `config.toml`, in the data root in use ([Where data lives](#where-data-lives)), so fixture and `PROJECTX_DATA` runs each have their own and v1, which shares the bundle id, never sees it (`Config.swift`). A launch with no file writes one with the defaults below; no default is specific to one owner. Change it in the Settings window (⌘, or Settings… in the menu-bar menu; the Advanced tab shows while `general.show_advanced` is on, [architecture.md](architecture.md#mac-ui)), by hand, or by asking Yorozu in the chat, which has a worker edit it ([architecture.md](architecture.md#settings)). A row whose key is set by an environment variable is disabled in Settings and labelled "Set by `PROJECTX_…`" ([Precedence](#precedence)); `models.rules.*`, `routing.*`, `direct.*`, `harness.kind`, `harness.hermes_url`, `mcp_servers` and user integrations' other keys have no Settings row, and `setup.*` is written by setup.
+Yorozu's settings are one file, `config.toml`, in the data root in use ([Where data lives](#where-data-lives)), so fixture and `PROJECTX_DATA` runs each have their own and v1, which shares the bundle id, never sees it (`Config.swift`). A launch with no file writes one with the defaults below; no default is specific to one owner. Change it in the Settings window (⌘, or Settings… in the menu-bar menu; the Advanced tab shows while `general.show_advanced` is on, [architecture.md](architecture.md#mac-ui)), by hand, or by asking Yorozu in the chat, which has a worker edit it ([architecture.md](architecture.md#settings)). A row whose key is set by an environment variable is disabled in Settings and labelled "Set by `PROJECTX_…`" ([Precedence](#precedence)); `models.rules.*`, `routing.*`, `direct.*`, `harness.hermes_url`, `mcp_servers` and user integrations' keys other than `enabled` have no Settings row (the harness popup and the integration switches are in Settings › Advanced), and `setup.*` is written by setup.
 
 | Key | Default | Meaning |
 |---|---|---|

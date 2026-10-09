@@ -62,7 +62,7 @@ phone. So every frame the Mac sends counts against every phone's 2 MiB window.
   phone has at most one page in flight.
 - The Mac keeps reply pages to at most 200 records and 256 KiB of encoded events, except that a
   page always holds at least one record when any remain (a bigger one is then
-  [chunked](#chunking)).
+  [chunked](#chunk-mac---phone-oversized-events)).
 - Every sealed frame is charged once against one token bucket across all phones: 512 KiB and
   30 frames a second, starting and capped at 512 KiB and 30 frames. A frame leaves only when the
   bucket covers it, else it waits; anything else for a phone that still has frames waiting
