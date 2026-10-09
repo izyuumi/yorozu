@@ -719,6 +719,10 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var notice: NoticeData?
     /// 0.7, Mac -> phone: the Mac's change sequence of this row (docs/ios-relay-contract.md, "Change sequence").
     public var seq: Int?
+    /// 0.7, Mac -> phone: when the Mac started processing this user message (routing began), epoch ms (#314).
+    public var readAt: Int?
+    /// 0.7, Mac -> phone: the phone's send time (the event `ts`) of a user message that came from a phone, epoch ms (#314).
+    public var sentAt: Int?
 
     public init(
         role: Role,
@@ -738,8 +742,12 @@ public struct MessageData: Codable, Equatable, Sendable {
         taskId: String? = nil,
         replyTo: String? = nil,
         notice: NoticeData? = nil,
-        seq: Int? = nil
+        seq: Int? = nil,
+        readAt: Int? = nil,
+        sentAt: Int? = nil
     ) {
+        self.readAt = readAt
+        self.sentAt = sentAt
         self.kind = kind
         self.topicId = topicId
         self.taskId = taskId
@@ -760,7 +768,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -785,6 +793,8 @@ public struct MessageData: Codable, Equatable, Sendable {
         replyTo = try c.decodeIfPresent(String.self, forKey: .replyTo)
         notice = try c.decodeIfPresent(NoticeData.self, forKey: .notice)
         seq = try c.decodeIfPresent(Int.self, forKey: .seq)
+        readAt = try c.decodeIfPresent(Int.self, forKey: .readAt)
+        sentAt = try c.decodeIfPresent(Int.self, forKey: .sentAt)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -807,6 +817,8 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(replyTo, forKey: .replyTo)
         try c.encodeIfPresent(notice, forKey: .notice)
         try c.encodeIfPresent(seq, forKey: .seq)
+        try c.encodeIfPresent(readAt, forKey: .readAt)
+        try c.encodeIfPresent(sentAt, forKey: .sentAt)
     }
 }
 

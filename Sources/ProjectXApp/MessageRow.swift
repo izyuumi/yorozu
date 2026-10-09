@@ -68,12 +68,15 @@ struct MessageRow: View {
     @ViewBuilder private var content: some View {
         switch message.style {
         case .user:
-            Text(message.body).textSelection(.enabled).foregroundStyle(.white)
-                .padding(.horizontal,11).padding(.vertical,7)
-                .background(ChatPalette.bubble,in: RoundedRectangle(cornerRadius: Metrics.bubbleRadius,style: .continuous))
-                .overlay { ring(Metrics.bubbleRadius) }
-                .containerRelativeFrame(.horizontal,alignment: .trailing) { width,_ in width * Metrics.bubbleShare }
-                .frame(maxWidth: .infinity,alignment: .trailing)
+            VStack(alignment: .trailing,spacing: 3) {
+                Text(message.body).textSelection(.enabled).foregroundStyle(.white)
+                    .padding(.horizontal,11).padding(.vertical,7)
+                    .background(ChatPalette.bubble,in: RoundedRectangle(cornerRadius: Metrics.bubbleRadius,style: .continuous))
+                    .overlay { ring(Metrics.bubbleRadius) }
+                ReceiptLine(message: message)
+            }
+            .containerRelativeFrame(.horizontal,alignment: .trailing) { width,_ in width * Metrics.bubbleShare }
+            .frame(maxWidth: .infinity,alignment: .trailing)
         case .answer: AnswerCard(message: message,header: message.hasStoredHeader ? nil : header,reveal: reveal).overlay { ring(Metrics.cardRadius) }
         case .question:
             VStack(alignment: .leading,spacing: 4) {
@@ -85,6 +88,39 @@ struct MessageRow: View {
     }
     @ViewBuilder private func ring(_ radius: CGFloat) -> some View {
         if highlighted { RoundedRectangle(cornerRadius: radius,style: .continuous).strokeBorder(Color.accentColor,lineWidth: Metrics.ring) }
+    }
+}
+
+/// Under a user bubble (#314): the delay line of a message that reached the Mac late, then the Delivered (stored) or
+/// Read (routing started) mark, which opens the two times. Updates arrive with the poll; nothing is announced.
+private struct ReceiptLine: View {
+    let message: Message
+    @State private var open = false
+    private enum Metrics { static let spacing: CGFloat = 6, padding: CGFloat = 12 }
+    var body: some View {
+        HStack(spacing: Metrics.spacing) {
+            if message.delay != nil, let sent = message.sentAt {
+                Text("sent \(Self.stamp(sent)) from phone · delivered \(Self.stamp(message.created))")
+            }
+            Button { open.toggle() } label: {
+                Image(systemName: message.readAt == nil ? "checkmark.circle" : "checkmark.circle.fill").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help(message.readAt.map { Text("Read \(Self.stamp($0))") } ?? Text("Delivered \(Self.stamp(message.created))"))
+            .accessibilityLabel(message.readAt == nil ? Text("Delivered") : Text("Read"))
+            .popover(isPresented: $open,arrowEdge: .bottom) {
+                VStack(alignment: .leading,spacing: Metrics.spacing) {
+                    Label("Delivered \(Self.stamp(message.created))",systemImage: "checkmark.circle")
+                    if let read = message.readAt { Label("Read \(Self.stamp(read))",systemImage: "checkmark.circle.fill") }
+                    else { Text("Waiting: earlier messages are still being handled").foregroundStyle(.secondary) }
+                }.font(.callout).padding(Metrics.padding)
+            }
+        }.font(.caption).foregroundStyle(.secondary)
+    }
+    /// The time, with the date when it is not today.
+    private static func stamp(_ t: Double) -> String {
+        let d = Date(timeIntervalSince1970: t)
+        return d.formatted(Calendar.current.isDateInToday(d) ? .dateTime.hour().minute() : .dateTime.month(.abbreviated).day().hour().minute())
     }
 }
 

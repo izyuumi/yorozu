@@ -1,6 +1,66 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Delivered" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配信済み"
+          }
+        }
+      }
+    },
+    "Delivered %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配信済み %@"
+          }
+        }
+      }
+    },
+    "Read" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "既読"
+          }
+        }
+      }
+    },
+    "Read %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "既読 %@"
+          }
+        }
+      }
+    },
+    "sent %@ from phone · delivered %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhoneから %@ に送信 · %@ に配信"
+          }
+        }
+      }
+    },
+    "Waiting: earlier messages are still being handled" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待機中：前のメッセージをまだ処理しています"
+          }
+        }
+      }
+    },
     "%@ bytes. The limit is %@." : {
       "localizations" : {
         "ja" : {
