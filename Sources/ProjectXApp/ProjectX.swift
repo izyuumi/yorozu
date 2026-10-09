@@ -87,8 +87,10 @@ import YorozuWire
     @Published var metadata: (allowed: [ModelInfo], primary: String?)?
     /// The last Settings write that failed, shown in Settings until the next one succeeds.
     @Published var settingsError: String?
-    /// The Settings window's tab, so the popover's Connect… can open Advanced.
+    /// The Settings window's tab, so the popover's Connect… can open Harness.
     @Published var settingsTab = SettingsView.Tab.general
+    /// The pair sheet in Settings › Devices, which the menu-bar menu's Pair a Client Device… also opens.
+    @Published var pairingSheet = false
     /// Why `[general] global_shortcut` is not registered (unrecognized, or in use by another app); nil when it is or it is off.
     @Published var shortcutProblem: String?
     /// The login item as Settings shows it: its real status, or why this run leaves it alone.

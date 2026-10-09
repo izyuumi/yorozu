@@ -7,7 +7,6 @@ struct DevicesSettings: View {
     @State private var removing: RelayDeviceStatus?
     @State private var renaming: RelayDeviceStatus?
     @State private var name = ""
-    @State private var pairing = false
 
     var body: some View {
         Form {
@@ -29,7 +28,7 @@ struct DevicesSettings: View {
             }
             Section("Pair a Client Device") {
                 LabeledContent {
-                    Button("Pair a Client Device…") { pairing = true }.disabled(model.relay == nil)
+                    Button("Pair a Client Device…") { model.pairingSheet = true }.disabled(model.relay == nil)
                 } label: {
                     Text("Pair a new client device")
                     Text(model.runtimeMode == .live ? "A code is created only when you press this. Each code works once." : "Pairing works in live mode only.")
@@ -37,7 +36,7 @@ struct DevicesSettings: View {
             }
         }
         .settingsForm()
-        .sheet(isPresented: $pairing) { PairPhoneView(model: model) }
+        .sheet(isPresented: $model.pairingSheet) { PairPhoneView(model: model) }
         .alert("Rename Client Device", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { device in
             TextField("Name", text: $name)
             Button("Rename") { let label = name; Task { await model.relay?.rename(device.pub, label: label) } }

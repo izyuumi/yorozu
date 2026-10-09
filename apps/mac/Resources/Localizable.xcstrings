@@ -1,6 +1,36 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Open Quick Chat" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クイックチャットを開く"
+          }
+        }
+      }
+    },
+    "Direct Connection (LAN/VPN)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続（LAN/VPN）"
+          }
+        }
+      }
+    },
+    "Keep Host Awake" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストをスリープさせない"
+          }
+        }
+      }
+    },
     "Paired with “%@”" : {
       "localizations" : {
         "ja" : {
@@ -3662,12 +3692,12 @@
         }
       }
     },
-    "Keep this Mac awake" : {
+    "Keep the host awake" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "この Mac をスリープさせない"
+            "value" : "ホストをスリープさせない"
           }
         }
       }

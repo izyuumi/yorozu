@@ -31,7 +31,7 @@ struct GeneralSettings: View {
                     Button("Open Login Items…") { SMAppService.openSystemSettingsLoginItems() }
                 }
                 Toggle(isOn: model.setting(\.general.keepMacAwake)) {
-                    Text("Keep this Mac awake")
+                    Text("Keep the host awake")
                     Text("Workers and client devices need the host awake. A closed lid still sleeps.")
                 }
             }
