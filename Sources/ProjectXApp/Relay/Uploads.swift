@@ -7,10 +7,12 @@ import UniformTypeIdentifiers
 import YorozuWire
 
 /// Phone uploads waiting for their commit (docs/ios-relay-contract.md, "Attachments"), translated from v1's
-/// `attachment-upload.ts`: `<root>/<device>/<message>/<index>-<sha256>.part`, directories 0700 and files 0600. Each chunk
-/// is checked against what is staged and fsynced before its `nextOffset` goes back; a file is hashed once complete and
+/// `attachment-upload.ts`: `<root>/<device>/<message>/<index>-<sha256>-<totalBytes>.part`, directories 0700 and files 0600.
+/// A file's name fixes its claimed size, so a chunk claiming another size starts that file over. Each chunk is checked against
+/// what is staged and fsynced before its `nextOffset` goes back; a file is hashed once complete and
 /// dropped if the hash is wrong. Staging survives relaunches on both sides, so an upload resumes from what is on disk.
-/// Caps: one complete message (10 × 50 MB) and a second, at most 64 messages; staging untouched for 48 h is pruned.
+/// Caps: one complete message (10 × 50 MB) and a second, each open file counted at its claimed size, and at most 64
+/// messages; staging untouched for 48 h is pruned.
 /// Not thread-safe: `EngineBridge` calls it from its actor.
 struct UploadStaging {
     enum Assembly { case ready([URL]), missing(index: Int, offset: Int), failed(String) }
@@ -33,7 +35,7 @@ struct UploadStaging {
         let folder = self.folder(device, c.messageId)
         guard c.deadline > Int(Date().timeIntervalSince1970 * 1000) else { remove(device: device, message: c.messageId); return (0, AttachmentReason.expired) }
         prune()
-        let fm = FileManager.default, file = folder.appendingPathComponent("\(c.index)-\(c.sha256).part")
+        let fm = FileManager.default, file = folder.appendingPathComponent(Self.name(c.index, c.sha256, c.totalBytes))
         do {
             if !fm.fileExists(atPath: file.path) {
                 let (staged, messages) = usage()
@@ -46,7 +48,7 @@ struct UploadStaging {
             }
             let handle = try FileHandle(forUpdating: file)
             defer { try? handle.close() }
-            let size = Int(try handle.seekToEnd())
+            var size = Int(try handle.seekToEnd())
             // A status query, or a chunk past what is staged: the phone continues from here.
             guard !bytes.isEmpty, c.offset <= size, size <= c.totalBytes else {
                 if size > c.totalBytes { try handle.truncate(atOffset: 0); return (0, nil) }
@@ -56,7 +58,7 @@ struct UploadStaging {
                 try handle.seek(toOffset: UInt64(c.offset))
                 let overlap = try handle.read(upToCount: min(bytes.count, size - c.offset)) ?? Data()
                 // The phone is the source: different bytes replace what was staged from there on.
-                if overlap != bytes.prefix(overlap.count) { try handle.truncate(atOffset: UInt64(c.offset)) }
+                if overlap != bytes.prefix(overlap.count) { try handle.truncate(atOffset: UInt64(c.offset)); size = c.offset }
             }
             try handle.seek(toOffset: UInt64(c.offset))
             try handle.write(contentsOf: bytes)
@@ -73,12 +75,13 @@ struct UploadStaging {
         }
     }
 
-    /// The staged files of a commit, in order, once each is complete (hashed when its last chunk landed).
+    /// The staged files of a commit, in order, once each is complete and hashes to its descriptor (staged under the
+    /// descriptor's own size and hash). A file that does not is dropped and asked for again from offset 0.
     func assemble(_ files: [AttachmentDescriptor], device: String, message: String) -> Assembly {
         let fm = FileManager.default, folder = self.folder(device, message)
         var urls: [URL] = []
         for (index, d) in files.enumerated() {
-            let file = folder.appendingPathComponent("\(index)-\(d.sha256).part")
+            let file = folder.appendingPathComponent(Self.name(index, d.sha256, d.bytes))
             if d.bytes == 0, !fm.fileExists(atPath: file.path) {
                 do { try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
                 catch { return .failed(AttachmentReason.storageFailed) }
@@ -87,6 +90,7 @@ struct UploadStaging {
             guard let size = (try? fm.attributesOfItem(atPath: file.path))?[.size] as? Int else { return .missing(index: index, offset: 0) }
             if size > d.bytes { try? fm.removeItem(at: file); return .missing(index: index, offset: 0) }
             if size < d.bytes { return .missing(index: index, offset: size) }
+            guard (try? AttachmentDescriptor.digest(of: file))?.sha256 == d.sha256 else { try? fm.removeItem(at: file); return .missing(index: index, offset: 0) }
             urls.append(file)
         }
         return .ready(urls)
@@ -113,7 +117,8 @@ struct UploadStaging {
         }
     }
 
-    /// Bytes staged and message folders, across devices.
+    /// Bytes staged (each file at least its claimed size, so open uploads can't outgrow the cap) and message folders,
+    /// across devices.
     private func usage() -> (bytes: Int64, messages: Int) {
         let fm = FileManager.default
         var bytes: Int64 = 0, messages = 0
@@ -121,12 +126,16 @@ struct UploadStaging {
             for message in (try? fm.contentsOfDirectory(at: device, includingPropertiesForKeys: nil)) ?? [] {
                 messages += 1
                 for file in (try? fm.contentsOfDirectory(at: message, includingPropertiesForKeys: [.fileSizeKey])) ?? [] {
-                    bytes += Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                    let size = Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                    let claim = Int64(file.deletingPathExtension().lastPathComponent.split(separator: "-").last ?? "") ?? 0
+                    bytes += max(size, claim)
                 }
             }
         }
         return (bytes, messages)
     }
+
+    private static func name(_ index: Int, _ sha256: String, _ bytes: Int) -> String { "\(index)-\(sha256)-\(bytes).part" }
 
     private func folder(_ device: String, _ message: String) -> URL {
         root.appendingPathComponent(device, isDirectory: true).appendingPathComponent(message, isDirectory: true)

@@ -54,12 +54,11 @@ public enum Prompts {
         if s.hasPrefix("/") { return s }
         return base.map { $0.appendingPathComponent(s).standardizedFileURL.path } ?? s
     }
-    /// Splits returned files out of `text`: standalone `MEDIA:<path>` lines (OpenClaw's form: outside fenced or indented
-    /// code, at most three leading spaces) and, with `filesSection`, a coding reply's `Files:` section of absolute or `~/`
-    /// paths. References `keep` refuses, and URLs, stay as text. Returns the text without them and the paths.
+    /// Splits returned files out of `text`: standalone `MEDIA:<path>` lines (OpenClaw's form: uppercase, outside fenced or
+    /// indented code, at most three leading spaces) and, with `filesSection`, a coding reply's `Files:` section of absolute
+    /// or `~/` paths when it is the reply's last block. References `keep` refuses, and URLs, stay as text. Returns the text without them and the paths.
     static func splitFiles(_ text: String, filesSection: Bool = false, base: URL? = nil, keep: (String) -> Bool = { _ in true }) -> (text: String, files: [String]) {
         var out: [Substring] = [], files: [String] = [], fence: String?, section: [Substring]?, listed: [String] = []
-        func endSection() { if let s = section { if listed.isEmpty { out += s } else { files += listed } }; section = nil; listed = [] }
         for line in text.split(separator: "\n",omittingEmptySubsequences: false) {
             let trimmed = line.trimmingCharacters(in: .whitespaces), indent = line.prefix { $0 == " " }.count
             if let f = fence { out.append(line); if trimmed.hasPrefix(f) { fence = nil }; continue }
@@ -67,15 +66,15 @@ public enum Prompts {
             if section != nil {
                 let item = trimmed.firstMatch(of: #/^(?:[-*+]|\d+[.)])\s+(.+)$/#).map { String($0.1) }
                 if let item, item.hasPrefix("/") || item.hasPrefix("~/") || item.hasPrefix("`/") || item.hasPrefix("`~/"), let path = localPath(item,base: base) { section!.append(line); listed.append(path); continue }
-                if trimmed.isEmpty, listed.isEmpty { section!.append(line); continue }
-                if item != nil { out += section!; section = nil; listed = [] } else { endSection() } // a listed relative path: not a Files section
+                if trimmed.isEmpty { section!.append(line); continue }
+                out += section!; section = nil; listed = [] // more follows (or a relative path): not the closing Files section
             }
             if !code, trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") { fence = String(trimmed.prefix(3)); out.append(line); continue }
             if !code, filesSection, trimmed.range(of: #"^(#{1,6}\s*)?(\*\*)?Files:?(\*\*)?:?$"#,options: [.regularExpression,.caseInsensitive]) != nil { section = [line]; continue }
-            if !code, trimmed.uppercased().hasPrefix("MEDIA:"), let path = localPath(String(trimmed.dropFirst(6)),base: base), keep(path) { files.append(path); continue }
+            if !code, trimmed.hasPrefix("MEDIA:"), let path = localPath(String(trimmed.dropFirst(6)),base: base), keep(path) { files.append(path); continue }
             out.append(line)
         }
-        endSection()
+        if let s = section { if listed.isEmpty { out += s } else { files += listed } }
         guard !files.isEmpty else { return (text,[]) }
         return (out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines),files)
     }

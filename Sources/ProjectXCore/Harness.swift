@@ -305,7 +305,8 @@ public struct OpenClawHarness: Harness {
     static let nativeParamsBudget = 7_600_000, cliParamsBudget = 600_000
     /// The work's images as `agent` `attachments` (`{type, mimeType, fileName, content}`, base64) when `models.list`
     /// lists `image` among `model`'s inputs, each is at most 6 MiB and all fit the transport with the message; the rest
-    /// (and every image when the check fails) reach the worker by path only.
+    /// (and every image when the check fails) reach the worker by path only. The bytes decide: a file that is not PNG,
+    /// JPEG, GIF or WebP by its magic bytes goes by path only, and an inlined one is labelled with its sniffed type.
     func inlineImages(_ attachments: [Attachment], model: String, root: URL?, message: Int) async -> [[String:String]] {
         let candidates = attachments.filter { Self.inlineTypes.contains($0.mime.lowercased()) && $0.bytes <= Self.maxImageBytes }
         guard !candidates.isEmpty, let rows = try? await rpc.call("models.list",["agentId":agent,"view":"configured","includeDetails":true])["models"] as? [[String:Any]],
@@ -313,12 +314,30 @@ public struct OpenClawHarness: Harness {
         var budget = (rpc.native != nil ? Self.nativeParamsBudget : Self.cliParamsBudget) - message * 2 - 4096 // escaping and the other params
         var images: [[String:String]] = []
         for a in candidates {
-            guard let url = Prompts.fileURL(a,root: root), let data = try? Data(contentsOf: url), data.count <= Self.maxImageBytes else { continue }
+            guard let url = Prompts.fileURL(a,root: root), let data = try? Data(contentsOf: url), data.count <= Self.maxImageBytes, let mime = Self.sniffImage(data) else { continue }
             let content = data.base64EncodedString(), cost = content.utf8.count + a.name.utf8.count * 2 + 128
             guard cost <= budget else { continue }
-            budget -= cost; images.append(["type":"image","mimeType":a.mime.lowercased(),"fileName":a.name,"content":content])
+            budget -= cost; images.append(["type":"image","mimeType":mime,"fileName":a.name,"content":content])
         }
         return images
+    }
+    /// PNG, JPEG, GIF or WebP by magic bytes, else nil.
+    static func sniffImage(_ d: Data) -> String? {
+        let b = [UInt8](d.prefix(12))
+        if b.starts(with: [0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]) { return "image/png" }
+        if b.starts(with: [0xFF,0xD8,0xFF]) { return "image/jpeg" }
+        if b.starts(with: Array("GIF87a".utf8)) || b.starts(with: Array("GIF89a".utf8)) { return "image/gif" }
+        if b.count == 12, b.starts(with: Array("RIFF".utf8)), b[8...] == ArraySlice("WEBP".utf8) { return "image/webp" }
+        return nil
+    }
+    /// An `agent` call; if OpenClaw refuses its inline images (`UnsupportedAttachmentError`, such as
+    /// `unsupported-non-image`), it goes once more without them: the message still names every file by path.
+    private func dispatch(_ params: [String:Any], final: Bool = false, sourceMessageID: String?) async throws -> [String:Any] {
+        do { return try await rpc.call("agent",params,final: final,sourceMessageID: sourceMessageID) }
+        catch where params["attachments"] != nil && error.localizedDescription.contains("UnsupportedAttachmentError") {
+            var bare = params; bare["attachments"] = nil
+            return try await rpc.call("agent",bare,final: final,sourceMessageID: sourceMessageID)
+        }
     }
     private func model(_ prompt: String, model: String, sourceMessageID: String? = nil) async throws -> String {
         guard agent == "projectx" else { throw ProjectError.blocked("Live R1 requires the dedicated projectx agent; personal agents are not an app backend.") }
@@ -369,7 +388,7 @@ public struct OpenClawHarness: Harness {
             let result: [String:Any]
             var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":240,"idempotencyKey":runID]
             if !images.isEmpty { params["attachments"] = images }
-            do { result = try await rpc.call("agent",params,final: true,sourceMessageID: input.work.messageID) }
+            do { result = try await dispatch(params,final: true,sourceMessageID: input.work.messageID) }
             catch { if let listener { await rpc.native?.removeObserver(listener) }; throw error }
             if let listener { await rpc.native?.removeObserver(listener) }
             // The CLI cannot stream; committed public messages of this exact run are projected once it ends.
@@ -623,7 +642,7 @@ extension OpenClawHarness {
         let mark = try? await sessionMark(key)
         var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":message,"deliver":false,"timeout":7200,"idempotencyKey":runID]
         if !images.isEmpty { params["attachments"] = images }
-        let started = try await rpc.call("agent",params,sourceMessageID: input.work.messageID)
+        let started = try await dispatch(params,sourceMessageID: input.work.messageID)
         guard started["runId"] as? String == runID else { throw ProjectError.uncertain("\(tool) run start unconfirmed. Request ID: \(runID)") }
         var lost = 0, failures = 0, unread = 0, shared = Set<String>() // events whose images went out already
         while true {

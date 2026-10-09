@@ -132,7 +132,7 @@ import ServiceManagement
                 var files: FileStore?
                 do {
                     files = try FileStore(root: explicit != nil || runtimeMode == .fixture ? root.appendingPathComponent("files",isDirectory: true)
-                                                                                            : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/files",isDirectory: true))
+                                                                                            : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/files",isDirectory: true),dataRoot: root)
                 } catch { filesNotice = String(localized: "Attachments are off: \(error.localizedDescription)") }
                 filesRoot = files?.root
                 let box = settingsBox; box.value = harnessSettings()

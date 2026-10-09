@@ -10,9 +10,22 @@ public struct FileStore: Sendable {
     /// Owner decision: at most 10 files per message, each at most 50 MB.
     public static let maxFiles = 10
     public static let maxBytes: Int64 = 50_000_000 // decimal, as Finder counts; the wire's MessageAttachment.maxBytes matches
+    /// Folders (relative to home) never copied from, whoever names the file: keys, credentials and Yorozu's own state.
+    /// `~/Library/Application Support/<bundle id>` and the data root are added per store.
+    static let deniedFolders: Set = [".ssh", ".gnupg", "Library/Keychains", ".appstoreconnect", ".openclaw", ".hermes", ".aws", ".config/gh"]
+    /// Private-key file names: these extensions, and `id_*` with no extension (`id_rsa`, `id_ed25519`).
+    static let deniedExtensions: Set = ["pem", "p8", "key"]
+    /// Resolved, lowercased (APFS is case-insensitive by default) folders refused, and the ones inside them still allowed:
+    /// the store itself and the phone upload staging (`<support>/uploads`, files Yorozu wrote from a paired phone).
+    private let denied: [String], allowed: [String]
 
     /// Refuses a root inside a git checkout or worktree (any ancestor holding `.git`), so files never land in a repo.
-    public init(root: URL) throws {
+    /// `dataRoot` (the app's private state) joins the folders it never copies from.
+    public init(root: URL, dataRoot: URL? = nil, home: URL = FileManager.default.homeDirectoryForCurrentUser) throws {
+        let support = home.appendingPathComponent("Library/Application Support/" + (Bundle.main.bundleIdentifier ?? "to.yumi.yorozu"), isDirectory: true)
+        let key = { (u: URL) in u.resolvingSymlinksInPath().standardizedFileURL.path.lowercased() }
+        denied = (Self.deniedFolders.map { home.appendingPathComponent($0, isDirectory: true) } + [support] + (dataRoot.map { [$0] } ?? [])).map(key)
+        let uploads = key(support.appendingPathComponent("uploads", isDirectory: true))
         let fm = FileManager.default
         var dir = root.standardizedFileURL
         // Resolve symlinks on the nearest existing ancestor; the root itself may not exist yet.
@@ -27,6 +40,7 @@ public struct FileStore: Sendable {
         }
         try fm.createDirectory(at: resolved, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         self.root = resolved
+        allowed = [key(resolved), uploads]
     }
 
     /// Copies a file the user attached; the row has no owner yet (`Store` sets it).
@@ -45,6 +59,7 @@ public struct FileStore: Sendable {
 
     private func copy(_ source: URL, name: String, mime: String) throws -> Attachment {
         let fm = FileManager.default, src = source.resolvingSymlinksInPath()
+        guard !refuses(source), !refuses(src), !Self.isKeyName(name) else { throw ProjectError.blocked("“\(name)” is in a private folder or looks like a key, so Yorozu won't copy it.") }
         let values = try? src.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values?.isRegularFile == true, fm.isReadableFile(atPath: src.path) else { throw ProjectError.invalid("“\(name)” is missing or unreadable.") }
         guard Int64(values?.fileSize ?? 0) <= Self.maxBytes else { throw ProjectError.invalid("“\(name)” is over 50 MB.") }
@@ -66,8 +81,18 @@ public struct FileStore: Sendable {
         throw ProjectError.blocked("Too many files named “\(name)” this second.")
     }
 
+    /// A private-key name, or a path under a denied folder (compared on the given and the resolved path).
+    func refuses(_ url: URL) -> Bool {
+        if Self.isKeyName(url.lastPathComponent) { return true }
+        let path = url.standardizedFileURL.path.lowercased(), under = { (dir: String) in path == dir || path.hasPrefix(dir + "/") }
+        return denied.contains(where: under) && !allowed.contains(where: under)
+    }
+    static func isKeyName(_ name: String) -> Bool {
+        let name = name.lowercased(), ext = (name as NSString).pathExtension
+        return deniedExtensions.contains(ext) || (name.hasPrefix("id_") && ext.isEmpty)
+    }
     /// No `/`, `:` or control characters; Unicode kept; never empty or a dot name.
-    static func sanitize(_ name: String) -> String {
+    public static func sanitize(_ name: String) -> String {
         let s = String(String.UnicodeScalarView(name.unicodeScalars.map { $0 == "/" || $0 == ":" || $0.properties.generalCategory == .control ? "_" : $0 }))
             .trimmingCharacters(in: .whitespaces)
         return s.isEmpty || s.allSatisfy({ $0 == "." }) ? "file" : s

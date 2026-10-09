@@ -52,6 +52,8 @@ public enum NativeGatewayProtocol {
         }
         if code == "AUTH_SCOPE_MISMATCH" { return .blocked("Yorozu device recognized, but approved scope grant does not cover this connection. Review pairing; no automatic scope expansion.") }
         if code.hasPrefix("AUTH_") { return .blocked("Yorozu native device authentication was not accepted. Existing model authentication is not disproven. Enroll this separate app privately, or use the configured-credential transport.") }
+        // An attachment OpenClaw would not take (`chat-attachments.ts`): named, so the harness can resend without it.
+        if (error["message"] as? String ?? "").hasPrefix("UnsupportedAttachmentError") { return .invalid("Gateway refused an attachment (UnsupportedAttachmentError).") }
         return .uncertain("Gateway rejected the request. No automatic replay or workaround; reconcile any active run before retry.")
     }
 }

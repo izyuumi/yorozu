@@ -676,8 +676,8 @@ the Store re-stamps the event's `seq` then, so the event reaches the phone again
    `admissionDeadline`; `data` = base64 of up to 256 KiB at `offset`). One chunk is in flight at a
    time across all uploads, and the next goes only after the reply, so phone -> Mac bytes in flight
    stay near 460 KB on the wire. Empty `data` asks only where the file stands.
-2. The Mac stages it in `~/Library/Application Support/<bundle id>/uploads/<device X25519 key>/<messageId>/<index>-<sha256>.part`
-   (directories 0700, files 0600), checks the offset against what is staged, writes and fsyncs, and
+2. The Mac stages it in `~/Library/Application Support/<bundle id>/uploads/<device X25519 key>/<messageId>/<index>-<sha256>-<totalBytes>.part`
+   (directories 0700, files 0600; a chunk with another `sha256` or `totalBytes` starts that file over), checks the offset against what is staged, writes and fsyncs, and
    answers `attachment_progress{requestId, messageId, index, nextOffset}`:
    - `offset` past the staged size: nothing written, `nextOffset` = the staged size (the phone goes back).
    - `offset` inside it: matching bytes are kept, different ones replace the rest; `nextOffset` = the new size.
@@ -692,8 +692,9 @@ the Store re-stamps the event's `seq` then, so the event reaches the phone again
    with event id = the message id and `ts` = the send time (renewed by Resend, like a `message`).
    The Mac applies the `message` [host checks](#message-phone---mac-send-a-user-message) (id, fixture
    mode, duplicate -> `receipt`, past deadline -> `expired` and the staging removed) plus: 1-10
-   descriptors, each valid and without `id`, else `rejected`. Then each file must be staged whole;
-   the first that is not gets `attachment_progress{requestId: messageId, index, nextOffset}` and the
+   descriptors, each valid and without `id`, else `rejected`. Then each file must be staged whole
+   under its descriptor's `sha256` and `bytes` and hash to that `sha256` (a staged file that does not
+   is dropped and asked for from offset 0); the first that is not gets `attachment_progress{requestId: messageId, index, nextOffset}` and the
    phone resumes from there. Otherwise the Mac calls `Engine.send(text, attachments: [PendingFile],
    id: messageId, sentAt: ts / 1000)`, which copies the files into the store, removes the staging and
    replies `receipt`; an Engine error is `rejected` with its text (staging is kept, so Resend commits
@@ -707,7 +708,8 @@ Reasons in `attachment_progress` (`AttachmentReason`): `attachment-storage-full`
 (`invalid-attachment-chunk`, `attachment-expired`, `attachment-corrupt`) ends the upload: the
 bubble shows Not delivered with Resend.
 
-Staging caps: 1 GB staged in all (two complete messages) and 64 messages; past either, a new file
+Staging caps: 1 GB staged in all (two complete messages; each file counts at least its claimed
+`totalBytes`, so open uploads cannot claim past the cap) and 64 messages; past either, a new file
 gets `attachment-storage-full`. A message folder untouched for 48 h is pruned (checked at most every
 10 minutes, on chunks).
 

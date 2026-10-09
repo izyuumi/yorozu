@@ -30,11 +30,12 @@ struct DraftFile: Identifiable, Equatable {
         mime = (values.contentType ?? UTType(filenameExtension: url.pathExtension))?.preferredMIMEType ?? "application/octet-stream"
     }
 
-    /// Yorozu's own scratch files live under `$TMPDIR/Yorozu-attachments/<uuid>/<name>`, one folder each.
+    /// Yorozu's own scratch files live under `$TMPDIR/Yorozu-attachments/<uuid>/<name>`, one folder each; `name` (often a
+    /// dropped item's suggested name) is sanitized, so it can never leave that folder.
     static func temporaryURL(named name: String) throws -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Yorozu-attachments/\(UUID().uuidString)",isDirectory: true)
         try FileManager.default.createDirectory(at: dir,withIntermediateDirectories: true)
-        return dir.appendingPathComponent(name)
+        return dir.appendingPathComponent(FileStore.sanitize(name),isDirectory: false)
     }
     /// Deletes a scratch file and its folder; anything outside the scratch root is left alone.
     static func discard(_ url: URL) {
