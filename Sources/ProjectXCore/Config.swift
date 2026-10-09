@@ -15,6 +15,7 @@ public struct Config: Sendable, Equatable {
     public struct Notifications: Sendable, Equatable { public var enabled = true, destination = Destination.mac }
     public struct Routing: Sendable, Equatable { public var personalKnowledge = "", selfTopic = "Yorozu" }
     public struct Relay: Sendable, Equatable { public var url = "wss://relay.yumi.to" }
+    public struct Direct: Sendable, Equatable { public var enabled = true, port = 8738 }
     public struct HarnessSettings: Sendable, Equatable {
         public var kind = HarnessKind.openclaw, agent = "yorozu", transport = Transport.native, gatewayURL = "ws://127.0.0.1:18789", hermesURL = "http://127.0.0.1:8642", devRepo = ""
         /// nil when `dev_repo` is empty; `~/` is expanded.
@@ -26,7 +27,7 @@ public struct Config: Sendable, Equatable {
         public init() {}
     }
     public struct Rules: Sendable, Equatable { public var minContextTokens = 32000, minOutputTokens = 16000 }
-    public var general = General(), notifications = Notifications(), routing = Routing(), relay = Relay(), harness = HarnessSettings(), models = Models()
+    public var general = General(), notifications = Notifications(), routing = Routing(), relay = Relay(), direct = Direct(), harness = HarnessSettings(), models = Models()
     public var mcpServers = MCPServers.defaults
     /// Keys Yorozu does not know, kept and written back as data.
     public var extra: [String:TOMLValue] = [:]
@@ -89,6 +90,8 @@ public struct Config: Sendable, Equatable {
         field("routing.personal_knowledge",\.routing.personalKnowledge,"Where the user's personal notes live, named in the routing policy; empty drops that hint."),
         field("routing.self_topic",\.routing.selfTopic,"Topic that holds work on Yorozu itself."),
         field("relay.url",\.relay.url,"Relay for the iPhone app (ws:// or wss://). After a change every phone must pair again." + security),
+        field("direct.enabled",\.direct.enabled,"Let paired phones connect straight to this Mac over the local network or a VPN (Tailscale/WireGuard); a phone tries only after its own Direct connection setting is on." + security),
+        field("direct.port",\.direct.port,"TCP port the direct listener uses on Wi-Fi, Ethernet and VPN interfaces (1024-65535)." + security),
         field("harness.kind",\.harness.kind,"Main harness: \"openclaw\" or \"hermes\"; applies after relaunch, and only once no work is running." + security),
         field("harness.agent",\.harness.agent,"Harness agent id Yorozu runs on." + security),
         field("harness.transport",\.harness.transport,"\"native\" (WebSocket client) or \"cli\" (openclaw CLI); applies after relaunch." + security),
@@ -103,7 +106,7 @@ public struct Config: Sendable, Equatable {
         field("models.rules.min_output_tokens",\.models.rules.minOutputTokens,"Smallest output cap for the automatic secretary and extraction model."),
     ]
     static let sections = [
-        "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "iPhone relay.",
+        "general": "General.", "notifications": "Notifications.", "routing": "Routing hints for the secretary.", "relay": "iPhone relay.", "direct": "Direct iPhone connection over LAN or VPN.",
         "harness": "Harness connection.", "models": "Models per role; a missing role is chosen automatically from the harness's model metadata.",
         "models.coding": "Coding executor id (OpenClaw: claude, codex; Hermes: hermes) = \"provider/model\"; a missing executor is automatic." + security,
         "models.rules": "Inputs of the automatic choice.",
@@ -177,6 +180,7 @@ public struct Config: Sendable, Equatable {
         if !(h.devRepo.isEmpty || h.devRepo.hasPrefix("/") || h.devRepo.hasPrefix("~/")) { return ("harness.dev_repo","expected an absolute path, a ~/ path or \"\"") }
         if let url = URLComponents(string: relay.url), ["ws","wss"].contains(url.scheme ?? ""), !(url.host ?? "").isEmpty {} else { return ("relay.url","expected a ws:// or wss:// address") }
         for (key,model) in [("secretary",models.secretary),("extraction",models.extraction),("worker",models.worker),("review",models.review)] + models.coding.map({ ("coding.\($0.key)",$0.value) }) where model?.isEmpty == true { return ("models.\(key)","expected \"provider/model\"; leave the key out for automatic") }
+        if !(1024...65535).contains(direct.port) { return ("direct.port","expected a port from 1024 to 65535") }
         if routing.selfTopic.count > 80 { return ("routing.self_topic","expected at most 80 characters") }
         if routing.personalKnowledge.utf8.count > 200 { return ("routing.personal_knowledge","expected at most 200 bytes of UTF-8") }
         if models.rules.minContextTokens < 1 { return ("models.rules.min_context_tokens","expected a positive integer") }

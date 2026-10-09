@@ -88,6 +88,7 @@ struct ConnectionSettings: View {
                     Button("Change Relay…") { confirming = true }.disabled(locked != nil || !valid || url == current)
                 } label: { Text("Every paired phone has to pair again after a change.") }
             }
+            if model.runtimeMode == .live { DirectDiagnostics(status: model.relayStatus) }
             if let notice = model.nativeNotice {
                 Section("Gateway") {
                     LabeledContent {
@@ -107,6 +108,57 @@ struct ConnectionSettings: View {
             Button("Cancel", role: .cancel) { url = current }
         } message: {
             Text("All paired phones must pair again.")
+        }
+    }
+}
+
+/// Settings › Connection › Direct connection (#315): the listener, the addresses phones are told, and each
+/// phone's route. `[direct] enabled` and `port` live in config.toml.
+struct DirectDiagnostics: View {
+    let status: RelayStatus
+
+    var body: some View {
+        let direct = status.direct
+        Section {
+            LabeledContent("Listener") { Text(Self.listener(direct)).textSelection(.enabled) }
+            LabeledContent("Addresses") {
+                if direct.candidates.isEmpty { Text("None") }
+                else {
+                    VStack(alignment: .trailing) {
+                        ForEach(direct.candidates, id: \.self) { Text(verbatim: "\($0.host) · \(Self.kind($0.kind))") }
+                    }.textSelection(.enabled)
+                }
+            }
+            ForEach(status.devices) { device in
+                LabeledContent {
+                    Text(device.route.map { String(localized: "Direct · \(Self.kind($0))") } ?? String(localized: "Relay"))
+                } label: {
+                    Text(device.displayName)
+                    if let error = device.directError { Text(error) }
+                }
+            }
+            if let refusal = direct.lastRefusal {
+                LabeledContent("Last refused") { Text(refusal).textSelection(.enabled) }
+            }
+        } header: { Text("Direct connection") } footer: {
+            Text("Phones on the same Wi-Fi or VPN connect straight to this Mac once their Direct connection setting is on. Set `[direct] enabled` and `port` in config.toml.").foregroundStyle(.secondary)
+        }
+    }
+
+    static func listener(_ direct: DirectStatus) -> String {
+        switch direct.listener {
+        case .off: String(localized: "Off")
+        case .starting: String(localized: "Starting on port \(String(direct.port))…")
+        case .listening: String(localized: "Listening on port \(String(direct.port))")
+        case .failed(let reason): String(localized: "Not listening on port \(String(direct.port)): \(reason)")
+        }
+    }
+
+    static func kind(_ kind: DirectKind) -> String {
+        switch kind {
+        case .lan: String(localized: "LAN")
+        case .vpn: String(localized: "VPN")
+        case .tailscale: String(localized: "Tailscale")
         }
     }
 }

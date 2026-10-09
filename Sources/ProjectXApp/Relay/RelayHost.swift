@@ -1,33 +1,56 @@
+import AppKit
 import CryptoKit
 import Foundation
+import Network
 import os
+import ProjectXCore
 import SystemConfiguration
 import YorozuWire
 
-/// What the pair sheet shows.
+/// What the pair sheet and Settings › Connection show.
 struct RelayStatus: Sendable {
     var state = "Connecting to the relay…"
     /// The pairing link (QR and copy), while the sheet has asked for one and the relay has minted it.
     var link: String?
     var devices: [RelayDeviceStatus] = []
+    var direct = DirectStatus()
 }
 
-/// The Mac half of the v1 relay (packages/runtime/src/serve.ts `connect()`), without legacy boxes, the
-/// direct path or notify; the phone half is `RelayClient`. Registers this Mac's room, mints pairing
-/// codes, admits a phone only with proof it read one, and exchanges sealed `ChannelEnvelope`s with each
-/// paired phone. The wire contract is docs/ios-relay-contract.md.
+/// The direct listener as Settings › Connection shows it.
+struct DirectStatus: Sendable, Equatable {
+    enum Listener: Sendable, Equatable { case off, starting, listening, failed(String) }
+    var listener = Listener.off
+    var port = DirectWire.defaultPort
+    /// What `hostInfo` advertises while listening, LAN first.
+    var candidates: [Address] = []
+    /// The last connection refused before it named a paired phone (unpaired key, wrong interface, no join).
+    var lastRefusal: String?
+    struct Address: Sendable, Equatable, Hashable { var host: String; var kind: DirectKind }
+}
+
+/// The Mac half of the v1 relay (packages/runtime/src/serve.ts `connect()`), without legacy boxes or
+/// notify; the phone half is `RelayClient`. Registers this Mac's room, mints pairing codes, admits a phone
+/// only with proof it read one, and exchanges sealed `ChannelEnvelope`s with each paired phone. The wire
+/// contract is docs/ios-relay-contract.md. Paired phones may also reach it directly (#315): a WebSocket
+/// listener on Wi-Fi/Ethernet and `utun` interfaces carries the same signed frames once the phone's join
+/// proves its paired key, and each phone's route follows its latest authenticated `hello`.
 actor RelayHost {
     /// `FrameBody` and the relay envelope are private in RelayClient.swift; these are the same shapes.
     private struct FrameBody: Codable { var t: String; var pub, spub, proof, n, c: String? }
     private struct Inbound: Decodable { var type: String; var nonce, payload, token: String?; var seq: Int? }
-    private struct Frame: Encodable { var payload, sig: String }
+    private typealias Frame = DirectWire.Frame
     private struct Batch: Encodable { var type = "frame"; var frames: [Frame] }
+    /// Where a phone's frames go: the path of its latest authenticated `hello`.
+    private enum Route: Equatable { case relay, direct(Int) }
     /// A paired phone. `compatibility` starts from the result on file (`RelayDevice.served`) and each
     /// claim replaces it; only a `.compatible` phone is served. A `hello` keeps a `.compatible` result
     /// and runs the exchange again, so the boxes the relay replays after a buffered `hello` still land.
     /// `accepted` is the channel seq accepted in memory, for ordering; `record.counter.recv` on file
     /// moves only once a frame has been handled, so a frame lost to a quit is accepted again on replay.
-    private struct Peer { var record: RelayDevice; let keys: (send: SymmetricKey, recv: SymmetricKey); var compatibility: PeerCompatibility?; var accepted: Int }
+    private struct Peer { var record: RelayDevice; let keys: (send: SymmetricKey, recv: SymmetricKey); var compatibility: PeerCompatibility?; var accepted: Int; var route = Route.relay }
+    /// A direct WebSocket. `kind` is known once it is ready, `signer` (the phone's paired Ed25519 key) once
+    /// its join verified; `heard` is when its last message arrived.
+    private struct Link { let connection: NWConnection; var kind: DirectKind?; var nonce = ""; var signer: String?; var heard = ContinuousClock.now }
     /// A box from a phone with no result yet, with the relay seq it came with, if replayed.
     private typealias Held = (relay: Int?, channel: Int, event: YorozuEvent)
 
@@ -76,9 +99,31 @@ actor RelayHost {
     private static let byteRate = 524_288.0, frameRate = 30.0
     private static let log = Logger(subsystem: "to.yumi.yorozu", category: "relay")
 
-    init(backend: any RelayBackend, relayURL: String, devicesFile: URL) throws {
+    // Direct path (#315).
+    private var direct: Config.Direct
+    private var listener: NWListener?
+    /// Counts listeners, so callbacks from a cancelled one are ignored.
+    private var listenerGeneration = 0
+    private var listenerState = DirectStatus.Listener.off
+    private var listenerRetry: Double = 2
+    private var listenerRestart: Task<Void, Never>?
+    private var links: [Int: Link] = [:]
+    private var nextLink = 0
+    private var lastRefusal: String?
+    /// The last direct problem per phone (X25519 key), for diagnostics.
+    private var directErrors: [String: String] = [:]
+    private var sweeper: Task<Void, Never>?
+    private var sleepWatch: Task<Void, Never>?
+    private var pathMonitor: NWPathMonitor?
+    /// Keeps App Nap off while the host runs; idle sleep is still allowed (Keep Mac awake is separate).
+    private var activity: (any NSObjectProtocol)?
+    private static let queue = DispatchQueue(label: "to.yumi.yorozu.direct")
+    /// Connections that have not joined yet, at most; more are cancelled on arrival.
+    private static let maxPending = 8, maxLinks = 24
+
+    init(backend: any RelayBackend, relayURL: String, devicesFile: URL, direct: Config.Direct) throws {
         identity = try RelayKeys.loadOrCreate()
-        self.backend = backend; self.relayURL = relayURL; file = devicesFile
+        self.backend = backend; self.relayURL = relayURL; file = devicesFile; self.direct = direct
         let (stream, continuation) = AsyncStream<RelayStatus>.makeStream(); status = stream; statusOut = continuation
         room = Data(SHA256.hash(data: identity.signingPublicKey)).base64URLEncodedString()
         // The relay remembers 16 devices a room, and the announce names every one of them.
@@ -94,12 +139,38 @@ actor RelayHost {
 
     func start() {
         guard loop == nil else { return }
+        activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Yorozu serves paired phones")
         publish()
         loop = Task { await run() }
+        restartListener()
+        sweeper = Task { [weak self] in
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(5)); await self?.sweep() }
+        }
+        sleepWatch = Task { [weak self] in
+            for await _ in NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.willSleepNotification) { await self?.sleeping() }
+        }
+        // Advertised addresses follow the network.
+        let monitor = NWPathMonitor(); pathMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] _ in Task { await self?.publish() } }
+        monitor.start(queue: Self.queue)
     }
 
     func stop() {
-        loop?.cancel(); pacer?.cancel(); socket?.cancel(with: .goingAway, reason: nil); statusOut.finish()
+        loop?.cancel(); pacer?.cancel(); socket?.cancel(with: .goingAway, reason: nil)
+        sweeper?.cancel(); sleepWatch?.cancel(); pathMonitor?.cancel(); listenerRestart?.cancel()
+        listenerGeneration += 1; listener?.cancel(); listener = nil
+        for id in links.keys { drop(id, nil) }
+        if let activity { ProcessInfo.processInfo.endActivity(activity); self.activity = nil }
+        statusOut.finish()
+    }
+
+    /// `[direct]` changed: the listener restarts on the new port, or stops, closing its links.
+    func setDirect(_ direct: Config.Direct) {
+        guard direct != self.direct else { return }
+        self.direct = direct
+        guard loop != nil else { return }
+        for id in links.keys { drop(id, nil) }
+        restartListener()
     }
 
     /// Live updates to every phone whose peer-info exchange succeeded on this run.
@@ -127,7 +198,8 @@ actor RelayHost {
     func removeDevice(_ pub: String) {
         guard let peer = peers.removeValue(forKey: pub) else { return }
         do { try persist() } catch { peers[pub] = peer; state = error.localizedDescription; return publish() }
-        online.remove(pub)
+        online.remove(pub); directErrors[pub] = nil
+        for (id, link) in links where link.signer == peer.record.signingPub { drop(id, .unauthorized) }
         outbox.removeAll { $0.pub == pub }
         release(pub, serve: false)
         announce()
@@ -161,7 +233,8 @@ actor RelayHost {
                 while true { if case .string(let text) = try await ws.receive() { receive(text) } }
             } catch {}
             heartbeat.cancel(); ws.cancel()
-            socket = nil; registered = false; online = []
+            // Phones on a direct route stay online.
+            socket = nil; registered = false; online = online.filter { peers[$0]?.route != .relay }
             // Frames are never buffered for a phone: it catches up after it redials.
             outbox = []
             state = "Relay offline, retrying…"; publish()
@@ -240,13 +313,18 @@ actor RelayHost {
 
     // MARK: Frames
 
-    /// Throws when the device list could not be written for a `hello`; that holds back the ack.
-    private func frame(_ body: FrameBody, relay: Int?) throws {
-        if body.t == "hello" { return try hello(body) }
+    /// Throws when the device list could not be written for a `hello`; that holds back the ack. `from` is the
+    /// phone a direct link already proved, so its box is opened with that phone's key alone.
+    private func frame(_ body: FrameBody, relay: Int?, from: String? = nil) throws {
+        if body.t == "hello" {
+            // A hello the relay buffered while this Mac was away is older than a live direct link: it leaves the route alone.
+            if relay != nil, let pub = body.pub, case .direct? = peers[pub]?.route { return }
+            return try hello(body, route: .relay)
+        }
         guard body.t == "box", let nonce = body.n.flatMap(Data.init(base64URLEncoded:)),
               let ciphertext = body.c.flatMap(Data.init(base64URLEncoded:)) else { return }
         // Frames carry no sender: whichever paired key opens one names its device.
-        for (pub, peer) in peers {
+        for (pub, peer) in peers where from == nil || pub == from {
             guard let plain = try? YorozuCrypto.open(key: peer.keys.recv, nonce: nonce, ciphertext: ciphertext) else { continue }
             // Malformed or replayed: dropped.
             guard let envelope = try? ChannelEnvelope.decode(plain), envelope.seq > peer.accepted else { return }
@@ -264,7 +342,9 @@ actor RelayHost {
         }
     }
 
-    private func hello(_ body: FrameBody) throws {
+    /// `route` is the path it came on; a hello on another path than the phone's route moves the route and
+    /// closes the direct link it leaves.
+    private func hello(_ body: FrameBody, route: Route) throws {
         guard let pub = body.pub, let raw = Data(base64URLEncoded: pub),
               let keys = try? YorozuCrypto.deriveChannelKeys(myPriv: identity.sessionPrivateKey, theirPub: raw, role: .mac) else { return }
         let known = peers[pub]
@@ -280,9 +360,14 @@ actor RelayHost {
         // A `.compatible` phone stays served until its next claim says otherwise.
         var served: PeerCompatibility?
         if case .compatible? = known?.compatibility { served = known?.compatibility }
-        peers[pub] = Peer(record: record, keys: keys, compatibility: served, accepted: known?.accepted ?? record.counter.recv)
+        if case .direct(let old)? = known?.route, known?.route != route { drop(old, .superseded) }
+        peers[pub] = Peer(record: record, keys: keys, compatibility: served, accepted: known?.accepted ?? record.counter.recv, route: route)
         if known?.record.signingPub != spub {
-            do { try persist() } catch { peers[pub] = known; throw error }
+            do { try persist() } catch {
+                peers[pub] = known
+                if case .direct(let id)? = known?.route, links[id] == nil { peers[pub]?.route = .relay }
+                throw error
+            }
             announce()
         }
         // A code is for one phone: the next one gets a fresh code.
@@ -298,7 +383,7 @@ actor RelayHost {
     /// still be `.paired` with live updates lost (or, after a restart, unserved) and never say hello
     /// again. The step-1 list once more restarts its exchange, and its next `.paired` catches up from
     /// before the gap.
-    private func rehandshake() { restartExchange(Array(peers.keys)) }
+    private func rehandshake() { restartExchange(peers.filter { $0.value.route == .relay }.map(\.key)) }
 
     /// Seals the step-1 list without peer info, the only list that restarts a ready `RelayClient`; a
     /// phone already served stays served, so the frames the relay replays meanwhile still land.
@@ -388,21 +473,20 @@ actor RelayHost {
     /// never runs out the phone's handshake deadline. Sealing order is still wire order: waiting frames are
     /// sealed only when `pace` sends them. Charged against the bucket, which may go below zero for them.
     private func handshake(_ items: [(String, YorozuEvent)]) {
-        guard registered else { return }
-        let stamped = items.compactMap { pub, event in peers[pub].map { (pub, stamp(event, for: $0)) } }
-        for (_, event) in stamped { _ = afford(event, force: true) }
+        let stamped = items.compactMap { pub, event in peers[pub].flatMap { reachable($0) ? (pub, stamp(event, for: $0)) : nil } }
+        for (pub, event) in stamped where peers[pub]?.route == .relay { _ = afford(event, force: true) }
         transmit(stamped)
     }
 
     /// Sends each event to its phone: whole when its encoding fits `ChunkData.budget`, else as a chunk set,
     /// and through `pace` whenever the bucket cannot cover it now. A phone with frames still waiting gets
     /// everything after them in order behind them. Thread lists are stamped now, with the phone's handshake
-    /// state at this moment.
+    /// state at this moment. A phone on a direct route gets its frames on its link at once, whatever the relay's
+    /// state; one on the relay route only while this Mac is registered there.
     private func deliver(_ items: [(String, YorozuEvent)]) {
-        guard registered else { return }
         var now: [(String, YorozuEvent)] = []
         for (pub, event) in items {
-            guard let peer = peers[pub] else { continue }
+            guard let peer = peers[pub], reachable(peer) else { continue }
             let event = stamp(event, for: peer)
             let parts: [YorozuEvent]
             do { parts = try event.chunked() } catch {
@@ -410,11 +494,12 @@ actor RelayHost {
                 Self.log.error("event \(event.id, privacy: .public) too large to send: \(error.localizedDescription, privacy: .public)")
                 continue
             }
+            if peer.route != .relay { now += parts.map { (pub, $0) }; continue }
             if parts.count == 1 && !outbox.contains(where: { $0.pub == pub }) && afford(event) { now.append((pub, event)) }
             else { outbox += parts.map { (pub, $0, parts.count > 1) } }
         }
         transmit(now)
-        if !outbox.isEmpty && pacer == nil { pacer = Task { await pace() } }
+        if registered, !outbox.isEmpty, pacer == nil { pacer = Task { await pace() } }
     }
 
     /// Every sealed frame (about 16/9 of the encoded event) is charged once against a bucket of 512 KiB and
@@ -445,15 +530,21 @@ actor RelayHost {
     }
 
     /// Seals each event for its phone and sends them as `frame` batches of at most 16 frames and about
-    /// 900 KB (the relay takes 1 MiB a message). Counters are written before anything leaves.
+    /// 900 KB (the relay takes 1 MiB a message), or one frame a message on a direct link. Counters are written
+    /// before anything leaves.
     private func transmit(_ items: [(String, YorozuEvent)]) {
-        guard registered, !items.isEmpty else { return }
-        var frames: [Frame] = []
+        var frames: [Frame] = [], direct: [(NWConnection, Frame)] = []
         for (pub, event) in items {
-            guard var peer = peers[pub], let frame = try? seal(event, for: &peer) else { continue }
-            peers[pub] = peer; frames.append(frame)
+            guard var peer = peers[pub], reachable(peer) else { continue }
+            var link: NWConnection?
+            if case .direct(let id) = peer.route { link = links[id]?.connection }
+            guard let frame = try? seal(event, for: &peer) else { continue }
+            peers[pub] = peer
+            if let link { direct.append((link, frame)) } else { frames.append(frame) }
         }
-        guard !frames.isEmpty, (try? persist()) != nil else { return }
+        guard !(frames.isEmpty && direct.isEmpty), (try? persist()) != nil else { return }
+        for (link, frame) in direct { if let data = try? JSONEncoder().encode(DirectWire.FrameOut(frame: frame)) { link.sendText(data) } }
+        guard !frames.isEmpty else { return }
         var batch: [Frame] = [], bytes = 0
         for frame in frames {
             let size = frame.payload.utf8.count + frame.sig.utf8.count + 24
@@ -462,6 +553,9 @@ actor RelayHost {
         }
         send(batch)
     }
+
+    /// A direct route always has its link (`drop` moves the route back); the relay route needs a registration.
+    private func reachable(_ peer: Peer) -> Bool { peer.route != .relay || registered }
 
     /// Every thread list a phone gets says this host negotiates, and once it has claimed, answers it.
     private func stamp(_ event: YorozuEvent, for peer: Peer) -> YorozuEvent {
@@ -488,7 +582,15 @@ actor RelayHost {
         var info = PeerInfoData.local
         info.computerName = SCDynamicStoreCopyComputerName(nil, nil) as String?
         if !info.isValid { info.computerName = nil }
+        // WIRE: once PeerInfoData has `directCandidates` and YorozuWire names the capability (#315):
+        //   info.directCandidates = advertised.map(\.candidate)   // nil while not listening
+        //   if !advertised.isEmpty, !info.capabilities.contains("direct-v1") { info.capabilities.append("direct-v1") }
         return info
+    }
+
+    /// The addresses a phone may dial, only while the listener is up.
+    private var advertised: [(candidate: DirectWire.Candidate, kind: DirectKind)] {
+        listenerState == .listening ? DirectInterfaces.candidates(port: direct.port) : []
     }
 
     /// The relay replaces its known set with this list, so it is always the whole list.
@@ -499,10 +601,203 @@ actor RelayHost {
     private func persist() throws { try RelayDeviceFile.save(peers.values.map(\.record), to: file) }
 
     private func publish() {
-        let devices = peers.values.map(\.record).sorted { $0.pairedAt < $1.pairedAt }.map {
-            RelayDeviceStatus(pub: $0.pub, name: $0.name, label: $0.label, pairedAt: $0.pairedAt, online: online.contains($0.pub), lastSeen: $0.lastSeen)
+        let devices = peers.values.sorted { $0.record.pairedAt < $1.record.pairedAt }.map { peer in
+            let r = peer.record
+            var route: DirectKind?
+            if case .direct(let id) = peer.route { route = links[id]?.kind }
+            return RelayDeviceStatus(pub: r.pub, name: r.name, label: r.label, pairedAt: r.pairedAt, online: online.contains(r.pub), lastSeen: r.lastSeen,
+                                     route: route, directError: directErrors[r.pub])
         }
-        statusOut.yield(RelayStatus(state: state, link: link, devices: devices))
+        let direct = DirectStatus(listener: listenerState, port: self.direct.port,
+                                  candidates: advertised.map { .init(host: $0.candidate.host, kind: $0.kind) }, lastRefusal: lastRefusal)
+        statusOut.yield(RelayStatus(state: state, link: link, devices: devices, direct: direct))
+    }
+
+    // MARK: Direct path (#315)
+
+    /// A fresh listener on `[direct] port`, or none while `[direct] enabled` is false. A failed one is
+    /// started again after 2 s, doubling to 60 s.
+    private func restartListener() {
+        listenerRestart?.cancel(); listenerRestart = nil
+        listenerGeneration += 1; listener?.cancel(); listener = nil
+        guard direct.enabled else { listenerState = .off; return publish() }
+        let generation = listenerGeneration
+        let ws = NWProtocolWebSocket.Options()
+        ws.autoReplyPing = true; ws.maximumMessageSize = DirectWire.maxMessage
+        let parameters = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
+        parameters.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
+        parameters.prohibitedInterfaceTypes = [.loopback]
+        parameters.allowLocalEndpointReuse = true
+        do {
+            guard let port = NWEndpoint.Port(rawValue: UInt16(clamping: direct.port)) else { throw ProjectError.invalid("Invalid port \(direct.port).") }
+            let listener = try NWListener(using: parameters, on: port)
+            listener.stateUpdateHandler = { [weak self] state in Task { await self?.listenerChanged(state, generation: generation) } }
+            listener.newConnectionHandler = { [weak self] connection in
+                guard let self else { return connection.cancel() }
+                Task { await self.accept(connection, generation: generation) }
+            }
+            self.listener = listener; listenerState = .starting
+            listener.start(queue: Self.queue)
+        } catch {
+            listenerFailed(error.localizedDescription)
+        }
+        publish()
+    }
+
+    private func listenerChanged(_ state: NWListener.State, generation: Int) {
+        guard generation == listenerGeneration else { return }
+        switch state {
+        case .ready: listenerState = .listening; listenerRetry = 2; publish()
+        case .waiting(let error): listenerState = .failed(error.localizedDescription); publish()
+        case .failed(let error): listener?.cancel(); listener = nil; listenerFailed(error.localizedDescription); publish()
+        default: break
+        }
+    }
+
+    private func listenerFailed(_ reason: String) {
+        listenerState = .failed(reason)
+        let wait = listenerRetry; listenerRetry = min(listenerRetry * 2, 60)
+        Self.log.error("direct listener failed: \(reason, privacy: .public); retrying in \(wait) s")
+        listenerRestart = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            if !Task.isCancelled { await self?.restartListener() }
+        }
+    }
+
+    /// At most `maxPending` connections wait for a join, each for 10 s.
+    private func accept(_ connection: NWConnection, generation: Int) {
+        guard generation == listenerGeneration, direct.enabled, links.count < Self.maxLinks,
+              links.values.filter({ $0.signer == nil }).count < Self.maxPending else { return connection.cancel() }
+        let id = nextLink; nextLink += 1
+        links[id] = Link(connection: connection)
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready: Task { await self?.ready(id) }
+            case .failed(let error): Task { await self?.drop(id, nil, error: error.localizedDescription) }
+            case .waiting, .cancelled: Task { await self?.drop(id, nil) }
+            default: break
+            }
+        }
+        connection.start(queue: Self.queue)
+        Task {
+            try? await Task.sleep(for: .seconds(10))
+            if links[id] != nil, links[id]?.signer == nil { refuse(id, String(localized: "A connection sent no valid join within 10 seconds.")) }
+        }
+    }
+
+    /// Only Wi-Fi/Ethernet and `utun` interfaces: anything else (loopback, AWDL, bridges) is closed unheard.
+    private func ready(_ id: Int) {
+        guard let connection = links[id]?.connection else { return }
+        guard let kind = DirectInterfaces.kind(local: connection.currentPath?.localEndpoint) else {
+            return refuse(id, String(localized: "Refused a connection on an interface other than Wi-Fi, Ethernet or VPN."))
+        }
+        let nonce = Data((0..<32).map { _ in UInt8.random(in: 0...255) }).base64URLEncodedString()
+        links[id]?.kind = kind; links[id]?.nonce = nonce; links[id]?.heard = .now
+        sendDirect(DirectWire.Nonce(nonce: nonce), on: id)
+        Task { await read(id) }
+    }
+
+    /// One message at a time, in order, until the link closes.
+    private func read(_ id: Int) async {
+        while let connection = links[id]?.connection {
+            guard let data = try? await connection.receiveText() else { break }
+            guard links[id] != nil else { return }
+            guard data.count <= DirectWire.maxMessage else { return drop(id, .tooLarge, error: String(localized: "A message was larger than 1 MiB.")) }
+            links[id]?.heard = .now
+            message(data, on: id)
+        }
+        drop(id, nil)
+    }
+
+    private func message(_ data: Data, on id: Int) {
+        guard let link = links[id] else { return }
+        guard let message = try? JSONDecoder().decode(DirectWire.Inbound.self, from: data) else {
+            return link.signer == nil ? refuse(id, String(localized: "A connection sent something other than a join.")) : drop(id, .unauthorized, error: String(localized: "The phone sent a malformed message."))
+        }
+        guard let signer = link.signer else {
+            return message.type == "join" ? join(message, on: id) : refuse(id, String(localized: "A connection sent something other than a join."))
+        }
+        switch message.type {
+        case "ping": sendDirect(DirectWire.Pong(t: message.t ?? 0), on: id)
+        case "frame":
+            guard let frame = message.frame, let sig = Data(base64URLEncoded: frame.sig), let key = Data(base64URLEncoded: signer),
+                  YorozuCrypto.verifyFrame(pub: key, data: Data(frame.payload.utf8), signature: sig),
+                  let raw = Data(base64URLEncoded: frame.payload), let body = try? JSONDecoder().decode(FrameBody.self, from: raw) else {
+                return drop(id, .unauthorized, error: String(localized: "A frame's signature did not verify."))
+            }
+            directFrame(body, signer: signer, on: id)
+        default: break
+        }
+    }
+
+    /// The phone proves it holds a paired Ed25519 key (signing this room and our nonce); the Mac answers with
+    /// its own proof over the phone's nonce. Unknown keys are refused: a phone pairs over the relay only.
+    private func join(_ m: DirectWire.Inbound, on id: Int) {
+        guard let nonce = links[id]?.nonce, m.room == room, let signer = m.pub, let sig = m.sig.flatMap({ Data(base64URLEncoded: $0) }),
+              let phoneNonce = m.nonce, Data(base64URLEncoded: phoneNonce)?.count == 32 else {
+            return refuse(id, String(localized: "Refused a malformed join."))
+        }
+        guard let pub = peers.first(where: { $0.value.record.signingPub == signer })?.key, let key = Data(base64URLEncoded: signer) else {
+            return refuse(id, String(localized: "Refused a key that is not paired with this Mac."))
+        }
+        guard YorozuCrypto.verifyFrame(pub: key, data: DirectWire.joinProof(room: room, nonce: nonce), signature: sig) else {
+            directErrors[pub] = String(localized: "Its join signature did not verify.")
+            return drop(id, .unauthorized)
+        }
+        guard let proof = try? YorozuCrypto.signFrame(priv: identity.signingPrivateKey, data: DirectWire.hostProof(room: room, nonce: phoneNonce)) else { return drop(id, nil) }
+        links[id]?.signer = signer
+        sendDirect(DirectWire.Joined(pub: identity.signingPublicKey.base64URLEncodedString(), sig: proof.base64URLEncodedString()), on: id)
+        publish()
+    }
+
+    /// The peer is the one the join proved, never a trial decryption. Its `hello` must name that same key.
+    private func directFrame(_ body: FrameBody, signer: String, on id: Int) {
+        guard let pub = peers.first(where: { $0.value.record.signingPub == signer })?.key else { return drop(id, .unauthorized) }
+        if body.t == "hello" {
+            guard body.spub == signer, body.pub == pub else {
+                return drop(id, .unauthorized, error: String(localized: "Its hello named another key than its join."))
+            }
+            // The key is already on file, so nothing is written and nothing throws.
+            try? hello(body, route: .direct(id))
+            return
+        }
+        // Never acked to the relay; a replayed seq is dropped like any other.
+        try? frame(body, relay: nil, from: pub)
+    }
+
+    /// Joined links silent for more than 30 s are dropped (the phone pings every 10 s).
+    private func sweep() {
+        let now = ContinuousClock.now
+        for (id, link) in links where link.signer != nil && link.heard.duration(to: now) > .seconds(30) {
+            drop(id, nil, error: String(localized: "Its direct link went silent for more than 30 seconds."))
+        }
+    }
+
+    /// The Mac is going to sleep: phones move to the relay, which keeps their messages until it wakes.
+    private func sleeping() {
+        for id in links.keys { drop(id, .sleeping, error: String(localized: "This Mac went to sleep.")) }
+    }
+
+    /// Closes a connection that never named a paired phone.
+    private func refuse(_ id: Int, _ reason: String) {
+        lastRefusal = reason
+        Self.log.info("direct: \(reason, privacy: .public)")
+        drop(id, .unauthorized)
+    }
+
+    /// Closes a link (with `code`, else at once). A phone routed over it goes back to the relay route;
+    /// `error` becomes its last direct error.
+    private func drop(_ id: Int, _ code: DirectWire.Close?, error: String? = nil) {
+        guard let link = links.removeValue(forKey: id) else { return }
+        if let code { link.connection.close(code) } else { link.connection.cancel() }
+        for (pub, peer) in peers where peer.route == .direct(id) { peers[pub]?.route = .relay; online.remove(pub) }
+        if let error, let signer = link.signer, let pub = peers.first(where: { $0.value.record.signingPub == signer })?.key { directErrors[pub] = error }
+        publish()
+    }
+
+    private func sendDirect(_ message: some Encodable, on id: Int) {
+        guard let data = try? JSONEncoder().encode(message) else { return }
+        links[id]?.connection.sendText(data)
     }
 
     private func send(_ frames: [Frame]) { send(try? JSONEncoder().encode(Batch(frames: frames))) }

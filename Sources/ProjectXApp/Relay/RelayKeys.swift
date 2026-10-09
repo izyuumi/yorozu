@@ -68,6 +68,10 @@ struct RelayDeviceStatus: Sendable, Identifiable, Equatable {
     /// Has an authenticated session on the host's current relay connection.
     var online: Bool
     var lastSeen: Date?
+    /// How its direct link reaches this Mac; nil while it is on the relay route.
+    var route: DirectKind?
+    /// Its last direct-path problem on this run.
+    var directError: String?
     var id: String { pub }
     var displayName: String { label ?? name ?? "iPhone" }
 }
