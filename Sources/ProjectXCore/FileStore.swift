@@ -45,21 +45,22 @@ public struct FileStore: Sendable {
 
     /// Copies a file the user attached; the row has no owner yet (`Store` sets it).
     public func store(_ file: PendingFile) throws -> Attachment {
-        try copy(file.url, name: file.name, mime: file.mime.isEmpty ? Self.mime(for: file.name) : file.mime)
+        try copy(file.url, name: file.name, mime: file.mime.isEmpty ? Self.mime(for: file.name) : file.mime, guarded: false) // the user chose this file
     }
-    /// Copies a file a worker returned (any readable path; `~` is expanded).
+    /// Copies a file a worker returned (any readable path outside private folders and key files; `~` is expanded): a
+    /// worker can be prompt-injected into naming one, and a copy syncs to the phone.
     public func adopt(path: String) throws -> Attachment {
         let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        return try copy(url, name: url.lastPathComponent, mime: Self.mime(for: url.lastPathComponent))
+        return try copy(url, name: url.lastPathComponent, mime: Self.mime(for: url.lastPathComponent), guarded: true)
     }
     public func url(for a: Attachment) -> URL { root.appendingPathComponent(a.path, isDirectory: false) }
     public func exists(_ a: Attachment) -> Bool { FileManager.default.isReadableFile(atPath: url(for: a).path) }
     /// Removes a copy no row owns (a failed send or a result that was not delivered).
     func remove(_ a: Attachment) { try? FileManager.default.removeItem(at: url(for: a)) }
 
-    private func copy(_ source: URL, name: String, mime: String) throws -> Attachment {
+    private func copy(_ source: URL, name: String, mime: String, guarded: Bool) throws -> Attachment {
         let fm = FileManager.default, src = source.resolvingSymlinksInPath()
-        guard !refuses(source), !refuses(src), !Self.isKeyName(name) else { throw ProjectError.blocked("“\(name)” is in a private folder or looks like a key, so Yorozu won't copy it.") }
+        guard !guarded || (!refuses(source) && !refuses(src) && !Self.isKeyName(name)) else { throw ProjectError.blocked("“\(name)” is in a private folder or looks like a key, so Yorozu won't copy it.") }
         let values = try? src.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values?.isRegularFile == true, fm.isReadableFile(atPath: src.path) else { throw ProjectError.invalid("“\(name)” is missing or unreadable.") }
         guard Int64(values?.fileSize ?? 0) <= Self.maxBytes else { throw ProjectError.invalid("“\(name)” is over 50 MB.") }
