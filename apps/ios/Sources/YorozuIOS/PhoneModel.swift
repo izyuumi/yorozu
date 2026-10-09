@@ -184,6 +184,8 @@ final class PhoneModel {
     @ObservationIgnored private var waking = false
     /// The read cursor the delivered pushes were last cleared to.
     @ObservationIgnored private var clearedTo: String?
+    /// This phone's last read, which the Mac's cursor may not echo yet.
+    @ObservationIgnored private var localRead: String?
 
     // MARK: Link
 
@@ -381,6 +383,8 @@ final class PhoneModel {
         linked = false
         outbox.forEach { LocalNotices.cancelExpiry($0.id) }
         PushNotices.update(badge: 0, read: nil)
+        localRead = nil
+        clearedTo = nil
         outbox = []
         marks = [:]
         Outbox.file.wipe()
@@ -576,13 +580,14 @@ final class PhoneModel {
     /// The main-timeline message a push's `event` ref names.
     func messageId(ref: String) -> String? { timeline.last { YorozuCrypto.threadRef($0.id) == ref }?.id }
 
-    /// The badge is Yorozu's messages after the read cursor (`readTo`: this phone's read, before the Mac echoes it).
-    /// When the cursor moves, the delivered pushes for messages at or before it go.
-    private func updateBadge(readTo id: String? = nil) {
-        guard let id = id ?? readCursor?.messageId, let index = timeline.firstIndex(where: { $0.id == id }) else { return }
-        let read = id == clearedTo ? nil : Set(timeline[...index].map { YorozuCrypto.threadRef($0.id) })
+    /// The badge is Yorozu's messages after the later of this phone's read and the Mac's cursor, or all of them when
+    /// neither is in the timeline. When that read moves, the delivered pushes for messages at or before it go.
+    private func updateBadge() {
+        let index = [localRead, readCursor?.messageId].compactMap { id in timeline.firstIndex { $0.id == id } }.max()
+        let id = index.map { timeline[$0].id }
+        let read = index.flatMap { i in id == clearedTo ? nil : Set(timeline[...i].map { YorozuCrypto.threadRef($0.id) }) }
         clearedTo = id
-        PushNotices.update(badge: timeline[(index + 1)...].filter { !$0.user }.count, read: read)
+        PushNotices.update(badge: timeline[(index.map { $0 + 1 } ?? 0)...].filter { !$0.user }.count, read: read)
     }
 
     private func hold(_ status: ClientConnectionStatus) {
@@ -1101,7 +1106,8 @@ final class PhoneModel {
     /// Moves the Mac's read cursor to the newest message seen. Only while `.paired`; not queued.
     func markRead(_ messageId: String) async {
         guard state == .paired else { return }
-        updateBadge(readTo: messageId)
+        localRead = messageId
+        updateBadge()
         _ = await sendNow(.readState(ReadStateData(threadId: "main", messageId: messageId)))
     }
 

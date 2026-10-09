@@ -50,10 +50,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 }
 
+@MainActor
 enum PushNotices {
+    /// The last update; each waits for the one before, so the latest badge wins.
+    private static var last: Task<Void, Never>?
+
     /// Sets the badge, and removes the delivered pushes whose `event` ref is in `read`.
     static func update(badge: Int, read: Set<String>?) {
-        Task {
+        let previous = last
+        last = Task {
+            await previous?.value
             let center = UNUserNotificationCenter.current()
             try? await center.setBadgeCount(badge)
             guard let read else { return }
