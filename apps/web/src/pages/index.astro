@@ -25,10 +25,11 @@ const build = 'https://github.com/izyuumi/yorozu/blob/projectx/README.md#build';
     </div>
   </section>
   <style>
-    /* No product screenshots until the 0.7.0 ones exist: the hero is copy only. Astro emits
+    /* The hero is copy only; the menu-bar section shows the 0.7.0 popover. Astro emits
        this as an external stylesheet (inlineStylesheets: 'never'), which the CSP allows. */
     .hero-inner { grid-template-columns: minmax(0, 1fr); }
     .hero-copy { padding-bottom: clamp(48px, 8vw, 110px); }
+    .popover-shot { max-width: 420px; margin: clamp(32px, 5vw, 56px) auto 0; }
   </style>
 
   <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
@@ -52,6 +53,9 @@ const build = 'https://github.com/izyuumi/yorozu/blob/projectx/README.md#build';
       <div><dt>Always running</dt><dd>The icon shows when work is running or something needs you. Yorozu keeps working after you close the popover.</dd></div>
       <div><dt>A Settings window</dt><dd>General, Devices, Connection, Storage and Jobs, plus Advanced when you want it. Or change a setting by asking in the chat.</dd></div>
     </dl>
+    <figure class="shot mac-shot popover-shot">
+      <img src="/assets/mac-07-dark.webp" alt="The Yorozu popover on a Mac with a demo chat: a name for a desk plant, and how long to steep sencha, answered by a background worker" width="426" height="750" loading="lazy">
+    </figure>
   </section>
 
   <section class="more" aria-labelledby="phone-title">
