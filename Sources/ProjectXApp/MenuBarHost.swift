@@ -86,6 +86,13 @@ import SwiftUI
         openSettingsAction?()
     }
 
+    /// The setup window (`AppModel.openSetup`), in front of everything.
+    fileprivate func showSetup(_ openWindow: OpenWindowAction) {
+        popover.performClose(nil)
+        NSApp.activate()
+        openWindow(id: SetupWindow.id)
+    }
+
     fileprivate func show(working: Bool) { self.working = working; refreshIcon() }
 
     /// `[general] global_shortcut`, applied at launch and whenever the config changes it. The problem in force is published
@@ -160,6 +167,7 @@ private struct StatusTracker: View {
     @ObservedObject var model: AppModel
     let host: MenuBarHost
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     /// The config reloads without publishing; the shortcut setting is re-read every 2 s (a string compare when unchanged).
     private let tick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     var body: some View {
@@ -168,6 +176,7 @@ private struct StatusTracker: View {
             .onChange(of: model.working, initial: true) { _, working in host.show(working: working) }
             .onChange(of: model.snapshot, initial: true) { _, snapshot in AttentionCenter.shared.ingest(snapshot) }
             .onChange(of: model.readCursor, initial: true) { _, cursor in AttentionCenter.shared.readCursor = cursor }
+            .onChange(of: model.setupRequests, initial: true) { _, count in if count > 0 { host.showSetup(openWindow) } }
             .onReceive(tick) { _ in if let spec = model.resolved?.config.general.globalShortcut { host.applyShortcut(spec, model: model) } }
     }
 }

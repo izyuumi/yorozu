@@ -23,10 +23,20 @@ import YorozuWire
     /// Set when the native transport was selected but this launch fell back to the CLI.
     @Published var nativeNotice: String?
     @Published var nativeNoticeDetail = ""
-    /// The main harness in use ("OpenClaw Gateway · projectx", "Hermes Agent 0.21.6"); nil outside live mode.
+    /// The main harness in use ("OpenClaw Gateway · projectx", "Hermes Agent"); nil outside live mode.
     @Published var harnessLabel: String?
-    /// What is wrong with the harness (not ready, untested version, a held switch); a send does not clear it.
-    @Published var harnessNotice: String?
+    /// The Mac's readiness (#317, SetupWiring.swift): the main harness's detection and Gateway `health`, a held switch and
+    /// the file store; nil until the first check. A send does not clear it; a recheck does.
+    @Published var readiness: Readiness?
+    /// The setup window's step to show (a Fix… target); nil shows the first step not done.
+    @Published var setupStep: String?
+    /// Bumped to open the setup window; MenuBarHost's tracker holds `openWindow`.
+    @Published var setupRequests = 0
+    /// The Gateway client the live OpenClaw harness uses, for readiness and setup; nil otherwise.
+    var gatewayRPC: GatewayRPC?
+    var recheckTask: Task<Void,Never>?
+    /// The newest failure row seen by the poll; a newer one triggers a recheck.
+    var lastFailureID: String?
     /// Set at launch when a harness switch waits for running work (open question 9).
     var switchNotice: String?
     /// The file store (#316) could not open (a root inside a git checkout): attachments are off this launch.
@@ -49,7 +59,7 @@ import YorozuWire
     private var bridge: EngineBridge?
     @Published var relayStatus = RelayStatus()
     /// What paired phones show as the Mac's readiness (#317), kept across relay restarts; set with `publishReadiness`.
-    private var readiness: ReadinessData?
+    private var phoneReadiness: ReadinessData?
     // Popover hooks, wired by MenuBarHost to AttentionCenter.
     /// Set by the host to bring a message into view; the timeline scrolls to it and clears it.
     @Published var focusMessageID: String?
@@ -154,7 +164,8 @@ import YorozuWire
                 devicesFile = support.appendingPathComponent("relay-devices.json")
                 if runtimeMode == .live { await startRelay(engine,url: resolved.config.relay.url) }
                 status = nil; ready = true
-                Task { await checkHarness() }
+                recheck()
+                if !file.setup.done, lastConfigError == nil { openSetup() }
                 applySystem(resolved.config.general)
                 watchConfig()
                 // Polls keep reading, but the UI hears only about a changed snapshot. The bridge hears every poll: it checks
@@ -165,7 +176,7 @@ import YorozuWire
                     do {
                         let next = try await engine.snapshot()
                         if notice != nil { if status == notice { status = nil }; notice = nil; failures = 0 }
-                        if next != snapshot { snapshot = next; let topics = Set(((try? await store.jobRecords()) ?? []).map(\.topicID)); if topics != jobTopics { jobTopics = topics } }
+                        if next != snapshot { snapshot = next; noteFailures(next); let topics = Set(((try? await store.jobRecords()) ?? []).map(\.topicID)); if topics != jobTopics { jobTopics = topics } }
                         let routing = await engine.routing; if routing != self.routing { self.routing = routing }
                         let cursor = try await store.readCursor(thread: "main"); if cursor != readCursor { readCursor = cursor }
                         if let relay, let bridge { await bridge.publish(next,to: relay) }
@@ -201,26 +212,16 @@ import YorozuWire
             try GatewayRPC.enforceAttribution(environment)
             nativeSelected = h.transport == .native
             let native = nativeSelected ? await connectNative(h.gatewayURL) : nil
-            harness = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: h.agent,rpc: GatewayRPC(native: native,audit: { try await store.requestReceipt($0) },target: h.gatewayURL),settings: { box.value })
+            let rpc = GatewayRPC(native: native,audit: { try await store.requestReceipt($0) },target: h.gatewayURL); gatewayRPC = rpc
+            harness = OpenClawHarness(workspace: root.appendingPathComponent("harness-workspaces"),agent: h.agent,rpc: rpc,settings: { box.value })
             harnessLabel = "OpenClaw Gateway · " + h.agent
         case .hermes:
-            // Not ready still launches: messages are saved and the status line says what to fix (`checkHarness`).
+            // Not ready still launches: messages are saved and the status line says what to fix (`recheck`).
             harness = try HermesHarness(url: h.hermesURL,agent: h.agent,audit: { try await store.requestReceipt($0) },settings: { box.value })
             harnessLabel = "Hermes Agent"
         }
         try await store.recordHarness(harness.id)
         return harness
-    }
-    /// The harness's readiness for the status line: Hermes's read-only check (problems, then an untested-version
-    /// warning), plus a held harness switch. Runs at launch and before each message while something is wrong.
-    func checkHarness() async {
-        var notes = [switchNotice,filesNotice].compactMap { $0 }
-        if let hermes = harness as? HermesHarness {
-            let r = await hermes.readiness()
-            harnessLabel = "Hermes Agent" + (r.version.map { " " + $0 } ?? "")
-            notes += r.ready ? r.warnings : ["Hermes is not ready: " + r.problems.joined(separator: " ")]
-        }
-        harnessNotice = notes.isEmpty ? nil : notes.joined(separator: " ")
     }
     /// The native client when its stored device token connects; otherwise nil, so this launch uses the CLI and says so.
     private func connectNative(_ target: String) async -> NativeGatewayClient? {
@@ -245,7 +246,7 @@ import YorozuWire
             let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile,direct: resolved?.config.direct ?? Config().direct)
             self.bridge = bridge; relay = host
             Task { for await status in host.status where relay === host { relayStatus = status } }
-            if let readiness { await host.publishReadiness(readiness) }
+            if let phoneReadiness { await host.publishReadiness(phoneReadiness) }
             await host.start()
         } catch {
             relayStatus.state = error.localizedDescription
@@ -258,7 +259,7 @@ import YorozuWire
     }
     /// The Mac readiness model (#317) calls this on every change (`ReadinessData(readiness)`); phones get it now and after each handshake.
     func publishReadiness(_ readiness: ReadinessData) async {
-        self.readiness = readiness
+        phoneReadiness = readiness
         await relay?.publishReadiness(readiness)
     }
     /// A new relay URL: the old host stops and a fresh one dials the new relay with the same keys and devices.
@@ -295,7 +296,7 @@ import YorozuWire
         guard let engine, !submitting, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return }
         submitting = true; defer { submitting = false }
         let text = draft, sent = files
-        if harnessNotice != nil { Task { await checkHarness() } }
+        if readiness.map({ $0.state != .ready }) ?? false { recheck() }
         await ensureModels()
         // Downscaling reads and re-encodes images, so it runs off the main actor; its scratch copies go once the Engine has
         // copied them into the file store (or failed).
@@ -310,7 +311,7 @@ import YorozuWire
             sent.filter(\.temporary).forEach { DraftFile.discard($0.url) }
             status = nil; snapshot = try await engine.snapshot()
         }
-        catch { showError(error) }
+        catch { showError(error); recheck() }
     }
     /// Where a stored attachment is now, or nil when it is gone (deleted in Finder).
     func attachmentURL(_ file: Attachment) async -> URL? {
@@ -343,7 +344,13 @@ import YorozuWire
 struct ProjectXApp: App {
     @NSApplicationDelegateAdaptor(Delegate.self) var delegate
     var body: some Scene {
+        // Suppressed too: with the setup window suppressed, SwiftUI would otherwise open Settings at launch.
         Settings { SettingsView(model: delegate.model) }
+            .defaultLaunchBehavior(.suppressed)
+        // Opened only by `AppModel.openSetup`: at a launch before setup is done, by Run Setup Again… and by Fix….
+        Window("Set up Yorozu", id: SetupWindow.id) { SetupWindow(model: delegate.model) }
+            .windowResizability(.contentSize)
+            .defaultLaunchBehavior(.suppressed)
     }
 }
 extension ReadinessData {

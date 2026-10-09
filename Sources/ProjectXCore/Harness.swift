@@ -158,6 +158,21 @@ public struct GatewayRPC: Sendable {
         if s.contains("no such file") || s.contains("command not found") || s.contains("node.js") { return "executable-or-runtime" }
         return "unclassified-refusal-or-disconnect"
     }
+    /// True when the loopback `target` (already pinned by `perform`) refuses a TCP connection: nothing listens there.
+    static func refused(_ target: URLComponents) -> Bool {
+        let port = in_port_t(UInt16(clamping: target.port ?? (target.scheme == "wss" ? 443 : 80)).bigEndian), v6 = target.host == "::1"
+        let fd = socket(v6 ? AF_INET6 : AF_INET,SOCK_STREAM,0); guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let code: Int32
+        if v6 {
+            var a = sockaddr_in6(); a.sin6_family = sa_family_t(AF_INET6); a.sin6_port = port; inet_pton(AF_INET6,"::1",&a.sin6_addr)
+            code = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self,capacity: 1) { connect(fd,$0,socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
+        } else {
+            var a = sockaddr_in(); a.sin_family = sa_family_t(AF_INET); a.sin_port = port; inet_pton(AF_INET,"127.0.0.1",&a.sin_addr)
+            code = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self,capacity: 1) { connect(fd,$0,socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        }
+        return code != 0 && errno == ECONNREFUSED
+    }
     /// `timeout` (ms, CLI transport only) shortens the CLI's 260 s wait, for setup and readiness probes.
     public func call(_ method: String, _ params: [String:Any], final: Bool = false, sourceMessageID: String? = nil, timeout: Int? = nil) async throws -> [String:Any] {
         guard method == "agent", let id = params["idempotencyKey"] as? String else { return try await perform(method,params,final: final,timeout: timeout) }
@@ -238,7 +253,10 @@ public struct GatewayRPC: Sendable {
                 process.waitUntilExit()
                 let stderr = await errorReader.value
                 guard process.terminationStatus == 0 else {
-                    let category = Self.diagnosticCategory(String(decoding: stderr + data.prefix(32768),as: UTF8.self))
+                    var category = Self.diagnosticCategory(String(decoding: stderr + data.prefix(32768),as: UTF8.self))
+                    // The CLI compares its own Gateway URL with `--expect-url` before dialing, so a target nothing listens on
+                    // reads as a mismatch; a refused connection to that loopback port means the Gateway there isn't running.
+                    if category == "gateway-target-mismatch", Self.refused(url) { category = "gateway-unreachable" }
                     // Gateway refusals arrive as a JSON envelope on stdout; its code/message is safe to show unless secret-shaped.
                     let refusal = (try? JSONSerialization.jsonObject(with: data) as? [String:Any])?["error"] as? [String:Any]
                     // Else the CLI's own words from stderr (such as "Start it with `openclaw gateway run`"), for Details (`PlainError`).
