@@ -37,6 +37,9 @@ struct Outbox: Codable, Sendable {
         var stored = false
         /// Why it was not delivered.
         var reason: String?
+        /// The message's files (#316): their copies wait in `UploadStore` and go up only over a live session
+        /// with the Mac, never through the relay's buffer. The text waits with them, as one unit.
+        var files: [AttachmentInfo]?
 
         var id: String { event.id }
         var deadline: Int {
@@ -71,6 +74,10 @@ struct Delivery: Equatable {
     var receivedAt: Int?
     var readAt: Int?
     var reason: String?
+    /// How many files the message carries.
+    var files = 0
+    /// The files' upload, 0 to 1, while it runs.
+    var upload: Double?
 
     var symbol: String {
         switch state {

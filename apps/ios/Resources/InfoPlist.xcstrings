@@ -60,7 +60,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Yorozu scans the pairing QR code shown by your Mac."
+            "value": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message."
           }
         },
         "es": {
@@ -72,7 +72,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "YorozuはMacに表示されたペアリング用QRコードをスキャンします。"
+            "value": "YorozuはMacに表示されたペアリング用QRコードをスキャンし、メッセージで送る写真を撮影します。"
           }
         },
         "ko": {
@@ -85,6 +85,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Yorozu 会扫描 Mac 上显示的配对二维码。"
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryAddUsageDescription": {
+      "comment": "Privacy - Photo Library Additions Usage Description",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozu saves pictures to your library when you ask it to."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yorozuが依頼に応じて写真をライブラリに保存します。"
           }
         }
       }
