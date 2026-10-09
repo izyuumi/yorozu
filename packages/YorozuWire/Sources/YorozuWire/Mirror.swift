@@ -19,11 +19,14 @@ public struct TopicData: Codable, Equatable, Sendable {
     public var label: String
     public var created: Int
     public var seq: Int
-    public init(id: String, label: String, created: Int, seq: Int) {
+    /// The topic this sub-chat was attached to (#348); absent when none. Older phones ignore it.
+    public var attachedTo: String?
+    public init(id: String, label: String, created: Int, seq: Int, attachedTo: String? = nil) {
         self.id = id
         self.label = label
         self.created = created
         self.seq = seq
+        self.attachedTo = attachedTo
     }
 }
 

@@ -97,6 +97,8 @@ public actor Store {
             CREATE INDEX attachments_message ON attachments(messageID); CREATE INDEX attachments_event ON attachments(eventID);
             CREATE TABLE workAttachments(workID TEXT NOT NULL, attachmentID TEXT NOT NULL, PRIMARY KEY(workID,attachmentID));
             """) }
+        // #348. Nullable: older builds insert topics through GRDB records, which name their columns.
+        migration.registerMigration("topic-attach") { db in try db.execute(sql: "ALTER TABLE topics ADD COLUMN attachedTo TEXT; ALTER TABLE topics ADD COLUMN attachedAt DOUBLE; ALTER TABLE work ADD COLUMN started DOUBLE") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -164,6 +166,15 @@ public actor Store {
                 total += try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM \(from)",arguments: args) ?? 0
             }
             return (Array(hits.sorted { $0.created > $1.created }.dropFirst(offset).prefix(limit)),total)
+        }
+    }
+    /// Attaches `topic` to `target` (#348) when `topic` was created in the last 7 days, is not attached and has nothing
+    /// attached, and `target` is another topic that is not attached itself; neither may be a job topic; false (nothing changed) otherwise.
+    public func attach(topic: String, to target: String) throws -> Bool {
+        let now = Date().timeIntervalSince1970
+        return try db.write { db in
+            try db.execute(sql: "UPDATE topics SET attachedTo=?,attachedAt=? WHERE id=? AND id<>? AND attachedTo IS NULL AND created>=? AND NOT EXISTS (SELECT 1 FROM topics s WHERE s.attachedTo=topics.id) AND NOT EXISTS (SELECT 1 FROM jobs WHERE topicID IN (topics.id,?)) AND EXISTS (SELECT 1 FROM topics t WHERE t.id=? AND t.attachedTo IS NULL)",arguments: [target,now,topic,target,now - 7 * 86400,target,target])
+            return db.changesCount > 0
         }
     }
     public func message(id: String) throws -> Message? { try db.read { try Message.fetchOne($0,key: id) } }
@@ -302,7 +313,7 @@ public actor Store {
     public func startWork(_ id: String) throws -> Work? {
         try db.write { db in
             guard var w = try Work.fetchOne(db,key: id), !w.suppressed, w.state == "queued" else { return nil }
-            w.state = "working"; try w.update(db); return w
+            w.state = "working"; w.started = w.started ?? Date().timeIntervalSince1970; try w.update(db); return w
         }
     }
     public func setHandle(_ id: String,handle: RunHandle) throws {

@@ -375,7 +375,7 @@ actor EngineBridge: RelayBackend {
                 failed: m.kind == "failure" ? true : nil, kind: m.kind, topicId: m.topicID, taskId: m.taskID, replyTo: m.replyTo,
                 notice: m.notice.map(notice), seq: seq,
                 readAt: m.role == "user" ? m.readAt.map(ms) : nil, sentAt: m.sentAt.map(ms), files: files[m.id])))
-        case .topic(let t): e = event(t.id, thread, ms(t.created), .topic(TopicData(id: t.id, label: t.label, created: ms(t.created), seq: seq)))
+        case .topic(let t): e = event(t.id, thread, ms(t.created), .topic(TopicData(id: t.id, label: t.label, created: ms(t.created), seq: seq, attachedTo: t.attachedTo)))
         case .work(let w):
             e = event(w.id, thread, ms(w.created), .task(TaskData(id: w.id, topicId: w.topicID, messageId: w.messageID, instruction: w.instruction,
                 executor: w.executor, state: w.state, revision: w.revision, suppressed: w.suppressed, error: w.error, result: w.result,

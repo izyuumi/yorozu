@@ -4,6 +4,8 @@ import GRDB
 public struct Topic: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "topics"
     public var id: String; public var label: String; public var sessionKey: String; public var created: Double
+    /// The topic this sub-chat was attached to and when (#348): its later work runs in that topic. Its history stays here.
+    public var attachedTo: String? = nil; public var attachedAt: Double? = nil
 }
 public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "messages"
@@ -40,6 +42,8 @@ public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, S
     public var outputRevision: Int?; public var created: Double
     /// nil = thinking worker; otherwise the id of a coding executor the harness advertises (`Harness.executors`).
     public var executor: String? = nil
+    /// When a worker first took it (`Store.startWork`, #348); nil before it started and for rows from older builds.
+    public var started: Double? = nil
     public var active: Bool { ["queued", "working", "amendment_pending", "cancellation_requested"].contains(state) }
 }
 public struct WorkerEvent: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
@@ -181,13 +185,16 @@ public struct Decision: Codable, Sendable {
     public var instruction: String?; public var reply: String?; public var memoryID: String?; public var executor: String?
     /// `approve` only: a pending job approval from `RoutingInput.approvals` (#319 open question 1).
     public var approvalID: String?
-    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, executor: String? = nil, approvalID: String? = nil) {
-        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.executor = executor; self.approvalID = approvalID
+    /// `delegate`/`steer` only (#348): an existing topic the message's recent sub-chat belongs to.
+    public var attachTo: String?
+    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, executor: String? = nil, approvalID: String? = nil, attachTo: String? = nil) {
+        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.executor = executor; self.approvalID = approvalID; self.attachTo = attachTo
     }
 }
 /// The secretary's slim view: only the fields routing needs, never database records. Long text is excerpted by bytes.
 public struct RoutingInput: Codable, Sendable {
-    public struct TopicView: Codable, Sendable { public var id: String; public var label: String }
+    /// `age`: how long ago the topic was created ("5h", "3d"); `attachedTo`: the topic it was attached to (#348).
+    public struct TopicView: Codable, Sendable { public var id: String; public var label: String; public var age: String? = nil; public var attachedTo: String? = nil }
     /// A file the secretary may know about (#316): name, type, size and absolute path, never contents.
     public struct FileView: Codable, Sendable { public var name: String; public var type: String; public var size: String; public var path: String }
     public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String; public var files: [FileView]? = nil }
