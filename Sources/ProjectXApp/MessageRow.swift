@@ -104,6 +104,19 @@ struct MessageRow: View {
     }
 }
 
+/// The delivery mark the clients draw too: two `checkmark.circle` symbols overlapping by half, filled once read. The
+/// Mac's own messages have no relay step, so they read Delivered while waiting and Read once routing starts.
+struct DeliveryMark: View {
+    let read: Bool
+    var body: some View {
+        let symbol = Image(systemName: read ? "checkmark.circle.fill" : "checkmark.circle")
+        ZStack(alignment: .leading) {
+            symbol
+            symbol.alignmentGuide(.leading) { -$0.width / 2 }
+        }.accessibilityHidden(true)
+    }
+}
+
 /// Under a user bubble (#314): the delay line of a message that reached the Mac late, then the Delivered (stored) or
 /// Read (routing started) mark, which opens the two times. Updates arrive with the poll; nothing is announced.
 private struct ReceiptLine: View {
@@ -116,15 +129,15 @@ private struct ReceiptLine: View {
                 Text("sent \(Self.stamp(sent)) from a client device · delivered \(Self.stamp(message.created))")
             }
             Button { open.toggle() } label: {
-                Image(systemName: message.readAt == nil ? "checkmark.circle" : "checkmark.circle.fill").foregroundStyle(.secondary)
+                DeliveryMark(read: message.readAt != nil).foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
             .help(message.readAt.map { Text("Read \(Self.stamp($0))") } ?? Text("Delivered \(Self.stamp(message.created))"))
             .accessibilityLabel(message.readAt == nil ? Text("Delivered") : Text("Read"))
             .popover(isPresented: $open,arrowEdge: .bottom) {
                 VStack(alignment: .leading,spacing: Metrics.spacing) {
-                    Label("Delivered \(Self.stamp(message.created))",systemImage: "checkmark.circle")
-                    if let read = message.readAt { Label("Read \(Self.stamp(read))",systemImage: "checkmark.circle.fill") }
+                    Label { Text("Delivered \(Self.stamp(message.created))") } icon: { DeliveryMark(read: false) }
+                    if let read = message.readAt { Label { Text("Read \(Self.stamp(read))") } icon: { DeliveryMark(read: true) } }
                     else { Text("Waiting: earlier messages are still being handled").foregroundStyle(.secondary) }
                 }.font(.callout).padding(Metrics.padding)
             }
