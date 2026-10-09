@@ -150,11 +150,11 @@ struct SearchScreen: View {
     @ViewBuilder
     private func placeholder(_ result: SearchResultData?, _ hits: [SearchHitData]) -> some View {
         if !paired {
-            ContentUnavailableView("Search needs your Mac", systemImage: "wifi.slash",
-                                   description: Text("Your Mac runs the search. Connect to it to search."))
+            ContentUnavailableView("Search needs the host", systemImage: "wifi.slash",
+                                   description: Text("The host runs the search. Connect to it to search."))
         } else if trimmed.isEmpty {
             ContentUnavailableView("Search everything", systemImage: "magnifyingglass",
-                                   description: Text("The main chat and every activity, on your Mac."))
+                                   description: Text("The main chat and every activity, on the host."))
         } else if let error = result?.error {
             ContentUnavailableView("Couldn't search", systemImage: "exclamationmark.triangle", description: Text(error))
         } else if result == nil {
@@ -186,7 +186,7 @@ struct SearchScreen: View {
                     .font(.subheadline)
                     .foregroundStyle(.primary)
                 if case .none = target {
-                    Text("Older than this iPhone keeps. Open it on your Mac.")
+                    Text("Older than this device keeps. Open it on the host.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -283,8 +283,8 @@ struct PageScreen: View {
             if let error = reply?.error {
                 ContentUnavailableView("Couldn't load", systemImage: "exclamationmark.triangle", description: Text(error))
             } else if bubbles.isEmpty && !paired {
-                ContentUnavailableView("Search needs your Mac", systemImage: "wifi.slash",
-                                       description: Text("Your Mac runs the search. Connect to it to search."))
+                ContentUnavailableView("Search needs the host", systemImage: "wifi.slash",
+                                       description: Text("The host runs the search. Connect to it to search."))
             } else if bubbles.isEmpty {
                 ProgressView()
             }

@@ -285,12 +285,12 @@ struct DeliveryRows: View {
         if let delivered = delivery.deliveredAt {
             row("Delivered", delivered)
             if let expires = delivery.expiresAt {
-                Text("Held by the relay until your Mac is online · expires \(MessageTime.exact.string(from: MessageTime.date(expires)))")
+                Text("Held by the relay until the host is online · expires \(MessageTime.exact.string(from: MessageTime.date(expires)))")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         } else if let received = delivery.receivedAt {
-            row("Received by Mac", received)
+            row("Received by host", received)
         }
         if let read = delivery.readAt { row("Read", read) }
         if delivery.delayed, let received = delivery.receivedAt {

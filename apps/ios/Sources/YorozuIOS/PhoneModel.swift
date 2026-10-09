@@ -1046,7 +1046,7 @@ final class PhoneModel {
     private func expireOverdue() {
         let now = Self.now
         for item in outbox where marks[item.id] == .sending && item.deliveredAt == nil && !item.stored && now > item.deadline {
-            notDelivered(item.id, reason: String(localized: "This iPhone couldn’t send it within 24 hours."))
+            notDelivered(item.id, reason: String(localized: "This device couldn’t send it within 24 hours."))
         }
     }
 
@@ -1144,7 +1144,7 @@ final class PhoneModel {
             stored(receipt.eventId, read: false)
         case .admissionStatus(let status) where status.status == .expired:
             // One meaning, said in the phone's language rather than the Mac's English reason.
-            notDelivered(status.eventId, reason: String(localized: "Your Mac was offline for more than 24 hours."))
+            notDelivered(status.eventId, reason: String(localized: "The host was offline for more than 24 hours."))
         case .admissionStatus(let status) where status.status == .rejected:
             notDelivered(status.eventId, reason: status.reason)
         case .syncDelta(let delta):

@@ -122,7 +122,7 @@ enum LocalNotices {
     /// 24 h after the relay buffered it (`accepted` with `buffered`), identified by the message id.
     static func scheduleExpiry(_ id: String) {
         let content = UNMutableNotificationContent()
-        content.body = String(localized: "A message to your Mac expired without being read.")
+        content.body = String(localized: "A message to the host expired without being read.")
         content.sound = .default
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(Outbox.lifetime / 1000), repeats: false)
         center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))

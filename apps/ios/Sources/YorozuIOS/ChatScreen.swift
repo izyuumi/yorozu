@@ -115,7 +115,7 @@ struct ChatScreen: View {
                             .foregroundStyle(.secondary)
                     } else if let reason = model.readinessReason {
                         // The Mac's own readiness; when blocked the composer below is off with it.
-                        Label { Text("\(reason) · Fix this on your Mac") } icon: {
+                        Label { Text("\(reason) · Fix this on the host") } icon: {
                             Image(systemName: model.readiness?.state == .blocked ? "xmark.octagon" : "exclamationmark.triangle")
                                 .foregroundStyle(model.readiness?.state == .blocked ? YorozuPalette.vermilion : YorozuPalette.warning)
                         }
@@ -410,7 +410,7 @@ private struct EmptyChat: View {
         ContentUnavailableView {
             Label("Ask Yorozu anything", systemImage: "text.bubble")
         } description: {
-            Text("Quick questions are answered right here. Bigger work (research, writing, code) runs on your Mac in the background, and the result comes back to this chat.")
+            Text("Quick questions are answered right here. Bigger work (research, writing, code) runs on your host in the background, and the result comes back to this chat.")
         } actions: {
             VStack(spacing: LayoutMetrics.stack) {
                 Text("For example")
@@ -447,10 +447,10 @@ private struct SettingsSheet: View {
                 Section {
                     LabeledContent("Status", value: model.status.label)
                     LabeledContent("Path") { Text(LocalizedStringKey(model.path?.name ?? "Not connected")) }
-                    if let hostName = model.hostName { LabeledContent("Mac", value: hostName) }
+                    if let hostName = model.hostName { LabeledContent("Host", value: hostName) }
                     if let relayHost = model.relayHost { LabeledContent("Relay", value: relayHost) }
                     if let fingerprint = model.fingerprint {
-                        LabeledContent("Mac key") {
+                        LabeledContent("Host key") {
                             Text(fingerprint).monospaced().textSelection(.enabled)
                         }
                     }
@@ -485,7 +485,7 @@ private struct SettingsSheet: View {
                 } header: {
                     Text("Connection")
                 } footer: {
-                    Text("Connects straight to your Mac on the same Wi-Fi or over Tailscale, and falls back to the relay.")
+                    Text("Connects straight to the host on the same Wi-Fi or over Tailscale, and falls back to the relay.")
                 }
                 Section {
                     LabeledContent("Notifications") { Text(LocalizedStringKey(notificationsName)) }
@@ -500,7 +500,7 @@ private struct SettingsSheet: View {
                 // The Mac's own readiness, as synced; the fixes are on the Mac.
                 if let readiness = model.readiness {
                     Section {
-                        LabeledContent("Mac readiness") {
+                        LabeledContent("Host readiness") {
                             Text(model.readinessReason ?? String(localized: "Ready"))
                         }
                         ForEach(readiness.items.filter { $0.severity != .ok }, id: \.id) { item in
@@ -512,12 +512,12 @@ private struct SettingsSheet: View {
                             }
                         }
                     } footer: {
-                        if readiness.state != .ready { Text("Fix this on your Mac") }
+                        if readiness.state != .ready { Text("Fix this on the host") }
                     }
                 }
                 Section {
-                    LabeledContent("Mac version", value: model.macVersion ?? String(localized: "Unknown"))
-                    LabeledContent("iPhone version", value: Self.version)
+                    LabeledContent("Host version", value: model.macVersion ?? String(localized: "Unknown"))
+                    LabeledContent("Version on this device", value: Self.version)
                     Link("Privacy Policy", destination: URL(string: "https://yorozu.yumi.to/privacy/")!)
                     Link("Terms of Use", destination: URL(string: "https://yorozu.yumi.to/terms/")!)
                     Link("Source on GitHub", destination: URL(string: "https://github.com/izyuumi/yorozu")!)
@@ -565,12 +565,12 @@ private struct SettingsSheet: View {
         let date = { (d: Date) in d.ISO8601Format() }
         return [
             "Yorozu diagnostics \(date(Date()))",
-            "iPhone app: \(Self.version)",
+            "Client app: \(Self.version)",
             "iOS: \(UIDevice.current.systemVersion)",
-            "Mac app: \(model.macVersion ?? "unknown")",
+            "Host app: \(model.macVersion ?? "unknown")",
             "Status: \(model.status)",
             "Relay host: \(model.relayHost ?? "none")",
-            "Mac key fingerprint: \(model.fingerprint ?? "none")",
+            "Host key fingerprint: \(model.fingerprint ?? "none")",
             "Paired since: \(model.pairedAt.map(date) ?? "unknown")",
             "Last error: \(model.lastError.map { "\(date($0.at)) \($0.message)" } ?? "none")",
             "Path: \(model.path?.name ?? "not connected")",

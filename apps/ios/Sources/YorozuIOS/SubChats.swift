@@ -141,9 +141,9 @@ struct TopicsScreen: View {
                     ForEach(ids, id: \.self) { row($0, nil, facts) }
                 } footer: {
                     if model.working == nil {
-                        Text("Status unknown until your Mac is connected.")
+                        Text("Status unknown until the host is connected.")
                     } else {
-                        Text("Status unknown until this iPhone has caught up with your Mac.")
+                        Text("Status unknown until this device has caught up with the host.")
                     }
                 }
             } else {
@@ -158,7 +158,7 @@ struct TopicsScreen: View {
         .overlay {
             if ids.isEmpty && !showsJobs {
                 ContentUnavailableView("No activities yet", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("Bigger work runs in the background on your Mac. It shows up here."))
+                                       description: Text("Bigger work runs in the background on the host. It shows up here."))
             }
         }
         .navigationTitle("Activities")
@@ -321,8 +321,8 @@ struct TopicScreen: View {
         .background(Color(.systemGroupedBackground))
         .overlay {
             if model.topics[topicId] == nil && job == nil {
-                ContentUnavailableView("Not on this iPhone", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("This activity is older than what this iPhone keeps. Open it on your Mac."))
+                ContentUnavailableView("Not on this device", systemImage: "bubble.left.and.bubble.right",
+                                       description: Text("This activity is older than what this device keeps. Open it on the host."))
             }
         }
         .task {

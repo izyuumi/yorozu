@@ -46,8 +46,8 @@ struct RootView: View {
             Button("Cancel", role: .cancel) { model.pendingPairing = nil }
         } message: { pending in
             Text(pending.repair
-                ? String(localized: "This Mac is already paired. Repair replaces only its connection.\n\nRelay: \(pending.relayHost)\nMac key: \(pending.fingerprint)")
-                : String(localized: "Add this Mac to Yorozu?\n\nRelay: \(pending.relayHost)\nMac key: \(pending.fingerprint)"))
+                ? String(localized: "This host is already paired. Repair replaces only its connection.\n\nRelay: \(pending.relayHost)\nHost key: \(pending.fingerprint)")
+                : String(localized: "Add this host to Yorozu?\n\nRelay: \(pending.relayHost)\nHost key: \(pending.fingerprint)"))
         }
         // iOS suspends the app and its socket with it. Hang up on the way out, so the relay does
         // not keep a frozen socket, and dial on the way back in rather than waiting out a backoff

@@ -43,13 +43,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Yorozu connects straight to your Mac on the same network when Direct connection is on."
+            "value": "Yorozu connects straight to the host on the same network when Direct connection is on."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "直接接続がオンのとき、Yorozuは同じネットワーク上のMacに直接接続します。"
+            "value": "直接接続がオンのとき、Yorozuは同じネットワーク上のホストに直接接続します。"
           }
         }
       }
@@ -60,31 +60,31 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message."
+            "value": "Yorozu scans the pairing QR code shown by the host, and takes photos you choose to send in a message."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Yorozu escanea el código QR de emparejamiento que muestra tu Mac."
+            "value": "Yorozu escanea el código QR de emparejamiento que muestra el anfitrión."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "YorozuはMacに表示されたペアリング用QRコードをスキャンし、メッセージで送る写真を撮影します。"
+            "value": "Yorozuはホストに表示されたペアリング用QRコードをスキャンし、メッセージで送る写真を撮影します。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Yorozu는 Mac에 표시된 페어링 QR 코드를 스캔합니다."
+            "value": "Yorozu는 호스트에 표시된 페어링 QR 코드를 스캔합니다."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Yorozu 会扫描 Mac 上显示的配对二维码。"
+            "value": "Yorozu 会扫描主机上显示的配对二维码。"
           }
         }
       }

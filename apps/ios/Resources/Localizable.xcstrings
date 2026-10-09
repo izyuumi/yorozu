@@ -1,12 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Update Yorozu on your Mac to send files." : {
+    "Update Yorozu on the host to send files." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ファイルを送るには、MacのYorozuをアップデートしてください。"
+            "value" : "ファイルを送るには、ホストのYorozuをアップデートしてください。"
           }
         }
       }
@@ -117,12 +117,12 @@
         }
       }
     },
-    "The files are no longer on this iPhone." : {
+    "The files are no longer on this device." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ファイルがこのiPhoneにもうありません。"
+            "value" : "ファイルがこの端末にもうありません。"
           }
         }
       }
@@ -268,32 +268,32 @@
         }
       }
     },
-    "Connects straight to your Mac on the same Wi-Fi or over Tailscale, and falls back to the relay." : {
+    "Connects straight to the host on the same Wi-Fi or over Tailscale, and falls back to the relay." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "同じWi-FiまたはTailscale経由でMacに直接つなぎ、つながらないときはリレーを使います。"
+            "value" : "同じWi-FiまたはTailscale経由でホストに直接つなぎ、つながらないときはリレーを使います。"
           }
         }
       }
     },
-    "The Mac went to sleep" : {
+    "The host went to sleep" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Macがスリープしました"
+            "value" : "ホストがスリープしました"
           }
         }
       }
     },
-    "The Mac refused this iPhone on the direct path" : {
+    "The host refused this device on the direct path" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MacがこのiPhoneの直接接続を拒否しました"
+            "value" : "ホストがこの端末の直接接続を拒否しました"
           }
         }
       }
@@ -348,22 +348,22 @@
         }
       }
     },
-    "Mac stopped answering" : {
+    "Host stopped answering" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Macが応答しなくなりました"
+            "value" : "ホストが応答しなくなりました"
           }
         }
       }
     },
-    "The direct listener is not this Mac" : {
+    "The direct listener is not this host" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "直接接続の相手がこのMacではありません"
+            "value" : "直接接続の相手がこのホストではありません"
           }
         }
       }
@@ -403,19 +403,19 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "メッセージを配信できませんでした" } }
       }
     },
-    "This iPhone couldn’t send it within 24 hours." : {
+    "This device couldn’t send it within 24 hours." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このiPhoneから24時間以内に送信できませんでした。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末から24時間以内に送信できませんでした。" } }
       }
     },
-    "Your Mac was offline for more than 24 hours." : {
+    "The host was offline for more than 24 hours." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macが24時間以上オフラインでした。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストが24時間以上オフラインでした。" } }
       }
     },
-    "A message to your Mac expired without being read." : {
+    "A message to the host expired without being read." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macへのメッセージが読まれないまま期限切れになりました。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストへのメッセージが読まれないまま期限切れになりました。" } }
       }
     },
     "%lld messages waiting to send" : {
@@ -446,14 +446,14 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除" } }
       }
     },
-    "Received by Mac" : {
+    "Received by host" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macが受信" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストが受信" } }
       }
     },
-    "Held by the relay until your Mac is online · expires %@" : {
+    "Held by the relay until the host is online · expires %@" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macがオンラインになるまでリレーが保管します · 期限 %@" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストがオンラインになるまでリレーが保管します · 期限 %@" } }
       }
     },
     "Sent %@ · delivered %@" : {
@@ -466,9 +466,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "最後のエラー" } }
       }
     },
-    "iPhone version" : {
+    "Version on this device" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "iPhoneのバージョン" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末のバージョン" } }
       }
     },
     "On" : {
@@ -552,9 +552,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu になんでも頼めます" } }
       }
     },
-    "Quick questions are answered right here. Bigger work (research, writing, code) runs on your Mac in the background, and the result comes back to this chat." : {
+    "Quick questions are answered right here. Bigger work (research, writing, code) runs on your host in the background, and the result comes back to this chat." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "簡単な質問にはここで答えます。調べもの・文章・コードなど時間のかかる作業は Mac がバックグラウンドで進め、終わったらこのチャットに結果を届けます。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "簡単な質問にはここで答えます。調べもの・文章・コードなど時間のかかる作業はホストがバックグラウンドで進め、終わったらこのチャットに結果を届けます。" } }
       }
     },
     "For example" : {
@@ -577,9 +577,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuにメッセージ…" } }
       }
     },
-    "On your Mac, open Settings › Devices › Pair iPhone and scan its QR code." : {
+    "On the host, open Settings › Devices › Pair a Client Device and scan its QR code." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac で「設定」›「デバイス」›「iPhoneをペアリング」を開き、QRコードをスキャンしてください。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストで「設定」›「デバイス」›「クライアント端末をペアリング」を開き、QRコードをスキャンしてください。" } }
       }
     },
     "Scan its QR code, or paste the code shown beside it" : {
@@ -587,19 +587,19 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "QRコードをスキャン、または横に表示されたコードを貼り付け" } }
       }
     },
-    "%@ · Fix this on your Mac" : {
+    "%@ · Fix this on the host" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ · Mac で修正してください" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ · ホストで修正してください" } }
       }
     },
-    "Fix this on your Mac" : {
+    "Fix this on the host" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac で修正してください" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストで修正してください" } }
       }
     },
-    "Mac readiness" : {
+    "Host readiness" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac の準備状況" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストの準備状況" } }
       }
     },
     "Ready" : {
@@ -2826,35 +2826,6 @@
         }
       }
     },
-    "Mac" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mac"
-          }
-        }
-      }
-    },
     "Mac offline" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3839,30 +3810,30 @@
         }
       }
     },
-    "Pair with your Mac" : {
+    "Pair with your host" : {
       "localizations" : {
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Emparejar con tu Mac"
+            "value" : "Emparejar con tu anfitrión"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mac とペアリング"
+            "value" : "ホストとペアリング"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mac과 페어링"
+            "value" : "호스트와 페어링"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "与 Mac 配对"
+            "value" : "与主机配对"
           }
         }
       }
@@ -5853,11 +5824,11 @@
       "comment" : "Push body: the relay's fixed loc-key.",
       "extractionState" : "manual",
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your Mac is back online." } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tu Mac vuelve a estar en línea." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Macがオンラインに戻りました。" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Mac이 다시 온라인 상태입니다." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你的 Mac 已重新上线。" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your host is back online." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tu anfitrión vuelve a estar en línea." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストがオンラインに戻りました。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트가 다시 온라인 상태입니다." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你的主机已重新上线。" } }
       }
     },
     "Yorozu needs attention." : {
@@ -6180,30 +6151,30 @@
         }
       }
     },
-    "Your Mac's agent, in your pocket." : {
+    "Your host's agent, wherever you are." : {
       "localizations" : {
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El agente de tu Mac, en tu bolsillo."
+            "value" : "El agente de tu anfitrión, estés donde estés."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mac のエージェントをポケットに。"
+            "value" : "ホストのエージェントを、どこにいても。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mac의 에이전트를 주머니 속에."
+            "value" : "어디서나 호스트의 에이전트를."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "把 Mac 上的代理装进口袋。"
+            "value" : "随时随地使用主机上的代理。"
           }
         }
       }
@@ -7136,30 +7107,30 @@
         }
       }
     },
-    "Host Mac offline": {
+    "Host offline": {
       "localizations": {
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mac anfitrión sin conexión"
+            "value": "Anfitrión sin conexión"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ホストMacはオフラインです"
+            "value": "ホストはオフラインです"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "호스트 Mac이 오프라인 상태임"
+            "value": "호스트가 오프라인 상태임"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "主机 Mac 已离线"
+            "value": "主机已离线"
           }
         }
       }
@@ -7897,12 +7868,12 @@
         }
       }
     },
-    "Updating · waiting for Mac to restart": {
+    "Updating · waiting for the host to restart": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "更新中 · Macの再起動を待っています"
+            "value": "更新中 · ホストの再起動を待っています"
           }
         }
       }
@@ -10848,12 +10819,12 @@
         }
       }
     },
-    "Mac key": {
+    "Host key": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mac の鍵"
+            "value": "ホストの鍵"
           }
         }
       }
@@ -13364,16 +13335,6 @@
         }
       }
     },
-    "Mac version": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Macのバージョン"
-          }
-        }
-      }
-    },
     "Nickname is stored on this device. Clear it to use the Mac's computer name.": {
       "localizations": {
         "ja": {
@@ -13384,22 +13345,22 @@
         }
       }
     },
-    "On your Mac, open Settings › Devices › Pair iPhone": {
+    "On the host, open Settings › Devices › Pair a Client Device": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mac で「設定」›「デバイス」›「iPhoneをペアリング」を開く"
+            "value": "ホストで「設定」›「デバイス」›「クライアント端末をペアリング」を開く"
           }
         }
       }
     },
-    "Paste the Code from Settings › Devices › Pair iPhone on your Mac. Copy Link there copies it.": {
+    "Paste the Code from Settings › Devices › Pair a Client Device on the host. Copy Link there copies it.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mac の「設定」›「デバイス」›「iPhoneをペアリング」に表示されるコードを貼り付けてください。そこの「リンクをコピー」でコピーできます。"
+            "value": "ホストの「設定」›「デバイス」›「クライアント端末をペアリング」に表示されるコードを貼り付けてください。そこの「リンクをコピー」でコピーできます。"
           }
         }
       }
@@ -13464,12 +13425,12 @@
         }
       }
     },
-    "Scan a code from a Mac you trust. Pairing codes are secret.": {
+    "Scan a code from a host you trust. Pairing codes are secret.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "信頼するMacのコードをスキャンしてください。ペアリングコードは他人に教えないでください。"
+            "value": "信頼するホストのコードをスキャンしてください。ペアリングコードは他人に教えないでください。"
           }
         }
       }
@@ -13484,12 +13445,12 @@
         }
       }
     },
-    "Check that the Mac key matches": {
+    "Check that the host key matches": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mac の鍵が一致することを確認"
+            "value": "ホストの鍵が一致することを確認"
           }
         }
       }
@@ -13544,22 +13505,22 @@
         }
       }
     },
-    "Add this Mac to Yorozu?\n\nRelay: %@\nMac key: %@": {
+    "Add this host to Yorozu?\n\nRelay: %@\nHost key: %@": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このMacをYorozuに追加しますか？\n\nリレー：%1$@\nMac の鍵：%2$@"
+            "value": "このホストをYorozuに追加しますか？\n\nリレー：%1$@\nホストの鍵：%2$@"
           }
         }
       }
     },
-    "This Mac is already paired. Repair replaces only its connection.\n\nRelay: %@\nMac key: %@": {
+    "This host is already paired. Repair replaces only its connection.\n\nRelay: %@\nHost key: %@": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このMacはペアリング済みです。修復すると接続だけが置き換わります。\n\nリレー：%1$@\nMac の鍵：%2$@"
+            "value": "このホストはペアリング済みです。修復すると接続だけが置き換わります。\n\nリレー：%1$@\nホストの鍵：%2$@"
           }
         }
       }
@@ -13584,22 +13545,22 @@
         }
       }
     },
-    "Mac has not answered pairing": {
+    "Host has not answered pairing": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Macからペアリングの応答がありません"
+            "value": "ホストからペアリングの応答がありません"
           }
         }
       }
     },
-    "Mac public key is not base64url": {
+    "Host public key is not base64url": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Macの公開キーがbase64url形式ではありません"
+            "value": "ホストの公開キーがbase64url形式ではありません"
           }
         }
       }
@@ -13764,12 +13725,12 @@
         }
       }
     },
-    "A replay-protected channel is required. Update Yorozu on the host Mac.": {
+    "A replay-protected channel is required. Update Yorozu on the host.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "再送攻撃から保護された通信が必要です。ホストのMacでYorozuを更新してください。"
+            "value": "再送攻撃から保護された通信が必要です。ホストでYorozuを更新してください。"
           }
         }
       }
@@ -13794,22 +13755,22 @@
         }
       }
     },
-    "Invalid peer information. Update Yorozu on this device and its host Mac.": {
+    "Invalid peer information. Update Yorozu on this device and its host.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "接続先の情報が無効です。このデバイスとホストのMacでYorozuを更新してください。"
+            "value": "接続先の情報が無効です。この端末とホストでYorozuを更新してください。"
           }
         }
       }
     },
-    "This host no longer advertises required protocol support. Update Yorozu on the host Mac.": {
+    "This host no longer advertises required protocol support. Update Yorozu on the host.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このホストは必要な通信プロトコルに対応していません。ホストのMacでYorozuを更新してください。"
+            "value": "このホストは必要な通信プロトコルに対応していません。ホストでYorozuを更新してください。"
           }
         }
       }
@@ -13904,12 +13865,12 @@
         }
       }
     },
-    "Update Yorozu on this device and its host Mac: a required security or protocol capability is unavailable.": {
+    "Update Yorozu on this device and its host: a required security or protocol capability is unavailable.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このデバイスとホストのMacでYorozuを更新してください。必要なセキュリティまたは通信プロトコルの機能を利用できません。"
+            "value": "この端末とホストでYorozuを更新してください。必要なセキュリティまたは通信プロトコルの機能を利用できません。"
           }
         }
       }
@@ -15143,9 +15104,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "置き換え済み" } }
       }
     },
-    "Status unknown until your Mac is connected." : {
+    "Status unknown until the host is connected." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac に接続するまで状態は不明です。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストに接続するまで状態は不明です。" } }
       }
     },
     "Needs attention" : {
@@ -15158,9 +15119,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクティビティはまだありません" } }
       }
     },
-    "Bigger work runs in the background on your Mac. It shows up here." : {
+    "Bigger work runs in the background on the host. It shows up here." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "時間のかかる作業は Mac のバックグラウンドで進み、ここに表示されます。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "時間のかかる作業はホストのバックグラウンドで進み、ここに表示されます。" } }
       }
     },
     "Activities" : {
@@ -15193,14 +15154,14 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "待機中 · %@" } }
       }
     },
-    "Not on this iPhone" : {
+    "Not on this device" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この iPhone にはありません" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末にはありません" } }
       }
     },
-    "This activity is older than what this iPhone keeps. Open it on your Mac." : {
+    "This activity is older than what this device keeps. Open it on the host." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このアクティビティは iPhone に保存される期間より古いものです。Mac で開いてください。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このアクティビティは この端末に保存される期間より古いものです。ホストで開いてください。" } }
       }
     },
     "To change this work, write in the main chat." : {
@@ -15273,14 +15234,14 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件" } }
       }
     },
-    "Search needs your Mac" : {
+    "Search needs the host" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索には Mac との接続が必要です" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索にはホストとの接続が必要です" } }
       }
     },
-    "Your Mac runs the search. Connect to it to search." : {
+    "The host runs the search. Connect to it to search." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索は Mac で行います。Mac に接続してから検索してください。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索はホストで行います。ホストに接続してから検索してください。" } }
       }
     },
     "Search everything" : {
@@ -15288,9 +15249,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべてを検索" } }
       }
     },
-    "The main chat and every activity, on your Mac." : {
+    "The main chat and every activity, on the host." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac にあるメインのチャットとすべてのアクティビティが対象です。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストにあるメインのチャットとすべてのアクティビティが対象です。" } }
       }
     },
     "Couldn't search" : {
@@ -15303,9 +15264,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクティビティ" } }
       }
     },
-    "Older than this iPhone keeps. Open it on your Mac." : {
+    "Older than this device keeps. Open it on the host." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "iPhone に保存される期間より古いものです。Mac で開いてください。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末に保存される期間より古いものです。ホストで開いてください。" } }
       }
     },
     "Search" : {
@@ -15345,9 +15306,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "最近" } }
       }
     },
-    "Status unknown until this iPhone has caught up with your Mac." : {
+    "Status unknown until this device has caught up with the host." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この iPhone が Mac に追いつくまで状態は不明です。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末がホストに追いつくまで状態は不明です。" } }
       }
     },
     "Show all %lld steps" : {
@@ -15415,9 +15376,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "「%@」を削除しますか？" } }
       }
     },
-    "It stops running. Its activity and its folder stay on your Mac." : {
+    "It stops running. Its activity and its folder stay on the host." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "実行されなくなります。アクティビティとフォルダは Mac に残ります。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "実行されなくなります。アクティビティとフォルダはホストに残ります。" } }
       }
     },
     "Run Now" : {
