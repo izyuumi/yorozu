@@ -30,7 +30,7 @@ struct ChatScreen: View {
         NavigationStack(path: $path) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
-                    let byId = Dictionary(model.bubbles.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+                    let byId = Dictionary(model.timeline.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
                     let firstUnread = firstUnread
                     ForEach(rows) { row in
                         VStack(spacing: LayoutMetrics.stack) {
@@ -78,17 +78,17 @@ struct ChatScreen: View {
                 } else {
                     atBottom = new.offset >= new.maxOffset - Self.bottomSlack
                 }
-                if atBottom { seenId = model.bubbles.last?.id }
+                if atBottom { seenId = model.timeline.last?.id }
             }
-            .onChange(of: model.bubbles.last?.id) { _, _ in
-                guard let last = model.bubbles.last else { return }
+            .onChange(of: model.timeline.last?.id) { _, _ in
+                guard let last = model.timeline.last else { return }
                 if atBottom {
                     position.scrollTo(edge: .bottom)
                     seenId = last.id
                 }
             }
             .overlay {
-                if model.bubbles.isEmpty && model.working != true {
+                if model.timeline.isEmpty && model.working != true {
                     EmptyChat { model.draft = $0 }
                 }
             }
@@ -155,6 +155,8 @@ struct ChatScreen: View {
                 switch route {
                 case .topics:
                     TopicsScreen(model: model)
+                case .jobs:
+                    JobsScreen(model: model) { path.append(.topic($0, focus: nil)) }
                 case .topic(let id, let focus):
                     TopicScreen(model: model, topicId: id, focus: focus) { path = [] }
                 case .search:
@@ -205,14 +207,14 @@ struct ChatScreen: View {
 
     /// Messages below the last one seen at the bottom.
     private var newCount: Int {
-        guard let seenId, let index = model.bubbles.lastIndex(where: { $0.id == seenId }) else { return 0 }
-        return model.bubbles.count - 1 - index
+        guard let seenId, let index = model.timeline.lastIndex(where: { $0.id == seenId }) else { return 0 }
+        return model.timeline.count - 1 - index
     }
 
     /// Each message, with a day separator before the first message of each day.
     private var rows: [TimelineRow] {
         var previous: Date?
-        return model.bubbles.map { bubble in
+        return model.timeline.map { bubble in
             let date = MessageTime.date(bubble.ts)
             defer { previous = date }
             let newDay = previous.map { !Calendar.current.isDate($0, inSameDayAs: date) } ?? true
@@ -241,22 +243,22 @@ struct ChatScreen: View {
 
     /// The first message from Yorozu after the read cursor: the user's own messages are never unread.
     private var firstUnread: String? {
-        guard let after = unreadAfter, let index = model.bubbles.firstIndex(where: { $0.id == after }) else { return nil }
-        return model.bubbles[(index + 1)...].first { !$0.user }?.id
+        guard let after = unreadAfter, let index = model.timeline.firstIndex(where: { $0.id == after }) else { return nil }
+        return model.timeline[(index + 1)...].first { !$0.user }?.id
     }
 
     /// The newest stored message, while it is on screen: the app active, the chat shown, the view at the bottom.
     private var readTarget: String? {
         guard scenePhase == .active, path.isEmpty, !settings, details == nil, atBottom, model.state == .paired else { return nil }
-        return model.bubbles.last { $0.seq != nil }?.id
+        return model.timeline.last { $0.seq != nil }?.id
     }
 
     /// `id` is this phone's last sent read or a message before it, in timeline order.
     private func atOrBeforeSentRead(_ id: String?) -> Bool {
         guard let id, let sentRead else { return false }
         if id == sentRead { return true }
-        guard let index = model.bubbles.firstIndex(where: { $0.id == id }),
-              let sent = model.bubbles.firstIndex(where: { $0.id == sentRead }) else { return false }
+        guard let index = model.timeline.firstIndex(where: { $0.id == id }),
+              let sent = model.timeline.firstIndex(where: { $0.id == sentRead }) else { return false }
         return index <= sent
     }
 
@@ -264,8 +266,8 @@ struct ChatScreen: View {
     private func markRead(_ id: String?) {
         guard let id, id != sentRead, id != model.readCursor?.messageId else { return }
         if let cursor = model.readCursor?.messageId,
-           let held = model.bubbles.firstIndex(where: { $0.id == cursor }),
-           let new = model.bubbles.firstIndex(where: { $0.id == id }), new <= held { return }
+           let held = model.timeline.firstIndex(where: { $0.id == cursor }),
+           let new = model.timeline.firstIndex(where: { $0.id == id }), new <= held { return }
         sentRead = id
         Task { await model.markRead(id) }
     }

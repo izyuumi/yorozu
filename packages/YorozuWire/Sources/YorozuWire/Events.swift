@@ -105,6 +105,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case pageRequest = "page_request"
         case chunk
         case readiness
+        case jobList = "job_list"
+        case jobControl = "job_control"
     }
 
     public enum Payload: Equatable, Sendable {
@@ -173,6 +175,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case pageRequest(PageRequestData)
         case chunk(ChunkData)
         case readiness(ReadinessData)
+        case jobList(JobListData)
+        case jobControl(JobControlData)
 
         public var kind: Kind {
             switch self {
@@ -241,6 +245,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .pageRequest: .pageRequest
             case .chunk: .chunk
             case .readiness: .readiness
+            case .jobList: .jobList
+            case .jobControl: .jobControl
             }
         }
 
@@ -344,6 +350,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .pageRequest: payload = .pageRequest(try c.decode(PageRequestData.self, forKey: .data))
             case .chunk: payload = .chunk(try c.decode(ChunkData.self, forKey: .data))
             case .readiness: payload = .readiness(try c.decode(ReadinessData.self, forKey: .data))
+            case .jobList: payload = .jobList(try c.decode(JobListData.self, forKey: .data))
+            case .jobControl: payload = .jobControl(try c.decode(JobControlData.self, forKey: .data))
             }
         } catch {
             payload = .unknown(kind: rawKind, data: rawData)
@@ -430,6 +438,8 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .pageRequest(let d): try c.encode(d, forKey: .data)
         case .chunk(let d): try c.encode(d, forKey: .data)
         case .readiness(let d): try c.encode(d, forKey: .data)
+        case .jobList(let d): try c.encode(d, forKey: .data)
+        case .jobControl(let d): try c.encode(d, forKey: .data)
         }
     }
 }
@@ -568,6 +578,8 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var readAt: Int?
     /// 0.7, Mac -> phone: the phone's send time (the event `ts`) of a user message that came from a phone, epoch ms (#314).
     public var sentAt: Int?
+    /// 0.7 `jobs-v1`, phone -> Mac: the job whose own input this message is (#319); it goes to that job's sub-chat.
+    public var jobId: String?
 
     public init(
         role: Role,
@@ -590,9 +602,11 @@ public struct MessageData: Codable, Equatable, Sendable {
         seq: Int? = nil,
         readAt: Int? = nil,
         sentAt: Int? = nil,
-        files: [AttachmentDescriptor]? = nil
+        files: [AttachmentDescriptor]? = nil,
+        jobId: String? = nil
     ) {
         self.files = files
+        self.jobId = jobId
         self.readAt = readAt
         self.sentAt = sentAt
         self.kind = kind
@@ -615,7 +629,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt, files }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt, files, jobId }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -643,6 +657,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         readAt = try c.decodeIfPresent(Int.self, forKey: .readAt)
         sentAt = try c.decodeIfPresent(Int.self, forKey: .sentAt)
         files = try c.decodeIfPresent([AttachmentDescriptor].self, forKey: .files)
+        jobId = try c.decodeIfPresent(String.self, forKey: .jobId)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -668,6 +683,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(readAt, forKey: .readAt)
         try c.encodeIfPresent(sentAt, forKey: .sentAt)
         try c.encodeIfPresent(files, forKey: .files)
+        try c.encodeIfPresent(jobId, forKey: .jobId)
     }
 }
 

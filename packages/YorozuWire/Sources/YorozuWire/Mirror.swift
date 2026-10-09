@@ -237,6 +237,53 @@ public struct ReadinessData: Codable, Equatable, Sendable {
     }
 }
 
+/// `job_list` (Mac -> phone, `jobs-v1`): every scheduled job, after each compatible handshake and on every change (#319).
+public struct JobListData: Codable, Equatable, Sendable {
+    public static let capability = "jobs-v1"
+    public struct Job: Codable, Equatable, Sendable, Identifiable {
+        public var id: String
+        public var name: String
+        /// The Mac's plain-words description; its first line is the schedule in words. nil until written.
+        public var summary: String?
+        /// Epoch ms; nil while paused, retired or unscheduled.
+        public var nextRun: Int?
+        public var lastRun: Int?
+        /// The last finished run: `done`, `failed`, `stopped` or `uncertain`, as text so a new value still decodes.
+        public var lastResult: String?
+        public var lastNotable: Bool?
+        /// `running`, `paused`, `needsApproval`, `needsAttention` or `idle`, as text so a new state still decodes.
+        public var state: String
+        /// The job's sub-chat; nil until the Mac has bound one.
+        public var topicId: String?
+        public init(id: String, name: String, summary: String?, nextRun: Int?, lastRun: Int?, lastResult: String?,
+                    lastNotable: Bool?, state: String, topicId: String?) {
+            self.id = id
+            self.name = name
+            self.summary = summary
+            self.nextRun = nextRun
+            self.lastRun = lastRun
+            self.lastResult = lastResult
+            self.lastNotable = lastNotable
+            self.state = state
+            self.topicId = topicId
+        }
+    }
+    public var jobs: [Job]
+    public init(jobs: [Job]) { self.jobs = jobs }
+}
+
+/// `job_control` (phone -> Mac, `jobs-v1`): one action on one job. Answered with `admission_status` for the
+/// event's id: `accepted`, or `rejected` with a user-facing `reason`.
+public struct JobControlData: Codable, Equatable, Sendable {
+    public enum Action: String, Codable, Sendable { case pause, resume, runNow = "run_now", delete }
+    public var jobId: String
+    public var action: Action
+    public init(jobId: String, action: Action) {
+        self.jobId = jobId
+        self.action = action
+    }
+}
+
 /// `chunk` (Mac -> phone): one ordered slice of an event whose JSON encoding exceeds ``budget``.
 /// `data` is base64 of up to ``slice`` bytes of that encoding; `id` names the set.
 public struct ChunkData: Codable, Equatable, Sendable {

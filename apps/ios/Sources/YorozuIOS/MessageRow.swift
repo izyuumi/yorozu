@@ -12,7 +12,7 @@ enum RowStyle {
             self = .question
         } else if bubble.failed {
             self = .failure
-        } else if bubble.notice != nil || ["acknowledgment", "memory_receipt", "approval_request"].contains(bubble.kind ?? "") {
+        } else if bubble.notice != nil || ["acknowledgment", "memory_receipt", "approval_request", "job_note"].contains(bubble.kind ?? "") {
             self = .system
         } else {
             self = .answer

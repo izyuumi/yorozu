@@ -40,6 +40,8 @@ struct Outbox: Codable, Sendable {
         /// The message's files (#316): their copies wait in `UploadStore` and go up only over a live session
         /// with the Mac, never through the relay's buffer. The text waits with them, as one unit.
         var files: [AttachmentInfo]?
+        /// A job's own input (#319): the job's sub-chat, where its bubble shows until the stored copy arrives.
+        var topicId: String?
 
         var id: String { event.id }
         var deadline: Int {
