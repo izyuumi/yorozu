@@ -9,11 +9,13 @@ extension AppModel {
     /// Checks readiness again: at launch, after a Gateway call fails, and before a send while not ready. One check at a
     /// time; phones get each change. Fixture and offline runs have no harness to check.
     func recheck() {
-        guard recheckTask == nil else { return }
+        guard recheckTask == nil else { recheckAgain = true; return }
         recheckTask = Task {
-            defer { recheckTask = nil }
-            let h = launched?.config.harness ?? config.harness
-            var r = runtimeMode == .live ? await Readiness.harness(h,rpc: gatewayRPC ?? GatewayRPC(target: h.gatewayURL)) : Readiness()
+            defer { recheckTask = nil; if recheckAgain { recheckAgain = false; recheck() } }
+            // The launched harness, against the settings in force now: Hermes's profiles follow [mcp_servers] and dev_repo.
+            var c = config
+            if let l = launched?.config.harness { let repo = c.harness.devRepo; c.harness = l; c.harness.devRepo = repo }
+            var r = runtimeMode == .live ? await Readiness.harness(c,rpc: gatewayRPC ?? GatewayRPC(target: c.harness.gatewayURL)) : Readiness()
             if let switchNotice { r.items.append(Readiness.Item(id: "harness.switch",title: switchNotice,severity: .warning,fix: .step("harness"))) }
             // A fixed title: phones get titles, never the raw error.
             if let filesNotice { r.items.append(Readiness.Item(id: "files",title: String(localized: "Attachments are off this launch"),detail: filesNotice,severity: .warning)) }

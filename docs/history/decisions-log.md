@@ -716,3 +716,10 @@ Added in implementation:
 - Integrations and `[mcp_servers]` coexist: workers get `[mcp_servers]` minus the servers of disabled integrations, plus the servers of enabled integrations, with `[mcp_servers]` winning on a name clash. A legacy `config.toml` whose `[mcp_servers]` has no `cua-driver` entry and that sets no `[integrations.cua] enabled` loads with cua off, since removing that entry used to mean computer use off.
 - An existing agent entry that differs from the expected shape is shown as a list of changes and written only after the user confirms; the write is refused if OpenClaw's config changed since the user saw it.
 - The setup CLI exits 2 for usage, an unknown id, an invalid value or an app-only step, and 1 for other failures, with `{"error": …}` under `--json`.
+
+## 2026-10-09 — Hermes profile setup
+Source: the plan comment on issue #318 for the remaining code after #317 (branch `hermes-setup`).
+
+- Yorozu writes its two Hermes profiles only after an explicit action: a click in the setup window, or `setup answer hermes_setup apply:<plan_digest>` naming the changes the caller reviewed. The digest and stale rule is the one `openclaw_setup` uses.
+- The default Hermes profile is never edited; when its API server is off, readiness shows the commands to copy.
+- When `[mcp_servers]`, an integration or `dev_repo` changes, the profiles are not rewritten automatically. Readiness warns "Hermes profiles need updating" with Fix… at the harness step, where the user applies the changes.

@@ -232,6 +232,50 @@
         }
       }
     },
+    "Turn on the API server in your default Hermes profile" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デフォルトの Hermes プロファイルで API サーバーをオンにしてください"
+          }
+        }
+      }
+    },
+    "Copy Commands" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コマンドをコピー"
+          }
+        }
+      }
+    },
+    "Hermes profiles need updating" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes プロファイルの更新が必要です"
+          }
+        }
+      }
+    },
+    "Yorozu's Hermes profiles can't be planned" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu の Hermes プロファイルの変更内容を用意できません"
+          }
+        }
+      }
+    },
     "%@ is off" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3420,6 +3464,76 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Gateway URL"
+          }
+        }
+      }
+    },
+    "Hermes URL" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes URL"
+          }
+        }
+      }
+    },
+    "Expected a loopback http:// or https:// address with no path, such as http://127.0.0.1:8642." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "パスのないループバックの http:// または https:// アドレスを入力してください（例: http://127.0.0.1:8642）。"
+          }
+        }
+      }
+    },
+    "Set Up Hermes Profiles…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes プロファイルを設定…"
+          }
+        }
+      }
+    },
+    "Hermes profiles" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes プロファイル"
+          }
+        }
+      }
+    },
+    "Yorozu's own profiles, yorozu-worker and yorozu-roles. Setup shows each change before writing it; your default profile is never changed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu 専用のプロファイル yorozu-worker と yorozu-roles です。セットアップは書き込む前に変更をすべて表示します。デフォルトのプロファイルは変更しません。"
+          }
+        }
+      }
+    },
+    "Continue writes only Yorozu's two Hermes profiles, yorozu-worker and yorozu-roles:" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「続ける」を押すと、Yorozu の 2 つの Hermes プロファイル yorozu-worker と yorozu-roles だけに書き込みます:"
+          }
+        }
+      }
+    },
+    "Your default Hermes profile and any other profile don't change." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デフォルトの Hermes プロファイルとほかのプロファイルは変わりません。"
           }
         }
       }

@@ -65,6 +65,7 @@ struct StorageSettings: View {
 struct AdvancedSettings: View {
     @ObservedObject var model: AppModel
     @State private var gateway = ""
+    @State private var hermes = ""
     @State private var enrolled = false
     /// A harness switch waiting for the user's confirmation.
     @State private var switchTo: Config.HarnessKind?
@@ -97,8 +98,20 @@ struct AdvancedSettings: View {
                         else if let launched, launched.transport != config.harness.transport { Text("Relaunch to apply.") }
                         else { Text("Native gets live progress and tool names. If it is unavailable, Yorozu uses the command line for that launch and says so.") }
                     }.disabled(model.override("harness.transport") != nil)
-                    gatewayRow(config, launched: launched)
+                    urlRow("Gateway URL", text: $gateway, key: "harness.gateway_url", path: \.gatewayURL, valid: Config.isLoopbackGateway(gateway),
+                           expected: "Expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789.", launched: launched)
                     if model.runtimeMode == .live, model.nativeSelected { enrollment }
+                }
+            } else {
+                Section("Harness connection") {
+                    urlRow("Hermes URL", text: $hermes, key: "harness.hermes_url", path: \.hermesURL, valid: Config.isLoopbackHTTP(hermes),
+                           expected: "Expected a loopback http:// or https:// address with no path, such as http://127.0.0.1:8642.", launched: launched)
+                    LabeledContent {
+                        Button("Set Up Hermes Profiles…") { model.openSetup(at: "harness") }
+                    } label: {
+                        Text("Hermes profiles")
+                        Text("Yorozu's own profiles, yorozu-worker and yorozu-roles. Setup shows each change before writing it; your default profile is never changed.")
+                    }
                 }
             }
             Section {
@@ -114,7 +127,7 @@ struct AdvancedSettings: View {
                     Text(config.harness.devRepo.isEmpty ? String(localized: "Not set: coding work is off.") : config.harness.devRepo).monospaced().textSelection(.enabled)
                     if let note = overrideNote(locked) { note }
                 }.disabled(locked != nil)
-                ForEach(config.harness.kind.adapter(config.harness, rpc: GatewayRPC()).executors(model.settingsBox.value), id: \.executor.id) { e in
+                ForEach(config.harness.kind.adapter(config, rpc: GatewayRPC()).executors(model.settingsBox.value), id: \.executor.id) { e in
                     LabeledContent {
                         if e.path == nil { Text("Not found").foregroundStyle(.orange) } else { Text("Found") }
                         if let login = Self.logins[e.executor.id] { Button("Copy Sign-In Command") { copyToClipboard(login) } }
@@ -167,12 +180,13 @@ struct AdvancedSettings: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { gateway = config.harness.gatewayURL; enrolled = model.nativeEnrolled }
+        .onAppear { gateway = config.harness.gatewayURL; hermes = config.harness.hermesURL; enrolled = model.nativeEnrolled }
         .onChange(of: config.harness.gatewayURL) { _, new in gateway = new }
+        .onChange(of: config.harness.hermesURL) { _, new in hermes = new }
         .onChange(of: model.connecting) { _, busy in if !busy { enrolled = model.nativeEnrolled } }
         .onDisappear { model.bootstrapSecret = "" }
         .alert("Switch the main harness?", isPresented: Binding(get: { switchTo != nil }, set: { if !$0 { switchTo = nil } }), presenting: switchTo) { kind in
-            Button("Switch to \(Self.harnessTitle(kind))") { model.writeSettings { $0.harness.kind = kind } }
+            Button("Switch to \(Self.harnessTitle(kind))") { model.writeSettings { $0.harness.kind = kind; $0.setup.answered.removeAll { $0 == "harness" } } }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Your messages, memory excerpts and workers' tasks then go to this harness. The switch applies at the next launch, once running work finishes.")
@@ -183,18 +197,19 @@ struct AdvancedSettings: View {
         switch kind { case .openclaw: "OpenClaw"; case .hermes: "Hermes Agent" }
     }
 
-    @ViewBuilder private func gatewayRow(_ config: Config, launched: Config.HarnessSettings?) -> some View {
-        let locked = model.override("harness.gateway_url"), valid = Config.isLoopbackGateway(gateway)
-        TextField(text: $gateway) {
-            Text("Gateway URL")
+    /// A loopback address of the harness (`key` in config.toml): applied on Return, at the next launch.
+    @ViewBuilder private func urlRow(_ title: LocalizedStringKey, text: Binding<String>, key: String, path: WritableKeyPath<Config.HarnessSettings, String>, valid: Bool, expected: LocalizedStringKey, launched: Config.HarnessSettings?) -> some View {
+        let locked = model.override(key), current = model.config.harness[keyPath: path]
+        TextField(text: text) {
+            Text(title)
             if let note = overrideNote(locked) { note }
-            else if !valid { Text("Expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789.") }
-            else if let launched, launched.gatewayURL != config.harness.gatewayURL { Text("Relaunch to apply.") }
+            else if !valid { Text(expected) }
+            else if let launched, launched[keyPath: path] != current { Text("Relaunch to apply.") }
             else { Text("Loopback only. Press Return to apply.") }
         }
         .monospaced()
         .disabled(locked != nil)
-        .onSubmit { let next = gateway; if valid, next != config.harness.gatewayURL { model.writeSettings { $0.harness.gatewayURL = next } } }
+        .onSubmit { let next = text.wrappedValue; if valid, next != current { model.writeSettings { $0.harness[keyPath: path] = next } } }
     }
 
     /// Enrolls Yorozu's own device with the local Gateway for the native transport.

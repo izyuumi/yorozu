@@ -10,14 +10,17 @@ public struct HermesReadiness: Sendable, Equatable {
     public var ready: Bool { problems.isEmpty }
 }
 
-/// Hermes's setup seam (#317): `HermesHarness.readiness()` as readiness items. Its setup steps are #318's
-/// (`HermesProfiles`); here only detection.
+/// Hermes's setup seam (#317): `HermesHarness.readiness()` as readiness items, plus two read-only checks: the default
+/// profile's API server (a command to copy; Yorozu never edits that profile) and, once Yorozu's profiles exist, whether
+/// they still match `HermesProfiles.pending`. The harness step offers the profile write (`hermes_setup`).
 public struct HermesSetup: HarnessSetup {
     public var kind: Config.HarnessKind { .hermes }
     public var title: String { "Hermes Agent" }
     public var steps: [String] { ["harness"] }
     public var url: String, agent: String
-    public init(url: String, agent: String) { self.url = url; self.agent = agent }
+    /// What the profiles should hold; nil skips the staleness check.
+    public var profiles: HermesProfiles.Settings?
+    public init(url: String, agent: String, profiles: HermesProfiles.Settings? = nil) { self.url = url; self.agent = agent; self.profiles = profiles }
     public var installed: Bool { HermesHarness.launcher() != nil }
     public func detect() async -> HarnessDetection {
         var d = HarnessDetection(kind: kind,title: title)
@@ -32,6 +35,16 @@ public struct HermesSetup: HarnessSetup {
         d.items = [Readiness.Item(id: "hermes.installed",title: String(localized: "Hermes Agent is installed"),detail: launcher + (r.version.map { " " + $0 } ?? ""),severity: .ok)]
             + r.problems.enumerated().map { Readiness.Item(id: "hermes.problem.\($0.offset)",title: String(localized: "Hermes Agent isn't ready"),detail: $0.element,severity: .warning,fix: .step("harness")) }
             + r.warnings.enumerated().map { Readiness.Item(id: "hermes.warning.\($0.offset)",title: String(localized: "This Hermes Agent version hasn't been tested with Yorozu"),detail: $0.element,severity: .warning) }
+        let home = profiles?.home ?? FileManager.default.homeDirectoryForCurrentUser
+        if let text = HermesProfiles.defaultProfileAPIServerStep(home: home) {
+            d.items.append(Readiness.Item(id: "hermes.default_api_server",title: String(localized: "Turn on the API server in your default Hermes profile"),detail: text,severity: .warning,
+                                          fix: .copy(title: String(localized: "Copy Commands"),command: text.components(separatedBy: .newlines).filter { $0.hasPrefix("hermes ") }.joined(separator: " && "))))
+        }
+        // Profiles changed since setup ([mcp_servers], integrations, dev_repo): a warning, never an automatic write.
+        if let profiles, HermesProfiles.profiles.allSatisfy({ FileManager.default.fileExists(atPath: HermesProfiles.profileDir($0,home).path) }),
+           let pending = try? HermesProfiles.pending(profiles), !pending.isEmpty {
+            d.items.append(Readiness.Item(id: "hermes.profiles",title: String(localized: "Hermes profiles need updating"),detail: pending.map(\.change.line).joined(separator: "\n"),severity: .warning,fix: .step("harness")))
+        }
         return d
     }
     public func executors(_ settings: HarnessSettings) -> [CodingExecutor] {

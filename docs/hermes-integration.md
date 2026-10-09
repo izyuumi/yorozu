@@ -14,7 +14,7 @@ Everything here was written against Hermes v0.21.6 (2026-10-08): its docs (`webs
 
 ## Profiles
 
-Yorozu owns two profiles and writes nothing else under `~/.hermes` (owner decision). `HermesProfiles.plan` lists every write so the setup step can show it first, and `apply` runs it; only an explicit setup action calls `apply`. That setup step belongs to onboarding (#317) and has no UI yet.
+Yorozu owns two profiles and writes nothing else under `~/.hermes` (owner decision). `HermesProfiles.plan` lists every write, `pending` keeps those not yet in place on disk so the setup step can show them first, and `apply` runs them; only an explicit setup action calls `apply` ([Setup step](#setup-step)).
 
 | Write | Both | `yorozu-worker` | `yorozu-roles` |
 |---|---|---|---|
@@ -35,8 +35,19 @@ Yorozu owns two profiles and writes nothing else under `~/.hermes` (owner decisi
 - `yorozu-worker` keeps Hermes's default API-server toolsets: its workers get the harness's default tools.
 - Skills: Hermes 0.21.6 has no switch for skill writes alone, so the whole `skills` toolset is disabled.
 - An empty toolset list still loads every MCP server, so `yorozu-roles` sets `no_mcp`.
-- MCP: Hermes reloads `mcp_servers` within about a minute. `HermesProfiles.confirmMCP` reads `GET /v1/toolsets` for `mcp-<name>` entries, but 0.21.6's handler lists only built-in and plugin toolsets, so an empty answer means unconfirmed, not missing. A changed `[mcp_servers]` reaches Hermes only when the profile setup runs again; nothing re-projects it on reload yet.
-- Default profile (open question 1 default): Hermes serves `/p/<profile>/` only while the default profile's API server is on. `HermesProfiles.defaultProfileAPIServerStep` checks `~/.hermes/.env` and `config.yaml` read-only and, when it is off or has no key of 16+ characters, returns the commands for the user ([setup.md](setup.md#hermes-agent)). Yorozu never edits the default profile.
+- MCP: Hermes reloads `mcp_servers` within about a minute. `HermesProfiles.confirmMCP` reads `GET /v1/toolsets` for `mcp-<name>` entries, but 0.21.6's handler lists only built-in and plugin toolsets, so an empty answer means unconfirmed, not missing. A changed `[mcp_servers]` reaches Hermes only when the profile setup runs again: readiness then warns that the profiles need updating, and nothing is written until the user applies the step ([Setup step](#setup-step)).
+- Default profile (open question 1 default): Hermes serves `/p/<profile>/` only while the default profile's API server is on. `HermesProfiles.defaultProfileAPIServerStep` checks `~/.hermes/.env` and `config.yaml` read-only and, when it is off or has no key of 16+ characters, returns the commands for the user ([setup.md](setup.md#hermes-agent)); readiness shows them as the warning "Turn on the API server in your default Hermes profile" with a button that copies them. Yorozu never edits the default profile.
+
+### Setup step
+
+With Hermes as the main harness, the setup engine's `harness` step offers the profile write as question `hermes_setup` ([setup.md](setup.md#first-setup)), the same way OpenClaw's step offers `openclaw_setup`:
+
+- The changes are `HermesProfiles.pending`: each pending write as a line `<path>: <on disk> → <planned>`, in the step's `OpenClawPlan` with its 12-digit digest. Paths are `profile <name>`, `<profile>: <config key>`, `<profile>/.env: API_SERVER_KEY`, `<profile>/SOUL.md` and `<profile>/work`; values are shown and compared as JSON text: every scalar as a string (so a quoted `"[...]"` never equals a list), lists and mappings as sorted JSON.
+- What is on disk is read without Hermes: each profile's `config.yaml` (a line reader for the block YAML that Hermes 0.21.6 writes with ruamel round-trip, `utils.atomic_roundtrip_yaml_save`, comments and quotes kept; a file with a line it cannot classify, an unbalanced quote, a tab in the indent or a duplicate key counts as unreadable, and every key then shows as a change), `.env` (a key of 32+ characters), the Keychain item's fingerprint against that key (8 bytes of its SHA-256, which `apply` stores in the item's `kSecAttrGeneric`; only attributes are read, so no secret and no prompt; an item without one, or with another key's, counts as pending), `SOUL.md` against Yorozu's text, and the `work` folder.
+- Apply runs only on a click in the setup window (Continue on the step) or `setup answer hermes_setup apply:<plan_digest>`. It computes `pending` again and refuses when the changes differ from the ones shown, then runs `HermesProfiles.apply` on the pending writes only and evaluates again. With everything in place there is nothing to apply and the step is done.
+- The step is done when detection passes (including no staleness warning) and nothing is pending, or when the user skipped it. A skipped step whose profiles are missing or out of date still offers the write (`SetupStep.write`, beside the harness choice), so Fix… opens a step whose Apply Changes button applies it; `answer hermes_setup apply:<plan_digest>` takes it too. Choosing another harness clears the step's skip.
+- Staleness: once both profile folders exist, `HermesSetup.detect` compares `pending` with what is on disk and, when anything differs (a changed `[mcp_servers]`, an integration switched, `dev_repo`), adds the warning "Hermes profiles need updating" (`hermes.profiles`) with the change lines as detail and Fix… at the harness step. Yorozu never writes the profiles on its own. The app checks readiness again after each settings reload while Hermes is the launched harness.
+- Settings › Advanced › Harness connection has "Set Up Hermes Profiles…", which opens setup at the harness step.
 
 ## Readiness
 
