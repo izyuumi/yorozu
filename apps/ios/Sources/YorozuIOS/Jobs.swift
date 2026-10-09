@@ -55,7 +55,9 @@ struct JobsScreen: View {
             Section {
                 ForEach(model.jobs) { row($0) }
             } footer: {
-                Text("To create or change a job, ask Yorozu in the main chat. Tap a job to open its sub-chat.")
+                if !model.jobs.isEmpty {
+                    Text("To create or change a job, ask Yorozu in the main chat. Tap a job to open its sub-chat.")
+                }
             }
         }
         .listStyle(.insetGrouped)
@@ -71,7 +73,7 @@ struct JobsScreen: View {
                             titleVisibility: .visible, presenting: deleting) { job in
             Button("Delete", role: .destructive) { act(job, .delete) }
         } message: { _ in
-            Text("It stops running. Its sub-chat stays on your Mac.")
+            Text("It stops running. Its sub-chat and its folder stay on your Mac.")
         }
     }
 
@@ -84,7 +86,7 @@ struct JobsScreen: View {
                 VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                     HStack(spacing: LayoutMetrics.inner) {
                         Text(job.name).font(.headline).lineLimit(1)
-                        badge(job.state)
+                        badge(job.state).layoutPriority(1)
                     }
                     if !job.schedule.isEmpty { Text(job.schedule).font(.subheadline) }
                     next(job).font(.footnote).foregroundStyle(.secondary)
@@ -169,7 +171,7 @@ struct JobsScreen: View {
             case (_, "done"?): Text("Done · \(when)").foregroundStyle(YorozuPalette.sage)
             case (_, "failed"?): Text("Failed · \(when)").foregroundStyle(YorozuPalette.warning)
             case (_, "stopped"?): Text("Stopped · \(when)").foregroundStyle(.secondary)
-            case (_, "uncertain"?): Text("Uncertain · \(when)").foregroundStyle(YorozuPalette.warning)
+            case (_, "uncertain"?): Text("Interrupted · \(when)").foregroundStyle(YorozuPalette.warning)
             case (_, nil) where job.lastRun == nil: Text("Not run yet").foregroundStyle(.secondary)
             default: Text("Last: \(when)").foregroundStyle(.secondary)
             }

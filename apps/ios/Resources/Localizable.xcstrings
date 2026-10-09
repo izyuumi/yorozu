@@ -15377,9 +15377,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "「%@」を削除しますか？" } }
       }
     },
-    "It stops running. Its sub-chat stays on your Mac." : {
+    "It stops running. Its sub-chat and its folder stay on your Mac." : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "実行されなくなります。サブチャットは Mac に残ります。" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "実行されなくなります。サブチャットとフォルダは Mac に残ります。" } }
       }
     },
     "Run Now" : {
@@ -15458,9 +15458,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "停止 · %@" } }
       }
     },
-    "Uncertain · %@" : {
+    "Interrupted · %@" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "不明 · %@" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "中断 · %@" } }
       }
     },
     "Not run yet" : {
