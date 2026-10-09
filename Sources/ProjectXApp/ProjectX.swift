@@ -12,6 +12,9 @@ import ServiceManagement
     /// The main thread's read cursor (`Store.readCursor`), moved here or by a phone's `read_state`.
     @Published var readCursor: String?
     @Published var draft = ""
+    /// The composer's files (#316), sent with the draft; `fileNotice` says why one was refused.
+    @Published var files: [DraftFile] = []
+    @Published var fileNotice: String?
     /// The popover's one-line status: startup progress or the last error, cleared by the next success.
     @Published var status: String? = "Opening local workspace…"
     /// Set when the native transport was selected but this launch fell back to the CLI.
@@ -266,11 +269,28 @@ import ServiceManagement
     func send() async {
         guard let engine, !submitting, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return }
         submitting = true; defer { submitting = false }
-        let text = draft
+        let text = draft, sent = files
         if harnessNotice != nil { Task { await checkHarness() } }
         await ensureModels()
-        do { try await engine.send(text); if draft == text { draft = "" }; status = nil; snapshot = try await engine.snapshot() }
+        // Downscaling reads and re-encodes images, so it runs off the main actor; its scratch copies go once the Engine has
+        // copied them into the file store (or failed).
+        let prepared: (pending: [PendingFile], scratch: [URL])
+        do { prepared = try await Task.detached { try DraftFile.prepare(sent) }.value; fileNotice = nil }
+        catch { fileNotice = error.localizedDescription; return }
+        defer { prepared.scratch.forEach(DraftFile.discard) }
+        do {
+            try await engine.send(text,attachments: prepared.pending)
+            if draft == text { draft = "" }
+            let ids = Set(sent.map(\.id)); files.removeAll { ids.contains($0.id) }
+            sent.filter(\.temporary).forEach { DraftFile.discard($0.url) }
+            status = nil; snapshot = try await engine.snapshot()
+        }
         catch { status = error.localizedDescription }
+    }
+    /// Where a stored attachment is now, or nil when it is gone (deleted in Finder).
+    func attachmentURL(_ file: Attachment) async -> URL? {
+        guard let url = await engine?.attachmentURL(file.id), FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
     }
     /// The popover showed this message at its bottom: the main read cursor moves to it (forward only, in the Store); the
     /// poll picks it up into `readCursor`, and the relay's next publish sends it to phones as `read_state`.

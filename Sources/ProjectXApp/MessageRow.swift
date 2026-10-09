@@ -56,6 +56,9 @@ struct MessageRow: View {
     let header: ReplyHeader?
     let highlighted: Bool
     let reveal: (String) -> Void
+    /// Files attached to a user message or a result (#316), and where each one is now.
+    var files: [Attachment] = []
+    var locate: (Attachment) async -> URL? = { _ in nil }
     private enum Metrics {
         static let cardRadius: CGFloat = 14, bubbleRadius: CGFloat = 16, ring: CGFloat = 2
         static let bubbleShare: CGFloat = 0.8
@@ -69,15 +72,19 @@ struct MessageRow: View {
         switch message.style {
         case .user:
             VStack(alignment: .trailing,spacing: 3) {
-                Text(message.body).textSelection(.enabled).foregroundStyle(.white)
-                    .padding(.horizontal,11).padding(.vertical,7)
-                    .background(ChatPalette.bubble,in: RoundedRectangle(cornerRadius: Metrics.bubbleRadius,style: .continuous))
-                    .overlay { ring(Metrics.bubbleRadius) }
+                if !files.isEmpty { MessageFiles(files: files,locate: locate).overlay { if message.body.isEmpty { ring(Metrics.cardRadius / 2) } } }
+                // An attachment-only message has no bubble.
+                if !message.body.isEmpty {
+                    Text(message.body).textSelection(.enabled).foregroundStyle(.white)
+                        .padding(.horizontal,11).padding(.vertical,7)
+                        .background(ChatPalette.bubble,in: RoundedRectangle(cornerRadius: Metrics.bubbleRadius,style: .continuous))
+                        .overlay { ring(Metrics.bubbleRadius) }
+                }
                 ReceiptLine(message: message)
             }
             .containerRelativeFrame(.horizontal,alignment: .trailing) { width,_ in width * Metrics.bubbleShare }
             .frame(maxWidth: .infinity,alignment: .trailing)
-        case .answer: AnswerCard(message: message,header: message.hasStoredHeader ? nil : header,reveal: reveal).overlay { ring(Metrics.cardRadius) }
+        case .answer: AnswerCard(message: message,header: message.hasStoredHeader ? nil : header,reveal: reveal,files: files,locate: locate).overlay { ring(Metrics.cardRadius) }
         case .question:
             VStack(alignment: .leading,spacing: 4) {
                 Label("Question",systemImage: "questionmark.bubble").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
@@ -138,6 +145,8 @@ private struct AnswerCard: View {
     let message: Message
     let header: ReplyHeader?
     let reveal: (String) -> Void
+    let files: [Attachment]
+    let locate: (Attachment) async -> URL?
     @State private var hovering = false
     private enum Metrics { static let radius: CGFloat = 14, headerRadius: CGFloat = 7 }
     var body: some View {
@@ -153,6 +162,7 @@ private struct AnswerCard: View {
                 } else { label.accessibilityLabel(Text("In reply to \(header.text)")) }
             }
             MarkdownBlocks(message.body)
+            if !files.isEmpty { MessageFiles(files: files,locate: locate) }
         }
         .card(radius: Metrics.radius)
         .overlay(alignment: .topTrailing) { if hovering { CopyButton(text: message.copyText).alignmentGuide(.top) { $0.height / 2 }.padding(.trailing,10) } }
