@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Paired with “%@”" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」とペアリングしました"
+          }
+        }
+      }
+    },
+    "Paired with a client device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クライアント端末とペアリングしました"
+          }
+        }
+      }
+    },
     "Yorozu needs its own OpenClaw agent, not your main one. Set [harness] agent to a dedicated id." : {
       "extractionState" : "manual",
       "localizations" : {
