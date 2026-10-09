@@ -26,7 +26,7 @@ extension Message {
     /// What a new main-timeline message tells the owner, for Mac notifications (#311) and phone pushes (#320). Questions:
     /// a clarify (`question` notice), a `question` reply and a job script waiting for a yes. Results: worker and posted job
     /// results, secretary replies and unconfirmed-change notices. Failures, but not offline mode's. Nothing else: the user's
-    /// own messages, acknowledgments, memory receipts and job-only kinds.
+    /// own messages, acknowledgments (delegated work's start and milestone messages too), memory receipts and job-only kinds.
     public var alert: Alert? {
         guard role == "assistant", onMainTimeline else { return nil }
         if ["question","approval_request"].contains(kind) || ["question","question_topic","question_task"].contains(notice?.code) { return .question }
@@ -188,8 +188,10 @@ public struct Decision: Codable, Sendable {
     public var approvalID: String?
     /// `delegate`/`steer` only (#348): an existing topic the message's recent sub-chat belongs to.
     public var attachTo: String?
-    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, approvalID: String? = nil, attachTo: String? = nil) {
-        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.approvalID = approvalID; self.attachTo = attachTo
+    /// `delegate`/`retry`/`steer` (owner, 2026-10-10): the secretary's own one-line start message, posted when new work starts.
+    public var startNote: String?
+    public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, approvalID: String? = nil, attachTo: String? = nil, startNote: String? = nil) {
+        self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.approvalID = approvalID; self.attachTo = attachTo; self.startNote = startNote
     }
 }
 /// The secretary's slim view: only the fields routing needs, never database records. Long text is excerpted by bytes.
