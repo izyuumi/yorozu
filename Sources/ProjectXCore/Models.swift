@@ -42,6 +42,8 @@ public struct Work: Codable, FetchableRecord, PersistableRecord, Identifiable, S
     public var outputRevision: Int?; public var created: Double
     /// nil = thinking worker; otherwise the id of a coding executor the harness advertises (`Harness.executors`).
     public var executor: String? = nil
+    /// When a worker first took it (`Store.startWork`, #348); nil before it started and for rows from older builds.
+    public var started: Double? = nil
     public var active: Bool { ["queued", "working", "amendment_pending", "cancellation_requested"].contains(state) }
 }
 public struct WorkerEvent: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
@@ -191,7 +193,8 @@ public struct Decision: Codable, Sendable {
 }
 /// The secretary's slim view: only the fields routing needs, never database records. Long text is excerpted by bytes.
 public struct RoutingInput: Codable, Sendable {
-    public struct TopicView: Codable, Sendable { public var id: String; public var label: String }
+    /// `age`: how long ago the topic was created ("5h", "3d"); `attachedTo`: the topic it was attached to (#348).
+    public struct TopicView: Codable, Sendable { public var id: String; public var label: String; public var age: String? = nil; public var attachedTo: String? = nil }
     /// A file the secretary may know about (#316): name, type, size and absolute path, never contents.
     public struct FileView: Codable, Sendable { public var name: String; public var type: String; public var size: String; public var path: String }
     public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String; public var files: [FileView]? = nil }

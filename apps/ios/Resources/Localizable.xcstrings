@@ -15218,6 +15218,16 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "閲覧のみ" } }
       }
     },
+    "Attached to “%@”" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「%@」に統合" } }
+      }
+    },
+    "“%@” was attached here" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「%@」をここに統合" } }
+      }
+    },
     "Amendment %lld · %@: %@" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "修正 %1$lld · %2$@: %3$@" } }

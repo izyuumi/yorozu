@@ -49,6 +49,27 @@ extension [TaskData] {
 }
 
 extension PhoneModel {
+    /// The label of the topic a sub-chat was attached to (#348), when it is on this iPhone.
+    func attachedTarget(of topicId: String) -> String? { topics[topicId]?.attachedTo.flatMap { topics[$0]?.label } }
+}
+
+/// A topic's attach links (#348): "Attached to “T”" on an attached sub-chat, one line per sub-chat attached to this topic.
+private struct AttachLinks: View {
+    let model: PhoneModel
+    let topicId: String
+
+    var body: some View {
+        let attached = model.topics.values.filter { $0.attachedTo == topicId }.sorted { $0.created < $1.created }
+        if let target = model.topics[topicId]?.attachedTo, let label = model.topics[target]?.label {
+            NavigationLink("Attached to “\(label)”", value: ChatRoute.topic(target, focus: nil)).font(.footnote)
+        }
+        ForEach(attached, id: \.id) { sub in
+            NavigationLink("“\(sub.label)” was attached here", value: ChatRoute.topic(sub.id, focus: nil)).font(.footnote)
+        }
+    }
+}
+
+extension PhoneModel {
     private static func byAge(_ a: TaskData, _ b: TaskData) -> Bool { (a.created, a.seq) < (b.created, b.seq) }
 
     /// A topic's tasks, oldest first.
@@ -159,9 +180,15 @@ struct TopicsScreen: View {
                 TopicSymbol(status: status)
                 VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                     Text(model.topics[id]?.label ?? "").lineLimit(1)
-                    subtitle(status, current: (facts.tasks[id] ?? []).current, when: facts.activity[id] ?? 0)
-                        .font(.footnote)
-                        .lineLimit(1)
+                    Group {
+                        if let target = model.attachedTarget(of: id) {
+                            Text("Attached to “\(target)”").foregroundStyle(.secondary)
+                        } else {
+                            subtitle(status, current: (facts.tasks[id] ?? []).current, when: facts.activity[id] ?? 0)
+                        }
+                    }
+                    .font(.footnote)
+                    .lineLimit(1)
                 }
             }
         }
@@ -267,6 +294,7 @@ struct TopicScreen: View {
         let job = model.jobsSupported == true ? model.jobs.first { $0.topicId == topicId } : nil
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                AttachLinks(model: model, topicId: topicId)
                 ForEach(items) { item in
                     switch item {
                     case .message(let bubble):
