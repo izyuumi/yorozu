@@ -800,3 +800,12 @@ Source: owner decision in issue #318 ("Hermes uses Codex or Claude Code, never C
 - Codex is the route: Hermes's own device-code login (`hermes auth login openai-codex`, answering N to importing the Codex CLI's tokens), borrowed by Yorozu's profiles from the default profile, so one sign-in covers both.
 - `auth.adopt_external_logins` stays false in Yorozu's profiles: a refresh of a borrowed Codex CLI or Claude Code token can sign that tool out. The Anthropic route exists only as that borrowing, so Codex is the safe choice.
 - Implemented: readiness blocks on a `copilot*` provider ("Hermes uses GitHub Copilot, which Yorozu doesn't use") with the `config set model.provider openai-codex` commands to copy; the no-provider warning copies the Codex route; the run path refuses a Copilot provider before sending, and the model list drops Copilot rows.
+
+## 2026-10-09 — Topic routing: small talk, new sub-chats, attach
+Source: owner decisions in issue #348.
+
+- Small talk is never filed: a message that isn't categorizable, such as "hello", gets a reply from the secretary and no topic.
+- Not enough context to categorize a prompt: Yorozu starts a completely new sub-chat and the discussion begins there.
+- Once that conversation turns out to belong to a topic that already exists, the new sub-chat's context is attached to the original topic and the discussion continues there, keeping topics separate and properly categorized.
+- This replaces "No automatic topic merging or splitting" for this case.
+- Implementer readings (not owner decisions): `attachTo` on `delegate`/`steer`; only a topic created in the last 7 days, not a job topic, not the `self_topic`, not attached and with nothing attached to it can be attached, and only to a topic that is not attached itself; attaching is one-way and never splits; the phone gets `attachedTo` on the topic record and shows it later.

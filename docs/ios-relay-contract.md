@@ -532,7 +532,7 @@ stay in their job's sub-chat and reach only a phone that negotiated `jobs-v1`; a
 (`job_run`) reaches no phone ([Jobs](#jobs)). A message with files (a user message or a result alike) carries `files`, their
 [descriptors](#descriptors), in order; absent when it has none.
 
-**`topic`** (`TopicData`, upsert): `id`, `label`, `created`, `seq`.
+**`topic`** (`TopicData`, upsert): `id`, `label`, `created`, `seq`, and `attachedTo`: the id of the topic this sub-chat was attached to (#348), absent when none. Its later work is filed under that topic; its own history stays here. An optional field inside 0.7 that an older phone ignores.
 
 **`task`** (`TaskData`, upsert): `id`, `topicId`, `messageId` (the message that started it),
 `instruction`, `executor` (nil = thinking worker, else `claude` or `codex`), `state` (the Mac's
