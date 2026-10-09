@@ -43,8 +43,11 @@ struct ChatScreen: View {
                             if row.id == firstUnread { UnreadDivider() }
                             MessageRow(
                                 bubble: row.bubble, header: header(for: row.bubble, in: byId),
+                                delivery: model.delivery(of: row.bubble),
                                 onShowRequest: { show(row.bubble.replyTo) },
-                                onShowDetails: { details = row.bubble })
+                                onShowDetails: { details = row.bubble },
+                                onResend: { model.resend(row.bubble.id) },
+                                onDelete: { model.delete(row.bubble.id) })
                         }
                         .id(row.id)
                     }
@@ -106,18 +109,11 @@ struct ChatScreen: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    if let sendError = model.sendError {
-                        Label { Text(sendError) } icon: {
-                            Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
-                        }
-                        .font(.footnote)
-                        .padding(.horizontal, LayoutMetrics.gutter)
-                    }
                     Composer(text: $model.draft, working: model.working == true, enabled: model.canSend) {
                         // Sending jumps to the bottom, so the sent message and its answer are followed.
                         atBottom = true
                         position.scrollTo(edge: .bottom)
-                        Task { await model.send() }
+                        model.send()
                     }
                 }
             }
@@ -169,7 +165,10 @@ struct ChatScreen: View {
                     onRepair()
                 }
             }
-            .sheet(item: $details) { MessageDetails(bubble: $0) }
+            .sheet(item: $details) { bubble in
+                MessageDetails(bubble: bubble, delivery: model.delivery(of: bubble),
+                               onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
+            }
         }
         .yorozuTint()
     }
