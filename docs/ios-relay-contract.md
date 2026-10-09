@@ -794,8 +794,9 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
 
 - One row per job of the Mac's current valid set (`Engine.jobStatus(nextRuns:)` with
   `JobScheduler.nextRuns`). `summary`'s first line is the schedule in words; it is nil until written.
-  `nextRun`, `lastRun` are epoch ms, `nextRun` nil while paused or retired. `lastResult` is the last
-  finished run (`done`, `failed`, `stopped`, `uncertain`) and `lastNotable` whether it was notable.
+  `nextRun`, `lastRun` are epoch ms, `nextRun` nil while paused or retired (or with no next slot),
+  `lastRun` the latest run's start. `lastResult` is `uncertain` while the latest run is, else the
+  last finished run's state (`done`, `failed`, `stopped`), and `lastNotable` whether it was notable.
   `state` is `running`, `paused`, `needsApproval`, `needsAttention` or `idle`; `state` and
   `lastResult` are text so a new value still decodes. `topicId` is the job's sub-chat.
 - Always the whole list. The Mac sends the latest after each compatible claim and to every served
@@ -817,7 +818,8 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
 - Pause, Resume and Delete edit `jobs.toml` (`Engine.pauseJob`, `resumeJob`, `deleteJob`); the
   next `job_list` shows the change. Run now (`Engine.runJobNow`) runs under the no-overlap rule,
   also when paused; a skipped run is `rejected` with `"It didn't run: " + Engine.skipText(reason)`.
-  Any Engine error, and fixture mode, is `rejected` with its text.
+  Any Engine error, and fixture mode, is `rejected` with its text. Reasons are the Mac's English
+  text, not localized on either side.
 - The phone sends one per tap, only while `.paired`, never queued, and keeps that job's actions
   disabled until the answer (or until it leaves `.paired`); a refusal shows under the job's row.
   Delete asks for confirmation first. A replayed event id (among the Mac's last 64) gets its first
@@ -852,7 +854,9 @@ Codes in 0.7: `question`, `question_topic`, `question_task`, `routing_failed`, `
 `change_held`, `change_after_finish`, `not_running`, `stopped`, `stopping`, `moved`,
 `moved_stopping`, `correction_saved`, `earlier_retired`, `memory_forgotten`,
 `amendment_unconfirmed`, `closed_too_long`, `task_control_failed`, `config_invalid`,
-`settings_changed`. A new code needs no capability: the fallback covers it.
+`settings_changed`, and for jobs (#319) `job_approval_requested`, `job_approved`,
+`job_approval_stale`, `job_failed`, `job_interrupted` and `job_skipped` (params in
+[architecture.md](architecture.md#state-names)). A new code needs no capability: the fallback covers it.
 
 ## Mac-side seams
 

@@ -723,3 +723,17 @@ Source: the plan comment on issue #318 for the remaining code after #317 (branch
 - Yorozu writes its two Hermes profiles only after an explicit action: a click in the setup window, or `setup answer hermes_setup apply:<plan_digest>` naming the changes the caller reviewed. The digest and stale rule is the one `openclaw_setup` uses.
 - The default Hermes profile is never edited; when its API server is off, readiness shows the commands to copy.
 - When `[mcp_servers]`, an integration or `dev_repo` changes, the profiles are not rewritten automatically. Readiness warns "Hermes profiles need updating" with Fix… at the harness step, where the user applies the changes.
+
+## 2026-10-09 — Jobs lists, job screens and wire: implementer readings (not owner decisions)
+Source: the plan comment on issue #319 for the rest of the issue after phase A (#331), built on contract 0.7 (#329) and the approved #311 mockups (branches `jb-wire`, `jb-mac`, merged in `jobs-ui`).
+
+- The owner decisions are those of "Scheduled jobs run by Yorozu" above, unchanged: Yorozu as the runner, `jobs.toml`, one topic per job, time-based schedules, always running, per-job posting, three forms, scripts with the yes even in YOLO, the Jobs lists, spec and summary, the job input as the one exception to typing only in the main timeline, the accepted defaults, and OpenClaw automations as reference only.
+- Open questions 1–16 stay at their proposed defaults, as listed in "Jobs phase A: implementer readings" above; the owner has not answered them. This part builds the two that waited for the UI: 13, Delete asks for a confirmation on both devices before it removes the entry; 14, the Mac's job sub-chat is the detail pane of Settings › Jobs, with the job input.
+
+Added in implementation:
+- A job run's trigger (`job_run`) is never sent to phones, with or without `jobs-v1`; the phone sees a run through its task and worker events.
+- The other job-only messages (`job_input`, `job_result`, `job_note`) go only to phones that negotiated `jobs-v1`. `EngineBridge` builds one page for every phone and `RelayHost` strips them per phone from each `sync_delta`, so a phone without `jobs-v1` never shows them in its main chat.
+- A phone cache filled without `jobs-v1` has its cursor past the job-only messages, so the first `jobs-v1` handshake drops the cursor once and catch-up refills the window; the cache records that it holds them.
+- The job input is text only on both devices: no attachments and no Send as Text File.
+- The job sub-chat on the Mac shows the run's worker events (a script's output, the lifecycle lines) as compact monospaced rows between the messages, and the `job_run` trigger as a system row.
+- `job_control` refusals (`admission_status rejected`) carry the Mac's English text, as other admission refusals do; the phone shows them as they arrive.
