@@ -141,7 +141,7 @@ struct ChatScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     // A standard bar button: the whole glass circle is the target, and the badge is the bar's own.
-                    Button("Sub-chats", systemImage: "bubble.left.and.bubble.right") { navigate([.topics]) }
+                    Button("Activities", systemImage: "bubble.left.and.bubble.right") { navigate([.topics]) }
                         .badge(model.runningTopics)
                         .accessibilityValue(model.runningTopics > 0 ? String(localized: "\(model.runningTopics) running") : "")
                 }

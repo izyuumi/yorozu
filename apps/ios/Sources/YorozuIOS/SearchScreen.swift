@@ -84,7 +84,7 @@ struct SearchScreen: View {
                 Picker("Scope", selection: $scope) {
                     Text("All").tag(Scope.all)
                     Text("Main").tag(Scope.main)
-                    Text("Sub-chats").tag(Scope.subChats)
+                    Text("Activities").tag(Scope.subChats)
                 }
                 .pickerStyle(.segmented)
                 .listRowInsets(EdgeInsets())
@@ -154,7 +154,7 @@ struct SearchScreen: View {
                                    description: Text("Your Mac runs the search. Connect to it to search."))
         } else if trimmed.isEmpty {
             ContentUnavailableView("Search everything", systemImage: "magnifyingglass",
-                                   description: Text("The main chat and every sub-chat, on your Mac."))
+                                   description: Text("The main chat and every activity, on your Mac."))
         } else if let error = result?.error {
             ContentUnavailableView("Couldn't search", systemImage: "exclamationmark.triangle", description: Text(error))
         } else if result == nil {
@@ -169,7 +169,7 @@ struct SearchScreen: View {
 
     private func row(_ hit: SearchHitData) -> some View {
         let target = model.target(of: hit)
-        let source = hit.topicId.map { model.topics[$0]?.label ?? String(localized: "Sub-chat") } ?? String(localized: "Main")
+        let source = hit.topicId.map { model.topics[$0]?.label ?? String(localized: "Activity") } ?? String(localized: "Main")
         return Button { onOpen(hit) } label: {
             VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                 HStack {

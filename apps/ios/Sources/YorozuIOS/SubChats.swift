@@ -136,12 +136,12 @@ struct TopicsScreen: View {
         .listStyle(.insetGrouped)
         .overlay {
             if ids.isEmpty && !showsJobs {
-                ContentUnavailableView("No sub-chats yet", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("Bigger work runs in a sub-chat on your Mac. It shows up here."))
+                ContentUnavailableView("No activities yet", systemImage: "bubble.left.and.bubble.right",
+                                       description: Text("Bigger work runs in the background on your Mac. It shows up here."))
             }
         }
-        .navigationTitle("Sub-chats")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationTitle("Activities")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     @ViewBuilder
@@ -294,7 +294,7 @@ struct TopicScreen: View {
         .overlay {
             if model.topics[topicId] == nil && job == nil {
                 ContentUnavailableView("Not on this iPhone", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("This sub-chat is older than what this iPhone keeps. Open it on your Mac."))
+                                       description: Text("This activity is older than what this iPhone keeps. Open it on your Mac."))
             }
         }
         .task {
