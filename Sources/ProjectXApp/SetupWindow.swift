@@ -309,21 +309,19 @@ struct SetupWindow: View {
     }
 }
 
-/// A setup row's state: done (green check), current (ring and dot), to do (ring), optional (dashed ring).
+/// A setup row's state as an SF Symbol: done (green check), current (ring and dot), to do (ring), optional (dashed ring).
 struct StepGlyph: View {
     enum Kind { case done, current, todo, optional }
     let kind: Kind
-    private static let side: CGFloat = 16, line: CGFloat = 1.5, dot: CGFloat = 6
+    private static let side: CGFloat = 16
     private var label: LocalizedStringKey { switch kind { case .done: "Done"; case .current: "Current step"; case .todo: "To do"; case .optional: "Optional" } }
     var body: some View {
-        ZStack {
+        Group {
             switch kind {
             case .done: Image(systemName: "checkmark.circle.fill").resizable().foregroundStyle(.green)
-            case .current:
-                Circle().strokeBorder(Color.accentColor, lineWidth: Self.line)
-                Circle().fill(Color.accentColor).frame(width: Self.dot, height: Self.dot)
-            case .todo: Circle().strokeBorder(.tertiary, lineWidth: Self.line)
-            case .optional: Circle().strokeBorder(.tertiary, style: StrokeStyle(lineWidth: Self.line, dash: [2, 2]))
+            case .current: Image(systemName: "smallcircle.filled.circle").resizable().foregroundStyle(Color.accentColor)
+            case .todo: Image(systemName: "circle").resizable().foregroundStyle(.tertiary)
+            case .optional: Image(systemName: "circle.dashed").resizable().foregroundStyle(.tertiary)
             }
         }
         .frame(width: Self.side, height: Self.side)
