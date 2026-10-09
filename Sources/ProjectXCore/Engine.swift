@@ -33,7 +33,8 @@ public actor Engine {
     /// Persist before returning; routing and workers never hold the main composer hostage.
     /// `id` lets a remote client (the phone) keep the id of the bubble it already shows; `sentAt` is the phone's send time
     /// (epoch seconds), kept for the delay line and the secretary's `messageAge` (#314). Never the device.
-    @discardableResult public func send(_ body: String, id: String = identifier(), sentAt: Double? = nil) async throws -> String {
+    @discardableResult public func send(_ body: String, attachments: [PendingFile] = [], id: String = identifier(), sentAt: Double? = nil) async throws -> String {
+        guard attachments.isEmpty else { throw ProjectError.invalid("Attachments are not supported yet.") } // #316 scaffold
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, body.utf8.count <= 6000 else { throw ProjectError.invalid("Message must be 1–6000 UTF-8 bytes.") }
         // Job runs do not count (open question 10).
         let jobs = pending.filter { jobWork.contains($0.id) }.count + running.keys.filter { jobWork.contains($0) }.count

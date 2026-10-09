@@ -59,6 +59,8 @@ public struct TaskOutcome: Sendable, Equatable {
 public struct Snapshot: Sendable, Equatable {
     public var topics: [Topic] = []; public var messages: [Message] = []; public var work: [Work] = []; public var events: [WorkerEvent] = []
     public var amendments: [Amendment] = []
+    /// Files attached to messages and worker events (#316).
+    public var attachments: [Attachment] = []
     public init() {}
 }
 public enum ProjectError: Error, LocalizedError, Sendable {
@@ -205,6 +207,8 @@ public struct WorkerInput: Codable, Sendable {
     public struct Note: Codable, Sendable { public var path: String; public var title: String; public var attribution: String; public var epistemicStatus: String; public var body: String }
     public var policy: String; public var topic: Topic; public var work: Work; public var current: Message
     public var history: [Turn]; public var memory: [Note]; public var followUp: String? = nil
+    /// Files the work carries (#316): each goes to the worker as an `Attached document: <path>` line.
+    public var attachments: [Attachment] = []
     /// What a thinking session is sent: slim views, never database records or harness session/controller keys (the topic
     /// is only `{id, label}`). The history bound measures this.
     public var wire: String { get throws {
@@ -216,6 +220,8 @@ public struct WorkerOutput: Codable, Sendable {
     public var text: String; public var appliedRevision: Int
     /// Scheduled job runs only (#319): whether the answer needs the user's attention.
     public var notable: Bool? = nil
+    /// Paths of files the worker returns (#316); Yorozu copies them into the file store and attaches them.
+    public var files: [String]? = nil
     public init(text: String, appliedRevision: Int = 0, notable: Bool? = nil) { self.text = text; self.appliedRevision = appliedRevision; self.notable = notable }
     /// A coding executor's free-text answer: notable when it carries `"notable": true` (in its final JSON or inline).
     public init(coded text: String, appliedRevision: Int) { self.init(text: text,appliedRevision: appliedRevision,notable: text.range(of: #""notable"\s*:\s*true\b"#,options: .regularExpression) != nil) }
@@ -231,3 +237,18 @@ public enum StreamUpdate: Sendable { case handle(RunHandle), event(WorkerEvent),
 public let rawPromptCap = 20_000
 public func identifier() -> String { UUID().uuidString.lowercased() }
 public func encoded<T: Encodable>(_ value: T) throws -> String { String(decoding: try JSONEncoder().encode(value), as: UTF8.self) }
+
+/// A stored file attached to a message or a worker event (#316). `path` is relative to the file store root.
+public struct Attachment: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
+    public static let databaseTableName = "attachments"
+    public var id: String; public var messageID: String?; public var eventID: String?
+    public var path: String; public var name: String; public var mime: String; public var bytes: Int64; public var sha256: String; public var created: Double
+    public init(id: String = identifier(), messageID: String? = nil, eventID: String? = nil, path: String, name: String, mime: String, bytes: Int64, sha256: String, created: Double = Date().timeIntervalSince1970) {
+        self.id = id; self.messageID = messageID; self.eventID = eventID; self.path = path; self.name = name; self.mime = mime; self.bytes = bytes; self.sha256 = sha256; self.created = created
+    }
+}
+/// A file handed to `Engine.send` before it is copied into the store (#316).
+public struct PendingFile: Sendable, Equatable {
+    public var url: URL; public var name: String; public var mime: String
+    public init(url: URL, name: String, mime: String) { self.url = url; self.name = name; self.mime = mime }
+}
