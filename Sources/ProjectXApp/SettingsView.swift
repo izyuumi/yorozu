@@ -2,10 +2,10 @@ import AppKit
 import ProjectXCore
 import SwiftUI
 
-/// The `Settings` scene (⌘, and Settings… in the menus): native grouped forms over `config.toml` (#312). Advanced shows
-/// only while General › Show Advanced settings is on.
+/// The `Settings` scene (⌘, and Settings… in the menus): native grouped forms over `config.toml` (#312). Harness and
+/// Advanced show only while General › Show Advanced settings is on.
 struct SettingsView: View {
-    enum Tab: Hashable { case general, devices, connection, storage, jobs, advanced }
+    enum Tab: Hashable { case general, devices, connection, storage, jobs, harness, advanced }
     @ObservedObject var model: AppModel
     /// The window's width, the one size this pane owns: nothing proposes a width to a Settings window.
     private let width: CGFloat = 560
@@ -18,11 +18,12 @@ struct SettingsView: View {
             StorageSettings(model: model).tabItem { Label("Storage", systemImage: "internaldrive") }.tag(Tab.storage)
             JobsSettings(model: model).tabItem { Label("Jobs", systemImage: "clock") }.tag(Tab.jobs)
             if model.config.general.showAdvanced {
+                HarnessSettingsView(model: model).tabItem { Label("Harness", systemImage: "cpu") }.tag(Tab.harness)
                 AdvancedSettings(model: model).tabItem { Label("Advanced", systemImage: "gearshape.2") }.tag(Tab.advanced)
             }
         }
         .frame(width: width)
-        .onChange(of: model.config.general.showAdvanced) { _, on in if !on, model.settingsTab == .advanced { model.settingsTab = .general } }
+        .onChange(of: model.config.general.showAdvanced) { _, on in if !on, [.harness, .advanced].contains(model.settingsTab) { model.settingsTab = .general } }
     }
 }
 
@@ -35,11 +36,16 @@ extension AppModel {
     }
     /// The environment variable that sets `key` for this run, if any.
     func override(_ key: String) -> String? { resolved?.environment[key] }
-    /// Turns on Advanced and selects it, for the Gateway enrollment (Connect… in the popover, Show Advanced in Connection).
+    /// Turns on Advanced settings and selects Harness, for the Gateway enrollment (Connect… in the popover, Show Harness in Connection).
     func showEnrollment() {
         if !config.general.showAdvanced { writeSettings { $0.general.showAdvanced = true } }
-        settingsTab = .advanced
+        settingsTab = .harness
     }
+}
+
+extension View {
+    /// A Settings tab's form at its ideal height: the window then sizes to each tab, so nothing scrolls (owner decision).
+    func settingsForm() -> some View { formStyle(.grouped).fixedSize(horizontal: false, vertical: true) }
 }
 
 /// "Set by `PROJECTX_…`": the subtitle of a row the environment overrides, which is then disabled.

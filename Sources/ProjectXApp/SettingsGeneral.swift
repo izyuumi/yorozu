@@ -13,7 +13,7 @@ struct GeneralSettings: View {
         let general = model.config.general
         Form {
             ConfigProblems(model: model)
-            Section {
+            Section("Startup") {
                 LabeledContent {
                     Button("Run Setup Again…") { model.openSetup() }
                 } label: {
@@ -22,8 +22,6 @@ struct GeneralSettings: View {
                         if let r = model.readiness { Text(r.state == .ready ? String(localized: "Setup: Ready") : r.summary) } else { Text("Setup: checking…") }
                     }
                 }
-            }
-            Section("Startup") {
                 Toggle(isOn: Binding(get: { general.startAtLogin && model.loginItemBlocker == nil }, set: { on in model.writeSettings { $0.general.startAtLogin = on } })) {
                     Text("Start at login")
                     if let blocker = model.loginItemBlocker { Text(blocker) }
@@ -89,7 +87,7 @@ struct GeneralSettings: View {
                 Toggle("Show Advanced settings", isOn: model.setting(\.general.showAdvanced))
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .onAppear { shortcut = general.globalShortcut; model.refreshLoginItem() }
         .onChange(of: general.globalShortcut) { _, spec in shortcut = spec }
     }

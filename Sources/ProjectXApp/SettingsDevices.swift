@@ -36,7 +36,7 @@ struct DevicesSettings: View {
                 }
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .sheet(isPresented: $pairing) { PairPhoneView(model: model) }
         .alert("Rename Client Device", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { device in
             TextField("Name", text: $name)
@@ -64,8 +64,8 @@ struct DevicesSettings: View {
 /// Settings › Connection: relay status and the relay URL; a new URL means every phone pairs again.
 struct ConnectionSettings: View {
     @ObservedObject var model: AppModel
-    /// Turns on Advanced and shows it, for the Gateway enrollment (`AppModel.showEnrollment`, which Connect… in the popover also uses).
-    let showAdvanced: () -> Void
+    /// Turns on Advanced settings and shows Harness, for the Gateway enrollment (`AppModel.showEnrollment`, which Connect… in the popover also uses).
+    let showHarness: () -> Void
     @State private var url = ""
     @State private var confirming = false
 
@@ -92,15 +92,15 @@ struct ConnectionSettings: View {
             if let notice = model.nativeNotice {
                 Section("Gateway") {
                     LabeledContent {
-                        Button("Show Advanced") { showAdvanced() }
+                        Button("Show Harness") { showHarness() }
                     } label: {
                         Text(notice)
-                        Text("Connect this Mac to the Gateway in Settings › Advanced.")
+                        Text("Connect this Mac to the Gateway in Settings › Harness.")
                     }
                 }
             }
         }
-        .formStyle(.grouped)
+        .settingsForm()
         .onAppear { url = current }
         .onChange(of: current) { _, new in url = new }
         .confirmationDialog("Change the relay?", isPresented: $confirming) {

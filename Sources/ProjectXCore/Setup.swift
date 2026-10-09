@@ -43,7 +43,7 @@ public struct SetupEngine: Sendable {
     public static let titles = ["welcome": String(localized: "Welcome"), "harness": String(localized: "Harness"), "gateway": String(localized: "Connect to the Gateway"), "models": String(localized: "Models"), "integrations": String(localized: "Computer use"), "yolo": String(localized: "YOLO"),
                                 "start_at_login": String(localized: "Start at login"), "pair_iphone": String(localized: "Pair a client device"), "path_link": String(localized: "yorozu command"), "done": String(localized: "Done")]
     /// Steps only the running app can do, and where.
-    public static let appOnly = ["gateway": String(localized: "Settings › Advanced › Harness connection"), "start_at_login": String(localized: "Settings › General › Start at login"), "pair_iphone": String(localized: "Settings › Devices › Pair a Client Device")]
+    public static let appOnly = ["gateway": String(localized: "Settings › Harness"), "start_at_login": String(localized: "Settings › General › Start at login"), "pair_iphone": String(localized: "Settings › Devices › Pair a Client Device")]
     /// What only the running app knows. Nil outside the app: app-only steps are then left to it.
     public struct Host: Sendable {
         public var enrolled: Bool, paired: Bool

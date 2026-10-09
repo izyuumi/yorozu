@@ -103,7 +103,7 @@ struct SetupWindow: View {
             checks(s.checks)
             if let q = s.question, q.id == "harness", !q.choices.contains("check") {
                 Picker("Main harness", selection: pick(q)) {
-                    ForEach(q.choices, id: \.self) { Text(Config.HarnessKind(rawValue: $0).map(AdvancedSettings.harnessTitle) ?? $0).tag($0) }
+                    ForEach(q.choices, id: \.self) { Text(Config.HarnessKind(rawValue: $0).map(HarnessSettingsView.harnessTitle) ?? $0).tag($0) }
                 }
             }
             plan(s)
@@ -121,7 +121,7 @@ struct SetupWindow: View {
                     if !model.enrollmentNotice.isEmpty { Text(model.enrollmentNotice).textSelection(.enabled) }
                 }
             } else {
-                Text("Enrolling needs a live run on the native transport (Settings › Advanced).").foregroundStyle(.secondary)
+                Text("Enrolling needs a live run on the native transport (Settings › Harness).").foregroundStyle(.secondary)
             }
             LabeledContent {
                 Button("Copy") { copyToClipboard("openclaw devices list") }

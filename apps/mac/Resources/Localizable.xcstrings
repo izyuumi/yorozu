@@ -408,13 +408,13 @@
         }
       }
     },
-    "Settings › Advanced › Harness connection" : {
+    "Settings › Harness" : {
       "extractionState" : "manual",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設定 › 詳細設定 › ハーネス接続"
+            "value" : "設定 › ハーネス"
           }
         }
       }
@@ -894,12 +894,12 @@
         }
       }
     },
-    "Enrolling needs a live run on the native transport (Settings › Advanced)." : {
+    "Enrolling needs a live run on the native transport (Settings › Harness)." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "登録にはネイティブ接続でのライブ実行が必要です（設定 › 詳細）。"
+            "value" : "登録にはネイティブ接続でのライブ実行が必要です（設定 › ハーネス）。"
           }
         }
       }
@@ -3412,12 +3412,12 @@
         }
       }
     },
-    "Connect this Mac to the Gateway in Settings › Advanced." : {
+    "Connect this Mac to the Gateway in Settings › Harness." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設定 › 詳細 でこの Mac を Gateway に接続してください。"
+            "value" : "設定 › ハーネス でこの Mac を Gateway に接続してください。"
           }
         }
       }
@@ -4172,12 +4172,12 @@
         }
       }
     },
-    "Show Advanced" : {
+    "Show Harness" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "詳細を表示"
+            "value" : "ハーネスを表示"
           }
         }
       }
