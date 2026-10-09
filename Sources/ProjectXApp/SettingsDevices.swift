@@ -64,7 +64,7 @@ struct DevicesSettings: View {
 /// Settings › Connection: relay status and the relay URL; a new URL means every phone pairs again.
 struct ConnectionSettings: View {
     @ObservedObject var model: AppModel
-    /// Turns on Advanced and shows it, for the Gateway enrollment the popover's Connect… leads to.
+    /// Turns on Advanced and shows it, for the Gateway enrollment (`AppModel.showEnrollment`, which Connect… in the popover also uses).
     let showAdvanced: () -> Void
     @State private var url = ""
     @State private var confirming = false

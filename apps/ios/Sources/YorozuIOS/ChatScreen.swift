@@ -281,6 +281,10 @@ private struct SettingsSheet: View {
                         UIPasteboard.general.string = diagnostics
                         copied = true
                     }
+                    .task(id: copied) {
+                        guard copied, (try? await Task.sleep(for: .seconds(2))) != nil else { return }
+                        copied = false
+                    }
                 } footer: {
                     Text("Versions and connection details only: never messages, keys or tokens.")
                 }

@@ -67,7 +67,7 @@ extension AppModel {
             return await postInvalid(problem,body: "Settings not applied: \(problem.localizedDescription). The last valid settings stay in force.")
         }
         if file == fileConfig, lastConfigError == nil { return } // a Settings write the watcher saw again
-        lastConfigError = nil
+        lastConfigError = nil; settingsError = nil
         let changed = fileConfig.map { file.securityChanges(from: $0) } ?? []
         fileConfig = file; resolved = next
         settingsBox.value = harnessSettings() // explicit choices, YOLO, routing hints and MCP now; automatic models after the read
@@ -77,9 +77,10 @@ extension AppModel {
             _ = try? await store?.message(role: "assistant",body: "Settings changed: \(keys)",kind: "acknowledgment",notice: Notice(.settingsChanged,["keys": keys]))
         }
         if runtimeMode == .live, next.config.relay.url != old.config.relay.url { await restartRelay() }
-        applySystem(next.config.general)
+        // After the awaits a newer reload may have run: apply the settings in force now, not this reload's.
+        applySystem((resolved ?? next).config.general)
         if let launched {
-            let h = next.config.harness, l = launched.config.harness
+            let h = (resolved ?? next).config.harness, l = launched.config.harness
             let pending = [("harness.kind",h.kind != l.kind),("harness.agent",h.agent != l.agent),("harness.transport",h.transport != l.transport),("harness.gateway_url",h.gatewayURL != l.gatewayURL),("harness.hermes_url",h.hermesURL != l.hermesURL)].filter(\.1).map(\.0)
             if !pending.isEmpty {
                 let keys = pending.joined(separator: ", ")

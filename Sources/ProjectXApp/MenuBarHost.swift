@@ -88,9 +88,13 @@ import SwiftUI
 
     fileprivate func show(working: Bool) { self.working = working; refreshIcon() }
 
-    /// `[general] global_shortcut`, applied at launch and whenever the config changes it; a problem goes to the status line.
+    /// `[general] global_shortcut`, applied at launch and whenever the config changes it. The problem in force is published
+    /// for Settings › General; a new one also goes to the status line.
     fileprivate func applyShortcut(_ spec: String, model: AppModel) {
-        if let problem = shortcut?.update(spec) { model.status = problem }
+        let problem = shortcut?.update(spec)
+        guard problem != model.shortcutProblem else { return }
+        model.shortcutProblem = problem
+        if let problem { model.status = problem }
     }
 
     private func refreshIcon() {

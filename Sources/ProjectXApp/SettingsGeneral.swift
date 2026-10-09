@@ -51,7 +51,7 @@ struct GeneralSettings: View {
                 if !general.globalShortcut.isEmpty {
                     TextField(text: $shortcut) {
                         Text("Shortcut")
-                        if let shortcutProblem { Text(shortcutProblem) } else { Text("Modifiers and a key, such as option+space or cmd+shift+y. Press Return to apply.") }
+                        if let problem = shortcutProblem ?? model.shortcutProblem { Text(problem) } else { Text("Modifiers and a key, such as option+space or cmd+shift+y. Press Return to apply.") }
                     }
                     .onSubmit {
                         let spec = shortcut.trimmingCharacters(in: .whitespaces)

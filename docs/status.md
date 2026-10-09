@@ -95,6 +95,7 @@ Each limit is described where its mechanism is documented.
 - Memory write rules bind thinking workers by prompt, not by sandbox ([architecture.md](architecture.md#memory), Worker access).
 - A run interrupted by an app restart is watched for about 2 hours, then the user is asked to retry ([architecture.md](architecture.md#restart-and-resume)).
 - An uncertain task whose run stays running or unknown blocks new work of its executor in its topic until it settles or is stopped; there is no dismiss action yet ([architecture.md](architecture.md#uncertain-blockers)).
+- In Settings › Advanced the automatic-model reasons ("Automatic (<model>, <reason>)") and the coding executors' readiness text stay English in the Japanese UI: they come from `ModelDefaults` and the harness, not the string catalog ([architecture.md](architecture.md#mac-ui)).
 - Mac distribution is roadmap item 11; the missing iOS features (push, attachments, sub-chats, Stop) come with #313–#320.
 - Computer-use rules are prompt policy, not code. Tasks in different topics or with different executors run at once, even on the same app; CuaDriver serializes their input calls but not their sequences ([cua-integration.md](cua-integration.md#concurrency)).
 - Claude Code coding workers do not get Yorozu's MCP servers, because OpenClaw 2026.9.6 does not pass session `toolOverrides` to its CLI runner; new coding work that needs an app goes to Codex (owner decision; [openclaw-integration.md](openclaw-integration.md#mcp-servers)).

@@ -7,14 +7,13 @@ import SwiftUI
 struct SettingsView: View {
     enum Tab: Hashable { case general, devices, connection, storage, advanced }
     @ObservedObject var model: AppModel
-    @State private var tab = Tab.general
     /// The window's width, the one size this pane owns: nothing proposes a width to a Settings window.
     private let width: CGFloat = 560
     var body: some View {
-        TabView(selection: $tab) {
+        TabView(selection: $model.settingsTab) {
             GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }.tag(Tab.general)
             DevicesSettings(model: model).tabItem { Label("Devices", systemImage: "iphone") }.tag(Tab.devices)
-            ConnectionSettings(model: model) { model.writeSettings { $0.general.showAdvanced = true }; tab = .advanced }
+            ConnectionSettings(model: model) { model.showEnrollment() }
                 .tabItem { Label("Connection", systemImage: "network") }.tag(Tab.connection)
             StorageSettings(model: model).tabItem { Label("Storage", systemImage: "internaldrive") }.tag(Tab.storage)
             if model.config.general.showAdvanced {
@@ -22,7 +21,7 @@ struct SettingsView: View {
             }
         }
         .frame(width: width)
-        .onChange(of: model.config.general.showAdvanced) { _, on in if !on, tab == .advanced { tab = .general } }
+        .onChange(of: model.config.general.showAdvanced) { _, on in if !on, model.settingsTab == .advanced { model.settingsTab = .general } }
     }
 }
 
@@ -35,6 +34,11 @@ extension AppModel {
     }
     /// The environment variable that sets `key` for this run, if any.
     func override(_ key: String) -> String? { resolved?.environment[key] }
+    /// Turns on Advanced and selects it, for the Gateway enrollment (Connect… in the popover, Show Advanced in Connection).
+    func showEnrollment() {
+        if !config.general.showAdvanced { writeSettings { $0.general.showAdvanced = true } }
+        settingsTab = .advanced
+    }
 }
 
 /// "Set by `PROJECTX_…`": the subtitle of a row the environment overrides, which is then disabled.

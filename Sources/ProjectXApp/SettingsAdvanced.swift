@@ -22,9 +22,10 @@ struct StorageSettings: View {
         }
         .formStyle(.grouped)
         .task(id: model.memoryFolder) {
-            let folders = [model.memoryFolder, files].compactMap { $0 }
-            sizes = await Task.detached { Dictionary(uniqueKeysWithValues: folders.compactMap { f in Self.size(f).map { (f, $0) } }) }.value
-            measured = true
+            var found: [URL: Int64] = [:]
+            for folder in [model.memoryFolder, files].compactMap({ $0 }) { found[folder] = await Self.size(folder) }
+            guard !Task.isCancelled else { return }
+            sizes = found; measured = true
         }
     }
 
@@ -44,13 +45,14 @@ struct StorageSettings: View {
         }
     }
 
-    /// Bytes allocated under `folder`, or nil when it does not exist.
-    nonisolated static func size(_ folder: URL) -> Int64? {
+    /// Bytes allocated under `folder`, or nil when it does not exist or the walk was cancelled. Runs off the main actor.
+    @concurrent nonisolated static func size(_ folder: URL) async -> Int64? {
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isFolder), isFolder.boolValue else { return nil }
         let keys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .isRegularFileKey]
         var total: Int64 = 0
         for case let file as URL in FileManager.default.enumerator(at: folder, includingPropertiesForKeys: Array(keys)) ?? NSEnumerator() {
+            if Task.isCancelled { return nil }
             guard let values = try? file.resourceValues(forKeys: keys), values.isRegularFile == true else { continue }
             total += Int64(values.totalFileAllocatedSize ?? 0)
         }
@@ -179,8 +181,10 @@ struct AdvancedSettings: View {
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         panel.prompt = String(localized: "Choose")
         if let current = model.config.harness.devRepoURL { panel.directoryURL = current }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let path = tildePath(url.standardizedFileURL)
+        guard panel.runModal() == .OK, let picked = panel.url else { return }
+        // The home folder itself stays absolute: its tilde form "~" is not a path `Config` accepts.
+        let url = picked.standardizedFileURL, home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        let path = url.path == home.path ? url.path : tildePath(url)
         model.writeSettings { $0.harness.devRepo = path }
     }
 
