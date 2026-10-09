@@ -24,7 +24,7 @@ public enum HermesProfiles {
         public init(home: URL = FileManager.default.homeDirectoryForCurrentUser, devRepo: URL? = nil, usableWindow: Int? = nil, mcpServers: [String:MCPServer] = MCPServers.defaults) {
             self.home = home; self.devRepo = devRepo; self.usableWindow = usableWindow; self.mcpServers = mcpServers
         }
-        public init(config: Config, usableWindow: Int? = nil) { self.init(devRepo: config.harness.devRepoURL, usableWindow: usableWindow, mcpServers: config.mcpServers) }
+        public init(config: Config, usableWindow: Int? = nil) { self.init(devRepo: config.harness.devRepoURL, usableWindow: usableWindow, mcpServers: config.effectiveMCPServers) }
     }
 
     public enum Step: Sendable, Equatable, CustomStringConvertible {

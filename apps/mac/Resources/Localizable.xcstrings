@@ -3318,6 +3318,120 @@
           }
         }
       }
+    },
+    "Integrations" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "連携"
+          }
+        }
+      }
+    },
+    "Computer use (CuaDriver)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コンピュータ操作 (CuaDriver)"
+          }
+        }
+      }
+    },
+    "CuaDriver app" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CuaDriver アプリ"
+          }
+        }
+      }
+    },
+    "CuaDriver permissions" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "CuaDriver の権限"
+          }
+        }
+      }
+    },
+    "Copy grant command" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "許可コマンドをコピー"
+          }
+        }
+      }
+    },
+    "OK" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "Needs attention" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要対応"
+          }
+        }
+      }
+    },
+    "Not working" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "動作していません"
+          }
+        }
+      }
+    },
+    "Check again" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再確認"
+          }
+        }
+      }
+    },
+    "Checking…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認中…"
+          }
+        }
+      }
+    },
+    "Checks run only while Settings is open or when you click Check again. Yorozu never grants permissions itself: run the copied command in Terminal." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認は設定を開いている間と「再確認」をクリックしたときだけ実行します。Yorozu が権限を許可することはありません。コピーしたコマンドをターミナルで実行してください。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

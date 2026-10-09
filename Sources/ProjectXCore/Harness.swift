@@ -58,6 +58,8 @@ public struct HarnessSettings: Sendable {
     public var mcpServers: [String:MCPServer]?
     /// Lifts the ask-first rules for requested outward-facing steps and the risky cua tools (owner, 2026-10-09).
     public var yolo = false
+    /// Integrations whose worker rules go into both worker contracts (`Prompts.integrationRules`); disabled ones are skipped.
+    public var integrations = Integration.builtIn
     /// The dev checkout coding workers merge into; nil refuses coding work.
     public var devRepo: URL?
     /// `devRepo`'s branch coding worktrees are cut from and merged into (`[harness] dev_base`; empty is the repo's
