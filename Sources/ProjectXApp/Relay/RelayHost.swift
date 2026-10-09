@@ -113,8 +113,12 @@ actor RelayHost {
     // Push (#320).
     /// `[notifications]` on with destination `phones`.
     private var alerts: Bool
+    private typealias Notify = (at: Date, cls: String, data: Data)
     /// Notifies waiting for a registration, newest last: at most 20, sent only within 24 h.
-    private var heldNotifies: [(at: Date, data: Data)] = []
+    private var heldNotifies: [Notify] = []
+    /// Notifies sent since the last `pong`: a socket half-open after sleep may have lost them, so the next
+    /// registration sends them again.
+    private var unponged: [Notify] = []
     /// `relay-online.json` beside the device file.
     private let onlineFile: URL
     private var lastOnline: Online?
@@ -206,7 +210,7 @@ actor RelayHost {
     }
 
     /// `[notifications]` changed: off drops the held notifies.
-    func setAlerts(_ on: Bool) { alerts = on; if !on { heldNotifies = [] } }
+    func setAlerts(_ on: Bool) { alerts = on; if !on { heldNotifies = []; unponged = [] } }
 
     /// Wakes paired phones through the relay (#320) with only `type`, `class`, `threadRef` and `eventRef`; the relay drops
     /// this socket on a class other than `reply`, `failed`, `approval` or `done`. Held while unregistered.
@@ -218,23 +222,28 @@ actor RelayHost {
     private func notify(_ cls: String, threadID: String, eventID: String) {
         guard alerts, !peers.isEmpty, let data = try? JSONSerialization.data(withJSONObject: [
             "type": "notify", "class": cls, "threadRef": YorozuCrypto.threadRef(threadID), "eventRef": YorozuCrypto.threadRef(eventID)], options: .sortedKeys) else { return }
-        if registered { sendNotify(data) } else { heldNotifies = Array((heldNotifies + [(Date(), data)]).suffix(20)) }
+        let held: Notify = (Date(), cls, data)
+        if registered { sendNotify(held) } else { heldNotifies = Array((heldNotifies + [held]).suffix(20)) }
     }
 
     /// The JSON holds only the class and two 8-character refs, so it is logged whole.
-    private func sendNotify(_ data: Data) {
-        Self.log.debug("notify \(String(decoding: data, as: UTF8.self), privacy: .public)")
-        send(data)
+    private func sendNotify(_ held: Notify) {
+        Self.log.debug("notify \(String(decoding: held.data, as: UTF8.self), privacy: .public)")
+        unponged.append(held)
+        send(held.data)
     }
 
-    /// On each registration, after `announce`: the held notifies from the last 24 h, and `done` (Mac back online) when no
-    /// registration was seen for 10 minutes, the app's own downtime included, and none went out in the last hour.
+    /// On each registration, after `announce`: the held and unponged notifies from the last 24 h (latest 20), only the newest
+    /// of each class, and `done` (Mac back online) when no registration was seen for 10 minutes, the app's own downtime
+    /// included, and none went out in the last hour.
     private func registeredAlerts() {
         let now = Date()
-        if alerts, !peers.isEmpty { for held in heldNotifies where now.timeIntervalSince(held.at) < 86_400 { sendNotify(held.data) } }
-        heldNotifies = []
+        var classes = Set<String>()
+        let due = (unponged + heldNotifies).suffix(20).filter { now.timeIntervalSince($0.at) < 86_400 }.reversed().filter { classes.insert($0.cls).inserted }
+        unponged = []; heldNotifies = []
+        if alerts, !peers.isEmpty { for held in due.reversed() { sendNotify(held) } }
         if let last = lastOnline, now.timeIntervalSince(last.seen) >= 600, last.notified.map({ now.timeIntervalSince($0) >= 3600 }) ?? true, alerts, !peers.isEmpty {
-            notify("done", threadID: "main", eventID: UUID().uuidString)
+            notify("done", threadID: main.id, eventID: UUID().uuidString)
             lastOnline?.notified = now
         }
         markOnline()
@@ -373,7 +382,7 @@ actor RelayHost {
             guard pairing, let token = message.token else { return }
             newCode(token)
         case "pong":
-            pongDue = false
+            pongDue = false; unponged = []
             if registered { markOnline() }
         case "state":
             // `notify rate limit` (60 a minute): that wake-up is lost, the frames are not.
