@@ -1,5 +1,4 @@
 import SwiftUI
-import UserNotifications
 
 /// Shown once per pairing, after the first handshake: how a client device works, then the notification
 /// permission. A sheet, so an iPad gets the system's centred form-sheet width; each page scrolls at large type.
@@ -8,18 +7,15 @@ struct OnboardingView: View {
 
     private enum Page { case howItWorks, notifications }
     @State private var page = Page.howItWorks
-    /// Nil until read: a permission already granted or refused skips the notifications page.
-    @State private var askNotifications: Bool?
 
     var body: some View {
         TabView(selection: $page) {
             howItWorks.tag(Page.howItWorks)
-            if askNotifications == true { notifications.tag(Page.notifications) }
+            notifications.tag(Page.notifications)
         }
-        .tabViewStyle(.page(indexDisplayMode: askNotifications == true ? .always : .never))
+        .tabViewStyle(.page(indexDisplayMode: .always))
         .indexViewStyle(.page(backgroundDisplayMode: .always))
         .interactiveDismissDisabled()
-        .task { askNotifications = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .notDetermined }
         .yorozuTint()
     }
 
@@ -34,14 +30,11 @@ struct OnboardingView: View {
             OnboardingPoint(symbol: "moon.zzz", title: "Keep the host awake",
                             detail: "Work runs only while the host is awake. Messages wait in the relay for up to 24 hours.")
         } actions: {
-            Button {
-                if askNotifications == true { withAnimation { page = .notifications } } else { onFinish() }
-            } label: {
-                Text(askNotifications == true ? "Continue" : "Done").frame(maxWidth: .infinity)
+            Button { withAnimation { page = .notifications } } label: {
+                Text("Continue").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(askNotifications == nil)
         }
     }
 
@@ -107,15 +100,22 @@ private struct OnboardingPoint: View {
     let title: LocalizedStringKey
     let detail: LocalizedStringKey
 
+    /// One column for every icon, so the titles line up whatever each symbol's width; scales with the headline.
+    @ScaledMetric(relativeTo: .headline) private var iconColumn: CGFloat = 28
+
     var body: some View {
-        Label {
+        HStack(alignment: .firstTextBaseline, spacing: LayoutMetrics.stack) {
+            Image(systemName: symbol)
+                .font(.headline)
+                .foregroundStyle(.tint)
+                .frame(width: iconColumn)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                 Text(title).font(.headline)
                 Text(detail).foregroundStyle(.secondary)
             }
-        } icon: {
-            Image(systemName: symbol).foregroundStyle(.tint)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
