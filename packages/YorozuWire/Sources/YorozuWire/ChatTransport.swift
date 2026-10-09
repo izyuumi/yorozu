@@ -108,4 +108,6 @@ public enum TransportUpdate: Sendable {
     case peerInfo(PeerInfoData)
     case compatibility(PeerCompatibility)
     case failed(String)
+    /// The relay forwarded (`buffered` false) or durably buffered (`buffered` true) this event's frame.
+    case accepted(eventId: String, buffered: Bool)
 }
