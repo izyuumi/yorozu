@@ -66,6 +66,9 @@ enum PairingStore {
         var paired: Bool?
         var pairedAt: Date?
         var counters: ChannelCounter?
+        /// The direct-path addresses the Mac last advertised. Here, never in UserDefaults, so Remove host and
+        /// Repair (which replace the whole record) take them along.
+        var directCandidates: [DirectCandidate]?
     }
 
     private static let account = "pairings-v2"
@@ -101,6 +104,12 @@ enum PairingStore {
                 stored.pairedAt = Date()
                 stored.pairing.token = ""
             }
+        }
+    }
+
+    static func setCandidates(_ candidates: [DirectCandidate], expectedIdentity: Data) {
+        try? update(expectedIdentity: expectedIdentity) { stored in
+            stored.directCandidates = candidates
         }
     }
 

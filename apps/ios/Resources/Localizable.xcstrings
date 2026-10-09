@@ -1,6 +1,196 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Path" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "経路"
+          }
+        }
+      }
+    },
+    "Direct · Wi-Fi" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接 · Wi-Fi"
+          }
+        }
+      }
+    },
+    "Direct · Tailscale" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接 · Tailscale"
+          }
+        }
+      }
+    },
+    "Direct · VPN" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接 · VPN"
+          }
+        }
+      }
+    },
+    "Direct connection (LAN / Tailscale)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続（LAN / Tailscale）"
+          }
+        }
+      }
+    },
+    "Local Network access is off. Turn it on in Settings › Privacy & Security › Local Network." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルネットワークへのアクセスがオフです。「設定」›「プライバシーとセキュリティ」›「ローカルネットワーク」でオンにしてください。"
+          }
+        }
+      }
+    },
+    "Direct addresses" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続アドレス"
+          }
+        }
+      }
+    },
+    "None yet" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだありません"
+          }
+        }
+      }
+    },
+    "Last direct error" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続の最後のエラー"
+          }
+        }
+      }
+    },
+    "Connects straight to your Mac on the same Wi-Fi or over Tailscale, and falls back to the relay." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "同じWi-FiまたはTailscale経由でMacに直接つなぎ、つながらないときはリレーを使います。"
+          }
+        }
+      }
+    },
+    "The Mac went to sleep" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Macがスリープしました"
+          }
+        }
+      }
+    },
+    "The Mac refused this iPhone on the direct path" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MacがこのiPhoneの直接接続を拒否しました"
+          }
+        }
+      }
+    },
+    "A newer connection took over" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい接続に切り替わりました"
+          }
+        }
+      }
+    },
+    "A message was too large" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージが大きすぎます"
+          }
+        }
+      }
+    },
+    "The direct connection closed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続が閉じられました"
+          }
+        }
+      }
+    },
+    "direct connection timed out" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続がタイムアウトしました"
+          }
+        }
+      }
+    },
+    "Local Network access is off" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルネットワークへのアクセスがオフです"
+          }
+        }
+      }
+    },
+    "Mac stopped answering" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Macが応答しなくなりました"
+          }
+        }
+      }
+    },
+    "The direct listener is not this Mac" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続の相手がこのMacではありません"
+          }
+        }
+      }
+    },
     "Sending" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "送信中" } }
