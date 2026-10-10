@@ -13,6 +13,8 @@ struct ComposerTextView: UIViewRepresentable {
     let onSubmit: () -> Void
 
     private static let maxLines: CGFloat = 5
+    /// UTF-16 units past which the text cannot fit in `maxLines`.
+    private static let measuredLimit = 1_000
 
     func makeUIView(context: Context) -> ComposerUITextView {
         let view = ComposerUITextView()
@@ -51,8 +53,14 @@ struct ComposerTextView: UIViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: ComposerUITextView, context: Context) -> CGSize? {
         guard let width = proposal.width, let font = uiView.font else { return nil }
-        let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         let maxHeight = ceil(font.lineHeight * Self.maxLines)
+        // Far more text than five lines hold, even on an iPad at the smallest size: at the cap without measuring. Laying
+        // out a large paste in full, on each of SwiftUI's many proposals, took seconds.
+        if (uiView.text as NSString).length > Self.measuredLimit {
+            uiView.isScrollEnabled = true
+            return CGSize(width: width, height: maxHeight)
+        }
+        let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         // Grows with the text up to five lines, then scrolls inside, as the TextField did.
         uiView.isScrollEnabled = fit.height > maxHeight
         return CGSize(width: width, height: min(max(fit.height, ceil(font.lineHeight)), maxHeight))
