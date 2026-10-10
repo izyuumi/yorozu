@@ -12,7 +12,8 @@ hand-written JSON.
 The phone is a mirror of the Mac with control: the Mac is the only source of truth. The phone
 holds a cache of the [history window](#history-window), catches up by
 [change sequence](#change-sequence), can Stop or Retry a task, moves the read cursor, searches the
-Mac's full history and removes its own pairing. The relay wakes it with content-free [push](#push).
+Mac's full history and removes its own pairing. The relay wakes it with [push](#push), whose words are
+[sealed](#sealed-previews) for the phone.
 
 Out of scope for 0.7:
 typing in sub-chats (other than a job's own input, [Jobs](#jobs)), multiple threads (the thread id is carried everywhere and never hard-wired
@@ -227,7 +228,7 @@ next `.paired` catches up. A device that had finished the exchange stays served 
 
 The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15 s deadline,
 `RelayClient.swift`). Both ends advertise `PeerInfoData.local`: protocol 2 (`protocolMin` =
-`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1","jobs-v1"]`,
+`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1","jobs-v1","push-preview-v1"]`,
 required `["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update
 required". Until a device's exchange succeeds, the host passes none of its other events to the
 backend; a known device whose last result on file is compatible counts as succeeded (Mac-side
@@ -848,9 +849,10 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
 ## Push
 
 Push (#320) uses the relay-level `push` (phone) and `notify` (Mac) messages the relay on `main`
-already has (`apps/relay/src/protocol.ts`, `worker.ts`); no sealed event, capability or protocol
-change, and no relay deploy. When the Mac sends a `notify` is in
-[architecture.md](architecture.md#push-notifications).
+already has (`apps/relay/src/protocol.ts`, `worker.ts`), including v1's per-device `previews`, so
+neither the content-free alerts nor the [sealed previews](#sealed-previews) (capability
+`push-preview-v1`, owner decision of 2026-10-10) needed a relay change. When the Mac sends a
+`notify` is in [architecture.md](architecture.md#push-notifications).
 
 ### Token registration (phone -> relay)
 
@@ -874,13 +876,14 @@ change, and no relay deploy. When the Mac sends a `notify` is in
 ### `notify` (Mac -> relay)
 
 ```json
-{"class":"reply","eventRef":"<8 chars>","threadRef":"<8 chars>","type":"notify"}
+{"class":"reply","eventRef":"<8 chars>","previews":{"<phone Ed25519 key>":{"c":"…","n":"…"}},"threadRef":"<8 chars>","type":"notify"}
 ```
 
-- Exactly these four keys (`RelayHost.notify`): `threadRef` is `YorozuCrypto.threadRef` of the
+- These keys only (`RelayHost.notify`): `threadRef` is `YorozuCrypto.threadRef` of the
   main thread id the Mac publishes (`main`),
   `eventRef` is `YorozuCrypto.threadRef(<message id>)` (the first 8 base64url characters of a
-  SHA-256). Never `previews` or `actions`.
+  SHA-256), and `previews` as in [Sealed previews](#sealed-previews), left out when no box was
+  sealed (a `done`, an empty excerpt, no phone with `push-preview-v1`). Never `actions`.
 - Only the four classes the relay accepts; any other makes it drop the Mac's socket with "bad
   notify". Each class's alert body is a fixed relay `loc-key`, which the phone's string catalog
   rewords for v2:
@@ -900,15 +903,48 @@ change, and no relay deploy. When the Mac sends a `notify` is in
   `{"type":"state","state":"notify rate limit"}`; the Mac logs it and carries on (that wake-up is
   lost, frames are not).
 
+### Sealed previews
+
+Capability `push-preview-v1` (`PushPreview.capability`). The alert shows the message's words; only
+the Mac and the phone can read them.
+
+- Key: per phone, HKDF-SHA256 over the pairing's X25519 agreement (the Mac's relay session key and
+  the phone's session key, as for the channel), salt `yorozu-v1`, info
+  `yorozu-push-preview/mac->device`, 32 bytes (`PushPreview.key`). It is never a channel key, so a
+  preview box cannot pass for a channel frame or the other way round.
+- Plaintext: compact JSON `{"b":<excerpt>,"c":<class>,"e":<event ref>}` (sorted keys), at most
+  256 bytes (the relay's limit); `PushPreview.plaintext()` cuts the body, ending it with "…", until
+  it fits. The excerpt is `Message.notificationExcerpt` (at most 180 characters, plain text,
+  [architecture.md](architecture.md#push-notifications)), so a Japanese excerpt shows about 70
+  characters on the phone.
+- Box: ChaCha20-Poly1305 with a fresh random 12-byte nonce per box (CryptoKit), `n` = base64url
+  nonce (16 characters), `c` = base64url ciphertext and tag (22–363 characters).
+- `previews` maps each served phone that negotiated `push-preview-v1` to its own box, keyed by its
+  Ed25519 relay key (43 base64url characters), at most 16. The Mac seals for results, failures and
+  questions, never for `done`. Held and re-sent notifies keep the boxes they were sealed with.
+- The relay (unchanged on `main`) checks the shapes, picks the phone's box when it sends that
+  phone's alert and adds it as top-level `preview {n, c}` with `aps.mutable-content: 1`. A malformed
+  map makes it drop the Mac's socket with "bad notify", so the Mac never sends one. A relay that
+  ignores `previews` sends the fixed alert.
+- Phone: the app derives the same key on every connect and keeps it in the Keychain group it
+  shares with the notification service extension (`PreviewKeychain`), never the pairing's private
+  keys; Remove host deletes it. The extension opens `preview` with it and, when the box opens,
+  decodes and names the push's own `event`, sets the title to the class's alert text from its
+  string catalog (the `loc-key` wording below) and the body to the excerpt. A missing box, a box
+  that does not open or names another event, a missing key (no pairing, or before the first unlock)
+  or an unknown class leaves the alert as the relay sent it: the fixed localized text.
+- Neither end logs a plaintext; the Mac's debug log of the `notify` holds only boxes.
+
 ### What the relay and APNs see
 
-- No previews: the alert is the fixed title "Yorozu" and the class's `loc-key`, never message
-  content, and has no `badge`. The relay and APNs see the class, the two 8-character refs (the
-  thread ref is the same for every push to the one thread), the phone's token and the timing.
+- No plaintext: the alert is the fixed title "Yorozu" and the class's `loc-key`, plus the phone's
+  sealed box, and has no `badge`. The relay and APNs see the class, the two 8-character refs (the
+  thread ref is the same for every push to the one thread), the box's length (which bounds the
+  excerpt's length), the phone's token and the timing.
 - The relay's alert payload: `aps.alert {title, "loc-key"}`, `sound: "default"`, `thread-id` (the
-  thread ref), for `approval` also `category: "approval-review"` (v1's; the v2 phone registers no
-  categories, so no buttons show), plus top-level `ref` (thread ref), `cls` and `event` (event
-  ref).
+  thread ref), `mutable-content: 1` with a box, for `approval` also `category: "approval-review"`
+  (v1's; the v2 phone registers no categories, so no buttons show), plus top-level `ref` (thread
+  ref), `cls`, `event` (event ref) and `preview` (the box).
 
 ### Silent push and catch-up
 

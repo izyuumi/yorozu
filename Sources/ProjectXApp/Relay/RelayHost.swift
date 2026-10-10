@@ -36,7 +36,8 @@ struct DirectStatus: Sendable, Equatable {
 /// contract is docs/ios-relay-contract.md. Paired phones may also reach it directly (#315): a WebSocket
 /// listener on Wi-Fi/Ethernet and `utun` interfaces carries the same signed frames once the phone's join
 /// proves its paired key, and each phone's route follows its latest authenticated `hello`. `notify` wakes
-/// paired phones through the relay's APNs path (#320) with a class and two opaque refs, never content.
+/// paired phones through the relay's APNs path (#320) with a class, two opaque refs and, for phones that take
+/// `push-preview-v1`, the message's excerpt sealed for each phone (`PushPreview`); never content in the clear.
 actor RelayHost {
     /// `FrameBody` and the relay envelope are private in RelayClient.swift; these are the same shapes.
     private struct FrameBody: Codable { var t: String; var pub, spub, proof, n, c: String? }
@@ -215,21 +216,34 @@ actor RelayHost {
     /// `[notifications]` changed: off drops the held notifies.
     func setAlerts(_ on: Bool) { alerts = on; if !on { heldNotifies = []; unponged = [] } }
 
-    /// Wakes paired phones through the relay (#320) with only `type`, `class`, `threadRef` and `eventRef`; the relay drops
-    /// this socket on a class other than `reply`, `failed`, `approval` or `done`. Held while unregistered.
-    func notify(_ alert: Message.Alert, threadID: String, eventID: String) {
+    /// Wakes paired phones through the relay (#320) with `type`, `class`, `threadRef`, `eventRef` and, when `excerpt` is not
+    /// empty, `previews`: the excerpt sealed once per served phone that takes `push-preview-v1`, keyed by its Ed25519 key. The
+    /// relay drops this socket on a class other than `reply`, `failed`, `approval` or `done`, or a malformed preview. Held
+    /// while unregistered.
+    func notify(_ alert: Message.Alert, threadID: String, eventID: String, excerpt: String) {
         let cls = switch alert { case .result: "reply"; case .failure: "failed"; case .question: "approval" }
-        notify(cls, threadID: threadID, eventID: eventID)
+        notify(cls, threadID: threadID, eventID: eventID, excerpt: excerpt)
     }
 
-    private func notify(_ cls: String, threadID: String, eventID: String) {
-        guard alerts, !peers.isEmpty, let data = try? JSONSerialization.data(withJSONObject: [
-            "type": "notify", "class": cls, "threadRef": YorozuCrypto.threadRef(threadID), "eventRef": YorozuCrypto.threadRef(eventID)], options: .sortedKeys) else { return }
+    private func notify(_ cls: String, threadID: String, eventID: String, excerpt: String = "") {
+        guard alerts, !peers.isEmpty else { return }
+        let eventRef = YorozuCrypto.threadRef(eventID)
+        var body: [String: Any] = ["type": "notify", "class": cls, "threadRef": YorozuCrypto.threadRef(threadID), "eventRef": eventRef]
+        let preview = PushPreview(cls: cls, event: eventRef, body: excerpt)
+        let previews = excerpt.isEmpty ? [:] : peers.reduce(into: [String: [String: String]]()) { out, entry in
+            let (pub, peer) = entry
+            guard takes(PushPreview.capability, pub), peer.record.signingPub.count == 43, let raw = Data(base64URLEncoded: pub),
+                  let key = try? PushPreview.key(myPriv: identity.sessionPrivateKey, theirPub: raw),
+                  let box = preview.seal(key: key) else { return }
+            out[peer.record.signingPub] = ["n": box.n, "c": box.c]
+        }
+        if !previews.isEmpty { body["previews"] = previews }
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: .sortedKeys) else { return }
         let held: Notify = (Date(), cls, data)
         if registered { sendNotify(held) } else { heldNotifies = Array((heldNotifies + [held]).suffix(20)) }
     }
 
-    /// The JSON holds only the class and two 8-character refs, so it is logged whole.
+    /// The JSON holds the class, two 8-character refs and sealed boxes the relay cannot open, so it is logged whole.
     private func sendNotify(_ held: Notify) {
         Self.log.debug("notify \(String(decoding: held.data, as: UTF8.self), privacy: .public)")
         unponged.append(held)

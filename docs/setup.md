@@ -334,17 +334,19 @@ Coding agents use their own model settings (their own configuration, or a `--mod
 | App | Bundle id | Signing |
 |---|---|---|
 | Mac | `to.yumi.yorozu` (v1's) | Team `AN5KM8QGEF`, manual signing, hardened runtime. The identity comes from `apps/mac/Signing.xcconfig`, which includes the gitignored `apps/mac/Signing.local.xcconfig` (`*.local.xcconfig`) when it exists. That local file sets `CODE_SIGN_IDENTITY` to the Developer ID Application identity for the team in the login keychain and `OTHER_CODE_SIGN_FLAGS = --timestamp`; the comment in `Signing.xcconfig` shows the shape. Without it the app is signed ad hoc (`-`), which runs only on the Mac that built it. Entitlements match v1 (`apps/mac/Yorozu.entitlements`); no app sandbox. |
-| iOS | `to.yumi.yorozu.ios` | Team `AN5KM8QGEF`, automatic signing. Xcode issues the distribution certificate and profile itself during `upload_ios.sh`, using the App Store Connect key. Entitlements in `apps/ios/Project.swift`: `aps-environment: production` ([Push notifications](#push-notifications)) and `applinks:yorozu.yumi.to`. |
+| iOS | `to.yumi.yorozu.ios` | Team `AN5KM8QGEF`, automatic signing. Xcode issues the distribution certificate and profile itself during `upload_ios.sh`, using the App Store Connect key. Entitlements in `apps/ios/Project.swift`: `aps-environment: production` ([Push notifications](#push-notifications)), `applinks:yorozu.yumi.to` and `keychain-access-groups` (the app's own group, then `to.yumi.yorozu.notifications`, both team-prefixed). |
+| iOS notification service extension | `to.yumi.yorozu.ios.notification-service` | Embedded in the app; same team, automatic signing and version pair. Entitlement `keychain-access-groups: [<team>.to.yumi.yorozu.notifications]` ([Push notifications](#push-notifications)). |
 
 ## Push notifications
 
-Phones are woken through the relay's APNs path (#320; flow in [architecture.md](architecture.md#push-notifications), wire in [ios-relay-contract.md](ios-relay-contract.md#push)).
+Phones are woken through the relay's APNs path (#320; flow in [architecture.md](architecture.md#push-notifications), wire in [ios-relay-contract.md](ios-relay-contract.md#push)). Alerts carry the message's excerpt, sealed for each phone and opened on the phone ([sealed previews](ios-relay-contract.md#sealed-previews)).
 
-- iOS app (`apps/ios/Project.swift`): the entitlement `aps-environment: production`, since TestFlight builds use production APNs (as on v1), and `UIBackgroundModes: ["remote-notification"]` for the silent catch-up. No notification service extension and no app group. v1 ships push on the same bundle id, so the App ID already has the capability; if automatic signing reports that it lacks push, enable it in the Apple Developer portal.
+- iOS app (`apps/ios/Project.swift`): the entitlement `aps-environment: production`, since TestFlight builds use production APNs (as on v1), and `UIBackgroundModes: ["remote-notification"]` for the silent catch-up. v1 ships push on the same bundle id, so the App ID already has the capability; if automatic signing reports that it lacks push, enable it in the Apple Developer portal.
+- Notification service extension (`YorozuNotificationService`, bundle id `to.yumi.yorozu.ios.notification-service`, v1's): opens sealed previews. It shares one Keychain access group with the app, `<team>.to.yumi.yorozu.notifications` (v1's), which holds only the preview key; no app group. Automatic signing registers the extension's App ID and issues its App Store profile during `upload_ios.sh` if v1's are gone. Keychain sharing needs no capability in the portal.
 - Permission: the phone asks once (alerts, sounds and badges) at a foreground launch when paired (never at a background, silent-push launch), and at #314's moments ([On the phone](#on-the-phone)). Denied, alerts and the badge stay off; the Notifications row in iPhone Settings offers Open Settings.
 - Mac: Settings › General › Notifications on and "Notify on" Phones (`[notifications] enabled = true`, `destination = "phones"`).
 - Relay: APNs needs three Worker secrets on the relay, by name `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_KEY_P8` (`apps/relay/src/apns.ts` on `main`). A relay without them, a self-hosted one included, forwards frames but wakes nobody. Check the names only with `wrangler secret list` (and the deployed version with `wrangler deployments list`) in `apps/relay` on `main`; the values never go in the repo.
-- Check the Mac side (acceptance criterion 10 of #320): the Mac logs each `notify` whole, since it holds only the class and two 8-character refs, and logs the relay's `notify rate limit` state.
+- Check the Mac side (acceptance criterion 10 of #320): the Mac logs each `notify` whole, since it holds only the class, two 8-character refs and sealed boxes, and logs the relay's `notify rate limit` state.
 
   ```sh
   log stream --level debug --predicate 'subsystem == "to.yumi.yorozu" AND category == "relay"'
@@ -364,6 +366,7 @@ Phones are woken through the relay's APNs path (#320; flow in [architecture.md](
 | `to.yumi.yorozu.gateway` | `<gateway URL>\|webchat\|operator` | The native transport's device key and Gateway-issued device token | Mac app, native enrollment only (Settings, Gateway tab); a launch without a token creates nothing |
 | `to.yumi.yorozu.hermes` | `yorozu-worker`, `yorozu-roles` | Each Yorozu Hermes profile's `API_SERVER_KEY` (43 random characters), mirrored from the profile's `.env`; `AfterFirstUnlockThisDeviceOnly`. Read per request, never logged, put in a URL or written to a receipt. | Mac app, the Hermes setup step only ([Hermes Agent](#hermes-agent)) |
 | `to.yumi.yorozu.ios` | `pairings-v2` | The phone's pairing and identity, and the direct addresses the Mac last advertised | iOS app, on the phone |
+| `to.yumi.yorozu.v2.push-preview` | `host` | The paired Mac's push-preview key, in the access group shared with the notification service extension ([Push notifications](#push-notifications)) | iOS app, on the phone, on each connect |
 
 The relay and Gateway items are `WhenUnlockedThisDeviceOnly`; the phone item is `AfterFirstUnlockThisDeviceOnly`. A Keychain the relay host cannot read stops the relay (not the app) rather than minting new keys; the app tries to start the relay again every 30 s, so unlocking the login Keychain is enough.
 
@@ -410,10 +413,11 @@ Jobs (#319): `jobs.toml` is created by the first write (a worker creating a job,
 | Last connection status (`lastConnectionStatus`) | `UserDefaults` | none; it holds only the status and when it was saved, no chat content |
 | Direct connection setting (`directPathEnabledV2`) | `UserDefaults` | none; a Boolean, off by default |
 | The APNs token the relay last heard, per pairing (`pushTokenOnRelayV2.<session key>`) | `UserDefaults` | none; the device token only, so a direct session skips the one-off relay join for a token the relay has |
+| The paired Mac's push-preview key (derived, 32 bytes; service `to.yumi.yorozu.v2.push-preview`, account `host`) | Keychain group `<team>.to.yumi.yorozu.notifications`, shared with the notification service extension | `AfterFirstUnlockThisDeviceOnly`; opens preview boxes only, never the channel; written on each connect, deleted by Remove host |
 
 The cache is a cache: a file that does not decode, has another format version or belongs to another pairing (its `owner` is the pairing's session key) loads as nothing and catch-up refills it. The outbox is not a cache: it holds messages that exist nowhere else until the Mac stores them. It is keyed to the pairing the same way, so a file from another pairing is never read. Remove host and every new pairing delete the `Mirror`, `Outbox`, `Uploads` and `Files` folders ([architecture.md](architecture.md#ios-app)).
 
-Notifications: the phone asks for notification permission (alerts, sounds and badges) at a foreground launch once paired, and the first time a message has to wait for a connection; iOS shows the prompt once. Its local notifications are "N messages waiting to send" and "A message to your Mac expired without being read."; pushes carry fixed text ([Push notifications](#push-notifications)); none carries message content. Denying permission changes nothing else: messages still queue and send, and the chat still catches up when opened.
+Notifications: the phone asks for notification permission (alerts, sounds and badges) at a foreground launch once paired, and the first time a message has to wait for a connection; iOS shows the prompt once. Its local notifications are "N messages waiting to send" and "A message to your Mac expired without being read."; pushes carry the message's excerpt, sealed end to end, or fixed text when it cannot be opened ([Push notifications](#push-notifications)); the local notifications carry no message content. Denying permission changes nothing else: messages still queue and send, and the chat still catches up when opened.
 
 ## Environment variables
 

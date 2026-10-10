@@ -328,6 +328,7 @@ final class PhoneModel {
             failure = error.localizedDescription
             return
         }
+        PreviewKeychain.clear()
         disconnect()
     }
 
@@ -340,6 +341,9 @@ final class PhoneModel {
     private func connect(_ stored: PairingStore.Stored) {
         let identity = stored.identity.sessionPublicKey
         let pushKey = "\(Self.pushKey).\(identity.base64URLEncodedString())"
+        // The notification extension's key for this Mac's sealed previews, written on every connect so it follows the pairing.
+        if let mac = Data(base64URLEncoded: stored.pairing.macPubkey),
+           let key = try? PushPreview.key(myPriv: stored.identity.sessionPrivateKey, theirPub: mac) { PreviewKeychain.save(key) }
         do {
             relay = try RelayClient(
                 pairing: stored.pairing, identity: stored.identity, paired: stored.paired == true,
