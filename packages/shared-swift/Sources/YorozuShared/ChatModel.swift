@@ -1651,7 +1651,10 @@ public final class ChatModel {
 
     private func armOutboxRetry() {
         let now = Date()
-        let sends = canDeliver ? pendingHeads(at: now).compactMap(\.nextAttemptAt) : []
+        // A priority send still in flight wakes nothing: its past retry time would spin flush.
+        let sends = canDeliver ? pendingHeads(at: now).filter { item in
+            priorityTask == nil || ![.interrupt, .approvalAnswer, .questionAnswer].contains(item.event.payload.kind)
+        }.compactMap(\.nextAttemptAt) : []
         let expiries = outbox.compactMap { item -> Date? in
             if let hold = item.legacyHoldUntil, item.status(at: now) == .checking, canDeliver {
                 return item.lastStatusQueryAt == nil ? now :
@@ -2273,7 +2276,16 @@ public final class ChatModel {
     public func pendingComposerCards(in threadId: String) -> [YorozuEvent] {
         guard generating.contains(threadId) ||
             synced.first(where: { $0.id == threadId })?.turnState.map({ $0 != .idle }) == true else { return [] }
-        return timeline(threadId).events.filter { event in
+        // Only the current turn's cards. One left open by an ended turn (its echo lost, say, to a
+        // host restart) would otherwise hold the next message, then take the one after as its answer.
+        let events = timeline(threadId).events
+        let active = activeEventId(in: threadId)
+        let turnStart = events.lastIndex { event in
+            if event.id == active { return true }
+            if case .message(let reply) = event.payload { return reply.role == .agent && reply.done == true && event.parentAgentId == nil }
+            return false
+        }.map { $0 + 1 } ?? 0
+        return events[turnStart...].filter { event in
             switch event.payload {
             case .approvalCard(let card):
                 return !answered.contains(card.actionId) && !approvalPending(card.actionId) &&
