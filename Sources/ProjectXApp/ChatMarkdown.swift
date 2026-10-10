@@ -230,19 +230,17 @@ private struct CodeBlock: View {
     }
 }
 
-/// Cells keep their natural width; a wide table scrolls sideways instead of wrapping.
+/// The table fits the width it is given and its cells wrap onto more lines, rather than running off sideways.
 private struct TableBlock: View {
     let header: [AttributedString]
     let rows: [[AttributedString]]
 
     var body: some View {
-        ScrollView(.horizontal) {
-            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                GridRow { ForEach(header.indices, id: \.self) { cell(header[$0]).fontWeight(.semibold).background(.fill.quaternary) } }
-                ForEach(rows.indices, id: \.self) { r in
-                    Divider()
-                    GridRow { ForEach(rows[r].indices, id: \.self) { cell(rows[r][$0]) } }
-                }
+        Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+            GridRow { ForEach(header.indices, id: \.self) { cell(header[$0]).fontWeight(.semibold).background(.fill.quaternary) } }
+            ForEach(rows.indices, id: \.self) { r in
+                Divider()
+                GridRow { ForEach(rows[r].indices, id: \.self) { cell(rows[r][$0]) } }
             }
         }
         .font(.callout.monospacedDigit())
@@ -251,7 +249,9 @@ private struct TableBlock: View {
     }
 
     private func cell(_ text: AttributedString) -> some View {
+        // Full height at a narrow width, so a wrapped cell grows its row instead of truncating.
         Text(text)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, MarkdownMetrics.inset)
             .padding(.vertical, MarkdownMetrics.tight)
             .frame(maxWidth: .infinity, alignment: .leading)
