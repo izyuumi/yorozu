@@ -849,3 +849,11 @@ Source: owner decisions in issue #351.
 Source: owner, in session ("full access").
 
 - With `[workspace] restrict` off, the built-in coding agents keep full access (`claude --permission-mode bypassPermissions`, `codex --sandbox danger-full-access`); with it on they run sandboxed to the workspace. This settles the open question from #351.
+
+## 2026-10-10 — Live steering by default; notifications with content; start, progress and completion messages
+Source: owner, in session, after a held steer showed "I'll apply that right after the current step." and notifications read only "Yorozu replied".
+
+- Steering is the default for a message about running work: the change goes into the running task live, not after its current step. On OpenClaw that means `chat.send` with `queueMode: "steer"` into the topic session's active run; the follow-up turn stays only as a fallback when the live inject is refused.
+- Notifications carry the message's actual content, on the host and on client devices. On client devices the preview is end-to-end encrypted: the host seals it, the relay forwards an opaque blob, and a Notification Service Extension on the phone decrypts it, so Apple and the relay never see the text. This replaces the content-free notification decision (2026-10-09, #311 question 3 and #320). The relay on `main` already forwards per-phone sealed previews, so it needs no change.
+- Delegated work gets an initial, progress and completion message in the main timeline, so the user knows what is happening. The secretary writes the initial message in its own words, naming the task, from the routing call it already makes (no extra model call). Progress messages come from worker milestones, a one-line update at most about every 2 minutes, and none for tasks that finish quickly. The completion message is the result. This replaces the 2026-10-08 "No boilerplate acknowledgments" decision; boilerplate such as "I'll work on that in the background" stays banned.
+- Only results, failures and questions notify; initial and progress messages update the timeline silently.
