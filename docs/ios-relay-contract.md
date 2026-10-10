@@ -657,7 +657,7 @@ Capability `readiness-v1` (`ReadinessData.capability`); the Mac sends it only to
   on each change, from `RelayHost.publishReadiness(_:)` (through `AppModel.publishReadiness(_:)`, which
   keeps it across relay restarts). A Mac that has no value yet sends nothing.
 - The phone keeps only the latest and drops it off `.paired`, where the status line already reads
-  "Status unknown". While `attention` or `blocked` it shows one line over the composer: the blocking
+  "Status unknown". While `attention` or `blocked` it shows one toast over the timeline: the blocking
   item's title, the only item's title, or "N items need attention", then "Fix this on the host". While
   `blocked` the composer is off, the same rule as on the Mac.
 - A value that does not decode (an unknown `state` or `severity`) is ignored like an unknown kind.

@@ -60,9 +60,6 @@ struct ChatScreen: View {
                     if model.routing == true {
                         ThinkingRow().readableRow()
                     }
-                    if model.working == true {
-                        ProgressView().accessibilityLabel("Working…").readableRow()
-                    }
                 }
                 .scrollTargetLayout()
                 .padding(.vertical, LayoutMetrics.gutter)
@@ -115,23 +112,38 @@ struct ChatScreen: View {
                     .padding(.bottom, LayoutMetrics.inner)
                 }
             }
-            .yorozuBottomBar {
-                VStack(spacing: 0) {
+            // The link's state and the Mac's work float over the timeline as toasts rather than strips that take its
+            // space: they come and go often, and the messages must not move when they do.
+            .overlay(alignment: .top) {
+                VStack(spacing: LayoutMetrics.inner) {
                     // Words as well as the dot, so the state is never told by colour alone.
                     if model.shownStatus != .connected {
                         // Off the link the Mac's work state is unknown, never idle.
-                        Text(model.updateRequired ?? String(localized: "\(model.shownStatus.label) · Status unknown"))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                        Toast { Text(model.updateRequired ?? String(localized: "\(model.shownStatus.label) · Status unknown")) }
                     } else if let reason = model.readinessReason {
                         // The Mac's own readiness; when blocked the composer below is off with it.
-                        Label { Text("\(reason) · Fix this on the host") } icon: {
-                            Image(systemName: model.readiness?.state == .blocked ? "xmark.octagon" : "exclamationmark.triangle")
-                                .foregroundStyle(model.readiness?.state == .blocked ? YorozuPalette.vermilion : YorozuPalette.warning)
+                        Toast {
+                            Label { Text("\(reason) · Fix this on the host") } icon: {
+                                Image(systemName: model.readiness?.state == .blocked ? "xmark.octagon" : "exclamationmark.triangle")
+                                    .foregroundStyle(model.readiness?.state == .blocked ? YorozuPalette.vermilion : YorozuPalette.warning)
+                            }
                         }
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                     }
+                    if model.working == true {
+                        Toast {
+                            Label { Text("Working…") } icon: { ProgressView().controlSize(.small) }
+                        }
+                    }
+                }
+                .padding(.top, LayoutMetrics.inner)
+                .padding(.horizontal, LayoutMetrics.gutter)
+                .allowsHitTesting(false)
+                .animation(.default, value: model.shownStatus)
+                .animation(.default, value: model.readinessReason)
+                .animation(.default, value: model.working)
+            }
+            .yorozuBottomBar {
+                VStack(spacing: 0) {
                     Composer(text: $model.draft, files: $model.draftFiles, attachments: model.attachmentsSupported != false,
                              working: model.working == true, enabled: model.canSend,
                              replyQuote: replyQuote, onCancelReply: { model.replyingTo = nil }) {
@@ -424,6 +436,22 @@ private struct TimelineRow: Identifiable {
 private struct ScrollEdge: Equatable {
     var offset: CGFloat
     var maxOffset: CGFloat
+}
+
+/// A notice floating over the timeline: never in its layout, so it moves no message.
+private struct Toast<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, LayoutMetrics.stack)
+            .padding(.vertical, LayoutMetrics.inner)
+            .yorozuGlass(in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
+            .accessibilityElement(children: .combine)
+            .transition(.move(edge: .top).combined(with: .opacity))
+    }
 }
 
 /// "↓ N new": back to the bottom.

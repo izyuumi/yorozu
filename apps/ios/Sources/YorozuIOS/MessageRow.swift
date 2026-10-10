@@ -345,6 +345,7 @@ private struct ReplySwipe: ViewModifier {
 
 /// The reply swipe's pan, a UIKit recognizer: it begins only for a pan moving right more than twice as fast as it
 /// moves vertically, so any other drag fails it before it starts, and it recognises alongside the scroll view's pan.
+/// A touch inside a sideways scroller (a wide table or code block) never reaches it.
 /// A SwiftUI `DragGesture` on every row instead joined each scroll and held up the scroll view's pan and deceleration.
 private struct ReplyPan: UIGestureRecognizerRepresentable {
     /// The pan's horizontal translation, on each move.
@@ -378,6 +379,16 @@ private struct ReplyPan: UIGestureRecognizerRepresentable {
 
         func gestureRecognizer(_ recognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+        /// Not inside something that scrolls sideways (a wide table or code block): there a rightward drag scrolls it.
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            var view = touch.view
+            while let current = view, current !== recognizer.view {
+                if let scroll = current as? UIScrollView, scroll.contentSize.width > scroll.bounds.width + 1 { return false }
+                view = current.superview
+            }
+            return true
+        }
     }
 }
 
