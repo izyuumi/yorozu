@@ -12,11 +12,13 @@ struct ChatScreen: View {
     @State private var settings = false
     @State private var details: PhoneModel.Bubble?
     @State private var position = ScrollPosition(edge: .bottom)
-    /// The view shows the newest message, so new ones are followed rather than counted.
+    /// The view follows the newest message: an intent only the reader's own scrolling clears. The lazy stack measuring its
+    /// rows moves the content under the view by itself, so the view's position alone cannot say whether the reader left.
     @State private var atBottom = true
-    @State private var scrollIdle = true
-    /// The latest scroll geometry, so the settle below can run again once the view comes to rest.
+    @State private var phase = ScrollPhase.idle
+    /// The latest scroll geometry, for the settle once the view comes to rest.
     @State private var edge: ScrollEdge?
+    @State private var settling: Task<Void, Never>?
     /// The newest message on screen the last time the view was at the bottom: the pill counts past it.
     @State private var seenId: String?
     @State private var path: [ChatRoute] = []
@@ -60,9 +62,12 @@ struct ChatScreen: View {
                     if model.routing == true {
                         ThinkingRow().readableRow()
                     }
+                    // The end, as a row: what `scrollToEnd()` scrolls to. It carries the bottom margin (with the stack's
+                    // spacing above it), so the end it aligns is the content's end.
+                    Color.clear.frame(height: LayoutMetrics.gutter - LayoutMetrics.stack).id(Self.endId)
                 }
                 .scrollTargetLayout()
-                .padding(.vertical, LayoutMetrics.gutter)
+                .padding(.top, LayoutMetrics.gutter)
             }
             .scrollPosition($position)
             // Only the first layout starts at the bottom; later growth leaves the reading position alone.
@@ -74,26 +79,28 @@ struct ChatScreen: View {
                 ScrollEdge(offset: geometry.contentOffset.y,
                            maxOffset: geometry.contentSize.height - geometry.containerSize.height - geometry.contentInsets.top)
             } action: { old, new in
-                if new.offset == old.offset, new.maxOffset > old.maxOffset {
-                    // Content grew (a message, a longer answer, the keyboard): follow it only from the bottom.
-                    if atBottom { position.scrollTo(edge: .bottom) }
-                } else {
-                    atBottom = new.offset >= new.maxOffset - Self.bottomSlack
-                }
                 edge = new
-                settle()
+                let atEnd = new.offset >= new.maxOffset - Self.bottomSlack
+                if [.tracking, .interacting, .decelerating].contains(phase) {
+                    atBottom = atEnd
+                } else if atEnd {
+                    atBottom = true
+                } else if atBottom, phase == .idle {
+                    // Following, and the end moved without the reader (a message, a longer answer, a row measuring
+                    // taller, the keyboard): stay on the newest message.
+                    scrollToEnd()
+                }
+                scheduleSettle()
                 if atBottom { seenId = model.timeline.last?.id }
             }
-            .onScrollPhaseChange { _, phase in
-                scrollIdle = phase == .idle
-                // The keyboard rising, switching layouts or going down, and the composer shrinking after Send, move the
-                // insets while the view is still animating, so the overshoot arrives outside idle: check again at rest.
-                settle()
+            .onScrollPhaseChange { _, new in
+                phase = new
+                scheduleSettle()
             }
             .onChange(of: model.timeline.last?.id) { _, _ in
                 guard let last = model.timeline.last else { return }
                 if atBottom {
-                    position.scrollTo(edge: .bottom)
+                    scrollToEnd()
                     seenId = last.id
                 }
             }
@@ -104,17 +111,21 @@ struct ChatScreen: View {
             }
             .overlay(alignment: .bottom) {
                 // Whenever the view is away from the end: "↓ N new" with messages below, else "Scroll to bottom".
-                if !atBottom {
-                    NewMessagesPill(count: newCount) {
-                        atBottom = true
-                        seenId = model.timeline.last?.id
-                        withAnimation { position.scrollTo(edge: .bottom) }
+                VStack {
+                    if !atBottom {
+                        NewMessagesPill(count: newCount) {
+                            atBottom = true
+                            seenId = model.timeline.last?.id
+                            withAnimation { scrollToEnd() }
+                        }
+                        .padding(.bottom, LayoutMetrics.inner)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    .padding(.bottom, LayoutMetrics.inner)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+                // Scoped to the pill: on the scroll view it animated every programmatic scroll, which then fought the
+                // settle back onto the end.
+                .animation(.snappy, value: atBottom)
             }
-            .animation(.snappy, value: atBottom)
             // The link's state and the Mac's work float over the timeline as toasts rather than strips that take its
             // space: they come and go often, and the messages must not move when they do.
             .overlay(alignment: .top) {
@@ -152,11 +163,11 @@ struct ChatScreen: View {
                              replyQuote: replyQuote, onCancelReply: { model.replyingTo = nil }) {
                         // Sending jumps to the bottom, so the sent message and its answer are followed.
                         atBottom = true
-                        position.scrollTo(edge: .bottom)
+                        scrollToEnd()
                         model.send()
                     } onSendAsTextFile: {
                         atBottom = true
-                        position.scrollTo(edge: .bottom)
+                        scrollToEnd()
                         model.sendAsTextFile()
                     }
                 }
@@ -304,13 +315,32 @@ struct ChatScreen: View {
         path = route
     }
 
-    /// Content shrank under a resting view (the launch's working row or status line going away, a lazy row measuring
-    /// shorter, the keyboard or composer getting smaller) and left it past the end, over empty space: settle back onto the
-    /// last message. Never mid-gesture, so a bounce at the bottom is not fought.
+    /// At rest, back onto the end when the view is past it, over empty space (content shrank: a status row going away, a
+    /// lazy row measuring shorter, the keyboard or composer getting smaller), or short of it while following. Never
+    /// mid-gesture, so a bounce at the bottom is not fought.
     private func settle() {
-        guard scrollIdle, let edge, edge.offset > edge.maxOffset + 1 else { return }
-        position.scrollTo(edge: .bottom)
+        guard phase == .idle, let edge else { return }
+        if edge.offset > edge.maxOffset + 1 || atBottom && edge.offset < edge.maxOffset - 1 { scrollToEnd() }
     }
+
+    /// Once the geometry has held still for a moment: the keyboard and the composer move the insets in animations the
+    /// scroll phase does not report, and correcting every frame of one fought it.
+    private func scheduleSettle() {
+        settling?.cancel()
+        settling = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            if !Task.isCancelled { settle() }
+        }
+    }
+
+    /// To the end row. `scrollTo(edge: .bottom)` ignores the keyboard's inset and landed a keyboard height past the end
+    /// whenever the keyboard was up, over empty space, and `scrollTo(y:)` counts from another origin (both measured on
+    /// iOS 27). Content that grows after this call (the message just sent) moves the end, and the geometry action follows.
+    private func scrollToEnd() {
+        position.scrollTo(id: Self.endId, anchor: .bottom)
+    }
+
+    private static let endId = "end"
 
     private func show(_ id: String?) {
         guard let id else { return }
@@ -357,7 +387,7 @@ struct ChatScreen: View {
             withAnimation { position.scrollTo(id: id, anchor: .center) }
         } else {
             atBottom = true
-            position.scrollTo(edge: .bottom)
+            scrollToEnd()
         }
     }
 
