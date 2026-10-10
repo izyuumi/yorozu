@@ -14,6 +14,7 @@ struct ChatScreen: View {
     @State private var position = ScrollPosition(edge: .bottom)
     /// The view shows the newest message, so new ones are followed rather than counted.
     @State private var atBottom = true
+    @State private var scrollIdle = true
     /// The newest message on screen the last time the view was at the bottom: the pill counts past it.
     @State private var seenId: String?
     @State private var path: [ChatRoute] = []
@@ -80,8 +81,13 @@ struct ChatScreen: View {
                 } else {
                     atBottom = new.offset >= new.maxOffset - Self.bottomSlack
                 }
+                // Content shrank under a resting view (the launch's working row or status line going away, a lazy row
+                // measuring shorter) and left it past the end: settle back onto the last message. Never mid-gesture,
+                // so a bounce at the bottom is not fought.
+                if scrollIdle, new.offset > new.maxOffset + 1 { position.scrollTo(edge: .bottom) }
                 if atBottom { seenId = model.timeline.last?.id }
             }
+            .onScrollPhaseChange { _, phase in scrollIdle = phase == .idle }
             .onChange(of: model.timeline.last?.id) { _, _ in
                 guard let last = model.timeline.last else { return }
                 if atBottom {
@@ -141,7 +147,12 @@ struct ChatScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     // A standard bar button: the whole glass circle is the target, and the badge is the bar's own.
-                    Button("Activities", systemImage: "bubble.left.and.bubble.right") { navigate([.topics]) }
+                    // The two-bubble symbol is wider than tall, so it is drawn a size down to sit inside the circle; the bar
+                    // ignores font and scale on a `Label`, only a bare image takes them (checked on iOS 27).
+                    Button { navigate([.topics]) } label: {
+                        Image(systemName: "bubble.left.and.bubble.right").font(.subheadline)
+                    }
+                        .accessibilityLabel("Activities")
                         .badge(model.runningTopics)
                         .accessibilityValue(model.runningTopics > 0 ? String(localized: "\(model.runningTopics) running") : "")
                 }
