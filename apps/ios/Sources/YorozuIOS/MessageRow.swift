@@ -12,7 +12,9 @@ enum RowStyle {
             self = .question
         } else if bubble.failed {
             self = .failure
-        } else if bubble.notice != nil || ["acknowledgment", "memory_receipt", "approval_request", "job_note"].contains(bubble.kind ?? "") {
+        } else if bubble.notice != nil || ["memory_receipt", "approval_request", "job_note"].contains(bubble.kind ?? "") {
+            // An acknowledgment without a notice code is the secretary's own words ("I'll check…", a milestone),
+            // so it falls through to an answer bubble; the app's fixed acknowledgments carry a notice and stay here.
             self = .system
         } else {
             self = .answer

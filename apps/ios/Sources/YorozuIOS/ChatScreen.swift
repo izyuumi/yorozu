@@ -15,6 +15,8 @@ struct ChatScreen: View {
     /// The view shows the newest message, so new ones are followed rather than counted.
     @State private var atBottom = true
     @State private var scrollIdle = true
+    /// The latest scroll geometry, so the settle below can run again once the view comes to rest.
+    @State private var edge: ScrollEdge?
     /// The newest message on screen the last time the view was at the bottom: the pill counts past it.
     @State private var seenId: String?
     @State private var path: [ChatRoute] = []
@@ -81,13 +83,16 @@ struct ChatScreen: View {
                 } else {
                     atBottom = new.offset >= new.maxOffset - Self.bottomSlack
                 }
-                // Content shrank under a resting view (the launch's working row or status line going away, a lazy row
-                // measuring shorter) and left it past the end: settle back onto the last message. Never mid-gesture,
-                // so a bounce at the bottom is not fought.
-                if scrollIdle, new.offset > new.maxOffset + 1 { position.scrollTo(edge: .bottom) }
+                edge = new
+                settle()
                 if atBottom { seenId = model.timeline.last?.id }
             }
-            .onScrollPhaseChange { _, phase in scrollIdle = phase == .idle }
+            .onScrollPhaseChange { _, phase in
+                scrollIdle = phase == .idle
+                // The keyboard rising, switching layouts or going down, and the composer shrinking after Send, move the
+                // insets while the view is still animating, so the overshoot arrives outside idle: check again at rest.
+                settle()
+            }
             .onChange(of: model.timeline.last?.id) { _, _ in
                 guard let last = model.timeline.last else { return }
                 if atBottom {
@@ -153,8 +158,8 @@ struct ChatScreen: View {
                         Image(systemName: "bubble.left.and.bubble.right").font(.subheadline)
                     }
                         .accessibilityLabel("Activities")
-                        .badge(model.runningTopics)
-                        .accessibilityValue(model.runningTopics > 0 ? String(localized: "\(model.runningTopics) running") : "")
+                        .badge(model.attentionTopics)
+                        .accessibilityValue(model.attentionTopics > 0 ? String(localized: "\(model.attentionTopics) need attention") : "")
                 }
                 if !Self.hasSubtitle {
                     ToolbarItem(placement: .topBarLeading) {
@@ -253,7 +258,8 @@ struct ChatScreen: View {
             return bubble.replyTo.flatMap { byId[$0] }.map { ReplyHeader(text: Self.firstLine($0), revealable: true) }
         }
         let stored = bubble.text.hasPrefix("Regarding “") && bubble.text.contains("”:\n\n")
-        guard RowStyle(bubble) == .answer, !stored, let id = bubble.replyTo else { return nil }
+        // An acknowledgment bubble sits right under the request; quoting it there (and on every milestone) is noise.
+        guard RowStyle(bubble) == .answer, bubble.kind != "acknowledgment", !stored, let id = bubble.replyTo else { return nil }
         if let request = byId[id] { return ReplyHeader(text: request.shownText, revealable: true) }
         return bubble.topicId.flatMap { model.topics[$0]?.label }.map { ReplyHeader(text: $0, revealable: false) }
     }
@@ -281,6 +287,14 @@ struct ChatScreen: View {
     private func navigate(_ route: [ChatRoute]) {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         path = route
+    }
+
+    /// Content shrank under a resting view (the launch's working row or status line going away, a lazy row measuring
+    /// shorter, the keyboard or composer getting smaller) and left it past the end, over empty space: settle back onto the
+    /// last message. Never mid-gesture, so a bounce at the bottom is not fought.
+    private func settle() {
+        guard scrollIdle, let edge, edge.offset > edge.maxOffset + 1 else { return }
+        position.scrollTo(edge: .bottom)
     }
 
     private func show(_ id: String?) {

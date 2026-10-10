@@ -15289,9 +15289,9 @@
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "前後のメッセージ" } }
       }
     },
-    "%lld running" : {
+    "%lld need attention" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件実行中" } }
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件要対応" } }
       }
     },
     "task.state.queued" : {
