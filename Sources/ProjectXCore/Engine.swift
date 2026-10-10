@@ -245,7 +245,12 @@ public actor Engine {
                 routed.topics = candidates.map { t in let h = Int(Date().timeIntervalSince1970 - t.created) / 3600; return RoutingInput.TopicView(id: t.id,label: t.label,age: h < 48 ? "\(h)h" : "\(h / 24)d",attachedTo: t.attachedTo,summary: t.summary) }
                 routed.policy += Self.candidateLine(kind,pinned: pinned,more: i < rounds.count - 1)
                 routed = trimmed(routed,blocking: blocking,forget: forget)
-                decision = Self.pin(Self.usable(try await harness.route(routed,stronger: false),snapshot),to: pinned,snapshot)
+                // A later round that fails or drops the new label keeps the earlier round's new topic.
+                let next: Decision
+                do { next = Self.pin(Self.usable(try await harness.route(routed,stronger: false),snapshot),to: pinned,snapshot) }
+                catch { if i == 0 || Task.isCancelled { throw error }; break }
+                if i > 0, next.noMatch == true, next.newTopic == nil { break }
+                decision = next
                 // None fits: the next round, unless the new label already names a topic (its exact reuse below).
                 guard decision.noMatch == true, let label = decision.newTopic, i < rounds.count - 1, !snapshot.topics.contains(where: { $0.label.caseInsensitiveCompare(label) == .orderedSame }) else { break }
                 try await store.receipt(kind: "routing_round",body: try encoded(decision))
