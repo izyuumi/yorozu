@@ -12,6 +12,8 @@ Owner feedback since then is merged:
 - #351, the workspace and coding agents run by Yorozu (#353, #354, #355).
 - The scroll fix for the reply swipe (#356).
 
+In review: start and milestone messages for delegated work in the main timeline (owner, 2026-10-10; branch `task-updates`): the secretary's `startNote` from the routing call, workers' `MILESTONE:` lines throttled to one per task every 2 minutes, as acknowledgments that never notify ([architecture.md](architecture.md#start-and-milestone-messages)). Not yet checked live.
+
 TestFlight 0.7.0 builds 1–4 are uploaded, to Internal testing only. Open owner steps are listed on #323:
 - the Codex model (`~/.codex/config.toml` pins a model Codex refuses for a ChatGPT sign-in);
 - on-device checks of build 4;
@@ -128,9 +130,9 @@ Each item has a default that holds until the owner answers.
 
 Each limit is described where its mechanism is documented.
 
-- On OpenClaw, workers take a change after the current step; no live steer ([openclaw-integration.md](openclaw-integration.md#methods-used), `tools.invoke`).
+- On OpenClaw, live steer (`chat.send` with `queueMode: "steer"`) is not yet checked live; a runtime that cannot take injected input falls back to a follow-up turn after the step ([openclaw-integration.md](openclaw-integration.md#live-steer)).
 - On Hermes: MCP servers and the working folder are profile-wide (the task folder is a contract rule) (`yorozu-worker`), and a changed `[mcp_servers]` reaches Hermes only when the profile setup runs again (readiness warns "Hermes profiles need updating"; Yorozu does not write them on its own); Hermes's own core system prompt is always prepended to Yorozu's instructions; `GET /v1/toolsets` may not list MCP servers on 0.21.6, so the MCP projection cannot be confirmed; `/api/model/options` gives no context window, so every automatic role resolves to the primary model; after an app restart a run is reconciled by status, not re-attached to its event stream ([hermes-integration.md](hermes-integration.md#limits)).
-- A launch that falls back to the CLI transport shows sub-chat progress only when a step ends ([openclaw-integration.md](openclaw-integration.md#transport)).
+- A launch that falls back to the CLI transport shows sub-chat progress messages (and milestones) about once a minute and tool rows only when a step ends ([openclaw-integration.md](openclaw-integration.md#transport)).
 - The Mac shows no sub-chats except job sub-chats in Settings › Jobs; other topics, work and events are shown only on the phone, and only for the history window it holds. A phone search hit on a sub-chat step whose topic is not on the phone cannot open ([architecture.md](architecture.md#ios-app)).
 - A phone frame the relay forwards to a half-open Mac socket is lost; the phone shows it Delivered and sends it again only on its next `.paired`, which the Mac dedupes by id ([ios-relay-contract.md](ios-relay-contract.md#the-phones-outbox)). A relay that always stores and forwards is out of scope (#314).
 - A phone record passes only if it fits 256 chunks (about 48 MiB); a larger one keeps its head ([ios-relay-contract.md](ios-relay-contract.md)).

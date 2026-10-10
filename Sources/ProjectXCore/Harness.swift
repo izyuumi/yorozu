@@ -364,10 +364,9 @@ public struct OpenClawHarness: Harness {
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput {
         guard input.topic.sessionKey.hasPrefix("agent:\(agent):projectx:") else { throw ProjectError.blocked("Workers must use app-owned sessions on the configured agent \(agent). No private session import.") }
         let s = settings()
-        let key = input.topic.sessionKey; let controller = "agent:\(agent):projectx-control:\(input.topic.id)"
+        let key = input.topic.sessionKey
         // Workers run at full permission with the agent's default tools (owner, 2026-10-07). Creating once per topic per
         // app run also upgrades topic sessions created read-only before that. The CLI requests admin scope for "full".
-        try await prepare(controller,model: s.workerModel,create: ["permissionMode":"guarded"],mcp: false)
         // The task folder is the session's working directory (#351; `cwd` outside the agent workspace needs admin, which the
         // CLI holds); the contract names it too, since an existing session takes it only from this app run's first create.
         try await prepare(key,model: s.workerModel,create: ["permissionMode":"full"].merging(input.folder.map { ["cwd":$0.path] } ?? [:]) { $1 },mcp: true)
@@ -379,20 +378,27 @@ public struct OpenClawHarness: Harness {
             // Images ride only with the step that names them; memory steps send none.
             let images = step == 0 ? await inlineImages(input.attachments,model: s.workerModel,root: s.filesRoot,message: wire.utf8.count) : []
             let runID = "projectx-run-" + identifier()
-            try await update(.handle(RunHandle(sessionKey: key,controllerKey: controller,runID: runID)))
+            try await update(.handle(RunHandle(sessionKey: key,controllerKey: "",runID: runID)))
             let listener = await rpc.native?.observe { raw in
                 if let event = Self.publicEvent(raw,session: key,run: runID,task: input.work.id) { try? await update(.event(event)) }
             }
+            // Committed public messages of this exact run, read every minute while it runs (so progress and milestones reach
+            // the sub-chat and the main timeline live) and once more when it ends; each is posted once.
+            let task = input.work.id, rpc = rpc
+            let project: @Sendable (Set<String>) async -> Set<String> = { seen in
+                guard let history = try? await rpc.call("chat.history",["sessionKey":key,"limit":10,"maxChars":64000]) else { return seen }
+                var seen = seen
+                for event in Self.visibleEvents(history,task: task,run: runID) where seen.insert(event.id).inserted { try? await Prompts.emitProgress(event,update: update) }
+                return seen
+            }
+            let poll = Task { var seen = Set<String>(); while (try? await Task.sleep(for: .seconds(60))) != nil { seen = await project(seen) }; return seen }
             let result: [String:Any]
             var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":Self.stepTimeout(s),"idempotencyKey":runID]
             if !images.isEmpty { params["attachments"] = images }
             do { result = try await dispatch(params,final: true,sourceMessageID: input.work.messageID,timeout: (Self.stepTimeout(s) + 30) * 1000) }
-            catch { if let listener { await rpc.native?.removeObserver(listener) }; throw error }
+            catch { poll.cancel(); _ = await poll.value; if let listener { await rpc.native?.removeObserver(listener) }; throw error }
             if let listener { await rpc.native?.removeObserver(listener) }
-            // The CLI cannot stream; committed public messages of this exact run are projected once it ends.
-            if let history = try? await rpc.call("chat.history",["sessionKey":key,"limit":10,"maxChars":64000]) {
-                for event in Self.visibleEvents(history,task: input.work.id,run: runID) { try? await Prompts.emitProgress(event,update: update) }
-            }
+            poll.cancel(); _ = await project(await poll.value)
             let answer: String
             do { answer = try text(result) } catch ProjectError.overflow {
                 throw ProjectError.overflow(try await compactTopic(input,force: true,update: update) ? "This topic's session ran out of context. Yorozu compacted it, so asking again should now work." : "This topic's session is too long for the model and could not be compacted. Start a new topic for this request.")
@@ -403,11 +409,27 @@ public struct OpenClawHarness: Harness {
             }
         }; throw ProjectError.invalid("Worker invocation ended without an answer.")
     }
+    /// Live steer (owner, 2026-10-10): `chat.send` with `queueMode: "steer"` on the topic session injects the change into
+    /// the step's run at its next model boundary. The ACK is "started" either way; when the run cannot take it, OpenClaw
+    /// queues it as its own turn behind the run instead (`agent.wait` answers pending in phase "queue"), which is withdrawn
+    /// here so the change runs once, as Yorozu's follow-up turn. `ok` or a bare `timeout` (a tool still running) count as taken.
     public func steer(_ work: Work, topic: Topic, amendment: Amendment) async throws -> Bool {
-        guard let controller = work.controllerKey else { return false }
-        let result = try await rpc.call("tools.invoke",["name":"sessions_send","sessionKey":controller,"agentId":agent,"idempotencyKey":"\(work.id)-revision-\(amendment.revision)","args":["sessionKey":topic.sessionKey,"message":try encoded(amendment),"mode":"steer","timeoutSeconds":0,"watch":false]])
-        let raw = result["output"] as? [String:Any] ?? [:]; let output = raw["details"] as? [String:Any] ?? raw
-        return result["ok"] as? Bool == true && output["status"] as? String == "accepted" && output["targetDisposition"] as? String == "steered" && output["sessionKey"] as? String == topic.sessionKey
+        guard let run = work.runID, run.hasPrefix("projectx-run-") else { return false } // a thinking step of this harness
+        // The step must still be running: on an idle session (a memory step, the answer being stored, a follow-up being
+        // prepared) chat.send starts the change as its own turn, which agent.wait reports like an admitted steer.
+        // A running `agent` run answers a bare timeout; an ended one carries endedAt.
+        let step = try await rpc.call("agent.wait",["runId":run,"timeoutMs":1])
+        guard step["status"] as? String == "timeout", step["endedAt"] == nil else { return false }
+        let id = "\(work.id)-revision-\(amendment.revision)"
+        let sent = try await rpc.call("chat.send",["sessionKey":topic.sessionKey,"agentId":agent,"message":try encoded(amendment),"queueMode":"steer","deliver":false,"idempotencyKey":id])
+        guard sent["runId"] as? String == id else { return false }
+        let wait = try await rpc.call("agent.wait",["runId":id,"timeoutMs":5000])
+        if wait["status"] as? String == "pending", wait["timeoutPhase"] as? String == "queue" {
+            // Withdraw only while still queued; a turn that already started is left to run rather than cut mid-answer.
+            let abort = try? await rpc.call("chat.abort",["sessionKey":topic.sessionKey,"agentId":agent,"runId":id,"discardPendingInput":true])
+            return abort?["aborted"] as? Bool != true
+        }
+        return ["ok","timeout"].contains(wait["status"] as? String ?? "")
     }
     public func cancel(_ work: Work, topic: Topic) async throws -> Bool {
         guard let run = work.runID else { return true } // Never dispatched; setHandle refuses suppressed work.
@@ -549,7 +571,7 @@ extension OpenClawHarness {
     static func arrayPaths(_ value: Any,_ path: String) -> [String] {
         value is [Any] ? [path] : (value as? [String:Any])?.flatMap { arrayPaths($0.value,path + "." + $0.key) } ?? []
     }
-    /// Before each use of a topic, controller or coding session: bring it to `model` (and `runtime`) with sessions.patch
+    /// Before each use of a topic or coding session: bring it to `model` (and `runtime`) with sessions.patch
     /// (operator.write), never by re-creating it, since sessions.create with another model on an existing key needs
     /// operator.admin; create it once per app run; then apply the MCP overlay. Embedded and Codex runs read the overlay each
     /// turn; claude-cli runs ignore it (OpenClaw 2026.9.6 does not pass session toolOverrides to the CLI runner). Gateway
