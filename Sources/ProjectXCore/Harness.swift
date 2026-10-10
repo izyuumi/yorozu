@@ -364,10 +364,9 @@ public struct OpenClawHarness: Harness {
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput {
         guard input.topic.sessionKey.hasPrefix("agent:\(agent):projectx:") else { throw ProjectError.blocked("Workers must use app-owned sessions on the configured agent \(agent). No private session import.") }
         let s = settings()
-        let key = input.topic.sessionKey; let controller = "agent:\(agent):projectx-control:\(input.topic.id)"
+        let key = input.topic.sessionKey
         // Workers run at full permission with the agent's default tools (owner, 2026-10-07). Creating once per topic per
         // app run also upgrades topic sessions created read-only before that. The CLI requests admin scope for "full".
-        try await prepare(controller,model: s.workerModel,create: ["permissionMode":"guarded"],mcp: false)
         // The task folder is the session's working directory (#351; `cwd` outside the agent workspace needs admin, which the
         // CLI holds); the contract names it too, since an existing session takes it only from this app run's first create.
         try await prepare(key,model: s.workerModel,create: ["permissionMode":"full"].merging(input.folder.map { ["cwd":$0.path] } ?? [:]) { $1 },mcp: true)
@@ -379,7 +378,7 @@ public struct OpenClawHarness: Harness {
             // Images ride only with the step that names them; memory steps send none.
             let images = step == 0 ? await inlineImages(input.attachments,model: s.workerModel,root: s.filesRoot,message: wire.utf8.count) : []
             let runID = "projectx-run-" + identifier()
-            try await update(.handle(RunHandle(sessionKey: key,controllerKey: controller,runID: runID)))
+            try await update(.handle(RunHandle(sessionKey: key,controllerKey: "",runID: runID)))
             let listener = await rpc.native?.observe { raw in
                 if let event = Self.publicEvent(raw,session: key,run: runID,task: input.work.id) { try? await update(.event(event)) }
             }
@@ -410,11 +409,27 @@ public struct OpenClawHarness: Harness {
             }
         }; throw ProjectError.invalid("Worker invocation ended without an answer.")
     }
+    /// Live steer (owner, 2026-10-10): `chat.send` with `queueMode: "steer"` on the topic session injects the change into
+    /// the step's run at its next model boundary. The ACK is "started" either way; when the run cannot take it, OpenClaw
+    /// queues it as its own turn behind the run instead (`agent.wait` answers pending in phase "queue"), which is withdrawn
+    /// here so the change runs once, as Yorozu's follow-up turn. `ok` or a bare `timeout` (a tool still running) count as taken.
     public func steer(_ work: Work, topic: Topic, amendment: Amendment) async throws -> Bool {
-        guard let controller = work.controllerKey else { return false }
-        let result = try await rpc.call("tools.invoke",["name":"sessions_send","sessionKey":controller,"agentId":agent,"idempotencyKey":"\(work.id)-revision-\(amendment.revision)","args":["sessionKey":topic.sessionKey,"message":try encoded(amendment),"mode":"steer","timeoutSeconds":0,"watch":false]])
-        let raw = result["output"] as? [String:Any] ?? [:]; let output = raw["details"] as? [String:Any] ?? raw
-        return result["ok"] as? Bool == true && output["status"] as? String == "accepted" && output["targetDisposition"] as? String == "steered" && output["sessionKey"] as? String == topic.sessionKey
+        guard let run = work.runID, run.hasPrefix("projectx-run-") else { return false } // a thinking step of this harness
+        // The step must still be running: on an idle session (a memory step, the answer being stored, a follow-up being
+        // prepared) chat.send starts the change as its own turn, which agent.wait reports like an admitted steer.
+        // A running `agent` run answers a bare timeout; an ended one carries endedAt.
+        let step = try await rpc.call("agent.wait",["runId":run,"timeoutMs":1])
+        guard step["status"] as? String == "timeout", step["endedAt"] == nil else { return false }
+        let id = "\(work.id)-revision-\(amendment.revision)"
+        let sent = try await rpc.call("chat.send",["sessionKey":topic.sessionKey,"agentId":agent,"message":try encoded(amendment),"queueMode":"steer","deliver":false,"idempotencyKey":id])
+        guard sent["runId"] as? String == id else { return false }
+        let wait = try await rpc.call("agent.wait",["runId":id,"timeoutMs":5000])
+        if wait["status"] as? String == "pending", wait["timeoutPhase"] as? String == "queue" {
+            // Withdraw only while still queued; a turn that already started is left to run rather than cut mid-answer.
+            let abort = try? await rpc.call("chat.abort",["sessionKey":topic.sessionKey,"agentId":agent,"runId":id,"discardPendingInput":true])
+            return abort?["aborted"] as? Bool != true
+        }
+        return ["ok","timeout"].contains(wait["status"] as? String ?? "")
     }
     public func cancel(_ work: Work, topic: Topic) async throws -> Bool {
         guard let run = work.runID else { return true } // Never dispatched; setHandle refuses suppressed work.
@@ -556,7 +571,7 @@ extension OpenClawHarness {
     static func arrayPaths(_ value: Any,_ path: String) -> [String] {
         value is [Any] ? [path] : (value as? [String:Any])?.flatMap { arrayPaths($0.value,path + "." + $0.key) } ?? []
     }
-    /// Before each use of a topic, controller or coding session: bring it to `model` (and `runtime`) with sessions.patch
+    /// Before each use of a topic or coding session: bring it to `model` (and `runtime`) with sessions.patch
     /// (operator.write), never by re-creating it, since sessions.create with another model on an existing key needs
     /// operator.admin; create it once per app run; then apply the MCP overlay. Embedded and Codex runs read the overlay each
     /// turn; claude-cli runs ignore it (OpenClaw 2026.9.6 does not pass session toolOverrides to the CLI runner). Gateway

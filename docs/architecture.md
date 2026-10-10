@@ -166,7 +166,7 @@ A substantive message with too little context starts a new sub-chat; once a late
 
 ## Workers
 
-Every task runs on a worker, the harness's own agent in the topic's session (#351): on OpenClaw the topic session `agent:<agent>:projectx:<topicID>` (plus a controller session for steering), at permission `full` with the agent's default tools, up to 7 steps, each one synchronous Gateway run of at most `stepTimeout` (the longest coding agent's timeout plus 10 minutes, 2100 s by default, so the worker can wait for an agent); on Hermes session `yorozu-<topicID>` of profile `yorozu-worker`, with progress live over SSE and changes steered live ([hermes-integration.md](hermes-integration.md#workers)).
+Every task runs on a worker, the harness's own agent in the topic's session (#351): on OpenClaw the topic session `agent:<agent>:projectx:<topicID>`, at permission `full` with the agent's default tools, up to 7 steps, each one synchronous Gateway run of at most `stepTimeout` (the longest coding agent's timeout plus 10 minutes, 2100 s by default, so the worker can wait for an agent); on Hermes session `yorozu-<topicID>` of profile `yorozu-worker`, with progress live over SSE; on both, changes are steered live ([openclaw-integration.md](openclaw-integration.md#live-steer), [hermes-integration.md](hermes-integration.md#workers)).
 
 | | Worker |
 |---|---|
@@ -177,7 +177,7 @@ Every task runs on a worker, the harness's own agent in the topic's session (#35
 | Memory tools | `memory.search`, `memory.read`, `memory.write` |
 | MCP servers | Yorozu's list |
 | Coding | Runs a coding agent through Yorozu (`Yorozu agent run`); the app spawns it in the task folder |
-| Changes to running work | Tries a live steer, else a follow-up turn after the step |
+| Changes to running work | Steered live into the running step (OpenClaw `chat.send` with `queueMode: "steer"`, Hermes `/steer`); when the run does not take it, a follow-up turn after the step |
 | Session compaction | Yorozu compacts the topic session before a task once it reaches half the window (OpenClaw); Hermes compacts its own |
 
 Models per role are in [setup.md](setup.md#models).
