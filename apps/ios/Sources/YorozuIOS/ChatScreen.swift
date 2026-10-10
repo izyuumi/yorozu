@@ -103,15 +103,18 @@ struct ChatScreen: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if !atBottom && newCount > 0 {
+                // Whenever the view is away from the end: "↓ N new" with messages below, else "Scroll to bottom".
+                if !atBottom {
                     NewMessagesPill(count: newCount) {
                         atBottom = true
                         seenId = model.timeline.last?.id
                         withAnimation { position.scrollTo(edge: .bottom) }
                     }
                     .padding(.bottom, LayoutMetrics.inner)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+            .animation(.snappy, value: atBottom)
             // The link's state and the Mac's work float over the timeline as toasts rather than strips that take its
             // space: they come and go often, and the messages must not move when they do.
             .overlay(alignment: .top) {
@@ -454,14 +457,14 @@ private struct Toast<Content: View>: View {
     }
 }
 
-/// "↓ N new": back to the bottom.
+/// "↓ N new", or "↓ Scroll to bottom" with nothing new: back to the bottom.
 private struct NewMessagesPill: View {
     let count: Int
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Label("\(count) new", systemImage: "arrow.down")
+            Label(count > 0 ? String(localized: "\(count) new") : String(localized: "Scroll to bottom"), systemImage: "arrow.down")
                 .font(.subheadline.weight(.semibold))
                 .padding(.horizontal, LayoutMetrics.gutter)
                 .padding(.vertical, LayoutMetrics.inner)
