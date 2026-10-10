@@ -99,6 +99,8 @@ public actor Store {
             """) }
         // #348. Nullable: older builds insert topics through GRDB records, which name their columns.
         migration.registerMigration("topic-attach") { db in try db.execute(sql: "ALTER TABLE topics ADD COLUMN attachedTo TEXT; ALTER TABLE topics ADD COLUMN attachedAt DOUBLE; ALTER TABLE work ADD COLUMN started DOUBLE") }
+        // Owner, 2026-10-10. Nullable: a topic's one-line summary, written by memory extraction.
+        migration.registerMigration("topic-summary") { db in try db.execute(sql: "ALTER TABLE topics ADD COLUMN summary TEXT") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -167,6 +169,30 @@ public actor Store {
             }
             return (Array(hits.sorted { $0.created > $1.created }.dropFirst(offset).prefix(limit)),total)
         }
+    }
+    /// Topic search for routing (owner, 2026-10-10): per topic, how many of its messages and sub-chat events match each
+    /// term (at most 5 a term, so one common word cannot carry a topic), plus 5 for each term in its label or summary.
+    /// A term "a / b" counts as two; terms of 3+ characters use the trigram indexes, shorter ones LIKE; empty terms are skipped.
+    public func topicHits(_ terms: [String]) throws -> [String:Int] {
+        try db.read { db in
+            var score: [String:Int] = [:]
+            for term in Set(terms.flatMap { $0.split(separator: "/") }.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }).prefix(16) {
+                let like = "%" + term.replacingOccurrences(of: "\\",with: "\\\\").replacingOccurrences(of: "%",with: "\\%").replacingOccurrences(of: "_",with: "\\_") + "%"
+                let fts = term.count >= 3, quoted = "\"" + term.replacingOccurrences(of: "\"",with: "\"\"") + "\""
+                let messages = fts ? "SELECT t.topicID AS topic FROM messageSearch JOIN messages t ON t.rowid=messageSearch.rowid WHERE messageSearch MATCH ?" : "SELECT topicID AS topic FROM messages WHERE body LIKE ? ESCAPE '\\'"
+                let events = fts ? "SELECT w.topicID AS topic FROM eventSearch JOIN events e ON e.rowid=eventSearch.rowid JOIN work w ON w.id=e.taskID WHERE eventSearch MATCH ?" : "SELECT w.topicID AS topic FROM events e JOIN work w ON w.id=e.taskID WHERE e.body LIKE ? ESCAPE '\\'"
+                let arg = fts ? quoted : like
+                for row in try Row.fetchAll(db,sql: "SELECT topic,MIN(COUNT(*),5) AS n FROM (\(messages) UNION ALL \(events)) WHERE topic IS NOT NULL GROUP BY topic",arguments: [arg,arg]) { score[row["topic"],default: 0] += row["n"] }
+                for id in try String.fetchAll(db,sql: "SELECT id FROM topics WHERE label LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\'",arguments: [like,like]) { score[id,default: 0] += 5 }
+            }
+            return score
+        }
+    }
+    /// A topic's one-line summary (owner, 2026-10-10), at most 200 characters.
+    public func setSummary(topic: String, _ summary: String) throws {
+        let line = String(summary.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces).prefix(200))
+        guard !line.isEmpty else { return }
+        try db.write { try $0.execute(sql: "UPDATE topics SET summary=? WHERE id=? AND summary IS NOT ?",arguments: [line,topic,line]) }
     }
     /// Attaches `topic` to `target` (#348) when `topic` was created in the last 7 days, is not attached and has nothing
     /// attached, and `target` is another topic that is not attached itself; neither may be a job topic; false (nothing changed) otherwise.

@@ -239,11 +239,17 @@ public struct HermesHarness: Harness {
         return try JSONDecoder().decode(Decision.self, from: Data(reply.utf8))
     }
 
-    public func extract(_ message: Message, existing: [MemoryHit], context: String?) async throws -> [MemoryProposal] {
-        if sensitive(message.body) { return [] }
-        let prompt = try Prompts.extractionPrompt(message, existing: existing, context: context, cap: rawPromptCap)
+    /// The classification step; Hermes takes no image input from Yorozu, so images go as descriptors only.
+    public func classify(_ input: ClassifyInput) async throws -> Classification {
+        let reply = try await role(Prompts.classificationPrompt(input), instructions: Self.roleRules, model: settings().secretaryModel, source: input.sourceMessageID)
+        return try JSONDecoder().decode(Classification.self, from: Data(reply.utf8))
+    }
+
+    public func extract(_ message: Message, existing: [MemoryHit], context: String?, topic: String?) async throws -> Extraction {
+        if sensitive(message.body) { return Extraction(memory: []) }
+        let prompt = try Prompts.extractionPrompt(message, existing: existing, context: context, topic: topic, cap: rawPromptCap)
         let reply = try await role(prompt, instructions: Self.roleRules, model: settings().extractionModel, source: message.id)
-        do { return try JSONDecoder().decode([MemoryProposal].self, from: Data(reply.utf8)) }
+        do { return try JSONDecoder().decode(Extraction.self, from: Data(reply.utf8)) }
         catch { throw ProjectError.invalid("Extraction reply is not a valid proposal array (\(reply.utf8.count) bytes): \(utf8Prefix(String(describing: error), bytes: 300))") }
     }
 
