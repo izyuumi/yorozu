@@ -397,7 +397,7 @@ public struct OpenClawHarness: Harness {
             var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":Self.stepTimeout(s),"idempotencyKey":runID]
             if !images.isEmpty { params["attachments"] = images }
             do { result = try await dispatch(params,final: true,sourceMessageID: input.work.messageID,timeout: (Self.stepTimeout(s) + 30) * 1000) }
-            catch { poll.cancel(); if let listener { await rpc.native?.removeObserver(listener) }; throw error }
+            catch { poll.cancel(); _ = await poll.value; if let listener { await rpc.native?.removeObserver(listener) }; throw error }
             if let listener { await rpc.native?.removeObserver(listener) }
             poll.cancel(); _ = await project(await poll.value)
             let answer: String
