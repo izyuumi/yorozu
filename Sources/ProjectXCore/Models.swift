@@ -6,6 +6,9 @@ public struct Topic: Codable, FetchableRecord, PersistableRecord, Identifiable, 
     public var id: String; public var label: String; public var sessionKey: String; public var created: Double
     /// The topic this sub-chat was attached to and when (#348): its later work runs in that topic. Its history stays here.
     public var attachedTo: String? = nil; public var attachedAt: Double? = nil
+    /// One line on what the topic is about, written by memory extraction after a result (owner, 2026-10-10); routing shows it
+    /// with each candidate topic and topic search matches it.
+    public var summary: String? = nil
 }
 public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "messages"
@@ -190,6 +193,8 @@ public struct Decision: Codable, Sendable {
     public var attachTo: String?
     /// `delegate`/`retry`/`steer` (owner, 2026-10-10): the secretary's own one-line start message, posted when new work starts.
     public var startNote: String?
+    /// Owner, 2026-10-10: none of the candidate topics fits; `newTopic` names the new topic if no later round finds one.
+    public var noMatch: Bool?
     public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, approvalID: String? = nil, attachTo: String? = nil, startNote: String? = nil) {
         self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.approvalID = approvalID; self.attachTo = attachTo; self.startNote = startNote
     }
@@ -197,7 +202,7 @@ public struct Decision: Codable, Sendable {
 /// The secretary's slim view: only the fields routing needs, never database records. Long text is excerpted by bytes.
 public struct RoutingInput: Codable, Sendable {
     /// `age`: how long ago the topic was created ("5h", "3d"); `attachedTo`: the topic it was attached to (#348).
-    public struct TopicView: Codable, Sendable { public var id: String; public var label: String; public var age: String? = nil; public var attachedTo: String? = nil }
+    public struct TopicView: Codable, Sendable { public var id: String; public var label: String; public var age: String? = nil; public var attachedTo: String? = nil; public var summary: String? = nil }
     /// A file the secretary may know about (#316): name, type, size and absolute path, never contents.
     public struct FileView: Codable, Sendable { public var name: String; public var type: String; public var size: String; public var path: String }
     public struct MessageView: Codable, Sendable { public var role: String; public var topicID: String?; public var taskID: String?; public var kind: String; public var body: String; public var files: [FileView]? = nil }
@@ -218,13 +223,40 @@ public struct RoutingInput: Codable, Sendable {
     public var messageAge: String? = nil
     /// The current message's attached files (#316); left out when it has none.
     public var files: [FileView] = []
-    enum CodingKeys: String, CodingKey { case message, files, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
+    /// The classification step's keywords for the message's subject, what its images show included (owner, 2026-10-10).
+    public var subject: [String]? = nil
+    enum CodingKeys: String, CodingKey { case message, files, subject, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
     /// Empty job lists are left out, so a workspace without jobs sends the pre-#319 context unchanged.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
+        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(subject,forKey: .subject); try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
         try c.encodeIfPresent(latestTopic,forKey: .latestTopic); try c.encode(memory,forKey: .memory); try c.encodeIfPresent(sourceMessageID,forKey: .sourceMessageID); try c.encodeIfPresent(omitted,forKey: .omitted)
         if !jobs.isEmpty { try c.encode(jobs,forKey: .jobs) }; if !approvals.isEmpty { try c.encode(approvals,forKey: .approvals) }
+    }
+}
+/// The classification step's view (owner, 2026-10-10): the message, its file descriptors and the recent messages; `images`
+/// (the message's image files, sent as thumbnails where the model takes images) are never encoded.
+public struct ClassifyInput: Codable, Sendable {
+    public var message: String; public var files: [RoutingInput.FileView]?; public var messageAge: String?; public var recent: [RoutingInput.MessageView]
+    public var sourceMessageID: String?
+    public var images: [Attachment] = []
+    enum CodingKeys: String, CodingKey { case message, files, messageAge, recent }
+}
+/// `kind`: `new` (a new subject), `oneoff` (the secretary answers it, no topic) or `continue` (an earlier subject, found by
+/// searching `terms`, English and Japanese keywords).
+public struct Classification: Codable, Sendable {
+    public var kind: String; public var terms: [String]? = nil
+}
+/// Extraction's answer: memory proposals and, when asked for a result in a topic, the topic's new one-line summary. The
+/// model may answer the plain proposal array when no summary was asked for.
+public struct Extraction: Decodable, Sendable {
+    public var memory: [MemoryProposal]; public var topicSummary: String? = nil
+    public init(memory: [MemoryProposal], topicSummary: String? = nil) { self.memory = memory; self.topicSummary = topicSummary }
+    enum CodingKeys: String, CodingKey { case memory, topicSummary }
+    public init(from decoder: Decoder) throws {
+        if let array = try? [MemoryProposal](from: decoder) { memory = array; return }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        memory = try c.decodeIfPresent([MemoryProposal].self,forKey: .memory) ?? []; topicSummary = try c.decodeIfPresent(String.self,forKey: .topicSummary)
     }
 }
 /// `history`: only topic conversation the worker's session has not seen. `followUp`: the amendments a follow-up turn adds;

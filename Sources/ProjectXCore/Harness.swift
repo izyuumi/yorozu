@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import ImageIO
 
 public protocol Harness: Sendable {
     var name: String { get }
@@ -16,6 +17,10 @@ public protocol Harness: Sendable {
     func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal]
     /// `context`: for a `result`, an excerpt of the message it answers, so the model knows the question (never a quotable source).
     func extract(_ message: Message, existing: [MemoryHit], context: String?) async throws -> [MemoryProposal]
+    /// `topic`: for a result in a topic, its label and current summary, so the answer also carries the new summary.
+    func extract(_ message: Message, existing: [MemoryHit], context: String?, topic: String?) async throws -> Extraction
+    /// The classification step before routing (owner, 2026-10-10), a raw run on the secretary model.
+    func classify(_ input: ClassifyInput) async throws -> Classification
     /// The models the harness's agent may use, and its primary model, for the smart role defaults (#312).
     func models() async throws -> (allowed: [ModelInfo], primary: String?)
     /// UTF-8 byte cap on a role run's final prompt (secretary, review, extraction); the Engine's routing trim measures against it.
@@ -29,6 +34,9 @@ public extension Harness {
     var workerGuard: Int { 32000 }
     func extract(_ message: Message, existing: [MemoryHit]) async throws -> [MemoryProposal] { [] }
     func extract(_ message: Message, existing: [MemoryHit], context: String?) async throws -> [MemoryProposal] { try await extract(message, existing: existing) }
+    func extract(_ message: Message, existing: [MemoryHit], context: String?, topic: String?) async throws -> Extraction { Extraction(memory: try await extract(message, existing: existing, context: context)) }
+    /// No model: every message counts as continuing, with no search terms (the recent topics are the candidates).
+    func classify(_ input: ClassifyInput) async throws -> Classification { Classification(kind: "continue") }
     func models() async throws -> (allowed: [ModelInfo], primary: String?) { ([],nil) }
 }
 /// Settings the app can change while it runs (#312). The harness and the Engine read them through a closure at the start
@@ -79,7 +87,7 @@ public actor FixtureHarness: Harness {
     public init(agent: String = Config().harness.agent) { agentID = agent }
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision {
         let text = input.message.trimmingCharacters(in: .whitespacesAndNewlines)
-        let latest = input.latestTopic ?? input.topics.last?.id
+        let latest = input.latestTopic ?? input.topics.first?.id
         if let a = input.approvals.first, text.lowercased() == "yes" { return Decision(action: "approve",approvalID: a.approvalID) } // #319 fixture checks
         if text.lowercased() == "retry" { return Decision(action: "retry",topicID: latest,taskID: input.work.last(where: { ["failed","uncertain"].contains($0.state) })?.id,instruction: "Continue the failed request") }
         if text.lowercased().hasPrefix("new topic:") { return Decision(action: "delegate",newTopic: String(text.dropFirst(10)).trimmingCharacters(in: .whitespaces),instruction: text) }
@@ -302,19 +310,29 @@ public struct OpenClawHarness: Harness {
     /// lists `image` among `model`'s inputs, each is at most 6 MiB and all fit the transport with the message; the rest
     /// (and every image when the check fails) reach the worker by path only. The bytes decide: a file that is not PNG,
     /// JPEG, GIF or WebP by its magic bytes goes by path only, and an inlined one is labelled with its sniffed type.
-    func inlineImages(_ attachments: [Attachment], model: String, root: URL?, message: Int) async -> [[String:String]] {
-        let candidates = attachments.filter { Self.inlineTypes.contains($0.mime.lowercased()) && $0.bytes <= Self.maxImageBytes }
+    /// `thumbnails` (the classification step): each image as a 512 px JPEG instead of the file.
+    func inlineImages(_ attachments: [Attachment], model: String, root: URL?, message: Int, thumbnails: Bool = false) async -> [[String:String]] {
+        let candidates = attachments.filter { Self.inlineTypes.contains($0.mime.lowercased()) && (thumbnails || $0.bytes <= Self.maxImageBytes) }
         guard !candidates.isEmpty, let rows = try? await rpc.call("models.list",["agentId":agent,"view":"configured","includeDetails":true])["models"] as? [[String:Any]],
               rows.contains(where: { "\($0["provider"] as? String ?? "")/\($0["id"] as? String ?? "")" == model && ($0["input"] as? [String] ?? []).contains("image") }) else { return [] }
         var budget = (rpc.native != nil ? Self.nativeParamsBudget : Self.cliParamsBudget) - message * 2 - 4096 // escaping and the other params
         var images: [[String:String]] = []
         for a in candidates {
-            guard let url = Prompts.fileURL(a,root: root), let data = try? Data(contentsOf: url), data.count <= Self.maxImageBytes, let mime = Self.sniffImage(data) else { continue }
+            guard let url = Prompts.fileURL(a,root: root), let data = thumbnails ? Self.thumbnail(url) : try? Data(contentsOf: url), data.count <= Self.maxImageBytes, let mime = Self.sniffImage(data) else { continue }
             let content = data.base64EncodedString(), cost = content.utf8.count + a.name.utf8.count * 2 + 128
             guard cost <= budget else { continue }
             budget -= cost; images.append(["type":"image","mimeType":mime,"fileName":a.name,"content":content])
         }
         return images
+    }
+    /// A 512 px JPEG of an image file (EXIF orientation applied), or nil when ImageIO cannot read it.
+    static func thumbnail(_ url: URL) -> Data? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL,nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways: true,kCGImageSourceCreateThumbnailWithTransform: true,kCGImageSourceThumbnailMaxPixelSize: 512] as CFDictionary) else { return nil }
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data,"public.jpeg" as CFString,1,nil) else { return nil }
+        CGImageDestinationAddImage(dest,image,[kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        return CGImageDestinationFinalize(dest) ? data as Data : nil
     }
     /// PNG, JPEG, GIF or WebP by magic bytes, else nil.
     static func sniffImage(_ d: Data) -> String? {
@@ -337,7 +355,7 @@ public struct OpenClawHarness: Harness {
     /// A thinking step's run timeout (s): long enough for the longest coding agent the worker may run, plus 10 minutes
     /// of its own work (#351); 2100 s with the default agents.
     static func stepTimeout(_ s: HarnessSettings) -> Int { (s.codingAgents.map(\.timeout).max() ?? CodingAgent.defaultTimeout) + 600 }
-    private func model(_ prompt: String, model: String, sourceMessageID: String? = nil) async throws -> String {
+    private func model(_ prompt: String, model: String, sourceMessageID: String? = nil, images: [[String:String]] = []) async throws -> String {
         guard prompt.utf8.count <= rawPromptCap else { throw ProjectError.invalid("Model input exceeds bounded context.") }
         guard !model.isEmpty else { throw ProjectError.blocked("No model is set for this role; choose one in Settings › Harness.") }
         // Public CLI `agent` connects with operator.write; per-turn model overrides require admin.
@@ -349,7 +367,9 @@ public struct OpenClawHarness: Harness {
                 let created = try await rpc.call("sessions.create",["key":key,"agentId":agent,"model":model,"permissionMode":"read-only"])
                 guard created["ok"] as? Bool == true, created["key"] as? String == key else { throw ProjectError.uncertain("Secretary model-session selection unconfirmed; no inference dispatched.") }
             }
-            let envelope = try await rpc.call("agent",["agentId":agent,"sessionKey":key,"message":prompt,"modelRun":true,"promptMode":"none","deliver":false,"timeout":90,"idempotencyKey":"projectx-" + identifier()],final: true,sourceMessageID: sourceMessageID)
+            var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":prompt,"modelRun":true,"promptMode":"none","deliver":false,"timeout":90,"idempotencyKey":"projectx-" + identifier()]
+            if !images.isEmpty { params["attachments"] = images }
+            let envelope = try await dispatch(params,final: true,sourceMessageID: sourceMessageID)
             // A deleted/pruned role session silently runs the agent's default model: recreate it once (raw runs are stateless).
             let used = ((envelope["result"] as? [String:Any])?["meta"] as? [String:Any])?["agentMeta"] as? [String:Any]
             if used == nil || "\(used?["provider"] as? String ?? "")/\(used?["model"] as? String ?? "")" == model { return try text(envelope) }
@@ -360,6 +380,12 @@ public struct OpenClawHarness: Harness {
     public func route(_ input: RoutingInput, stronger: Bool) async throws -> Decision {
         let prompt = Prompts.routingPrompt(input,stronger: stronger)
         return try JSONDecoder().decode(Decision.self,from: Data(try await model(prompt,model: stronger ? settings().reviewModel : settings().secretaryModel,sourceMessageID: input.sourceMessageID).utf8))
+    }
+    /// The classification step: the message's images go along as thumbnails when the secretary model takes images.
+    public func classify(_ input: ClassifyInput) async throws -> Classification {
+        let s = settings(), prompt = Prompts.classificationPrompt(input)
+        let images = await inlineImages(input.images,model: s.secretaryModel,root: s.filesRoot,message: prompt.utf8.count,thumbnails: true)
+        return try JSONDecoder().decode(Classification.self,from: Data(try await model(prompt,model: s.secretaryModel,sourceMessageID: input.sourceMessageID,images: images).utf8))
     }
     public func run(_ input: WorkerInput, update: @escaping @Sendable (StreamUpdate) async throws -> Void, memory: @escaping @Sendable (MemoryCall) async throws -> String) async throws -> WorkerOutput {
         guard input.topic.sessionKey.hasPrefix("agent:\(agent):projectx:") else { throw ProjectError.blocked("Workers must use app-owned sessions on the configured agent \(agent). No private session import.") }
@@ -469,11 +495,11 @@ public struct OpenClawHarness: Harness {
         guard let turn = messages.last(where: { $0["idempotencyKey"] as? String == run + ":user" }) else { return .stopped }
         return Date().timeIntervalSince1970 - (turn["timestamp"] as? Double ?? 0) / 1000 > 900 ? .stopped : .unknown
     }
-    public func extract(_ message: Message, existing: [MemoryHit], context: String?) async throws -> [MemoryProposal] {
-        if sensitive(message.body) { return [] }
-        let prompt = try Prompts.extractionPrompt(message,existing: existing,context: context,cap: rawPromptCap)
+    public func extract(_ message: Message, existing: [MemoryHit], context: String?, topic: String?) async throws -> Extraction {
+        if sensitive(message.body) { return Extraction(memory: []) }
+        let prompt = try Prompts.extractionPrompt(message,existing: existing,context: context,topic: topic,cap: rawPromptCap)
         let reply = try await model(prompt,model: settings().extractionModel,sourceMessageID: message.id)
-        do { return try JSONDecoder().decode([MemoryProposal].self,from: Data(reply.utf8)) }
+        do { return try JSONDecoder().decode(Extraction.self,from: Data(reply.utf8)) }
         catch { throw ProjectError.invalid("Extraction reply is not a valid proposal array (\(reply.utf8.count) bytes): \(utf8Prefix(String(describing: error),bytes: 300))") }
     }
     /// Only actual public lifecycle/tool-name facts for the exact locally owned run. No text deltas, reasoning or arguments.
