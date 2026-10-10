@@ -383,16 +383,23 @@ public struct OpenClawHarness: Harness {
             let listener = await rpc.native?.observe { raw in
                 if let event = Self.publicEvent(raw,session: key,run: runID,task: input.work.id) { try? await update(.event(event)) }
             }
+            // Committed public messages of this exact run, read every minute while it runs (so progress and milestones reach
+            // the sub-chat and the main timeline live) and once more when it ends; each is posted once.
+            let task = input.work.id, rpc = rpc
+            let project: @Sendable (Set<String>) async -> Set<String> = { seen in
+                guard let history = try? await rpc.call("chat.history",["sessionKey":key,"limit":10,"maxChars":64000]) else { return seen }
+                var seen = seen
+                for event in Self.visibleEvents(history,task: task,run: runID) where seen.insert(event.id).inserted { try? await Prompts.emitProgress(event,update: update) }
+                return seen
+            }
+            let poll = Task { var seen = Set<String>(); while (try? await Task.sleep(for: .seconds(60))) != nil { seen = await project(seen) }; return seen }
             let result: [String:Any]
             var params: [String:Any] = ["agentId":agent,"sessionKey":key,"message":wire,"bootstrapContextMode":"lightweight","promptMode":"minimal","deliver":false,"disableMessageTool":true,"timeout":Self.stepTimeout(s),"idempotencyKey":runID]
             if !images.isEmpty { params["attachments"] = images }
             do { result = try await dispatch(params,final: true,sourceMessageID: input.work.messageID,timeout: (Self.stepTimeout(s) + 30) * 1000) }
-            catch { if let listener { await rpc.native?.removeObserver(listener) }; throw error }
+            catch { poll.cancel(); _ = await poll.value; if let listener { await rpc.native?.removeObserver(listener) }; throw error }
             if let listener { await rpc.native?.removeObserver(listener) }
-            // The CLI cannot stream; committed public messages of this exact run are projected once it ends.
-            if let history = try? await rpc.call("chat.history",["sessionKey":key,"limit":10,"maxChars":64000]) {
-                for event in Self.visibleEvents(history,task: input.work.id,run: runID) { try? await Prompts.emitProgress(event,update: update) }
-            }
+            poll.cancel(); _ = await project(await poll.value)
             let answer: String
             do { answer = try text(result) } catch ProjectError.overflow {
                 throw ProjectError.overflow(try await compactTopic(input,force: true,update: update) ? "This topic's session ran out of context. Yorozu compacted it, so asking again should now work." : "This topic's session is too long for the model and could not be compacted. Start a new topic for this request.")
