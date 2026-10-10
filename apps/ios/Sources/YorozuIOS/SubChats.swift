@@ -112,10 +112,10 @@ extension PhoneModel {
         return latest
     }
 
-    /// Job runs do not count, as the Mac's working flag ignores them.
-    var runningTopics: Int {
+    /// The Activities badge: topics in the list's Needs attention section. Running work is no reason to look.
+    var attentionTopics: Int {
         let byTopic = tasksByTopic, jobs = jobTopicIds
-        return topics.keys.filter { !jobs.contains($0) && status(of: $0, tasks: byTopic[$0] ?? []) == .running }.count
+        return topics.keys.filter { !jobs.contains($0) && status(of: $0, tasks: byTopic[$0] ?? []) == .attention }.count
     }
 }
 

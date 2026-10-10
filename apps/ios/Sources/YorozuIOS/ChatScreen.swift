@@ -15,6 +15,8 @@ struct ChatScreen: View {
     /// The view shows the newest message, so new ones are followed rather than counted.
     @State private var atBottom = true
     @State private var scrollIdle = true
+    /// The latest scroll geometry, so the settle below can run again once the view comes to rest.
+    @State private var edge: ScrollEdge?
     /// The newest message on screen the last time the view was at the bottom: the pill counts past it.
     @State private var seenId: String?
     @State private var path: [ChatRoute] = []
@@ -58,9 +60,6 @@ struct ChatScreen: View {
                     if model.routing == true {
                         ThinkingRow().readableRow()
                     }
-                    if model.working == true {
-                        ProgressView().accessibilityLabel("Working…").readableRow()
-                    }
                 }
                 .scrollTargetLayout()
                 .padding(.vertical, LayoutMetrics.gutter)
@@ -81,13 +80,16 @@ struct ChatScreen: View {
                 } else {
                     atBottom = new.offset >= new.maxOffset - Self.bottomSlack
                 }
-                // Content shrank under a resting view (the launch's working row or status line going away, a lazy row
-                // measuring shorter) and left it past the end: settle back onto the last message. Never mid-gesture,
-                // so a bounce at the bottom is not fought.
-                if scrollIdle, new.offset > new.maxOffset + 1 { position.scrollTo(edge: .bottom) }
+                edge = new
+                settle()
                 if atBottom { seenId = model.timeline.last?.id }
             }
-            .onScrollPhaseChange { _, phase in scrollIdle = phase == .idle }
+            .onScrollPhaseChange { _, phase in
+                scrollIdle = phase == .idle
+                // The keyboard rising, switching layouts or going down, and the composer shrinking after Send, move the
+                // insets while the view is still animating, so the overshoot arrives outside idle: check again at rest.
+                settle()
+            }
             .onChange(of: model.timeline.last?.id) { _, _ in
                 guard let last = model.timeline.last else { return }
                 if atBottom {
@@ -110,23 +112,38 @@ struct ChatScreen: View {
                     .padding(.bottom, LayoutMetrics.inner)
                 }
             }
-            .yorozuBottomBar {
-                VStack(spacing: 0) {
+            // The link's state and the Mac's work float over the timeline as toasts rather than strips that take its
+            // space: they come and go often, and the messages must not move when they do.
+            .overlay(alignment: .top) {
+                VStack(spacing: LayoutMetrics.inner) {
                     // Words as well as the dot, so the state is never told by colour alone.
                     if model.shownStatus != .connected {
                         // Off the link the Mac's work state is unknown, never idle.
-                        Text(model.updateRequired ?? String(localized: "\(model.shownStatus.label) · Status unknown"))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                        Toast { Text(model.updateRequired ?? String(localized: "\(model.shownStatus.label) · Status unknown")) }
                     } else if let reason = model.readinessReason {
                         // The Mac's own readiness; when blocked the composer below is off with it.
-                        Label { Text("\(reason) · Fix this on the host") } icon: {
-                            Image(systemName: model.readiness?.state == .blocked ? "xmark.octagon" : "exclamationmark.triangle")
-                                .foregroundStyle(model.readiness?.state == .blocked ? YorozuPalette.vermilion : YorozuPalette.warning)
+                        Toast {
+                            Label { Text("\(reason) · Fix this on the host") } icon: {
+                                Image(systemName: model.readiness?.state == .blocked ? "xmark.octagon" : "exclamationmark.triangle")
+                                    .foregroundStyle(model.readiness?.state == .blocked ? YorozuPalette.vermilion : YorozuPalette.warning)
+                            }
                         }
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                     }
+                    if model.working == true {
+                        Toast {
+                            Label { Text("Working…") } icon: { ProgressView().controlSize(.small) }
+                        }
+                    }
+                }
+                .padding(.top, LayoutMetrics.inner)
+                .padding(.horizontal, LayoutMetrics.gutter)
+                .allowsHitTesting(false)
+                .animation(.default, value: model.shownStatus)
+                .animation(.default, value: model.readinessReason)
+                .animation(.default, value: model.working)
+            }
+            .yorozuBottomBar {
+                VStack(spacing: 0) {
                     Composer(text: $model.draft, files: $model.draftFiles, attachments: model.attachmentsSupported != false,
                              working: model.working == true, enabled: model.canSend,
                              replyQuote: replyQuote, onCancelReply: { model.replyingTo = nil }) {
@@ -153,8 +170,8 @@ struct ChatScreen: View {
                         Image(systemName: "bubble.left.and.bubble.right").font(.subheadline)
                     }
                         .accessibilityLabel("Activities")
-                        .badge(model.runningTopics)
-                        .accessibilityValue(model.runningTopics > 0 ? String(localized: "\(model.runningTopics) running") : "")
+                        .badge(model.attentionTopics)
+                        .accessibilityValue(model.attentionTopics > 0 ? String(localized: "\(model.attentionTopics) need attention") : "")
                 }
                 if !Self.hasSubtitle {
                     ToolbarItem(placement: .topBarLeading) {
@@ -253,7 +270,8 @@ struct ChatScreen: View {
             return bubble.replyTo.flatMap { byId[$0] }.map { ReplyHeader(text: Self.firstLine($0), revealable: true) }
         }
         let stored = bubble.text.hasPrefix("Regarding “") && bubble.text.contains("”:\n\n")
-        guard RowStyle(bubble) == .answer, !stored, let id = bubble.replyTo else { return nil }
+        // An acknowledgment bubble sits right under the request; quoting it there (and on every milestone) is noise.
+        guard RowStyle(bubble) == .answer, bubble.kind != "acknowledgment", !stored, let id = bubble.replyTo else { return nil }
         if let request = byId[id] { return ReplyHeader(text: request.shownText, revealable: true) }
         return bubble.topicId.flatMap { model.topics[$0]?.label }.map { ReplyHeader(text: $0, revealable: false) }
     }
@@ -281,6 +299,14 @@ struct ChatScreen: View {
     private func navigate(_ route: [ChatRoute]) {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         path = route
+    }
+
+    /// Content shrank under a resting view (the launch's working row or status line going away, a lazy row measuring
+    /// shorter, the keyboard or composer getting smaller) and left it past the end, over empty space: settle back onto the
+    /// last message. Never mid-gesture, so a bounce at the bottom is not fought.
+    private func settle() {
+        guard scrollIdle, let edge, edge.offset > edge.maxOffset + 1 else { return }
+        position.scrollTo(edge: .bottom)
     }
 
     private func show(_ id: String?) {
@@ -410,6 +436,22 @@ private struct TimelineRow: Identifiable {
 private struct ScrollEdge: Equatable {
     var offset: CGFloat
     var maxOffset: CGFloat
+}
+
+/// A notice floating over the timeline: never in its layout, so it moves no message.
+private struct Toast<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, LayoutMetrics.stack)
+            .padding(.vertical, LayoutMetrics.inner)
+            .yorozuGlass(in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
+            .accessibilityElement(children: .combine)
+            .transition(.move(edge: .top).combined(with: .opacity))
+    }
 }
 
 /// "↓ N new": back to the bottom.
