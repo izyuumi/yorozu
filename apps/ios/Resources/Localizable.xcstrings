@@ -1,6 +1,76 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Update Yorozu on this device to talk to this host." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このホストと通信するには、この端末の Yorozu をアップデートしてください。" } }
+      }
+    },
+    "Update Yorozu on the host to talk to this device." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末と通信するには、ホストの Yorozu をアップデートしてください。" } }
+      }
+    },
+    "line %lld" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 行目" } }
+      }
+    },
+    "OpenClaw or Node.js isn’t installed." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "OpenClaw または Node.js がインストールされていません。" } }
+      }
+    },
+    "The OpenClaw Gateway isn’t running. Start it with `openclaw gateway run`." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "OpenClaw Gateway が起動していません。`openclaw gateway run` で起動してください。" } }
+      }
+    },
+    "Hermes isn’t connected to an AI provider. Sign in to Codex with `hermes auth login openai-codex`, then run `hermes -p yorozu-worker config set model.provider openai-codex` and the same for yorozu-roles." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Hermes が AI プロバイダに接続されていません。`hermes auth login openai-codex` で Codex にサインインしてから、`hermes -p yorozu-worker config set model.provider openai-codex` と、yorozu-roles にも同じコマンドを実行してください。" } }
+      }
+    },
+    "Hermes uses GitHub Copilot, which Yorozu doesn’t use. Set both Yorozu profiles to Codex with `hermes -p yorozu-worker config set model.provider openai-codex` and the same for yorozu-roles." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Hermes が GitHub Copilot を使う設定になっていますが、Yorozu は GitHub Copilot を使いません。`hermes -p yorozu-worker config set model.provider openai-codex` と、yorozu-roles にも同じコマンドで、両方の Yorozu プロファイルを Codex に設定してください。" } }
+      }
+    },
+    "Yorozu’s agent isn’t set up in OpenClaw." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu のエージェントが OpenClaw に設定されていません。" } }
+      }
+    },
+    "Yorozu needs its own OpenClaw agent, not your main one. Set [harness] agent to a dedicated id." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu にはメインとは別の専用の OpenClaw エージェントが必要です。[harness] agent に専用の ID を設定してください。" } }
+      }
+    },
+    "Nothing answers at %@; check [harness] gateway_url" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ で応答がありません。[harness] gateway_url を確認してください" } }
+      }
+    },
+    "OpenClaw doesn’t allow %@ for Yorozu." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "OpenClaw は Yorozu に %@ の使用を許可していません。" } }
+      }
+    },
+    "Yorozu was started from an agent’s shell; open it from Finder." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu がエージェントのシェルから起動されました。Finder から開いてください。" } }
+      }
+    },
+    "Yorozu is already running." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu はすでに起動しています。" } }
+      }
+    },
+    "Yorozu’s memory can’t load %@." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu のメモリが %@ を読み込めません。" } }
+      }
+    },
     "Update Yorozu on the host to send files." : {
       "localizations" : {
         "ja" : {

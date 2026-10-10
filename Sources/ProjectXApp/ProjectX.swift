@@ -19,7 +19,7 @@ import YorozuWire
     @Published var files: [DraftFile] = []
     @Published var fileNotice: String?
     /// The popover's one-line status: startup progress or the last error, cleared by the next success.
-    @Published var status: String? = "Opening local workspace…" { didSet { statusDetail = nil } }
+    @Published var status: String? = String(localized: "Opening local workspace…") { didSet { statusDetail = nil } }
     /// The raw error behind a plain `status` (`showError`), as its tooltip.
     @Published var statusDetail: String?
     /// Set when the native transport was selected but this launch fell back to the CLI.
@@ -249,7 +249,7 @@ import YorozuWire
         do {
             let client = try NativeGatewayClient(target: target); nativeClient = client
             // Unenrolled: connecting would store a fresh key and fail. Unreachable: give up after 3 s, not the 15 s handshake.
-            guard client.isEnrolled else { throw ProjectError.blocked("This Mac is not enrolled with the Gateway yet.") }
+            guard client.isEnrolled else { throw ProjectError.blocked(String(localized: "This Mac is not enrolled with the Gateway yet.")) }
             do { try await client.connect(timeout: .seconds(3)) } catch { await client.close(); throw error }
             return client
         } catch {

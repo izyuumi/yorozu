@@ -123,7 +123,7 @@ enum NoticeText {
     static func details(_ params: [String: String]) -> String? {
         if let error = params["error"], !error.isEmpty { return error }
         if let file = params["file"], let reason = params["reason"] {
-            return (file as NSString).lastPathComponent + (params["line"].map { " line \($0)" } ?? "") + (params["key"].map { " (\($0))" } ?? "") + ": " + reason
+            return (file as NSString).lastPathComponent + (params["line"].map { " " + String(localized: "line \($0)") } ?? "") + (params["key"].map { " (\($0))" } ?? "") + ": " + reason
         }
         return params["files"]
     }

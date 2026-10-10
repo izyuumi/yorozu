@@ -189,12 +189,12 @@ public struct SetupEngine: Sendable {
         if host == nil, let step = report.steps.first(where: { $0.id == id && $0.state == .app }) {
             throw ProjectError.blocked("Finish this in the Yorozu app: \(step.whereInApp ?? "the setup window").")
         }
-        guard let step = report.steps.first(where: { $0.question?.id == id || $0.write?.id == id }), let question = step.question?.id == id ? step.question : step.write else { throw ProjectError.invalid("Nothing to answer for \"\(id)\" now. Known steps: " + Self.order.joined(separator: ", ") + ".") }
+        guard let step = report.steps.first(where: { $0.question?.id == id || $0.write?.id == id }), let question = step.question?.id == id ? step.question : step.write else { throw ProjectError.invalid(String(localized: "Nothing to answer for \"\(id)\" now. Known steps: ") + Self.order.joined(separator: ", ") + ".") }
         let assisted = Self.assisted.contains(id)
         if assisted, value.hasPrefix("apply"), !question.choices.contains(value) {
-            throw ProjectError.invalid("These aren't the changes Yorozu would make now. Run `yorozu setup --json` again, review the changes, and answer with its apply:<plan_digest>.")
+            throw ProjectError.invalid(String(localized: "These aren't the changes Yorozu would make now. Run `yorozu setup --json` again, review the changes, and answer with its apply:<plan_digest>."))
         }
-        guard question.choices.contains(value) else { throw ProjectError.invalid("\"\(value)\" isn't an answer to \(id); choose one of: " + question.choices.joined(separator: ", ") + ".") }
+        guard question.choices.contains(value) else { throw ProjectError.invalid(String(localized: "\"\(value)\" isn't an answer to \(id); choose one of: ") + question.choices.joined(separator: ", ") + ".") }
         let next: SetupReport
         if assisted, value.hasPrefix("apply"), let plan = step.plan {
             // A failed write is not a usage error: the CLI exits 1 for it, as for a plan that changed meanwhile.
@@ -233,7 +233,7 @@ public struct SetupEngine: Sendable {
         let resolved = try ResolvedSettings(try Config.load(configFile),environment: environment), h = resolved.config.harness
         if h.kind == .hermes {
             let fresh = try HermesProfiles.pending(.init(config: resolved.config))
-            guard fresh.map(\.change) == plan.changes else { throw ProjectError.conflict("Yorozu's Hermes profiles changed since they were checked. Check again and review the changes.") }
+            guard fresh.map(\.change) == plan.changes else { throw ProjectError.conflict(String(localized: "Yorozu's Hermes profiles changed since they were checked. Check again and review the changes.")) }
             try await HermesProfiles.apply(fresh.map(\.step))
         } else {
             try await OpenClawSetup(agent: h.agent,rpc: rpc ?? GatewayRPC(target: h.gatewayURL)).apply(plan,settings: resolved,dataRoot: dataRoot,confirmed: true)
@@ -248,7 +248,7 @@ public struct SetupEngine: Sendable {
     static func makeLink(to executable: URL) throws {
         let fm = FileManager.default
         if let existing = try? fm.destinationOfSymbolicLink(atPath: link.path) { if existing == executable.path { return } }
-        if fm.fileExists(atPath: link.path) || (try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil { throw ProjectError.invalid("\(link.path) already exists; remove it first, then answer again.") }
+        if fm.fileExists(atPath: link.path) || (try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil { throw ProjectError.invalid(String(localized: "\(link.path) already exists; remove it first, then answer again.")) }
         try fm.createDirectory(at: link.deletingLastPathComponent(),withIntermediateDirectories: true)
         try fm.createSymbolicLink(atPath: link.path,withDestinationPath: executable.path)
     }

@@ -177,7 +177,7 @@ public final class CodingAgentHost: @unchecked Sendable {
         var told = false
         while let busy = take(task) {
             guard busy.isEmpty else { return Reply(error: busy) }
-            if !told { told = true; try? await post("lifecycle","Waiting for a coding slot: \(Self.slots) coding agents are running.") }
+            if !told { told = true; try? await post("lifecycle",String(localized: "Waiting for a coding slot: \(Self.slots) coding agents are running.")) }
             guard !hungUp.on, await alive(task) else { return Reply(error: "The task stopped before \(agent.name) could start.") }
             try? await Task.sleep(for: .seconds(1))
         }
@@ -216,7 +216,10 @@ public final class CodingAgentHost: @unchecked Sendable {
         // Claude Code's result may come after the sub-chat's 2 MB cap: then it is read from the log.
         let output = utf8Excerpt(lines.result ?? Self.lastResult(log) ?? lines.plain.trimmingCharacters(in: .whitespacesAndNewlines),bytes: Self.outputCap)
         let ended = result.launchError.map { "Couldn't start \(agent.name): \($0)" } ?? (result.timedOut ? "\(agent.name) ran past its \(agent.timeout)-second limit and was stopped." : result.ok ? "\(agent.name) finished." : hungUp.on ? "\(agent.name) was stopped: the worker stopped waiting for it." : gone.on ? "\(agent.name) was stopped: its task is no longer running." : "\(agent.name) ended: " + result.summary)
-        try? await post(result.ok ? "lifecycle" : "error",ended + " Full output: " + log.path)
+        // The same line in the user's language for the sub-chat; the model's reply keeps the English.
+        let n = agent.name
+        let shown = result.launchError.map { String(localized: "Couldn't start \(n): \($0)") } ?? (result.timedOut ? String(localized: "\(n) ran past its \(agent.timeout)-second limit and was stopped.") : result.ok ? String(localized: "\(n) finished.") : hungUp.on ? String(localized: "\(n) was stopped: the worker stopped waiting for it.") : gone.on ? String(localized: "\(n) was stopped: its task is no longer running.") : String(localized: "\(n) ended: \(result.summary)"))
+        try? await post(result.ok ? "lifecycle" : "error",shown + " " + String(localized: "Full output: \(log.path)"))
         return Reply(exitCode: result.exitCode,output: output,error: result.ok ? nil : ended + " Full output: " + log.path)
     }
     /// The last stream-json `result` in a run's log (its last 16 MiB), for output past the sub-chat cap.

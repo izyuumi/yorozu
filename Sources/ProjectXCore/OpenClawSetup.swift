@@ -57,7 +57,7 @@ public struct OpenClawSetup: HarnessSetup {
         if Self.personal(agent,config: config) { d.items.append(Readiness.Item(id: "openclaw.personal",title: Self.personalAgent,detail: "[harness] agent = \(agent)",severity: .blocking,fix: .step("harness"))) }
         return d
     }
-    static let inApp = Readiness.Item(id: "openclaw.gateway",title: String(localized: "Gateway checks are left to the Yorozu app"),detail: "This process was started from an OpenClaw agent's shell, so it makes no Gateway calls. Open Yorozu from Finder and finish setup there.",severity: .warning,fix: .step("harness"))
+    static let inApp = Readiness.Item(id: "openclaw.gateway",title: String(localized: "Gateway checks are left to the Yorozu app"),detail: String(localized: "This process was started from an OpenClaw agent's shell, so it makes no Gateway calls. Open Yorozu from Finder and finish setup there."),severity: .warning,fix: .step("harness"))
     public static let personalAgent = String(localized: "Yorozu needs its own OpenClaw agent, not your main one. Set [harness] agent to a dedicated id.")
     /// `agent` is OpenClaw's default agent: id `main`, or an entry marked `default: true` in `config` (a `config.get` answer's).
     public static func personal(_ agent: String, config: [String:Any]?) -> Bool {
@@ -70,7 +70,7 @@ public struct OpenClawSetup: HarnessSetup {
     /// Refuses OpenClaw's default agent (`personal`), so `apply` never writes it.
     public func inspect(_ settings: ResolvedSettings, dataRoot: URL) async throws -> OpenClawInspection {
         let snapshot = try await rpc.call("config.get",[:],timeout: Self.probe)
-        guard let hash = snapshot["hash"] as? String, let config = snapshot["config"] as? [String:Any] else { throw ProjectError.uncertain("OpenClaw's config could not be read (config.get).") }
+        guard let hash = snapshot["hash"] as? String, let config = snapshot["config"] as? [String:Any] else { throw ProjectError.uncertain(String(localized: "OpenClaw's config could not be read (config.get).")) }
         guard !Self.personal(agent,config: config) else { throw ProjectError.blocked(Self.personalAgent) }
         let c = settings.config, agents = config["agents"] as? [String:Any] ?? [:], entries = agents["entries"] as? [String:Any] ?? [:]
         let entry = entries[agent] as? [String:Any], base = "agents.entries.\(agent)"
@@ -93,11 +93,11 @@ public struct OpenClawSetup: HarnessSetup {
             if ((entry["subagents"] as? [String:Any])?["allowAgents"] as? [Any])?.isEmpty != true { shape.append("subagents") }
             if entry["tools"] != nil { shape.append("tools") }
         } else {
-            out.entry.append(Readiness.Item(id: "openclaw.agent",title: String(localized: "Yorozu's agent isn't set up in OpenClaw"),detail: "agents.entries.\(agent) is missing.",severity: .warning,fix: .step("harness")))
+            out.entry.append(Readiness.Item(id: "openclaw.agent",title: String(localized: "Yorozu's agent isn't set up in OpenClaw"),detail: String(localized: "agents.entries.\(agent) is missing."),severity: .warning,fix: .step("harness")))
             // A second entry is valid only in an explicit roster; Yorozu never writes agents.ownership, so OpenClaw adds it.
             let explicit = agents["ownership"] as? String == "explicit" || entries.values.contains { ($0 as? [String:Any])?["default"] as? Bool == true }
             if !explicit || entries.isEmpty {
-                out.blocked = Readiness.Item(id: "openclaw.roster",title: String(localized: "Add Yorozu's agent with OpenClaw first"),detail: "OpenClaw's agent list isn't in explicit mode (agents.ownership), and Yorozu writes only its own entry. Add the agent with OpenClaw, then run setup again.",severity: .warning,
+                out.blocked = Readiness.Item(id: "openclaw.roster",title: String(localized: "Add Yorozu's agent with OpenClaw first"),detail: String(localized: "OpenClaw's agent list isn't in explicit mode (agents.ownership), and Yorozu writes only its own entry. Add the agent with OpenClaw, then run setup again."),severity: .warning,
                                              fix: .copy(title: String(localized: "Copy command"),command: "openclaw agents add \(agent) --non-interactive --workspace \(Self.quoted(workspace.path))"))
             } else { shape = ["workspace","model","contextInjection","skills","subagents"] }
         }
@@ -136,7 +136,7 @@ public struct OpenClawSetup: HarnessSetup {
                     if let row = byID[id] {
                         let reason = row["unavailableReason"] as? String
                         out.models.append(row["available"] as? Bool == false
-                            ? Readiness.Item(id: "openclaw.model.\(role)",title: String(localized: "\(name): \(id) can't be used right now"),detail: reason ?? "unavailable",severity: .warning,fix: reason == "cooldown" ? nil : .copy(title: String(localized: "Copy sign-in command"),command: "openclaw models auth login --agent \(agent) --provider \(id.split(separator: "/").first ?? "")"))
+                            ? Readiness.Item(id: "openclaw.model.\(role)",title: String(localized: "\(name): \(id) can't be used right now"),detail: reason ?? String(localized: "unavailable"),severity: .warning,fix: reason == "cooldown" ? nil : .copy(title: String(localized: "Copy sign-in command"),command: "openclaw models auth login --agent \(agent) --provider \(id.split(separator: "/").first ?? "")"))
                             : Readiness.Item(id: "openclaw.model.\(role)",title: "\(name): \(id)",severity: .ok))
                     } else { missing.append(id) }
                 }
@@ -147,7 +147,7 @@ public struct OpenClawSetup: HarnessSetup {
                     let policy = ((entry?["modelPolicy"] as? [String:Any])?["allow"] ?? (((agents["defaults"] as? [String:Any])?["modelPolicy"] as? [String:Any])?["allow"])) as? [String] ?? []
                     let allowable = policy.isEmpty ? [] : missing.filter(all.contains) // an empty policy allows any model: a list would narrow it
                     for id in missing {
-                        out.models.append(Readiness.Item(id: "openclaw.model.\(id)",title: String(localized: "OpenClaw doesn't allow \(id) for Yorozu"),detail: all.contains(id) ? "Not in agent \(agent)'s model policy." : "OpenClaw doesn't list \(id).",severity: .warning,fix: .step("models")))
+                        out.models.append(Readiness.Item(id: "openclaw.model.\(id)",title: String(localized: "OpenClaw doesn't allow \(id) for Yorozu"),detail: all.contains(id) ? String(localized: "Not in agent \(agent)'s model policy.") : String(localized: "OpenClaw doesn't list \(id)."),severity: .warning,fix: .step("models")))
                     }
                     if !allowable.isEmpty {
                         // Seeded from the policy in force (the entry's, else the defaults'), since an entry's own list replaces the defaults.
@@ -163,7 +163,7 @@ public struct OpenClawSetup: HarnessSetup {
                 for p in providers {
                     guard let id = p["provider"] as? String, used.contains(id) else { continue }
                     let name = p["displayName"] as? String ?? id, status = p["status"] as? String ?? "unknown", fine = ["ok","static"].contains(status)
-                    out.auth.append(Readiness.Item(id: "openclaw.auth.\(id)",title: fine ? String(localized: "\(name): signed in") : status == "expiring" ? String(localized: "\(name): sign-in expires soon") : status == "expired" ? String(localized: "\(name): sign-in expired") : String(localized: "\(name): not signed in"),detail: "\(id): \(status)",severity: fine ? .ok : .warning,
+                    out.auth.append(Readiness.Item(id: "openclaw.auth.\(id)",title: fine ? String(localized: "\(name): signed in") : status == "expiring" ? String(localized: "\(name): sign-in expires soon") : status == "expired" ? String(localized: "\(name): sign-in expired") : String(localized: "\(name): not signed in"),detail: String(localized: "\(id): \(status)"),severity: fine ? .ok : .warning,
                                                    fix: fine ? nil : .copy(title: String(localized: "Copy sign-in command"),command: "openclaw models auth login --agent \(agent) --provider \(id)")))
                 }
             }
@@ -192,12 +192,12 @@ public struct OpenClawSetup: HarnessSetup {
     /// leaves a restart sentinel that wakes the owner's main agent). A plan with nothing to change writes nothing.
     public func apply(_ plan: OpenClawPlan, settings: ResolvedSettings, dataRoot: URL, confirmed: Bool) async throws {
         let fresh = try await inspect(settings,dataRoot: dataRoot).plan
-        guard fresh.changes == plan.changes else { throw ProjectError.conflict("OpenClaw's config changed since it was checked. Check again and review the changes.") }
+        guard fresh.changes == plan.changes else { throw ProjectError.conflict(String(localized: "OpenClaw's config changed since it was checked. Check again and review the changes.")) }
         guard !fresh.changes.isEmpty else { return }
-        guard !fresh.needsConfirmation || confirmed else { throw ProjectError.blocked("Yorozu's agent entry in OpenClaw already exists and differs. Review the changes and confirm them first.") }
+        guard !fresh.needsConfirmation || confirmed else { throw ProjectError.blocked(String(localized: "Yorozu's agent entry in OpenClaw already exists and differs. Review the changes and confirm them first.")) }
         if let folder = fresh.workspace, folder == Self.workspace(dataRoot) { try FileManager.default.createDirectory(at: folder,withIntermediateDirectories: true,attributes: [.posixPermissions: 0o700]) }
         let patched = try await rpc.call("config.patch",["raw":fresh.raw,"baseHash":fresh.baseHash,"replacePaths":fresh.replacePaths])
-        guard patched["ok"] as? Bool == true else { throw ProjectError.uncertain("OpenClaw did not confirm the config update.") }
+        guard patched["ok"] as? Bool == true else { throw ProjectError.uncertain(String(localized: "OpenClaw did not confirm the config update.")) }
     }
 
     /// The agent's workspace: an empty Yorozu-owned folder, where OpenClaw's bootstrap files land. Topic sessions work in

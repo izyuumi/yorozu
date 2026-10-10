@@ -123,9 +123,9 @@ actor EngineBridge: RelayBackend {
     private func admit(_ m: MessageData, id: String, ts: Int) async -> YorozuEvent {
         func reject(_ reason: String) -> YorozuEvent { .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .rejected, reason: reason))) }
         let receipt = YorozuEvent.control(.receipt(ReceiptData(eventId: id)))
-        guard id.range(of: #"^[A-Za-z0-9-]{1,64}\z"#, options: .regularExpression) != nil else { return reject("Invalid message id.") }
-        guard m.attachments.isEmpty else { return reject("Update Yorozu on this device to send attachments.") }
-        guard mode.permitsInput(fixtureAcknowledged: false) else { return reject("The host is in fixture mode and doesn't take messages from client devices.") }
+        guard id.range(of: #"^[A-Za-z0-9-]{1,64}\z"#, options: .regularExpression) != nil else { return reject(String(localized: "Invalid message id.")) }
+        guard m.attachments.isEmpty else { return reject(String(localized: "Update Yorozu on this device to send attachments.")) }
+        guard mode.permitsInput(fixtureAcknowledged: false) else { return reject(String(localized: "The host is in fixture mode and doesn't take messages from client devices.")) }
         // A resend or a relay replay of something already stored: the receipt is all it needs.
         if await exists(id) { return receipt }
         // Past its deadline (the phone sets send time + 24 h): never routed late, the phone shows Not delivered (#314).
@@ -154,15 +154,15 @@ actor EngineBridge: RelayBackend {
     private func jobControl(_ c: JobControlData, id: String, ts: Int) async -> YorozuEvent {
         if let done = jobControls.last(where: { $0.eventId == id }) { return .control(.admissionStatus(done)) }
         var reason: String?
-        if Self.now - ts > 120_000 { reason = "That tap reached the host too late." }
-        else if !mode.permitsInput(fixtureAcknowledged: false) { reason = "The host is in fixture mode and doesn't take messages from client devices." }
+        if Self.now - ts > 120_000 { reason = String(localized: "That tap reached the host too late.") }
+        else if !mode.permitsInput(fixtureAcknowledged: false) { reason = String(localized: "The host is in fixture mode and doesn't take messages from client devices.") }
         else {
             do {
                 switch c.action {
                 case .pause: try await engine.pauseJob(c.jobId)
                 case .resume: try await engine.resumeJob(c.jobId)
                 case .delete: try await engine.deleteJob(c.jobId)
-                case .runNow: if case .skipped(let why) = try await engine.runJobNow(c.jobId) { reason = "It didn't run: " + Engine.skipText(why) }
+                case .runNow: if case .skipped(let why) = try await engine.runJobNow(c.jobId) { reason = String(localized: "It didn't run: ") + Engine.skipText(why) }
                 }
             } catch { reason = error.localizedDescription }
         }
@@ -204,11 +204,11 @@ actor EngineBridge: RelayBackend {
     private func commit(_ c: AttachmentCommitData, id: String, ts: Int, device: String) async -> YorozuEvent {
         func reject(_ reason: String) -> YorozuEvent { .control(.admissionStatus(AdmissionStatusData(eventId: id, status: .rejected, reason: reason))) }
         let receipt = YorozuEvent.control(.receipt(ReceiptData(eventId: id)))
-        guard AttachmentDescriptor.isID(id) else { return reject("Invalid message id.") }
+        guard AttachmentDescriptor.isID(id) else { return reject(String(localized: "Invalid message id.")) }
         guard (1...MessageAttachment.maxCount).contains(c.attachments.count), c.attachments.allSatisfy({ $0.isValid && $0.id == nil }) else {
-            return reject("Up to \(MessageAttachment.maxCount) files of at most 50 MB each.")
+            return reject(String(localized: "Up to \(MessageAttachment.maxCount) files of at most 50 MB each."))
         }
-        guard mode.permitsInput(fixtureAcknowledged: false) else { return reject("The host is in fixture mode and doesn't take messages from client devices.") }
+        guard mode.permitsInput(fixtureAcknowledged: false) else { return reject(String(localized: "The host is in fixture mode and doesn't take messages from client devices.")) }
         if await exists(id) { staging.remove(device: device, message: id); return receipt }
         if c.admissionDeadline < Self.now {
             staging.remove(device: device, message: id)
@@ -281,7 +281,7 @@ actor EngineBridge: RelayBackend {
     /// cursor is absent, zero or stale. Always answered; an unreadable store gives an error page.
     private func reply(_ r: SyncRequestData, thread: String) async -> YorozuEvent {
         let routing = await engine.routing
-        guard Self.threads.contains(thread) else { return delta([], thread: thread, after: r.afterSeq.map(Int64.init), routing: routing, error: "Unknown thread.") }
+        guard Self.threads.contains(thread) else { return delta([], thread: thread, after: r.afterSeq.map(Int64.init), routing: routing, error: String(localized: "Unknown thread.")) }
         do {
             let bounds = try await engine.store.cursorBounds()
             let cursor = Int64(r.afterSeq ?? 0)
@@ -291,27 +291,27 @@ actor EngineBridge: RelayBackend {
             return delta(events, thread: thread, after: r.afterSeq.map(Int64.init), latest: next, more: more, reset: reset, routing: routing)
         } catch {
             Self.log.error("sync_request unreadable: \(error.localizedDescription, privacy: .public)")
-            return delta([], thread: thread, after: r.afterSeq.map(Int64.init), routing: routing, error: "Couldn't read the chat on the host: \(error.localizedDescription)")
+            return delta([], thread: thread, after: r.afterSeq.map(Int64.init), routing: routing, error: String(localized: "Couldn't read the chat on the host: \(error.localizedDescription)"))
         }
     }
 
     /// A page reply: the messages around one message, in or out of the window. It never moves the cursor.
     private func page(_ r: PageRequestData) async -> YorozuEvent {
         let routing = await engine.routing
-        guard Self.threads.contains(r.threadId) else { return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: "Unknown thread.") }
+        guard Self.threads.contains(r.threadId) else { return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: String(localized: "Unknown thread.")) }
         do {
             guard let changes = try await engine.store.page(around: r.messageId) else {
-                return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: "Message not found.")
+                return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: String(localized: "Message not found."))
             }
             let files = await files()
             let page = delta(changes.filter(Self.sent).map { Self.record($0, thread: r.threadId, files: files).event }, thread: r.threadId, routing: routing, requestId: r.requestId)
             // 101 capped records could still pass what 256 chunks carry.
             guard (try? JSONEncoder().encode(page).count).map({ $0 <= Self.hardCap }) == true else {
-                return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: "That part of the chat is too large to send.")
+                return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: String(localized: "That part of the chat is too large to send."))
             }
             return page
         } catch {
-            return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: "Couldn't read the chat on the host: \(error.localizedDescription)")
+            return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: String(localized: "Couldn't read the chat on the host: \(error.localizedDescription)"))
         }
     }
 
@@ -325,7 +325,7 @@ actor EngineBridge: RelayBackend {
                               snippet: $0.snippet, created: Int($0.created * 1000))
             }, total: total, nextOffset: !hits.isEmpty && next < total ? next : nil)))
         } catch {
-            return .control(.searchResult(SearchResultData(requestId: r.requestId, hits: [], total: 0, error: "Search failed: \(error.localizedDescription)")))
+            return .control(.searchResult(SearchResultData(requestId: r.requestId, hits: [], total: 0, error: String(localized: "Search failed: \(error.localizedDescription)"))))
         }
     }
 

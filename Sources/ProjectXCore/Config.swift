@@ -173,30 +173,30 @@ public struct Config: Sendable, Equatable {
         var tree: [String:TOMLValue]
         do { tree = try TOMLDecoder().decode([String:Node].self,from: text).mapValues(\.value) }
         catch let TOMLDecodingError.invalidSyntax(line,_,message) { throw fail(nil,message,line: line) }
-        catch { throw fail(nil,"\(error)") }
+        catch { throw fail(nil,String(localized: "\(error)")) }
         func take(_ table: inout [String:TOMLValue], _ path: ArraySlice<String>, _ key: String) throws -> TOMLValue? {
             guard path.count > 1 else { return table.removeValue(forKey: path.first!) }
             guard let next = table[path.first!] else { return nil }
-            guard case .table(var sub) = next else { throw fail(key,"\(path.first!) must be a table") }
+            guard case .table(var sub) = next else { throw fail(key,String(localized: "\(path.first!) must be a table")) }
             defer { table[path.first!] = .table(sub) }; return try take(&sub,path.dropFirst(),key)
         }
         var config = Config()
         for field in fields {
             guard let value = try take(&tree,field.key.split(separator: ".").map(String.init)[...],field.key) else { continue }
-            guard field.set(&config,value) else { throw fail(field.key,"expected \(field.expected)") }
+            guard field.set(&config,value) else { throw fail(field.key,String(localized: "expected \(field.expected)")) }
             config.fileKeys.insert(field.key)
         }
         /// A `[<prefix>.<name>]` server list and each entry's unknown keys.
         func servers(_ raw: TOMLValue, _ prefix: String) throws -> ([String:MCPServer], [String:TOMLValue]) {
-            guard case .table(let table) = raw else { throw fail(prefix,"expected [\(prefix).<name>] tables") }
+            guard case .table(let table) = raw else { throw fail(prefix,String(localized: "expected [\(prefix).<name>] tables")) }
             var list: [String:MCPServer] = [:], rest: [String:TOMLValue] = [:]
             for (name,value) in table {
                 let key = "\(prefix).\(name)"
-                guard case .table(var entry) = value, case .string(let command)? = entry.removeValue(forKey: "command") else { throw fail(key,"needs command = \"/absolute/path\"") }
-                guard entry["env"] == nil else { throw fail(key,"env is not supported") }
+                guard case .table(var entry) = value, case .string(let command)? = entry.removeValue(forKey: "command") else { throw fail(key,String(localized: "needs command = \"/absolute/path\"")) }
+                guard entry["env"] == nil else { throw fail(key,String(localized: "env is not supported")) }
                 var args: [String]?
                 if let raw = entry.removeValue(forKey: "args") {
-                    guard case .array(let items) = raw, let strings = Optional(items.compactMap { if case .string(let s) = $0 { s } else { nil } }), strings.count == items.count else { throw fail(key + ".args","expected an array of strings") }
+                    guard case .array(let items) = raw, let strings = Optional(items.compactMap { if case .string(let s) = $0 { s } else { nil } }), strings.count == items.count else { throw fail(key + ".args",String(localized: "expected an array of strings")) }
                     args = strings
                 }
                 list[name] = MCPServer(command: command,args: args)
@@ -210,29 +210,29 @@ public struct Config: Sendable, Equatable {
             if !rest.isEmpty { tree["mcp_servers"] = .table(rest) }
         }
         if let raw = try take(&tree,["coding_agents"],"coding_agents") {
-            guard case .table(let table) = raw else { throw fail("coding_agents","expected [coding_agents.<name>] tables") }
+            guard case .table(let table) = raw else { throw fail("coding_agents",String(localized: "expected [coding_agents.<name>] tables")) }
             var rest: [String:TOMLValue] = [:]
             for (name,value) in table {
                 let key = "coding_agents.\(name)"
-                guard case .table(var entry) = value, let raw = entry.removeValue(forKey: "command"), let command = [String](toml: raw) else { throw fail(key,"needs command = [\"program\", \"argument\", …]") }
+                guard case .table(var entry) = value, let raw = entry.removeValue(forKey: "command"), let command = [String](toml: raw) else { throw fail(key,String(localized: "needs command = [\"program\", \"argument\", …]")) }
                 var agent = CodingAgent(name: name,command: command)
-                if let raw = entry.removeValue(forKey: "restricted_command") { guard let c = [String](toml: raw) else { throw fail(key + ".restricted_command","expected [\"program\", \"argument\", …]") }; agent.restrictedCommand = c }
-                if let t = entry.removeValue(forKey: "timeout") { guard let seconds = Int(toml: t) else { throw fail(key + ".timeout","expected an integer") }; agent.timeout = seconds }
+                if let raw = entry.removeValue(forKey: "restricted_command") { guard let c = [String](toml: raw) else { throw fail(key + ".restricted_command",String(localized: "expected [\"program\", \"argument\", …]")) }; agent.restrictedCommand = c }
+                if let t = entry.removeValue(forKey: "timeout") { guard let seconds = Int(toml: t) else { throw fail(key + ".timeout",String(localized: "expected an integer")) }; agent.timeout = seconds }
                 config.codingAgents[name] = agent; config.fileKeys.insert(key)
                 if !entry.isEmpty { rest[name] = .table(entry) }
             }
             if !rest.isEmpty { tree["coding_agents"] = .table(rest) }
         }
         if let raw = try take(&tree,["integrations"],"integrations") {
-            guard case .table(let table) = raw else { throw fail("integrations","expected [integrations.<name>] tables") }
+            guard case .table(let table) = raw else { throw fail("integrations",String(localized: "expected [integrations.<name>] tables")) }
             var rest: [String:TOMLValue] = [:]
             for (name,value) in table {
                 let key = "integrations.\(name)", builtIn = Integration.builtIn.contains { $0.name == name }
-                guard case .table(var entry) = value else { throw fail(key,"expected a table") }
+                guard case .table(var entry) = value else { throw fail(key,String(localized: "expected a table")) }
                 var item = config.integrations[name] ?? Integration(name: name)
                 func string(_ field: String) throws -> String? {
                     guard let v = entry.removeValue(forKey: field) else { return nil }
-                    guard case .string(let s) = v else { throw fail("\(key).\(field)","expected a string") }; return s
+                    guard case .string(let s) = v else { throw fail("\(key).\(field)",String(localized: "expected a string")) }; return s
                 }
                 /// An array of tables, each with a string `title` and exactly one string value among `kinds`.
                 func items(_ field: String, _ kinds: [String], _ rule: String) throws -> [(title: String, kind: String, value: String)]? {
@@ -244,10 +244,10 @@ public struct Config: Sendable, Equatable {
                     }
                 }
                 if let v = entry.removeValue(forKey: "enabled") {
-                    guard case .boolean(let on) = v else { throw fail(key + ".enabled","expected true or false") }
+                    guard case .boolean(let on) = v else { throw fail(key + ".enabled",String(localized: "expected true or false")) }
                     item.enabled = on; config.fileKeys.insert(key + ".enabled")
                 }
-                if let v = entry.removeValue(forKey: "settings") { guard case .table(let t) = v else { throw fail(key + ".settings","expected a table") }; item.settings = t }
+                if let v = entry.removeValue(forKey: "settings") { guard case .table(let t) = v else { throw fail(key + ".settings",String(localized: "expected a table")) }; item.settings = t }
                 if !builtIn { // a built-in's servers, rules, checks and fixes ship with the app; those keys stay as unknown data
                     if let title = try string("title") { item.title = title }
                     if let rules = try string("rules") { item.rules = rules }
@@ -261,7 +261,7 @@ public struct Config: Sendable, Equatable {
                     if let fixes = try items("fixes",["copy","url"],"expected [{ title = \"…\", copy = \"command\" }] or url = \"https://…\"") {
                         item.fixes = try fixes.map { f in
                             if f.kind == "copy" { return .copy(title: f.title,command: f.value) }
-                            guard let url = URL(string: f.value) else { throw fail(key + ".fixes","expected an http:// or https:// URL") }; return .open(title: f.title,url: url)
+                            guard let url = URL(string: f.value) else { throw fail(key + ".fixes",String(localized: "expected an http:// or https:// URL")) }; return .open(title: f.title,url: url)
                         }
                     }
                 }
@@ -285,31 +285,31 @@ public struct Config: Sendable, Equatable {
     /// The first invalid value as (dotted key, reason).
     func problem() -> (String, String)? {
         let h = harness
-        if h.agent.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return ("harness.agent","expected 1-64 letters, digits, - or _") }
-        if !Self.isLoopbackGateway(h.gatewayURL) { return ("harness.gateway_url","expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789") }
-        if !Self.isLoopbackHTTP(h.hermesURL) { return ("harness.hermes_url","expected a loopback http:// or https:// address with no path, such as http://127.0.0.1:8642") }
-        if !(workspace.path.isEmpty || workspace.path.hasPrefix("/") || workspace.path.hasPrefix("~/")) { return ("workspace.path","expected an absolute path, a ~/ path or \"\"") }
+        if h.agent.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return ("harness.agent",String(localized: "expected 1-64 letters, digits, - or _")) }
+        if !Self.isLoopbackGateway(h.gatewayURL) { return ("harness.gateway_url",String(localized: "expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789")) }
+        if !Self.isLoopbackHTTP(h.hermesURL) { return ("harness.hermes_url",String(localized: "expected a loopback http:// or https:// address with no path, such as http://127.0.0.1:8642")) }
+        if !(workspace.path.isEmpty || workspace.path.hasPrefix("/") || workspace.path.hasPrefix("~/")) { return ("workspace.path",String(localized: "expected an absolute path, a ~/ path or \"\"")) }
         for a in codingAgents.values.sorted(by: { $0.name < $1.name }) {
             let key = "coding_agents.\(a.name)"
-            if a.name.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return (key,"expected a name of 1-64 letters, digits, - or _") }
-            if a.command.first?.isEmpty != false { return (key + ".command","expected a program and its arguments") }
-            if let r = a.restrictedCommand, r.first?.isEmpty != false { return (key + ".restricted_command","expected a program and its arguments") }
-            if a.timeout < 1 { return (key + ".timeout","expected a positive number of seconds") }
+            if a.name.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return (key,String(localized: "expected a name of 1-64 letters, digits, - or _")) }
+            if a.command.first?.isEmpty != false { return (key + ".command",String(localized: "expected a program and its arguments")) }
+            if let r = a.restrictedCommand, r.first?.isEmpty != false { return (key + ".restricted_command",String(localized: "expected a program and its arguments")) }
+            if a.timeout < 1 { return (key + ".timeout",String(localized: "expected a positive number of seconds")) }
         }
-        if let url = URLComponents(string: relay.url), ["ws","wss"].contains(url.scheme ?? ""), !(url.host ?? "").isEmpty {} else { return ("relay.url","expected a ws:// or wss:// address") }
-        for (key,model) in [("secretary",models.secretary),("extraction",models.extraction),("worker",models.worker),("review",models.review)] where model?.isEmpty == true { return ("models.\(key)","expected \"provider/model\"; leave the key out for automatic") }
-        if !(1024...65535).contains(direct.port) { return ("direct.port","expected a port from 1024 to 65535") }
-        if routing.selfTopic.count > 80 { return ("routing.self_topic","expected at most 80 characters") }
-        if routing.personalKnowledge.utf8.count > 200 { return ("routing.personal_knowledge","expected at most 200 bytes of UTF-8") }
-        if models.rules.minContextTokens < 1 { return ("models.rules.min_context_tokens","expected a positive integer") }
-        if models.rules.minOutputTokens < 1 { return ("models.rules.min_output_tokens","expected a positive integer") }
+        if let url = URLComponents(string: relay.url), ["ws","wss"].contains(url.scheme ?? ""), !(url.host ?? "").isEmpty {} else { return ("relay.url",String(localized: "expected a ws:// or wss:// address")) }
+        for (key,model) in [("secretary",models.secretary),("extraction",models.extraction),("worker",models.worker),("review",models.review)] where model?.isEmpty == true { return ("models.\(key)",String(localized: "expected \"provider/model\"; leave the key out for automatic")) }
+        if !(1024...65535).contains(direct.port) { return ("direct.port",String(localized: "expected a port from 1024 to 65535")) }
+        if routing.selfTopic.count > 80 { return ("routing.self_topic",String(localized: "expected at most 80 characters")) }
+        if routing.personalKnowledge.utf8.count > 200 { return ("routing.personal_knowledge",String(localized: "expected at most 200 bytes of UTF-8")) }
+        if models.rules.minContextTokens < 1 { return ("models.rules.min_context_tokens",String(localized: "expected a positive integer")) }
+        if models.rules.minOutputTokens < 1 { return ("models.rules.min_output_tokens",String(localized: "expected a positive integer")) }
         if let name = MCPServers.invalid(mcpServers) { return ("mcp_servers.\(name)",MCPServers.rule) }
         for i in integrations.values.sorted(by: { $0.name < $1.name }) {
             let key = "integrations.\(i.name)", shipped = Integration.builtIn.first { $0.name == i.name }
-            if i.name.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return (key,"expected a name of 1-64 letters, digits, - or _") }
+            if i.name.range(of: "^[A-Za-z0-9_-]{1,64}$",options: .regularExpression) == nil { return (key,String(localized: "expected a name of 1-64 letters, digits, - or _")) }
             if let name = MCPServers.invalid(i.mcpServers) { return ("\(key).mcp_servers.\(name)",MCPServers.rule) }
-            if i.checks != shipped?.checks, i.checks.contains(where: { if case .command = $0.kind { true } else { false } }) { return (key + ".checks","only built-in integrations may run commands") }
-            for case .open(_,let url) in i.fixes where !["http","https"].contains(url.scheme ?? "") { return (key + ".fixes","expected an http:// or https:// URL") }
+            if i.checks != shipped?.checks, i.checks.contains(where: { if case .command = $0.kind { true } else { false } }) { return (key + ".checks",String(localized: "only built-in integrations may run commands")) }
+            for case .open(_,let url) in i.fixes where !["http","https"].contains(url.scheme ?? "") { return (key + ".fixes",String(localized: "expected an http:// or https:// URL")) }
         }
         return nil
     }
@@ -437,7 +437,7 @@ public struct Config: Sendable, Equatable {
 public struct ConfigError: Error, LocalizedError, Sendable, Equatable {
     public var file: String; public var line: Int?; public var key: String?; public var reason: String
     public init(file: String, line: Int? = nil, key: String? = nil, reason: String) { self.file = file; self.line = line; self.key = key; self.reason = reason }
-    public var errorDescription: String? { (file as NSString).lastPathComponent + (line.map { " line \($0)" } ?? "") + (key.map { " (\($0))" } ?? "") + ": " + reason }
+    public var errorDescription: String? { (file as NSString).lastPathComponent + (line.map { " " + String(localized: "line \($0)") } ?? "") + (key.map { " (\($0))" } ?? "") + ": " + reason }
 }
 
 /// Where a resolved value came from, for Settings ("Set by PROJECTX_…").

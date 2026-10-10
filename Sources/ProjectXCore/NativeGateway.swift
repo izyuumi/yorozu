@@ -15,7 +15,7 @@ struct NativeDeviceVault: Sendable {
         var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?; let status = SecItemCopyMatching(q as CFDictionary,&result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else { throw ProjectError.blocked("Yorozu Keychain access failed. Unlock the login Keychain and retry.") }
+        guard status == errSecSuccess, let data = result as? Data else { throw ProjectError.blocked(String(localized: "Yorozu Keychain access failed. Unlock the login Keychain and retry.")) }
         return try JSONDecoder().decode(NativeDeviceRecord.self,from:data)
     }
     func save(_ record: NativeDeviceRecord) throws {
@@ -25,19 +25,19 @@ struct NativeDeviceVault: Sendable {
             var q = query; q[kSecValueData as String] = data; q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             status = SecItemAdd(q as CFDictionary,nil)
         }
-        guard status == errSecSuccess else { throw ProjectError.blocked("Could not save Yorozu device enrollment in Keychain. Connection stopped; do not copy credentials into project files.") }
+        guard status == errSecSuccess else { throw ProjectError.blocked(String(localized: "Could not save Yorozu device enrollment in Keychain. Connection stopped; do not copy credentials into project files.")) }
     }
 }
 public enum NativeGatewayProtocol {
     public static let clientID = "webchat" // Registered generic client; not reserved internal backend.
     public static let scopes = ["operator.read","operator.write"]
     public static func target(_ value: String) throws -> URL {
-        guard let p = URLComponents(string:value), ["ws","wss"].contains(p.scheme ?? ""), ["127.0.0.1","localhost","::1"].contains(p.host ?? ""), p.user == nil, p.password == nil, p.query == nil, p.fragment == nil, ["","/"].contains(p.path), let url = p.url else { throw ProjectError.blocked("Only credential-free loopback Gateway URLs are allowed.") }
+        guard let p = URLComponents(string:value), ["ws","wss"].contains(p.scheme ?? ""), ["127.0.0.1","localhost","::1"].contains(p.host ?? ""), p.user == nil, p.password == nil, p.query == nil, p.fragment == nil, ["","/"].contains(p.path), let url = p.url else { throw ProjectError.blocked(String(localized: "Only credential-free loopback Gateway URLs are allowed.")) }
         return url
     }
     static func base64URL(_ data: Data) -> String { data.base64EncodedString().replacingOccurrences(of:"+",with:"-").replacingOccurrences(of:"/",with:"_").replacingOccurrences(of:"=",with:"") }
     static func proof(key: Curve25519.Signing.PrivateKey,token: String?,scopes: [String],nonce: String,timestamp: Int64) throws -> [String:Any] {
-        guard !nonce.isEmpty, nonce.count <= 1024, timestamp >= 0 else { throw ProjectError.invalid("Invalid Gateway challenge; no proof signed.") }
+        guard !nonce.isEmpty, nonce.count <= 1024, timestamp >= 0 else { throw ProjectError.invalid(String(localized: "Invalid Gateway challenge; no proof signed.")) }
         let pub = key.publicKey.rawRepresentation; let id = SHA256.hash(data:pub).map { String(format:"%02x",$0) }.joined()
         let payload = ["v3",id,clientID,"ui","operator",scopes.joined(separator:","),String(timestamp),token ?? "",nonce,"macos","mac"].joined(separator:"|")
         return ["id":id,"publicKey":base64URL(pub),"signature":base64URL(try key.signature(for:Data(payload.utf8))),"signedAt":timestamp,"nonce":nonce]
@@ -124,45 +124,45 @@ public actor NativeGatewayClient {
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation:record.privateKey)
         try vault.save(record) // Same identity across pending-pairing attempts.
         let bootstrap = bootstrapSecret.flatMap { $0.isEmpty ? nil : $0 }
-        guard let token = bootstrap ?? record.token, !token.isEmpty else { throw ProjectError.blocked("Separate Yorozu native device not enrolled. Enter the Gateway bootstrap secret privately in Connect, or use the already-authenticated configured transport. No existing credentials were extracted.") }
+        guard let token = bootstrap ?? record.token, !token.isEmpty else { throw ProjectError.blocked(String(localized: "Separate Yorozu native device not enrolled. Enter the Gateway bootstrap secret privately in Connect, or use the already-authenticated configured transport. No existing credentials were extracted.")) }
         let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 120; config.httpShouldSetCookies = false; config.urlCache = nil
         let session = URLSession(configuration:config); self.session = session
         let ws = session.webSocketTask(with:url); ws.maximumMessageSize = maxPayload; socket = ws; ws.resume()
         let deadline = Task { try? await Task.sleep(for:timeout); if !Task.isCancelled { ws.cancel(with:.goingAway,reason:nil) } }; defer { deadline.cancel() }
         let challenge = try await receive(ws)
-        guard challenge["type"] as? String == "event", challenge["event"] as? String == "connect.challenge", let payload = challenge["payload"] as? [String:Any], let nonce = payload["nonce"] as? String, let number = payload["ts"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue >= 0, number.doubleValue.rounded() == number.doubleValue, number.doubleValue < Double(Int64.max) else { throw ProjectError.invalid("Gateway did not supply a valid protocol-4 challenge.") }
+        guard challenge["type"] as? String == "event", challenge["event"] as? String == "connect.challenge", let payload = challenge["payload"] as? [String:Any], let nonce = payload["nonce"] as? String, let number = payload["ts"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue >= 0, number.doubleValue.rounded() == number.doubleValue, number.doubleValue < Double(Int64.max) else { throw ProjectError.invalid(String(localized: "Gateway did not supply a valid protocol-4 challenge.")) }
         let id = identifier()
         let params: [String:Any] = ["minProtocol":4,"maxProtocol":4,"client":["id":NativeGatewayProtocol.clientID,"displayName":"Yorozu","version":"R1","platform":"macos","deviceFamily":"mac","mode":"ui"],"role":"operator","scopes":record.scopes,"caps":["tool-events"],"auth":["token":token],"device":try NativeGatewayProtocol.proof(key:key,token:token,scopes:record.scopes,nonce:nonce,timestamp:number.int64Value)]
         try await send(["type":"req","id":id,"method":"connect","params":params],on:ws)
         let response = try await receive(ws)
-        guard response["type"] as? String == "res", response["id"] as? String == id else { throw ProjectError.invalid("Unexpected Gateway handshake frame.") }
+        guard response["type"] as? String == "res", response["id"] as? String == id else { throw ProjectError.invalid(String(localized: "Unexpected Gateway handshake frame.")) }
         guard response["ok"] as? Bool == true else { throw NativeGatewayProtocol.refusal(response) }
-        guard let hello = response["payload"] as? [String:Any], hello["type"] as? String == "hello-ok", hello["protocol"] as? Int == 4, let auth = hello["auth"] as? [String:Any], auth["role"] as? String == "operator", let scopes = auth["scopes"] as? [String], Set(NativeGatewayProtocol.scopes).isSubset(of:Set(scopes)), let features = hello["features"] as? [String:Any], let advertised = features["methods"] as? [String], let policy = hello["policy"] as? [String:Any], let limit = policy["maxPayload"] as? Int, limit > 0 else { throw ProjectError.blocked("Gateway handshake lacks required protocol, read/write grant or method/size contract.") }
+        guard let hello = response["payload"] as? [String:Any], hello["type"] as? String == "hello-ok", hello["protocol"] as? Int == 4, let auth = hello["auth"] as? [String:Any], auth["role"] as? String == "operator", let scopes = auth["scopes"] as? [String], Set(NativeGatewayProtocol.scopes).isSubset(of:Set(scopes)), let features = hello["features"] as? [String:Any], let advertised = features["methods"] as? [String], let policy = hello["policy"] as? [String:Any], let limit = policy["maxPayload"] as? Int, limit > 0 else { throw ProjectError.blocked(String(localized: "Gateway handshake lacks required protocol, read/write grant or method/size contract.")) }
         if let issued = auth["deviceToken"] as? String, !issued.isEmpty, record.token != issued { record.token = issued; record.scopes = scopes; try vault.save(record) }
-        guard record.token != nil else { throw ProjectError.blocked("Gateway did not issue a reusable Yorozu device token. Review pairing; bootstrap secret was not saved.") }
+        guard record.token != nil else { throw ProjectError.blocked(String(localized: "Gateway did not issue a reusable Yorozu device token. Review pairing; bootstrap secret was not saved.")) }
         maxPayload = min(limit,8_000_000); methods = Set(advertised); ready = true; sequence = nil
         reader = Task { await self.readLoop(ws) }
     }
     /// `deadline`: seconds before the call fails as uncertain (default 270; a long thinking step passes its own).
     public func call(_ method: String,json: String,final: Bool,deadline: Int = 270) async throws -> String {
         try GatewayRPC.enforceAttribution(ProcessInfo.processInfo.environment); try await connect()
-        guard ready, let ws = socket, methods.contains(method) else { throw ProjectError.blocked("Gateway does not advertise requested method; no alternate dispatch attempted.") }
+        guard ready, let ws = socket, methods.contains(method) else { throw ProjectError.blocked(String(localized: "Gateway does not advertise requested method; no alternate dispatch attempted.")) }
         let params = try JSONSerialization.jsonObject(with:Data(json.utf8)); let id = identifier()
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 pending[id] = (final,continuation)
-                timers[id] = Task { try? await Task.sleep(for:.seconds(deadline)); if !Task.isCancelled { self.fail(id,ProjectError.uncertain("Gateway deadline elapsed; remote run may still be active. Reconcile before retry.")) } }
-                Task { do { try await self.send(["type":"req","id":id,"method":method,"params":params],on:ws) } catch { self.fail(id,ProjectError.uncertain("Gateway send failed; delivery uncertain. No automatic replay.")) } }
+                timers[id] = Task { try? await Task.sleep(for:.seconds(deadline)); if !Task.isCancelled { self.fail(id,ProjectError.uncertain(String(localized: "Gateway deadline elapsed; remote run may still be active. Reconcile before retry."))) } }
+                Task { do { try await self.send(["type":"req","id":id,"method":method,"params":params],on:ws) } catch { self.fail(id,ProjectError.uncertain(String(localized: "Gateway send failed; delivery uncertain. No automatic replay."))) } }
             }
         },onCancel:{ Task { await self.cancelPending(id) } })
     }
-    private func cancelPending(_ id: String) { fail(id,ProjectError.uncertain("Local observation cancelled; remote execution is not confirmed stopped.")) }
+    private func cancelPending(_ id: String) { fail(id,ProjectError.uncertain(String(localized: "Local observation cancelled; remote execution is not confirmed stopped."))) }
     private func fail(_ id: String,_ error: Error) { timers.removeValue(forKey:id)?.cancel(); pending.removeValue(forKey:id)?.1.resume(throwing:error) }
     /// Disconnects and stops redialing until the next `connect`.
     public func close() { stopped = true; retry?.cancel(); retry = nil; teardown() }
     private func teardown() {
         ready = false; reader?.cancel(); reader = nil; socket?.cancel(with:.goingAway,reason:nil); socket = nil; session?.invalidateAndCancel(); session = nil
-        for id in Array(pending.keys) { fail(id,ProjectError.uncertain("Gateway disconnected. Saved work retained; reconcile before retry.")) }; sequence = nil
+        for id in Array(pending.keys) { fail(id,ProjectError.uncertain(String(localized: "Gateway disconnected. Saved work retained; reconcile before retry."))) }; sequence = nil
     }
     // In-memory only. Consumers filter owned run/session and public channels before persistence.
     public func observe(_ handler: @escaping @Sendable (String) async -> Void) -> UUID { let id = UUID(); listeners[id] = handler; return id }
@@ -180,7 +180,7 @@ public actor NativeGatewayClient {
                 } else if frame["type"] as? String == "event" {
                     if let seq = frame["seq"] as? Int {
                         if let prior = sequence, seq <= prior { continue }
-                        if let prior = sequence, seq > prior + 1 { throw ProjectError.uncertain("Gateway event gap; reconnect and reconcile exact owned runs before retry.") }; sequence = seq
+                        if let prior = sequence, seq > prior + 1 { throw ProjectError.uncertain(String(localized: "Gateway event gap; reconnect and reconcile exact owned runs before retry.")) }; sequence = seq
                     }
                     guard ["agent","chat"].contains(frame["event"] as? String ?? "") else { continue }
                     let value = String(decoding:try JSONSerialization.data(withJSONObject:frame),as:UTF8.self)
@@ -191,11 +191,11 @@ public actor NativeGatewayClient {
     }
     private func receive(_ ws: URLSessionWebSocketTask) async throws -> [String:Any] {
         let message = try await ws.receive(); let data: Data
-        switch message { case .data(let value): data = value; case .string(let value): data = Data(value.utf8); @unknown default: throw ProjectError.invalid("Unsupported Gateway frame.") }
-        guard data.count <= maxPayload, let object = try JSONSerialization.jsonObject(with:data) as? [String:Any] else { throw ProjectError.invalid("Invalid/oversized Gateway frame.") }; return object
+        switch message { case .data(let value): data = value; case .string(let value): data = Data(value.utf8); @unknown default: throw ProjectError.invalid(String(localized: "Unsupported Gateway frame.")) }
+        guard data.count <= maxPayload, let object = try JSONSerialization.jsonObject(with:data) as? [String:Any] else { throw ProjectError.invalid(String(localized: "Invalid/oversized Gateway frame.")) }; return object
     }
     private func send(_ object: [String:Any],on ws: URLSessionWebSocketTask) async throws {
-        let data = try JSONSerialization.data(withJSONObject:object); guard data.count <= maxPayload else { throw ProjectError.invalid("Gateway request exceeds negotiated frame size.") }
+        let data = try JSONSerialization.data(withJSONObject:object); guard data.count <= maxPayload else { throw ProjectError.invalid(String(localized: "Gateway request exceeds negotiated frame size.")) }
         try await ws.send(.string(String(decoding:data,as:UTF8.self)))
     }
 }

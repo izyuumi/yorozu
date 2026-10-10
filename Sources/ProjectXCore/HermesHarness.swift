@@ -375,7 +375,7 @@ public struct HermesHarness: Harness {
         try Self.verify(end, provider: provider, model: name)
         if let before = await state.effective[session], let now = await effective(session), now != before {
             await state.setEffective(session, now)
-            try? await update(.event(WorkerEvent(id: task + ":" + server + ":compaction", taskID: task, kind: "compaction", body: "Hermes compacted this topic's session.", created: Date().timeIntervalSince1970)))
+            try? await update(.event(WorkerEvent(id: task + ":" + server + ":compaction", taskID: task, kind: "compaction", body: String(localized: "Hermes compacted this topic's session."), created: Date().timeIntervalSince1970)))
         }
         return end
     }
@@ -426,9 +426,9 @@ public struct HermesHarness: Harness {
             let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String:Any]
             guard object?["memoryCall"] == nil, object?["appliedRevision"] == nil else { return nil }
             kind = "message"; body = text
-        case "subagent.start": body = "Subagent started"
-        case "subagent.complete": body = "Subagent finished" + ((e["status"] as? String).map { ": " + $0.prefix(40) } ?? "")
-        case _ where name.hasPrefix("run."): body = "Worker lifecycle: " + name.dropFirst(4)
+        case "subagent.start": body = String(localized: "Subagent started")
+        case "subagent.complete": body = (e["status"] as? String).map { String(localized: "Subagent finished: \(String($0.prefix(40)))") } ?? String(localized: "Subagent finished")
+        case _ where name.hasPrefix("run."): body = workerLifecycle(name.dropFirst(4))
         default: return nil // message.delta, reasoning.available, replay.truncated, approval.*
         }
         guard let text = body, !sensitive(text) else { return nil }

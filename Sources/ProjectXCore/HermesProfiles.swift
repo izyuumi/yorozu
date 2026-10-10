@@ -117,7 +117,7 @@ public enum HermesProfiles {
     /// Rewrites `mcp_servers` in `yorozu-worker` (Hermes reloads it within about a minute). No server gets `trust`, so
     /// none is `untrusted`. `--force` because `config set` refuses to replace an existing mapping section without it.
     public static func projectMCP(servers: [String:MCPServer]) throws -> Step {
-        if let name = MCPServers.invalid(servers) { throw ProjectError.invalid("MCP server \(name) \(MCPServers.rule).") }
+        if let name = MCPServers.invalid(servers) { throw ProjectError.invalid(String(localized: "MCP server \(name) \(MCPServers.rule).")) }
         let table = servers.mapValues { server -> [String:Any] in var entry: [String:Any] = ["command": server.command]; if let args = server.args { entry["args"] = args }; return entry }
         let json = String(decoding: try JSONSerialization.data(withJSONObject: table, options: [.sortedKeys, .withoutEscapingSlashes]), as: UTF8.self)
         return .setConfig(profile: worker, key: "mcp_servers", value: json, force: true)
@@ -150,7 +150,7 @@ public enum HermesProfiles {
                 try write(text, to: dir.appendingPathComponent("SOUL.md"), mode: 0o644)
             case let .makeFolder(_,name):
                 let folder = dir.appendingPathComponent(name)
-                guard !isSymlink(folder) else { throw ProjectError.blocked("\(folder.path) is a symbolic link; Yorozu writes only real folders in its Hermes profiles.") }
+                guard !isSymlink(folder) else { throw ProjectError.blocked(String(localized: "\(folder.path) is a symbolic link; Yorozu writes only real folders in its Hermes profiles.")) }
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             }
         }
@@ -194,14 +194,14 @@ public enum HermesProfiles {
     static func profileDir(_ name: String, _ home: URL) -> URL { home.appendingPathComponent(".hermes/profiles/\(name)", isDirectory: true) }
     /// The profile folder, refusing any other profile and a symlinked `profiles/` or profile folder.
     static func profileDir(checked name: String, _ home: URL) throws -> URL {
-        guard profiles.contains(name) else { throw ProjectError.blocked("Yorozu writes only its own Hermes profiles; \(name) was refused.") }
+        guard profiles.contains(name) else { throw ProjectError.blocked(String(localized: "Yorozu writes only its own Hermes profiles; \(name) was refused.")) }
         let dir = profileDir(name, home)
-        for url in [dir.deletingLastPathComponent(), dir] where isSymlink(url) { throw ProjectError.blocked("\(url.path) is a symbolic link; Yorozu does not write through it.") }
+        for url in [dir.deletingLastPathComponent(), dir] where isSymlink(url) { throw ProjectError.blocked(String(localized: "\(url.path) is a symbolic link; Yorozu does not write through it.")) }
         return dir
     }
     static func isSymlink(_ url: URL) -> Bool { (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeSymbolicLink }
     static func regularFile(_ url: URL) throws -> URL {
-        if isSymlink(url) { throw ProjectError.blocked("\(url.path) is a symbolic link; Yorozu does not write through it.") }
+        if isSymlink(url) { throw ProjectError.blocked(String(localized: "\(url.path) is a symbolic link; Yorozu does not write through it.")) }
         return url
     }
     /// Atomic replace: a new temp file created with `mode` (never wider, even briefly) in the same folder, then rename.
@@ -209,10 +209,10 @@ public enum HermesProfiles {
         _ = try regularFile(url)
         let temp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).yorozu-\(UUID().uuidString)")
         let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(mode))
-        guard fd >= 0 else { throw ProjectError.blocked("Could not write \(url.path) (errno \(errno)).") }
+        guard fd >= 0 else { throw ProjectError.blocked(String(localized: "Could not write \(url.path) (errno \(errno)).")) }
         do { let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true); try handle.write(contentsOf: Data(text.utf8)); try handle.close() }
-        catch { try? FileManager.default.removeItem(at: temp); throw ProjectError.blocked("Could not write \(url.path).") }
-        guard rename(temp.path, url.path) == 0 else { try? FileManager.default.removeItem(at: temp); throw ProjectError.blocked("Could not replace \(url.path) (errno \(errno)).") }
+        catch { try? FileManager.default.removeItem(at: temp); throw ProjectError.blocked(String(localized: "Could not write \(url.path).")) }
+        guard rename(temp.path, url.path) == 0 else { try? FileManager.default.removeItem(at: temp); throw ProjectError.blocked(String(localized: "Could not replace \(url.path) (errno \(errno)).")) }
     }
 
     // MARK: - .env and YAML reading (no YAML library: line scans of the few keys needed)
@@ -344,7 +344,7 @@ public enum HermesProfiles {
     /// 32 random bytes as base64url: 43 characters.
     static func generateKey() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw ProjectError.blocked("Could not generate a Hermes API key.") }
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw ProjectError.blocked(String(localized: "Could not generate a Hermes API key.")) }
         return Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
     static func saveKeychain(account: String, key: String) throws {
@@ -352,7 +352,7 @@ public enum HermesProfiles {
         let update: [String:Any] = [kSecValueData as String: Data(key.utf8), kSecAttrGeneric as String: fingerprint(key), kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
         var status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if status == errSecItemNotFound { status = SecItemAdd(query.merging(update) { $1 } as CFDictionary, nil) }
-        guard status == errSecSuccess else { throw ProjectError.blocked("Could not save the Hermes API key for \(account) in the Keychain. Unlock the login Keychain and retry setup.") }
+        guard status == errSecSuccess else { throw ProjectError.blocked(String(localized: "Could not save the Hermes API key for \(account) in the Keychain. Unlock the login Keychain and retry setup.")) }
     }
 
     // MARK: - Hermes CLI
@@ -362,7 +362,7 @@ public enum HermesProfiles {
         let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
         let dirs = [home.appendingPathComponent(".local/bin").path] + path.split(separator: ":").map(String.init) + ["/opt/homebrew/bin","/usr/local/bin"]
         guard let found = dirs.map({ URL(fileURLWithPath: $0).appendingPathComponent("hermes") }).first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
-            throw ProjectError.blocked("Hermes is not installed (no hermes launcher in ~/.local/bin or on PATH). Install Hermes Agent first; Yorozu does not install it.")
+            throw ProjectError.blocked(String(localized: "Hermes is not installed (no hermes launcher in ~/.local/bin or on PATH). Install Hermes Agent first; Yorozu does not install it."))
         }
         return found
     }
@@ -372,7 +372,8 @@ public enum HermesProfiles {
         return [6,7].contains(args.count) && args[0] == "-p" && profiles.contains(args[1]) && args[2...3] == ["config","set"] && (args.count == 6 || args[4] == "--force")
     }
     static func run(_ launcher: URL, _ args: [String], _ home: URL) async throws {
-        guard allowed(args) else { throw ProjectError.blocked("Refused Hermes command: hermes \(args.prefix(4).joined(separator: " ")).") }
+        let shown = args.prefix(4).joined(separator: " ")
+        guard allowed(args) else { throw ProjectError.blocked(String(localized: "Refused Hermes command: hermes \(shown).")) }
         try await Task.detached(priority: .utility) {
             let process = Process(), output = Pipe()
             process.executableURL = launcher; process.arguments = args
@@ -383,14 +384,15 @@ public enum HermesProfiles {
             env["PATH"] = (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin") + ":/opt/homebrew/bin:/usr/local/bin"
             process.environment = env
             process.standardInput = FileHandle.nullDevice; process.standardOutput = output; process.standardError = output
-            do { try process.run() } catch { throw ProjectError.blocked("Could not start \(launcher.path).") }
+            do { try process.run() } catch { throw ProjectError.blocked(String(localized: "Could not start \(launcher.path).")) }
             let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
             DispatchQueue.global().asyncAfter(deadline: .now() + 120, execute: deadline)
             defer { deadline.cancel() }
             let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
             guard process.terminationStatus == 0 else {
                 let text = String(decoding: data.suffix(2000), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                throw ProjectError.blocked("hermes \(args.prefix(5).joined(separator: " ")) failed (exit \(process.terminationStatus)): \(text)")
+                let command = args.prefix(5).joined(separator: " ")
+                throw ProjectError.blocked(String(localized: "hermes \(command) failed (exit \(process.terminationStatus)): \(text)"))
             }
         }.value
     }
