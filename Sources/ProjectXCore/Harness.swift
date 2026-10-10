@@ -418,8 +418,9 @@ public struct OpenClawHarness: Harness {
         guard sent["runId"] as? String == id else { return false }
         let wait = try await rpc.call("agent.wait",["runId":id,"timeoutMs":5000])
         if wait["status"] as? String == "pending", wait["timeoutPhase"] as? String == "queue" {
-            _ = try? await rpc.call("chat.abort",["sessionKey":topic.sessionKey,"agentId":agent,"runId":id])
-            return false
+            // Withdraw only while still queued; a turn that already started is left to run rather than cut mid-answer.
+            let abort = try? await rpc.call("chat.abort",["sessionKey":topic.sessionKey,"agentId":agent,"runId":id,"discardPendingInput":true])
+            return abort?["aborted"] as? Bool != true
         }
         return ["ok","timeout"].contains(wait["status"] as? String ?? "")
     }
