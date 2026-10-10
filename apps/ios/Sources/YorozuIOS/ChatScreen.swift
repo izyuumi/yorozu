@@ -85,9 +85,11 @@ struct ChatScreen: View {
                     atBottom = atEnd
                 } else if atEnd {
                     atBottom = true
-                } else if atBottom, phase == .idle {
-                    // Following, and the end moved without the reader (a message, a longer answer, a row measuring
-                    // taller, the keyboard): stay on the newest message.
+                } else if atBottom, phase == .idle, new.offset == old.offset, new.maxOffset != old.maxOffset {
+                    // Following, and the end moved under a still view (a message, a longer answer, a row measuring
+                    // taller, the keyboard): stay on the newest message. Only when the view itself did not move: a drag's
+                    // first frames can arrive before its phase does, and pinning those yanked the drag back. Drift of the
+                    // view while following is left to the settle at rest.
                     scrollToEnd()
                 }
                 scheduleSettle()
