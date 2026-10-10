@@ -42,7 +42,8 @@ public struct PushPreview: Codable, Equatable, Sendable {
             if data.count <= Self.maxPlaintextBytes { return copy.body.isEmpty ? nil : data }
             var chars = Array(copy.body.hasSuffix("…") ? String(copy.body.dropLast()) : copy.body)
             guard chars.count > 1 else { return nil }
-            chars.removeLast(max(1, (data.count - Self.maxPlaintextBytes) / 4))
+            // A character can be far more than 4 bytes (flags, ZWJ emoji, escaped controls): never remove them all.
+            chars.removeLast(min(chars.count - 1, max(1, (data.count - Self.maxPlaintextBytes) / 4)))
             copy.body = String(chars).trimmingCharacters(in: .whitespaces) + "…"
         }
     }
