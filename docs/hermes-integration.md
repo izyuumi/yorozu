@@ -99,10 +99,10 @@ Run statuses: `queued`, `running`, `stopping`, `waiting_for_approval`, then term
 
 ## Role runs
 
-The secretary, the stronger review and extraction (owner default H6.1):
+The classification step, the secretary, the stronger review and extraction (owner default H6.1):
 
 - Each call is a fresh one-shot run in `yorozu-roles` with no `session_id`, an explicit provider and model, and `Idempotency-Key: yorozu-role-<uuid>`.
-- Routing: `instructions` is a short role framing plus the routing policy; `input` is the shared routing prompt with the policy replaced by a pointer to the instructions. Extraction: `instructions` is the framing, `input` the shared extraction prompt. The two together stay within the shared 20000-byte cap; `rawPromptCap` is that cap less the framing, so the Engine's trim still fits.
+- Routing: `instructions` is a short role framing plus the routing policy; `input` is the shared routing prompt with the policy replaced by a pointer to the instructions. Classification and extraction: `instructions` is the framing, `input` the shared classification or extraction prompt. Classification runs on the secretary model and gets the message's files as descriptors only: Hermes takes no image input from Yorozu, so it sees no thumbnails. The two together stay within the shared 20000-byte cap; `rawPromptCap` is that cap less the framing, so the Engine's trim still fits.
 - The run is followed over SSE for at most 120 s, then stopped and reported uncertain.
 - Model check: the output is used only when `runtime.provider` and `runtime.model` equal the requested pair exactly; anything else, a fallback model included, is `model_mismatch` and the output is discarded.
 - Hermes always prepends its own core system prompt to `instructions`, and `SOUL.md` of `yorozu-roles` tells it it serves Yorozu's roles with no tools.
