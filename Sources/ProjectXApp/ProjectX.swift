@@ -370,6 +370,9 @@ struct ProjectXApp: App {
         Settings { SettingsView(model: delegate.model) }
             .defaultLaunchBehavior(.suppressed)
         // Opened only by `AppModel.openSetup`: at a launch before setup is done, by Run Setup Again… and by Fix….
+        // The sub-chats (Activities.swift), opened from the popover.
+        Window("Activities", id: ActivitiesView.id) { ActivitiesView(model: delegate.model) }
+            .defaultLaunchBehavior(.suppressed)
         Window("Set up Yorozu", id: SetupWindow.id) { SetupWindow(model: delegate.model) }
             .windowResizability(.contentSize)
             .defaultLaunchBehavior(.suppressed)

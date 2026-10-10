@@ -22,13 +22,15 @@ import SwiftUI
     private var working = false
     /// SwiftUI's `openSettings`, captured from a view because AppKit has no supported way to open a `Settings` scene.
     fileprivate var openSettingsAction: OpenSettingsAction?
+    fileprivate var openWindowAction: OpenWindowAction?
     /// A transient popover closes on the mouse-down that lands on the icon; its mouse-up must not reopen it.
     private var closedAt = Date.distantPast
 
     init(model: AppModel) {
         super.init()
         self.model = model
-        let content = NSHostingController(rootView: PopoverContent(model: model) { [weak self] in self?.showSettings() })
+        let content = NSHostingController(rootView: PopoverContent(model: model,openSettings: { [weak self] in self?.showSettings() },
+                                                                   openActivities: { [weak self] in self?.showActivities() }))
         content.sizingOptions = []
         popover.contentViewController = content
         popover.contentSize = Self.popoverSize
@@ -111,6 +113,13 @@ import SwiftUI
         popover.performClose(nil)
         NSApp.activate()
         openSettingsAction?()
+    }
+
+    /// The Activities window, the sub-chats, in front of everything.
+    private func showActivities() {
+        popover.performClose(nil)
+        NSApp.activate()
+        openWindowAction?(id: ActivitiesView.id)
     }
 
     /// The setup window (`AppModel.openSetup`), in front of everything.
@@ -199,7 +208,7 @@ private struct StatusTracker: View {
     private let tick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     var body: some View {
         Color.clear
-            .onAppear { host.openSettingsAction = openSettings }
+            .onAppear { host.openSettingsAction = openSettings; host.openWindowAction = openWindow }
             .onChange(of: model.working, initial: true) { _, working in host.show(working: working) }
             .onChange(of: model.snapshot, initial: true) { _, snapshot in AttentionCenter.shared.ingest(snapshot) }
             .onChange(of: model.readCursor, initial: true) { _, cursor in AttentionCenter.shared.readCursor = cursor }

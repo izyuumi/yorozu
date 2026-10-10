@@ -7,6 +7,7 @@ import ProjectXCore
 struct PopoverContent: View {
     @ObservedObject var model: AppModel
     let openSettings: () -> Void
+    let openActivities: () -> Void
     @StateObject private var search = ChatSearch()
     var body: some View {
         VStack(alignment: .leading,spacing: 0) {
@@ -55,10 +56,19 @@ struct PopoverContent: View {
             if model.working { ProgressView().controlSize(.small).help("Working on it").accessibilityLabel("Working") }
             Spacer()
             HStack(spacing: 2) {
+                // The sub-chats; a dot while one needs attention (failed, uncertain or stopping), not merely running.
+                let attention = model.snapshot.activities(excluding: model.jobTopics).filter { $0.state == .attention }.count
+                Button(action: openActivities) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .overlay(alignment: .topTrailing) { if attention > 0 { Circle().fill(ChatPalette.warning).frame(width: 6,height: 6).offset(x: 3,y: -2) } }
+                }
+                    .buttonStyle(.accessoryBar).help("Activities").accessibilityLabel("Activities")
+                    .accessibilityValue(attention > 0 ? String(localized: "\(attention) need attention") : "")
                 Button(action: showSearch) { Image(systemName: "magnifyingglass") }
                     .buttonStyle(.accessoryBar).help("Search (⌘F)").accessibilityLabel("Search")
                 Menu {
                     Button("Search",action: showSearch).keyboardShortcut("f")
+                    Button("Activities",action: openActivities)
                     Button("Settings…",action: openSettings).keyboardShortcut(",")
                     Divider()
                     Button("Quit Yorozu") { NSApp.terminate(nil) }.keyboardShortcut("q")
