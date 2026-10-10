@@ -405,9 +405,14 @@ public struct OpenClawHarness: Harness {
     /// Live steer (owner, 2026-10-10): `chat.send` with `queueMode: "steer"` on the topic session injects the change into
     /// the step's run at its next model boundary. The ACK is "started" either way; when the run cannot take it, OpenClaw
     /// queues it as its own turn behind the run instead (`agent.wait` answers pending in phase "queue"), which is withdrawn
-    /// here so the change runs once, as Yorozu's follow-up turn. Pending outside the queue means the run took it.
+    /// here so the change runs once, as Yorozu's follow-up turn. `ok` or a bare `timeout` (a tool still running) count as taken.
     public func steer(_ work: Work, topic: Topic, amendment: Amendment) async throws -> Bool {
-        guard work.runID?.hasPrefix("projectx-run-") == true else { return false } // a thinking step of this harness
+        guard let run = work.runID, run.hasPrefix("projectx-run-") else { return false } // a thinking step of this harness
+        // The step must still be running: on an idle session (a memory step, the answer being stored, a follow-up being
+        // prepared) chat.send starts the change as its own turn, which agent.wait reports like an admitted steer.
+        // A running `agent` run answers a bare timeout; an ended one carries endedAt.
+        let step = try await rpc.call("agent.wait",["runId":run,"timeoutMs":1])
+        guard step["status"] as? String == "timeout", step["endedAt"] == nil else { return false }
         let id = "\(work.id)-revision-\(amendment.revision)"
         let sent = try await rpc.call("chat.send",["sessionKey":topic.sessionKey,"agentId":agent,"message":try encoded(amendment),"queueMode":"steer","deliver":false,"idempotencyKey":id])
         guard sent["runId"] as? String == id else { return false }
