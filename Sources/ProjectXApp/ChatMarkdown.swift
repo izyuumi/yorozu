@@ -236,8 +236,16 @@ private struct TableBlock: View {
     let rows: [[AttributedString]]
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-            GridRow { ForEach(header.indices, id: \.self) { cell(header[$0]).fontWeight(.semibold).background(.fill.quaternary) } }
+        Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+            // Each header cell fills the row's height under a plain rectangle, so the fill reads as one band however the
+            // titles wrap; a bare `.fill` background took the container's rounded shape per cell, sized to its own text.
+            GridRow {
+                ForEach(header.indices, id: \.self) {
+                    cell(header[$0]).fontWeight(.semibold)
+                        .frame(maxHeight: .infinity, alignment: .topLeading)
+                        .background(.fill.quaternary, in: Rectangle())
+                }
+            }
             ForEach(rows.indices, id: \.self) { r in
                 Divider()
                 GridRow { ForEach(rows[r].indices, id: \.self) { cell(rows[r][$0]) } }
