@@ -49,29 +49,29 @@ public enum JobsFile {
         var tree: [String:TOMLValue]
         do { tree = try TOMLDecoder().decode([String:JobsNode].self,from: text).mapValues(\.value) }
         catch let TOMLDecodingError.invalidSyntax(line,_,message) { throw fail(nil,message,line: line) }
-        catch { throw fail(nil,"\(error)") }
+        catch { throw fail(nil,String(localized: "\(error)")) }
         let root = tree.removeValue(forKey: "jobs")
-        if let key = tree.keys.sorted().first { throw fail(key,"unknown key; each job is a [jobs.<id>] table") }
+        if let key = tree.keys.sorted().first { throw fail(key,String(localized: "unknown key; each job is a [jobs.<id>] table")) }
         guard let root else { return [] }
-        guard case .table(let tables) = root else { throw fail("jobs","expected [jobs.<id>] tables") }
+        guard case .table(let tables) = root else { throw fail("jobs",String(localized: "expected [jobs.<id>] tables")) }
         var jobs: [(Int, JobSpec)] = []
         for (id,value) in tables {
             let base = "jobs.\(id)"
-            guard case .table(var t) = value else { throw fail(base,"expected a [\(base)] table") }
+            guard case .table(var t) = value else { throw fail(base,String(localized: "expected a [\(base)] table")) }
             func take<V>(_ key: String, _ expected: String, _ cast: (TOMLValue) -> V?) throws -> V? {
                 guard let value = t.removeValue(forKey: key) else { return nil }
-                guard let v = cast(value) else { throw fail("\(base).\(key)","expected \(expected)") }
+                guard let v = cast(value) else { throw fail("\(base).\(key)",String(localized: "expected \(expected)")) }
                 return v
             }
             func string(_ key: String) throws -> String? { try take(key,"a string") { if case .string(let s) = $0 { s } else { nil } } }
             func bool(_ key: String) throws -> Bool? { try take(key,"true or false") { if case .boolean(let b) = $0 { b } else { nil } } }
-            guard let name = try string("name") else { throw fail(base,"missing name") }
+            guard let name = try string("name") else { throw fail(base,String(localized: "missing name")) }
             let strings: (TOMLValue) -> [String]? = { value in
                 guard case .array(let items) = value else { return nil }
                 let list = items.compactMap { if case .string(let s) = $0 { s } else { nil } }
                 return list.count == items.count ? list : nil
             }
-            guard let schedule = try take("schedule","a list of cron strings, such as [\"0 8 * * 1-5\"]",strings) else { throw fail(base,"missing schedule") }
+            guard let schedule = try take("schedule","a list of cron strings, such as [\"0 8 * * 1-5\"]",strings) else { throw fail(base,String(localized: "missing schedule")) }
             var job = JobSpec(id: id,name: name,schedule: schedule)
             if let post = try take("post","\"always\" or \"notable\"",{ if case .string(let s) = $0 { JobSpec.Post(rawValue: s) } else { nil } }) { job.post = post }
             job.once = try bool("once") ?? false; job.paused = try bool("paused") ?? false; job.retired = try bool("retired") ?? false
@@ -89,15 +89,15 @@ public enum JobsFile {
     /// The first invalid value of `job` as (dotted key, reason).
     public static func problem(_ job: JobSpec) -> (String, String)? {
         let base = "jobs.\(job.id)"
-        if job.id.range(of: "^[a-z0-9][a-z0-9-]{0,39}$",options: .regularExpression) == nil { return (base,"job id must be 1-40 of a-z, 0-9 and -, not starting with -") }
-        if job.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return ("\(base).name","expected a non-empty name") }
-        if job.schedule.isEmpty { return ("\(base).schedule","expected at least one cron string, such as \"0 8 * * 1-5\"") }
+        if job.id.range(of: "^[a-z0-9][a-z0-9-]{0,39}$",options: .regularExpression) == nil { return (base,String(localized: "job id must be 1-40 of a-z, 0-9 and -, not starting with -")) }
+        if job.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return ("\(base).name",String(localized: "expected a non-empty name")) }
+        if job.schedule.isEmpty { return ("\(base).schedule",String(localized: "expected at least one cron string, such as \"0 8 * * 1-5\"")) }
         for expression in job.schedule { if let reason = Cron.problem(expression) { return ("\(base).schedule",reason) } }
         func blank(_ s: String?) -> Bool { s?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true }
-        if blank(job.script) && blank(job.instruction) { return (base,"needs a script, an instruction or both") }
-        if !(1...86400).contains(job.timeout) { return ("\(base).timeout","expected 1-86400 seconds") }
-        if !["always","changed"].contains(job.aiWhen), (try? NSRegularExpression(pattern: job.aiWhen)) == nil { return ("\(base).ai_when","expected \"always\", \"changed\" or a valid regular expression") }
-        for (key,value) in [("model",job.model),("executor",job.executor),("topic",job.topic)] where value?.isEmpty == true { return ("\(base).\(key)","expected a non-empty string; leave the key out instead") }
+        if blank(job.script) && blank(job.instruction) { return (base,String(localized: "needs a script, an instruction or both")) }
+        if !(1...86400).contains(job.timeout) { return ("\(base).timeout",String(localized: "expected 1-86400 seconds")) }
+        if !["always","changed"].contains(job.aiWhen), (try? NSRegularExpression(pattern: job.aiWhen)) == nil { return ("\(base).ai_when",String(localized: "expected \"always\", \"changed\" or a valid regular expression")) }
+        for (key,value) in [("model",job.model),("executor",job.executor),("topic",job.topic)] where value?.isEmpty == true { return ("\(base).\(key)",String(localized: "expected a non-empty string; leave the key out instead")) }
         return nil
     }
 

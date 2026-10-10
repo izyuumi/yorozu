@@ -34,7 +34,7 @@ public struct FileStore: Sendable {
         var resolved = dir.resolvingSymlinksInPath(); for c in missing { resolved.appendPathComponent(c, isDirectory: true) }
         var probe = resolved
         while true {
-            if fm.fileExists(atPath: probe.appendingPathComponent(".git").path) { throw ProjectError.blocked("The file store can't be inside a git checkout or worktree (\(probe.path)).") }
+            if fm.fileExists(atPath: probe.appendingPathComponent(".git").path) { throw ProjectError.blocked(String(localized: "The file store can't be inside a git checkout or worktree (\(probe.path)).")) }
             if probe.path == "/" { break }
             probe.deleteLastPathComponent()
         }
@@ -60,10 +60,10 @@ public struct FileStore: Sendable {
 
     private func copy(_ source: URL, name: String, mime: String, guarded: Bool) throws -> Attachment {
         let fm = FileManager.default, src = source.resolvingSymlinksInPath()
-        guard !guarded || (!refuses(source) && !refuses(src) && !Self.isKeyName(name)) else { throw ProjectError.blocked("“\(name)” is in a private folder or looks like a key, so Yorozu won't copy it.") }
+        guard !guarded || (!refuses(source) && !refuses(src) && !Self.isKeyName(name)) else { throw ProjectError.blocked(String(localized: "“\(name)” is in a private folder or looks like a key, so Yorozu won't copy it.")) }
         let values = try? src.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard values?.isRegularFile == true, fm.isReadableFile(atPath: src.path) else { throw ProjectError.invalid("“\(name)” is missing or unreadable.") }
-        guard Int64(values?.fileSize ?? 0) <= Self.maxBytes else { throw ProjectError.invalid("“\(name)” is over 50 MB.") }
+        guard values?.isRegularFile == true, fm.isReadableFile(atPath: src.path) else { throw ProjectError.invalid(String(localized: "“\(name)” is missing or unreadable.")) }
+        guard Int64(values?.fileSize ?? 0) <= Self.maxBytes else { throw ProjectError.invalid(String(localized: "“\(name)” is over 50 MB.")) }
         let now = Date(), month = Self.format(now, "yyyy-MM"), stamp = Self.format(now, "yyyy-MM-dd_HHmmss")
         let dir = root.appendingPathComponent(month, isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -75,11 +75,11 @@ public struct FileStore: Sendable {
             do {
                 try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dest.path)
                 let (bytes, sha) = try Self.digest(dest)
-                guard bytes <= Self.maxBytes else { throw ProjectError.invalid("“\(name)” is over 50 MB.") } // grew while copying
+                guard bytes <= Self.maxBytes else { throw ProjectError.invalid(String(localized: "“\(name)” is over 50 MB.")) } // grew while copying
                 return Attachment(path: month + "/" + file, name: name, mime: mime, bytes: bytes, sha256: sha, created: now.timeIntervalSince1970)
             } catch { try? fm.removeItem(at: dest); throw error }
         }
-        throw ProjectError.blocked("Too many files named “\(name)” this second.")
+        throw ProjectError.blocked(String(localized: "Too many files named “\(name)” this second."))
     }
 
     /// A private-key name, or a path under a denied folder (compared on the given and the resolved path).

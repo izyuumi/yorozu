@@ -9,7 +9,7 @@ import YorozuWire
 
 /// What the pair sheet and Settings › Connection show.
 struct RelayStatus: Sendable {
-    var state = "Connecting to the relay…"
+    var state = String(localized: "Connecting to the relay…")
     /// The pairing link (QR and copy), while the sheet has asked for one and the relay has minted it.
     var link: String?
     /// The key of the client device that paired while the sheet showed, so the sheet can say so.
@@ -345,10 +345,10 @@ actor RelayHost {
     // MARK: Socket
 
     private func run() async {
-        guard var dial = URLComponents(string: relayURL) else { state = "Bad relay URL: \(relayURL)"; return publish() }
+        guard var dial = URLComponents(string: relayURL) else { state = String(localized: "Bad relay URL: \(relayURL)"); return publish() }
         // The relay routes on the room before it reads anything, so it goes in the URL too.
         dial.queryItems = (dial.queryItems ?? []) + [URLQueryItem(name: "room", value: room)]
-        guard let url = dial.url else { state = "Bad relay URL: \(relayURL)"; return publish() }
+        guard let url = dial.url else { state = String(localized: "Bad relay URL: \(relayURL)"); return publish() }
         while !Task.isCancelled {
             let ws = URLSession.shared.webSocketTask(with: url)
             // Held boxes went unacked and unaccepted, so the relay brings them again on this socket.
@@ -363,7 +363,7 @@ actor RelayHost {
             socket = nil; registered = false; online = online.filter { peers[$0]?.route != .relay }
             // Frames are never buffered for a phone: it catches up after it redials.
             outbox = []
-            state = "Relay offline, retrying…"; publish()
+            state = String(localized: "Relay offline, retrying…"); publish()
             // Doubling until a registration lands, so a relay that keeps refusing is not hammered.
             try? await Task.sleep(for: .seconds(retry))
             retry = min(retry * 2, 30)
@@ -394,7 +394,7 @@ actor RelayHost {
             registeredAlerts()
             if pairing { send(["type": "mint"]) }
             rehandshake()
-            state = "Connected"; publish()
+            state = String(localized: "Connected"); publish()
         case "token":
             guard pairing, let token = message.token else { return }
             newCode(token)
@@ -588,7 +588,7 @@ actor RelayHost {
     private func claim(_ info: PeerInfoData?, id: String, from pub: String) {
         guard let before = peers[pub] else { return }
         let result = PeerInfoData.local.compatibility(with: info)
-        peers[pub]?.compatibility = result == .legacy ? .updateRequired("Invalid peer information.") : result
+        peers[pub]?.compatibility = result == .legacy ? .updateRequired(String(localized: "Invalid peer information.")) : result
         // Kept on file with the phone's model name; a phone that sends none keeps the one it had.
         if case .compatible(let version, let capabilities) = result {
             peers[pub]?.record.compatible = .init(version: version, capabilities: capabilities, hostProtocol: PeerInfoData.local.protocolMax)

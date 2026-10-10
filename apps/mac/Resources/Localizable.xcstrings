@@ -5094,6 +5094,1945 @@
           }
         }
       }
+    },
+    "%lld need attention" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld件要対応"
+          }
+        }
+      }
+    },
+    "Activities" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクティビティ"
+          }
+        }
+      }
+    },
+    "Activity · ^[%lld step](inflect: true)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "経過 · %lld 件"
+          }
+        }
+      }
+    },
+    "Applying a change" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "変更を反映中"
+          }
+        }
+      }
+    },
+    "Attached to “%@”" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」に統合"
+          }
+        }
+      }
+    },
+    "Bigger work runs in its own sub-chat; it shows here." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "大きな作業はそれぞれのサブチャットで進み、ここに表示されます。"
+          }
+        }
+      }
+    },
+    "LAN" : {
+      "shouldTranslate" : false
+    },
+    "Message Yorozu" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu にメッセージ"
+          }
+        }
+      }
+    },
+    "No activities yet" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクティビティはまだありません"
+          }
+        }
+      }
+    },
+    "Nothing here yet." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだ何もありません。"
+          }
+        }
+      }
+    },
+    "Phones" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "クライアント端末"
+          }
+        }
+      }
+    },
+    "Queued" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待機中"
+          }
+        }
+      }
+    },
+    "Recent" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近"
+          }
+        }
+      }
+    },
+    "Replaced" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "置き換え済み"
+          }
+        }
+      }
+    },
+    "Retry" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再試行"
+          }
+        }
+      }
+    },
+    "Select an activity to see its sub-chat." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクティビティを選ぶとそのサブチャットが表示されます。"
+          }
+        }
+      }
+    },
+    "Stop" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止"
+          }
+        }
+      }
+    },
+    "Stopping" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止中"
+          }
+        }
+      }
+    },
+    "Tailscale" : {
+      "shouldTranslate" : false
+    },
+    "Uncertain" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "結果不明"
+          }
+        }
+      }
+    },
+    "VPN" : {
+      "shouldTranslate" : false
+    },
+    "“%@” was attached here" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」をここに統合"
+          }
+        }
+      }
+    },
+    "Opening local workspace…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルのワークスペースを開いています…"
+          }
+        }
+      }
+    },
+    "This Mac is not enrolled with the Gateway yet." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac はまだ Gateway に登録されていません。"
+          }
+        }
+      }
+    },
+    "line %lld" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 行目"
+          }
+        }
+      }
+    },
+    "Connecting to the relay…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーに接続しています…"
+          }
+        }
+      }
+    },
+    "Bad relay URL: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーの URL が正しくありません: %@"
+          }
+        }
+      }
+    },
+    "Relay offline, retrying…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーがオフラインです。再試行しています…"
+          }
+        }
+      }
+    },
+    "Connected" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続済み"
+          }
+        }
+      }
+    },
+    "Invalid peer information." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ピア情報が正しくありません。"
+          }
+        }
+      }
+    },
+    "Invalid message id." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージ ID が正しくありません。"
+          }
+        }
+      }
+    },
+    "Update Yorozu on this device to send attachments." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添付ファイルを送るには、この端末の Yorozu をアップデートしてください。"
+          }
+        }
+      }
+    },
+    "The host is in fixture mode and doesn't take messages from client devices." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストがフィクスチャモードのため、クライアント端末からのメッセージを受け付けません。"
+          }
+        }
+      }
+    },
+    "That tap reached the host too late." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "操作がホストに届くのが遅すぎました。"
+          }
+        }
+      }
+    },
+    "It didn't run: " : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行されませんでした: "
+          }
+        }
+      }
+    },
+    "Up to %lld files of at most 50 MB each." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送れるのは 50 MB 以下のファイル %lld 件までです。"
+          }
+        }
+      }
+    },
+    "Unknown thread." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不明なスレッドです。"
+          }
+        }
+      }
+    },
+    "Couldn't read the chat on the host: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストでチャットを読み込めませんでした: %@"
+          }
+        }
+      }
+    },
+    "Message not found." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージが見つかりません。"
+          }
+        }
+      }
+    },
+    "That part of the chat is too large to send." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャットのこの部分は大きすぎて送れません。"
+          }
+        }
+      }
+    },
+    "Search failed: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検索に失敗しました: %@"
+          }
+        }
+      }
+    },
+    "Yorozu could not read its relay keys from the Keychain. Unlock the login Keychain; Yorozu tries again every 30 seconds." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "キーチェーンからリレーの鍵を読み込めませんでした。ログインキーチェーンのロックを解除してください。Yorozu は 30 秒ごとに再試行します。"
+          }
+        }
+      }
+    },
+    "Yorozu could not save its relay keys in the Keychain." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーの鍵をキーチェーンに保存できませんでした。"
+          }
+        }
+      }
+    },
+    "relay-devices.json is unreadable; the relay host was not started." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "relay-devices.json を読み込めないため、リレーホストを起動していません。"
+          }
+        }
+      }
+    },
+    "Could not write relay-devices.json." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "relay-devices.json に書き込めませんでした。"
+          }
+        }
+      }
+    },
+    "Yorozu Keychain access failed. Unlock the login Keychain and retry." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のキーチェーンにアクセスできませんでした。ログインキーチェーンのロックを解除して再試行してください。"
+          }
+        }
+      }
+    },
+    "Could not save Yorozu device enrollment in Keychain. Connection stopped; do not copy credentials into project files." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu の端末登録をキーチェーンに保存できませんでした。接続を中止しました。認証情報をプロジェクトのファイルにコピーしないでください。"
+          }
+        }
+      }
+    },
+    "Only credential-free loopback Gateway URLs are allowed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "認証情報を含まないループバックの Gateway URL のみ使えます。"
+          }
+        }
+      }
+    },
+    "Invalid Gateway challenge; no proof signed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway のチャレンジが正しくないため、署名しませんでした。"
+          }
+        }
+      }
+    },
+    "Separate Yorozu native device not enrolled. Enter the Gateway bootstrap secret privately in Connect, or use the already-authenticated configured transport. No existing credentials were extracted." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu 専用の端末が登録されていません。「接続」で Gateway のブートストラップシークレットを非公開で入力するか、認証済みの設定済みトランスポートを使ってください。既存の認証情報は取り出していません。"
+          }
+        }
+      }
+    },
+    "Gateway did not supply a valid protocol-4 challenge." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway から有効なプロトコル 4 のチャレンジが届きませんでした。"
+          }
+        }
+      }
+    },
+    "Unexpected Gateway handshake frame." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway のハンドシェイクで想定外のフレームを受け取りました。"
+          }
+        }
+      }
+    },
+    "Gateway handshake lacks required protocol, read/write grant or method/size contract." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway のハンドシェイクに必要なプロトコル、読み書き権限、メソッドまたはサイズの取り決めがありません。"
+          }
+        }
+      }
+    },
+    "Gateway did not issue a reusable Yorozu device token. Review pairing; bootstrap secret was not saved." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway が再利用できる Yorozu の端末トークンを発行しませんでした。ペアリングを確認してください。ブートストラップシークレットは保存していません。"
+          }
+        }
+      }
+    },
+    "Gateway does not advertise requested method; no alternate dispatch attempted." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway が要求したメソッドに対応していません。別の方法は試していません。"
+          }
+        }
+      }
+    },
+    "Gateway deadline elapsed; remote run may still be active. Reconcile before retry." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway の期限を過ぎました。リモートの実行がまだ続いている可能性があります。再試行の前に状態を照合してください。"
+          }
+        }
+      }
+    },
+    "Gateway send failed; delivery uncertain. No automatic replay." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway への送信に失敗し、届いたかどうか分かりません。自動では再送しません。"
+          }
+        }
+      }
+    },
+    "Local observation cancelled; remote execution is not confirmed stopped." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルでの監視を中止しました。リモートの実行が止まったかは確認できていません。"
+          }
+        }
+      }
+    },
+    "Gateway disconnected. Saved work retained; reconcile before retry." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway との接続が切れました。保存済みの作業は残っています。再試行の前に状態を照合してください。"
+          }
+        }
+      }
+    },
+    "Gateway event gap; reconnect and reconcile exact owned runs before retry." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway のイベントが途切れました。再接続し、該当する実行を照合してから再試行してください。"
+          }
+        }
+      }
+    },
+    "Unsupported Gateway frame." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "対応していない Gateway フレームです。"
+          }
+        }
+      }
+    },
+    "Invalid/oversized Gateway frame." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway フレームが不正か、大きすぎます。"
+          }
+        }
+      }
+    },
+    "Gateway request exceeds negotiated frame size." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway へのリクエストが取り決めたフレームサイズを超えています。"
+          }
+        }
+      }
+    },
+    "Message must be 1–6000 UTF-8 bytes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージは 1〜6000 バイト (UTF-8) にしてください。"
+          }
+        }
+      }
+    },
+    "Message text must be at most 6000 UTF-8 bytes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージの本文は 6000 バイト (UTF-8) 以内にしてください。"
+          }
+        }
+      }
+    },
+    "At most %lld files per message." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 件のメッセージに添付できるファイルは %lld 件までです。"
+          }
+        }
+      }
+    },
+    "Attachments can't be stored here." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ここでは添付ファイルを保存できません。"
+          }
+        }
+      }
+    },
+    "32 requests pending; wait for work to finish." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "処理待ちのリクエストが 32 件あります。作業が終わるまでお待ちください。"
+          }
+        }
+      }
+    },
+    "Yorozu quit before the script started." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スクリプトが始まる前に Yorozu が終了しました。"
+          }
+        }
+      }
+    },
+    "Unknown task." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不明なタスクです。"
+          }
+        }
+      }
+    },
+    "The earlier run had finished; its result is in the chat." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前回の実行は完了していました。結果はチャットにあります。"
+          }
+        }
+      }
+    },
+    "That task changed meanwhile; nothing was retried." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "その間にタスクが変わったため、再試行しませんでした。"
+          }
+        }
+      }
+    },
+    "Running it again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "もう一度実行しています。"
+          }
+        }
+      }
+    },
+    "Unknown job." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不明なジョブです。"
+          }
+        }
+      }
+    },
+    "Jobs can't be changed here yet." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ここではまだジョブを変更できません。"
+          }
+        }
+      }
+    },
+    "Ran; no output." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行しました。出力はありません。"
+          }
+        }
+      }
+    },
+    "The output looks like it holds a secret, so it stays in the log: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "出力に秘密情報が含まれているようなので、ログにのみ残しています: %@"
+          }
+        }
+      }
+    },
+    "Runs a script." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スクリプトを実行します。"
+          }
+        }
+      }
+    },
+    "Once %@ (cron)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 回のみ %@ (cron)"
+          }
+        }
+      }
+    },
+    "On schedule %@ (cron)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スケジュール %@ (cron)"
+          }
+        }
+      }
+    },
+    "Results always go to the main chat." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "結果は常にメインチャットに届きます。"
+          }
+        }
+      }
+    },
+    "Results go to the main chat only when notable." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "結果は注目すべきときだけメインチャットに届きます。"
+          }
+        }
+      }
+    },
+    "the previous run is still going." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前回の実行がまだ続いています。"
+          }
+        }
+      }
+    },
+    "an earlier run was interrupted and its state is unknown. Say retry or stop about it to resume the schedule." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以前の実行が中断され、状態が分かりません。スケジュールを再開するには、その実行について「再試行」か「停止」と伝えてください。"
+          }
+        }
+      }
+    },
+    "its script waits for your yes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スクリプトがあなたの承認を待っています。"
+          }
+        }
+      }
+    },
+    "the job is paused." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ジョブは一時停止中です。"
+          }
+        }
+      }
+    },
+    "jobs can't run here right now." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今はここでジョブを実行できません。"
+          }
+        }
+      }
+    },
+    "Hermes compacted this topic's session." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes がこのトピックのセッションを圧縮しました。"
+          }
+        }
+      }
+    },
+    "Subagent started" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "サブエージェントを開始しました"
+          }
+        }
+      }
+    },
+    "Subagent finished: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "サブエージェントが終了しました: %@"
+          }
+        }
+      }
+    },
+    "Subagent finished" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "サブエージェントが終了しました"
+          }
+        }
+      }
+    },
+    "Waiting for a coding slot: %lld coding agents are running." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コーディングの空きを待っています: %lld 件のコーディングエージェントが実行中です。"
+          }
+        }
+      }
+    },
+    "Couldn't start %@: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ を開始できませんでした: %2$@"
+          }
+        }
+      }
+    },
+    "%@ ran past its %lld-second limit and was stopped." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ が制限時間 %2$lld 秒を超えたため停止しました。"
+          }
+        }
+      }
+    },
+    "%@ finished." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ が完了しました。"
+          }
+        }
+      }
+    },
+    "%@ was stopped: the worker stopped waiting for it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ を停止しました: ワーカーが待つのをやめました。"
+          }
+        }
+      }
+    },
+    "%@ was stopped: its task is no longer running." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ を停止しました: タスクはもう実行されていません。"
+          }
+        }
+      }
+    },
+    "%@ ended: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ が終了しました: %2$@"
+          }
+        }
+      }
+    },
+    "Full output: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "出力全体: %@"
+          }
+        }
+      }
+    },
+    "MCP server %@ %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MCP サーバー %1$@: %2$@。"
+          }
+        }
+      }
+    },
+    "%@ is a symbolic link; Yorozu writes only real folders in its Hermes profiles." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ はシンボリックリンクです。Yorozu は Hermes プロファイル内の実フォルダにのみ書き込みます。"
+          }
+        }
+      }
+    },
+    "Yorozu writes only its own Hermes profiles; %@ was refused." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu は自分の Hermes プロファイルにのみ書き込みます。%@ は拒否しました。"
+          }
+        }
+      }
+    },
+    "%@ is a symbolic link; Yorozu does not write through it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ はシンボリックリンクです。Yorozu はリンク越しには書き込みません。"
+          }
+        }
+      }
+    },
+    "Could not write %@ (errno %d)." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ に書き込めませんでした (errno %2$d)。"
+          }
+        }
+      }
+    },
+    "Could not write %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ に書き込めませんでした。"
+          }
+        }
+      }
+    },
+    "Could not replace %@ (errno %d)." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ を置き換えられませんでした (errno %2$d)。"
+          }
+        }
+      }
+    },
+    "Could not generate a Hermes API key." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes の API キーを生成できませんでした。"
+          }
+        }
+      }
+    },
+    "Could not save the Hermes API key for %@ in the Keychain. Unlock the login Keychain and retry setup." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ の Hermes API キーをキーチェーンに保存できませんでした。ログインキーチェーンのロックを解除して、セットアップをやり直してください。"
+          }
+        }
+      }
+    },
+    "Hermes is not installed (no hermes launcher in ~/.local/bin or on PATH). Install Hermes Agent first; Yorozu does not install it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes がインストールされていません (~/.local/bin にも PATH にも hermes ランチャーがありません)。先に Hermes Agent をインストールしてください。Yorozu はインストールしません。"
+          }
+        }
+      }
+    },
+    "Refused Hermes command: hermes %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hermes のコマンドを拒否しました: hermes %@。"
+          }
+        }
+      }
+    },
+    "Could not start %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ を開始できませんでした。"
+          }
+        }
+      }
+    },
+    "hermes %@ failed (exit %d): %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "hermes %1$@ が失敗しました (終了コード %2$d): %3$@"
+          }
+        }
+      }
+    },
+    "Compacted this topic's session." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このトピックのセッションを圧縮しました。"
+          }
+        }
+      }
+    },
+    "Compacted this topic's session: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このトピックのセッションを圧縮しました: %@"
+          }
+        }
+      }
+    },
+    "Worker started" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ワーカーを開始しました"
+          }
+        }
+      }
+    },
+    "Worker finished" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ワーカーが完了しました"
+          }
+        }
+      }
+    },
+    "Worker failed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ワーカーが失敗しました"
+          }
+        }
+      }
+    },
+    "Worker step: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ワーカーのステップ: %@"
+          }
+        }
+      }
+    },
+    "%@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@"
+          }
+        }
+      }
+    },
+    "%@ must be a table" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ はテーブルにしてください"
+          }
+        }
+      }
+    },
+    "expected %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ を指定してください"
+          }
+        }
+      }
+    },
+    "expected [%@.<name>] tables" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "[%@.<name>] のテーブルにしてください"
+          }
+        }
+      }
+    },
+    "needs command = \"/absolute/path\"" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "command = \"/absolute/path\" が必要です"
+          }
+        }
+      }
+    },
+    "env is not supported" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "env には対応していません"
+          }
+        }
+      }
+    },
+    "expected an array of strings" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文字列の配列にしてください"
+          }
+        }
+      }
+    },
+    "expected [coding_agents.<name>] tables" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "[coding_agents.<name>] のテーブルにしてください"
+          }
+        }
+      }
+    },
+    "needs command = [\"program\", \"argument\", …]" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "command = [\"program\", \"argument\", …] が必要です"
+          }
+        }
+      }
+    },
+    "expected [\"program\", \"argument\", …]" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "[\"program\", \"argument\", …] の形式にしてください"
+          }
+        }
+      }
+    },
+    "expected an integer" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "整数にしてください"
+          }
+        }
+      }
+    },
+    "expected [integrations.<name>] tables" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "[integrations.<name>] のテーブルにしてください"
+          }
+        }
+      }
+    },
+    "expected a table" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テーブルにしてください"
+          }
+        }
+      }
+    },
+    "expected a string" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文字列にしてください"
+          }
+        }
+      }
+    },
+    "expected true or false" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "true か false にしてください"
+          }
+        }
+      }
+    },
+    "expected an http:// or https:// URL" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "http:// または https:// の URL にしてください"
+          }
+        }
+      }
+    },
+    "expected 1-64 letters, digits, - or _" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "英数字、- または _ を 1〜64 文字にしてください"
+          }
+        }
+      }
+    },
+    "expected a loopback ws:// or wss:// address with no path, such as ws://127.0.0.1:18789" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "パスのないループバックの ws:// または wss:// アドレスにしてください (例: ws://127.0.0.1:18789)"
+          }
+        }
+      }
+    },
+    "expected a loopback http:// or https:// address with no path, such as http://127.0.0.1:8642" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "パスのないループバックの http:// または https:// アドレスにしてください (例: http://127.0.0.1:8642)"
+          }
+        }
+      }
+    },
+    "expected an absolute path, a ~/ path or \"\"" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "絶対パス、~/ から始まるパス、または \"\" にしてください"
+          }
+        }
+      }
+    },
+    "expected a name of 1-64 letters, digits, - or _" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名前は英数字、- または _ を 1〜64 文字にしてください"
+          }
+        }
+      }
+    },
+    "expected a program and its arguments" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "プログラムとその引数を指定してください"
+          }
+        }
+      }
+    },
+    "expected a positive number of seconds" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正の秒数にしてください"
+          }
+        }
+      }
+    },
+    "expected a ws:// or wss:// address" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ws:// または wss:// のアドレスにしてください"
+          }
+        }
+      }
+    },
+    "expected \"provider/model\"; leave the key out for automatic" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"provider/model\" の形式にしてください。自動にするならキーを省いてください"
+          }
+        }
+      }
+    },
+    "expected a port from 1024 to 65535" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1024〜65535 のポートにしてください"
+          }
+        }
+      }
+    },
+    "expected at most 80 characters" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "80 文字以内にしてください"
+          }
+        }
+      }
+    },
+    "expected at most 200 bytes of UTF-8" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "UTF-8 で 200 バイト以内にしてください"
+          }
+        }
+      }
+    },
+    "expected a positive integer" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正の整数にしてください"
+          }
+        }
+      }
+    },
+    "only built-in integrations may run commands" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コマンドを実行できるのは組み込みの連携だけです"
+          }
+        }
+      }
+    },
+    "unknown key; each job is a [jobs.<id>] table" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不明なキーです。各ジョブは [jobs.<id>] のテーブルにしてください"
+          }
+        }
+      }
+    },
+    "expected [jobs.<id>] tables" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "[jobs.<id>] のテーブルにしてください"
+          }
+        }
+      }
+    },
+    "expected a [%@] table" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "[%@] のテーブルにしてください"
+          }
+        }
+      }
+    },
+    "missing name" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "name がありません"
+          }
+        }
+      }
+    },
+    "missing schedule" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "schedule がありません"
+          }
+        }
+      }
+    },
+    "job id must be 1-40 of a-z, 0-9 and -, not starting with -" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ジョブ ID は a-z、0-9、- を 1〜40 文字にし、- で始めないでください"
+          }
+        }
+      }
+    },
+    "expected a non-empty name" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空でない名前にしてください"
+          }
+        }
+      }
+    },
+    "expected at least one cron string, such as \"0 8 * * 1-5\"" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "cron 文字列を 1 つ以上指定してください (例: \"0 8 * * 1-5\")"
+          }
+        }
+      }
+    },
+    "needs a script, an instruction or both" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "script、instruction、またはその両方が必要です"
+          }
+        }
+      }
+    },
+    "expected 1-86400 seconds" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1〜86400 秒にしてください"
+          }
+        }
+      }
+    },
+    "expected \"always\", \"changed\" or a valid regular expression" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "\"always\"、\"changed\"、または有効な正規表現にしてください"
+          }
+        }
+      }
+    },
+    "expected a non-empty string; leave the key out instead" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空でない文字列にしてください。使わない場合はキーを省いてください"
+          }
+        }
+      }
+    },
+    "Couldn't start the script: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スクリプトを開始できませんでした: %@"
+          }
+        }
+      }
+    },
+    "Timed out; stopped." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "時間切れのため停止しました。"
+          }
+        }
+      }
+    },
+    "Exit code %d." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "終了コード %d。"
+          }
+        }
+      }
+    },
+    "Ended by a signal." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "シグナルで終了しました。"
+          }
+        }
+      }
+    },
+    "explicit choice" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "明示的に選択"
+          }
+        }
+      }
+    },
+    "no model metadata and no primary model" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデル情報も主モデルもありません"
+          }
+        }
+      }
+    },
+    "the agent's primary model (no allowed model reports a price and an output cap)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントの主モデル (価格と出力上限が分かる許可モデルがありません)"
+          }
+        }
+      }
+    },
+    "the agent's primary model" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントの主モデル"
+          }
+        }
+      }
+    },
+    "most expensive allowed model" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "許可されたうち最も高価なモデル"
+          }
+        }
+      }
+    },
+    "the agent's primary model (no priced model has ≥ %@ context and ≥ %@ output)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントの主モデル (コンテキスト %1$@ 以上・出力 %2$@ 以上で価格が分かるモデルがありません)"
+          }
+        }
+      }
+    },
+    "cheapest allowed model with ≥ %@ context and ≥ %@ output" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コンテキスト %1$@ 以上・出力 %2$@ 以上で許可されたうち最も安いモデル"
+          }
+        }
+      }
+    },
+    "most expensive allowed model other than the secretary's" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "秘書以外で許可されたうち最も高価なモデル"
+          }
+        }
+      }
+    },
+    "most expensive allowed model (no other priced model)" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "許可されたうち最も高価なモデル (価格が分かる他のモデルがありません)"
+          }
+        }
+      }
+    },
+    "This process was started from an OpenClaw agent's shell, so it makes no Gateway calls. Open Yorozu from Finder and finish setup there." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このプロセスは OpenClaw エージェントのシェルから起動されたため、Gateway を呼び出しません。Finder から Yorozu を開き、そこでセットアップを完了してください。"
+          }
+        }
+      }
+    },
+    "OpenClaw's config could not be read (config.get)." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw の設定を読み込めませんでした (config.get)。"
+          }
+        }
+      }
+    },
+    "agents.entries.%@ is missing." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "agents.entries.%@ がありません。"
+          }
+        }
+      }
+    },
+    "OpenClaw's agent list isn't in explicit mode (agents.ownership), and Yorozu writes only its own entry. Add the agent with OpenClaw, then run setup again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw のエージェント一覧が明示モード (agents.ownership) ではなく、Yorozu は自分のエントリにしか書き込みません。OpenClaw でエージェントを追加してから、セットアップをやり直してください。"
+          }
+        }
+      }
+    },
+    "unavailable" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "利用できません"
+          }
+        }
+      }
+    },
+    "Not in agent %@'s model policy." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェント %@ のモデルポリシーに含まれていません。"
+          }
+        }
+      }
+    },
+    "OpenClaw doesn't list %@." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw の一覧に %@ がありません。"
+          }
+        }
+      }
+    },
+    "OpenClaw's config changed since it was checked. Check again and review the changes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認後に OpenClaw の設定が変わりました。もう一度確認し、変更内容を見直してください。"
+          }
+        }
+      }
+    },
+    "Yorozu's agent entry in OpenClaw already exists and differs. Review the changes and confirm them first." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw にある Yorozu のエージェントエントリが既にあり、内容が異なります。変更内容を見直して確定してください。"
+          }
+        }
+      }
+    },
+    "OpenClaw did not confirm the config update." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw が設定の更新を確認しませんでした。"
+          }
+        }
+      }
+    },
+    "The file store can't be inside a git checkout or worktree (%@)." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイル置き場を git のチェックアウトやワークツリーの中に置くことはできません (%@)。"
+          }
+        }
+      }
+    },
+    "“%@” is in a private folder or looks like a key, so Yorozu won't copy it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」は非公開のフォルダにあるか鍵のように見えるため、Yorozu はコピーしません。"
+          }
+        }
+      }
+    },
+    "“%@” is missing or unreadable." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」が見つからないか、読み込めません。"
+          }
+        }
+      }
+    },
+    "“%@” is over 50 MB." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%@」は 50 MB を超えています。"
+          }
+        }
+      }
+    },
+    "Too many files named “%@” this second." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この 1 秒間に「%@」という名前のファイルが多すぎます。"
+          }
+        }
+      }
+    },
+    "App restarted while this was running." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行中にアプリが再起動しました。"
+          }
+        }
+      }
+    },
+    "Result retained in sub-chat; latest amendment not confirmed." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "結果はサブチャットに残しています。最新の変更はまだ確認されていません。"
+          }
+        }
+      }
+    },
+    "Nothing to answer for \"%@\" now. Known steps: " : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "今は「%@」に答える項目はありません。既知のステップ: "
+          }
+        }
+      }
+    },
+    "These aren't the changes Yorozu would make now. Run `yorozu setup --json` again, review the changes, and answer with its apply:<plan_digest>." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "これは Yorozu が今行う変更ではありません。`yorozu setup --json` をもう一度実行して変更内容を確認し、その apply:<plan_digest> で答えてください。"
+          }
+        }
+      }
+    },
+    "\"%@\" isn't an answer to %@; choose one of: " : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「%1$@」は %2$@ への答えではありません。次から選んでください: "
+          }
+        }
+      }
+    },
+    "Yorozu's Hermes profiles changed since they were checked. Check again and review the changes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "確認後に Yorozu の Hermes プロファイルが変わりました。もう一度確認し、変更内容を見直してください。"
+          }
+        }
+      }
+    },
+    "%@ already exists; remove it first, then answer again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ は既にあります。削除してから、もう一度答えてください。"
+          }
+        }
+      }
+    },
+    "%@: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@: %2$@"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

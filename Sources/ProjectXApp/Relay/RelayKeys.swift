@@ -17,10 +17,10 @@ enum RelayKeys {
         var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?; let status = SecItemCopyMatching(q as CFDictionary, &result)
         if status == errSecSuccess, let data = result as? Data { return try JSONDecoder().decode(PhoneIdentity.self, from: data) }
-        guard status == errSecItemNotFound else { throw ProjectError.blocked("Yorozu could not read its relay keys from the Keychain. Unlock the login Keychain; Yorozu tries again every 30 seconds.") }
+        guard status == errSecItemNotFound else { throw ProjectError.blocked(String(localized: "Yorozu could not read its relay keys from the Keychain. Unlock the login Keychain; Yorozu tries again every 30 seconds.")) }
         let keys = PhoneIdentity.generate()
         q = query; q[kSecValueData as String] = try JSONEncoder().encode(keys); q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw ProjectError.blocked("Yorozu could not save its relay keys in the Keychain.") }
+        guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw ProjectError.blocked(String(localized: "Yorozu could not save its relay keys in the Keychain.")) }
         return keys
     }
 }
@@ -84,14 +84,14 @@ enum RelayDeviceFile {
         // Something on disk that cannot be read is not "no devices": counters starting over would make
         // every box a replay to the phone, so the host stops instead.
         do { return try JSONDecoder().decode([RelayDevice].self, from: Data(contentsOf: url)) }
-        catch { throw ProjectError.blocked("relay-devices.json is unreadable; the relay host was not started.") }
+        catch { throw ProjectError.blocked(String(localized: "relay-devices.json is unreadable; the relay host was not started.")) }
     }
     static func save(_ devices: [RelayDevice], to url: URL) throws {
         let data = try JSONEncoder().encode(devices); let tmp = url.path + ".tmp"
         let fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
-        guard fd >= 0 else { throw ProjectError.blocked("Could not write relay-devices.json.") }
+        guard fd >= 0 else { throw ProjectError.blocked(String(localized: "Could not write relay-devices.json.")) }
         let written = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0
         close(fd)
-        guard written, rename(tmp, url.path) == 0 else { unlink(tmp); throw ProjectError.blocked("Could not write relay-devices.json.") }
+        guard written, rename(tmp, url.path) == 0 else { unlink(tmp); throw ProjectError.blocked(String(localized: "Could not write relay-devices.json.")) }
     }
 }

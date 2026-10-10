@@ -108,7 +108,7 @@ public actor Store {
             // Never dispatched (no run ID): safe to queue again. Dispatched: Engine.resume() re-attaches and reports.
             for var item in interrupted {
                 if item.runID == nil { item.state = item.suppressed ? "cancelled" : "queued" }
-                else { item.state = "uncertain"; item.error = "App restarted while this was running." }
+                else { item.state = "uncertain"; item.error = String(localized: "App restarted while this was running.") }
                 try item.update(db)
             }
         }
@@ -454,7 +454,7 @@ public actor Store {
         // Queued-input amendments were part of the instruction the worker answered; only live-steered ones need its echo.
         let steered = try Int.fetchOne(db, sql: "SELECT MAX(revision) FROM amendments WHERE taskID=? AND state='accepted'", arguments: [task]) ?? 0
         if w.suppressed { w.state = "superseded"; try w.update(db); return nil }
-        guard output.appliedRevision >= steered, pending == 0 else { w.state = "amendment_pending"; w.error = "Result retained in sub-chat; latest amendment not confirmed."; try w.update(db)
+        guard output.appliedRevision >= steered, pending == 0 else { w.state = "amendment_pending"; w.error = String(localized: "Result retained in sub-chat; latest amendment not confirmed."); try w.update(db)
             let kind = "amendment_unconfirmed_" + String(w.revision)
             if try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind=?",arguments: [task,kind]) == 0 {
                 let m = Message(id: identifier(),role: "assistant",body: "The task finished without confirming your latest change. Its answer is in the sub-chat.",topicID: w.topicID,taskID: task,replyTo: w.messageID,kind: kind,created: Date().timeIntervalSince1970,notice: Notice(.amendmentUnconfirmed)); try m.insert(db); try attach(m)

@@ -17,9 +17,9 @@ public struct ScriptResult: Sendable {
     public var ok: Bool { exitCode == 0 && !timedOut && launchError == nil }
     /// A plain-language line for the sub-chat and notices.
     public var summary: String {
-        if let launchError { return "Couldn't start the script: \(launchError)" }
-        if timedOut { return "Timed out; stopped." }
-        return exitCode.map { "Exit code \($0)." } ?? "Ended by a signal."
+        if let launchError { return String(localized: "Couldn't start the script: \(launchError)") }
+        if timedOut { return String(localized: "Timed out; stopped.") }
+        return exitCode.map { String(localized: "Exit code \($0).") } ?? String(localized: "Ended by a signal.")
     }
 }
 

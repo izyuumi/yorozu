@@ -507,7 +507,7 @@ public struct OpenClawHarness: Harness {
         guard let frame = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String:Any], frame["event"] as? String == "agent", let p = frame["payload"] as? [String:Any], p["runId"] as? String == run, let seq = p["seq"] as? Int, seq >= 0, let data = p["data"] as? [String:Any] else { return nil }
         if let key = p["sessionKey"] as? String, key != session { return nil }
         let body: String; let kind: String
-        if p["stream"] as? String == "lifecycle", let phase = data["phase"] as? String, ["start","end","error"].contains(phase) { body = "Worker lifecycle: " + phase; kind = "lifecycle" }
+        if p["stream"] as? String == "lifecycle", let phase = data["phase"] as? String, ["start","end","error"].contains(phase) { body = workerLifecycle(phase[...]); kind = "lifecycle" }
         // One row per call, from its start (only the start carries args). A call made through tool_call also arrives as its
         // own event with parentToolCallId; the tool_call row already names it.
         else if p["stream"] as? String == "tool", data["phase"] as? String == "start", data["parentToolCallId"] == nil, let name = data["name"] as? String, name.count <= 100, case let row = toolRow(name,args: data["args"]), !sensitive(row) { body = row; kind = "tool" }
@@ -658,7 +658,7 @@ extension OpenClawHarness {
             return false
         }
         let sizes = before.map { b in after.map { "\(b) → \($0) tokens" } ?? "from \(b) tokens" } ?? ""
-        try await update(.event(WorkerEvent(id: input.work.id + ":compaction:" + identifier(),taskID: input.work.id,kind: "compaction",body: "Compacted this topic's session" + (sizes.isEmpty ? "." : ": " + sizes),created: Date().timeIntervalSince1970)))
+        try await update(.event(WorkerEvent(id: input.work.id + ":compaction:" + identifier(),taskID: input.work.id,kind: "compaction",body: sizes.isEmpty ? String(localized: "Compacted this topic's session.") : String(localized: "Compacted this topic's session: \(sizes)"),created: Date().timeIntervalSince1970)))
         return true
     }
 }
@@ -695,4 +695,14 @@ func utf8Excerpt(_ s: String, bytes: Int) -> String {
     var i = s.utf8.index(s.endIndex,offsetBy: -half)
     while i.samePosition(in: s.unicodeScalars) == nil { i = s.utf8.index(after: i) }
     return utf8Prefix(s,bytes: half) + marker + String(s.unicodeScalars[i...])
+}
+
+/// A worker's lifecycle step for the sub-chat, in the user's language; an unknown phase as reported.
+func workerLifecycle(_ phase: Substring) -> String {
+    switch phase {
+    case "start","started": String(localized: "Worker started")
+    case "end","completed","finished": String(localized: "Worker finished")
+    case "error","failed": String(localized: "Worker failed")
+    default: String(localized: "Worker step: \(String(phase))")
+    }
 }

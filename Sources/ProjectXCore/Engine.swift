@@ -48,12 +48,12 @@ public actor Engine {
     /// store first, then the message and its attachment rows are stored in one transaction; a failure removes the copies.
     /// `replyTo`: the message the user replied to; a reply to a message in a topic stays in that topic (owner, 2026-10-09).
     @discardableResult public func send(_ body: String, attachments: [PendingFile] = [], id: String = identifier(), sentAt: Double? = nil, replyTo: String? = nil) async throws -> String {
-        guard body.utf8.count <= 6000, !attachments.isEmpty || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ProjectError.invalid(attachments.isEmpty ? "Message must be 1–6000 UTF-8 bytes." : "Message text must be at most 6000 UTF-8 bytes.") }
-        guard attachments.count <= FileStore.maxFiles else { throw ProjectError.invalid("At most \(FileStore.maxFiles) files per message.") }
-        guard attachments.isEmpty || files != nil else { throw ProjectError.blocked("Attachments can't be stored here.") }
+        guard body.utf8.count <= 6000, !attachments.isEmpty || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ProjectError.invalid(attachments.isEmpty ? String(localized: "Message must be 1–6000 UTF-8 bytes.") : String(localized: "Message text must be at most 6000 UTF-8 bytes.")) }
+        guard attachments.count <= FileStore.maxFiles else { throw ProjectError.invalid(String(localized: "At most \(FileStore.maxFiles) files per message.")) }
+        guard attachments.isEmpty || files != nil else { throw ProjectError.blocked(String(localized: "Attachments can't be stored here.")) }
         // Job runs do not count (open question 10).
         let jobs = pending.filter { jobWork.contains($0) }.count + running.keys.filter { jobWork.contains($0) }.count
-        guard routingCount + pending.count + running.count - jobs < 32 else { throw ProjectError.blocked("32 requests pending; wait for work to finish.") }
+        guard routingCount + pending.count + running.count - jobs < 32 else { throw ProjectError.blocked(String(localized: "32 requests pending; wait for work to finish.")) }
         try await bindRuntime()
         var copies: [Attachment] = []
         if let files {
@@ -84,7 +84,7 @@ public actor Engine {
         jobWork = Set(work.filter { triggers.contains($0.messageID) }.map(\.id))
         for w in work where w.state == "queued" && !w.suppressed {
             // A script step is never started again after a quit (#319).
-            if w.executor == Self.scriptExecutor { _ = try? await store.endScript(w.id,ok: false,summary: "Yorozu quit before the script started."); continue }
+            if w.executor == Self.scriptExecutor { _ = try? await store.endScript(w.id,ok: false,summary: String(localized: "Yorozu quit before the script started.")); continue }
             pending.append(w.id)
         }
         pump()
@@ -451,7 +451,7 @@ public actor Engine {
     }
     /// A refusal or error is posted like a typed one (its code, else `task_control_failed`), in the task's topic.
     private func control(_ id: String,_ act: (Work,Topic) async throws -> TaskOutcome) async -> TaskOutcome {
-        guard let w = try? await store.work(id), let topic = try? await store.topic(id: w.topicID) else { return TaskOutcome(accepted: false,text: "Unknown task.",notice: nil,messageID: nil) }
+        guard let w = try? await store.work(id), let topic = try? await store.topic(id: w.topicID) else { return TaskOutcome(accepted: false,text: String(localized: "Unknown task."),notice: nil,messageID: nil) }
         do { return try await act(w,topic) } catch {
             let coded = error as? NoticeError, notice = coded?.notice ?? Notice(.taskControlFailed,error: error)
             let m = try? await store.message(role: "assistant",body: error.localizedDescription,topic: w.topicID,task: w.id,replyTo: w.messageID,kind: coded?.kind ?? "failure",notice: notice)
@@ -488,13 +488,13 @@ public actor Engine {
             }
             if let reply { enqueueExtraction(reply) }
             await jobAIFinished(w.id,reply: reply,output: output)
-            return TaskOutcome(accepted: reply != nil,text: reply != nil ? "The earlier run had finished; its result is in the chat." : "That task changed meanwhile; nothing was retried.",notice: nil,messageID: reply?.id)
+            return TaskOutcome(accepted: reply != nil,text: reply != nil ? String(localized: "The earlier run had finished; its result is in the chat.") : String(localized: "That task changed meanwhile; nothing was retried."),notice: nil,messageID: reply?.id)
         case .stopped where w.executor == Self.scriptExecutor:
             // A job script is retried as a new run of its job (Run now), never by a harness.
             guard let spec = spec(topic: w.topicID) else { throw NoticeError(.retryNotAllowed,"That job no longer exists, so its script can't run again.") }
             try await store.retireForRetry(w.id); await syncJobRun(work: w.id)
             switch await runJob(spec,slot: Date(),manual: true) {
-            case .started: return TaskOutcome(accepted: true,text: "Running it again.",notice: nil,messageID: nil)
+            case .started: return TaskOutcome(accepted: true,text: String(localized: "Running it again."),notice: nil,messageID: nil)
             case .skipped(let reason): return try await acknowledge(w,replyTo: request.id,"It didn't run again: " + Self.skipText(reason),Notice(.jobSkipped,["job": spec.id,"name": spec.name,"reason": reason.rawValue]),accepted: false)
             }
         case .stopped:
@@ -885,8 +885,8 @@ extension Engine {
     /// secretary. During the job's run or an earlier answer it waits and runs as the next turn (open question 12).
     /// `id` and `sentAt` as in `send`: a phone keeps its bubble's id and its send time (#319).
     @discardableResult public func sendToJob(jobID: String, body: String, id: String = identifier(), sentAt: Double? = nil) async throws -> String {
-        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, body.utf8.count <= 6000 else { throw ProjectError.invalid("Message must be 1–6000 UTF-8 bytes.") }
-        guard let spec = specs.first(where: { $0.id == jobID }) else { throw ProjectError.invalid("Unknown job.") }
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, body.utf8.count <= 6000 else { throw ProjectError.invalid(String(localized: "Message must be 1–6000 UTF-8 bytes.")) }
+        guard let spec = specs.first(where: { $0.id == jobID }) else { throw ProjectError.invalid(String(localized: "Unknown job.")) }
         try await bindRuntime()
         let topic = try await bindTopic(spec)
         let m = try await store.message(role: "user",body: body,topic: topic.id,kind: "job_input",id: id,sentAt: sentAt)
@@ -899,17 +899,17 @@ extension Engine {
     public func resumeJob(_ id: String) async throws { try await editJob(id) { $0.paused = false } }
     /// Removes the entry (open question 13); the topic, its history and the job folder stay.
     public func deleteJob(_ id: String) async throws {
-        guard let writeJobs else { throw ProjectError.blocked("Jobs can't be changed here yet.") }
-        try await writeJobs { all in guard all.contains(where: { $0.id == id }) else { throw ProjectError.invalid("Unknown job.") }; all.removeAll { $0.id == id } }
+        guard let writeJobs else { throw ProjectError.blocked(String(localized: "Jobs can't be changed here yet.")) }
+        try await writeJobs { all in guard all.contains(where: { $0.id == id }) else { throw ProjectError.invalid(String(localized: "Unknown job.")) }; all.removeAll { $0.id == id } }
     }
     /// Runs now under the no-overlap rule, also when paused.
     public func runJobNow(_ id: String) async throws -> JobRunOutcome {
-        guard let spec = specs.first(where: { $0.id == id }) else { throw ProjectError.invalid("Unknown job.") }
+        guard let spec = specs.first(where: { $0.id == id }) else { throw ProjectError.invalid(String(localized: "Unknown job.")) }
         return await runJob(spec,slot: Date(),manual: true)
     }
     private func editJob(_ id: String,_ change: (inout JobSpec) -> Void) async throws {
-        guard let writeJobs else { throw ProjectError.blocked("Jobs can't be changed here yet.") }
-        try await writeJobs { all in guard let i = all.firstIndex(where: { $0.id == id }) else { throw ProjectError.invalid("Unknown job.") }; change(&all[i]) }
+        guard let writeJobs else { throw ProjectError.blocked(String(localized: "Jobs can't be changed here yet.")) }
+        try await writeJobs { all in guard let i = all.firstIndex(where: { $0.id == id }) else { throw ProjectError.invalid(String(localized: "Unknown job.")) }; change(&all[i]) }
     }
 
     /// The Jobs list: one row per job of the current set. `nextRuns` (job id → date) comes from the scheduler.
@@ -966,7 +966,7 @@ extension Engine {
         guard let instruction = spec.instruction, gate else {
             // Script only (open question 3): notable when it failed (handled above) or its output changed.
             let output = log.map { Self.excerpt($0,bytes: 4000) } ?? ""
-            let shown = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Ran; no output." : sensitive(output) ? "The output looks like it holds a secret, so it stays in the log: \(log?.path ?? "")" : output
+            let shown = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "Ran; no output.") : sensitive(output) ? String(localized: "The output looks like it holds a secret, so it stays in the log: \(log?.path ?? "")") : output
             let posted = spec.post == .always || changed
             if let m = try? await store.message(role: "assistant",body: shown,topic: topic.id,task: scriptWork,replyTo: trigger.id,kind: posted ? "result" : "job_result"), posted { enqueueExtraction(m) }
             await finishRun(run.id,state: "done",notable: changed,posted: posted); return
@@ -1096,8 +1096,10 @@ extension Engine {
     private func summary(_ spec: JobSpec) async -> String {
         if let d = try? await rawAsk(policy: Prompts.jobSummaryPolicy,message: utf8Excerpt(Self.specJSON(spec),bytes: 6000)), d.action == "reply",
            let text = d.reply?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, text.utf8.count <= 1500 { return text }
-        let what = spec.instruction.flatMap { $0.split(separator: "\n").first.map(String.init) } ?? "Runs a script."
-        return "\(spec.once ? "Once" : "On schedule") \(spec.schedule.joined(separator: ", ")) (cron)\n" + utf8Prefix(what,bytes: 300) + (spec.post == .always ? " Results always go to the main chat." : " Results go to the main chat only when notable.")
+        let what = spec.instruction.flatMap { $0.split(separator: "\n").first.map(String.init) } ?? String(localized: "Runs a script.")
+        let when = spec.schedule.joined(separator: ", ")
+        return (spec.once ? String(localized: "Once \(when) (cron)") : String(localized: "On schedule \(when) (cron)")) + "\n" + utf8Prefix(what,bytes: 300) + " "
+            + (spec.post == .always ? String(localized: "Results always go to the main chat.") : String(localized: "Results go to the main chat only when notable."))
     }
     /// A raw secretary-model run through the routing contract (no harness API change): the policy is the task, the
     /// message its input, and the Decision's reply or approve its answer.
@@ -1131,11 +1133,11 @@ extension Engine {
     }
     public static func skipText(_ reason: JobRunOutcome.Skip) -> String {
         switch reason {
-        case .overlap: "the previous run is still going."
-        case .uncertain: "an earlier run was interrupted and its state is unknown. Say retry or stop about it to resume the schedule."
-        case .needsApproval: "its script waits for your yes."
-        case .paused: "the job is paused."
-        case .unavailable: "jobs can't run here right now."
+        case .overlap: String(localized: "the previous run is still going.")
+        case .uncertain: String(localized: "an earlier run was interrupted and its state is unknown. Say retry or stop about it to resume the schedule.")
+        case .needsApproval: String(localized: "its script waits for your yes.")
+        case .paused: String(localized: "the job is paused.")
+        case .unavailable: String(localized: "jobs can't run here right now.")
         }
     }
     /// A message's age for the secretary: "7 h 16 min", or "16 min" under an hour.
