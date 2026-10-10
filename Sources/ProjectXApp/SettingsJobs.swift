@@ -259,7 +259,7 @@ private struct JobDetail: View {
 }
 
 /// A worker event in the sub-chat: a script's output, a run's log line, a worker's progress.
-private struct EventRow: View {
+struct EventRow: View {
     let event: WorkerEvent
     private enum Metrics { static let radius: CGFloat = 7 }
     var body: some View {
