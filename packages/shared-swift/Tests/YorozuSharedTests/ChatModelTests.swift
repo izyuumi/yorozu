@@ -3086,6 +3086,43 @@ func silentSuccessfulReplyClearsItsPreviewWithoutABlankBubble(final: MessageData
 }
 
 @MainActor
+@Test func cardLeftOpenByAnEndedTurnNeitherHoldsNorAnswersTheNextMessages() async throws {
+    let transport = FakeTransport(autoReceipt: true)
+    let model = await connected(transport)
+    defer { model.close() }
+    let thread = ThreadSummary(id: "home", title: "Home", archived: false, lastActivity: 1)
+    // The turn asked, then finished without the answer's echo ever arriving.
+    await transport.yield(.event(event("old-question", .questionCard(QuestionCardData(
+        questionId: "old", question: "Which?", options: ["A"])))))
+    await transport.yield(.event(event("old-reply", .message(MessageData(role: .agent, text: "Done.", done: true)))))
+    #expect(await eventually { model.timeline(thread.id).events.contains { $0.id == "old-reply" } })
+    for text in ["first", "second"] {
+        model.drafts[thread.id] = text
+        model.send(in: thread)
+        #expect(model.pendingComposerCards(in: thread.id).isEmpty)
+    }
+    let sentEvents = await sent(by: transport, atLeast: pairingSends + 1)
+    #expect(sentEvents.allSatisfy { $0.payload.kind != .questionAnswer })
+    #expect(sentEvents.contains { event in
+        guard case .message(let data) = event.payload else { return false }
+        return data.role == .user && data.text == "first"
+    })
+
+    // With host turn state, a new turn's prompt after the card retires it the same way.
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["turn-state-v1"])))
+    await transport.yield(.event(YorozuEvent(id: "stale-question", threadId: thread.id, ts: 2, agentId: "main",
+        payload: .questionCard(QuestionCardData(questionId: "stale", question: "Why?", options: ["B"])))))
+    await transport.yield(.event(YorozuEvent(id: "prompt", threadId: thread.id, ts: 3, agentId: "mac",
+        payload: .message(MessageData(role: .user, text: "next")))))
+    await transport.yield(.event(event("running", .threadList(ThreadListData(threads: [
+        ThreadSummary(id: thread.id, title: thread.title, archived: false, lastActivity: 2,
+            activeEventId: "prompt", turnState: .running)
+    ])))))
+    #expect(await eventually { model.activeEventId(in: thread.id) == "prompt" })
+    #expect(model.pendingComposerCards(in: thread.id).isEmpty)
+}
+
+@MainActor
 @Test func openCardsHoldQueuedMessagesUntilAnswersArriveThenSendInOrder() async throws {
     let transport = FakeTransport()
     let model = await connected(transport)
