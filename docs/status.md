@@ -68,7 +68,7 @@ Update this file when a part changes state; keep only the current picture. Past 
 15. Push notifications (issue #320, step 12 of the implementation order): done: merged in #343 with no relay change, the Mac side checked live; the issue is closed. The owner confirms the relay runs `main` with its APNs secrets; on-device checks (2–8, 11) wait for a TestFlight build, uploaded only when the owner asks.
 16. Website for 0.7.0 (issue #321, step 13, last in the queue): the site in `apps/web` and `Start.md`, both on `main`, rewritten for 0.7.0 on branch `website`; its PR to `main` waits for the 0.7.0 release, when the owner merges it ([release.md](release.md#website)).
 17. Workspace and coding agents (issue #351): on branch `workspace`, Settings included; next the live check.
-18. Later, unscheduled: Mac distribution (notarization, an update feed); vector retrieval; automatic topic merge and split; a dismiss action for stale uncertain tasks.
+18. Mac distribution: Sparkle on v1's feed and key and a notarizing release script, built and notarized locally (owner, 2026-10-11); publishing waits for the owner. Later, unscheduled: vector retrieval; automatic topic merge and split; a dismiss action for stale uncertain tasks.
 
 ## Open items
 
@@ -151,7 +151,7 @@ Each limit is described where its mechanism is documented.
 - A run interrupted by an app restart is watched for about 2 hours, then the user is asked to retry ([architecture.md](architecture.md#restart-and-resume)).
 - An uncertain task whose run stays running or unknown blocks new work in its topic until it settles or is stopped; there is no dismiss action yet ([architecture.md](architecture.md#uncertain-blockers)).
 - Coding agents show only whether their program is found on the app's `PATH`, `~/.local/bin`, `~/.local/share/mise/shims` or the Homebrew folders, never whether they are signed in ([architecture.md](architecture.md#workspace-and-coding-agents)).
-- Mac distribution is roadmap item 17; the iPhone share sheet comes with #322.
+- The iPhone share sheet comes with #322.
 - Push: a read on the Mac clears the phone's badge only at the phone's next sync, since the relay has no badge-only push; notifies held while the relay is down live in memory, so a quit loses them, and a reconnect sends only the newest per class; a notify re-sent after a half-open socket may reach the phone twice; a Mac sleep over 10 minutes sends one "back online" alert (at most hourly), per #320 open question 4; the shared classifier makes Mac notifications fire for secretary replies and job approval requests too; the relay and APNs see the class, two 8-character refs, a sealed box's length, the token and the timing ([ios-relay-contract.md](ios-relay-contract.md#push)); a phone's preview is cut to 256 bytes of plaintext (about 70 Japanese characters), and notice text in it is in the Mac's language.
 - Attachments: the Mac's Activities window shows a worker's shared image as its event text, not the image; Hermes workers get files by path only, never as image input; files are deleted only by hand in Finder, and a deleted file stays listed as "File no longer available"; a phone message with files waits for a live session with the Mac, since files never go through the relay buffer ([architecture.md](architecture.md#attachments)).
 - Computer-use rules are prompt policy, not code. Tasks in different topics run at once, even on the same app; CuaDriver serializes their input calls but not their sequences ([cua-integration.md](cua-integration.md#concurrency)).

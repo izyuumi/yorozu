@@ -368,7 +368,11 @@ import YorozuWire
 @MainActor final class Delegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var host: MenuBarHost?
-    func applicationDidFinishLaunching(_ notification: Notification) { host = MenuBarHost(model: model); model.start() }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        host = MenuBarHost(model: model); model.start()
+        Updates.shared.idle = { [model] in !model.snapshot.work.contains(where: \.active) }
+        Updates.shared.start()
+    }
     func applicationWillTerminate(_ notification: Notification) { model.stop() }
     /// A menu-bar host: closing Settings leaves the engine, relay and model running until Quit.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

@@ -89,6 +89,7 @@ import SwiftUI
         add("Direct Connection (LAN/VPN)", #selector(toggleDirect), on: config.direct.enabled)
         add("Keep Host Awake", #selector(toggleAwake), on: config.general.keepMacAwake)
         menu.addItem(.separator())
+        if Updates.shared.available { add("Check for Updates…", #selector(checkForUpdates)) }
         add("Settings…", #selector(showSettings), key: ",")
         menu.addItem(withTitle: String(localized: "Quit Yorozu"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
@@ -108,6 +109,8 @@ import SwiftUI
     func popoverWillShow(_ notification: Notification) { model?.popoverShown = true }
 
     func popoverDidClose(_ notification: Notification) { closedAt = Date(); model?.popoverShown = false; attention.popoverAtBottom = false }
+
+    @objc private func checkForUpdates() { Updates.shared.check() }
 
     @objc private func showSettings() {
         popover.performClose(nil)
@@ -210,6 +213,8 @@ private struct StatusTracker: View {
         Color.clear
             .onAppear { host.openSettingsAction = openSettings; host.openWindowAction = openWindow }
             .onChange(of: model.working, initial: true) { _, working in host.show(working: working) }
+            // A downloaded update waits for no task to run (job runs included).
+            .onChange(of: model.snapshot.work.contains(where: \.active)) { _, active in if !active { Updates.shared.installIfIdle() } }
             .onChange(of: model.snapshot, initial: true) { _, snapshot in AttentionCenter.shared.ingest(snapshot) }
             .onChange(of: model.readCursor, initial: true) { _, cursor in AttentionCenter.shared.readCursor = cursor }
             .onChange(of: model.setupRequests, initial: true) { _, count in if count > 0 { host.showSetup(openWindow) } }

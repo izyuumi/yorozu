@@ -19,7 +19,13 @@ A minor version that breaks the relay wire also raises the peer-info protocol ([
 
 Restarting mid-task is safe: the relaunched app re-attaches to interrupted runs and delivers their results ([architecture.md](architecture.md#restart-and-resume)).
 
-The build is Developer ID signed but not notarized, and nothing in the repo notarizes it; `spctl` rejects it as "Unnotarized Developer ID". It also carries `get-task-allow`. It is a local dev build, not a distributable one.
+The dev build is Developer ID signed (no `get-task-allow`) but not notarized, and has no update feed: built as build 1, it would take v1's own release as an update. Releases come from `scripts/release_mac.sh` (below).
+
+## Mac: release and updates
+
+The app embeds Sparkle with v1's feed (`https://yorozu.yumi.to/appcast.xml`, the latest GitHub release's `appcast.xml`) and EdDSA public key, so an installed v1 updates to this app and this app keeps updating (owner, 2026-10-11). Checks and downloads are automatic and hourly; a downloaded update installs and relaunches once no task is running, since the menu-bar host rarely quits. Settings › General has Get beta updates (v1's `YorozuBetaUpdates` default, so v1's beta users stay on beta; they read `https://yorozu.yumi.to/beta/appcast.xml`) and Check for Updates…, also in the menu-bar menu.
+
+`BUILD=<n> scripts/release_mac.sh beta|stable` builds the release in `build/release/<version>-<build>/`: `Yorozu.dmg` (Developer ID, Sparkle's helpers re-signed with it, hardened runtime, notarized with the `yorozu-notary` profile and stapled), `appcast.xml` with one item signed with the Sparkle key in the login Keychain (`SPARKLE_ED_KEY_FILE` instead), beta items carrying the beta channel, and `candidate.json`. `BUILD` must be above every published build: v1's stable is 293 and its beta 10271, so v2 starts at 10272. Nothing is published: a GitHub release is the owner's step. Stable users get the assets of the release marked latest (`v<version>`); beta users get the newest prerelease tagged `v<version>-beta` that `apps/web/worker.mjs` on `main` accepts, which checks `candidate.json` and today requires `source_branch` `main`, so the first v2 beta needs that check widened on `main`.
 
 ## Installing over v1
 
@@ -55,6 +61,6 @@ The 0.7.0 update (#321) is a PR to `main` that stays open until the release; the
 
 ## Not wired
 
-- Mac distribution: no notarization, DMG or update feed.
+- Mac release publishing: `scripts/release_mac.sh` builds and notarizes; uploading to a GitHub release stays a manual, owner-only step.
 - v1's release process on `main` (Release Please, GitHub Actions release and promote workflows, `BUILD = 10000 + run number`, Sparkle appcasts) does not apply to `projectx`, which has no CI.
 - Public App Store release: not requested; iOS goes to internal TestFlight only.

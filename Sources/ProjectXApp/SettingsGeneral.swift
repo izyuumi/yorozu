@@ -35,6 +35,15 @@ struct GeneralSettings: View {
                     Text("Workers and client devices need the host awake. A closed lid still sleeps.")
                 }
             }
+            if Updates.shared.available {
+                Section("Updates") {
+                    Toggle(isOn: Binding(get: { Updates.shared.beta }, set: { Updates.shared.beta = $0 })) {
+                        Text("Get beta updates")
+                        Text("Updates install on their own once no task is running.")
+                    }
+                    Button("Check for Updates…") { Updates.shared.check() }
+                }
+            }
             Section("Notifications") {
                 Toggle(isOn: model.setting(\.notifications.enabled)) {
                     Text("Show notifications")
