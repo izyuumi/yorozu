@@ -14,7 +14,8 @@ let version: String = {
 
 let project = Project(
     name: "Yorozu",
-    packages: [.package(path: "../.."), .package(path: "../../packages/YorozuWire")],
+    packages: [.package(path: "../.."), .package(path: "../../packages/YorozuWire"),
+               .package(url: "https://github.com/sparkle-project/Sparkle", .upToNextMajor(from: "2.9.0"))],
     targets: [
         .target(
             name: "Yorozu",
@@ -30,17 +31,28 @@ let project = Project(
                 "LSApplicationCategoryType": "public.app-category.productivity",
                 "LSUIElement": true, // Menu-bar host: no Dock icon, no main window.
                 "NSLocalNetworkUsageDescription": "Yorozu lets your paired client devices connect to this Mac directly over your local network or VPN.",
+                // Sparkle (Updates.swift): v1's feed and EdDSA public key, so v1 installs update to this app. The feed is set
+                // only by scripts/release_mac.sh: a dev build (build 1) would take v1's own release as an update.
+                "SUFeedURL": "$(YOROZU_FEED_URL)",
+                "SUPublicEDKey": "pD6gPv1CP/XDvIJXbztjQRTIkgR/kfMMYT/Mpp8aQvI=",
+                "SUEnableAutomaticChecks": true,
+                "SUAutomaticallyUpdate": true,
+                "SUAllowsAutomaticUpdates": true,
+                "SUScheduledCheckInterval": 3600,
             ]),
             sources: ["../../Sources/ProjectXApp/**"],
             resources: ["Resources/Yorozu.icns", "Resources/Accent.xcassets", "Resources/Localizable.xcstrings", "Resources/InfoPlist.xcstrings"],
             entitlements: "Yorozu.entitlements",
-            dependencies: [.package(product: "ProjectXCore"), .package(product: "YorozuWire")],
+            dependencies: [.package(product: "ProjectXCore"), .package(product: "YorozuWire"), .package(product: "Sparkle")],
             settings: .settings(base: [
                 "DEVELOPMENT_TEAM": "AN5KM8QGEF",
                 "CODE_SIGN_STYLE": "Manual",
                 "ENABLE_HARDENED_RUNTIME": "YES",
                 "MARKETING_VERSION": .string(version),
                 "CURRENT_PROJECT_VERSION": "1",
+                // A build never carries get-task-allow: notarization refuses it, and the dev app is the same signed app.
+                "CODE_SIGN_INJECT_BASE_ENTITLEMENTS": "NO",
+                "YOROZU_FEED_URL": "",
             ], configurations: [
                 // Identity and timestamp flag: Signing.xcconfig, overridden by the gitignored Signing.local.xcconfig.
                 .debug(name: .debug, xcconfig: "Signing.xcconfig"),
