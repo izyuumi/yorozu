@@ -775,9 +775,16 @@ final class PhoneModel {
     }
 
     func send() {
-        let text = draft
-        let picked = draftFiles
-        guard canSend, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !picked.isEmpty else { return }
+        guard send(text: draft, files: draftFiles, replyTo: replyingTo) else { return }
+        draft = ""
+        draftFiles = []
+        replyingTo = nil
+    }
+
+    /// One message through the outbox; false when nothing went (not sendable, empty, or files not kept).
+    @discardableResult
+    func send(text: String, files picked: [StagedFile], replyTo: String? = nil) -> Bool {
+        guard canSend, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !picked.isEmpty else { return false }
         let ts = Self.now
         let id = UUID().uuidString
         var infos: [AttachmentInfo] = []
@@ -786,19 +793,37 @@ final class PhoneModel {
                 infos = try UploadStore.store(picked, for: id)
             } catch {
                 attachFailure = String(localized: "Couldn’t keep the files for sending. Try again.")
-                return
+                return false
             }
             for (index, info) in infos.enumerated() { files.register(UploadStore.url(id, index), for: info) }
             uploadOffsets[id] = Array(repeating: 0, count: infos.count)
             UploadStore.setOffsets(id, uploadOffsets[id] ?? [])
         }
         let event = YorozuEvent(id: id, threadId: "main", ts: ts, agentId: "device",
-                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, replyTo: replyingTo)))
-        draft = ""
-        draftFiles = []
+                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, replyTo: replyTo)))
         enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos),
-                Bubble(id: id, user: true, ts: ts, text: text, replyTo: replyingTo, attachments: infos))
-        replyingTo = nil
+                Bubble(id: id, user: true, ts: ts, text: text, replyTo: replyTo, attachments: infos))
+        return true
+    }
+
+    /// Sends what the share extension left (`ShareInbox`), oldest first, each as its own message; a share stays until it
+    /// can go (paired, host not blocked). Called at launch and on each return to the foreground.
+    func sendShares() {
+        #if os(iOS)
+        guard canSend else { return }
+        for (share, folder) in ShareInbox.pending() {
+            var files: [StagedFile] = []
+            if let name = share.fileName {
+                // `stage` moves its source: give it a copy, so a failed send leaves the share whole.
+                let copy = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + "-" + name)
+                guard (try? FileManager.default.copyItem(at: folder.appending(path: name), to: copy)) != nil,
+                      let staged = try? StagedFile.stage(copy, name: name) else { try? FileManager.default.removeItem(at: folder); continue }
+                files = [staged]
+            }
+            if send(text: share.text, files: files) { try? FileManager.default.removeItem(at: folder) }
+            files.forEach { $0.discard() }
+        }
+        #endif
     }
 
     /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only.

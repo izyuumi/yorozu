@@ -15,6 +15,8 @@ let version: String = {
 /// The Keychain group the app shares with its notification service extension, holding only the sealed-preview key
 /// (`PreviewKeychain`). v1's group, same team and bundle ids, so the App IDs it was registered under still apply.
 let notificationKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.notifications"
+/// The app and its share extension pass shares through this App Group's container (`ShareInbox`). v1's group.
+let appGroup = "group.to.yumi.yorozu"
 /// The app and its extension must carry the same version pair, or the upload is rejected.
 func signing(_ extra: SettingsDictionary = [:]) -> Settings {
     .settings(base: [
@@ -58,7 +60,7 @@ let project = Project(
                     ]
                 ],
             ]),
-            sources: ["Sources/YorozuIOS/**", "Sources/Shared/**", "Sources/Client/**", "../../Sources/ProjectXApp/ChatMarkdown.swift", "../../Sources/ProjectXApp/NoticeText.swift"],
+            sources: ["Sources/YorozuIOS/**", "Sources/Shared/**", "Sources/Client/**", "Sources/ShareInbox/**", "../../Sources/ProjectXApp/ChatMarkdown.swift", "../../Sources/ProjectXApp/NoticeText.swift"],
             resources: [
                 "Resources/AppIcon.icon",
                 "Resources/Assets.xcassets",
@@ -74,8 +76,9 @@ let project = Project(
                 // The app's own group first, so it stays the default for items saved without a group (the pairing's
                 // private keys); the shared group holds only the preview key.
                 "keychain-access-groups": ["$(AppIdentifierPrefix)to.yumi.yorozu.ios", .string(notificationKeychainGroup)],
+                "com.apple.security.application-groups": [.string(appGroup)],
             ]),
-            dependencies: [.package(product: "YorozuWire"), .target(name: "YorozuNotificationService")],
+            dependencies: [.package(product: "YorozuWire"), .target(name: "YorozuNotificationService"), .target(name: "YorozuShare")],
             // Automatic signing plus `xcodebuild -allowProvisioningUpdates` and an App Store Connect key:
             // Xcode issues the distribution certificate and the App Store profiles (app and extension) itself.
             settings: signing(["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"])
@@ -102,6 +105,35 @@ let project = Project(
             resources: ["Resources/Localizable.xcstrings"],
             entitlements: .dictionary(["keychain-access-groups": [.string(notificationKeychainGroup)]]),
             dependencies: [.package(product: "YorozuWire")],
+            settings: signing()
+        ),
+        // Yorozu in the share sheet: text, one link, one picture or one file, handed to the app (`ShareInbox`). v1's bundle id.
+        .target(
+            name: "YorozuShare",
+            destinations: .iOS,
+            product: .appExtension,
+            bundleId: "to.yumi.yorozu.ios.share",
+            deploymentTargets: .iOS("18.0"),
+            infoPlist: .extendingDefault(with: [
+                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "CFBundleDisplayName": "Yorozu",
+                "NSExtension": [
+                    "NSExtensionPointIdentifier": "com.apple.share-services",
+                    "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).ShareViewController",
+                    "NSExtensionAttributes": [
+                        "NSExtensionActivationRule": [
+                            "NSExtensionActivationSupportsText": true,
+                            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+                            "NSExtensionActivationSupportsImageWithMaxCount": 1,
+                            "NSExtensionActivationSupportsFileWithMaxCount": 1,
+                        ],
+                    ],
+                ],
+            ]),
+            sources: ["Sources/YorozuShare/**", "Sources/ShareInbox/**"],
+            resources: ["Resources/Localizable.xcstrings"],
+            entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             settings: signing()
         ),
     ]
