@@ -55,14 +55,31 @@ public struct OpenClawSetup: HarnessSetup {
         // Workers never run on the user's personal agent (the default one).
         let config = (try? await rpc.call("config.get",[:],timeout: Self.probe))?["config"] as? [String:Any]
         if Self.personal(agent,config: config) { d.items.append(Readiness.Item(id: "openclaw.personal",title: Self.personalAgent,detail: "[harness] agent = \(agent)",severity: .blocking,fix: .step("harness"))) }
-        // Yorozu 1's channel plugin (id `yorozu`) talks to a socket only v1 opened; this version never uses it. Yorozu leaves
-        // OpenClaw's plugins to the user and offers the command.
+        // Yorozu 1's channel plugin (id `yorozu`) talks to a socket only v1 opened; this version never uses it. The app removes it
+        // (`removeV1Plugin`); this row stays only while that fails, with the command to run by hand.
         if Self.v1Plugin(config) {
             d.items.append(Readiness.Item(id: "openclaw.v1-plugin",title: String(localized: "Yorozu 1's OpenClaw plugin is still installed"),
                 detail: String(localized: "This version of Yorozu doesn't use it."),severity: .warning,
                 fix: .copy(title: String(localized: "Copy command"),command: "openclaw plugins uninstall yorozu")))
         }
         return d
+    }
+    /// Removes Yorozu 1's `yorozu` channel plugin with OpenClaw's own uninstall (its settings, install record, allowlist entry,
+    /// load path and `channels.yorozu`), as part of replacing v1 (owner, 2026-10-12). Never from an agent's shell. True when
+    /// OpenClaw reported success within two minutes.
+    public static func removeV1Plugin() async -> Bool {
+        guard gatewayAllowed, let openclaw = which("openclaw") else { return false }
+        return await Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: openclaw)
+            process.arguments = ["plugins","uninstall","yorozu","--force"]
+            process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return false }
+            let deadline = Date().addingTimeInterval(120)
+            while process.isRunning, Date() < deadline { try? await Task.sleep(for: .milliseconds(250)) }
+            if process.isRunning { process.terminate(); return false }
+            return process.terminationStatus == 0
+        }.value
     }
     /// Yorozu 1's `yorozu` channel plugin is enabled or still listed in a `config.get` answer's config.
     static func v1Plugin(_ config: [String:Any]?) -> Bool {

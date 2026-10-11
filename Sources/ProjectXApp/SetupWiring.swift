@@ -19,6 +19,11 @@ extension AppModel {
             if let switchNotice { r.items.append(Readiness.Item(id: "harness.switch",title: switchNotice,severity: .warning,fix: .step("harness"))) }
             // A fixed title: phones get titles, never the raw error.
             if let filesNotice { r.items.append(Readiness.Item(id: "files",title: String(localized: "Attachments are off this launch"),detail: filesNotice,severity: .warning)) }
+            // Replacing Yorozu 1: its OpenClaw plugin goes too, once per launch, unless a v1 app is running and still uses it.
+            if runtimeMode == .live, !v1PluginRemovalTried, r.items.contains(where: { $0.id == "openclaw.v1-plugin" }), !Self.v1Running {
+                v1PluginRemovalTried = true
+                if await OpenClawSetup.removeV1Plugin() { recheckAgain = true }
+            }
             guard r != readiness else { return }
             readiness = r
             await publishReadiness(ReadinessData(r))
