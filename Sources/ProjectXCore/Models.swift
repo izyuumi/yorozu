@@ -313,3 +313,39 @@ public struct PendingFile: Sendable, Equatable {
     public var url: URL; public var name: String; public var mime: String
     public init(url: URL, name: String, mime: String) { self.url = url; self.name = name; self.mime = mime }
 }
+
+// Records a client mirrors from its host (a Mac in the client role, owner 2026-10-11), for the same views as the host's own.
+extension Topic {
+    public init(mirroredID id: String, label: String, created: Double, attachedTo: String?, summary: String?) {
+        self.init(id: id,label: label,sessionKey: "",created: created,attachedTo: attachedTo,attachedAt: nil,summary: summary)
+    }
+}
+extension Message {
+    public init(mirroredID id: String, role: String, body: String, topicID: String?, taskID: String?, replyTo: String?, kind: String, created: Double,
+                notice: Notice?, readAt: Double?, sentAt: Double?) {
+        self.init(id: id,role: role,body: body,topicID: topicID,taskID: taskID,replyTo: replyTo,kind: kind,created: created,notice: notice,readAt: readAt,sentAt: sentAt)
+    }
+}
+extension Work {
+    public init(mirroredID id: String, topicID: String, messageID: String, instruction: String, state: String, revision: Int, suppressed: Bool,
+                result: String?, error: String?, created: Double, executor: String?) {
+        self.init(id: id,topicID: topicID,messageID: messageID,instruction: instruction,state: state,revision: revision,runID: nil,controllerKey: nil,
+                  sessionReady: true,suppressed: suppressed,result: result,error: error,outputRevision: nil,created: created,executor: executor)
+    }
+}
+extension WorkerEvent {
+    public init(mirroredID id: String, taskID: String, kind: String, body: String, created: Double) { self.init(id: id,taskID: taskID,kind: kind,body: body,created: created) }
+}
+extension Amendment {
+    public init(mirroredID id: String, taskID: String, messageID: String, revision: Int, instruction: String, state: String) {
+        self.init(id: id,taskID: taskID,messageID: messageID,revision: revision,instruction: instruction,state: state)
+    }
+}
+extension Notice {
+    public init(code: String, params: [String:String]) { self.init(.offline); self.code = code; self.params = params }
+}
+extension SearchHit {
+    public init(mirroredMessage id: String, topicID: String?, snippet: String, created: Double) {
+        self.init(topicID: topicID,taskID: nil,messageID: id,eventID: nil,snippet: snippet,created: created)
+    }
+}

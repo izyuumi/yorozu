@@ -40,7 +40,8 @@ let project = Project(
                 "SUAllowsAutomaticUpdates": true,
                 "SUScheduledCheckInterval": 3600,
             ]),
-            sources: ["../../Sources/ProjectXApp/**"],
+            // The client core the phone runs, for a Mac in the client role (connected to another host Mac).
+            sources: ["../../Sources/ProjectXApp/**", "../ios/Sources/Client/**"],
             resources: ["Resources/Yorozu.icns", "Resources/Accent.xcassets", "Resources/Localizable.xcstrings", "Resources/InfoPlist.xcstrings"],
             entitlements: "Yorozu.entitlements",
             dependencies: [.package(product: "ProjectXCore"), .package(product: "YorozuWire"), .package(product: "Sparkle")],

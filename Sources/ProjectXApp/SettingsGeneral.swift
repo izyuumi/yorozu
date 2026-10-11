@@ -13,15 +13,16 @@ struct GeneralSettings: View {
         let general = model.config.general
         Form {
             ConfigProblems(model: model)
+            RoleSection(model: model)
             Section("Startup") {
-                LabeledContent {
+                if !model.isClient { LabeledContent {
                     Button("Run Setup Again…") { model.openSetup() }
                 } label: {
                     HStack(spacing: 6) {
                         ReadinessDot(state: model.readiness?.state)
                         if let r = model.readiness { Text(r.state == .ready ? String(localized: "Setup: Ready") : r.summary) } else { Text("Setup: checking…") }
                     }
-                }
+                } }
                 Toggle(isOn: Binding(get: { general.startAtLogin && model.loginItemBlocker == nil }, set: { on in model.writeSettings { $0.general.startAtLogin = on } })) {
                     Text("Start at login")
                     if let blocker = model.loginItemBlocker { Text(blocker) }
@@ -30,9 +31,11 @@ struct GeneralSettings: View {
                 if model.loginItemBlocker == nil, general.startAtLogin, model.loginItemStatus == .requiresApproval {
                     Button("Open Login Items…") { SMAppService.openSystemSettingsLoginItems() }
                 }
-                Toggle(isOn: model.setting(\.general.keepMacAwake)) {
-                    Text("Keep the host awake")
-                    Text("Workers and client devices need the host awake. A closed lid still sleeps.")
+                if !model.isClient {
+                    Toggle(isOn: model.setting(\.general.keepMacAwake)) {
+                        Text("Keep the host awake")
+                        Text("Workers and client devices need the host awake. A closed lid still sleeps.")
+                    }
                 }
             }
             if Updates.shared.available {
@@ -49,13 +52,16 @@ struct GeneralSettings: View {
                     Text("Show notifications")
                     Text("For results, failures and questions. Nothing is shown while you are reading the latest message.")
                 }
-                Picker(selection: model.setting(\.notifications.destination)) {
-                    Text("This host").tag(Config.Destination.mac)
-                    Text("Phones").tag(Config.Destination.phones)
-                } label: {
-                    Text("Notify on")
-                    if model.config.notifications.destination == .phones { Text("Each client device must allow notifications from Yorozu.") }
-                }.disabled(!model.config.notifications.enabled)
+                // Where the host posts them; a client only shows its own.
+                if !model.isClient {
+                    Picker(selection: model.setting(\.notifications.destination)) {
+                        Text("This host").tag(Config.Destination.mac)
+                        Text("Phones").tag(Config.Destination.phones)
+                    } label: {
+                        Text("Notify on")
+                        if model.config.notifications.destination == .phones { Text("Each client device must allow notifications from Yorozu.") }
+                    }.disabled(!model.config.notifications.enabled)
+                }
             }
             Section("Keyboard") {
                 Toggle(isOn: Binding(get: { !general.globalShortcut.isEmpty }, set: { on in
@@ -81,19 +87,19 @@ struct GeneralSettings: View {
                     Text("Off: Enter sends a one-line message; once a draft has more lines, Enter adds a line and ⌘Enter sends. On: Enter always adds a line.")
                 }
             }
-            Section("Workers") {
+            if !model.isClient { Section("Workers") {
                 Toggle(isOn: model.setting(\.general.yolo)) {
                     Text("YOLO mode")
                     Text("Workers take outward-facing steps you asked for, and use risky computer-use tools, without asking first. Always held: settings changes and anything you did not ask for still need your word; no secrets; Yorozu never takes focus or touches other agents' sessions.")
                 }
-            }
+            } }
             Section("Appearance") {
                 Picker("Appearance", selection: model.setting(\.general.appearance)) {
                     Text("System").tag(Config.Appearance.system)
                     Text("Light").tag(Config.Appearance.light)
                     Text("Dark").tag(Config.Appearance.dark)
                 }
-                Toggle("Show Advanced settings", isOn: model.setting(\.general.showAdvanced))
+                if !model.isClient { Toggle("Show Advanced settings", isOn: model.setting(\.general.showAdvanced)) }
             }
         }
         .settingsForm()

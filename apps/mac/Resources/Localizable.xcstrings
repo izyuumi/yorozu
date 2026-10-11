@@ -7123,6 +7123,946 @@
           }
         }
       }
+    },
+    "%@ · Status unknown" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · 状態不明"
+          }
+        }
+      }
+    },
+    "%lld messages waiting to send" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信待ちのメッセージが%lld件あります"
+          }
+        }
+      }
+    },
+    "A message to the host expired without being read." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストへのメッセージが読まれないまま期限切れになりました。"
+          }
+        }
+      }
+    },
+    "A message was too large" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージが大きすぎます"
+          }
+        }
+      }
+    },
+    "A newer connection took over" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい接続に切り替わりました"
+          }
+        }
+      }
+    },
+    "A replay-protected channel is required. Update Yorozu on the host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再送攻撃から保護された通信が必要です。ホストでYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "Account" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アカウント"
+          }
+        }
+      }
+    },
+    "Add host?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストを追加しますか？"
+          }
+        }
+      }
+    },
+    "Already connected" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続済み"
+          }
+        }
+      }
+    },
+    "Attachments aren’t available right now." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "現在、添付ファイルは使えません。"
+          }
+        }
+      }
+    },
+    "Category" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カテゴリ"
+          }
+        }
+      }
+    },
+    "Connect to another Mac" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "別のMacに接続"
+          }
+        }
+      }
+    },
+    "Couldn’t connect" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続できませんでした"
+          }
+        }
+      }
+    },
+    "Couldn’t keep the files for sending. Try again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信用にファイルを保存できませんでした。もう一度お試しください。"
+          }
+        }
+      }
+    },
+    "Couldn’t send" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信できませんでした"
+          }
+        }
+      }
+    },
+    "Extra high" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "非常に高い"
+          }
+        }
+      }
+    },
+    "Finishing agent work before update" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新前にエージェントの作業を完了中"
+          }
+        }
+      }
+    },
+    "High" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "高い"
+          }
+        }
+      }
+    },
+    "Host" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホスト"
+          }
+        }
+      }
+    },
+    "Host Yorozu here" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このMacでYorozuをホスト"
+          }
+        }
+      }
+    },
+    "Host compatibility has not been established" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストとの互換性を確認できていません"
+          }
+        }
+      }
+    },
+    "Host connection is closed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストとの接続が終了しています"
+          }
+        }
+      }
+    },
+    "Host has not answered pairing" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストからペアリングの応答がありません"
+          }
+        }
+      }
+    },
+    "Host offline" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストはオフラインです"
+          }
+        }
+      }
+    },
+    "Host public key is not base64url" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストの公開キーがbase64url形式ではありません"
+          }
+        }
+      }
+    },
+    "Host stopped answering" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストが応答しなくなりました"
+          }
+        }
+      }
+    },
+    "Invalid peer information. Update Yorozu on this device and its host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続先の情報が無効です。この端末とホストでYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "Local Network access is off" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカルネットワークへのアクセスがオフです"
+          }
+        }
+      }
+    },
+    "Low" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "低い"
+          }
+        }
+      }
+    },
+    "Max" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最大"
+          }
+        }
+      }
+    },
+    "Medium" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中程度"
+          }
+        }
+      }
+    },
+    "Merchant" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加盟店"
+          }
+        }
+      }
+    },
+    "Message not delivered" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージを配信できませんでした"
+          }
+        }
+      }
+    },
+    "Minimal" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最小"
+          }
+        }
+      }
+    },
+    "New chat" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいチャット"
+          }
+        }
+      }
+    },
+    "Not a Yorozu pairing code." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のペアリングコードではありません。"
+          }
+        }
+      }
+    },
+    "Not delivered" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未配信"
+          }
+        }
+      }
+    },
+    "Not delivered: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未配信：%@"
+          }
+        }
+      }
+    },
+    "Pair" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング"
+          }
+        }
+      }
+    },
+    "Pair with your host" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストとペアリング"
+          }
+        }
+      }
+    },
+    "Paired since" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング日時"
+          }
+        }
+      }
+    },
+    "Pairing code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングコード"
+          }
+        }
+      }
+    },
+    "Persistent" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "継続"
+          }
+        }
+      }
+    },
+    "QR payload carries no room ID" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QRコードにルームIDがありません"
+          }
+        }
+      }
+    },
+    "Quantity" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "数量"
+          }
+        }
+      }
+    },
+    "Relay stopped answering" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーからの応答がなくなりました"
+          }
+        }
+      }
+    },
+    "Remove host" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストを削除"
+          }
+        }
+      }
+    },
+    "Remove host?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストを削除しますか？"
+          }
+        }
+      }
+    },
+    "Restarting in %@s" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld秒後に再起動"
+          }
+        }
+      }
+    },
+    "Role" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "役割"
+          }
+        }
+      }
+    },
+    "Sending" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信中"
+          }
+        }
+      }
+    },
+    "Sent" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信"
+          }
+        }
+      }
+    },
+    "The direct connection closed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続が閉じられました"
+          }
+        }
+      }
+    },
+    "The direct listener is not this host" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続の相手がこのホストではありません"
+          }
+        }
+      }
+    },
+    "The files are no longer on this device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイルがこの端末にもうありません。"
+          }
+        }
+      }
+    },
+    "The host refused this device on the direct path" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストがこの端末の直接接続を拒否しました"
+          }
+        }
+      }
+    },
+    "The host was offline for more than 24 hours." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストが24時間以上オフラインでした。"
+          }
+        }
+      }
+    },
+    "The host went to sleep" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストがスリープしました"
+          }
+        }
+      }
+    },
+    "This Mac" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このMac"
+          }
+        }
+      }
+    },
+    "This device couldn’t send it within 24 hours." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この端末から24時間以内に送信できませんでした。"
+          }
+        }
+      }
+    },
+    "This host no longer advertises required protocol support. Update Yorozu on the host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このホストは必要な通信プロトコルに対応していません。ホストでYorozuを更新してください。"
+          }
+        }
+      }
+    },
+    "Timed out sending to host" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストへの送信がタイムアウトしました"
+          }
+        }
+      }
+    },
+    "To" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "宛先"
+          }
+        }
+      }
+    },
+    "Ultra" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最高"
+          }
+        }
+      }
+    },
+    "Unknown" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不明"
+          }
+        }
+      }
+    },
+    "Update Yorozu on the host to talk to this device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この端末と通信するには、ホストの Yorozu をアップデートしてください。"
+          }
+        }
+      }
+    },
+    "Update Yorozu on this device and its host: a required security or protocol capability is unavailable." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この端末とホストでYorozuを更新してください。必要なセキュリティまたは通信プロトコルの機能を利用できません。"
+          }
+        }
+      }
+    },
+    "Update Yorozu on this device to talk to this host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このホストと通信するには、この端末の Yorozu をアップデートしてください。"
+          }
+        }
+      }
+    },
+    "Update postponed until %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@まで更新を延期"
+          }
+        }
+      }
+    },
+    "Update queued · %@ agents working" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新待ち · %lld個のエージェントが作業中"
+          }
+        }
+      }
+    },
+    "Update queued · 1 agent working" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新待ち · 1個のエージェントが作業中"
+          }
+        }
+      }
+    },
+    "Update required: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新が必要です：%@"
+          }
+        }
+      }
+    },
+    "Update waiting · checking agent status" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新待ち · エージェントの状態を確認中"
+          }
+        }
+      }
+    },
+    "Updating · waiting for the host to restart" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新中 · ホストの再起動を待っています"
+          }
+        }
+      }
+    },
+    "Waiting for connection" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続を待っています"
+          }
+        }
+      }
+    },
+    "attachment.textFileName" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージ.txt"
+          }
+        }
+      }
+    },
+    "ciphertext too short" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暗号化データが短すぎます"
+          }
+        }
+      }
+    },
+    "direct connection timed out" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接接続がタイムアウトしました"
+          }
+        }
+      }
+    },
+    "envelope seq out of range" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通信データの連番が範囲外です"
+          }
+        }
+      }
+    },
+    "host handshake timed out" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストとの接続確認がタイムアウトしました"
+          }
+        }
+      }
+    },
+    "not a Yorozu v1 pairing string" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu v1のペアリングコードではありません"
+          }
+        }
+      }
+    },
+    "not connected" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続されていません"
+          }
+        }
+      }
+    },
+    "relay URL is not a websocket URL" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーのURLがWebSocket形式ではありません"
+          }
+        }
+      }
+    },
+    "relay connection timed out" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーへの接続がタイムアウトしました"
+          }
+        }
+      }
+    },
+    "remove the pairing to clear channel counters" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通信カウンターを消去するにはペアリングを削除してください"
+          }
+        }
+      }
+    },
+    "stored channel counter is unreadable" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存された通信カウンターを読み取れません"
+          }
+        }
+      }
+    },
+    "Attach files on the host or a phone" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ファイルはホストかスマートフォンから添付してください"
+          }
+        }
+      }
+    },
+    "Check that the host key matches the one the host shows: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストに表示されているホストキーと一致することを確認してください: %@"
+          }
+        }
+      }
+    },
+    "Fix this on the host: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストで解決してください: %@"
+          }
+        }
+      }
+    },
+    "Not paired with a host yet: Settings › Host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだホストとペアリングしていません: 設定 › ホスト"
+          }
+        }
+      }
+    },
+    "On the host Mac, open Settings › Devices › Pair a Client Device, copy its code and paste it here." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストの Mac で「設定 › デバイス › クライアント端末をペアリング」を開き、コードをコピーしてここに貼り付けてください。"
+          }
+        }
+      }
+    },
+    "Pair again…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "もう一度ペアリング…"
+          }
+        }
+      }
+    },
+    "Paste the host's pairing code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストのペアリングコードを貼り付け"
+          }
+        }
+      }
+    },
+    "Yorozu restarts to apply a change." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "変更を反映するため Yorozu が再起動します。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

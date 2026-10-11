@@ -44,7 +44,7 @@ final class ProtectedFile: Sendable {
     private let queue: DispatchQueue
 
     init(folder: String, name: String) {
-        directory = URL.applicationSupportDirectory.appending(path: folder, directoryHint: .isDirectory)
+        directory = clientSupportDirectory.appending(path: folder, directoryHint: .isDirectory)
         file = directory.appending(path: name)
         queue = DispatchQueue(label: "yorozu.file.\(folder)")
     }

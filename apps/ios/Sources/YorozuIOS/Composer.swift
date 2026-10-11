@@ -9,7 +9,7 @@ import SwiftUI
 /// to send it as a text file. Staged files sit in a strip above the field.
 struct Composer: View {
     @Binding var text: String
-    @Binding var files: [DraftFile]
+    @Binding var files: [StagedFile]
     /// The Mac takes attachments, or has not said it does not.
     let attachments: Bool
     let working: Bool

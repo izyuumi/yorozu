@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import UserNotifications
 import YorozuWire
 
@@ -163,6 +165,7 @@ enum LocalNotices {
 /// Background execution time, ended once by `end()` or by iOS's expiry (after `onExpiry`).
 @MainActor
 final class BackgroundTask {
+    #if os(iOS)
     private var id = UIBackgroundTaskIdentifier.invalid
 
     init(_ name: String, onExpiry: @escaping @MainActor () -> Void = {}) {
@@ -179,4 +182,9 @@ final class BackgroundTask {
         UIApplication.shared.endBackgroundTask(id)
         id = .invalid
     }
+    #else
+    // A Mac app is not suspended in the background: nothing to ask for.
+    init(_ name: String, onExpiry: @escaping @MainActor () -> Void = {}) {}
+    func end() {}
+    #endif
 }

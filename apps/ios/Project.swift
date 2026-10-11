@@ -58,7 +58,7 @@ let project = Project(
                     ]
                 ],
             ]),
-            sources: ["Sources/YorozuIOS/**", "Sources/Shared/**", "../../Sources/ProjectXApp/ChatMarkdown.swift", "../../Sources/ProjectXApp/NoticeText.swift"],
+            sources: ["Sources/YorozuIOS/**", "Sources/Shared/**", "Sources/Client/**", "../../Sources/ProjectXApp/ChatMarkdown.swift", "../../Sources/ProjectXApp/NoticeText.swift"],
             resources: [
                 "Resources/AppIcon.icon",
                 "Resources/Assets.xcassets",

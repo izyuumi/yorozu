@@ -177,6 +177,7 @@ Yorozu's settings are one file, `config.toml`, in the data root in use ([Where d
 | `general.global_shortcut` | `""` (off) | Shortcut that toggles the popover: modifiers and one key joined by `+`, such as `"option+space"`, `"cmd+shift+y"` or `"ctrl+f5"`; a key other than F1–F12 needs a modifier ([architecture.md](architecture.md#mac-ui)) |
 | `general.appearance` | `"system"` | `"system"`, `"light"` or `"dark"` |
 | `general.show_advanced` | `false` | Shows the Harness and Advanced tabs, and About this install in Storage |
+| `general.role` | `"host"` | `"host"`: Yorozu runs on this Mac. `"client"`: this Mac uses another host Mac through the relay, as a phone does ([architecture.md](architecture.md#mac-client-role)). Read at launch; Settings › General › This Mac relaunches the app to apply a change |
 | `notifications.enabled` | `true` | Notifications for results, failures and questions; the menu-bar dot shows either way |
 | `notifications.destination` | `"mac"` | `"mac"` (macOS notifications) or `"phones"` (push to paired phones, [Push notifications](#push-notifications)); with `"phones"` the Mac posts none |
 | `routing.personal_knowledge` | `""` | The user's personal notes, named in the routing policy as a source only a worker can read; empty drops that clause; at most 200 bytes of UTF-8 |
