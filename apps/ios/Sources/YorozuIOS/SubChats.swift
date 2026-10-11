@@ -261,7 +261,7 @@ struct TopicScreen: View {
     @State private var toggled: Set<String> = []
     /// A job's own input (#319); other sub-chats are inspect only.
     @State private var draft = ""
-    @State private var noFiles: [DraftFile] = []
+    @State private var noFiles: [StagedFile] = []
     @State private var details: PhoneModel.Bubble?
 
     private enum Item: Identifiable {

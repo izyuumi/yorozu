@@ -2,7 +2,14 @@ import CryptoKit
 import Foundation
 import ImageIO
 import Observation
+#if canImport(UIKit)
 import UIKit
+/// A decoded thumbnail.
+typealias PlatformImage = UIImage
+#else
+import AppKit
+typealias PlatformImage = NSImage
+#endif
 import UniformTypeIdentifiers
 import YorozuWire
 
@@ -68,8 +75,18 @@ extension WorkerEventData {
 
 /// A folder in `Application Support`, encrypted at rest like `ProtectedFile` and excluded from backup.
 func protectedFolder(_ name: String) -> URL {
-    URL.applicationSupportDirectory.appending(path: name, directoryHint: .isDirectory)
+    clientSupportDirectory.appending(path: name, directoryHint: .isDirectory)
 }
+
+/// Where the client keeps its mirror and files: the app's own container on iOS; on a Mac, which shares Application
+/// Support with every app, a `client` folder in Yorozu's own (v1 wrote its client caches loose in Application Support).
+let clientSupportDirectory: URL = {
+    #if os(macOS)
+    URL.applicationSupportDirectory.appending(path: "\(Bundle.main.bundleIdentifier ?? "to.yumi.yorozu")/client", directoryHint: .isDirectory)
+    #else
+    URL.applicationSupportDirectory
+    #endif
+}()
 
 func makeProtectedDirectory(_ url: URL) throws {
     guard !FileManager.default.fileExists(atPath: url.path) else { return }
@@ -107,7 +124,7 @@ enum UploadStore {
     private static func offsetsFile(_ messageId: String) -> URL { folder(messageId).appending(path: "offsets.json") }
 
     /// Moves each draft's chosen file into the outbox (one volume, so no copy) and returns the descriptors.
-    static func store(_ drafts: [DraftFile], for messageId: String) throws -> [AttachmentInfo] {
+    static func store(_ drafts: [StagedFile], for messageId: String) throws -> [AttachmentInfo] {
         try makeProtectedDirectory(root)
         try makeProtectedDirectory(folder(messageId))
         do {
@@ -159,7 +176,7 @@ enum UploadStore {
 @MainActor
 @Observable
 final class AttachmentFiles {
-    private(set) var thumbnails: [String: UIImage] = [:]
+    private(set) var thumbnails: [String: PlatformImage] = [:]
     /// A full file's download progress, 0 to 1, by cache key.
     private(set) var progress: [String: Double] = [:]
     /// Files the Mac no longer has: "File no longer available".
@@ -277,12 +294,16 @@ final class AttachmentFiles {
 }
 
 /// Decodes an image file at most `maxPixels` on its long edge, upright, without the full bitmap.
-func downsample(_ url: URL, maxPixels: Int) -> UIImage? {
+func downsample(_ url: URL, maxPixels: Int) -> PlatformImage? {
     guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
     let options: [CFString: Any] = [
         kCGImageSourceCreateThumbnailFromImageAlways: true,
         kCGImageSourceCreateThumbnailWithTransform: true,
         kCGImageSourceThumbnailMaxPixelSize: maxPixels,
     ]
+    #if canImport(UIKit)
     return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map(UIImage.init(cgImage:))
+    #else
+    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map { NSImage(cgImage: $0, size: .zero) }
+    #endif
 }

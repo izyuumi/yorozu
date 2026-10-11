@@ -6,11 +6,13 @@ import TOML
 public struct Config: Sendable, Equatable {
     public enum SendKey: String, CaseIterable, Sendable { case smart, cmdEnter = "cmd-enter" }
     public enum Appearance: String, CaseIterable, Sendable { case system, light, dark }
+    /// This Mac runs Yorozu (`host`) or uses another Mac's through the relay, as a client device does (`client`; owner, 2026-10-11).
+    public enum Role: String, CaseIterable, Sendable { case host, client }
     public enum Destination: String, CaseIterable, Sendable { case mac, phones }
     public enum Transport: String, CaseIterable, Sendable { case native, cli }
     public enum HarnessKind: String, CaseIterable, Sendable { case openclaw, hermes }
     public struct General: Sendable, Equatable {
-        public var startAtLogin = true, keepMacAwake = false, yolo = false, sendKey = SendKey.cmdEnter, globalShortcut = "", appearance = Appearance.system, showAdvanced = false
+        public var startAtLogin = true, keepMacAwake = false, yolo = false, sendKey = SendKey.cmdEnter, globalShortcut = "", appearance = Appearance.system, showAdvanced = false, role = Role.host
     }
     public struct Notifications: Sendable, Equatable { public var enabled = true, destination = Destination.mac }
     public struct Routing: Sendable, Equatable { public var personalKnowledge = "", selfTopic = "Yorozu" }
@@ -129,6 +131,7 @@ public struct Config: Sendable, Equatable {
         field("general.global_shortcut",\.general.globalShortcut,"Shortcut that brings up Yorozu; empty is off."),
         field("general.appearance",\.general.appearance,"\"system\", \"light\" or \"dark\"."),
         field("general.show_advanced",\.general.showAdvanced,"Show the Advanced tab in Settings."),
+        field("general.role",\.general.role,"\"host\" (Yorozu runs on this Mac) or \"client\" (this Mac uses another host Mac, like a phone). Applies from the next launch."),
         field("notifications.enabled",\.notifications.enabled,"Post notifications."),
         field("notifications.destination",\.notifications.destination,"Where notifications appear: \"mac\" (the host) or \"phones\" (client devices)."),
         field("routing.personal_knowledge",\.routing.personalKnowledge,"Where the user's personal notes live, named in the routing policy; empty drops that hint."),
@@ -499,6 +502,7 @@ extension TOMLScalar where Self: RawRepresentable & CaseIterable, RawValue == St
 }
 extension Config.SendKey: TOMLScalar {}
 extension Config.Appearance: TOMLScalar {}
+extension Config.Role: TOMLScalar {}
 extension Config.Destination: TOMLScalar {}
 extension Config.Transport: TOMLScalar {}
 extension Config.HarnessKind: TOMLScalar {}

@@ -61,6 +61,9 @@ import YorozuWire
     @Published private(set) var nativeSelected = false
     private var nativeClient: NativeGatewayClient?
     private(set) var engine: Engine?
+    /// The client role's link to another host Mac (ClientMode.swift); nil on a host.
+    @Published var client: PhoneModel?
+    var clientPoll: Task<Void,Never>?
     private var observation: Task<Void,Never>?
     /// The phone's way in (iOS 0.7): live mode only, and nil when it could not start.
     private(set) var relay: RelayHost?
@@ -143,6 +146,15 @@ import YorozuWire
                 catch { lastConfigError = error as? ConfigError ?? ConfigError(file: configFile.path,reason: error.localizedDescription) }
                 let resolved = try ResolvedSettings(file,environment: env)
                 self.configFile = configFile; configText = text; fileConfig = file; self.resolved = resolved; launched = resolved
+                // Client role (owner, 2026-10-11): no store, engine, harness or relay host here. A v1 Mac that was a client of
+                // another Mac (`macRole`) stays one when this app replaces it: its first launch has no config file yet.
+                let v1Client = text == nil && explicit == nil && UserDefaults.standard.string(forKey: "macRole") == "client" && !Self.otherCopyInstalled
+                if v1Client { writeSettings { $0.general.role = .client } }
+                if resolved.config.general.role == .client || v1Client {
+                    if runtimeMode == .live, explicit == nil, !Self.otherCopyInstalled { _ = await V1Migration.run(dataRoot: root,memory: nil) }
+                    startClient(); applySystem(resolved.config.general); watchConfig()
+                    return
+                }
                 let store = try Store(root: root); self.store = store
                 if let problem = lastConfigError { await postInvalid(problem,body: "Settings not applied: \(problem.localizedDescription). Yorozu runs on its default settings until the file is fixed.") }
                 let memory = explicit != nil || runtimeMode == .fixture ? try MemoryStore(dataRoot: root) : try MemoryStore(
@@ -309,7 +321,7 @@ import YorozuWire
         }
         relayRestart = task; await task.value
     }
-    func stop() { observation?.cancel(); stopJobs(); agentHost?.stop(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
+    func stop() { clientPoll?.cancel(); observation?.cancel(); stopJobs(); agentHost?.stop(); relayRetry?.cancel(); watcher?.stop(); bootstrapSecret = ""; if let engine { Task { await engine.shutdown() } }; if let nativeClient { Task { await nativeClient.close() } }; if let relay { Task { await relay.stop() } } }
     /// This Mac holds a Gateway device token (Keychain), for Settings › Advanced.
     var nativeEnrolled: Bool { nativeClient?.isEnrolled ?? false }
     func enroll() async {
@@ -325,6 +337,7 @@ import YorozuWire
         } catch { enrollmentNotice = error.localizedDescription }
     }
     func send() async {
+        if isClient { return sendFromClient() }
         guard let engine, !submitting, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return }
         submitting = true; defer { submitting = false }
         let text = draft, sent = files, reply = replyingTo?.id
@@ -354,11 +367,18 @@ import YorozuWire
     /// The popover showed this message at its bottom: the main read cursor moves to it (forward only, in the Store); the
     /// poll picks it up into `readCursor`, and the relay's next publish sends it to phones as `read_state`.
     func markRead(_ id: String) {
+        if let client { if id != readCursor { Task { await client.markRead(id) } }; return }
         guard id != readCursor, let store else { return }
         Task { _ = try? await store.markRead(thread: "main", message: id) }
     }
     /// Chat search for the popover's ⌘F bar; the caller keeps only main-timeline message hits (open question 10).
     func search(_ query: String,limit: Int,offset: Int = 0) async throws -> (hits: [SearchHit], total: Int) {
+        if isClient {
+            // Over the mirror this Mac holds (the host's newest history window), newest first.
+            let hits = snapshot.messages.filter(\.onMainTimeline).reversed().filter { $0.body.localizedCaseInsensitiveContains(query) }
+                .map { SearchHit(mirroredMessage: $0.id,topicID: $0.topicID,snippet: String($0.body.prefix(200)),created: $0.created) }
+            return (Array(hits.dropFirst(offset).prefix(limit)),hits.count)
+        }
         guard let engine else { return ([],0) }
         return try await engine.search(query,limit: limit,offset: offset)
     }

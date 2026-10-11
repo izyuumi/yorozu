@@ -84,11 +84,14 @@ import SwiftUI
             item.target = self; if let on { item.state = on ? .on : .off }
         }
         add("Open Quick Chat", #selector(openChat))
-        add("Pair a Client Device…", #selector(pair), enabled: model?.relay != nil)
-        menu.addItem(.separator())
-        add("Direct Connection (LAN/VPN)", #selector(toggleDirect), on: config.direct.enabled)
-        add("Keep Host Awake", #selector(toggleAwake), on: config.general.keepMacAwake)
-        menu.addItem(.separator())
+        // A client Mac hosts nothing: no pairing of devices, direct listener or keep-awake of its own.
+        if model?.isClient != true {
+            add("Pair a Client Device…", #selector(pair), enabled: model?.relay != nil)
+            menu.addItem(.separator())
+            add("Direct Connection (LAN/VPN)", #selector(toggleDirect), on: config.direct.enabled)
+            add("Keep Host Awake", #selector(toggleAwake), on: config.general.keepMacAwake)
+            menu.addItem(.separator())
+        }
         if Updates.shared.available { add("Check for Updates…", #selector(checkForUpdates)) }
         add("Settings…", #selector(showSettings), key: ",")
         menu.addItem(withTitle: String(localized: "Quit Yorozu"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")

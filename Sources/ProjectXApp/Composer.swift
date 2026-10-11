@@ -64,10 +64,12 @@ struct Composer: View {
             HStack(alignment: .bottom,spacing: 6) {
                 Button { model.pickFiles() } label: {
                     Image(systemName: "paperclip").fontWeight(.semibold).frame(width: Metrics.sendSide,height: Metrics.sendSide).contentShape(Circle())
-                }.buttonStyle(.plain).foregroundStyle(.secondary).disabled(!enabled).help("Attach files").accessibilityLabel("Attach files")
+                }.buttonStyle(.plain).foregroundStyle(.secondary).disabled(!enabled || model.isClient)
+                    // A client Mac sends text only for now; files go from the host or a phone.
+                    .help(model.isClient ? String(localized: "Attach files on the host or a phone") : String(localized: "Attach files")).accessibilityLabel("Attach files")
                 ComposerField(text: $model.draft,placeholder: model.runtimeMode == .fixture ? String(localized: "Synthetic test message, no AI") : String(localized: "Message Yorozu"),
                               enabled: enabled,maxHeight: maxHeight,sendKey: { [model] in model.sendKey },submit: { if canSend { send() }; return canSend },
-                              take: { [model] board in enabled && model.attach(from: board) })
+                              take: { [model] board in enabled && !model.isClient && model.attach(from: board) })
                     .padding(.horizontal,12).padding(.vertical,6)
                     .background(.background,in: RoundedRectangle(cornerRadius: Metrics.fieldRadius,style: .continuous))
                     .overlay { RoundedRectangle(cornerRadius: Metrics.fieldRadius,style: .continuous).strokeBorder(.separator,lineWidth: 0.5) }

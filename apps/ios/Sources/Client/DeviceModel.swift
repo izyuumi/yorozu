@@ -4,6 +4,9 @@ import Foundation
 /// iOS hides the user's own device name without a special entitlement, so the model stands in for it.
 enum DeviceModel {
     static let name: String = {
+        #if os(macOS)
+        return Host.current().localizedName ?? "Mac"
+        #endif
         // The simulator reports the Mac's architecture; it names the device it simulates here.
         let id = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? machine
         return names[id] ?? (id.hasPrefix("iPad") ? "iPad" : "iPhone")

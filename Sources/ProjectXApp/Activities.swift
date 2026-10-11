@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ProjectXCore
+import YorozuWire
 
 /// A sub-chat's state, from its current task: the newest active or uncertain one, else the newest (the phone's rule).
 enum ActivityState: Int, Comparable {
@@ -195,10 +196,10 @@ private struct TaskCard: View {
                 state
                 Spacer()
                 if work.active || work.state == "uncertain" {
-                    Button("Stop") { control { await $0.stopTask(id: work.id) } }.disabled(busy || work.state == "cancellation_requested")
+                    Button("Stop") { control(.stop) }.disabled(busy || work.state == "cancellation_requested")
                 }
                 if ["failed","uncertain"].contains(work.state) {
-                    Button("Retry") { control { await $0.retryTask(id: work.id) } }.disabled(busy)
+                    Button("Retry") { control(.retry) }.disabled(busy)
                 }
             }.controlSize(.small)
             Text(work.instruction).lineLimit(isExpanded ? nil : 3).textSelection(.enabled)
@@ -244,9 +245,8 @@ private struct TaskCard: View {
         }
     }
 
-    private func control(_ act: @escaping (Engine) async -> TaskOutcome) {
-        guard let engine = model.engine else { return }
+    private func control(_ action: TaskControlData.Action) {
         busy = true
-        Task { _ = await act(engine); busy = false }
+        Task { await model.control(task: work.id,action); busy = false }
     }
 }

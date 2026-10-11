@@ -1,6 +1,9 @@
 import Foundation
 import Observation
+import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 import YorozuWire
 
 /// The phone's half of docs/ios-relay-contract.md: the one pairing, the `RelayClient` it drives,
@@ -82,7 +85,7 @@ final class PhoneModel {
 
     var draft = ""
     /// Files staged in the composer (#316).
-    var draftFiles: [DraftFile] = []
+    var draftFiles: [StagedFile] = []
     var pendingPairing: PendingPairing?
 
     // MARK: Attachments (#316)
@@ -267,7 +270,7 @@ final class PhoneModel {
     /// Loads the pairing and its cache; the first `resume()` dials.
     init() {
         savedStatus = SavedStatus.load()
-        DraftFile.clearAll()
+        StagedFile.clearAll()
         do {
             if let stored = try PairingStore.loadRequired() { connect(stored) }
         } catch {
@@ -328,7 +331,9 @@ final class PhoneModel {
             failure = error.localizedDescription
             return
         }
+        #if os(iOS)
         PreviewKeychain.clear()
+        #endif
         disconnect()
     }
 
@@ -342,8 +347,10 @@ final class PhoneModel {
         let identity = stored.identity.sessionPublicKey
         let pushKey = "\(Self.pushKey).\(identity.base64URLEncodedString())"
         // The notification extension's key for this Mac's sealed previews, written on every connect so it follows the pairing.
+        #if os(iOS)
         if let mac = Data(base64URLEncoded: stored.pairing.macPubkey),
            let key = try? PushPreview.key(myPriv: stored.identity.sessionPrivateKey, theirPub: mac) { PreviewKeychain.save(key) }
+        #endif
         do {
             relay = try RelayClient(
                 pairing: stored.pairing, identity: stored.identity, paired: stored.paired == true,
@@ -409,7 +416,9 @@ final class PhoneModel {
         ownPub = nil
         linked = false
         outbox.forEach { LocalNotices.cancelExpiry($0.id) }
+        #if os(iOS)
         PushNotices.update(badge: 0, read: nil)
+        #endif
         localRead = nil
         clearedTo = nil
         outbox = []
@@ -536,7 +545,9 @@ final class PhoneModel {
         backgroundTime?.end()
         backgroundTime = nil
         LocalNotices.clearWaiting()
+        #if os(iOS)
         PushNotices.removeBackOnline()
+        #endif
         expireOverdue()
         if let saved = savedStatus {
             savedStatus = nil
@@ -603,7 +614,7 @@ final class PhoneModel {
         waking = false
         flush()
         updateBadge()
-        if UIApplication.shared.applicationState == .background {
+        if Self.inBackground {
             if backgroundTime != nil { finishBackgroundIfDone() } else if dialled || inBackground { suspend() }
             await closing?.value
         }
@@ -622,7 +633,9 @@ final class PhoneModel {
         let id = index.map { timeline[$0].id }
         let read = index.flatMap { i in id == clearedTo ? nil : Set(timeline[...i].map { YorozuCrypto.threadRef($0.id) }) }
         clearedTo = id
+        #if os(iOS)
         PushNotices.update(badge: timeline[(index.map { $0 + 1 } ?? 0)...].filter { !$0.user }.count, read: read)
+        #endif
     }
 
     private func hold(_ status: ClientConnectionStatus) {
@@ -752,6 +765,15 @@ final class PhoneModel {
     /// Into the outbox: the bubble shows at once with Sending, the draft clears, and the flush sends it
     /// now if the relay is reachable. A message with files keeps their protected copies in `UploadStore`,
     /// and its text waits with them as one unit.
+    /// The app is in the background: on a Mac, which keeps running, never.
+    private static var inBackground: Bool {
+        #if os(iOS)
+        UIApplication.shared.applicationState == .background
+        #else
+        false
+        #endif
+    }
+
     func send() {
         let text = draft
         let picked = draftFiles
@@ -817,7 +839,7 @@ final class PhoneModel {
     func sendAsTextFile() {
         guard draftFiles.count < AttachmentLimits.maxCount else { return }
         do {
-            draftFiles.append(try DraftFile.textFile(draft))
+            draftFiles.append(try StagedFile.textFile(draft))
         } catch {
             attachFailure = String(localized: "Couldn’t keep the files for sending. Try again.")
             return
@@ -1096,7 +1118,7 @@ final class PhoneModel {
             LocalNotices.cancelExpiry(id)
         case .notDelivered:
             LocalNotices.cancelExpiry(id)
-            UIAccessibility.post(notification: .announcement, argument: String(localized: "Message not delivered"))
+            AccessibilityNotification.Announcement(String(localized: "Message not delivered")).post()
         }
     }
 
