@@ -1,6 +1,21 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Couldn’t keep this for Yorozu. Try again." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu に渡せませんでした。もう一度お試しください。" } }
+      }
+    },
+    "Yorozu sends this the next time it’s open." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "次に Yorozu を開いたときに送信します。" } }
+      }
+    },
+    "Send to Yorozu" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu に送る" } }
+      }
+    },
     "Yorozu was updated to 0.7. Pair your iPhone, iPad and other Macs again: update Yorozu on each, then choose Pair a Client Device… here." : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu を 0.7 にアップデートしました。iPhone、iPad、他の Mac をもう一度ペアリングしてください。それぞれで Yorozu をアップデートしてから、ここで「クライアント端末をペアリング…」を選びます。" } }

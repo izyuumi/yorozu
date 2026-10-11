@@ -59,7 +59,7 @@ struct RootView: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             switch phase {
             case .background: model.enterBackground()
-            case .active: model.resume()
+            case .active: model.resume(); model.sendShares()
             default: break
             }
         }
