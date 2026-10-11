@@ -61,6 +61,13 @@ import YorozuWire
     @Published private(set) var nativeSelected = false
     private var nativeClient: NativeGatewayClient?
     private(set) var engine: Engine?
+    /// Yorozu 1's OpenClaw plugin was already removed, or tried, this launch.
+    var v1PluginRemovalTried = false
+    /// Another app with this bundle id is running: a Yorozu 1 still in use.
+    static var v1Running: Bool {
+        NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "to.yumi.yorozu")
+            .contains { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+    }
     /// The client role's link to another host Mac (ClientMode.swift); nil on a host.
     @Published var client: PhoneModel?
     var clientPoll: Task<Void,Never>?
