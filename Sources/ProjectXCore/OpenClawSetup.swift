@@ -73,6 +73,10 @@ public struct OpenClawSetup: HarnessSetup {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: openclaw)
             process.arguments = ["plugins","uninstall","yorozu","--force"]
+            // As `GatewayRPC` launches it: an app opened from Finder has no Homebrew on its PATH, and `openclaw` needs `node`.
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin") + ":/opt/homebrew/bin:/usr/local/bin"
+            process.environment = env
             process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
             guard (try? process.run()) != nil else { return false }
             let deadline = Date().addingTimeInterval(120)
