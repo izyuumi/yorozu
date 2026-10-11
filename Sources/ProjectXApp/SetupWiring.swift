@@ -22,7 +22,7 @@ extension AppModel {
             // Replacing Yorozu 1: its OpenClaw plugin goes too, once per launch, unless a v1 app is running and still uses it.
             if runtimeMode == .live, !v1PluginRemovalTried, r.items.contains(where: { $0.id == "openclaw.v1-plugin" }), !Self.v1Running {
                 v1PluginRemovalTried = true
-                if await OpenClawSetup.removeV1Plugin() { recheckAgain = true }
+                if await OpenClawSetup(agent: c.harness.agent,rpc: gatewayRPC ?? GatewayRPC(target: c.harness.gatewayURL)).removeV1Plugin() { recheckAgain = true }
             }
             guard r != readiness else { return }
             readiness = r

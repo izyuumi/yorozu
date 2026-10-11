@@ -56,7 +56,7 @@ public struct OpenClawSetup: HarnessSetup {
         let config = (try? await rpc.call("config.get",[:],timeout: Self.probe))?["config"] as? [String:Any]
         if Self.personal(agent,config: config) { d.items.append(Readiness.Item(id: "openclaw.personal",title: Self.personalAgent,detail: "[harness] agent = \(agent)",severity: .blocking,fix: .step("harness"))) }
         // Yorozu 1's channel plugin (id `yorozu`) talks to a socket only v1 opened; this version never uses it. The app removes it
-        // (`removeV1Plugin`); this row stays only while that fails, with the command to run by hand.
+        // (`removeV1Plugin`); this row stays only while that fails, with OpenClaw's uninstall command to run by hand.
         if Self.v1Plugin(config) {
             d.items.append(Readiness.Item(id: "openclaw.v1-plugin",title: String(localized: "Yorozu 1's OpenClaw plugin is still installed"),
                 detail: String(localized: "This version of Yorozu doesn't use it."),severity: .warning,
@@ -64,26 +64,27 @@ public struct OpenClawSetup: HarnessSetup {
         }
         return d
     }
-    /// Removes Yorozu 1's `yorozu` channel plugin with OpenClaw's own uninstall (its settings, install record, allowlist entry,
-    /// load path and `channels.yorozu`), as part of replacing v1 (owner, 2026-10-12). Never from an agent's shell. True when
-    /// OpenClaw reported success within two minutes.
-    public static func removeV1Plugin() async -> Bool {
-        guard gatewayAllowed, let openclaw = which("openclaw") else { return false }
-        return await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: openclaw)
-            process.arguments = ["plugins","uninstall","yorozu","--force"]
-            // As `GatewayRPC` launches it: an app opened from Finder has no Homebrew on its PATH, and `openclaw` needs `node`.
-            var env = ProcessInfo.processInfo.environment
-            env["PATH"] = (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin") + ":/opt/homebrew/bin:/usr/local/bin"
-            process.environment = env
-            process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
-            guard (try? process.run()) != nil else { return false }
-            let deadline = Date().addingTimeInterval(120)
-            while process.isRunning, Date() < deadline { try? await Task.sleep(for: .milliseconds(250)) }
-            if process.isRunning { process.terminate(); return false }
-            return process.terminationStatus == 0
-        }.value
+    /// Removes Yorozu 1's `yorozu` channel plugin from OpenClaw's config, as part of replacing v1 (owner, 2026-10-12): one
+    /// `config.patch` (no `note`, with `baseHash`) that drops `channels.yorozu`, `plugins.entries.yorozu`,
+    /// `plugins.installs.yorozu` and `yorozu` in `plugins.allow` (the key itself when it was the only one). OpenClaw's own
+    /// `plugins uninstall` goes through a running Gateway's plugin lifecycle and failed there. Never from an agent's shell.
+    public func removeV1Plugin() async -> Bool {
+        guard Self.gatewayAllowed, let snapshot = try? await rpc.call("config.get",[:],timeout: Self.probe),
+              let hash = snapshot["hash"] as? String, let config = snapshot["config"] as? [String:Any] else { return false }
+        var patch: [String:Any] = [:], plugins: [String:Any] = [:], replace: [String] = []
+        if (config["channels"] as? [String:Any])?["yorozu"] != nil { patch["channels"] = ["yorozu": NSNull()] }
+        let p = config["plugins"] as? [String:Any] ?? [:]
+        for key in ["entries","installs"] where (p[key] as? [String:Any])?["yorozu"] != nil { plugins[key] = ["yorozu": NSNull()] }
+        if let allow = p["allow"] as? [String], allow.contains("yorozu") {
+            let kept = allow.filter { $0 != "yorozu" }
+            plugins["allow"] = kept.isEmpty ? NSNull() : kept
+            replace.append("plugins.allow")
+        }
+        if !plugins.isEmpty { patch["plugins"] = plugins }
+        guard !patch.isEmpty else { return true }
+        guard let data = try? JSONSerialization.data(withJSONObject: patch),
+              let patched = try? await rpc.call("config.patch",["raw": String(decoding: data,as: UTF8.self),"baseHash": hash,"replacePaths": replace]) else { return false }
+        return patched["ok"] as? Bool == true
     }
     /// Yorozu 1's `yorozu` channel plugin is enabled or still listed in a `config.get` answer's config.
     static func v1Plugin(_ config: [String:Any]?) -> Bool {
