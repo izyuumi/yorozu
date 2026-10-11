@@ -23,7 +23,7 @@ The build is Developer ID signed but not notarized, and nothing in the repo nota
 
 ## Installing over v1
 
-The Mac app shares v1's bundle id, so a copy placed in `/Applications` would replace v1 in place, sharing its TCC grants and preferences. Doing that is the owner's call. v2 has no update feed, so v1 users do not receive v2.
+The Mac app shares v1's bundle id, so it replaces v1 in place, keeping its TCC grants and preferences. On the first live launch with no other copy of the bundle installed, it handles what v1 left ([architecture.md](architecture.md#replacing-yorozu-1)): v1's watchdog LaunchAgent is booted out and deleted, v1's memory notes are imported, v1's login item becomes this app's, and one chat note says to pair client devices again. While v1 is still installed beside it (as on the owner's Mac), none of that runs. v1's chats, keys and devices stay in `~/Library/Application Support/Yorozu`. The iPhone app, installed over v1's, finds v1's pairing and says why it pairs again.
 
 ## iOS: upload to TestFlight
 

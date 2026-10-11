@@ -173,7 +173,7 @@ public struct Config: Sendable, Equatable {
         var tree: [String:TOMLValue]
         do { tree = try TOMLDecoder().decode([String:Node].self,from: text).mapValues(\.value) }
         catch let TOMLDecodingError.invalidSyntax(line,_,message) { throw fail(nil,message,line: line) }
-        catch { throw fail(nil,String(localized: "\(error)")) }
+        catch { throw fail(nil,"\(error)") }
         func take(_ table: inout [String:TOMLValue], _ path: ArraySlice<String>, _ key: String) throws -> TOMLValue? {
             guard path.count > 1 else { return table.removeValue(forKey: path.first!) }
             guard let next = table[path.first!] else { return nil }

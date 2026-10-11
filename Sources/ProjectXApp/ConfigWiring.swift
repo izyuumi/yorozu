@@ -120,6 +120,9 @@ extension AppModel {
         do {
             switch (general.startAtLogin,service.status) {
             case (true,.notRegistered),(true,.notFound): try service.register(); fm.createFile(atPath: marker.path,contents: nil)
+            // Enabled with no marker: Yorozu 1's item, this same bundle replaced in place (no other copy is installed, above).
+            // It is this app's now, so turning Start at login off can remove it.
+            case (true,.enabled): if !fm.fileExists(atPath: marker.path) { fm.createFile(atPath: marker.path,contents: nil) }
             case (false,.enabled),(false,.requiresApproval): if fm.fileExists(atPath: marker.path) { try service.unregister(); try? fm.removeItem(at: marker) }
             default: break
             }

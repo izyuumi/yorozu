@@ -177,6 +177,11 @@ import YorozuWire
                     let host = CodingAgentHost(socket: root.appendingPathComponent("agents.sock"),settings: { box.value },folder: { try await engine.agentFolder(task: $0) },alive: { await engine.agentTaskRunning($0) },emit: { try await engine.agentEvent($0) })
                     do { try host.start(); agentHost = host; box.value = harnessSettings() } catch { NSLog("Yorozu: coding agents are off this launch: %@",error.localizedDescription) }
                 }
+                // Replacing Yorozu 1 in place: its watchdog goes, its memory comes along, and one note says to pair again. Not while
+                // another copy with this bundle id is installed: that is a v1 still in use, whose watchdog must stay.
+                if runtimeMode == .live, explicit == nil, !Self.otherCopyInstalled, let v1 = await V1Migration.run(dataRoot: root,memory: memory), v1.found {
+                    await engine.noteV1Update(importedNotes: v1.importedNotes)
+                }
                 await engine.resume()
                 await startJobs(engine,root: root,scripts: explicit != nil || runtimeMode == .fixture ? root.appendingPathComponent("jobs",isDirectory: true) : fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/jobs",isDirectory: true))
                 // Keys and device counters live as long as each other, so the device file stays in the support root whatever PROJECTX_DATA says.
@@ -209,6 +214,12 @@ import YorozuWire
         }
     }
     /// `error` in the status line: a known setup cause in plain words with the raw text as the tooltip, else the raw text.
+    /// Another bundle with this bundle id is installed (Yorozu 1 kept beside this one, or a second copy).
+    static var otherCopyInstalled: Bool {
+        let me = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
+        guard let id = Bundle.main.bundleIdentifier else { return false }
+        return NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).contains { $0.resolvingSymlinksInPath().standardizedFileURL.path != me }
+    }
     func showError(_ error: Error) {
         let plain = PlainError.describe(error)
         status = plain.map { NoticeText.plain(cause: $0.cause,subject: $0.subject) ?? $0.title } ?? error.localizedDescription

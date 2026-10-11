@@ -17,6 +17,8 @@ struct PairingFlowView: View {
     }
     @State private var destination: Destination?
     @State private var error: String?
+    /// Read once: an update from Yorozu 1 says why the phone asks to pair again.
+    @State private var updatedFromV1 = PairingStore.updatedFromV1
 
     var body: some View {
         GeometryReader { geometry in
@@ -33,6 +35,7 @@ struct PairingFlowView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                    if updatedFromV1 && onCancel == nil { updated.padding(.top, 8) }
                     guide.padding(.top, 8)
                     Spacer()
                     Button { destination = .scanner } label: {
@@ -82,6 +85,18 @@ struct PairingFlowView: View {
                     .yorozuTint()
             }
         }
+    }
+
+    /// After an update from Yorozu 1: its pairing doesn't carry over, and the host needs this version too.
+    private var updated: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("Yorozu was updated", systemImage: "arrow.triangle.2.circlepath").font(.subheadline.weight(.semibold))
+            Text("This version pairs again. Update Yorozu on your Mac too, then pair with the steps below. Earlier chats stay on your Mac.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .yorozuCard()
     }
 
     /// The three steps, named as the Mac's pair sheet shows them.

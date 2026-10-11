@@ -1,6 +1,31 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Yorozu was updated to 0.7. Pair your iPhone, iPad and other Macs again: update Yorozu on each, then choose Pair a Client Device… here." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu を 0.7 にアップデートしました。iPhone、iPad、他の Mac をもう一度ペアリングしてください。それぞれで Yorozu をアップデートしてから、ここで「クライアント端末をペアリング…」を選びます。" } }
+      }
+    },
+    "%lld notes from its memory came along." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "以前のメモリから %lld 件のメモを引き継ぎました。" } }
+      }
+    },
+    "Earlier chats stay in ~/Library/Application Support/Yorozu." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "以前のチャットは ~/Library/Application Support/Yorozu に残っています。" } }
+      }
+    },
+    "Yorozu was updated" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu がアップデートされました" } }
+      }
+    },
+    "This version pairs again. Update Yorozu on your Mac too, then pair with the steps below. Earlier chats stay on your Mac." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このバージョンではペアリングをやり直します。Mac の Yorozu もアップデートしてから、下の手順でペアリングしてください。以前のチャットは Mac に残っています。" } }
+      }
+    },
     "Update Yorozu on this device to talk to this host." : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "このホストと通信するには、この端末の Yorozu をアップデートしてください。" } }

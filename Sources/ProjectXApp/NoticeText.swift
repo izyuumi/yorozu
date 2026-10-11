@@ -13,6 +13,11 @@ enum NoticeText {
         }
         let name = params["name"]
         switch code {
+        case "v1_updated":
+            let notes = params["notes"].flatMap(Int.init) ?? 0
+            return String(localized: "Yorozu was updated to 0.7. Pair your iPhone, iPad and other Macs again: update Yorozu on each, then choose Pair a Client Device… here.")
+                + (notes > 0 ? " " + String(localized: "\(notes) notes from its memory came along.") : "")
+                + " " + String(localized: "Earlier chats stay in ~/Library/Application Support/Yorozu.")
         case "question_topic": return String(localized: "Which subject should this belong to?")
         case "question_task": return String(localized: "Which task do you mean?")
         case "routing_failed": return String(localized: "Yorozu couldn’t handle that message. Send it again to retry.")
