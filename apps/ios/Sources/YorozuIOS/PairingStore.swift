@@ -97,6 +97,11 @@ enum PairingStore {
         try synchronized { try Keychain.clearRequired(account) }
     }
 
+    /// Yorozu 1 left a pairing (its `pairings` or older `pairing` account): this phone was updated, not newly installed.
+    static var updatedFromV1: Bool {
+        ["pairings","pairing"].contains { (try? Keychain.loadRequired($0)) != nil }
+    }
+
     static func markPaired(expectedIdentity: Data) {
         try? update(expectedIdentity: expectedIdentity) { stored in
             if stored.paired != true {

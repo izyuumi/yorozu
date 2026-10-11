@@ -49,7 +49,7 @@ public enum JobsFile {
         var tree: [String:TOMLValue]
         do { tree = try TOMLDecoder().decode([String:JobsNode].self,from: text).mapValues(\.value) }
         catch let TOMLDecodingError.invalidSyntax(line,_,message) { throw fail(nil,message,line: line) }
-        catch { throw fail(nil,String(localized: "\(error)")) }
+        catch { throw fail(nil,"\(error)") }
         let root = tree.removeValue(forKey: "jobs")
         if let key = tree.keys.sorted().first { throw fail(key,String(localized: "unknown key; each job is a [jobs.<id>] table")) }
         guard let root else { return [] }

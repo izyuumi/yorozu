@@ -108,6 +108,7 @@ public struct Notice: Codable, Sendable, Equatable {
         case notRunning = "not_running", stopped, stopping, moved, movedStopping = "moved_stopping", correctionSaved = "correction_saved", earlierRetired = "earlier_retired"
         case memoryForgotten = "memory_forgotten", amendmentUnconfirmed = "amendment_unconfirmed"
         case closedTooLong = "closed_too_long", taskControlFailed = "task_control_failed" // unrouted > 24 h at launch; Stop/Retry control error (params error)
+        case v1Updated = "v1_updated" // acknowledgment, once after replacing Yorozu 1 (V1Migration): params notes
         case configInvalid = "config_invalid", settingsChanged = "settings_changed" // config.toml (#312): params file/line/key/reason; keys
         // Typed harness failures (#318, `HarnessError`); params error.
         case harnessBusy = "harness_busy", runInterrupted = "run_interrupted", approvalRequested = "approval_requested", modelMismatch = "model_mismatch", harnessNotReady = "harness_not_ready"

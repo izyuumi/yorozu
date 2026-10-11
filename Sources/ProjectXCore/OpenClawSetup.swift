@@ -55,7 +55,20 @@ public struct OpenClawSetup: HarnessSetup {
         // Workers never run on the user's personal agent (the default one).
         let config = (try? await rpc.call("config.get",[:],timeout: Self.probe))?["config"] as? [String:Any]
         if Self.personal(agent,config: config) { d.items.append(Readiness.Item(id: "openclaw.personal",title: Self.personalAgent,detail: "[harness] agent = \(agent)",severity: .blocking,fix: .step("harness"))) }
+        // Yorozu 1's channel plugin (id `yorozu`) talks to a socket only v1 opened; this version never uses it. Yorozu leaves
+        // OpenClaw's plugins to the user and offers the command.
+        if Self.v1Plugin(config) {
+            d.items.append(Readiness.Item(id: "openclaw.v1-plugin",title: String(localized: "Yorozu 1's OpenClaw plugin is still installed"),
+                detail: String(localized: "This version of Yorozu doesn't use it."),severity: .warning,
+                fix: .copy(title: String(localized: "Copy command"),command: "openclaw plugins uninstall yorozu")))
+        }
         return d
+    }
+    /// Yorozu 1's `yorozu` channel plugin is enabled or still listed in a `config.get` answer's config.
+    static func v1Plugin(_ config: [String:Any]?) -> Bool {
+        let channel = ((config?["channels"] as? [String:Any])?["yorozu"] as? [String:Any])?["enabled"] as? Bool == true
+        let entry = ((config?["plugins"] as? [String:Any])?["entries"] as? [String:Any])?["yorozu"] != nil
+        return channel || entry
     }
     static let inApp = Readiness.Item(id: "openclaw.gateway",title: String(localized: "Gateway checks are left to the Yorozu app"),detail: String(localized: "This process was started from an OpenClaw agent's shell, so it makes no Gateway calls. Open Yorozu from Finder and finish setup there."),severity: .warning,fix: .step("harness"))
     public static let personalAgent = String(localized: "Yorozu needs its own OpenClaw agent, not your main one. Set [harness] agent to a dedicated id.")

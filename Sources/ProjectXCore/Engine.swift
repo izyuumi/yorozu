@@ -438,6 +438,13 @@ public actor Engine {
     }
     /// Records an accepted attach (#348); a refusal (`Store.attach` eligibility) changes nothing.
     private func record(_ a: (topic: String,target: String)?) async { if let a { _ = try? await store.attach(topic: a.topic,to: a.target) } }
+    /// The one note after this app replaced Yorozu 1 (`V1Migration`): devices pair again, and how many memory notes came
+    /// along. An acknowledgment, so it never notifies.
+    public func noteV1Update(importedNotes: Int) async {
+        let notes = importedNotes > 0 ? " \(importedNotes) notes from its memory came along." : ""
+        _ = try? await store.message(role: "assistant",body: "Yorozu was updated to 0.7. Pair your iPhone, iPad and other Macs again: update Yorozu on each, then choose Pair a Client Device… here." + notes + " Earlier chats stay in ~/Library/Application Support/Yorozu.",
+                                     kind: "acknowledgment",notice: Notice(.v1Updated,["notes": String(importedNotes)]))
+    }
     /// Stop control (the phone's button): a typed stop's guards and acknowledgments with no secretary call and no user
     /// message, filed in the task's topic and replying to the task's original message (#313 open question 4).
     public func stopTask(id: String) async -> TaskOutcome { await control(id) { w,topic in try await self.halt(w,topic: topic,replyTo: w.messageID) } }
