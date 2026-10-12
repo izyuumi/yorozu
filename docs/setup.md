@@ -116,7 +116,7 @@ Help me set up Yorozu on this Mac. Yorozu has a setup command: you run it, and I
 Rules: never install software, sign in or grant permissions for me, and never run a fix command yourself. Show me the command; after I run it, answer "check". Never choose an answer for me, and never edit Yorozu's or OpenClaw's config files. If a command fails, show me the error and stop.
 ```
 
-The message assumes `/Applications/Yorozu.app`. Until Mac distribution exists, a dev build lives elsewhere (`build/Yorozu.app`), and v1, which shares the bundle id, has no `setup` subcommand: the path must point at the v2 app.
+The message assumes `/Applications/Yorozu.app`, where the app lives (the dev build too); v1, which shares the bundle id, has no `setup` subcommand: the path must point at the v2 app.
 
 ## OpenClaw Gateway
 
@@ -296,7 +296,7 @@ args = ["mcp"]
 
 ### Start at login and keep awake
 
-- `start_at_login` registers the running app bundle as a login item with `SMAppService.mainApp` (for the dev app, `build/Yorozu.app`) and records that in `login-item-registered` in the data root; `false` unregisters the item only when that file exists, so an item this app did not register is never removed. An item already enabled at this app's own path with no other copy installed is Yorozu 1's, replaced in place, and is recorded as this app's. It is on by default. When macOS wants approval, the status line says "Start at login needs approval in System Settings › General › Login Items", and Settings › General says it is waiting and offers Open Login Items…. Fixture and `PROJECTX_DATA` runs never touch the login item, and Settings shows the switch disabled with that reason.
+- `start_at_login` registers the running app bundle as a login item with `SMAppService.mainApp` (`/Applications/Yorozu.app`) and records that in `login-item-registered` in the data root; `false` unregisters the item only when that file exists, so an item this app did not register is never removed. An item already enabled at this app's own path with no other copy installed is Yorozu 1's, replaced in place, and is recorded as this app's. It is on by default. When macOS wants approval, the status line says "Start at login needs approval in System Settings › General › Login Items", and Settings › General says it is waiting and offers Open Login Items…. Fixture and `PROJECTX_DATA` runs never touch the login item, and Settings shows the switch disabled with that reason.
 - Known limit: v1 shares the bundle id, and `SMAppService.mainApp` could act on its login item. While LaunchServices knows any other bundle with this id (`/Applications/Yorozu.app`, or another build copy), the app leaves login items alone and, with `start_at_login` on, the status line says "Start at login is off while another Yorozu with the same id is installed"; Settings › General shows the switch off and disabled, naming the other bundle's path.
 - `keep_mac_awake` holds a `ProcessInfo` activity with `.idleSystemSleepDisabled` while the app runs (`pmset -g assertions` lists it). A closed lid still sleeps.
 

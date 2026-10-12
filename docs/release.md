@@ -10,10 +10,10 @@ A minor version that breaks the relay wire also raises the peer-info protocol ([
 
 ## Mac: rebuild the dev app
 
-`scripts/build_native.sh` is the only way the Mac app is built. Run it from the main checkout so the one dev app stays at `build/Yorozu.app` there; a worktree's own `build/` would make a second bundle.
+`scripts/build_native.sh` is the only way the Mac app is built. It replaces `/Applications/Yorozu.app` in place, the one Yorozu on the owner's Mac (owner, 2026-10-12: v1 removed, no second copy with the bundle id, so the login item and the v1 migration work). Run it from the main checkout.
 
-- Without `--restart` it exits 3 while this checkout's `build/Yorozu.app` is running.
-- It quits only this checkout's dev app, by pid, because v1 shares the bundle id.
+- Without `--restart` it exits 3 while `/Applications/Yorozu.app` is running.
+- It quits only the app at that path, by pid.
 - `--restart` relaunches the app with `open -n` even if it was not running before. `-n` keeps LaunchServices from just focusing v1.
 - Mac builds are build 1 unless `BUILD` is set.
 
