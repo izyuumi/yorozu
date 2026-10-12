@@ -1,7 +1,8 @@
 # Continuous chat and PAIOS memory: design v0.0
 
 Status: proposal for review, 2026-09-30. **Design only; nothing here is implemented by this
-change.** v0.0 labels this proposal, not an app version or release.
+change.** v0.0 labels this proposal, not an app version or release. Revised by
+[v0.1](continuous-chat-memory-v0.1.md), which wins where the two disagree.
 
 ## Goal and scope
 
