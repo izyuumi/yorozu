@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { tmpdir } from "node:os";
 import { REASONING_EFFORTS, type ModelOption } from "@yorozu/shared";
-import { childEnv, turnCwd } from "./native.js";
+import { childEnv, SEND_FILE_TOOL, turnCwd } from "./native.js";
 import type { NativeAgentRunner, NativeTurn } from "./native.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -217,6 +217,8 @@ export function codexNativeRunner(connect: ConnectCodex = connectCodex): NativeA
           cwd, model: turn.model ?? null,
           approvalPolicy: turn.bypass ? "never" : "on-request", approvalsReviewer: "user",
           sandbox: turn.bypass ? "danger-full-access" : "workspace-write",
+          ...(turn.sendFile ? { dynamicTools: [{ type: "function", name: SEND_FILE_TOOL.name, description: SEND_FILE_TOOL.description,
+            inputSchema: { type: "object", properties: { path: { type: "string", description: SEND_FILE_TOOL.path } }, required: ["path"] } }] } : {}),
         });
         sessionId = string(object(home.thread).id);
         if (!sessionId) throw new Error("Codex did not return a thread id");
@@ -271,6 +273,10 @@ async function answerRequest(method: string, params: ObjectValue, turn: NativeTu
     const allowed = !signal.aborted && (turn.bypass || await turn.approve?.(method.split("/")[1]!, Object.fromEntries(Object.entries(params).filter(([key]) => !["threadId", "turnId", "itemId"].includes(key))), signal));
     if (method === "item/permissions/requestApproval") return { permissions: allowed && !signal.aborted ? object(params.permissions) : {}, scope: "turn" };
     return { decision: allowed && !signal.aborted ? "accept" : "decline" };
+  }
+  if (method === "item/tool/call" && params.tool === SEND_FILE_TOOL.name && turn.sendFile) {
+    try { return { contentItems: [{ type: "inputText", text: await turn.sendFile(string(object(params.arguments).path)) }], success: true }; }
+    catch (error) { return { contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }], success: false }; }
   }
   throw new Error("Unsupported Codex request");
 }

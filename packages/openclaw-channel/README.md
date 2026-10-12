@@ -55,7 +55,7 @@ Newline-delimited JSON over the socket. Both directions are at least once and ac
 | Frame | Direction | Meaning |
 | --- | --- | --- |
 | `inbound` | Yorozu → plugin | A user message, with `attachments` (`{ name, mime, data }`, base64) when it has any and `text` empty when it is only attachments (`media-v1`). Each is saved to OpenClaw's media store and passed as one media fact, in order. Acked once OpenClaw has dispatched it; resent on every connect until then. |
-| `deliver` | plugin → Yorozu | An OpenClaw reply. An unknown thread id opens a new thread. |
+| `deliver` | plugin → Yorozu | An OpenClaw reply. An unknown thread id opens a new thread. Files the agent sends (reply `mediaUrl(s)` or the `message` tool) ride along as `attachments` in the same `{ name, mime, data }` shape and limits as inbound; a file that cannot be read or is too large is named in the text instead. |
 | `ack` / `error` | both | Receipt by id. |
 | `hello` | plugin → Yorozu | First frame on every connection: `{ capabilities: ["run-boundary-v1", "progress-v1", "model-select-v1", "media-v1", "reply-stream-v1"] }`. |
 | `run_started` / `run_finished` | plugin → Yorozu | `run-boundary-v1`: one run per `inbound`, from OpenClaw starting on it to its end (`completed`, `failed` or `aborted`), however many replies or none. Runs are serialized per thread, and an unfinished run is re-announced after a reconnect. |
@@ -98,7 +98,7 @@ SDK blocks are never promoted from a draft. Timers and callbacks seal at dispatc
 
 Preview callback contract inspected against installed OpenClaw `2026.9.6`. This extension still
 requires SDK `2026.9.1` or newer; optional callbacks/options are consumed by supported SDKs.
-Outbound media delivery remains outside this text-only adapter. Inbound attachments are unchanged.
+Final reply files ride on the last part of the answer, after all of its text.
 In-flight delivery retries survive socket reconnect within the Gateway process, not a Gateway
 process crash; acknowledged finals are durable in Yorozu's thread log.
 Transient draft timestamps/revisions survive device reconnect, but reset after host process

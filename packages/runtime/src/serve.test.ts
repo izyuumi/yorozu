@@ -4840,6 +4840,21 @@ test("a failed run with no reply records a failed agent message; a reply, or com
   } finally { plugin.close(); }
 });
 
+test("an OpenClaw reply's files are logged on the agent message; oversized files are refused", async () => {
+  const { dir, eventsUntil, plugin, target } = await channelRun();
+  try {
+    plugin.send({ type: "run_started", messageId: target });
+    const pdf = { name: "report.pdf", mime: "application/pdf", data: Buffer.from("%PDF").toString("base64") };
+    plugin.send({ type: "deliver", id: "files", threadId: "t1", text: "", attachments: [pdf] });
+    await eventsUntil((event) => event.id === "files");
+    expect(readThreadEvents("t1", dir).find((event) => event.id === "files"))
+      .toMatchObject({ data: { role: "agent", text: "", attachments: [pdf] } });
+    plugin.send({ type: "deliver", id: "huge", threadId: "t1", text: "",
+      attachments: [{ ...pdf, data: Buffer.alloc(5 * 1024 * 1024 + 1).toString("base64") }] });
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "error", id: "huge", reason: "invalid-deliver" }));
+  } finally { plugin.close(); }
+});
+
 test.each([{ large: false, restarts: 0 }, { large: true, restarts: 0 }, { large: false, restarts: 2 }])(
   "OpenClaw dispatcher streams Markdown through the real channel socket to the phone (large=$large, restarts=$restarts)", async ({ large, restarts }) => {
   const host = await pairedPhone([], true, {}, true);

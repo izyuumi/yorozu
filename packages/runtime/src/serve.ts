@@ -129,7 +129,7 @@ import {
 } from "./threads.js";
 import { codexNativeRunner, connectCodex } from "./codex-native.js";
 import { NativeCards } from "./native-cards.js";
-import { claudeCodeRunner, type NativeAgentRunner, type NativeTurn } from "./native.js";
+import { claudeCodeRunner, fileAttachment, type NativeAgentRunner, type NativeTurn } from "./native.js";
 import { isProjectFolder, listProjects } from "./projects.js";
 import { questionDesk, QUESTION_TIMEOUT_MS } from "./tools/cards.js";
 import { appendTranscript, transcriptDir } from "./transcripts.js";
@@ -1689,13 +1689,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
     const id = userEventId ? completionIdFor(threadId, userEventId) : randomUUID();
     // `done` on the finished one only: it is what tells a phone the turn is over, so its
     // composer can stop offering Stop. The deltas under the same id leave it unset.
-    const message = (reply: string, done = false, failed = false): YorozuEvent => ({
+    const message = (reply: string, done = false, failed = false, attachments: MessageAttachment[] = []): YorozuEvent => ({
       id,
       threadId,
       ts: Date.now(),
       agentId: MAIN_AGENT,
       kind: "message",
-      data: { role: "agent", text: reply, ...(done ? { done: true } : {}), ...(failed ? { failed: true } : {}) },
+      data: { role: "agent", text: reply, ...(done ? { done: true } : {}), ...(failed ? { failed: true } : {}),
+        ...(attachments.length ? { attachments } : {}) },
     });
 
     // A native agent's thread is answered by that agent alone: its own session, in the
@@ -1717,8 +1718,10 @@ export function serve(options: ServeOptions = {}): Sidecar {
           void pending.finally(() => { if (pendingChanges.get(threadId) === pending) pendingChanges.delete(threadId); });
         }
       };
+      // Files the agent sent with `send_file`; they ride on its final reply.
+      const sentFiles: MessageAttachment[] = [];
       const finish = (reply: string, failed = false): void => {
-        const final = message(reply, true, failed);
+        const final = message(reply, true, failed, sentFiles);
         appendTranscript(final, transcripts);
         appendThreadEvent(final, dir);
         broadcast(final);
@@ -1829,6 +1832,14 @@ export function serve(options: ServeOptions = {}): Sidecar {
                 return !signal.aborted && updateGate.status.phase !== "installing";
               },
               onToolBoundary: () => pauseAtSafePoint(threadId),
+              sendFile: async (path) => {
+                const file = await fileAttachment(path, home.cwd);
+                // A recovered turn may send the same file again.
+                if (sentFiles.some((sent) => sent.name === file.name && sent.data === file.data)) return `${file.name} is already attached.`;
+                if (!attachmentsWithinLimits([...sentFiles, file])) throw new Error("This reply already carries as many files as Yorozu sends at once (10 files, 20 MB).");
+                sentFiles.push(file);
+                return `Sent ${file.name} to the user; it arrives with your reply.`;
+              },
               onUpdate: (reply) => { if (!turn.signal.aborted) { executionStarted = true; broadcast(message(reply)); } },
               onActivity: (key, payload) => {
                 executionStarted = true;
@@ -3223,7 +3234,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       run.replyDraft = draft;
       broadcast(draft, false);
     },
-    deliver: ({ id, threadId, text, title: named, messageId, failed, interrupted }, auxiliary) => {
+    deliver: ({ id, threadId, text, title: named, messageId, failed, interrupted, attachments }, auxiliary) => {
       const thread = listThreads(dir).find((known) => known.id === threadId);
       if (thread && (thread.agent ?? "yorozu") !== "yorozu") throw new Error("not-a-channel-thread");
       if (readThreadEvents(threadId, dir).some((known) => known.id === id)) return;
@@ -3234,7 +3245,7 @@ export function serve(options: ServeOptions = {}): Sidecar {
       if (!thread && !named) title(threadId, text);
       const ts = active?.replyDraft?.id === id ? active.replyDraft.ts : Date.now();
       const event: YorozuEvent = { id, threadId, ts, agentId: MAIN_AGENT, kind: "message",
-        data: { role: "agent", text, done: true,
+        data: { role: "agent", text, done: true, ...(attachments ? { attachments } : {}),
           ...(messageId ? { replyTo: messageId, streamRevision: (active?.replyDraft?.data.streamRevision ?? 0) + 1 } : {}),
           ...(failed ? { failed: true } : {}), ...(interrupted ? { interrupted: true } : {}) } };
       if (auxiliary && active && !active.status) {

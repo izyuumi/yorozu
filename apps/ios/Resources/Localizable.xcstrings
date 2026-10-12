@@ -25,6 +25,16 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "送达未确认 — 轻点重试" } }
       }
     },
+    "Downloading": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード中"
+          }
+        }
+      }
+    },
     "Notifications" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Notificaciones" } },
@@ -33,12 +43,42 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "通知" } }
       }
     },
+    "Open": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開く"
+          }
+        }
+      }
+    },
+    "Opens the file": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ファイルを開きます"
+          }
+        }
+      }
+    },
     "Re-register push notifications" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Volver a registrar las notificaciones push" } },
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "プッシュ通知を再登録" } },
         "ko" : { "stringUnit" : { "state" : "translated", "value" : "푸시 알림 다시 등록" } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新注册推送通知" } }
+      }
+    },
+    "Save…": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存…"
+          }
+        }
       }
     },
     "Try this if notifications stop arriving or arrive twice." : {

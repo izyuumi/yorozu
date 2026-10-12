@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { replyMediaUrls } from "./media.js";
 
 // JSON bytes, before the two base64 layers and sealed-frame overhead on the relay.
 const MAX_REPLY_BYTES = 256 * 1024;
@@ -71,6 +72,7 @@ export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message
   const id = `openclaw:${createHash("sha256").update(message.threadId).update("\0").update(message.id).digest("hex")}:reply`;
   const parts = [];
   const finalParts = [];
+  const finalMedia = [];
   let current = "";
   let sealed = false;
   let timer;
@@ -116,6 +118,7 @@ export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message
           // SDK tool prompts can await an answer: make them visible before the run ends.
           if (info?.kind !== "final") return deliver(payload);
           if (typeof payload?.text === "string" && payload.text.trim()) finalParts.push(payload.text);
+          finalMedia.push(...replyMediaUrls(payload));
         } : deliver,
         onError: (error) => {
           outcome = "failed";
@@ -155,9 +158,12 @@ export const createInboundDispatcher = (sdk) => async ({ cfg, accountId, message
     const failed = !interrupted && Boolean(threw || outcome === "failed" || result?.dispatched === false);
     // A deliberate successful NO_REPLY must clear the draft, never promote suppressed text.
     const text = finalParts.length ? finalParts.join("\n\n") : interrupted || failed ? snapshot() : "";
-    if (text || snapshot()) {
+    if (text || snapshot() || finalMedia.length) {
       const chunks = replyChunks(text);
-      for (let index = 0; index < chunks.length; index++) await deliver({ text: chunks[index] }, {
+      // Files ride on the last part, after all of the text.
+      for (let index = 0; index < chunks.length; index++) await deliver({
+        text: chunks[index], ...(index === chunks.length - 1 && finalMedia.length ? { mediaUrls: finalMedia } : {}),
+      }, {
         id: index === 0 ? id : `${id}:${index}`, messageId: message.id, interrupted, failed,
       });
     }
