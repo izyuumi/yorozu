@@ -99,7 +99,7 @@ struct MessageRow: View {
         case .answer: AnswerCard(message: message,header: message.hasStoredHeader ? nil : header,reveal: reveal,files: files,locate: locate).overlay { ring(Metrics.cardRadius) }
         case .question:
             VStack(alignment: .leading,spacing: 4) {
-                Label("Question",systemImage: "questionmark.bubble").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
+                Image(systemName: "questionmark.bubble").font(.callout.weight(.semibold)).foregroundStyle(Color.accentColor).accessibilityLabel("Question")
                 MarkdownBlocks(notice(message))
             }.card(radius: Metrics.cardRadius).overlay { ring(Metrics.cardRadius) }
         case .system, .failure: SystemRow(message: message).overlay { ring(Metrics.cardRadius / 2) }
@@ -251,8 +251,8 @@ struct CopyButton: View {
             let ok = Pasteboard.copy(text); copied = ok
             Task { try? await Task.sleep(for: .seconds(2)); if copied == ok { copied = nil } }
         } label: {
-            Label(copied == nil ? "Copy" : copied! ? "Copied" : "Copy failed",systemImage: copied == nil ? "doc.on.doc" : copied! ? "checkmark" : "exclamationmark.triangle")
-                .font(.caption).padding(.horizontal,8).padding(.vertical,3)
+            Image(systemName: copied == nil ? "doc.on.doc" : copied! ? "checkmark" : "exclamationmark.triangle")
+                .font(.caption).padding(.horizontal,8).padding(.vertical,5)
                 .background(.thickMaterial,in: Capsule()).overlay { Capsule().strokeBorder(.separator,lineWidth: 0.5) }
                 .shadow(color: .black.opacity(0.12),radius: 4,y: 2)
         }.buttonStyle(.plain).foregroundStyle(copied == false ? ChatPalette.warning : .primary)

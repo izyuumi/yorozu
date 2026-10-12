@@ -197,10 +197,11 @@ private struct CodeBlock: View {
                 Text(verbatim: language ?? "").font(.caption.monospaced())
                 Spacer()
                 Button(action: copy) {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc").font(.caption)
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.caption)
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(copied ? "Code copied" : "Copy code")
+                .help("Copy code")
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, MarkdownMetrics.inset)
