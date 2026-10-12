@@ -1,14 +1,14 @@
 #!/bin/sh
-# Generates the project with Tuist, builds Yorozu.app and replaces build/Yorozu.app in place (never a second app).
-# --restart: if the dev app is running, quit it after a successful build, swap the bundle and relaunch it.
-# Only this checkout's build/Yorozu.app is touched, never /Applications/Yorozu.app (same bundle id).
+# Generates the project with Tuist, builds Yorozu.app and replaces /Applications/Yorozu.app in place: the one Yorozu on
+# this Mac (owner, 2026-10-12), so no second copy with the bundle id blocks the login item or the v1 migration.
+# --restart: if the app is running, quit it after a successful build, swap the bundle and relaunch it.
 set -eu
 cd "$(dirname "$0")/.."
-APP="$PWD/build/Yorozu.app"
+APP="/Applications/Yorozu.app"
 RESTART=0; [ "${1:-}" = "--restart" ] && RESTART=1
 running() { pgrep -f "$APP/Contents/MacOS/Yorozu" || true; }
 if [ -n "$(running)" ] && [ "$RESTART" = 0 ]; then
-    echo "Refusing to replace a running app. Quit build/Yorozu.app first, or pass --restart." >&2
+    echo "Refusing to replace a running app. Quit Yorozu first, or pass --restart." >&2
     exit 3
 fi
 mkdir -p build

@@ -10,7 +10,7 @@ Yorozu is a native macOS personal assistant: one conversation with a secretary m
 - Commit messages follow Conventional Commits and every commit is signed (signing is configured).
 - Feature work: fetch the base branch, then work in a dedicated git worktree on a new branch named for the topic alone, one per independent feature. Work only in your own worktree. Once its work is merged and the tree is clean, `git worktree remove` it (plain, without `--force`) and delete the branch if nothing else uses it.
 - In an OpenClaw-managed worktree (branch `openclaw/…`), the task contract replaces the feature-work rule: stay in that worktree and merge, push and restart exactly as the contract says.
-- One dev app: `build/Yorozu.app` in the main checkout, rebuilt in place by `scripts/build_native.sh`; leave `/Applications/Yorozu.app` and other bundles alone.
+- One app: `/Applications/Yorozu.app`, the dev build, rebuilt in place by `scripts/build_native.sh` from the main checkout (owner, 2026-10-12); never make a second copy with its bundle id.
 - Upload to TestFlight (`scripts/upload_ios.sh --confirm`) only when the owner asks for that upload: each upload uses up its build number for good.
 - Approved cleanup of build outputs and stale app copies: confirm the list, then `rm -rf` it.
 - UI layout: size views from their container with the platform's native mechanisms; fixed numbers belong only inside a custom component that owns its geometry. Read [docs/ui-layout.md](docs/ui-layout.md) before changing SwiftUI layout in `Sources/ProjectXApp` or `apps/ios`.
@@ -20,8 +20,8 @@ Yorozu is a native macOS personal assistant: one conversation with a secretary m
 ```sh
 mise install                        # Tuist, at the version pinned in mise.toml
 swift build                         # Sources/ProjectXCore only
-scripts/build_native.sh             # build/Yorozu.app
-scripts/build_native.sh --restart   # build/Yorozu.app, relaunched
+scripts/build_native.sh             # /Applications/Yorozu.app
+scripts/build_native.sh --restart   # /Applications/Yorozu.app, relaunched
 ```
 
 App code (`Sources/ProjectXApp`) compiles only through `build_native.sh`; iOS code only through the iOS Xcode project ([docs/release.md](docs/release.md#ios-compile-check-without-uploading)).
