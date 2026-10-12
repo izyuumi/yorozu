@@ -220,3 +220,19 @@ test("the Codex app server is spawned with the allowlisted env, never Yorozu's o
     expect(ended).toHaveBeenCalledOnce();
   } finally { vi.unstubAllEnvs(); }
 });
+
+test("Codex gets send_file only when the host can take files, and its calls reach the host", async () => {
+  const results: unknown[] = [];
+  const fake = fakeCodex(async (h) => {
+    results.push(await h.request("item/tool/call", { tool: "send_file", arguments: { path: "out.pdf" } }));
+    results.push(await h.request("item/tool/call", { tool: "send_file", arguments: { path: "missing" } }));
+    h.notify("turn/completed", { threadId: "native", turn: { status: "completed" } });
+  });
+  const sendFile = vi.fn(async (path: string) => { if (path === "missing") throw new Error("No file"); return "Sent"; });
+  await codexNativeRunner(fake.connect).run(turn({ sendFile }));
+  expect(fake.calls.find(([m]) => m === "thread/start")?.[1]).toMatchObject({ dynamicTools: [expect.objectContaining({ name: "send_file" })] });
+  expect(results).toEqual([
+    { contentItems: [{ type: "inputText", text: "Sent" }], success: true },
+    { contentItems: [{ type: "inputText", text: "No file" }], success: false },
+  ]);
+});

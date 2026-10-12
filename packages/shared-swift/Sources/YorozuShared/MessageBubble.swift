@@ -1,4 +1,6 @@
+import QuickLook
 import SwiftUI
+import UniformTypeIdentifiers
 
 #if canImport(UIKit)
     import UIKit
@@ -531,18 +533,76 @@ private struct AttachmentsView: View {
     }
 
     private func fileRow(_ attachment: MessageAttachment) -> some View {
-        Label {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(attachment.name).lineLimit(1).truncationMode(.middle)
-                Text(attachment.size).font(.scaled(.caption)).foregroundStyle(.secondary)
+        FileRow(file: AttachmentFile(attachment: attachment))
+    }
+}
+
+/// A file in a message. Once its bytes are here it opens in Quick Look, and saves or shares
+/// from its context menu; a Mac can also drag it out.
+private struct FileRow: View {
+    let file: AttachmentFile
+    @State private var previewing: URL?
+    @State private var saving = false
+
+    private var attachment: MessageAttachment { file.attachment }
+    private var ready: Bool { !attachment.isDeferred && attachment.bytes?.isEmpty == false }
+
+    var body: some View {
+        Button { previewing = try? file.write() } label: {
+            Label {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(attachment.name).lineLimit(1).truncationMode(.middle)
+                    Text(attachment.size).font(.scaled(.caption)).foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "doc").foregroundStyle(.secondary)
             }
-        } icon: {
-            Image(systemName: "doc").foregroundStyle(.secondary)
+            .font(.scaled(.subheadline))
+            .padding(10)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .font(.scaled(.subheadline))
-        .padding(10)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .buttonStyle(.plain)
+        .disabled(!ready)
+        .contextMenu {
+            if ready {
+                Button("Open", systemImage: "eye") { previewing = try? file.write() }
+                Button("Save…", systemImage: "square.and.arrow.down") { saving = true }
+                ShareLink(item: file, preview: SharePreview(attachment.name))
+            }
+        }
+        .draggable(file)
+        .quickLookPreview($previewing)
+        .fileExporter(isPresented: $saving, item: file, contentTypes: [.data],
+                      defaultFilename: attachment.name) { _ in }
         .accessibilityLabel("Attached file, \(attachment.name), \(attachment.size)")
+        .accessibilityHint(ready ? "Opens the file" : "Downloading")
+    }
+}
+
+/// A received file's bytes as a file on disk, written only when the user opens, saves,
+/// shares or drags it.
+struct AttachmentFile: Transferable {
+    let attachment: MessageAttachment
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .data) { SentTransferredFile(try $0.write()) }
+            .suggestedFileName { $0.attachment.name }
+    }
+
+    /// The bytes under the file's own name, in a temporary folder of their own so two files
+    /// with one name never overwrite each other.
+    func write() throws -> URL {
+        guard let bytes = attachment.bytes, !bytes.isEmpty else { throw CocoaError(.fileReadNoSuchFile) }
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Received", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = attachment.name.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let url = folder.appendingPathComponent(name.isEmpty || name.hasPrefix(".") ? "file\(name)" : name)
+        try bytes.write(to: url, options: .atomic)
+        return url
     }
 }
 

@@ -93,3 +93,20 @@ test("successful suppressed final clears the preview; legacy delivery remains se
     new AbortController().signal, () => {});
   assert.deepEqual(blocks, ["a", "a"]);
 });
+
+test("final media payloads reach the answer with its text, or alone", async () => {
+  for (const [finals, expected] of [
+    [[{ text: "Here it is", mediaUrl: "/m/a.pdf" }, { mediaUrls: ["/m/b.png"] }], { text: "Here it is", mediaUrls: ["/m/a.pdf", "/m/b.png"] }],
+    [[{ mediaUrl: "/m/a.pdf" }], { text: "", mediaUrls: ["/m/a.pdf"] }],
+  ]) {
+    const delivered = [];
+    const dispatch = dispatchWith(async (plan) => {
+      for (const payload of finals) await plan.delivery.deliver(payload, { kind: "final" });
+      plan.replyOptions.onAgentRunTerminalOutcome("completed");
+      return { dispatched: true };
+    });
+    await dispatch({ cfg: {}, accountId: "default", message, preview: () => true,
+      deliver: async (payload) => delivered.push(payload) }, new AbortController().signal, () => {});
+    assert.deepEqual(delivered, [expected]);
+  }
+});

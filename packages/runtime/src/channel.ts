@@ -12,7 +12,7 @@
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ChannelModelChoice, ChannelModelOption, MessageAttachment } from "@yorozu/shared";
+import { attachmentsWithinLimits, type ChannelModelChoice, type ChannelModelOption, type MessageAttachment } from "@yorozu/shared";
 import { startLocalChannel, type Send } from "./local.js";
 
 export const channelSocketPath = (dir: string): string => join(dir, "channel.sock");
@@ -37,6 +37,8 @@ export interface ChannelDeliver {
   failed?: boolean;
   /** Title for a thread this message creates. Ignored when the thread exists. */
   title?: string;
+  /** Files the agent sends the user, within the same limits as a user's attachments. */
+  attachments?: MessageAttachment[];
 }
 
 export type HostFrame =
@@ -369,13 +371,15 @@ export function startChannelHost(options: ChannelHostOptions): ChannelHost {
             !announcedBy.get(device)?.has("reply-stream-v1") ||
             Buffer.byteLength(JSON.stringify(frame.text)) > MAX_TEXT)) ||
           (frame.failed !== undefined && typeof frame.failed !== "boolean") ||
-          (frame.interrupted !== undefined && typeof frame.interrupted !== "boolean")) {
+          (frame.interrupted !== undefined && typeof frame.interrupted !== "boolean") ||
+          (frame.attachments !== undefined && !attachmentsWithinLimits(frame.attachments))) {
         return send({ type: "error", id, reason: "invalid-deliver" });
       }
       try {
         options.deliver({ id: frame.id, threadId: frame.threadId, text: frame.text,
           ...(frame.messageId !== undefined ? { messageId: frame.messageId, failed: frame.failed, interrupted: frame.interrupted } : {}),
-          ...(frame.title !== undefined ? { title: frame.title.slice(0, 200) } : {}) },
+          ...(frame.title !== undefined ? { title: frame.title.slice(0, 200) } : {}),
+          ...(frame.attachments?.length ? { attachments: frame.attachments.map(({ name, mime, data }) => ({ name, mime, data })) } : {}) },
           frame.messageId === undefined && runBoundaryPlugins.has(device) &&
             announcedBy.get(device)?.has("reply-stream-v1") === true);
       } catch (error) {

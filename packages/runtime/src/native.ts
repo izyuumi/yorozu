@@ -8,11 +8,14 @@
  * id and hands back the one to store, so a later prompt resumes where the agent left off.
  */
 
-import { query as sdkQuery, type ModelInfo, type Options, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query as sdkQuery, tool, type ModelInfo, type Options, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { spawn } from "node:child_process";
-import { tmpdir } from "node:os";
-import { dirname } from "node:path";
-import type { AgentDescriptor, EventPayload, ModelOption, ReasoningEffort, SkillOption } from "@yorozu/shared";
+import { readFile, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, extname, resolve } from "node:path";
+import { ATTACHMENT_MAX_BYTES, type AgentDescriptor, type EventPayload, type MessageAttachment, type ModelOption,
+  type ReasoningEffort, type SkillOption } from "@yorozu/shared";
+import { z } from "zod";
 
 export interface NativeTurn {
   threadId: string;
@@ -48,6 +51,35 @@ export interface NativeTurn {
   ask?: (question: string, options: string[], signal: AbortSignal) => Promise<string | undefined>;
   beforeTool?: (signal: AbortSignal) => Promise<boolean>;
   onToolBoundary?: () => void;
+  /** Attaches a file on this Mac to the reply; resolves with what to tell the agent, throws if it cannot. */
+  sendFile?: (path: string) => Promise<string>;
+}
+
+/** The tool each native agent gets for handing the user a file. */
+export const SEND_FILE_TOOL = {
+  name: "send_file",
+  description: "Send a file on this Mac to the user. It arrives attached to your reply in their Yorozu chat, " +
+    "on Mac and iPhone, where they can open, save or share it. Use it whenever the user asks for a file, or " +
+    "when a file you made is the answer; do not paste the file's contents instead. Up to 10 files, 5 MB each.",
+  path: "Absolute path, or relative to the working directory.",
+} as const;
+
+const MIME_TYPES: Record<string, string> = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+  ".heic": "image/heic", ".svg": "image/svg+xml", ".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown",
+  ".csv": "text/csv", ".json": "application/json", ".html": "text/html", ".zip": "application/zip",
+  ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".wav": "audio/wav", ".mp4": "video/mp4", ".mov": "video/quicktime",
+};
+
+/** A file on this Mac as an attachment for the user; relative paths are from `cwd`. */
+export async function fileAttachment(path: string, cwd?: string): Promise<MessageAttachment> {
+  if (!path.trim()) throw new Error("send_file needs a path");
+  const file = resolve(cwd || homedir(), path.trim().replace(/^~(?=$|\/)/, homedir()));
+  const info = await stat(file).catch(() => { throw new Error(`No file at ${file}`); });
+  if (!info.isFile()) throw new Error(`${file} is not a file`);
+  if (info.size > ATTACHMENT_MAX_BYTES) throw new Error(`${basename(file)} is over Yorozu's 5 MB limit for one file`);
+  return { name: basename(file), mime: MIME_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
+    data: (await readFile(file)).toString("base64") };
 }
 
 /**
@@ -225,6 +257,12 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
           ...(turn.sessionId ? { resume: turn.sessionId } : {}),
           ...(turn.model ? { model: turn.model } : {}),
           ...(claudeEffort(turn.effort) ? { effort: claudeEffort(turn.effort) } : {}),
+          ...(turn.sendFile ? { mcpServers: { yorozu: createSdkMcpServer({ name: "yorozu", tools: [
+            tool(SEND_FILE_TOOL.name, SEND_FILE_TOOL.description, { path: z.string().describe(SEND_FILE_TOOL.path) }, async ({ path }) => {
+              try { return { content: [{ type: "text", text: await turn.sendFile!(path) }] }; }
+              catch (error) { return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true }; }
+            }),
+          ] }) } } : {}),
           includePartialMessages: true,
           permissionMode: turn.bypass ? "bypassPermissions" : "default",
           allowDangerouslySkipPermissions: turn.bypass === true,
@@ -251,7 +289,8 @@ export function claudeCodeRunner(query: QueryFn = sdkQuery,
               const updatedInput = await answerQuestions(input, signal);
               return updatedInput ? { behavior: "allow", updatedInput } : deny;
             }
-            if (turn.bypass) return { behavior: "allow", updatedInput: input };
+            // The file goes to the user who is asking; nothing leaves their own devices.
+            if (turn.bypass || toolName === `mcp__yorozu__${SEND_FILE_TOOL.name}`) return { behavior: "allow", updatedInput: input };
             return await turn.approve?.(toolName, input, signal) && !signal.aborted
               ? { behavior: "allow", updatedInput: input }
               : deny;

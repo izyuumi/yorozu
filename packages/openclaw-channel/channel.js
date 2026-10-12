@@ -12,6 +12,8 @@ import {
   toInboundMediaFacts,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
+import { getAgentScopedMediaLocalRoots } from "openclaw/plugin-sdk/media-runtime";
+import { loadOutboundMediaFromUrl } from "openclaw/plugin-sdk/outbound-media";
 import { createChannelReplyPipeline } from "openclaw/plugin-sdk/channel-reply-pipeline";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { applySessionModelSelection } from "openclaw/plugin-sdk/model-session-runtime";
@@ -20,7 +22,7 @@ import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-s
 import { getRuntimeConfigSnapshot } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import { createInboundDispatcher } from "./dispatch.js";
 import { CAPABILITIES } from "./capabilities.js";
-import { createAttachmentSaver } from "./media.js";
+import { createAttachmentSaver, loadReplyAttachments, replyMediaUrls } from "./media.js";
 import { createProgress } from "./progress.js";
 import { createModelResponder } from "./models.js";
 import { createRuns } from "./runs.js";
@@ -70,14 +72,21 @@ export const progress = createProgress({
   send: (frame) => link?.send(frame) ?? false,
 });
 
-async function send(to, text) {
+/** Text plus the payload's files; a file that cannot be sent is named in the text instead. */
+async function withAttachments(text, urls, options) {
+  if (!urls.length) return { text };
+  const { attachments, notes } = await loadReplyAttachments(urls, loadOutboundMediaFromUrl, options);
+  return { text: [text, ...notes].filter((part) => part.trim()).join("\n\n"), attachments };
+}
+
+async function send(to, text, attachments) {
   const threadId = normalizeYorozuTarget(to);
   if (!threadId) throw new Error("Yorozu target must be yorozu:<threadId>");
   if (!link?.connected) {
     throw new PlatformMessageNotDispatchedError("Yorozu is not running", { cause: undefined, retryable: true });
   }
   try {
-    return { messageId: await link.deliver(threadId, text) };
+    return { messageId: await link.deliver(threadId, text, attachments?.length ? { attachments } : undefined) };
   } catch (cause) {
     throw new PlatformMessageNotDispatchedError(`Yorozu delivery failed: ${String(cause)}`, { cause, retryable: true });
   }
@@ -145,10 +154,13 @@ export const yorozuPlugin = createChatChannelPlugin({
                 log: ctx.log,
                 ...(current.streaming ? { preview: (reply) => current.send({ type: "reply_preview", ...reply }) } : {}),
                 deliver: async (payload, reply) => {
-                  const text = typeof payload?.text === "string" ? payload.text : "";
-                  if (text.trim() || reply) {
-                    if (reply) await current.deliver(message.threadId, text, reply);
-                    else await send(message.threadId, text);
+                  // Reply files were already copied into OpenClaw's media store, under these roots.
+                  const { text, attachments } = await withAttachments(
+                    typeof payload?.text === "string" ? payload.text : "", replyMediaUrls(payload),
+                    { mediaLocalRoots: getAgentScopedMediaLocalRoots(getRuntimeConfigSnapshot() ?? ctx.cfg) });
+                  if (text.trim() || attachments?.length || reply) {
+                    if (reply) await current.deliver(message.threadId, text, { ...reply, ...(attachments?.length ? { attachments } : {}) });
+                    else await send(message.threadId, text, attachments);
                   }
                 },
               }, signal, begin)),
@@ -173,6 +185,13 @@ export const yorozuPlugin = createChatChannelPlugin({
         return threadId ? { ok: true, to: threadId } : { ok: false, error: new Error("Yorozu target must be yorozu:<threadId>") };
       },
     },
-    attachedResults: { channel: "yorozu", sendText: ({ to, text }) => send(to, text) },
+    attachedResults: {
+      channel: "yorozu",
+      sendText: ({ to, text }) => send(to, text),
+      sendMedia: async ({ to, text = "", mediaUrl, mediaAccess, mediaLocalRoots, mediaReadFile }) => {
+        const reply = await withAttachments(text, [mediaUrl], { mediaAccess, mediaLocalRoots, mediaReadFile });
+        return send(to, reply.text, reply.attachments);
+      },
+    },
   },
 });

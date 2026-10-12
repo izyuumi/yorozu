@@ -1,5 +1,8 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { CHILD_ENV_KEYS, CHILD_ENV_PREFIXES, childEnv, claudeCodeRunner, type QueryFn } from "./native.js";
+import { CHILD_ENV_KEYS, CHILD_ENV_PREFIXES, childEnv, claudeCodeRunner, fileAttachment, type QueryFn } from "./native.js";
 
 /** A stand-in for the SDK's Query: the messages it will yield, plus close(). */
 function fakeQuery(messages: unknown[] | ((options: Record<string, unknown>) => unknown[])) {
@@ -348,4 +351,24 @@ test("childEnv skips undefined values, lets extra win, and reads process.env by 
     expect(Object.keys(env).some((key) => key.startsWith("YOROZU_"))).toBe(false);
     expect(Object.values(env).every((value) => typeof value === "string")).toBe(true);
   } finally { vi.unstubAllEnvs(); }
+});
+
+test("fileAttachment reads a file relative to the folder and refuses what cannot be sent", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "yorozu-send-"));
+  writeFileSync(join(folder, "chart.png"), "png");
+  expect(await fileAttachment("chart.png", folder)).toEqual({ name: "chart.png", mime: "image/png", data: Buffer.from("png").toString("base64") });
+  await expect(fileAttachment("missing.txt", folder)).rejects.toThrow("No file at");
+  await expect(fileAttachment(".", folder)).rejects.toThrow("is not a file");
+});
+
+test("Claude Code gets send_file when the host can take files, without asking to use it", async () => {
+  const { query, calls } = fakeQuery([init("s"), result("s", "done")]);
+  const approve = vi.fn();
+  await claudeCodeRunner(query).run({ threadId: "cc", cwd: "/tmp/proj", text: "go", signal: new AbortController().signal,
+    approve, sendFile: async () => "Sent" });
+  const options = calls[0] as unknown as Options;
+  expect(options.mcpServers).toHaveProperty("yorozu");
+  expect(await options.canUseTool!("mcp__yorozu__send_file", { path: "a" }, { signal: new AbortController().signal, toolUseID: "t" }))
+    .toMatchObject({ behavior: "allow" });
+  expect(approve).not.toHaveBeenCalled();
 });
