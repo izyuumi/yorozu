@@ -199,9 +199,10 @@ struct MessageRow: View {
     }
 
     @ViewBuilder private var question: some View {
-        Label("Question", systemImage: "questionmark.bubble")
-            .font(.caption.weight(.semibold))
+        Image(systemName: "questionmark.bubble")
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(.tint)
+            .accessibilityLabel("Question")
         MarkdownBlocks(bubble.shownText)
     }
 

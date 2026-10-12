@@ -130,10 +130,11 @@ struct MainChat: View {
         Button {
             intent.followLatest(); withAnimation(.snappy) { position.scrollTo(edge: .bottom) }
         } label: {
-            Label { if unseen > 0 { Text("\(unseen) new") } } icon: { Image(systemName: "arrow.down") }
+            // The arrow alone (owner, 2026-10-12); the count is in the accessibility label.
+            Image(systemName: "arrow.down")
                 .font(.callout.weight(.semibold)).foregroundStyle(Color.accentColor)
-                .padding(.horizontal,12).padding(.vertical,5)
-                .background(.thickMaterial,in: Capsule()).overlay { Capsule().strokeBorder(.separator,lineWidth: 0.5) }
+                .padding(8)
+                .background(.thickMaterial,in: Circle()).overlay { Circle().strokeBorder(.separator,lineWidth: 0.5) }
                 .shadow(color: .black.opacity(0.16),radius: 7,y: 4)
         }.buttonStyle(.plain).accessibilityLabel(unseen > 0 ? Text("\(unseen) new messages, scroll to bottom") : Text("Scroll to bottom"))
     }

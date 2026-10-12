@@ -489,22 +489,22 @@ private struct Toast<Content: View>: View {
     }
 }
 
-/// "↓ N new", or "↓ Scroll to bottom" with nothing new: back to the bottom.
+/// "↓": back to the bottom. An icon, not words (owner, 2026-10-12); VoiceOver hears how many are new.
 private struct NewMessagesPill: View {
     let count: Int
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Label(count > 0 ? String(localized: "\(count) new") : String(localized: "Scroll to bottom"), systemImage: "arrow.down")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, LayoutMetrics.gutter)
-                .padding(.vertical, LayoutMetrics.inner)
-                .contentShape(Capsule())
+            Image(systemName: "arrow.down")
+                .font(.body.weight(.semibold))
+                .frame(width: controlTarget, height: controlTarget)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(.tint)
-        .yorozuGlass(in: Capsule())
+        .yorozuGlass(in: Circle())
+        .accessibilityLabel(count > 0 ? String(localized: "\(count) new") : String(localized: "Scroll to bottom"))
     }
 }
 
