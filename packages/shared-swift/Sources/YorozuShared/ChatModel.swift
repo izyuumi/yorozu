@@ -3201,6 +3201,8 @@ public final class ChatModel {
             thread.insert(event, at: index)
         }
         timeline(event.threadId).events = thread
+        // A streamed reply's row is already on screen when its files land, so it never appears again.
+        if visibleAttachmentMessages.contains("\(event.threadId)\0\(event.id)") { requestAttachmentDownloads(event) }
         // Synced pages restore once the page is whole: a later message in it means the prompt
         // was already used.
         if persist { restoreRewoundPrompt(in: event.threadId) }
