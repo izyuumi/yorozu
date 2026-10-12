@@ -2791,6 +2791,24 @@ func deferredAttachmentDownloadsAfterVisibleHistoryArrives(legacyCache: Bool) as
     })
 }
 
+@MainActor @Test func streamedReplyDownloadsFilesThatArriveWithItsFinal() async throws {
+    let transport = FakeTransport()
+    let model = await connected(transport)
+    defer { model.close() }
+    await transport.yield(.compatibility(.compatible(version: 1, capabilities: ["attachment-chunks-v1"])))
+    let draft = event("reply", .message(MessageData(role: .agent, text: "Here")), thread: "t")
+    await transport.yield(.event(draft))
+    #expect(await eventually { model.events["t"]?.contains(where: { $0.id == draft.id }) == true })
+    model.requestAttachmentDownloads(draft)
+    let bytes = Data(repeating: 7, count: 300_000)
+    let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    await transport.yield(.event(event("reply", .message(MessageData(role: .agent, text: "Here", done: true,
+        attachments: [MessageAttachment(name: "chart.png", mime: "image/png", data: "",
+            sizeBytes: bytes.count, sha256: digest)])), thread: "t")))
+    #expect(await sent(by: transport, payload: .attachmentDownloadRequest(AttachmentDownloadRequestData(
+        messageId: "reply", index: 0, offset: 0)), in: "t") != nil)
+}
+
 @MainActor @Test func confirmedAttachmentBytesSurviveClientRelaunch() throws {
     let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
