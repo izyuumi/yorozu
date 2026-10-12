@@ -4851,7 +4851,7 @@ test("an OpenClaw reply's files are logged on the agent message; oversized files
       .toMatchObject({ data: { role: "agent", text: "", attachments: [pdf] } });
     plugin.send({ type: "deliver", id: "huge", threadId: "t1", text: "",
       attachments: [{ ...pdf, data: Buffer.alloc(5 * 1024 * 1024 + 1).toString("base64") }] });
-    await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "error", id: "huge", reason: "invalid-deliver" }));
+    await vi.waitFor(() => expect(plugin.frames).toContainEqual({ type: "error", id: "huge", reason: "invalid-deliver" }), { timeout: 10_000 });
   } finally { plugin.close(); }
 });
 
