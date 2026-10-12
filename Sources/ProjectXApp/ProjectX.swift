@@ -234,10 +234,18 @@ import YorozuWire
     }
     /// `error` in the status line: a known setup cause in plain words with the raw text as the tooltip, else the raw text.
     /// Another bundle with this bundle id is installed (Yorozu 1 kept beside this one, or a second copy).
-    static var otherCopyInstalled: Bool {
+    static var otherCopyInstalled: Bool { otherInstalledCopy != nil }
+    /// Another bundle with this bundle id installed where apps live (`/Applications`, `~/Applications`): Yorozu 1 kept beside
+    /// this one, or a second copy. LaunchServices also lists every Xcode build product and scratch copy, which are not installs
+    /// and would otherwise keep the login item off and the v1 migration from running on any Mac that builds Yorozu.
+    static var otherInstalledCopy: URL? {
         let me = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
-        guard let id = Bundle.main.bundleIdentifier else { return false }
-        return NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).contains { $0.resolvingSymlinksInPath().standardizedFileURL.path != me }
+        guard let id = Bundle.main.bundleIdentifier else { return nil }
+        let homeApps = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path + "/"
+        return NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).first { url in
+            let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+            return path != me && (path.hasPrefix("/Applications/") || path.hasPrefix(homeApps)) && FileManager.default.fileExists(atPath: path)
+        }
     }
     func showError(_ error: Error) {
         let plain = PlainError.describe(error)

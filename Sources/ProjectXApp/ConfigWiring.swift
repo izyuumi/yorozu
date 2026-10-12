@@ -110,8 +110,7 @@ extension AppModel {
         guard runtimeMode != .fixture, environment["PROJECTX_DATA"] == nil, let marker = configFile?.deletingLastPathComponent().appendingPathComponent("login-item-registered") else {
             loginItemBlocker = String(localized: "Test fixture and PROJECTX_DATA runs leave the login item alone."); return
         }
-        let me = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL.path
-        if let id = Bundle.main.bundleIdentifier, let other = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id).first(where: { $0.resolvingSymlinksInPath().standardizedFileURL.path != me }) {
+        if let other = Self.otherInstalledCopy {
             loginItemBlocker = String(localized: "Off while another Yorozu with the same bundle id is installed (\(other.path)): macOS could act on that app's login item.")
             if general.startAtLogin { status = String(localized: "Start at login is off while another Yorozu with the same id is installed") }; return
         }
