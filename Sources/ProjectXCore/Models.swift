@@ -237,8 +237,8 @@ public struct RoutingInput: Codable, Sendable {
     /// The classification step's keywords for the message's subject, what its images show included (owner, 2026-10-10).
     public var subject: [String]? = nil
     /// Recall (owner, 2026-10-13): earlier messages of any chat that match the subject, the current chat's first; `chat` is
-    /// the thread's name or "Main chat", for the citation link. Left out when there are none.
-    public struct FoundView: Codable, Sendable { public var id: String; public var chat: String; public var role: String; public var body: String }
+    /// the thread's name or "Main chat"; `link` is the citation, `[In <chat>](yorozu://message/<id>)`. Left out when there are none.
+    public struct FoundView: Codable, Sendable { public var link: String; public var chat: String; public var role: String; public var body: String }
     public var found: [FoundView] = []
     enum CodingKeys: String, CodingKey { case message, files, subject, found, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
     /// Empty job lists are left out, so a workspace without jobs sends the pre-#319 context unchanged.
