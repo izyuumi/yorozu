@@ -305,6 +305,7 @@ public actor Engine {
                 routed.topics = candidates.map { t in let h = Int(Date().timeIntervalSince1970 - t.created) / 3600; return RoutingInput.TopicView(id: t.id,label: t.label,age: h < 48 ? "\(h)h" : "\(h / 24)d",attachedTo: t.attachedTo,summary: t.summary) }
                 routed.policy += Self.candidateLine(kind,pinned: pinned,thread: thread != nil,more: i < rounds.count - 1) + (naming == nil ? "" : Self.namingLine)
                 routed = trimmed(routed,blocking: blocking,forget: forget)
+                if !input.found.isEmpty { try await store.receipt(kind: "routing_recall",body: try encoded(["found": input.found.count,"kept": routed.found.count])) }
                 // A later round that fails or drops the new label keeps the earlier round's new topic.
                 let raw: Decision
                 do { raw = try await harness.route(routed,stronger: false) }
@@ -379,9 +380,9 @@ public actor Engine {
             return input.topics.count > floor ? input.topics.lastIndex { !kept.contains($0.id) } : nil
         }
         while Prompts.routingPrompt(input,stronger: true).utf8.count > harness.rawPromptCap {
-            if !input.found.isEmpty { input.found.removeLast() }
-            else if !forget, !input.memory.isEmpty { input.memory.removeLast() }
+            if !forget, !input.memory.isEmpty { input.memory.removeLast() }
             else if let i = input.work.firstIndex(where: { !blocking.contains($0.id) }) { input.work.remove(at: i) }
+            else if !input.found.isEmpty { input.found.removeLast() }
             else if let i = oldTopic(floor: 10) { input.topics.remove(at: i); topics += 1 }
             else if !input.jobs.isEmpty { input.jobs.removeLast(); jobs += 1 }
             else if !input.recent.isEmpty { input.recent.removeFirst() }
