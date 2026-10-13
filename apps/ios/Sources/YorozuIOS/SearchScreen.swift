@@ -11,6 +11,9 @@ enum ChatRoute: Hashable {
     case search
     /// The Mac's page around a message outside the cache.
     case page(String)
+    /// `threads-v1`: the archived threads, and New chat's empty thread with the id its first message creates.
+    case archived
+    case newChat(String)
 }
 
 /// Where a search hit opens.

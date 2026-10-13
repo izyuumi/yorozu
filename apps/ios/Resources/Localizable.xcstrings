@@ -1,6 +1,81 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Main chat" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインチャット" } }
+      }
+    },
+    "Show more" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "さらに表示" } }
+      }
+    },
+    "Chats" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "チャット" } }
+      }
+    },
+    "New chat" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "新規チャット" } }
+      }
+    },
+    "No archived chats" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーカイブ済みのチャットはありません" } }
+      }
+    },
+    "Archived chats leave the list and stay searchable." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アーカイブしたチャットは一覧から外れ、検索では見つかります。" } }
+      }
+    },
+    "Started by Secretary" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "秘書が開始" } }
+      }
+    },
+    "%lld unread" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "未読 %lld 件" } }
+      }
+    },
+    "Rename chat" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "チャット名を変更" } }
+      }
+    },
+    "Its messages are removed for good, from search and from what Yorozu can recall. Memory already taken from them stays." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メッセージは検索からも Yorozu が思い出せる内容からも完全に削除されます。すでにメッセージから取り込んだメモリは残ります。" } }
+      }
+    },
+    "Started by Secretary from the main chat" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインチャットから秘書が開始" } }
+      }
+    },
+    "Worker" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ワーカー" } }
+      }
+    },
+    "Secretary" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "秘書" } }
+      }
+    },
+    "Yorozu answers here and names the chat from your first message." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu がここで返信し、最初のメッセージからチャット名を付けます。" } }
+      }
+    },
+    "Chat actions" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "チャットの操作" } }
+      }
+    },
     "Couldn’t keep this for Yorozu. Try again." : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu に渡せませんでした。もう一度お試しください。" } }

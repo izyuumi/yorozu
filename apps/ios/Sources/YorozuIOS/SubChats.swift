@@ -255,14 +255,24 @@ struct TopicScreen: View {
     /// A message or task to scroll to (a search hit); a task's activity opens.
     let focus: String?
     let onMainChat: () -> Void
+    /// `threads-v1`: New chat's empty thread, whose first message creates it on the host.
+    var isNew = false
+    /// A message to show: the main timeline's (a secretary-started thread's source) or a cited one.
+    var onOpenMessage: (String) -> Void = { _ in }
 
     @State private var position = ScrollPosition(edge: .bottom)
     /// Tasks whose activity is toggled from its default (open while active).
     @State private var toggled: Set<String> = []
-    /// A job's own input (#319); other sub-chats are inspect only.
+    /// A job's own input (#319), or a thread's composer (`threads-v1`); without threads other sub-chats are inspect only.
     @State private var draft = ""
     @State private var noFiles: [StagedFile] = []
+    @State private var files: [StagedFile] = []
     @State private var details: PhoneModel.Bubble?
+    @State private var renaming: ThreadRef?
+    @State private var deleting: ThreadRef?
+    @State private var sentRead: String?
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     private enum Item: Identifiable {
         case message(PhoneModel.Bubble)
@@ -285,24 +295,99 @@ struct TopicScreen: View {
 
     var body: some View {
         let tasks = model.tasks(in: topicId)
-        let messages = model.bubbles.filter { $0.topicId == topicId && !model.hidesInTopic($0) }
+        let job = model.jobsSupported == true ? model.jobs.first { $0.topicId == topicId } : nil
+        // A thread (`threads-v1`): its own messages too, typed or answered in it; a composer instead of inspect only.
+        let threads = model.threadsSupported == true && job == nil
+        let row = model.thread(topicId)
+        let held = (threads ? model.bubbles(inThread: topicId) : model.bubbles.filter { $0.topicId == topicId }).filter { !model.hidesInTopic($0) }
+        // Nothing of an older thread held here: the host's page around its newest message.
+        let pageAround = threads && held.isEmpty ? row?.lastMessageId : nil
+        let messages = pageAround != nil && model.page?.messageId == pageAround ? model.page?.bubbles ?? [] : held
+        let source = threads && (row?.bySecretary ?? (model.topics[topicId]?.origin.map { $0 != "user" } ?? false))
+            ? row?.sourceMessageId ?? model.topics[topicId]?.sourceMessageId : nil
+        let ref = ThreadRef(id: topicId, name: model.threadName(topicId) ?? "", archived: row?.archivedAt != nil || model.topics[topicId]?.archivedAt != nil)
         // Grouped once for every card, not filtered per card.
         let taskIds = Set(tasks.map(\.id))
         let events = Dictionary(grouping: model.workerEvents.values.filter { taskIds.contains($0.taskId) }, by: \.taskId)
         let amendments = Dictionary(grouping: model.amendments.values.filter { taskIds.contains($0.taskId) }, by: \.taskId)
         let items = (messages.map(Item.message) + tasks.map(Item.task)).sorted { $0.ts < $1.ts }
-        let job = model.jobsSupported == true ? model.jobs.first { $0.topicId == topicId } : nil
+        let readTarget = threads && scenePhase == .active && model.state == .paired ? messages.last { $0.seq != nil }?.id : nil
+        let missing = model.topics[topicId] == nil && job == nil && !(threads && (isNew || row != nil || !messages.isEmpty))
+        let controls = threads && (model.topics[topicId] != nil || row != nil)
+        list(items, source: source, threads: threads, events: events, amendments: amendments)
+        .overlay {
+            if missing {
+                ContentUnavailableView("Not on this device", systemImage: "bubble.left.and.bubble.right",
+                                       description: Text("This activity is older than what this device keeps. Open it on the host."))
+            } else if isNew && items.isEmpty {
+                ContentUnavailableView("New chat", systemImage: "square.and.pencil",
+                                       description: Text("Yorozu answers here and names the chat from your first message."))
+            }
+        }
+        .task {
+            guard let focus else { return }
+            if let task = model.tasks[focus], !task.isActive { toggled.insert(focus) }
+            position.scrollTo(id: focus, anchor: .center)
+        }
+        .task(id: model.state == .paired) {
+            if let pageAround, model.state == .paired, model.page?.messageId != pageAround { await model.loadPage(around: pageAround, thread: topicId) }
+        }
+        // A thread's own read cursor: its newest stored message while it is on screen and the app is active.
+        .onChange(of: readTarget, initial: true) { _, id in
+            guard let id, id != sentRead, id != model.threadReads[topicId]?.messageId else { return }
+            sentRead = id
+            Task { await model.markRead(id, thread: topicId) }
+        }
+        .yorozuBottomBar { bottomBar(job: job, threads: threads, working: tasks.contains(where: \.isActive)) }
+        .navigationTitle(job?.name ?? model.threadName(topicId) ?? (isNew ? String(localized: "New chat") : ""))
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationSubtitleIfAvailable(job.map(\.schedule) ?? (threads ? "" : String(localized: "Inspect only")))
+        .toolbar {
+            if controls {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        ThreadMenu(model: model, ref: ref, renaming: $renaming, deleting: $deleting)
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .accessibilityLabel("Chat actions")
+                }
+            }
+        }
+        .threadDialogs(model: model, renaming: $renaming, deleting: $deleting) { dismiss() }
+        .sheet(item: $details) { bubble in
+            MessageDetails(bubble: bubble, delivery: model.delivery(of: bubble),
+                           onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
+        }
+    }
+
+    private func list(_ items: [Item], source: String?, threads: Bool, events: [String: [WorkerEventData]], amendments: [String: [AmendmentData]]) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                if let source {
+                    Button { onOpenMessage(source) } label: {
+                        Label("Started by Secretary from the main chat", systemImage: "arrow.turn.down.right")
+                            .font(.footnote)
+                    }
+                    .readableRow(gutter: LayoutMetrics.stack)
+                }
                 AttachLinks(model: model, topicId: topicId).readableRow(gutter: LayoutMetrics.stack)
                 ForEach(items) { item in
                     switch item {
                     case .message(let bubble):
-                        MessageRow(bubble: bubble, header: nil, delivery: model.delivery(of: bubble),
-                                   onShowRequest: {}, onShowDetails: { details = bubble },
-                                   onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
-                            .readableRow(gutter: LayoutMetrics.stack)
-                            .id(bubble.id)
+                        VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+                            // Who speaks, in a thread: the secretary, or a worker's result.
+                            if threads, !bubble.user {
+                                Text(bubble.kind == "result" ? String(localized: "Worker") : String(localized: "Secretary"))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            MessageRow(bubble: bubble, header: nil, delivery: model.delivery(of: bubble),
+                                       onShowRequest: {}, onShowDetails: { details = bubble },
+                                       onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
+                        }
+                        .readableRow(gutter: LayoutMetrics.stack)
+                        .id(bubble.id)
                     case .task(let task):
                         TaskCard(model: model, task: task, events: events[task.id] ?? [], amendments: amendments[task.id] ?? [],
                                  open: task.isActive != toggled.contains(task.id)) {
@@ -319,41 +404,40 @@ struct TopicScreen: View {
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .background(Color(.systemGroupedBackground))
-        .overlay {
-            if model.topics[topicId] == nil && job == nil {
-                ContentUnavailableView("Not on this device", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("This activity is older than what this device keeps. Open it on the host."))
+    }
+
+    /// A job's input, a thread's composer (`threads-v1`), or the inspect-only note.
+    @ViewBuilder private func bottomBar(job: JobListData.Job?, threads: Bool, working: Bool) -> some View {
+        VStack(spacing: LayoutMetrics.tight) {
+            if !model.statusKnown {
+                Text("\(model.shownStatus.label) · Status unknown")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-        }
-        .task {
-            guard let focus else { return }
-            if let task = model.tasks[focus], !task.isActive { toggled.insert(focus) }
-            position.scrollTo(id: focus, anchor: .center)
-        }
-        .yorozuBottomBar {
-            VStack(spacing: LayoutMetrics.tight) {
-                if !model.statusKnown {
-                    Text("\(model.shownStatus.label) · Status unknown")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+            if let job {
+                Composer(text: $draft, files: $noFiles, attachments: false, working: false, enabled: model.canSend, allowsFiles: false) {
+                    model.send(draft, toJob: job.id, topic: topicId)
+                    draft = ""
+                    position.scrollTo(edge: .bottom)
+                } onSendAsTextFile: {}
+            } else if threads {
+                if let refusal = model.threadRefusals[topicId] {
+                    Text(refusal).font(.footnote).foregroundStyle(YorozuPalette.warning)
                 }
-                if let job {
-                    Composer(text: $draft, files: $noFiles, attachments: false, working: false, enabled: model.canSend, allowsFiles: false) {
-                        model.send(draft, toJob: job.id, topic: topicId)
+                Composer(text: $draft, files: $files, attachments: model.attachmentsSupported != false, working: working, enabled: model.canSend) {
+                    // New chat's first message creates the thread; until its record arrives every send says so, which
+                    // the host ignores once the thread exists.
+                    if model.send(text: draft, files: files, thread: topicId, newThread: isNew && model.topics[topicId] == nil) {
                         draft = ""
+                        files = []
                         position.scrollTo(edge: .bottom)
-                    } onSendAsTextFile: {}
-                } else {
-                    inspectOnly
+                    }
+                } onSendAsTextFile: {
+                    if let file = try? StagedFile.textFile(draft) { files.append(file); draft = "" }
                 }
+            } else {
+                inspectOnly
             }
-        }
-        .navigationTitle(job?.name ?? model.topics[topicId]?.label ?? "")
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationSubtitleIfAvailable(job.map(\.schedule) ?? String(localized: "Inspect only"))
-        .sheet(item: $details) { bubble in
-            MessageDetails(bubble: bubble, delivery: model.delivery(of: bubble),
-                           onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
         }
     }
 

@@ -206,11 +206,19 @@ struct ChatScreen: View {
             .navigationDestination(for: ChatRoute.self) { route in
                 switch route {
                 case .topics:
-                    TopicsScreen(model: model)
+                    if model.threadsSupported == true {
+                        ThreadsScreen(model: model) { navigate([]) } onNewChat: { path.append(.newChat(UUID().uuidString)) }
+                    } else {
+                        TopicsScreen(model: model)
+                    }
                 case .jobs:
                     JobsScreen(model: model) { path.append(.topic($0, focus: nil)) }
                 case .topic(let id, let focus):
-                    TopicScreen(model: model, topicId: id, focus: focus) { navigate([]) }
+                    TopicScreen(model: model, topicId: id, focus: focus, onMainChat: { navigate([]) }, onOpenMessage: openMessage)
+                case .newChat(let id):
+                    TopicScreen(model: model, topicId: id, focus: nil, onMainChat: { navigate([]) }, isNew: true, onOpenMessage: openMessage)
+                case .archived:
+                    ArchivedThreadsScreen(model: model)
                 case .search:
                     SearchScreen(model: model, onOpen: open) { path.removeLast() }
                 case .page(let id):
@@ -246,6 +254,12 @@ struct ChatScreen: View {
             }
         }
         .environment(model.files)
+        // The secretary cites what it recalls as `yorozu://message/<id>` links (owner, 2026-10-13), in every screen.
+        .environment(\.openURL, OpenURLAction { url in
+            guard url.scheme == "yorozu", url.host() == "message", let id = url.pathComponents.last, id != "/" else { return .systemAction }
+            openMessage(id)
+            return .handled
+        })
         .yorozuTint()
     }
 
@@ -384,7 +398,10 @@ struct ChatScreen: View {
             }
         }
         model.pushOpen = nil
-        if let id {
+        // A push for a thread's message opens the thread (owner, 2026-10-13).
+        if let id, let thread = model.bubbles.first(where: { $0.id == id })?.threadId {
+            path = [.topics, .topic(thread, focus: id)]
+        } else if let id {
             atBottom = false
             withAnimation { position.scrollTo(id: id, anchor: .center) }
         } else {
@@ -410,6 +427,19 @@ struct ChatScreen: View {
            let new = model.timeline.firstIndex(where: { $0.id == id }), new <= held { return }
         sentRead = id
         Task { await model.markRead(id) }
+    }
+
+    /// One message by id (a cited link, a thread's source): its thread opens at it, the main timeline scrolls to it, and
+    /// one not held here opens the host's page around it.
+    private func openMessage(_ id: String) {
+        guard let bubble = model.bubbles.first(where: { $0.id == id }) else { path.append(.page(id)); return }
+        if let thread = bubble.threadId {
+            path.append(.topic(thread, focus: id))
+        } else {
+            path = []
+            atBottom = false
+            withAnimation { position.scrollTo(id: id, anchor: .center) }
+        }
     }
 
     /// A search hit: the main timeline scrolls to it; a sub-chat opens over the search; a message
