@@ -34,189 +34,27 @@ struct ChatScreen: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
-                    let byId = Dictionary(model.timeline.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
-                    let firstUnread = firstUnread
-                    ForEach(rows) { row in
-                        VStack(spacing: LayoutMetrics.stack) {
-                            if let day = row.day {
-                                Text(day)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity)
-                            }
-                            if row.id == firstUnread { UnreadDivider() }
-                            MessageRow(
-                                bubble: row.bubble, header: header(for: row.bubble, in: byId),
-                                delivery: model.delivery(of: row.bubble),
-                                onShowRequest: { show(row.bubble.replyTo) },
-                                onShowDetails: { details = row.bubble },
-                                onResend: { model.resend(row.bubble.id) },
-                                onDelete: { model.delete(row.bubble.id) },
-                                onReply: canReply(row.bubble) ? { model.replyingTo = row.bubble.id } : nil)
-                        }
-                        .readableRow()
-                        .id(row.id)
-                    }
-                    if model.routing == true {
-                        ThinkingRow().readableRow()
-                    }
-                    // The end, as a row: what `scrollToEnd()` scrolls to. It carries the bottom margin (with the stack's
-                    // spacing above it), so the end it aligns is the content's end.
-                    Color.clear.frame(height: LayoutMetrics.gutter - LayoutMetrics.stack).id(Self.endId)
-                }
-                .scrollTargetLayout()
-                .padding(.top, LayoutMetrics.gutter)
-            }
-            .scrollPosition($position)
-            // Only the first layout starts at the bottom; later growth leaves the reading position alone.
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .scrollDismissesKeyboard(.interactively)
-            .onScrollGeometryChange(for: ScrollEdge.self) { geometry in
-                // `containerSize` is the bounds less the insets and the offset is -top at the top, so the end
-                // sits at content - container - top (measured on iOS 26 and 27, with the bars' insets).
-                ScrollEdge(offset: geometry.contentOffset.y,
-                           maxOffset: geometry.contentSize.height - geometry.containerSize.height - geometry.contentInsets.top)
-            } action: { old, new in
-                edge = new
-                let atEnd = new.offset >= new.maxOffset - Self.bottomSlack
-                if [.tracking, .interacting, .decelerating].contains(phase) {
-                    atBottom = atEnd
-                } else if atEnd {
-                    atBottom = true
-                } else if atBottom, phase == .idle, new.offset == old.offset, new.maxOffset != old.maxOffset {
-                    // Following, and the end moved under a still view (a message, a longer answer, a row measuring
-                    // taller, the keyboard): stay on the newest message. Only when the view itself did not move: a drag's
-                    // first frames can arrive before its phase does, and pinning those yanked the drag back. Drift of the
-                    // view while following is left to the settle at rest.
-                    scrollToEnd()
-                }
-                scheduleSettle()
-                if atBottom { seenId = model.timeline.last?.id }
-            }
-            .onScrollPhaseChange { _, new in
-                phase = new
-                scheduleSettle()
-            }
-            .onChange(of: model.timeline.last?.id) { _, _ in
-                guard let last = model.timeline.last else { return }
-                if atBottom {
-                    scrollToEnd()
-                    seenId = last.id
-                }
-            }
-            .overlay {
-                if model.timeline.isEmpty && model.working != true {
-                    EmptyChat { model.draft = $0 }
-                }
-            }
-            .overlay(alignment: .bottom) {
-                // Whenever the view is away from the end: "↓ N new" with messages below, else "Scroll to bottom".
-                VStack {
-                    if !atBottom {
-                        NewMessagesPill(count: newCount) {
-                            atBottom = true
-                            seenId = model.timeline.last?.id
-                            withAnimation { scrollToEnd() }
-                        }
-                        .padding(.bottom, LayoutMetrics.inner)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
-                // Scoped to the pill: on the scroll view it animated every programmatic scroll, which then fought the
-                // settle back onto the end.
-                .animation(.snappy, value: atBottom)
-            }
-            // The link's state and the Mac's work float over the timeline as toasts rather than strips that take its
-            // space: they come and go often, and the messages must not move when they do.
-            .overlay(alignment: .top) {
-                VStack(spacing: LayoutMetrics.inner) {
-                    // Words as well as the dot, so the state is never told by colour alone.
-                    if model.shownStatus != .connected {
-                        // Off the link the Mac's work state is unknown, never idle.
-                        Toast { Text(model.updateRequired ?? String(localized: "\(model.shownStatus.label) · Status unknown")) }
-                    } else if let reason = model.readinessReason {
-                        // The Mac's own readiness; when blocked the composer below is off with it.
-                        Toast {
-                            Label { Text("\(reason) · Fix this on the host") } icon: {
-                                Image(systemName: model.readiness?.state == .blocked ? "xmark.octagon" : "exclamationmark.triangle")
-                                    .foregroundStyle(model.readiness?.state == .blocked ? YorozuPalette.vermilion : YorozuPalette.warning)
-                            }
-                        }
-                    }
-                    if model.working == true {
-                        Toast {
-                            Label { Text("Working…") } icon: { ProgressView().controlSize(.small) }
-                        }
-                    }
-                }
-                .padding(.top, LayoutMetrics.inner)
-                .padding(.horizontal, LayoutMetrics.gutter)
-                .allowsHitTesting(false)
-                .animation(.default, value: model.shownStatus)
-                .animation(.default, value: model.readinessReason)
-                .animation(.default, value: model.working)
-            }
-            .yorozuBottomBar {
-                VStack(spacing: 0) {
-                    Composer(text: $model.draft, files: $model.draftFiles, attachments: model.attachmentsSupported != false,
-                             working: model.working == true, enabled: model.canSend,
-                             replyQuote: replyQuote, onCancelReply: { model.replyingTo = nil }) {
-                        // Sending jumps to the bottom, so the sent message and its answer are followed.
-                        atBottom = true
-                        scrollToEnd()
-                        model.send()
-                    } onSendAsTextFile: {
-                        atBottom = true
-                        scrollToEnd()
-                        model.sendAsTextFile()
-                    }
-                }
-            }
-            .navigationTitle("Yorozu")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationSubtitleIfAvailable(model.shownStatus.label)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    // A standard bar button: the whole glass circle is the target, and the badge is the bar's own.
-                    // The two-bubble symbol is wider than tall, so it is drawn a size down to sit inside the circle; the bar
-                    // ignores font and scale on a `Label`, only a bare image takes them (checked on iOS 27).
-                    Button { navigate([.topics]) } label: {
-                        Image(systemName: "bubble.left.and.bubble.right").font(.subheadline)
-                    }
-                        .accessibilityLabel("Activities")
-                        .badge(model.attentionTopics)
-                        .accessibilityValue(model.attentionTopics > 0 ? String(localized: "\(model.attentionTopics) need attention") : "")
-                }
-                if !Self.hasSubtitle {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Image(systemName: "circle.fill")
-                            .font(.system(size: Self.dot))
-                            .foregroundStyle(dotColor)
-                            .accessibilityElement()
-                            .accessibilityLabel(model.shownStatus.label)
-                    }
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("Search", systemImage: "magnifyingglass") { navigate([.search]) }
-                    Button("Settings", systemImage: "gearshape") { settings = true }
-                }
+            // With threads (owner, 2026-10-14) the stack starts at the thread list and the main chat is a page of it, like
+            // every thread; a host without `threads-v1` keeps the main chat as the root.
+            Group {
+                if listRoot { threadList } else { timeline }
             }
             .navigationDestination(for: ChatRoute.self) { route in
                 switch route {
+                case .main:
+                    timeline
                 case .topics:
                     if model.threadsSupported == true {
-                        ThreadsScreen(model: model) { navigate([]) } onNewChat: { path.append(.newChat(UUID().uuidString)) }
+                        ThreadsScreen(model: model) { navigate(mainPath) } onNewChat: { path.append(.newChat(UUID().uuidString)) }
                     } else {
                         TopicsScreen(model: model)
                     }
                 case .jobs:
                     JobsScreen(model: model) { path.append(.topic($0, focus: nil)) }
                 case .topic(let id, let focus):
-                    TopicScreen(model: model, topicId: id, focus: focus, onMainChat: { navigate([]) }, onOpenMessage: openMessage)
+                    TopicScreen(model: model, topicId: id, focus: focus, onMainChat: { navigate(mainPath) }, onOpenMessage: openMessage)
                 case .newChat(let id):
-                    TopicScreen(model: model, topicId: id, focus: nil, onMainChat: { navigate([]) }, isNew: true, onOpenMessage: openMessage)
+                    TopicScreen(model: model, topicId: id, focus: nil, onMainChat: { navigate(mainPath) }, isNew: true, onOpenMessage: openMessage)
                 case .archived:
                     ArchivedThreadsScreen(model: model)
                 case .search:
@@ -261,6 +99,200 @@ struct ChatScreen: View {
             return .handled
         })
         .yorozuTint()
+    }
+
+    /// The thread list is the root unless the host has said it doesn't take `threads-v1` (unknown counts as taking it,
+    /// so the app opens on the list before the first handshake).
+    private var listRoot: Bool { model.threadsSupported != false }
+
+    /// The main chat's route: a page over the thread list, or the root itself.
+    private var mainPath: [ChatRoute] { listRoot ? [.main] : [] }
+
+    private var threadList: some View {
+        ThreadsScreen(model: model) { navigate([.main]) } onNewChat: { navigate([.newChat(UUID().uuidString)]) }
+            .navigationSubtitleIfAvailable(model.shownStatus.label)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarLeading) {
+                    Button("Search", systemImage: "magnifyingglass") { navigate([.search]) }
+                    Button("Settings", systemImage: "gearshape") { settings = true }
+                }
+            }
+    }
+
+    /// The main chat: the root without threads, else the `.main` page.
+    private var timeline: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                let byId = Dictionary(model.timeline.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+                let firstUnread = firstUnread
+                ForEach(rows) { row in
+                    VStack(spacing: LayoutMetrics.stack) {
+                        if let day = row.day {
+                            Text(day)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
+                        }
+                        if row.id == firstUnread { UnreadDivider() }
+                        MessageRow(
+                            bubble: row.bubble, header: header(for: row.bubble, in: byId),
+                            delivery: model.delivery(of: row.bubble),
+                            onShowRequest: { show(row.bubble.replyTo) },
+                            onShowDetails: { details = row.bubble },
+                            onResend: { model.resend(row.bubble.id) },
+                            onDelete: { model.delete(row.bubble.id) },
+                            onReply: canReply(row.bubble) ? { model.replyingTo = row.bubble.id } : nil)
+                    }
+                    .readableRow()
+                    .id(row.id)
+                }
+                if model.routing == true {
+                    ThinkingRow().readableRow()
+                }
+                // The end, as a row: what `scrollToEnd()` scrolls to. It carries the bottom margin (with the stack's
+                // spacing above it), so the end it aligns is the content's end.
+                Color.clear.frame(height: LayoutMetrics.gutter - LayoutMetrics.stack).id(Self.endId)
+            }
+            .scrollTargetLayout()
+            .padding(.top, LayoutMetrics.gutter)
+        }
+        .scrollPosition($position)
+        // Only the first layout starts at the bottom; later growth leaves the reading position alone.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .scrollDismissesKeyboard(.interactively)
+        .onScrollGeometryChange(for: ScrollEdge.self) { geometry in
+            // `containerSize` is the bounds less the insets and the offset is -top at the top, so the end
+            // sits at content - container - top (measured on iOS 26 and 27, with the bars' insets).
+            ScrollEdge(offset: geometry.contentOffset.y,
+                       maxOffset: geometry.contentSize.height - geometry.containerSize.height - geometry.contentInsets.top)
+        } action: { old, new in
+            edge = new
+            let atEnd = new.offset >= new.maxOffset - Self.bottomSlack
+            if [.tracking, .interacting, .decelerating].contains(phase) {
+                atBottom = atEnd
+            } else if atEnd {
+                atBottom = true
+            } else if atBottom, phase == .idle, new.offset == old.offset, new.maxOffset != old.maxOffset {
+                // Following, and the end moved under a still view (a message, a longer answer, a row measuring
+                // taller, the keyboard): stay on the newest message. Only when the view itself did not move: a drag's
+                // first frames can arrive before its phase does, and pinning those yanked the drag back. Drift of the
+                // view while following is left to the settle at rest.
+                scrollToEnd()
+            }
+            scheduleSettle()
+            if atBottom { seenId = model.timeline.last?.id }
+        }
+        .onScrollPhaseChange { _, new in
+            phase = new
+            scheduleSettle()
+        }
+        .onChange(of: model.timeline.last?.id) { _, _ in
+            guard let last = model.timeline.last else { return }
+            if atBottom {
+                scrollToEnd()
+                seenId = last.id
+            }
+        }
+        .overlay {
+            if model.timeline.isEmpty && model.working != true {
+                EmptyChat { model.draft = $0 }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            // Whenever the view is away from the end: "↓ N new" with messages below, else "Scroll to bottom".
+            VStack {
+                if !atBottom {
+                    NewMessagesPill(count: newCount) {
+                        atBottom = true
+                        seenId = model.timeline.last?.id
+                        withAnimation { scrollToEnd() }
+                    }
+                    .padding(.bottom, LayoutMetrics.inner)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            // Scoped to the pill: on the scroll view it animated every programmatic scroll, which then fought the
+            // settle back onto the end.
+            .animation(.snappy, value: atBottom)
+        }
+        // The link's state and the Mac's work float over the timeline as toasts rather than strips that take its
+        // space: they come and go often, and the messages must not move when they do.
+        .overlay(alignment: .top) {
+            VStack(spacing: LayoutMetrics.inner) {
+                // Words as well as the dot, so the state is never told by colour alone.
+                if model.shownStatus != .connected {
+                    // Off the link the Mac's work state is unknown, never idle.
+                    Toast { Text(model.updateRequired ?? String(localized: "\(model.shownStatus.label) · Status unknown")) }
+                } else if let reason = model.readinessReason {
+                    // The Mac's own readiness; when blocked the composer below is off with it.
+                    Toast {
+                        Label { Text("\(reason) · Fix this on the host") } icon: {
+                            Image(systemName: model.readiness?.state == .blocked ? "xmark.octagon" : "exclamationmark.triangle")
+                                .foregroundStyle(model.readiness?.state == .blocked ? YorozuPalette.vermilion : YorozuPalette.warning)
+                        }
+                    }
+                }
+                if model.working == true {
+                    Toast {
+                        Label { Text("Working…") } icon: { ProgressView().controlSize(.small) }
+                    }
+                }
+            }
+            .padding(.top, LayoutMetrics.inner)
+            .padding(.horizontal, LayoutMetrics.gutter)
+            .allowsHitTesting(false)
+            .animation(.default, value: model.shownStatus)
+            .animation(.default, value: model.readinessReason)
+            .animation(.default, value: model.working)
+        }
+        .yorozuBottomBar {
+            VStack(spacing: 0) {
+                Composer(text: $model.draft, files: $model.draftFiles, attachments: model.attachmentsSupported != false,
+                         working: model.working == true, enabled: model.canSend,
+                         replyQuote: replyQuote, onCancelReply: { model.replyingTo = nil }) {
+                    // Sending jumps to the bottom, so the sent message and its answer are followed.
+                    atBottom = true
+                    scrollToEnd()
+                    model.send()
+                } onSendAsTextFile: {
+                    atBottom = true
+                    scrollToEnd()
+                    model.sendAsTextFile()
+                }
+            }
+        }
+        .navigationTitle(listRoot ? String(localized: "Main chat") : String(localized: "Yorozu"))
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationSubtitleIfAvailable(model.shownStatus.label)
+        .toolbar {
+            // As a page over the thread list, the back button replaces the Activities button and Settings stays on the list.
+            if !listRoot {
+                ToolbarItem(placement: .topBarLeading) {
+                    // A standard bar button: the whole glass circle is the target, and the badge is the bar's own.
+                    // The two-bubble symbol is wider than tall, so it is drawn a size down to sit inside the circle; the bar
+                    // ignores font and scale on a `Label`, only a bare image takes them (checked on iOS 27).
+                    Button { navigate([.topics]) } label: {
+                        Image(systemName: "bubble.left.and.bubble.right").font(.subheadline)
+                    }
+                        .accessibilityLabel("Activities")
+                        .badge(model.attentionTopics)
+                        .accessibilityValue(model.attentionTopics > 0 ? String(localized: "\(model.attentionTopics) need attention") : "")
+                }
+            }
+            if !Self.hasSubtitle {
+                ToolbarItem(placement: .topBarLeading) {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: Self.dot))
+                        .foregroundStyle(dotColor)
+                        .accessibilityElement()
+                        .accessibilityLabel(model.shownStatus.label)
+                }
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Search", systemImage: "magnifyingglass") { navigate([.search]) }
+                if !listRoot { Button("Settings", systemImage: "gearshape") { settings = true } }
+            }
+        }
     }
 
     private static let dot: CGFloat = 8
@@ -375,14 +407,14 @@ struct ChatScreen: View {
 
     /// The newest stored message, while it is on screen: the app active, the chat shown, the view at the bottom.
     private var readTarget: String? {
-        guard scenePhase == .active, path.isEmpty, !settings, details == nil, atBottom, model.state == .paired else { return nil }
+        guard scenePhase == .active, path == mainPath, !settings, details == nil, atBottom, model.state == .paired else { return nil }
         return model.timeline.last { $0.seq != nil }?.id
     }
 
     /// The main timeline is on screen: pushes show no banner.
-    private var mainShown: Bool { scenePhase == .active && path.isEmpty && !settings && details == nil }
+    private var mainShown: Bool { scenePhase == .active && path == mainPath && !settings && details == nil }
 
-    /// A tapped push: back to the main timeline, at its message once caught up (up to 10 s), else at the bottom.
+    /// A tapped push: its thread, or the main chat at its message once caught up (up to 10 s), else at the bottom.
     private func openPush() async {
         guard let request = model.pushOpen else { return }
         path = []
@@ -400,13 +432,25 @@ struct ChatScreen: View {
         model.pushOpen = nil
         // A push for a thread's message opens the thread (owner, 2026-10-13).
         if let id, let thread = model.bubbles.first(where: { $0.id == id })?.threadId {
-            path = [.topics, .topic(thread, focus: id)]
+            path = listRoot ? [.topic(thread, focus: id)] : [.topics, .topic(thread, focus: id)]
         } else if let id {
-            atBottom = false
-            withAnimation { position.scrollTo(id: id, anchor: .center) }
+            showOnMain(id)
         } else {
+            path = mainPath
             atBottom = true
             scrollToEnd()
+        }
+    }
+
+    /// The main chat at one message: scrolled at once when it is the root, else once its page has been pushed (a scroll
+    /// view that does not exist yet ignores the position).
+    private func showOnMain(_ id: String) {
+        let pushed = path != mainPath
+        path = mainPath
+        atBottom = false
+        Task {
+            if pushed { try? await Task.sleep(for: .milliseconds(400)) }
+            withAnimation { position.scrollTo(id: id, anchor: .center) }
         }
     }
 
@@ -436,9 +480,7 @@ struct ChatScreen: View {
         if let thread = bubble.threadId {
             path.append(.topic(thread, focus: id))
         } else {
-            path = []
-            atBottom = false
-            withAnimation { position.scrollTo(id: id, anchor: .center) }
+            showOnMain(id)
         }
     }
 
@@ -447,9 +489,7 @@ struct ChatScreen: View {
     private func open(_ hit: SearchHitData) {
         switch model.target(of: hit) {
         case .main(let id):
-            path = []
-            atBottom = false
-            withAnimation { position.scrollTo(id: id, anchor: .center) }
+            showOnMain(id)
         case .topic(let topicId, let focus):
             path.append(.topic(topicId, focus: focus))
         case .page(let id):

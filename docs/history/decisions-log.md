@@ -901,3 +901,9 @@ Source: the implementation of the 2026-10-13 thread decisions (branch `user-thre
 - Mac: the window keeps id `activities`, titled Chats. The thread composer is text-only on the Mac (host and client); files go from the main chat or a client device. Thread results post macOS notifications that open the thread; the menu-bar dot stays main-only.
 - Phone: Delete closes the thread screen when the request is sent (a refusal shows on the list row); a thread's read cursor follows its newest stored message while the screen is open, without the main chat's at-the-bottom check; a cited message the phone does not hold opens the main page view; the Activities badge still counts topics that need attention, not thread unread counts.
 - Live check (#397–#400): main-timeline routing never sees a user-started thread's work or topic ids (not in `work`, not on `recent`); a main reply naming one is posted untopiced and any other main decision naming one is refused. Recall hits outlive memory hits and finished work in the routing trim and carry a ready citation link the secretary must copy.
+
+## 2026-10-14 — The thread list is the iPhone's root
+Source: owner, after the thread implementation: the root view should be the thread list, and the main chat and each thread pages of it.
+
+- The iPhone opens on the thread list (Main chat pinned on top, New chat, the threads); the main chat and every thread are pushed from it, with the back button returning to the list. Search and Settings sit on the list.
+- Implementer reading: a host that has said it does not take `threads-v1` keeps the main chat as the root, as before; until the first handshake the app assumes threads and opens on the list. The Mac's chat window is unchanged (its sidebar is already the list).
