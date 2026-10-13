@@ -9,6 +9,13 @@ public struct Topic: Codable, FetchableRecord, PersistableRecord, Identifiable, 
     /// One line on what the topic is about, written by memory extraction after a result (owner, 2026-10-10); routing shows it
     /// with each candidate topic and topic search matches it.
     public var summary: String? = nil
+    /// Threads (owner, 2026-10-13): who started it (`secretary`, from the main timeline, or `user`, with New chat), when it
+    /// was archived, the main-timeline message a secretary-started thread came from, its latest activity (the newest
+    /// message filed in or typed into it; nil on rows older builds wrote) and when it was deleted (a tombstone: its
+    /// messages and work are gone, the row stays so phones learn of the delete).
+    public var origin = Topic.secretary; public var archivedAt: Double? = nil; public var source: String? = nil
+    public var activity: Double? = nil; public var deletedAt: Double? = nil
+    public static let secretary = "secretary", user = "user"
 }
 public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable, Sendable, Equatable {
     public static let databaseTableName = "messages"
@@ -22,16 +29,19 @@ public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable
     /// Never sent to a model; only the age of a delayed message is (`RoutingInput.messageAge`).
     public var sentAt: Double? = nil
     /// Seconds between the phone's send and the Mac storing it, when over 60 s (#314 open question 2); else nil.
+    /// The thread (a topic id) a message was typed in, or that a reply, acknowledgment or result to one inherits; nil
+    /// = the main timeline (owner, 2026-10-13). A message with a thread never shows on the main timeline.
+    public var threadID: String? = nil
     public var delay: Double? { sentAt.map { created - $0 }.flatMap { $0 > 60 ? $0 : nil } }
 }
 extension Message {
     public enum Alert: Sendable { case result, failure, question }
-    /// What a new main-timeline message tells the owner, for Mac notifications (#311) and phone pushes (#320). Questions:
+    /// What a new main-timeline or thread message (`threadID`) tells the owner, for Mac notifications (#311) and phone pushes (#320). Questions:
     /// a clarify (`question` notice), a `question` reply and a job script waiting for a yes. Results: worker and posted job
     /// results, secretary replies and unconfirmed-change notices. Failures, but not offline mode's. Nothing else: the user's
     /// own messages, acknowledgments (delegated work's start and milestone messages too), memory receipts and job-only kinds.
     public var alert: Alert? {
-        guard role == "assistant", onMainTimeline else { return nil }
+        guard role == "assistant", !Self.jobOnlyKinds.contains(kind) else { return nil }
         if ["question","approval_request"].contains(kind) || ["question","question_topic","question_task"].contains(notice?.code) { return .question }
         if kind == "failure" { return notice?.code == Notice.Code.offline.rawValue ? nil : .failure }
         return ["result","conversation"].contains(kind) || kind.hasPrefix("amendment_unconfirmed_") ? .result : nil
@@ -226,11 +236,15 @@ public struct RoutingInput: Codable, Sendable {
     public var files: [FileView] = []
     /// The classification step's keywords for the message's subject, what its images show included (owner, 2026-10-10).
     public var subject: [String]? = nil
-    enum CodingKeys: String, CodingKey { case message, files, subject, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
+    /// Recall (owner, 2026-10-13): earlier messages of any chat that match the subject, the current chat's first; `chat` is
+    /// the thread's name or "Main chat", for the citation link. Left out when there are none.
+    public struct FoundView: Codable, Sendable { public var id: String; public var chat: String; public var role: String; public var body: String }
+    public var found: [FoundView] = []
+    enum CodingKeys: String, CodingKey { case message, files, subject, found, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
     /// Empty job lists are left out, so a workspace without jobs sends the pre-#319 context unchanged.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(subject,forKey: .subject); try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
+        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(subject,forKey: .subject); if !found.isEmpty { try c.encode(found,forKey: .found) }; try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
         try c.encodeIfPresent(latestTopic,forKey: .latestTopic); try c.encode(memory,forKey: .memory); try c.encodeIfPresent(sourceMessageID,forKey: .sourceMessageID); try c.encodeIfPresent(omitted,forKey: .omitted)
         if !jobs.isEmpty { try c.encode(jobs,forKey: .jobs) }; if !approvals.isEmpty { try c.encode(approvals,forKey: .approvals) }
     }
@@ -348,4 +362,20 @@ extension SearchHit {
     public init(mirroredMessage id: String, topicID: String?, snippet: String, created: Double) {
         self.init(topicID: topicID,taskID: nil,messageID: id,eventID: nil,snippet: snippet,created: created)
     }
+}
+
+// Threads (owner, 2026-10-13).
+/// One row of the thread list: the thread's topic, its current task's state (the newest active or uncertain one, else
+/// the newest; nil without work), its newest message and how many messages from Yorozu in it are past its read cursor.
+public struct ThreadRow: Sendable, Equatable {
+    public var topic: Topic; public var state: String?; public var lastMessageID: String?; public var unread: Int
+    public init(topic: Topic, state: String?, lastMessageID: String?, unread: Int) { self.topic = topic; self.state = state; self.lastMessageID = lastMessageID; self.unread = unread }
+}
+/// `next`: the cursor of the following page (Show more); nil on the last.
+public struct ThreadPage: Sendable, Equatable { public var rows: [ThreadRow]; public var next: String? }
+/// A message the secretary may cite: `thread` and `label` name the thread it is in; nil for the main timeline.
+public struct RecallHit: Sendable, Equatable { public var messageID: String; public var role: String; public var body: String; public var created: Double; public var thread: String?; public var label: String? }
+extension Array {
+    /// Slices of at most `size`, for SQL `IN` lists.
+    func chunked(_ size: Int = 500) -> [[Element]] { stride(from: 0,to: count,by: size).map { Array(self[$0..<Swift.min($0 + size,count)]) } }
 }

@@ -301,10 +301,19 @@ actor RelayHost {
         if case .compatible(_, let capabilities)? = peers[pub]?.compatibility { capabilities.contains(capability) } else { false }
     }
 
-    /// Job-only messages (#319) reach only phones that take `jobs-v1`; any other phone would show them in its main chat.
+    /// Job-only messages (#319) reach only phones that take `jobs-v1`, and thread messages, user-started threads and
+    /// deleted threads' tombstones only phones that take `threads-v1` (owner, 2026-10-13): any other phone would show them
+    /// in its main chat or its sub-chat list, so it keeps the main timeline it had.
     private func strip(_ event: YorozuEvent, for pub: String) -> YorozuEvent {
-        guard case .syncDelta(var delta) = event.payload, !takes(JobListData.capability, pub) else { return event }
-        delta.events.removeAll { if case .message(let m) = $0.payload { Message.jobOnlyKinds.contains(m.kind ?? "") } else { false } }
+        let jobs = takes(JobListData.capability, pub), threads = takes(ThreadData.capability, pub)
+        guard case .syncDelta(var delta) = event.payload, !jobs || !threads else { return event }
+        delta.events.removeAll {
+            switch $0.payload {
+            case .message(let m): (!jobs && Message.jobOnlyKinds.contains(m.kind ?? "")) || (!threads && m.threadId != nil)
+            case .topic(let t): !threads && (t.origin == Topic.user || t.deleted == true)
+            default: false
+            }
+        }
         var event = event
         event.payload = .syncDelta(delta)
         return event

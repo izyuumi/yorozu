@@ -886,3 +886,17 @@ Source: owner, in a design session: sub-chats are threads, and the user should b
 - Wire: threads are an additive capability within 0.7, shipped to the Mac and the phone together; phones without it still get the main timeline.
 - This replaces "one main timeline is the only place to type" (2026-10-09), "sub-chats of other topics stay inspect-only" (2026-10-09) and the inspect-only Activities window (2026-10-10).
 - Language, clarified the same day: "Swift wherever possible, to serve a native feel", not Swift only. Never Python; code that must live in another ecosystem, such as an OpenClaw Gateway plugin, uses that ecosystem's language.
+
+## 2026-10-13 — User-created threads: implementer readings (not owner decisions)
+Source: the implementation of the 2026-10-13 thread decisions (branch `user-threads-impl`). Each is a reading the owner may overrule.
+
+- Thread list grouping (status open item): kept Needs attention, Running and Recent, each by latest activity, with Main pinned above them. Grouping uses each row's current task state, so an `amendment_pending` task that already has a result counts as Running; a thread whose failure is older than the loaded pages shows only once Show more reaches it.
+- A thread is created by its first message (`newThread` on `message`/`attachment_commit`, with the client's id), so New chat works offline through the outbox; `thread_control` covers rename, archive, unarchive and delete. Engine has `createThread` for the same.
+- A new thread is named from its first message's first line (≤ 40 characters, else "New chat") until the secretary's routing call for that message gives it a label (`newTopic`); a name the user set meanwhile wins. No extra model call.
+- Typing in an archived thread brings it back to the list (archiving itself stays manual only).
+- Main-timeline routing never files into a user-started thread and never reuses its label; attach refuses user-started threads on both sides.
+- Recall runs on the classification step's terms, which in a thread now runs for its terms only (its kind is ignored); a one-off gets no recall. Up to 6 hits, current thread first; citations are `[In <chat>](yorozu://message/<id>)` links.
+- Deleting a secretary-started thread also removes its messages from the main timeline (they are the thread's messages). Delete is refused while a task of the thread runs or is uncertain. Worker sessions in the harness, receipts and the task folder stay; only Yorozu's store and its attachment files are cleared. The topic row stays as a tombstone so phones drop what they hold.
+- Thread messages stay in the phone's history window for 30 days, like job-only ones; older ones load as a page around the list row's newest message. A phone without `threads-v1` keeps a deleted secretary thread's cached main messages until its cache resets.
+- Mac: the window keeps id `activities`, titled Chats. The thread composer is text-only on the Mac (host and client); files go from the main chat or a client device. Thread results post macOS notifications that open the thread; the menu-bar dot stays main-only.
+- Phone: Delete closes the thread screen when the request is sent (a refusal shows on the list row); a thread's read cursor follows its newest stored message while the screen is open, without the main chat's at-the-bottom check; a cited message the phone does not hold opens the main page view; the Activities badge still counts topics that need attention, not thread unread counts.

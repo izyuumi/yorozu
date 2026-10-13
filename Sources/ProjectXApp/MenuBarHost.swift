@@ -38,6 +38,9 @@ import SwiftUI
         popover.delegate = self
         menu.delegate = self
         attention.onOpen = { [weak self] in self?.open() }
+        // A thread's notification or message link opens the chat window there (owner, 2026-10-13).
+        attention.onOpenThread = { [weak model] thread,message in model?.chatFocus = ChatFocus(thread: thread,message: message); model?.openChatWindow?() }
+        model.openChatWindow = { [weak self] in self?.showActivities() }
         model.onSeen = { AttentionCenter.shared.seen(upTo: $0) }
         model.onBottomChanged = { AttentionCenter.shared.popoverAtBottom = $0 }
         // A tapped notification's message goes to the timeline, which scrolls to it and clears the model's copy.
@@ -121,11 +124,11 @@ import SwiftUI
         openSettingsAction?()
     }
 
-    /// The Activities window, the sub-chats, in front of everything.
+    /// The chat window (Main and the threads), in front of everything.
     private func showActivities() {
         popover.performClose(nil)
         NSApp.activate()
-        openWindowAction?(id: ActivitiesView.id)
+        openWindowAction?(id: ChatWindow.id)
     }
 
     /// The setup window (`AppModel.openSetup`), in front of everything.

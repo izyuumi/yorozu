@@ -1,6 +1,201 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Chats" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャット"
+          }
+        }
+      }
+    },
+    "Main" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メイン"
+          }
+        }
+      }
+    },
+    "Archived" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アーカイブ済み"
+          }
+        }
+      }
+    },
+    "Show more" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "さらに表示"
+          }
+        }
+      }
+    },
+    "Rename Chat" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャット名を変更"
+          }
+        }
+      }
+    },
+    "Delete this chat?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このチャットを削除しますか？"
+          }
+        }
+      }
+    },
+    "Its messages are removed for good, from search and from Yorozu's recall. Memory already taken from them stays." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージは完全に削除され、検索にも Yorozu の想起にも出なくなります。すでにそこから取り込まれたメモリは残ります。"
+          }
+        }
+      }
+    },
+    "Archive" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アーカイブ"
+          }
+        }
+      }
+    },
+    "Unarchive" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アーカイブを解除"
+          }
+        }
+      }
+    },
+    "Started by Secretary" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "秘書が開始"
+          }
+        }
+      }
+    },
+    "%lld unread" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未読 %lld 件"
+          }
+        }
+      }
+    },
+    "Started by Secretary from the main chat" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メインチャットから秘書が開始"
+          }
+        }
+      }
+    },
+    "Ask anything; this chat keeps its own subject." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "なんでも聞いてください。このチャットは独自の話題を保ちます。"
+          }
+        }
+      }
+    },
+    "That message is no longer here." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "そのメッセージはもうありません。"
+          }
+        }
+      }
+    },
+    "That chat no longer exists." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "そのチャットはもうありません。"
+          }
+        }
+      }
+    },
+    "Invalid chat id." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャット ID が無効です。"
+          }
+        }
+      }
+    },
+    "A job's chat is changed in Settings › Jobs." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ジョブのチャットは 設定 › ジョブ で変更します。"
+          }
+        }
+      }
+    },
+    "A chat name must be 1–80 characters." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャット名は 1〜80 文字にしてください。"
+          }
+        }
+      }
+    },
+    "This chat has a task running. Stop it first, then delete the chat." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このチャットには実行中のタスクがあります。停止してから削除してください。"
+          }
+        }
+      }
+    },
     "Reply" : {
       "localizations" : {
         "ja" : {

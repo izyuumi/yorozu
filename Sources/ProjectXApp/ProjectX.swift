@@ -135,6 +135,15 @@ import YorozuWire
     /// Topics bound to jobs, deleted ones included: their work never turns on the working indicator (open question 10).
     @Published var jobTopics = Set<String>()
     var working: Bool { snapshot.work.contains { $0.active && !jobTopics.contains($0.topicID) } }
+    // Threads (owner, 2026-10-13; Threads.swift): the chat window's list, a page at a time, and its archived list.
+    @Published var threads: [ThreadRow] = []; @Published var threadsNext: String?
+    @Published var archivedThreads: [ThreadRow] = []; @Published var archivedNext: String?
+    /// The last thread action's refusal or send error, shown in the chat window.
+    @Published var threadNotice: String?
+    /// A thread (nil: Main) and message the chat window should show, from a notification or a message link.
+    @Published var chatFocus: ChatFocus?
+    /// Opens the chat window; set by MenuBarHost.
+    var openChatWindow: (() -> Void)?
     /// The main chat: everything but the messages that stay in a job's sub-chat.
     var timeline: [Message] { snapshot.messages.filter(\.onMainTimeline) }
     func start() {
@@ -420,8 +429,8 @@ struct ProjectXApp: App {
         Settings { SettingsView(model: delegate.model) }
             .defaultLaunchBehavior(.suppressed)
         // Opened only by `AppModel.openSetup`: at a launch before setup is done, by Run Setup Again… and by Fix….
-        // The sub-chats (Activities.swift), opened from the popover.
-        Window("Activities", id: ActivitiesView.id) { ActivitiesView(model: delegate.model) }
+        // The chat window (Activities.swift): Main and the threads, opened from the popover.
+        Window("Chats", id: ChatWindow.id) { ChatWindow(model: delegate.model) }
             .defaultLaunchBehavior(.suppressed)
         Window("Set up Yorozu", id: SetupWindow.id) { SetupWindow(model: delegate.model) }
             .windowResizability(.contentSize)

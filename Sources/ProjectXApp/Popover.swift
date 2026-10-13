@@ -42,6 +42,8 @@ struct PopoverContent: View {
             MainChat(model: model,search: search)
         }
         .background { Button("Search",action: showSearch).keyboardShortcut("f").hidden() }
+        // The secretary's citations, `yorozu://message/<id>`, open the message where it is (owner, 2026-10-13).
+        .environment(\.openURL,OpenURLAction { url in model.openLink(url) ? .handled : .systemAction })
         .task(id: search.shown ? search.query : nil) {
             guard search.shown else { return }
             try? await Task.sleep(for: .milliseconds(250))
@@ -56,19 +58,19 @@ struct PopoverContent: View {
             if model.working { ProgressView().controlSize(.small).help("Working on it").accessibilityLabel("Working") }
             Spacer()
             HStack(spacing: 2) {
-                // The sub-chats; a dot while one needs attention (failed, uncertain or stopping), not merely running.
+                // The chat window (Main and the threads); a dot while a thread needs attention (failed, uncertain or stopping), not merely running.
                 let attention = model.snapshot.activities(excluding: model.jobTopics).filter { $0.state == .attention }.count
                 Button(action: openActivities) {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .overlay(alignment: .topTrailing) { if attention > 0 { Circle().fill(ChatPalette.warning).frame(width: 6,height: 6).offset(x: 3,y: -2) } }
                 }
-                    .buttonStyle(.accessoryBar).help("Activities").accessibilityLabel("Activities")
+                    .buttonStyle(.accessoryBar).help("Chats").accessibilityLabel("Chats")
                     .accessibilityValue(attention > 0 ? String(localized: "\(attention) need attention") : "")
                 Button(action: showSearch) { Image(systemName: "magnifyingglass") }
                     .buttonStyle(.accessoryBar).help("Search (⌘F)").accessibilityLabel("Search")
                 Menu {
                     Button("Search",action: showSearch).keyboardShortcut("f")
-                    Button("Activities",action: openActivities)
+                    Button("Chats",action: openActivities)
                     Button("Settings…",action: openSettings).keyboardShortcut(",")
                     Divider()
                     Button("Quit Yorozu") { NSApp.terminate(nil) }.keyboardShortcut("q")

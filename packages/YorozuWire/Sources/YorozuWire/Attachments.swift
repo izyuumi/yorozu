@@ -124,8 +124,14 @@ public struct AttachmentCommitData: Codable, Equatable, Sendable {
     public var text: String
     public var attachments: [AttachmentDescriptor]
     public var admissionDeadline: Int
+    /// `threads-v1`: as on `message`, the thread it was typed in and whether it starts that thread (New chat).
+    public var threadId: String?
+    public var newThread: Bool?
 
-    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, delivery: MessageDelivery? = nil, channelModel: ChannelModelChoice? = nil) {
+    public init(text: String, attachments: [AttachmentDescriptor], admissionDeadline: Int, delivery: MessageDelivery? = nil, channelModel: ChannelModelChoice? = nil,
+                threadId: String? = nil, newThread: Bool? = nil) {
+        self.threadId = threadId
+        self.newThread = newThread
         self.delivery = delivery
         self.channelModel = channelModel
         self.text = text
@@ -245,8 +251,11 @@ public actor AttachmentTransfers {
         public var text: String
         public var admissionDeadline: Int
         public var files: [File]
-        public init(messageId: String, threadId: String = "main", ts: Int, text: String, admissionDeadline: Int, files: [File]) {
+        /// `threads-v1`: New chat's first message, which creates `threadId` (a thread other than `main`).
+        public var newThread: Bool?
+        public init(messageId: String, threadId: String = "main", ts: Int, text: String, admissionDeadline: Int, files: [File], newThread: Bool? = nil) {
             self.messageId = messageId
+            self.newThread = newThread
             self.threadId = threadId
             self.ts = ts
             self.text = text
@@ -417,7 +426,8 @@ public actor AttachmentTransfers {
             index = -1
             event = YorozuEvent(id: u.messageId, threadId: u.threadId, ts: u.ts, agentId: "device",
                                 payload: .attachmentCommit(AttachmentCommitData(text: u.text, attachments: u.files.map(\.descriptor),
-                                                                                admissionDeadline: u.admissionDeadline)))
+                                                                                admissionDeadline: u.admissionDeadline, threadId: u.threadId == "main" ? nil : u.threadId,
+                                                                                newThread: u.newThread)))
         }
         let requestId = index < 0 ? u.messageId : id
         uploading = (u.messageId, InFlight(requestId: requestId, index: index, at: .now))

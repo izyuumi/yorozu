@@ -26,6 +26,8 @@ import UserNotifications
     var readCursor: String? { didSet { if readCursor != oldValue { applyCursor(); refresh() } } }
     /// Shows the popover; set by the host.
     var onOpen: (() -> Void)?
+    /// Opens the chat window on a thread at a message (a tapped thread notification); set by the host.
+    var onOpenThread: ((String, String) -> Void)?
 
     private var messages: [Message] = []
     /// Everything created at or before this is seen. Starts at launch: older messages never raise the dot or a notification.
@@ -43,7 +45,8 @@ import UserNotifications
         messages = snapshot.messages
         applyCursor()
         if popoverAtBottom { seenThrough = max(seenThrough, newest) }
-        for m in messages where m.created > notifiedThrough && m.created > seenThrough { if let r = m.alert { post(m, r) } }
+        // Thread messages (owner, 2026-10-13) notify too, but never raise the dot: the chat window's badges cover them.
+        for m in messages where m.created > notifiedThrough && (m.threadID != nil || m.created > seenThrough) { if let r = m.alert { post(m, r) } }
         notifiedThrough = max(notifiedThrough, newest)
         refresh()
     }
@@ -68,7 +71,7 @@ import UserNotifications
     }
 
     private func refresh() {
-        let next = messages.filter { $0.created > seenThrough && $0.alert != nil }.map(\.id)
+        let next = messages.filter { $0.threadID == nil && $0.created > seenThrough && $0.alert != nil }.map(\.id)
         let cleared = Set(unseen).subtracting(next)
         if !cleared.isEmpty { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: Array(cleared)) }
         if next != unseen { unseen = next }
@@ -85,7 +88,7 @@ import UserNotifications
         }
         content.body = m.notificationExcerpt
         content.sound = .default
-        content.userInfo = ["messageID": m.id]
+        content.userInfo = ["messageID": m.id, "threadID": m.threadID ?? ""]
         let request = UNNotificationRequest(identifier: m.id, content: content, trigger: nil)
         let ask = authorization ?? Task { (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false }
         authorization = ask
@@ -93,8 +96,9 @@ import UserNotifications
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard let id = response.notification.request.content.userInfo["messageID"] as? String else { return }
-        await open(messageID: id)
+        let info = response.notification.request.content.userInfo
+        guard let id = info["messageID"] as? String else { return }
+        if let thread = info["threadID"] as? String, !thread.isEmpty { await onOpenThread?(thread, id) } else { await open(messageID: id) }
     }
 
     /// The app is active while the popover is open; a notification posted then (popover scrolled up) still shows.

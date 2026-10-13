@@ -11,12 +11,18 @@ extension Snapshot {
     @MainActor init(client: PhoneModel) {
         self.init()
         topics = client.topics.values.sorted { $0.created < $1.created }
-            .map { Topic(mirroredID: $0.id,label: $0.label,created: Double($0.created) / 1000,attachedTo: $0.attachedTo,summary: nil) }
+            .map { d in
+                var t = Topic(mirroredID: d.id,label: d.label,created: Double(d.created) / 1000,attachedTo: d.attachedTo,summary: nil)
+                // Threads (`threads-v1`): the host's origin, archive time and source message.
+                t.origin = d.origin ?? Topic.secretary; t.archivedAt = d.archivedAt.map { Double($0) / 1000 }; t.source = d.sourceMessageId
+                return t
+            }
         messages = client.bubbles.map { b in
-            Message(mirroredID: b.id,role: b.user ? "user" : "assistant",body: b.text,topicID: b.topicId,taskID: b.taskId,replyTo: b.replyTo,
+            var m = Message(mirroredID: b.id,role: b.user ? "user" : "assistant",body: b.text,topicID: b.topicId,taskID: b.taskId,replyTo: b.replyTo,
                     kind: b.kind ?? (b.failed ? "failure" : "conversation"),created: Double(b.ts) / 1000,
                     notice: b.notice.map { Notice(code: $0.code,params: $0.params) },
                     readAt: b.readAt.map { Double($0) / 1000 },sentAt: b.sentAt.map { Double($0) / 1000 })
+            m.threadID = b.threadId; return m
         }
         work = client.tasks.values.sorted { $0.created < $1.created }.map { t in
             Work(mirroredID: t.id,topicID: t.topicId,messageID: t.messageId,instruction: t.instruction,state: t.state,revision: t.revision,
@@ -63,6 +69,7 @@ extension AppModel {
         let hostRouting = client.routing == true; if hostRouting != routing { routing = hostRouting }
         if client.readCursor?.messageId != readCursor { readCursor = client.readCursor?.messageId }
         if client.jobTopicIds != jobTopics { jobTopics = client.jobTopicIds }
+        syncClientThreads(client)
         let hostReadiness = client.readiness.map(Readiness.init(host:))
         if hostReadiness != readiness { readiness = hostReadiness }
         // Off the link the host's work state is unknown, never idle (as on the phone).

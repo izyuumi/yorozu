@@ -228,7 +228,7 @@ next `.paired` catches up. A device that had finished the exchange stays served 
 
 The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15 s deadline,
 `RelayClient.swift`). Both ends advertise `PeerInfoData.local`: protocol 2 (`protocolMin` =
-`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1","jobs-v1","push-preview-v1"]`,
+`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1","jobs-v1","push-preview-v1","threads-v1"]`,
 required `["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update
 required". Until a device's exchange succeeds, the host passes none of its other events to the
 backend; a known device whose last result on file is compatible counts as succeeded (Mac-side
@@ -327,6 +327,10 @@ event carries its row's `seq`.
 | `readiness` | Mac -> phone | `ReadinessData` | whether the Mac can answer ([`readiness`](#readiness-mac---phone-can-the-mac-answer)) |
 | `job_list` | Mac -> phone | `JobListData` | every scheduled job ([Jobs](#jobs)) |
 | `job_control` | phone -> Mac | `JobControlData` | Pause, Resume, Run now or Delete one job; answered with `admission_status` |
+| `threads_request` | phone -> Mac | `ThreadsRequestData` | one page of the thread list ([Threads](#threads)) |
+| `threads_page` | Mac -> phone | `ThreadsPageData` | its answer |
+| `thread_control` | phone -> Mac | `ThreadControlData` | Rename, Archive, Unarchive or Delete one thread |
+| `thread_control_result` | Mac -> phone | `ThreadControlResultData` | its outcome |
 
 Record kinds travel only inside `sync_delta.events`. Everything else is a top-level event. The
 host ignores every other kind (no reply, no receipt); the phone ignores kinds it does not show.
@@ -345,6 +349,8 @@ YorozuEvent(id: UUID().uuidString, threadId: "main", ts: nowMs, agentId: "device
 - `ts` is the phone's send time; the Mac keeps it as the message's `sentAt`. Resend renews it.
 - `admissionDeadline` is always `ts` + 24 h, the relay buffer's lifetime. Resend renews it.
 - `jobId` (`jobs-v1` only) makes it that job's own input ([Jobs](#jobs)); absent for the main chat.
+- `threadId` (`threads-v1` only) is the thread it was typed in, and `newThread: true` on New chat's first message creates that
+  thread with that id ([Threads](#threads)); both absent for the main chat. The envelope `threadId` is the same thread.
 - `replyTo`, set when the user replied to a stored main-timeline message, is that message's id; the host files the
   reply with its target's topic. Absent otherwise.
 - `delivery`, `channelModel`, `sentAt`, `readAt` and the other 0.7 metadata are not sent and the
@@ -532,10 +538,10 @@ one typed on the Mac). Both are optional fields an older 0.7 peer ignores; they 
 details when the Mac's `created` is more than 60 s after `sentAt`. Every message goes to the main timeline as on the Mac; `topicId` also files it in
 its sub-chat. The exception is the job-only kinds (`job_input`, `job_result`, `job_note`), which
 stay in their job's sub-chat and reach only a phone that negotiated `jobs-v1`; a job run's trigger
-(`job_run`) reaches no phone ([Jobs](#jobs)). A message with files (a user message or a result alike) carries `files`, their
+(`job_run`) reaches no phone ([Jobs](#jobs)). A message in a thread (`threads-v1`) carries `threadId`, stays out of the main timeline and reaches only a phone that negotiated `threads-v1` ([Threads](#threads)). A message with files (a user message or a result alike) carries `files`, their
 [descriptors](#descriptors), in order; absent when it has none.
 
-**`topic`** (`TopicData`, upsert): `id`, `label`, `created`, `seq`, and `attachedTo`: the id of the topic this sub-chat was attached to (#348), absent when none. Its later work is filed under that topic; its own history stays here. An optional field inside 0.7 that an older phone ignores.
+**`topic`** (`TopicData`, upsert): `id`, `label`, `created`, `seq`, and `attachedTo`: the id of the topic this sub-chat was attached to (#348), absent when none. Its later work is filed under that topic; its own history stays here. An optional field inside 0.7 that an older phone ignores. With `threads-v1` it also carries `origin` (`secretary` or `user`), `archivedAt` (epoch ms), `sourceMessageId` (the main-timeline message a secretary-started thread came from) and, on a deleted thread's tombstone, `deleted: true` with an empty label: the phone drops the thread's messages, tasks, amendments and steps. A phone without `threads-v1` never gets user-started threads or tombstones.
 
 **`task`** (`TaskData`, upsert): `id`, `topicId`, `messageId` (the message that started it),
 `instruction`, `executor` (nil = thinking worker, else `claude` or `codex`), `state` (the Mac's
@@ -845,6 +851,75 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
   (`job_run`) reaches no phone; its tasks and worker events are ordinary records.
 - A cache filled without `jobs-v1` has a cursor past the job-only messages, so the first
   `jobs-v1` handshake asks from no cursor (a window start); the cache records that it holds them.
+
+## Threads
+
+Capability `threads-v1` (`ThreadData.capability`, owner 2026-10-13): user-created threads, additive within 0.7 and
+shipped to the Mac and the phone together. A thread is a topic: the secretary starts one from the main timeline
+(`origin: secretary`) or the user starts one with New chat (`origin: user`). The Mac sends thread messages,
+user-started threads and tombstones only to a phone that negotiated it, and that phone sends thread messages,
+`threads_request` and `thread_control` only to such a Mac; a phone without it keeps today's main timeline and
+inspect-only sub-chats. Types are in `Mirror.swift`.
+
+### A thread's messages
+
+- A message typed in a thread is a [`message`](#message-phone---mac-send-a-user-message) (or an
+  [`attachment_commit`](#attachments)) with `threadId` = the thread, and the envelope `threadId` the same. New chat's
+  first message also carries `newThread: true` and a thread id the phone made (`UUID().uuidString`, 1-64 of
+  `[A-Za-z0-9-]`): the Mac creates the thread with that id if it does not exist, so New chat works offline through the
+  outbox. A deleted thread's message is `rejected` with "That chat no longer exists."; typing in an archived thread
+  brings it back to the list.
+- The Mac files it in the thread's topic and the secretary answers there. Everything that replies to it, and everything
+  the work it starts posts (start, milestone, result, failure), carries the same `threadId` on its `message` record and
+  never shows on the main timeline. A secretary-started thread's own messages from the main timeline have no
+  `threadId`: they show on the main timeline and, by `topicId`, in the thread.
+- The phone's thread view is every message with that `threadId` or that `topicId`, plus the topic's tasks.
+- Thread messages are in the [history window](#history-window) for 30 days, like job-only messages; older ones are
+  reached with `page_request` whose `threadId` is the thread (a page of that thread's messages around one message), for
+  example around the list row's `lastMessageId`.
+- `read_state` takes a thread id too: each thread has its own forward-only cursor, which the list's `unread` counts
+  against. The `main` cursor and the badge stay main-only.
+
+### `threads_request` / `threads_page` (the thread list)
+
+```swift
+// phone -> Mac
+.threadsRequest(ThreadsRequestData(requestId: rid, archived: nil /* true: the archived list */, after: next /* nil: first page */, limit: 30))
+// Mac -> phone, threadId ""
+.threadsPage(ThreadsPageData(requestId: rid, threads: rows, next: cursor /* nil on the last page */))
+```
+
+- Newest activity first, threads of both origins, never a job's (Jobs keeps those) or a deleted one; archived ones only
+  in the archived list. `limit` is 1-200 (default 30). The Mac reads one page with one index range scan
+  (`Store.threads`), so a page costs the same at 40 threads or 4,000. `after` is an opaque cursor from `next`.
+- Each `ThreadData` row: `id`, `name`, `origin`, `sourceMessageId`, `summary`, `created`, `lastActivity`, `archivedAt`
+  (epoch ms), `state` (the current task's Mac work state: the newest active or uncertain task, else the newest; nil
+  without work), `lastMessageId` and `unread` (messages from Yorozu in the thread past its read cursor).
+- The phone keeps the loaded rows in memory, not in its cache. It asks for the first page on every `.paired` and, after
+  a live update with records, again (at most once a second) with `limit` = the rows it holds; Show more asks with
+  `after`. An unreadable store answers with `error` and no rows.
+
+### `thread_control` / `thread_control_result`
+
+```swift
+// phone -> Mac
+.threadControl(ThreadControlData(requestId: rid, threadId: id, action: .rename /* .archive, .unarchive, .delete */, name: "Kyoto trip"))
+// Mac -> phone, threadId ""
+.threadControlResult(ThreadControlResultData(requestId: rid, threadId: id, accepted: true, reason: nil))
+```
+
+- Rename (1-80 characters, one line), Archive (manual only; the thread leaves the list and stays searchable),
+  Unarchive, Delete. Delete removes the thread's messages, tasks, steps and files on the Mac for good, so search and
+  the secretary's recall no longer see them; memory already extracted from them stays. It is refused while one of the
+  thread's tasks runs or is uncertain ("This chat has a task running. Stop it first, then delete the chat."). The
+  change reaches every phone as the thread's `topic` record (a tombstone for Delete).
+- One per tap, only while `.paired`, never queued. A replayed `requestId` among the Mac's last 64 gets its first answer
+  again. Fixture mode and every Engine error are `rejected` with the Mac's English `reason`.
+
+### Push
+
+A result, failure or question in a thread pushes like a main-timeline one, with the thread's id as the `threadRef`
+source; the phone finds the message by its `eventRef` and a tap opens the message's thread.
 
 ## Push
 
