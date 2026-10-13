@@ -69,6 +69,7 @@ extension AppModel {
         let hostRouting = client.routing == true; if hostRouting != routing { routing = hostRouting }
         if client.readCursor?.messageId != readCursor { readCursor = client.readCursor?.messageId }
         if client.jobTopicIds != jobTopics { jobTopics = client.jobTopicIds }
+        syncClientThreads(client)
         let hostReadiness = client.readiness.map(Readiness.init(host:))
         if hostReadiness != readiness { readiness = hostReadiness }
         // Off the link the host's work state is unknown, never idle (as on the phone).
