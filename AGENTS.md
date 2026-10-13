@@ -4,7 +4,7 @@ Yorozu is a native macOS personal assistant: one conversation with a secretary m
 
 ## Rules
 
-- Write everything in Swift; a separate long-running background process, if one is ever needed, is Rust.
+- Write Swift wherever possible, for a native feel, and never Python. Code that has to live in another ecosystem uses its language (for example a TypeScript plugin inside the OpenClaw Gateway); a separate long-running background process of our own is Rust.
 - Tests and CI are on hold for this branch until the owner lifts it. Verify by compiling (commands below) and by running the app; leave `tests/`, `scripts/test_native.sh` and CI config alone.
 - The repository is public. Commit code and docs only: say "the owner", write paths as `~/…` or repo-relative, and keep names, emails, secrets, key IDs and personal notes out of files and commit messages. Commit only your own changes; the owner's uncommitted files stay as they are.
 - Commit messages follow Conventional Commits and every commit is signed (signing is configured).

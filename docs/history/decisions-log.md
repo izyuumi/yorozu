@@ -870,3 +870,19 @@ Source: owner, in session, after reviewing how real messages were filed: a photo
 - Cost accepted: one extra small-model call per message, skipped when a reply pin or the identical-message rule already decides.
 - This replaces "a clear follow-up goes to the latest user-discussion topic" (2026-10-07) and the secretary seeing the whole topic list.
 - Implementer readings (not owner decisions): the classifier runs on the secretary model and its call failing counts as `continue` without terms; `new` shows the `self_topic`'s topic as the one candidate and `continue` adds it to the first round; job topics are never candidates (they are listed under jobs); topic search counts matching messages and sub-chat events per term (at most 5 a term) plus 5 for a label or summary match, divided by 1 + months since the topic's last activity; label and summary matching is a `LIKE` scan, since topics are few, rather than a new full-text index; "none fits" is the decision's `noMatch` flag with a `newTopic` label, which the next round replaces unless the label already names a topic; summaries are at most 200 characters and written only for results in non-job topics; thumbnails are 512 px JPEGs; Hermes, which takes no image input from Yorozu, classifies with file descriptors only.
+
+## 2026-10-13 — User-created threads
+Source: owner, in a design session: sub-chats are threads, and the user should be able to start one, not only the secretary.
+
+- A sub-chat is a thread. The secretary starts threads from the main timeline as before; the user starts them with New chat. One list holds both.
+- The user can type in every thread. The secretary answers there, scoped to the thread: it replies itself, steers the thread's worker or starts work. Job threads keep their direct job input.
+- One thread is one topic with one persistent worker session; work started in a thread stays in it. A user-started thread is a topic from its first message, small talk included.
+- Messages: the user's on the right, agent messages on the left labelled Secretary or Worker. A secretary-started thread is marked by an icon in the list and a "Started by Secretary from the main chat" header that links to its source message.
+- A user-started thread never posts to the main timeline; a list badge and a push notification that opens the thread cover it.
+- The secretary searches every thread's messages, current thread first, and cites hits with a link.
+- Names are automatic from the first message and renamable. Archive is manual only, and archived threads stay searchable. Delete is permanent, with a confirmation that says extracted memory stays.
+- The list pins the main timeline on top, then threads by latest activity, loaded a page at a time behind Show more.
+- Mac: the Activities window becomes the chat window with the thread list as its sidebar; the popover stays main-only. Phone: the same list as a navigation stack.
+- Wire: threads are an additive capability within 0.7, shipped to the Mac and the phone together; phones without it still get the main timeline.
+- This replaces "one main timeline is the only place to type" (2026-10-09), "sub-chats of other topics stay inspect-only" (2026-10-09) and the inspect-only Activities window (2026-10-10).
+- Language, clarified the same day: "Swift wherever possible, to serve a native feel", not Swift only. Never Python; code that must live in another ecosystem, such as an OpenClaw Gateway plugin, uses that ecosystem's language.
