@@ -203,6 +203,7 @@ public actor Engine {
             // A message typed in a thread is routed scoped to it (owner, 2026-10-13): its context is the thread's messages,
             // the main timeline's is the main timeline's.
             let thread = message.threadID.flatMap { id in snapshot.topics.first { $0.id == id && $0.deletedAt == nil } }
+            if message.threadID != nil, thread == nil { return } // its thread was deleted meanwhile
             let before = snapshot.messages.filter { m in m.id != message.id && m.created <= message.created && (thread.map { m.threadID == $0.id || m.topicID == $0.id } ?? (m.threadID == nil)) }
             // Main-timeline messages only: a job's own input (`job_input`) never moves the latest topic.
             let latest = before.last(where: { $0.role == "user" && $0.topicID != nil && $0.kind == "conversation" })?.topicID
