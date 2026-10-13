@@ -228,7 +228,9 @@ public actor Engine {
                 var body = m.body
                 if m.kind == "result", body.hasPrefix("Regarding “"), let r = body.range(of: "”:\n\n") { body = String(body[r.upperBound...]) }
                 let views = fileViews(m.id,snapshot)
-                return RoutingInput.MessageView(role: m.role,topicID: m.topicID,taskID: m.taskID,kind: m.kind,body: utf8Excerpt(body,bytes: m.kind == "result" ? 1500 : 1000),files: views.isEmpty ? nil : views)
+                // Main routing never sees a user-started thread's topic id, not even on a main message filed there.
+                let topic = thread != nil || m.topicID.flatMap({ id in snapshot.topics.first { $0.id == id } }).map(Self.fileable) != false ? m.topicID : nil
+                return RoutingInput.MessageView(role: m.role,topicID: topic,taskID: topic == nil ? nil : m.taskID,kind: m.kind,body: utf8Excerpt(body,bytes: m.kind == "result" ? 1500 : 1000),files: views.isEmpty ? nil : views)
             }
             // Recent work plus anything still blocking (active/uncertain), so it can always be retried or stopped.
             // The main timeline never sees a user-started thread's work: it can't file into, steer or stop it (owner, 2026-10-13).
@@ -313,6 +315,8 @@ public actor Engine {
                 try await store.receipt(kind: "routing_round",body: try encoded(decision))
             }
             if decision.noMatch == true, decision.newTopic != nil { decision.topicID = nil; decision.attachTo = nil } // a new topic, silently
+            // A main reply or clarification naming a user-started thread's topic is posted untopiced; other actions are refused in `validate`.
+            if thread == nil, ["reply","clarify"].contains(decision.action), let id = decision.topicID, snapshot.topics.first(where: { $0.id == id }).map(Self.fileable) == false { decision.topicID = nil }
             if let pinned { try await store.receipt(kind: "routing_pin",body: try encoded(["replyTo": message.replyTo ?? "","thread": thread?.id ?? "","topicID": pinned])) }
             if let naming, let t = thread, let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { try? await store.rename(thread: t.id,from: naming,to: name) }
             try validate(decision,snapshot: snapshot,memories: memories,approvals: routed.approvals,main: thread == nil)
