@@ -190,7 +190,7 @@ public actor Engine {
     }
     /// A new chat's first message: the label routing would give a new topic names the chat (`Store.rename(thread:from:to:)`).
     static let namingLine = " This is the first message of a chat the user just started: also set newTopic to a 1-5 word label naming its subject in the user's language, as for a new topic (a greeting alone gets a short neutral label); it names the chat."
-    static let recallLine = " found lists earlier messages from the user's chats that match this message, the current chat's first, each with its chat's name. Recalling something found holds is reply, not delegate: answer from it and cite each message you use as a Markdown link to it, [In <chat>](yorozu://message/<id>), e.g. \"[In Kyoto](yorozu://message/1f0c…): Hoshinoya, ¥28k\". Cite only messages in found."
+    static let recallLine = " found lists earlier messages from the user's chats that match this message, the current chat's first, each with its chat's name and its link. Recalling something found holds is reply, not delegate, with no newTopic: answer from it, and the reply MUST start each fact it takes from found with that message's link copied exactly, then a colon, e.g. \"[In Kyoto](yorozu://message/1f0c…): Hoshinoya, ¥28k\". Use only links given in found."
     /// A topic a decision may file into or reuse by label: never a user-started or deleted thread (owner, 2026-10-13).
     static func fileable(_ t: Topic) -> Bool { t.origin != Topic.user && t.deletedAt == nil }
     private func route(_ message: Message) async {
@@ -281,7 +281,10 @@ public actor Engine {
             // Recall (owner, 2026-10-13): matching messages of every chat, archived threads included, the current one's first.
             if !recallTerms.isEmpty {
                 let hits = try await store.recall(recallTerms,thread: thread?.id,excluding: shown.union([message.id]))
-                input.found = hits.map { RoutingInput.FoundView(id: $0.messageID,chat: $0.thread == nil ? "Main chat" : utf8Prefix($0.label ?? "",bytes: 80),role: $0.role,body: utf8Excerpt($0.body,bytes: 400)) }
+                input.found = hits.map { h in
+                    let chat = h.thread == nil ? "Main chat" : utf8Prefix(h.label ?? "",bytes: 80)
+                    return RoutingInput.FoundView(link: "[In \(chat.replacingOccurrences(of: "]",with: ")"))](yorozu://message/\(h.messageID))",chat: chat,role: h.role,body: utf8Excerpt(h.body,bytes: 400))
+                }
                 if !input.found.isEmpty { input.policy += Self.recallLine }
             }
             // Rounds of candidates: the search matches plus the 5 most recent topics, then the next 5 by recency, at most 3.
