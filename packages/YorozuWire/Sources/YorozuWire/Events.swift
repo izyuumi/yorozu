@@ -107,6 +107,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case readiness
         case jobList = "job_list"
         case jobControl = "job_control"
+        case threadControl = "thread_control"
+        case threadControlResult = "thread_control_result"
+        case threadsRequest = "threads_request"
+        case threadsPage = "threads_page"
     }
 
     public enum Payload: Equatable, Sendable {
@@ -177,6 +181,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case readiness(ReadinessData)
         case jobList(JobListData)
         case jobControl(JobControlData)
+        case threadControl(ThreadControlData)
+        case threadControlResult(ThreadControlResultData)
+        case threadsRequest(ThreadsRequestData)
+        case threadsPage(ThreadsPageData)
 
         public var kind: Kind {
             switch self {
@@ -247,6 +255,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .readiness: .readiness
             case .jobList: .jobList
             case .jobControl: .jobControl
+            case .threadControl: .threadControl
+            case .threadControlResult: .threadControlResult
+            case .threadsRequest: .threadsRequest
+            case .threadsPage: .threadsPage
             }
         }
 
@@ -352,6 +364,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .readiness: payload = .readiness(try c.decode(ReadinessData.self, forKey: .data))
             case .jobList: payload = .jobList(try c.decode(JobListData.self, forKey: .data))
             case .jobControl: payload = .jobControl(try c.decode(JobControlData.self, forKey: .data))
+            case .threadControl: payload = .threadControl(try c.decode(ThreadControlData.self, forKey: .data))
+            case .threadControlResult: payload = .threadControlResult(try c.decode(ThreadControlResultData.self, forKey: .data))
+            case .threadsRequest: payload = .threadsRequest(try c.decode(ThreadsRequestData.self, forKey: .data))
+            case .threadsPage: payload = .threadsPage(try c.decode(ThreadsPageData.self, forKey: .data))
             }
         } catch {
             payload = .unknown(kind: rawKind, data: rawData)
@@ -440,6 +456,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .readiness(let d): try c.encode(d, forKey: .data)
         case .jobList(let d): try c.encode(d, forKey: .data)
         case .jobControl(let d): try c.encode(d, forKey: .data)
+        case .threadControl(let d): try c.encode(d, forKey: .data)
+        case .threadControlResult(let d): try c.encode(d, forKey: .data)
+        case .threadsRequest(let d): try c.encode(d, forKey: .data)
+        case .threadsPage(let d): try c.encode(d, forKey: .data)
         }
     }
 }
@@ -580,6 +600,11 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var sentAt: Int?
     /// 0.7 `jobs-v1`, phone -> Mac: the job whose own input this message is (#319); it goes to that job's sub-chat.
     public var jobId: String?
+    /// 0.7 `threads-v1` (owner, 2026-10-13): the thread (a topic id) the message is in. Mac -> phone: set on a message that
+    /// stays out of the main timeline; phone -> Mac: the thread it was typed in. Absent for the main timeline.
+    public var threadId: String?
+    /// 0.7 `threads-v1`, phone -> Mac: New chat's first message, which creates `threadId` with that id.
+    public var newThread: Bool?
 
     public init(
         role: Role,
@@ -603,8 +628,12 @@ public struct MessageData: Codable, Equatable, Sendable {
         readAt: Int? = nil,
         sentAt: Int? = nil,
         files: [AttachmentDescriptor]? = nil,
-        jobId: String? = nil
+        jobId: String? = nil,
+        threadId: String? = nil,
+        newThread: Bool? = nil
     ) {
+        self.threadId = threadId
+        self.newThread = newThread
         self.files = files
         self.jobId = jobId
         self.readAt = readAt
@@ -629,7 +658,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt, files, jobId }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt, files, jobId, threadId, newThread }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -658,6 +687,8 @@ public struct MessageData: Codable, Equatable, Sendable {
         sentAt = try c.decodeIfPresent(Int.self, forKey: .sentAt)
         files = try c.decodeIfPresent([AttachmentDescriptor].self, forKey: .files)
         jobId = try c.decodeIfPresent(String.self, forKey: .jobId)
+        threadId = try c.decodeIfPresent(String.self, forKey: .threadId)
+        newThread = try c.decodeIfPresent(Bool.self, forKey: .newThread)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -684,6 +715,8 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(sentAt, forKey: .sentAt)
         try c.encodeIfPresent(files, forKey: .files)
         try c.encodeIfPresent(jobId, forKey: .jobId)
+        try c.encodeIfPresent(threadId, forKey: .threadId)
+        try c.encodeIfPresent(newThread, forKey: .newThread)
     }
 }
 

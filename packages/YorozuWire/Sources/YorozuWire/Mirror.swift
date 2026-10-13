@@ -21,7 +21,19 @@ public struct TopicData: Codable, Equatable, Sendable {
     public var seq: Int
     /// The topic this sub-chat was attached to (#348); absent when none. Older phones ignore it.
     public var attachedTo: String?
-    public init(id: String, label: String, created: Int, seq: Int, attachedTo: String? = nil) {
+    /// `threads-v1` (owner, 2026-10-13): `secretary` or `user` (New chat), when it was archived (epoch ms), the main-timeline
+    /// message a secretary-started thread came from, and `deleted` on the tombstone of a deleted thread, whose messages,
+    /// tasks and steps the phone drops. Older phones ignore them.
+    public var origin: String?
+    public var archivedAt: Int?
+    public var sourceMessageId: String?
+    public var deleted: Bool?
+    public init(id: String, label: String, created: Int, seq: Int, attachedTo: String? = nil, origin: String? = nil, archivedAt: Int? = nil,
+                sourceMessageId: String? = nil, deleted: Bool? = nil) {
+        self.origin = origin
+        self.archivedAt = archivedAt
+        self.sourceMessageId = sourceMessageId
+        self.deleted = deleted
         self.id = id
         self.label = label
         self.created = created
@@ -353,5 +365,100 @@ public struct ChunkAssembler: Sendable {
         guard let event = try? JSONDecoder().decode(YorozuEvent.self, from: bytes) else { return nil }
         if case .chunk = event.payload { return nil }
         return event
+    }
+}
+
+// MARK: Threads (`threads-v1`, owner 2026-10-13)
+
+/// One row of the thread list (`threads_page`): a sub-chat of either origin. `state` is its current task's Mac work state
+/// as text (the newest active or uncertain task, else the newest; nil without work); `unread` counts messages from Yorozu
+/// typed or answered in it past its read cursor. Times are epoch ms.
+public struct ThreadData: Codable, Equatable, Sendable, Identifiable {
+    public static let capability = "threads-v1"
+    public var id: String
+    public var name: String
+    /// `secretary` or `user`, as text so a new origin still decodes.
+    public var origin: String
+    public var sourceMessageId: String?
+    public var summary: String?
+    public var created: Int
+    public var lastActivity: Int
+    public var archivedAt: Int?
+    public var state: String?
+    public var lastMessageId: String?
+    public var unread: Int
+    public init(id: String, name: String, origin: String, sourceMessageId: String?, summary: String?, created: Int, lastActivity: Int,
+                archivedAt: Int?, state: String?, lastMessageId: String?, unread: Int) {
+        self.id = id
+        self.name = name
+        self.origin = origin
+        self.sourceMessageId = sourceMessageId
+        self.summary = summary
+        self.created = created
+        self.lastActivity = lastActivity
+        self.archivedAt = archivedAt
+        self.state = state
+        self.lastMessageId = lastMessageId
+        self.unread = unread
+    }
+}
+
+/// `threads_request` (phone -> Mac): one page of the thread list, newest activity first. `after` is the previous page's
+/// `next` (Show more); absent for the first page. `archived` lists the archived threads instead. `limit` 1–200, default 30.
+public struct ThreadsRequestData: Codable, Equatable, Sendable {
+    public var requestId: String
+    public var archived: Bool?
+    public var after: String?
+    public var limit: Int?
+    public init(requestId: String, archived: Bool? = nil, after: String? = nil, limit: Int? = nil) {
+        self.requestId = requestId
+        self.archived = archived
+        self.after = after
+        self.limit = limit
+    }
+}
+
+/// `threads_page` (Mac -> phone): the answer. `next` is set while more threads remain; `error` is user-facing.
+public struct ThreadsPageData: Codable, Equatable, Sendable {
+    public var requestId: String
+    public var threads: [ThreadData]
+    public var next: String?
+    public var error: String?
+    public init(requestId: String, threads: [ThreadData], next: String? = nil, error: String? = nil) {
+        self.requestId = requestId
+        self.threads = threads
+        self.next = next
+        self.error = error
+    }
+}
+
+/// `thread_control` (phone -> Mac): rename, archive, unarchive or delete one thread. A thread is created by its first
+/// message (`MessageData.newThread`). Answered with `thread_control_result`; a replayed `requestId` gets its first answer.
+public struct ThreadControlData: Codable, Equatable, Sendable {
+    public enum Action: String, Codable, Sendable { case rename, archive, unarchive, delete }
+    public var requestId: String
+    public var threadId: String
+    public var action: Action
+    /// `rename` only: 1–80 characters.
+    public var name: String?
+    public init(requestId: String, threadId: String, action: Action, name: String? = nil) {
+        self.requestId = requestId
+        self.threadId = threadId
+        self.action = action
+        self.name = name
+    }
+}
+
+/// `thread_control_result` (Mac -> phone). `reason` is the Mac's user-facing refusal.
+public struct ThreadControlResultData: Codable, Equatable, Sendable {
+    public var requestId: String
+    public var threadId: String
+    public var accepted: Bool
+    public var reason: String?
+    public init(requestId: String, threadId: String, accepted: Bool, reason: String? = nil) {
+        self.requestId = requestId
+        self.threadId = threadId
+        self.accepted = accepted
+        self.reason = reason
     }
 }

@@ -20,6 +20,8 @@ final class MirrorCache: Sendable {
         var workerEvents: [WorkerEventData]
         /// Filled with `jobs-v1`, so it holds job-only messages (#319). Optional so an older cache still loads.
         var jobs: Bool?
+        /// Filled with `threads-v1`, so it holds thread messages. Optional so an older cache still loads.
+        var threads: Bool?
     }
 
     static let shared = MirrorCache()

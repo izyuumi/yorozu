@@ -8,6 +8,8 @@ import YorozuWire
 /// `admission_status`, `sync_delta`, `task_control_result`, `search_result`, `attachment_progress` and
 /// `attachment_download_chunk` out. Records travel by change sequence (`Store.changes`) with their files' descriptors.
 /// Jobs (#319, `jobs-v1`): `job_control` and job-targeted `message` in, `job_list` out through `RelayHost.publishJobs`.
+/// Threads (`threads-v1`, owner 2026-10-13): `threads_request`, `thread_control` and thread-targeted `message` and
+/// `page_request` in; `threads_page` and `thread_control_result` out, and records that name their thread.
 /// A job run's trigger (`job_run`) never reaches phones; the other job-only kinds go only to phones that take `jobs-v1`
 /// (`RelayHost` strips them for the rest), and the working flag ignores work in job topics (open question 10).
 actor EngineBridge: RelayBackend {
@@ -28,6 +30,8 @@ actor EngineBridge: RelayBackend {
     private var controlled: [TaskControlResultData] = []
     /// The last 64 `job_control` answers, keyed by event id, for replays.
     private var jobControls: [AdmissionStatusData] = []
+    /// The last 64 `thread_control` answers, for replays of the same `requestId`.
+    private var threadControls: [ThreadControlResultData] = []
     /// Next runs for `job_list`; nil before jobs start.
     private let scheduler: JobScheduler?
     /// What the last job list was read at (change sequence, next runs) and when: read again only when either moved or
@@ -62,8 +66,11 @@ actor EngineBridge: RelayBackend {
         case .syncRequest(let r): return [await reply(r, thread: r.threadId ?? (e.threadId.isEmpty ? "main" : e.threadId))]
         case .readState(let r):
             // Forward-only in the Store; a cursor that moved reaches every phone as a record in the next live update.
-            if Self.threads.contains(r.threadId) { _ = try? await engine.store.markRead(thread: r.threadId, message: r.messageId) }
+            // Each thread has its own (owner, 2026-10-13).
+            if Self.threads.contains(r.threadId) || Self.isID(r.threadId) { _ = try? await engine.store.markRead(thread: r.threadId, message: r.messageId) }
             return []
+        case .threadsRequest(let r): return [await threadsPage(r)]
+        case .threadControl(let c): return [await threadControl(c)]
         case .taskControl(let c):
             // A replayed request gets its first result again, never a second run.
             if let done = controlled.last(where: { $0.requestId == c.requestId }) { return [.control(.taskControlResult(done))] }
@@ -87,8 +94,8 @@ actor EngineBridge: RelayBackend {
         let jobs = Set(((try? await engine.store.jobRecords()) ?? []).map(\.topicID))
         let working = s.work.contains { $0.active && !jobs.contains($0.topicID) }, routing = await engine.routing
         remember(s.attachments)
-        // Every main-timeline message goes out on the main thread, so that is the thread a push names.
-        if let alerted { for m in s.messages where m.created > alerted { if let a = m.alert { await host.notify(a, threadID: main.id, eventID: m.id, excerpt: m.notificationExcerpt) } } }
+        // A push names the message's thread: the main one, or the thread it is in, which a tap opens (owner, 2026-10-13).
+        if let alerted { for m in s.messages where m.created > alerted { if let a = m.alert { await host.notify(a, threadID: m.threadID ?? main.id, eventID: m.id, excerpt: m.notificationExcerpt) } } }
         alerted = max(alerted ?? 0, s.messages.last?.created ?? 0)
         main = .main((s.messages.last(where: \.onMainTimeline)?.created ?? 0) * 1000)
         await host.setMain(main)
@@ -139,8 +146,9 @@ actor EngineBridge: RelayBackend {
             if let job = m.jobId { try await engine.sendToJob(jobID: job, body: m.text, id: id, sentAt: Double(ts) / 1000) }
             else {
                 // A reply names the message it answers; its topic then holds this one (owner, 2026-10-09).
-                let replyTo = m.replyTo.flatMap { $0.range(of: #"^[A-Za-z0-9-]{1,64}\z"#, options: .regularExpression) != nil ? $0 : nil }
-                try await engine.send(m.text, id: id, sentAt: Double(ts) / 1000, replyTo: replyTo)
+                let replyTo = m.replyTo.flatMap { Self.isID($0) ? $0 : nil }
+                guard m.threadId.map(Self.isID) != false else { return reject(String(localized: "That chat no longer exists.")) }
+                try await engine.send(m.text, id: id, sentAt: Double(ts) / 1000, replyTo: replyTo, thread: m.threadId, newThread: m.newThread == true)
             }
             return receipt
         } catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
@@ -185,6 +193,47 @@ actor EngineBridge: RelayBackend {
         }))
     }
 
+    // MARK: Threads (`threads-v1`, owner 2026-10-13)
+
+    /// One page of the thread list (`Engine.threads`); an unreadable store answers with an error and no rows.
+    private func threadsPage(_ r: ThreadsRequestData) async -> YorozuEvent {
+        do {
+            let page = try await engine.threads(archived: r.archived == true, after: r.after, limit: r.limit ?? 30)
+            return .control(.threadsPage(ThreadsPageData(requestId: r.requestId, threads: page.rows.map(Self.thread), next: page.next)))
+        } catch {
+            return .control(.threadsPage(ThreadsPageData(requestId: r.requestId, threads: [], error: String(localized: "Couldn't read the chat on the host: \(error.localizedDescription)"))))
+        }
+    }
+
+    static func thread(_ row: ThreadRow) -> ThreadData {
+        let t = row.topic, ms = { (d: Double) in Int(d * 1000) }
+        return ThreadData(id: t.id, name: t.label, origin: t.origin, sourceMessageId: t.source, summary: t.summary, created: ms(t.created),
+                          lastActivity: ms(t.activity ?? t.created), archivedAt: t.archivedAt.map(ms), state: row.state, lastMessageId: row.lastMessageID, unread: row.unread)
+    }
+
+    /// Rename, archive, unarchive or delete; the change reaches phones as the thread's topic record. A replayed
+    /// `requestId` gets its first answer again, never a second run.
+    private func threadControl(_ c: ThreadControlData) async -> YorozuEvent {
+        if let done = threadControls.last(where: { $0.requestId == c.requestId }) { return .control(.threadControlResult(done)) }
+        var reason: String?
+        if !mode.permitsInput(fixtureAcknowledged: false) { reason = String(localized: "The host is in fixture mode and doesn't take messages from client devices.") }
+        else {
+            do {
+                switch c.action {
+                case .rename: try await engine.renameThread(c.threadId, to: c.name ?? "")
+                case .archive: try await engine.archiveThread(c.threadId, true)
+                case .unarchive: try await engine.archiveThread(c.threadId, false)
+                case .delete: try await engine.deleteThread(c.threadId)
+                }
+            } catch { reason = error.localizedDescription }
+        }
+        let result = ThreadControlResultData(requestId: c.requestId, threadId: c.threadId, accepted: reason == nil, reason: reason)
+        threadControls = Array((threadControls + [result]).suffix(64))
+        return .control(.threadControlResult(result))
+    }
+
+    private static func isID(_ id: String) -> Bool { id.range(of: #"^[A-Za-z0-9-]{1,64}\z"#, options: .regularExpression) != nil }
+
     /// Only after a failed send: a keyed lookup of the id.
     private func exists(_ id: String) async -> Bool { ((try? await engine.store.message(id: id)) ?? nil) != nil }
 
@@ -221,7 +270,8 @@ actor EngineBridge: RelayBackend {
             await prepare()
             let files = zip(urls, c.attachments).map { PendingFile(url: $0, name: $1.name, mime: $1.mime) }
             // Staging stays after a refusal, so a Resend commits again without uploading again; pruning clears it.
-            do { try await engine.send(c.text, attachments: files, id: id, sentAt: Double(ts) / 1000) }
+            guard c.threadId.map(Self.isID) != false else { return reject(String(localized: "That chat no longer exists.")) }
+            do { try await engine.send(c.text, attachments: files, id: id, sentAt: Double(ts) / 1000, thread: c.threadId, newThread: c.newThread == true) }
             catch { return await exists(id) ? receipt : reject(error.localizedDescription) }
             staging.remove(device: device, message: id)
             return receipt
@@ -298,9 +348,11 @@ actor EngineBridge: RelayBackend {
     /// A page reply: the messages around one message, in or out of the window. It never moves the cursor.
     private func page(_ r: PageRequestData) async -> YorozuEvent {
         let routing = await engine.routing
-        guard Self.threads.contains(r.threadId) else { return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: String(localized: "Unknown thread.")) }
+        // The main timeline, or (`threads-v1`) one thread's messages (owner, 2026-10-13).
+        let main = Self.threads.contains(r.threadId)
+        guard main || Self.isID(r.threadId) else { return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: String(localized: "Unknown thread.")) }
         do {
-            guard let changes = try await engine.store.page(around: r.messageId) else {
+            guard let changes = try await engine.store.page(around: r.messageId, thread: main ? nil : r.threadId) else {
                 return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: String(localized: "Message not found."))
             }
             let files = await files()
@@ -378,8 +430,9 @@ actor EngineBridge: RelayBackend {
             e = event(m.id, thread, ms(m.created), .message(MessageData(role: m.role == "user" ? .user : .agent, text: m.body, done: true,
                 failed: m.kind == "failure" ? true : nil, kind: m.kind, topicId: m.topicID, taskId: m.taskID, replyTo: m.replyTo,
                 notice: m.notice.map(notice), seq: seq,
-                readAt: m.role == "user" ? m.readAt.map(ms) : nil, sentAt: m.sentAt.map(ms), files: files[m.id])))
-        case .topic(let t): e = event(t.id, thread, ms(t.created), .topic(TopicData(id: t.id, label: t.label, created: ms(t.created), seq: seq, attachedTo: t.attachedTo)))
+                readAt: m.role == "user" ? m.readAt.map(ms) : nil, sentAt: m.sentAt.map(ms), files: files[m.id], threadId: m.threadID)))
+        case .topic(let t): e = event(t.id, thread, ms(t.created), .topic(TopicData(id: t.id, label: t.label, created: ms(t.created), seq: seq, attachedTo: t.attachedTo,
+                origin: t.origin, archivedAt: t.archivedAt.map(ms), sourceMessageId: t.source, deleted: t.deletedAt == nil ? nil : true)))
         case .work(let w):
             e = event(w.id, thread, ms(w.created), .task(TaskData(id: w.id, topicId: w.topicID, messageId: w.messageID, instruction: w.instruction,
                 executor: w.executor, state: w.state, revision: w.revision, suppressed: w.suppressed, error: w.error, result: w.result,

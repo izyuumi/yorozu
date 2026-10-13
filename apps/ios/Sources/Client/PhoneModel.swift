@@ -34,14 +34,17 @@ final class PhoneModel {
         var sentAt: Int?
         /// Its files (#316). Optional so a cache written before attachments still loads.
         var attachments: [AttachmentInfo]?
+        /// `threads-v1`: the thread it is in, which keeps it off the main timeline; nil there. Optional so an older cache loads.
+        var threadId: String?
 
         var files: [AttachmentInfo] { attachments ?? [] }
 
         init(id: String, user: Bool, ts: Int, text: String, failed: Bool = false,
              kind: String? = nil, topicId: String? = nil, taskId: String? = nil, replyTo: String? = nil,
              notice: NoticeData? = nil, seq: Int? = nil, readAt: Int? = nil, sentAt: Int? = nil,
-             attachments: [AttachmentInfo] = []) {
+             attachments: [AttachmentInfo] = [], threadId: String? = nil) {
             self.id = id
+            self.threadId = threadId
             self.user = user
             self.ts = ts
             self.text = text
@@ -60,7 +63,7 @@ final class PhoneModel {
         init(record id: String, ts: Int, _ m: MessageData) {
             self.init(id: id, user: m.role == .user, ts: ts, text: m.text, failed: m.failed == true || m.kind == "failure",
                       kind: m.kind, topicId: m.topicId, taskId: m.taskId, replyTo: m.replyTo, notice: m.notice, seq: m.seq,
-                      readAt: m.readAt, sentAt: m.sentAt, attachments: m.attachmentInfos)
+                      readAt: m.readAt, sentAt: m.sentAt, attachments: m.attachmentInfos, threadId: m.threadId)
         }
     }
 
@@ -79,6 +82,8 @@ final class PhoneModel {
     struct PageReply: Equatable {
         let requestId: String
         let messageId: String
+        /// `main`, or the thread the page is from (`threads-v1`).
+        var threadId = "main"
         var bubbles: [Bubble] = []
         var error: String?
     }
@@ -111,7 +116,7 @@ final class PhoneModel {
     private(set) var bubbles: [Bubble] = [] { didSet { if !receiving { rebuildTimeline() } } }
     /// A delta is being applied: the timeline is rebuilt once at its end, not per record.
     @ObservationIgnored private var receiving = false
-    private func rebuildTimeline() { timeline = bubbles.filter { !Self.jobOnlyKinds.contains($0.kind ?? "") } }
+    private func rebuildTimeline() { timeline = bubbles.filter { !Self.jobOnlyKinds.contains($0.kind ?? "") && $0.threadId == nil } }
     /// The main timeline: every message but those that stay in a job's sub-chat (#319), as on the Mac.
     private(set) var timeline: [Bubble] = []
     /// The Mac's job-only kinds (`Message.jobOnlyKinds`) that reach a phone with `jobs-v1`; the run trigger never does.
@@ -150,6 +155,29 @@ final class PhoneModel {
     private var cacheHasJobs = false
     /// Sub-chats that belong to jobs: reached through Jobs, not the topic list.
     var jobTopicIds: Set<String> { jobsSupported == true ? Set(jobs.compactMap(\.topicId)) : [] }
+
+    // Threads (`threads-v1`, owner 2026-10-13).
+    /// Whether the host takes `threads-v1`; nil until known.
+    private(set) var threadsSupported: Bool?
+    /// The thread list loaded so far, newest activity first, and the cursor of its next page (Show more); the same for
+    /// the archived list, which loads only while shown. Both come from the host, a page at a time, never from the cache.
+    private(set) var threadList: [ThreadData] = []
+    private(set) var threadsNext: String?
+    private(set) var archivedThreads: [ThreadData] = []
+    private(set) var archivedNext: String?
+    /// The last `threads_page` error, until the next page arrives.
+    private(set) var threadsError: String?
+    /// `thread_control` in flight (request id → thread id) and the last refusal per thread.
+    private(set) var threadControls: [String: String] = [:]
+    private(set) var threadRefusals: [String: String] = [:]
+    /// Read cursors of the threads other than main, in memory only.
+    private(set) var threadReads: [String: ReadStateData] = [:]
+    private var threadsRequests: [String: (archived: Bool, append: Bool)] = [:]
+    private var threadsRefresh: Task<Void, Never>?
+    private var cacheHasThreads = false
+    func canControlThread(_ id: String) -> Bool { state == .paired && threadsSupported == true && !threadControls.values.contains(id) }
+    /// The bubbles of one thread: typed or answered in it, or filed in its topic (a secretary-started thread), oldest first.
+    func bubbles(inThread id: String) -> [Bubble] { bubbles.filter { $0.threadId == id || $0.topicId == id } }
     func canControlJob(_ id: String) -> Bool { state == .paired && !jobControls.values.contains(id) }
 
     // MARK: Outbox (#314)
@@ -391,7 +419,7 @@ final class PhoneModel {
                 for (index, info) in (item.files ?? []).enumerated() { files.register(UploadStore.url(item.id, index), for: info) }
                 if case .message(let message) = item.event.payload, !bubbles.contains(where: { $0.id == item.id }) {
                     merge(Bubble(id: item.id, user: true, ts: item.event.ts, text: message.text, kind: message.jobId.map { _ in "job_input" },
-                                 topicId: item.topicId, replyTo: message.replyTo, attachments: item.files ?? []))
+                                 topicId: item.topicId, replyTo: message.replyTo, attachments: item.files ?? [], threadId: message.threadId))
                 }
             }
             expireOverdue()
@@ -623,8 +651,8 @@ final class PhoneModel {
 
     func open(pushEvent ref: String?) { pushOpen = PushOpen(ref: ref) }
 
-    /// The main-timeline message a push's `event` ref names.
-    func messageId(ref: String) -> String? { timeline.last { YorozuCrypto.threadRef($0.id) == ref }?.id }
+    /// The message a push's `event` ref names, on the main timeline or in a thread (its bubble's `threadId`).
+    func messageId(ref: String) -> String? { bubbles.last { YorozuCrypto.threadRef($0.id) == ref }?.id }
 
     /// The badge is Yorozu's messages after the later of this phone's read and the Mac's cursor, or all of them when
     /// neither is in the timeline. When that read moves, the delivered pushes for messages at or before it go.
@@ -703,6 +731,12 @@ final class PhoneModel {
                     cacheHasJobs = true
                     cursor = nil
                 }
+                // The same for thread messages (`threads-v1`), which a host strips for a phone without it.
+                threadsSupported = capabilities.contains(ThreadData.capability)
+                if threadsSupported == true, !cacheHasThreads {
+                    cacheHasThreads = true
+                    cursor = nil
+                }
             }
         case .failed(let reason):
             failure = reason
@@ -721,6 +755,8 @@ final class PhoneModel {
         readiness = nil
         controlling = []
         jobControls = [:]
+        threadControls = [:]
+        threadsRequests = [:]
         searchOffset = nil
         pageDeadline?.cancel()
         pageDeadline = nil
@@ -740,6 +776,7 @@ final class PhoneModel {
         // The relay dropped a page request that went out before the link fell: ask again.
         if let page, page.bubbles.isEmpty, page.error == nil { Task { await requestPage() } }
         flushOutbox(all: true)
+        Task { await loadThreads() }
     }
 
     /// Asks for the changes after the cursor, and again after 15 s with neither a reply page nor a chunk.
@@ -783,8 +820,10 @@ final class PhoneModel {
 
     /// One message through the outbox; false when nothing went (not sendable, empty, or files not kept).
     @discardableResult
-    func send(text: String, files picked: [StagedFile], replyTo: String? = nil) -> Bool {
-        guard canSend, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !picked.isEmpty else { return false }
+    /// `thread` (`threads-v1`): the thread it is typed in; `newThread`: New chat's first message, which creates that thread
+    /// on the host with this id, so it works offline through the outbox like any message.
+    func send(text: String, files picked: [StagedFile], replyTo: String? = nil, thread: String? = nil, newThread: Bool = false) -> Bool {
+        guard canSend, thread == nil || threadsSupported == true, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !picked.isEmpty else { return false }
         let ts = Self.now
         let id = UUID().uuidString
         var infos: [AttachmentInfo] = []
@@ -799,10 +838,11 @@ final class PhoneModel {
             uploadOffsets[id] = Array(repeating: 0, count: infos.count)
             UploadStore.setOffsets(id, uploadOffsets[id] ?? [])
         }
-        let event = YorozuEvent(id: id, threadId: "main", ts: ts, agentId: "device",
-                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, replyTo: replyTo)))
-        enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos),
-                Bubble(id: id, user: true, ts: ts, text: text, replyTo: replyTo, attachments: infos))
+        let event = YorozuEvent(id: id, threadId: thread ?? "main", ts: ts, agentId: "device",
+                                payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, replyTo: replyTo,
+                                                              threadId: thread, newThread: newThread ? true : nil)))
+        enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos, topicId: thread),
+                Bubble(id: id, user: true, ts: ts, text: text, topicId: thread, replyTo: replyTo, attachments: infos, threadId: thread))
         return true
     }
 
@@ -1014,7 +1054,8 @@ final class PhoneModel {
         uploadProgress[id] = Self.fraction(offsets, attached)
         uploading.insert(id)
         await transfers.upload(AttachmentTransfers.Upload(messageId: id, threadId: item.event.threadId, ts: item.event.ts,
-                                                          text: message.text, admissionDeadline: item.deadline, files: files))
+                                                          text: message.text, admissionDeadline: item.deadline, files: files,
+                                                          newThread: message.newThread))
     }
 
     /// `AttachmentTransfers.updates`: offsets to persist, a failed upload, and downloads for the cache.
@@ -1178,25 +1219,99 @@ final class PhoneModel {
     /// The page around one message (a search hit outside the cache), into `page`. Needs `.paired`;
     /// a request the relay dropped is asked again on the next `.paired`, one that did not go is forgotten.
     @discardableResult
-    func loadPage(around messageId: String) async -> Bool {
+    func loadPage(around messageId: String, thread: String = "main") async -> Bool {
         guard state == .paired else { return false }
-        page = PageReply(requestId: UUID().uuidString, messageId: messageId)
+        page = PageReply(requestId: UUID().uuidString, messageId: messageId, threadId: thread)
         return await requestPage()
     }
 
     private func requestPage() async -> Bool {
         guard let held = page else { return false }
-        let ok = await sendNow(.pageRequest(PageRequestData(requestId: held.requestId, threadId: "main", messageId: held.messageId)))
+        let ok = await sendNow(.pageRequest(PageRequestData(requestId: held.requestId, threadId: held.threadId, messageId: held.messageId)))
         if !ok, page?.requestId == held.requestId { page = nil }
         return ok
     }
 
-    /// Moves the Mac's read cursor to the newest message seen. Only while `.paired`; not queued.
-    func markRead(_ messageId: String) async {
+    /// Moves the Mac's read cursor to the newest message seen, of the main timeline or of one thread (`threads-v1`).
+    /// Only while `.paired`; not queued.
+    func markRead(_ messageId: String, thread: String = "main") async {
         guard state == .paired else { return }
-        localRead = messageId
-        updateBadge()
-        _ = await sendNow(.readState(ReadStateData(threadId: "main", messageId: messageId)))
+        if thread == "main" { localRead = messageId; updateBadge() }
+        _ = await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId)))
+    }
+
+    // MARK: Threads (`threads-v1`, owner 2026-10-13)
+
+    /// The thread list's first page again, as many rows as are loaded (30 to 200), or with `more` the next page (Show
+    /// more). `archived` loads the archived list instead. Needs `.paired` and a host that takes `threads-v1`.
+    @discardableResult
+    func loadThreads(archived: Bool = false, more: Bool = false) async -> Bool {
+        guard state == .paired, threadsSupported == true else { return false }
+        let after = more ? (archived ? archivedNext : threadsNext) : nil
+        if more, after == nil { return false }
+        let loaded = archived ? archivedThreads.count : threadList.count
+        let id = UUID().uuidString
+        threadsRequests[id] = (archived, more)
+        let ok = await sendNow(.threadsRequest(ThreadsRequestData(requestId: id, archived: archived ? true : nil, after: after,
+                                                                  limit: more ? 30 : min(200, max(30, loaded)))))
+        if !ok { threadsRequests[id] = nil }
+        return ok
+    }
+
+    /// Rename, archive, unarchive or delete one thread: one at a time per thread, only while `.paired`, never queued.
+    @discardableResult
+    func control(thread id: String, _ action: ThreadControlData.Action, name: String? = nil) async -> Bool {
+        guard canControlThread(id) else { return false }
+        let requestId = UUID().uuidString
+        threadControls[requestId] = id
+        threadRefusals[id] = nil
+        let ok = await sendNow(.threadControl(ThreadControlData(requestId: requestId, threadId: id, action: action, name: name)))
+        if !ok { threadControls[requestId] = nil }
+        return ok
+    }
+
+    private func receive(_ page: ThreadsPageData) {
+        guard let request = threadsRequests.removeValue(forKey: page.requestId) else { return }
+        threadsError = page.error
+        guard page.error == nil else { return }
+        let held = request.append ? (request.archived ? archivedThreads : threadList) : []
+        let rows = held + page.threads.filter { row in !held.contains { $0.id == row.id } }
+        if request.archived { archivedThreads = rows; archivedNext = page.next } else { threadList = rows; threadsNext = page.next }
+    }
+
+    private func receive(_ result: ThreadControlResultData) {
+        guard let thread = threadControls.removeValue(forKey: result.requestId) else { return }
+        guard result.accepted else { threadRefusals[thread] = result.reason; return }
+        threadList.removeAll { $0.id == thread }
+        archivedThreads.removeAll { $0.id == thread }
+        Task {
+            await loadThreads()
+            if !archivedThreads.isEmpty || archivedNext != nil { await loadThreads(archived: true) }
+        }
+    }
+
+    /// Records changed: the loaded lists again, at most once a second.
+    private func refreshThreads() {
+        guard threadsSupported == true, threadsRefresh == nil else { return }
+        threadsRefresh = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, !Task.isCancelled else { return }
+            self.threadsRefresh = nil
+            await self.loadThreads()
+        }
+    }
+
+    /// A deleted thread (its tombstone record): everything of it goes from the mirror and the lists.
+    private func purge(thread id: String) {
+        let taskIds = Set(tasks.values.filter { $0.topicId == id }.map(\.id))
+        bubbles.removeAll { $0.threadId == id || $0.topicId == id || $0.taskId.map(taskIds.contains) == true }
+        tasks = tasks.filter { !taskIds.contains($0.key) }
+        amendments = amendments.filter { !taskIds.contains($0.value.taskId) }
+        workerEvents = workerEvents.filter { !taskIds.contains($0.value.taskId) }
+        topics[id] = nil
+        threadReads[id] = nil
+        threadList.removeAll { $0.id == id }
+        archivedThreads.removeAll { $0.id == id }
     }
 
     private func sendNow(_ payload: YorozuEvent.Payload) async -> Bool {
@@ -1232,6 +1347,10 @@ final class PhoneModel {
             receive(delta)
         case .readiness(let readiness):
             self.readiness = readiness
+        case .threadsPage(let page):
+            receive(page)
+        case .threadControlResult(let result):
+            receive(result)
         case .taskControlResult(let result):
             controlling.remove(result.taskId)
             controlResults[result.taskId] = result
@@ -1277,6 +1396,7 @@ final class PhoneModel {
             if delta.more == true { requestSync() } else { catchingUp = false }
         } else {
             delta.events.forEach(applyRecord)
+            if !delta.events.isEmpty { refreshThreads() }
             if !catchingUp, let latest = delta.latestSeq {
                 if (delta.afterSeq ?? 0) <= (cursor ?? 0) {
                     cursor = max(cursor ?? 0, latest)
@@ -1312,6 +1432,8 @@ final class PhoneModel {
             guard held?.seq == nil || (held?.seq ?? 0) < (message.seq ?? 0) else { return }
             merge(Bubble(record: event.id, ts: event.ts, message))
             if message.role == .user, message.seq != nil { stored(event.id, read: message.readAt != nil) }
+        case .topic(let topic) where topic.deleted == true:
+            purge(thread: topic.id)
         case .topic(let topic):
             if (topics[topic.id]?.seq ?? -1) < topic.seq { topics[topic.id] = topic }
         case .task(let task):
@@ -1327,6 +1449,8 @@ final class PhoneModel {
             if (workerEvents[workerEvent.id]?.seq ?? -1) < workerEvent.seq { workerEvents[workerEvent.id] = workerEvent }
         case .readState(let read) where read.threadId == "main":
             if (readCursor?.seq ?? -1) < (read.seq ?? 0) { readCursor = read }
+        case .readState(let read):
+            if (threadReads[read.threadId]?.seq ?? -1) < (read.seq ?? 0) { threadReads[read.threadId] = read }
         default:
             break
         }
@@ -1348,6 +1472,7 @@ final class PhoneModel {
         amendments = [:]
         workerEvents = [:]
         readCursor = nil
+        threadReads = [:]
         page = nil
         search = nil
         controlResults = [:]
@@ -1362,6 +1487,7 @@ final class PhoneModel {
         amendments = Dictionary(snapshot.amendments.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         workerEvents = Dictionary(snapshot.workerEvents.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         cacheHasJobs = snapshot.jobs == true
+        cacheHasThreads = snapshot.threads == true
         trim()
     }
 
@@ -1384,7 +1510,7 @@ final class PhoneModel {
         MirrorCache.shared.save(MirrorCache.Snapshot(
             owner: ownPub, cursor: cursor, readCursor: readCursor,
             messages: bubbles.filter { $0.seq != nil }, topics: Array(topics.values), tasks: Array(tasks.values),
-            amendments: Array(amendments.values), workerEvents: Array(workerEvents.values), jobs: cacheHasJobs))
+            amendments: Array(amendments.values), workerEvents: Array(workerEvents.values), jobs: cacheHasJobs, threads: cacheHasThreads))
     }
 
     /// The history window by the phone's clock and count: the newest 500 stored main-timeline messages
@@ -1393,7 +1519,7 @@ final class PhoneModel {
     private func trim() {
         let cutoff = Self.now - Self.windowDays * 86_400_000
         let stored = bubbles.filter { $0.seq != nil }
-        let newest = Set(stored.filter { !Self.jobOnlyKinds.contains($0.kind ?? "") }.suffix(Self.windowCount).map(\.id))
+        let newest = Set(stored.filter { !Self.jobOnlyKinds.contains($0.kind ?? "") && $0.threadId == nil }.suffix(Self.windowCount).map(\.id))
         bubbles.removeAll { $0.seq != nil && $0.ts < cutoff && !newest.contains($0.id) }
         let kept = Set(bubbles.map(\.id))
         let keptTasks = Set(bubbles.compactMap(\.taskId))
