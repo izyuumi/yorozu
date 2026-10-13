@@ -47,7 +47,10 @@ public actor Engine {
     /// `attachments` (#316): at most 10 files of at most 50 MB each; the body may then be empty. Files are copied into the
     /// store first, then the message and its attachment rows are stored in one transaction; a failure removes the copies.
     /// `replyTo`: the message the user replied to; a reply to a message in a topic stays in that topic (owner, 2026-10-09).
-    @discardableResult public func send(_ body: String, attachments: [PendingFile] = [], id: String = identifier(), sentAt: Double? = nil, replyTo: String? = nil) async throws -> String {
+    /// `thread` (owner, 2026-10-13): the thread it was typed in, a topic id; the secretary answers there, scoped to it.
+    /// `newThread`: New chat's first message, which creates that thread with this id when it does not exist yet, so a
+    /// client's outbox can send it with no round trip. Typing in an archived thread brings it back to the list.
+    @discardableResult public func send(_ body: String, attachments: [PendingFile] = [], id: String = identifier(), sentAt: Double? = nil, replyTo: String? = nil, thread: String? = nil, newThread: Bool = false) async throws -> String {
         guard body.utf8.count <= 6000, !attachments.isEmpty || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ProjectError.invalid(attachments.isEmpty ? String(localized: "Message must be 1–6000 UTF-8 bytes.") : String(localized: "Message text must be at most 6000 UTF-8 bytes.")) }
         guard attachments.count <= FileStore.maxFiles else { throw ProjectError.invalid(String(localized: "At most \(FileStore.maxFiles) files per message.")) }
         guard attachments.isEmpty || files != nil else { throw ProjectError.blocked(String(localized: "Attachments can't be stored here.")) }
@@ -55,13 +58,40 @@ public actor Engine {
         let jobs = pending.filter { jobWork.contains($0) }.count + running.keys.filter { jobWork.contains($0) }.count
         guard routingCount + pending.count + running.count - jobs < 32 else { throw ProjectError.blocked(String(localized: "32 requests pending; wait for work to finish.")) }
         try await bindRuntime()
+        if let thread {
+            if newThread, try await store.topic(id: thread) == nil { try await createThread(id: thread,firstMessage: body) }
+            guard let t = try await store.topic(id: thread), t.deletedAt == nil, !jobTopics.values.contains(thread) else { throw ProjectError.invalid(String(localized: "That chat no longer exists.")) }
+            if t.archivedAt != nil { try await store.archive(thread: thread,false) }
+        }
         var copies: [Attachment] = []
         if let files {
             do { for f in attachments { copies.append(try await Self.offActor { try files.store(f) }) } } catch { copies.forEach(files.remove); throw error }
         }
         let m: Message
-        do { m = try await store.message(role: "user",body: body,replyTo: replyTo,id: id,sentAt: sentAt,attachments: copies) } catch { copies.forEach { files?.remove($0) }; throw error }
+        do { m = try await store.message(role: "user",body: body,topic: thread,replyTo: replyTo,id: id,sentAt: sentAt,attachments: copies,thread: thread) } catch { copies.forEach { files?.remove($0) }; throw error }
         enqueueRoute(m); return m.id
+    }
+    // MARK: Threads (owner, 2026-10-13)
+
+    /// A user-started thread: a topic from its first message, named from it until routing gives it a name
+    /// (`Engine.route`). `id` is the client's, so the thread it already shows keeps it.
+    @discardableResult public func createThread(id: String = identifier(),firstMessage: String = "") async throws -> Topic {
+        guard id.range(of: #"^[A-Za-z0-9-]{1,64}\z"#,options: .regularExpression) != nil else { throw ProjectError.invalid(String(localized: "Invalid chat id.")) }
+        return try await store.topic(label: Self.provisionalName(firstMessage),agent: harness.agentID,origin: Topic.user,id: id)
+    }
+    /// A new thread's name until routing names it: its first message's first line, else "New chat".
+    static func provisionalName(_ body: String) -> String {
+        let line = body.split(whereSeparator: \.isNewline).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        return line.isEmpty ? String(localized: "New chat") : line.count > 40 ? String(line.prefix(39)) + "…" : line
+    }
+    /// One page of the thread list (`Store.threads`).
+    public func threads(archived: Bool = false,after: String? = nil,limit: Int = 30) async throws -> ThreadPage { try await store.threads(archived: archived,after: after,limit: limit) }
+    public func renameThread(_ id: String,to name: String) async throws { try await store.rename(thread: id,to: name) }
+    public func archiveThread(_ id: String,_ archived: Bool = true) async throws { try await store.archive(thread: id,archived) }
+    /// Deletes a thread's messages, work and their files for good; memory already extracted from them stays.
+    public func deleteThread(_ id: String) async throws {
+        guard !jobTopics.values.contains(id) else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Settings › Jobs.")) }
+        for a in try await store.delete(thread: id) { files?.remove(a) }
     }
     private func enqueueRoute(_ m: Message) {
         routingCount += 1
@@ -148,7 +178,9 @@ public actor Engine {
     }
 
     /// The policy line for one routing round: what the classification step decided, and what `topics` holds.
-    static func candidateLine(_ kind: String, pinned: String?, more: Bool) -> String {
+    /// `thread`: the message was typed in the chat whose topic is `pinned` (owner, 2026-10-13).
+    static func candidateLine(_ kind: String, pinned: String?, thread: Bool = false, more: Bool) -> String {
+        if let pinned, thread { return "\nThe user typed this message in the chat of topic \(pinned), which holds the recent messages: everything you do stays in it. Use topicID \(pinned), never attachTo or another topic; greetings and small talk get a reply in it too. Steer, stop or retry its own tasks; start new work there with delegate." }
         if let pinned { return "\nThis message replies to a message in topic \(pinned); use topicID \(pinned), never newTopic, attachTo or another topic." }
         switch kind {
         case "oneoff": return "\nThe classification step judged this message small talk or something you answer yourself, so topics is empty: reply with no topicID or newTopic. If it needs a worker after all, delegate with newTopic."
@@ -156,6 +188,11 @@ public actor Engine {
         default: return "\nThe classification step judged that this message continues an earlier subject; topics holds the candidates (search matches, the most recent topics and this app's own topic). Use the topicID of the one it continues; a short reaction or answer to a recent reply is not small talk: reply or act in that reply's topic. If none fits, set noMatch true and give newTopic, a short label for a new topic\(more ? "; more candidates may follow" : "")."
         }
     }
+    /// A new chat's first message: the label routing would give a new topic names the chat (`Store.rename(thread:from:to:)`).
+    static let namingLine = " This is the first message of a chat the user just started: also set newTopic to a 1-5 word label naming its subject in the user's language, as for a new topic (a greeting alone gets a short neutral label); it names the chat."
+    static let recallLine = " found lists earlier messages from the user's chats that match this message, the current chat's first, each with its chat's name. Recalling something found holds is reply, not delegate: answer from it and cite each message you use as a Markdown link to it, [In <chat>](yorozu://message/<id>), e.g. \"[In Kyoto](yorozu://message/1f0c…): Hoshinoya, ¥28k\". Cite only messages in found."
+    /// A topic a decision may file into or reuse by label: never a user-started or deleted thread (owner, 2026-10-13).
+    static func fileable(_ t: Topic) -> Bool { t.origin != Topic.user && t.deletedAt == nil }
     private func route(_ message: Message) async {
         defer { routingCount -= 1 }
         // Before anything else: a quit from here on leaves the message alone at launch (open question 3).
@@ -163,7 +200,10 @@ public actor Engine {
         do {
             try Task.checkCancellation()
             let snapshot = try await store.snapshot()
-            let before = snapshot.messages.filter { $0.id != message.id && $0.created <= message.created }
+            // A message typed in a thread is routed scoped to it (owner, 2026-10-13): its context is the thread's messages,
+            // the main timeline's is the main timeline's.
+            let thread = message.threadID.flatMap { id in snapshot.topics.first { $0.id == id && $0.deletedAt == nil } }
+            let before = snapshot.messages.filter { m in m.id != message.id && m.created <= message.created && (thread.map { m.threadID == $0.id || m.topicID == $0.id } ?? (m.threadID == nil)) }
             // Main-timeline messages only: a job's own input (`job_input`) never moves the latest topic.
             let latest = before.last(where: { $0.role == "user" && $0.topicID != nil && $0.kind == "conversation" })?.topicID
             // Verbatim resend while its work still runs: file it with the original and take no action.
@@ -177,7 +217,8 @@ public actor Engine {
             var activity = Dictionary(uniqueKeysWithValues: snapshot.topics.map { ($0.id,$0.created) })
             for (id,t) in snapshot.messages.compactMap({ m in m.topicID.map { ($0,m.created) } }) + snapshot.work.map({ ($0.topicID,$0.created) }) { activity[id] = max(activity[id] ?? t,t) }
             let jobTopicIDs = Set(jobTopics.values)
-            let byActivity = snapshot.topics.filter { !jobTopicIDs.contains($0.id) }.sorted { activity[$0.id]! > activity[$1.id]! }
+            // A user-started thread is never filed into from elsewhere: only its own messages go there.
+            let byActivity = snapshot.topics.filter { !jobTopicIDs.contains($0.id) && Self.fileable($0) }.sorted { activity[$0.id]! > activity[$1.id]! }
             // Slim view, never DB records. App-generated acknowledgments/failures never reach the secretary (owner, 2026-10-08), its own start messages included.
             // Last 4 across topics plus last 3 of the latest topic, chronological; results without Store's "Regarding" header.
             let said = before.filter { ["conversation","result","question"].contains($0.kind) } // a routing question the user may be answering
@@ -209,23 +250,34 @@ public actor Engine {
             input.policy = Self.routingPolicy(settings(),jobs: !input.jobs.isEmpty || !input.approvals.isEmpty,delayed: input.messageAge != nil,files: !input.files.isEmpty || recent.contains { $0.files != nil })
             input.sourceMessageID = message.id
             // A reply to a message in a topic belongs to that topic: the secretary picks the action, never the topic (owner, 2026-10-09).
-            let pinned = message.replyTo.flatMap { r in snapshot.messages.first { $0.id == r }?.topicID }.map { Self.home($0,snapshot) }
+            // A message typed in a thread belongs to the thread's topic: no classification of the subject, no new topic.
+            let pinned = thread.map { Self.home($0.id,snapshot) } ?? message.replyTo.flatMap { r in snapshot.messages.first { $0.id == r }?.topicID }.map { Self.home($0,snapshot) }
+            // A user-started thread's first message also names it, through the label a new topic would get.
+            let naming = thread.flatMap { t in t.origin == Topic.user && !before.contains { $0.role == "user" } ? t.label : nil }
             // Classification (owner, 2026-10-10): new subject, one-off or continuation; a pinned reply skips it. A failed call
-            // counts as a continuation without search terms, so the recent topics are the candidates.
-            var kind = "continue", ranked: [Topic] = []
-            if pinned == nil {
+            // counts as a continuation without search terms, so the recent topics are the candidates. In a thread it runs
+            // for its search terms only (recall, below).
+            var kind = "continue", ranked: [Topic] = [], recallTerms: [String] = []
+            if pinned == nil || thread != nil {
                 var c = Classification(kind: "continue")
                 let images = try await store.attachments(message: message.id).map { a in var a = a; if let files { a.path = files.url(for: a).path }; return a }
                 do { c = try await harness.classify(ClassifyInput(message: message.body,files: input.files.isEmpty ? nil : input.files,messageAge: input.messageAge,recent: recent,sourceMessageID: message.id,images: images)) } catch { try? await store.receipt(kind: "classification_failed",body: utf8Prefix(error.localizedDescription,bytes: 500)) }
                 if ["new","oneoff"].contains(c.kind) { kind = c.kind }
                 try await store.receipt(kind: "classification",body: try encoded(c))
                 if let terms = c.terms, !terms.isEmpty, kind != "oneoff" { input.subject = Array(terms.prefix(8)).map { utf8Prefix($0,bytes: 60) }; input.policy += " subject lists the classification step's keywords for this message's subject, what attached images show included." }
-                if kind == "continue", let terms = c.terms, !terms.isEmpty {
+                if kind != "oneoff" { recallTerms = c.terms ?? [] }
+                if kind == "continue", pinned == nil, let terms = c.terms, !terms.isEmpty {
                     // Hits weighed by recency: a topic last active a month ago counts half.
                     let found = try await store.topicHits(terms), now = Date().timeIntervalSince1970
                     let score = { (t: Topic) in Double(found[t.id] ?? 0) / (1 + (now - activity[t.id]!) / (30 * 86400)) }
                     ranked = Array(byActivity.filter { found[$0.id] != nil }.sorted { score($0) > score($1) }.prefix(5))
                 }
+            }
+            // Recall (owner, 2026-10-13): matching messages of every chat, archived threads included, the current one's first.
+            if !recallTerms.isEmpty {
+                let hits = try await store.recall(recallTerms,thread: thread?.id,excluding: shown.union([message.id]))
+                input.found = hits.map { RoutingInput.FoundView(id: $0.messageID,chat: $0.thread == nil ? "Main chat" : utf8Prefix($0.label ?? "",bytes: 80),role: $0.role,body: utf8Excerpt($0.body,bytes: 400)) }
+                if !input.found.isEmpty { input.policy += Self.recallLine }
             }
             // Rounds of candidates: the search matches plus the 5 most recent topics, then the next 5 by recency, at most 3.
             // This app's own topic is always a candidate, except for a one-off.
@@ -239,24 +291,27 @@ public actor Engine {
                 rounds = [first,Array(rest.prefix(5)),Array(rest.dropFirst(5).prefix(5))].enumerated().filter { $0.offset == 0 || !$0.element.isEmpty }.map(\.element)
             }
             let forget = message.body.range(of: Self.forgetRequest,options: .regularExpression) != nil
-            var decision = Decision(action: "reply"), routed = input
+            var decision = Decision(action: "reply"), routed = input, name: String?
             for (i,candidates) in rounds.enumerated() {
                 routed = input
                 routed.topics = candidates.map { t in let h = Int(Date().timeIntervalSince1970 - t.created) / 3600; return RoutingInput.TopicView(id: t.id,label: t.label,age: h < 48 ? "\(h)h" : "\(h / 24)d",attachedTo: t.attachedTo,summary: t.summary) }
-                routed.policy += Self.candidateLine(kind,pinned: pinned,more: i < rounds.count - 1)
+                routed.policy += Self.candidateLine(kind,pinned: pinned,thread: thread != nil,more: i < rounds.count - 1) + (naming == nil ? "" : Self.namingLine)
                 routed = trimmed(routed,blocking: blocking,forget: forget)
                 // A later round that fails or drops the new label keeps the earlier round's new topic.
-                let next: Decision
-                do { next = Self.pin(Self.usable(try await harness.route(routed,stronger: false),snapshot),to: pinned,snapshot) }
+                let raw: Decision
+                do { raw = try await harness.route(routed,stronger: false) }
                 catch { if i == 0 || Task.isCancelled { throw error }; break }
+                if naming != nil { name = raw.newTopic }
+                let next = Self.pin(Self.usable(raw,snapshot),to: pinned,snapshot)
                 if i > 0, next.noMatch == true, next.newTopic == nil { break }
                 decision = next
                 // None fits: the next round, unless the new label already names a topic (its exact reuse below).
-                guard decision.noMatch == true, let label = decision.newTopic, i < rounds.count - 1, !snapshot.topics.contains(where: { $0.label.caseInsensitiveCompare(label) == .orderedSame }) else { break }
+                guard decision.noMatch == true, let label = decision.newTopic, i < rounds.count - 1, !snapshot.topics.contains(where: { Self.fileable($0) && $0.label.caseInsensitiveCompare(label) == .orderedSame }) else { break }
                 try await store.receipt(kind: "routing_round",body: try encoded(decision))
             }
             if decision.noMatch == true, decision.newTopic != nil { decision.topicID = nil; decision.attachTo = nil } // a new topic, silently
-            if let pinned { try await store.receipt(kind: "routing_pin",body: try encoded(["replyTo": message.replyTo!,"topicID": pinned])) }
+            if let pinned { try await store.receipt(kind: "routing_pin",body: try encoded(["replyTo": message.replyTo ?? "","thread": thread?.id ?? "","topicID": pinned])) }
+            if let naming, let t = thread, let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { try? await store.rename(thread: t.id,from: naming,to: name) }
             try validate(decision,snapshot: snapshot,memories: memories,approvals: routed.approvals)
             try await store.receipt(kind: "routing",body: try encoded(decision))
             if decision.action == "clarify" {
@@ -312,7 +367,8 @@ public actor Engine {
             return input.topics.count > floor ? input.topics.lastIndex { !kept.contains($0.id) } : nil
         }
         while Prompts.routingPrompt(input,stronger: true).utf8.count > harness.rawPromptCap {
-            if !forget, !input.memory.isEmpty { input.memory.removeLast() }
+            if !input.found.isEmpty { input.found.removeLast() }
+            else if !forget, !input.memory.isEmpty { input.memory.removeLast() }
             else if let i = input.work.firstIndex(where: { !blocking.contains($0.id) }) { input.work.remove(at: i) }
             else if let i = oldTopic(floor: 10) { input.topics.remove(at: i); topics += 1 }
             else if !input.jobs.isEmpty { input.jobs.removeLast(); jobs += 1 }
@@ -327,13 +383,14 @@ public actor Engine {
     }
     /// Where new messages and work for a topic go: the topic it was attached to, if any (#348; attachments are one hop).
     private static func home(_ id: String,_ snapshot: Snapshot) -> String { snapshot.topics.first { $0.id == id }?.attachedTo ?? id }
-    private func resolveTopic(_ d: Decision,snapshot: Snapshot) async throws -> Topic {
+    private func resolveTopic(_ d: Decision,snapshot: Snapshot,source: String?) async throws -> Topic {
         let home = { (t: Topic) in snapshot.topics.first { $0.id == Self.home(t.id,snapshot) } ?? t }
         if let id = d.topicID, let topic = snapshot.topics.first(where: { $0.id == id }) { return home(topic) }
         guard let label = d.newTopic, !label.isEmpty else { throw NoticeError(.questionTopic,"Which subject should this belong to?",kind: "question") }
         // Exact reuse is a last defense against needless duplicate topics.
-        if let found = snapshot.topics.first(where: { $0.label.caseInsensitiveCompare(label) == .orderedSame }) { return home(found) }
-        return try await store.topic(label: label,agent: harness.agentID)
+        if let found = snapshot.topics.first(where: { Self.fileable($0) && $0.label.caseInsensitiveCompare(label) == .orderedSame }) { return home(found) }
+        // A secretary-started thread links to the message it came from (owner, 2026-10-13).
+        return try await store.topic(label: label,agent: harness.agentID,source: source)
     }
     private func apply(_ d: Decision,to message: Message,snapshot: Snapshot,latest: String?,memories: [MemoryHit]) async throws {
         var d = d, attach: (topic: String,target: String)?
@@ -353,7 +410,7 @@ public actor Engine {
         }
         if ["reply","clarify"].contains(d.action) {
             var topic = d.topicID.map { Self.home($0,snapshot) } // Greetings/small talk stay untopiced; newTopic opens (or reuses) a topic.
-            if topic == nil, d.newTopic != nil { topic = try await resolveTopic(d,snapshot: snapshot).id }
+            if topic == nil, d.newTopic != nil { topic = try await resolveTopic(d,snapshot: snapshot,source: message.threadID == nil ? message.id : nil).id }
             if let topic { try await store.assign(message: message.id,topic: topic) }
             let reply = try await store.message(role: "assistant",body: d.reply!,topic: topic,replyTo: message.id,notice: d.action == "clarify" ? Notice(.question) : nil)
             enqueueExtraction(message); enqueueExtraction(reply); return
@@ -407,7 +464,7 @@ public actor Engine {
             guard let topic = snapshot.topics.first(where: { $0.id == w.topicID }) else { throw Self.notRetryable }
             _ = try await retry(w,topic: topic,request: message,note: "\nUser requested retry: " + utf8Excerpt(message.body,bytes: 1500),file: true,startNote: d.startNote); return
         }
-        let topic = try await resolveTopic(d,snapshot: snapshot)
+        let topic = try await resolveTopic(d,snapshot: snapshot,source: message.threadID == nil ? message.id : nil)
         try await store.assign(message: message.id,topic: topic.id)
         if d.action == "correct" {
             let priorWork = try await store.work(d.taskID!)
