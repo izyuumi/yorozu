@@ -101,6 +101,21 @@ public actor Store {
         migration.registerMigration("topic-attach") { db in try db.execute(sql: "ALTER TABLE topics ADD COLUMN attachedTo TEXT; ALTER TABLE topics ADD COLUMN attachedAt DOUBLE; ALTER TABLE work ADD COLUMN started DOUBLE") }
         // Owner, 2026-10-10. Nullable: a topic's one-line summary, written by memory extraction.
         migration.registerMigration("topic-summary") { db in try db.execute(sql: "ALTER TABLE topics ADD COLUMN summary TEXT") }
+        // Threads (owner, 2026-10-13). Additive: older builds insert named columns, so the new ones are nullable or
+        // defaulted. Existing topics are secretary-started, from their first message; activity is kept by a trigger, so
+        // every build's inserts move it, and the thread list pages over an index (`threads`).
+        migration.registerMigration("threads-r1") { db in try db.execute(sql: """
+            ALTER TABLE topics ADD COLUMN origin TEXT NOT NULL DEFAULT 'secretary';
+            ALTER TABLE topics ADD COLUMN archivedAt DOUBLE; ALTER TABLE topics ADD COLUMN source TEXT;
+            ALTER TABLE topics ADD COLUMN activity DOUBLE; ALTER TABLE topics ADD COLUMN deletedAt DOUBLE;
+            ALTER TABLE messages ADD COLUMN threadID TEXT;
+            CREATE INDEX messages_topic ON messages(topicID,created); CREATE INDEX messages_thread ON messages(threadID,created);
+            CREATE INDEX work_topic ON work(topicID,created); CREATE INDEX topics_activity ON topics(activity,id);
+            UPDATE topics SET source=(SELECT id FROM messages WHERE topicID=topics.id ORDER BY created,rowid LIMIT 1),
+                activity=MAX(created,COALESCE((SELECT MAX(created) FROM messages WHERE topicID=topics.id),0));
+            CREATE TRIGGER messages_activity_ai AFTER INSERT ON messages WHEN new.topicID IS NOT NULL OR new.threadID IS NOT NULL BEGIN
+                UPDATE topics SET activity=new.created WHERE id IN (new.topicID,new.threadID) AND (activity IS NULL OR activity<new.created); END;
+            """) }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -129,15 +144,28 @@ public actor Store {
         }
     }
     /// Session key `agent:<agent>:projectx:<id>`: `projectx` is the app's namespace, fixed so existing keys keep their shape.
-    public func topic(label: String, agent: String = "yorozu") throws -> Topic {
+    /// `origin`, `source` (the routed main-timeline message a secretary-started topic comes from) and `id` (a client's
+    /// New chat keeps the id it already shows) for threads (owner, 2026-10-13).
+    public func topic(label: String, agent: String = "yorozu", origin: String = Topic.secretary, source: String? = nil, id: String = identifier()) throws -> Topic {
         guard !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, label.count <= 80 else { throw ProjectError.invalid("Topic label must be 1–80 characters.") }
-        let id = identifier(); let t = Topic(id: id, label: label, sessionKey: "agent:\(agent):projectx:\(id)", created: Date().timeIntervalSince1970)
+        let now = Date().timeIntervalSince1970
+        let t = Topic(id: id, label: label, sessionKey: "agent:\(agent):projectx:\(id)", created: now, origin: origin, source: source, activity: now)
         try db.write { try t.insert($0) }; return t
     }
-    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation", id: String = identifier(), notice: Notice? = nil, sentAt: Double? = nil, attachments: [Attachment] = []) throws -> Message {
-        let m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970, notice: notice, sentAt: sentAt)
+    /// `thread`: the thread a user message was typed in. Any other message without one inherits the thread of the
+    /// message it replies to, else of its task's request, so work started in a thread stays there (owner, 2026-10-13).
+    @discardableResult public func message(role: String, body: String, topic: String? = nil, task: String? = nil, replyTo: String? = nil, kind: String = "conversation", id: String = identifier(), notice: Notice? = nil, sentAt: Double? = nil, attachments: [Attachment] = [], thread: String? = nil) throws -> Message {
+        var m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970, notice: notice, sentAt: sentAt, threadID: thread)
         // Attachments go in with their message, in one transaction (#316).
-        try db.write { db in try m.insert(db); for var a in attachments { a.messageID = m.id; a.eventID = nil; try a.insert(db) } }; return m
+        try db.write { db in
+            if m.threadID == nil { m.threadID = try Self.inheritedThread(db,replyTo: replyTo,task: task) }
+            try m.insert(db); for var a in attachments { a.messageID = m.id; a.eventID = nil; try a.insert(db) }
+        }; return m
+    }
+    private static func inheritedThread(_ db: Database,replyTo: String?,task: String?) throws -> String? {
+        if let replyTo, let t = try String.fetchOne(db,sql: "SELECT threadID FROM messages WHERE id=?",arguments: [replyTo]) { return t }
+        guard let task else { return nil }
+        return try String.fetchOne(db,sql: "SELECT m.threadID FROM work w JOIN messages m ON m.id=w.messageID WHERE w.id=?",arguments: [task])
     }
     /// Newest first over message bodies and sub-chat worker event bodies (results are `result` messages; a superseded
     /// answer is an event). Terms of 3+ characters match the trigram indexes (AND, each a quoted phrase); a shorter term
@@ -159,11 +187,11 @@ public actor Store {
             var hits: [SearchHit] = []; var total = 0
             // Messages that stay in a job's sub-chat are not searchable from phones (#319), the only caller.
             let jobOnly = " AND t.kind NOT IN \(Self.jobOnlyList)"
-            for (table,index,columns,extra) in [("messages","messageSearch","t.topicID AS topic,t.taskID AS task",jobOnly),("events","eventSearch","(SELECT topicID FROM work WHERE id=t.taskID) AS topic,t.taskID AS task","")] {
+            for (table,index,columns,extra) in [("messages","messageSearch","t.topicID AS topic,t.taskID AS task,t.threadID AS thread",jobOnly),("events","eventSearch","(SELECT topicID FROM work WHERE id=t.taskID) AS topic,t.taskID AS task,NULL AS thread","")] {
                 let (from,args): (String,StatementArguments) = fts ? ("\(index) JOIN \(table) t ON t.rowid=\(index).rowid WHERE \(index) MATCH ?\(extra)",[match]) : ("\(table) t WHERE \(filter)\(extra)",StatementArguments(like))
                 let rows = try Row.fetchAll(db,sql: "SELECT t.id,t.created,t.body,\(columns)\(fts ? ",snippet(\(index),0,'','','…',48) AS s" : "") FROM \(from) ORDER BY t.created DESC,t.rowid DESC LIMIT \(offset + limit)",arguments: args)
                 hits += rows.map { row in
-                    SearchHit(topicID: row["topic"],taskID: row["task"],messageID: table == "messages" ? row["id"] : nil,eventID: table == "events" ? row["id"] : nil,snippet: fts ? row["s"] : cut(row["body"]),created: row["created"])
+                    SearchHit(threadID: row["thread"] ?? "main",topicID: row["topic"],taskID: row["task"],messageID: table == "messages" ? row["id"] : nil,eventID: table == "events" ? row["id"] : nil,snippet: fts ? row["s"] : cut(row["body"]),created: row["created"])
                 }
                 total += try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM \(from)",arguments: args) ?? 0
             }
@@ -195,11 +223,12 @@ public actor Store {
         try db.write { try $0.execute(sql: "UPDATE topics SET summary=? WHERE id=? AND summary IS NOT ?",arguments: [line,topic,line]) }
     }
     /// Attaches `topic` to `target` (#348) when `topic` was created in the last 7 days, is not attached and has nothing
-    /// attached, and `target` is another topic that is not attached itself; neither may be a job topic; false (nothing changed) otherwise.
+    /// attached, and `target` is another topic that is not attached itself; neither may be a job topic, a user-started or a
+    /// deleted thread; false (nothing changed) otherwise.
     public func attach(topic: String, to target: String) throws -> Bool {
         let now = Date().timeIntervalSince1970
         return try db.write { db in
-            try db.execute(sql: "UPDATE topics SET attachedTo=?,attachedAt=? WHERE id=? AND id<>? AND attachedTo IS NULL AND created>=? AND NOT EXISTS (SELECT 1 FROM topics s WHERE s.attachedTo=topics.id) AND NOT EXISTS (SELECT 1 FROM jobs WHERE topicID IN (topics.id,?)) AND EXISTS (SELECT 1 FROM topics t WHERE t.id=? AND t.attachedTo IS NULL)",arguments: [target,now,topic,target,now - 7 * 86400,target,target])
+            try db.execute(sql: "UPDATE topics SET attachedTo=?,attachedAt=? WHERE id=? AND id<>? AND attachedTo IS NULL AND origin='secretary' AND deletedAt IS NULL AND created>=? AND NOT EXISTS (SELECT 1 FROM topics s WHERE s.attachedTo=topics.id) AND NOT EXISTS (SELECT 1 FROM jobs WHERE topicID IN (topics.id,?)) AND EXISTS (SELECT 1 FROM topics t WHERE t.id=? AND t.attachedTo IS NULL AND t.origin='secretary' AND t.deletedAt IS NULL)",arguments: [target,now,topic,target,now - 7 * 86400,target,target])
             return db.changesCount > 0
         }
     }
@@ -212,7 +241,7 @@ public actor Store {
     /// User messages whose routing never started, oldest first. Older builds never set `readAt`, so a message they
     /// already answered, filed in a topic or delegated counts as routed.
     public func unrouted() throws -> [Message] {
-        try db.read { try Message.fetchAll($0,sql: "SELECT * FROM messages m WHERE role='user' AND readAt IS NULL AND topicID IS NULL AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.replyTo=m.id) AND NOT EXISTS (SELECT 1 FROM work w WHERE w.messageID=m.id) ORDER BY created,rowid") }
+        try db.read { try Message.fetchAll($0,sql: "SELECT * FROM messages m WHERE role='user' AND readAt IS NULL AND (topicID IS NULL OR threadID IS NOT NULL) AND kind='conversation' AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.replyTo=m.id) AND NOT EXISTS (SELECT 1 FROM work w WHERE w.messageID=m.id) ORDER BY created,rowid") }
     }
     /// Moves a thread's read cursor forward to `message` in timeline order; false when that is not newer or unknown.
     public func markRead(thread: String, message: String) throws -> Bool {
@@ -232,7 +261,7 @@ public actor Store {
     private static func scope(_ table: String) -> String {
         let s = "(SELECT s FROM w)"
         let recent = "created>=strftime('%s','now')-\(30 * 86400)"
-        let messages = "created>=\(s) AND (kind NOT IN \(jobOnlyList) OR \(recent))"
+        let messages = "created>=\(s) AND ((kind NOT IN \(jobOnlyList) AND threadID IS NULL) OR \(recent))"
         let work = "((created>=\(s) AND (\(recent) OR NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=work.messageID AND m.kind IN \(jobOnlyList)))) OR id IN (SELECT taskID FROM messages WHERE \(messages)) OR (suppressed=0 AND state IN ('queued','working','amendment_pending','cancellation_requested','uncertain')))"
         switch table {
         case "messages": return messages
@@ -269,7 +298,7 @@ public actor Store {
     private static let jobOnlyList = "(" + Message.jobOnlyKinds.sorted().map { "'\($0)'" }.joined(separator: ",") + ")"
     /// Messages created at or after this belong to the window (job-only ones only from the last 30 days).
     private static func windowStart(_ db: Database) throws -> Double {
-        let nth = try Double.fetchOne(db,sql: "SELECT created FROM messages WHERE kind NOT IN \(jobOnlyList) ORDER BY created DESC,rowid DESC LIMIT 1 OFFSET 499")
+        let nth = try Double.fetchOne(db,sql: "SELECT created FROM messages WHERE kind NOT IN \(jobOnlyList) AND threadID IS NULL ORDER BY created DESC,rowid DESC LIMIT 1 OFFSET 499")
         return min(Date().timeIntervalSince1970 - 30 * 86400,nth ?? 0)
     }
     private static func record(_ table: String,_ row: Row) throws -> Change.Record {
@@ -282,15 +311,127 @@ public actor Store {
         default: return .readCursor(try ReadCursor(row: row))
         }
     }
-    /// Up to `before` older and `after` newer main-timeline messages (each ≤ 500) around one message, in timeline order,
-    /// inside or outside the window; nil for an unknown id.
-    public func page(around id: String, before: Int = 50, after: Int = 50) throws -> [Change]? {
+    /// Up to `before` older and `after` newer messages (each ≤ 500) around one message, in timeline order, inside or
+    /// outside the window: main-timeline messages, or with `thread` that thread's (`inThread`); nil for an unknown id.
+    public func page(around id: String, thread: String? = nil, before: Int = 50, after: Int = 50) throws -> [Change]? {
         try db.read { db in
             guard let at = try Row.fetchOne(db,sql: "SELECT created,rowid FROM messages WHERE id=?",arguments: [id]) else { return nil }
             let c: Double = at[0], r: Int64 = at[1]
-            let older = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE kind NOT IN \(Self.jobOnlyList) AND (created,rowid)<(?,?) ORDER BY created DESC,rowid DESC LIMIT ?",arguments: [c,r,max(0,min(before,500))])
-            let newer = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE kind NOT IN \(Self.jobOnlyList) AND (created,rowid)>=(?,?) ORDER BY created,rowid LIMIT ?",arguments: [c,r,max(0,min(after,500)) + 1])
+            let scope = thread == nil ? "kind NOT IN \(Self.jobOnlyList) AND threadID IS NULL" : Self.inThread
+            let args: [DatabaseValueConvertible] = thread.map { [$0,$0] } ?? []
+            let older = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE \(scope) AND (created,rowid)<(?,?) ORDER BY created DESC,rowid DESC LIMIT ?",arguments: StatementArguments(args + [c,r,max(0,min(before,500))]))
+            let newer = try Row.fetchAll(db,sql: "SELECT * FROM messages WHERE \(scope) AND (created,rowid)>=(?,?) ORDER BY created,rowid LIMIT ?",arguments: StatementArguments(args + [c,r,max(0,min(after,500)) + 1]))
             return try (older.reversed() + newer).map { Change(seq: $0["seq"],record: try Self.record("messages",$0)) }
+        }
+    }
+    // MARK: Threads (owner, 2026-10-13)
+
+    /// A thread's messages: typed in it or inheriting it (`threadID`), or filed in its topic. Binds the thread id twice.
+    static let inThread = "(threadID=? OR topicID=?)"
+    private static let active = "('queued','working','amendment_pending','cancellation_requested','uncertain')"
+    /// One page of the thread list, newest activity first: threads of both origins, never a job's or a deleted one,
+    /// archived ones only with `archived`. `after` is the previous page's `next`; `limit` 1–200. One index range scan,
+    /// so a page costs the same at 40 threads or 4,000.
+    public func threads(archived: Bool = false, after: String? = nil, limit: Int = 30) throws -> ThreadPage {
+        let limit = max(1,min(limit,200))
+        var bound = "", args: [DatabaseValueConvertible] = []
+        if let after, let bar = after.lastIndex(of: "|"), let at = Double(after[..<bar]) { bound = " AND (t.activity,t.id)<(?,?)"; args = [at,String(after[after.index(after: bar)...])] }
+        return try db.read { db in
+            let rows = try Row.fetchAll(db,sql: """
+                SELECT t.*,
+                  (SELECT state FROM work w WHERE w.topicID=t.id ORDER BY w.state IN \(Self.active) DESC,w.created DESC,w.rowid DESC LIMIT 1) AS current,
+                  (SELECT id FROM messages m WHERE m.threadID=t.id OR m.topicID=t.id ORDER BY m.created DESC,m.rowid DESC LIMIT 1) AS last,
+                  (SELECT COUNT(*) FROM messages m WHERE m.threadID=t.id AND m.role='assistant' AND m.created>COALESCE((SELECT x.created FROM readCursor c JOIN messages x ON x.id=c.messageID WHERE c.threadID=t.id),0)) AS unread
+                FROM topics t WHERE t.deletedAt IS NULL AND t.activity IS NOT NULL AND t.archivedAt IS \(archived ? "NOT " : "")NULL\(bound)
+                  AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.topicID=t.id)
+                ORDER BY t.activity DESC,t.id DESC LIMIT ?
+                """,arguments: StatementArguments(args + [limit + 1]))
+            let page = try rows.prefix(limit).map { ThreadRow(topic: try Topic(row: $0),state: $0["current"],lastMessageID: $0["last"],unread: $0["unread"]) }
+            return ThreadPage(rows: page,next: rows.count > limit ? page.last.map { "\($0.topic.activity ?? 0)|\($0.topic.id)" } : nil)
+        }
+    }
+    /// A live, non-job topic for a thread action; throws a user-facing refusal otherwise.
+    private static func liveThread(_ db: Database,_ id: String) throws -> Topic {
+        guard let t = try Topic.fetchOne(db,key: id), t.deletedAt == nil else { throw ProjectError.invalid(String(localized: "That chat no longer exists.")) }
+        guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM jobs WHERE topicID=?",arguments: [id]) == 0 else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Settings › Jobs.")) }
+        return t
+    }
+    /// 1–80 characters after trimming, on one line.
+    public func rename(thread id: String,to name: String) throws {
+        let name = name.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        guard (1...80).contains(name.count) else { throw ProjectError.invalid(String(localized: "A chat name must be 1–80 characters.")) }
+        try db.write { db in _ = try Self.liveThread(db,id); try db.execute(sql: "UPDATE topics SET label=? WHERE id=? AND label IS NOT ?",arguments: [name,id,name]) }
+    }
+    /// Renames a thread only while it still has `expected` as its name, so an automatic name never overwrites the user's.
+    public func rename(thread id: String,from expected: String,to name: String) throws {
+        let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        guard !name.isEmpty else { return }
+        try db.write { try $0.execute(sql: "UPDATE topics SET label=? WHERE id=? AND label=? AND deletedAt IS NULL",arguments: [name,id,expected]) }
+    }
+    /// Manual only (owner, 2026-10-13): an archived thread leaves the list and stays searchable.
+    public func archive(thread id: String,_ archived: Bool) throws {
+        try db.write { db in
+            _ = try Self.liveThread(db,id)
+            try db.execute(sql: archived ? "UPDATE topics SET archivedAt=? WHERE id=? AND archivedAt IS NULL" : "UPDATE topics SET archivedAt=NULL WHERE id=? AND archivedAt IS NOT NULL",
+                           arguments: archived ? [Date().timeIntervalSince1970,id] : [id])
+        }
+    }
+    /// Removes a thread's messages, their work, worker events and amendments for good, which their triggers take out of
+    /// search; memory files stay. The topic row stays as a tombstone (`deletedAt`, no label or summary), re-stamped so
+    /// phones drop what they hold of it. Refused while one of its tasks runs or is uncertain. Returns the removed
+    /// attachment rows, whose files the caller deletes.
+    public func delete(thread id: String) throws -> [Attachment] {
+        try db.write { db in
+            _ = try Self.liveThread(db,id)
+            guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM work WHERE topicID=? AND state IN \(Self.active) AND suppressed=0",arguments: [id]) == 0 else {
+                throw ProjectError.blocked(String(localized: "This chat has a task running. Stop it first, then delete the chat."))
+            }
+            let topicWork = try String.fetchAll(db,sql: "SELECT id FROM work WHERE topicID=?",arguments: [id])
+            let messages = Set(try String.fetchAll(db,sql: "SELECT id FROM messages WHERE \(Self.inThread)",arguments: [id,id])
+                               + (try topicWork.chunked().flatMap { ids in try String.fetchAll(db,sql: "SELECT id FROM messages WHERE taskID IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }))
+            let work = Set(topicWork + (try Array(messages).chunked().flatMap { ids in try String.fetchAll(db,sql: "SELECT id FROM work WHERE messageID IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }))
+            var removed: [Attachment] = []
+            for ids in Array(work).chunked() {
+                removed += try Attachment.fetchAll(db,sql: "SELECT * FROM attachments WHERE eventID IN (SELECT id FROM events WHERE taskID IN \(Self.marks(ids)))",arguments: StatementArguments(ids))
+                for sql in ["DELETE FROM attachments WHERE eventID IN (SELECT id FROM events WHERE taskID IN #)","DELETE FROM workAttachments WHERE workID IN #","DELETE FROM amendments WHERE taskID IN #","DELETE FROM events WHERE taskID IN #"] {
+                    try db.execute(sql: sql.replacingOccurrences(of: "#",with: Self.marks(ids)),arguments: StatementArguments(ids))
+                }
+            }
+            for ids in Array(messages).chunked() {
+                removed += try Attachment.fetchAll(db,sql: "SELECT * FROM attachments WHERE messageID IN \(Self.marks(ids))",arguments: StatementArguments(ids))
+                for sql in ["DELETE FROM attachments WHERE messageID IN #","DELETE FROM amendments WHERE messageID IN #","DELETE FROM memoryJobs WHERE messageID IN #","DELETE FROM memoryJobReasons WHERE messageID IN #"] {
+                    try db.execute(sql: sql.replacingOccurrences(of: "#",with: Self.marks(ids)),arguments: StatementArguments(ids))
+                }
+            }
+            for ids in Array(work).chunked() { try db.execute(sql: "DELETE FROM work WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
+            for ids in Array(messages).chunked() { try db.execute(sql: "DELETE FROM messages WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
+            try db.execute(sql: "DELETE FROM readCursor WHERE threadID=?",arguments: [id])
+            try db.execute(sql: "UPDATE topics SET attachedTo=NULL,attachedAt=NULL WHERE attachedTo=?",arguments: [id])
+            try db.execute(sql: "UPDATE topics SET label='',summary=NULL,source=NULL,deletedAt=? WHERE id=?",arguments: [Date().timeIntervalSince1970,id])
+            return removed
+        }
+    }
+    private static func marks(_ ids: [String]) -> String { "(" + Array(repeating: "?",count: ids.count).joined(separator: ",") + ")" }
+    /// The secretary's recall (owner, 2026-10-13): conversation, results and questions of every thread and the main
+    /// timeline, archived threads included, that match any of `terms`; the current `thread`'s first, then by how many
+    /// terms match, newest first. Terms of 3+ characters use the trigram index, shorter ones LIKE.
+    public func recall(_ terms: [String],thread: String?,excluding: Set<String> = [],limit: Int = 6) throws -> [RecallHit] {
+        let terms = Array(Set(terms.flatMap { $0.split(separator: "/") }.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }).prefix(16))
+        guard !terms.isEmpty else { return [] }
+        var parts: [String] = [], args: [DatabaseValueConvertible] = []
+        for term in terms {
+            if term.count >= 3 { parts.append("SELECT rowid AS r FROM messageSearch WHERE messageSearch MATCH ?"); args.append("\"" + term.replacingOccurrences(of: "\"",with: "\"\"") + "\"") }
+            else { parts.append("SELECT rowid AS r FROM messages WHERE body LIKE ? ESCAPE '\\'"); args.append("%" + term.replacingOccurrences(of: "\\",with: "\\\\").replacingOccurrences(of: "%",with: "\\%").replacingOccurrences(of: "_",with: "\\_") + "%") }
+        }
+        return try db.read { db in
+            try Row.fetchAll(db,sql: """
+                SELECT m.id,m.role,m.body,m.created,COALESCE(m.threadID,m.topicID) AS place,m.threadID IS NULL AS main,t.label,COUNT(*) AS n
+                FROM (\(parts.joined(separator: " UNION ALL "))) h JOIN messages m ON m.rowid=h.r LEFT JOIN topics t ON t.id=COALESCE(m.threadID,m.topicID)
+                WHERE m.kind IN ('conversation','result','question') GROUP BY m.id
+                ORDER BY (? IS NOT NULL AND (m.threadID IS ? OR m.topicID IS ?)) DESC,n DESC,m.created DESC LIMIT ?
+                """,arguments: StatementArguments(args + [thread,thread,thread,limit + excluding.count]))
+            .filter { !excluding.contains($0["id"]) }.prefix(limit)
+            .map { RecallHit(messageID: $0["id"],role: $0["role"],body: $0["body"],created: $0["created"],thread: $0["main"] ? nil : $0["place"],label: $0["label"]) }
         }
     }
     /// Assign only the newly received, previously unrouted message. Never migrate an old exchange.
@@ -457,13 +598,13 @@ public actor Store {
         guard output.appliedRevision >= steered, pending == 0 else { w.state = "amendment_pending"; w.error = String(localized: "Result retained in sub-chat; latest amendment not confirmed."); try w.update(db)
             let kind = "amendment_unconfirmed_" + String(w.revision)
             if try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind=?",arguments: [task,kind]) == 0 {
-                let m = Message(id: identifier(),role: "assistant",body: "The task finished without confirming your latest change. Its answer is in the sub-chat.",topicID: w.topicID,taskID: task,replyTo: w.messageID,kind: kind,created: Date().timeIntervalSince1970,notice: Notice(.amendmentUnconfirmed)); try m.insert(db); try attach(m)
+                let m = Message(id: identifier(),role: "assistant",body: "The task finished without confirming your latest change. Its answer is in the sub-chat.",topicID: w.topicID,taskID: task,replyTo: w.messageID,kind: kind,created: Date().timeIntervalSince1970,notice: Notice(.amendmentUnconfirmed),threadID: try inheritedThread(db,replyTo: w.messageID,task: nil)); try m.insert(db); try attach(m)
             }; return nil }
         w.state = "done"; w.error = nil; try w.update(db)
         try db.execute(sql: "UPDATE amendments SET state='applied' WHERE taskID=?", arguments: [task])
         if try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE taskID=? AND kind IN ('result','job_result')", arguments: [task]) ?? 0 > 0 { return nil }
         // The answer alone (#311): the UI draws the reply header from `replyTo`; results stored before keep their "Regarding" prefix.
-        let m = Message(id: identifier(), role: "assistant", body: output.text, topicID: w.topicID, taskID: task, replyTo: w.messageID, kind: delivery ?? "result", created: Date().timeIntervalSince1970)
+        let m = Message(id: identifier(), role: "assistant", body: output.text, topicID: w.topicID, taskID: task, replyTo: w.messageID, kind: delivery ?? "result", created: Date().timeIntervalSince1970, threadID: try inheritedThread(db,replyTo: w.messageID,task: nil))
         try m.insert(db); try attach(m); return m
     }
     // MARK: Jobs (#319)
