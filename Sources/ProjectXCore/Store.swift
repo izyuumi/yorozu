@@ -124,6 +124,17 @@ public actor Store {
             UPDATE messages SET answeredBy=(SELECT u.id FROM messages u WHERE u.role='user' AND u.replyTo=messages.id ORDER BY u.created,u.rowid LIMIT 1)
               WHERE role='assistant' AND kind<>'approval_request' AND (kind='question' OR json_extract(notice,'$.code') IN ('question','question_topic','question_task'));
             """) }
+        // #405. Explicit deletion records, synced by change sequence like any row: a client removes exactly these and
+        // never keeps them again, whatever it holds or infers (the Main chat's Delete).
+        migration.registerMigration("deletions-r1") { db in
+            let stamp = "UPDATE changeSeq SET value=value+1; UPDATE deletions SET seq=(SELECT value FROM changeSeq) WHERE rowid=new.rowid;"
+            try db.execute(sql: """
+                CREATE TABLE deletions(kind TEXT NOT NULL, id TEXT NOT NULL, seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind,id));
+                CREATE TRIGGER deletions_seq_ai AFTER INSERT ON deletions BEGIN \(stamp) END;
+                CREATE TRIGGER deletions_seq_au AFTER UPDATE ON deletions WHEN new.seq IS old.seq BEGIN \(stamp) END;
+                CREATE INDEX deletions_seq ON deletions(seq);
+                """)
+        }
         migration.registerMigration("session-key-lower") { db in try db.execute(sql: "UPDATE topics SET sessionKey=lower(sessionKey) WHERE sessionKey<>lower(sessionKey)") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
@@ -139,6 +150,8 @@ public actor Store {
     }
     deinit { if lease >= 0 { flock(lease, LOCK_UN); close(lease) } }
     static let synced = ["topics","messages","work","events","amendments","readCursor"]
+    /// What change pages read: the synced rows and, since #405, deletion records.
+    static let changeTables = synced + ["deletions"]
     public func snapshot() throws -> Snapshot {
         try db.read { db in
             var s = Snapshot()
@@ -298,7 +311,8 @@ public actor Store {
         return try db.read { db in
             let start = full ? 0 : try Self.windowStart(db)
             var all: [Change] = []
-            for t in Self.synced {
+            // Deletion records only for a whole-history client: a window client never held what they name.
+            for t in full ? Self.changeTables : Self.synced {
                 for row in try Row.fetchAll(db,sql: "WITH w(s) AS (SELECT ?) SELECT * FROM \(t) WHERE seq>? AND \(full ? "1" : Self.scope(t)) ORDER BY seq LIMIT ?",arguments: [start,seq,limit + 1]) {
                     all.append(Change(seq: row["seq"],record: try Self.record(t,row)))
                 }
@@ -330,6 +344,7 @@ public actor Store {
         case "work": return .work(try Work(row: row))
         case "events": return .event(try WorkerEvent(row: row))
         case "amendments": return .amendment(try Amendment(row: row))
+        case "deletions": return .deletion(kind: row["kind"],id: row["id"])
         default: return .readCursor(try ReadCursor(row: row))
         }
     }
@@ -466,6 +481,16 @@ public actor Store {
                     try db.execute(sql: sql.replacingOccurrences(of: "#",with: Self.marks(ids)),arguments: StatementArguments(ids))
                 }
             }
+            // Named one by one for clients (`deletions`), with the steps and changes of that work.
+            for ids in work.chunked() {
+                for kind in ["events","amendments"] {
+                    for id in try String.fetchAll(db,sql: "SELECT id FROM \(kind) WHERE taskID IN \(Self.marks(ids))",arguments: StatementArguments(ids)) {
+                        try db.execute(sql: "INSERT OR REPLACE INTO deletions(kind,id) VALUES (?,?)",arguments: [kind == "events" ? "worker_event" : "amendment",id])
+                    }
+                }
+                for id in ids { try db.execute(sql: "INSERT OR REPLACE INTO deletions(kind,id) VALUES ('task',?)",arguments: [id]) }
+            }
+            for id in messages { try db.execute(sql: "INSERT OR REPLACE INTO deletions(kind,id) VALUES ('message',?)",arguments: [id]) }
             for ids in work.chunked() { try db.execute(sql: "DELETE FROM work WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
             for ids in messages.chunked() { try db.execute(sql: "DELETE FROM messages WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
             try db.execute(sql: "DELETE FROM readCursor WHERE threadID='main'")

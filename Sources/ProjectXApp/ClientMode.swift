@@ -54,7 +54,12 @@ extension AppModel {
         self.client = client
         drafts.load()
         // A send a quit interrupted: its message is in the client's outbox or history when it went.
-        Task { await drafts.settle { id in client.bubbles.contains { $0.id == id } || client.hasQueued(id) }; restorePopoverDraft() }
+        Task {
+            // Only once the client's history is loaded can a missing message mean it was never sent.
+            while client.historyLoading { try? await Task.sleep(for: .milliseconds(200)) }
+            await drafts.settle { id in client.bubbles.contains { $0.id == id } || client.hasQueued(id) }
+            restorePopoverDraft()
+        }
         client.resume()
         ready = true; status = nil
         clientPoll = Task { [weak self] in
@@ -99,7 +104,7 @@ extension AppModel {
         // Main chat off (#405): Quick Chat's first message creates its chat on the host.
         // Marked with its message id first (#405): a quit mid-send leaves the draft or the queued message, never both.
         let key = popoverDraftKey, id = UUID().uuidString, text = draft, reply = replyingTo?.id
-        drafts.markSending(key,text: text,replyTo: reply,id: id)
+        guard drafts.markSending(key,text: text,replyTo: reply,id: id) else { status = MacDrafts.saveFailed; return }
         let ok = mainChat ? client.send(text: text,files: [],replyTo: reply,id: id)
                           : client.send(text: text,files: [],thread: quickThread,newThread: !snapshot.topics.contains { $0.id == quickThread },id: id)
         drafts.finishSending(key,id: id,sent: ok)

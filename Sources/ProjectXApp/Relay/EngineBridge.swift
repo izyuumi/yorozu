@@ -488,6 +488,7 @@ actor EngineBridge: RelayBackend {
         case .event(let w):
             e = event(w.id, thread, ms(w.created), .workerEvent(WorkerEventData(id: w.id, taskId: w.taskID, kind: w.kind, body: w.body, created: ms(w.created), seq: seq, files: files[w.id])))
         case .readCursor(let c): e = event(c.threadID, thread, now, .readState(ReadStateData(threadId: c.threadID, messageId: c.messageID, seq: seq)))
+        case .deletion(let kind, let id): e = event(id, thread, now, .deleted(DeletedData(kind: kind, id: id, seq: seq)))
         }
         // Shrinks the long text fields until the record fits; a few passes always do, since each one cuts in proportion.
         for _ in 0..<4 {

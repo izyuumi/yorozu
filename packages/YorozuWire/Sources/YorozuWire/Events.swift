@@ -114,6 +114,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case hostSettings = "host_settings"
         case textRequest = "text_request"
         case textSlice = "text_slice"
+        case deleted
     }
 
     public enum Payload: Equatable, Sendable {
@@ -191,6 +192,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case hostSettings(HostSettingsData)
         case textRequest(TextRequestData)
         case textSlice(TextSliceData)
+        case deleted(DeletedData)
 
         public var kind: Kind {
             switch self {
@@ -268,6 +270,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .hostSettings: .hostSettings
             case .textRequest: .textRequest
             case .textSlice: .textSlice
+            case .deleted: .deleted
             }
         }
 
@@ -380,6 +383,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .hostSettings: payload = .hostSettings(try c.decode(HostSettingsData.self, forKey: .data))
             case .textRequest: payload = .textRequest(try c.decode(TextRequestData.self, forKey: .data))
             case .textSlice: payload = .textSlice(try c.decode(TextSliceData.self, forKey: .data))
+            case .deleted: payload = .deleted(try c.decode(DeletedData.self, forKey: .data))
             }
         } catch {
             payload = .unknown(kind: rawKind, data: rawData)
@@ -475,6 +479,7 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .hostSettings(let d): try c.encode(d, forKey: .data)
         case .textRequest(let d): try c.encode(d, forKey: .data)
         case .textSlice(let d): try c.encode(d, forKey: .data)
+        case .deleted(let d): try c.encode(d, forKey: .data)
         }
     }
 }

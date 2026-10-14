@@ -511,6 +511,16 @@ public struct ThreadControlResultData: Codable, Equatable, Sendable {
     }
 }
 
+/// `deleted` (host -> client, a record inside `sync_delta`, `history-v1`): a record removed for good. The client removes it
+/// from its store and search and keeps no later copy of it.
+public struct DeletedData: Codable, Equatable, Sendable {
+    /// `message`, `task`, `worker_event` or `amendment`.
+    public var kind: String
+    public var id: String
+    public var seq: Int
+    public init(kind: String, id: String, seq: Int) { self.kind = kind; self.id = id; self.seq = seq }
+}
+
 // MARK: Host settings (`host-settings-v1`, #405)
 
 /// `host_settings` (both ways): host-wide settings every client shares. Host -> client after each compatible handshake and

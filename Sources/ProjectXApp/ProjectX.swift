@@ -387,7 +387,7 @@ import YorozuWire
         // Where it goes is fixed now, before any wait (#405): turning the Main chat on or off meanwhile never sends it
         // elsewhere; a Main message the host no longer takes is refused and its draft kept.
         let key = popoverDraftKey, id = identifier(), quick: String? = mainChat ? nil : quickThread
-        drafts.markSending(key,text: text,files: sent,replyTo: reply,id: id)
+        guard drafts.markSending(key,text: text,files: sent,replyTo: reply,id: id) else { status = MacDrafts.saveFailed; return }
         if readiness.map({ $0.state != .ready }) ?? false { recheck() }
         await ensureModels()
         // Downscaling reads and re-encodes images, so it runs off the main actor; its scratch copies go once the Engine has

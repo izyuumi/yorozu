@@ -75,7 +75,8 @@ public struct Amendment: Codable, FetchableRecord, PersistableRecord, Identifiab
 public struct ReadCursor: Codable, FetchableRecord, Sendable, Equatable { public var threadID: String; public var messageID: String }
 /// One row with the change sequence of its last insert or update (`changeSeq`, bumped by triggers).
 public struct Change: Sendable {
-    public enum Record: Sendable { case topic(Topic), message(Message), work(Work), event(WorkerEvent), amendment(Amendment), readCursor(ReadCursor) }
+    /// `deletion` (#405): a record removed for good (`kind` `message`, `task`, `worker_event` or `amendment`).
+    public enum Record: Sendable { case topic(Topic), message(Message), work(Work), event(WorkerEvent), amendment(Amendment), readCursor(ReadCursor), deletion(kind: String, id: String) }
     public var seq: Int64; public var record: Record
 }
 /// Changes in sequence order. Apply a prefix and continue after its last `seq`; with `more` false, `latest` is the next cursor.

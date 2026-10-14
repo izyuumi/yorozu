@@ -49,13 +49,16 @@ import ProjectXCore
         scheduleSave()
     }
 
-    /// Before a send: the draft as it is, with the message id it will be stored under, written now.
-    func markSending(_ key: String,text: String,files: [DraftFile] = [],replyTo: String? = nil,id: String) {
+    /// Before a send: the draft as it is, with the message id it will be stored under, written now. False, and the send
+    /// must not start, when that write failed.
+    @discardableResult
+    func markSending(_ key: String,text: String,files: [DraftFile] = [],replyTo: String? = nil,id: String) -> Bool {
         update(key,text: text,files: files,replyTo: replyTo)
         if all[key] == nil { all[key] = Saved(text: text) }
         all[key]?.sending = id
-        save()
+        return save()
     }
+    static let saveFailed = String(localized: "Couldn't save the draft before sending, so it wasn't sent. Free up some space and try again.")
     /// After a send: stored, the draft goes now (not after the usual pause); refused, it stays without the mark.
     func finishSending(_ key: String,id: String,sent: Bool) {
         guard all[key]?.sending == id else { return }
@@ -90,12 +93,17 @@ import ProjectXCore
         }
     }
 
-    func save() {
+    /// True once on disk. A failed finish leaves the mark on disk, which the next launch settles.
+    @discardableResult
+    func save() -> Bool {
         saveTask?.cancel(); saveTask = nil
-        guard let data = try? JSONEncoder().encode(all) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),withIntermediateDirectories: true,attributes: [.posixPermissions: 0o700])
-        try? data.write(to: url,options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600],ofItemAtPath: url.path)
+        guard let data = try? JSONEncoder().encode(all) else { return false }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),withIntermediateDirectories: true,attributes: [.posixPermissions: 0o700])
+            try data.write(to: url,options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600],ofItemAtPath: url.path)
+            return true
+        } catch { return false }
     }
 }
 

@@ -216,6 +216,8 @@ final class PhoneModel {
     private(set) var textError: String?
     /// Tasks of deleted threads (from their tombstones): their steps and changes are never kept again.
     @ObservationIgnored private var deletedTasks: Set<String> = []
+    /// Messages the host deleted one by one (`deleted` records): never kept again.
+    @ObservationIgnored private var deletedMessages: Set<String> = []
     /// The host's Main chat setting (`host-settings-v1`), the last value it confirmed, kept for offline use; nil until known.
     private(set) var mainChat: Bool?
     private(set) var hostSettingsSupported: Bool?
@@ -582,6 +584,7 @@ final class PhoneModel {
         historyWriteFailed = false
         deletedThreads = []
         deletedTasks = []
+        deletedMessages = []
         sentReads = [:]
         reminderAt = nil
         reminderCovered = nil
@@ -1809,7 +1812,8 @@ final class PhoneModel {
         func newer(_ held: Int?, _ incoming: Int?) -> Bool { replacing || held == nil || (held ?? 0) < (incoming ?? 0) }
         switch event.payload {
         case .message(let message):
-            if [message.threadId, message.topicId].contains(where: { $0.map(deletedThreads.contains) == true }) || message.taskId.map(deletedTasks.contains) == true { return }
+            if [message.threadId, message.topicId].contains(where: { $0.map(deletedThreads.contains) == true }) || message.taskId.map(deletedTasks.contains) == true
+                || deletedMessages.contains(event.id) { return }
             // The Main chat's deleted history never comes back from an older page.
             if let cleared = hostSettings?.mainClearedAt, message.threadId == nil, event.ts <= cleared, !Self.jobOnlyKinds.contains(message.kind ?? "") { return }
             let held = bubbles.first { $0.id == event.id }
@@ -1843,6 +1847,27 @@ final class PhoneModel {
             workerEvents[workerEvent.id] = workerEvent
             touch("event", workerEvent.id)
             for field in workerEvent.truncated ?? [] { needText(TextNeed(kind: "worker_event", id: workerEvent.id, field: field, seq: workerEvent.seq)) }
+        case .deleted(let d):
+            // Removed for good on the host (#405): gone here, from search too, and never kept again.
+            switch d.kind {
+            case "message":
+                deletedMessages.insert(d.id)
+                bubbles.removeAll { $0.id == d.id && $0.seq != nil }
+                drop("message", d.id)
+            case "task":
+                deletedTasks.insert(d.id)
+                tasks[d.id] = nil
+                drop("task", d.id)
+            case "worker_event":
+                workerEvents[d.id] = nil
+                drop("event", d.id)
+            case "amendment":
+                amendments[d.id] = nil
+                drop("amendment", d.id)
+            default: break
+            }
+            textNeeds.removeAll { $0.id == d.id }
+            metaDirty = true
         case .readState(let read) where read.threadId == "main":
             if newer(readCursor?.seq, read.seq ?? 0) { readCursor = read; touch("read", read.threadId) }
         case .readState(let read):
@@ -2029,6 +2054,7 @@ final class PhoneModel {
         var historySupported: Bool?
         var deletedTasks: [String]?
         var hostSettings: HostSettingsData?
+        var deletedMessages: [String]?
     }
     @ObservationIgnored private var metaDirty = false
     /// The history is being read from disk; `start()` waits for it.
@@ -2094,6 +2120,7 @@ final class PhoneModel {
             historySupported = meta.historySupported
             deletedTasks = Set(meta.deletedTasks ?? [])
             hostSettings = meta.hostSettings
+            deletedMessages = Set(meta.deletedMessages ?? [])
         }
     }
 
@@ -2227,7 +2254,8 @@ final class PhoneModel {
             meta["sync"] = try? encoder.encode(Meta(cursor: cursor, historySynced: historySynced, jobs: cacheHasJobs, threads: cacheHasThreads,
                                                     jobList: jobs, jobListAt: jobsUpdated.map { Int($0.timeIntervalSince1970 * 1000) },
                                                     threadList: threadList, archivedThreads: archivedThreads, mainRow: mainRow, mainChat: mainChat,
-                                                    historySupported: historySupported, deletedTasks: Array(deletedTasks), hostSettings: hostSettings))
+                                                    historySupported: historySupported, deletedTasks: Array(deletedTasks), hostSettings: hostSettings,
+                                                    deletedMessages: Array(deletedMessages)))
         }
         // Held records are written as they are now: the in-memory upsert rule already decided, so the disk follows it.
         // What this batch carried is written again with the next one unless it committed, so a failed write (a full disk)

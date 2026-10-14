@@ -71,7 +71,7 @@ extension AppModel {
     /// a quit mid-send never sends it twice (#405).
     func send(_ text: String,thread id: String,draftKey: String? = nil) async -> Bool {
         let new = !snapshot.topics.contains { $0.id == id }, messageID = identifier()
-        if let draftKey { drafts.markSending(draftKey,text: text,id: messageID) }
+        if let draftKey, !drafts.markSending(draftKey,text: text,id: messageID) { threadNotice = MacDrafts.saveFailed; return false }
         if let client {
             let ok = client.send(text: text,files: [],thread: id,newThread: new,id: messageID)
             if let draftKey { drafts.finishSending(draftKey,id: messageID,sent: ok) }
