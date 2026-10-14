@@ -2,6 +2,9 @@ import SwiftUI
 import UserNotifications
 import YorozuWire
 
+/// The app's sections (owner, 2026-10-14).
+enum AppSection: Hashable { case chats, scheduled, settings, search }
+
 /// The one conversation: the Mac's main chat with day separators, a working indicator while it has
 /// a turn running, and the composer. The view stays where the user is reading; new messages below
 /// raise a "↓ N new" pill, and sending jumps to the bottom.
@@ -9,7 +12,10 @@ struct ChatScreen: View {
     @Bindable var model: PhoneModel
     let onRepair: () -> Void
 
-    @State private var settings = false
+    @State private var section = AppSection.chats
+    /// Scheduled's own stack; Chats uses `path`.
+    @State private var jobsPath: [ChatRoute] = []
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var details: PhoneModel.Bubble?
     @State private var position = ScrollPosition(edge: .bottom)
     /// The view follows the newest message: an intent only the reader's own scrolling clears. The lazy stack measuring its
@@ -33,63 +39,49 @@ struct ChatScreen: View {
     private static let bottomSlack: CGFloat = 24
 
     var body: some View {
-        NavigationStack(path: $path) {
-            // With threads (owner, 2026-10-14) the stack starts at the thread list and the main chat is a page of it, like
-            // every thread; a host without `threads-v1` keeps the main chat as the root.
-            Group {
-                if listRoot { threadList } else { timeline }
-            }
-            .navigationDestination(for: ChatRoute.self) { route in
-                switch route {
-                case .main:
-                    timeline
-                case .topics:
-                    if model.threadsSupported == true {
-                        ThreadsScreen(model: model) { navigate(mainPath) } onNewChat: { path.append(.newChat(UUID().uuidString.lowercased())) }
-                    } else {
-                        TopicsScreen(model: model)
-                    }
-                case .jobs:
-                    JobsScreen(model: model) { path.append(.topic($0, focus: nil)) }
-                case .topic(let id, let focus):
-                    TopicScreen(model: model, topicId: id, focus: focus, onMainChat: { navigate(mainPath) }, onOpenMessage: openMessage)
-                case .newChat(let id):
-                    TopicScreen(model: model, topicId: id, focus: nil, onMainChat: { navigate(mainPath) }, isNew: true, onOpenMessage: openMessage)
-                case .archived:
-                    ArchivedThreadsScreen(model: model)
-                case .search:
-                    SearchScreen(model: model, onOpen: open) { path.removeLast() }
-                case .page(let id):
-                    PageScreen(model: model, messageId: id)
+        // The sections (owner, 2026-10-14): a tab bar on iPhone, a sidebar on iPad. The app always opens on Chats.
+        TabView(selection: $section) {
+            Tab("Chats", systemImage: "bubble.left.and.bubble.right", value: AppSection.chats) { chats }
+                .badge(model.attentionTopics > 0 ? Self.dotBadge : nil)
+            Tab("Scheduled", systemImage: "clock", value: AppSection.scheduled) {
+                NavigationStack(path: $jobsPath) {
+                    JobsScreen(model: model) { jobsPath = [.job($0)] }
+                        .navigationDestination(for: ChatRoute.self, destination: destination)
                 }
             }
-            // The Mac's cursor moved by another device (or first loaded) moves the divider; this phone's own
-            // does not, nor does any cursor at or before it, so the divider never lands on messages just read.
-            .onChange(of: model.readCursor?.messageId, initial: true) { _, id in
-                if !atOrBeforeSentRead(id) { unreadAfter = id }
+            .badge(model.jobs.contains(where: \.needsAttention) ? Self.dotBadge : nil)
+            Tab("Settings", systemImage: "gearshape", value: AppSection.settings) {
+                SettingsScreen(model: model, onRepair: onRepair)
             }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .active { unreadAfter = model.readCursor?.messageId }
-            }
-            .onChange(of: readTarget, initial: true) { _, id in markRead(id) }
-            .onChange(of: mainShown, initial: true) { _, shown in model.mainShown = shown }
-            .onDisappear { model.mainShown = false }
-            .task(id: model.pushOpen?.id) { await openPush() }
-            .sheet(isPresented: $settings) {
-                SettingsSheet(model: model) {
-                    settings = false
-                    onRepair()
+            Tab(value: AppSection.search, role: .search) {
+                NavigationStack {
+                    SearchScreen(model: model, onOpen: open) { section = .chats }
+                        .toolbar(compact ? .hidden : .automatic, for: .tabBar)
                 }
             }
-            .sheet(item: $details) { bubble in
-                MessageDetails(bubble: bubble, delivery: model.delivery(of: bubble),
-                               onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
-            }
-            .alert("Couldn’t send", isPresented: Binding(get: { model.attachFailure != nil }, set: { if !$0 { model.attachFailure = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(model.attachFailure ?? "")
-            }
+        }
+        .tabViewStyle(.sidebarAdaptable)
+        .background { shortcuts }
+        // The Mac's cursor moved by another device (or first loaded) moves the divider; this phone's own
+        // does not, nor does any cursor at or before it, so the divider never lands on messages just read.
+        .onChange(of: model.readCursor?.messageId, initial: true) { _, id in
+            if !atOrBeforeSentRead(id) { unreadAfter = id }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { unreadAfter = model.readCursor?.messageId }
+        }
+        .onChange(of: readTarget, initial: true) { _, id in markRead(id) }
+        .onChange(of: mainShown, initial: true) { _, shown in model.mainShown = shown }
+        .onDisappear { model.mainShown = false }
+        .task(id: model.pushOpen?.id) { await openPush() }
+        .sheet(item: $details) { bubble in
+            MessageDetails(bubble: bubble, delivery: model.delivery(of: bubble),
+                           onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
+        }
+        .alert("Couldn’t send", isPresented: Binding(get: { model.attachFailure != nil }, set: { if !$0 { model.attachFailure = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(model.attachFailure ?? "")
         }
         .environment(model.files)
         // The secretary cites what it recalls as `yorozu://message/<id>` links (owner, 2026-10-13), in every screen.
@@ -101,25 +93,69 @@ struct ChatScreen: View {
         .yorozuTint()
     }
 
-    /// The thread list is the root unless the host has said it doesn't take `threads-v1` (unknown counts as taking it,
-    /// so the app opens on the list before the first handshake).
-    private var listRoot: Bool { model.threadsSupported != false }
+    /// A small dot on a section, no number (owner, 2026-10-14).
+    private static let dotBadge = Text(verbatim: " ")
 
-    /// The main chat's route: a page over the thread list, or the root itself.
-    private var mainPath: [ChatRoute] { listRoot ? [.main] : [] }
+    private var compact: Bool { sizeClass == .compact }
 
-    private var threadList: some View {
-        ThreadsScreen(model: model) { navigate([.main]) } onNewChat: { navigate([.newChat(UUID().uuidString.lowercased())]) }
-            .navigationSubtitleIfAvailable(model.shownStatus.label)
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarLeading) {
-                    Button("Search", systemImage: "magnifyingglass") { navigate([.search]) }
-                    Button("Settings", systemImage: "gearshape") { settings = true }
+    /// Chats: the thread list as the stack's root on iPhone; on iPad the list beside the open chat.
+    @ViewBuilder private var chats: some View {
+        if compact {
+            NavigationStack(path: $path) {
+                threadList.navigationDestination(for: ChatRoute.self, destination: destination)
+            }
+        } else {
+            NavigationSplitView {
+                threadList
+            } detail: {
+                NavigationStack(path: $path) {
+                    ContentUnavailableView("No chat selected", systemImage: "bubble.left.and.bubble.right")
+                        .navigationDestination(for: ChatRoute.self, destination: destination)
                 }
             }
+        }
     }
 
-    /// The main chat: the root without threads, else the `.main` page.
+    private var threadList: some View {
+        ThreadsScreen(model: model) { navigate([.main]) } onNewChat: {
+            navigate([.newChat(UUID().uuidString.lowercased())])
+        } onOpen: { navigate([$0]) }
+            .navigationSubtitleIfAvailable(model.shownStatus.label)
+    }
+
+    /// Every page a section's stack can push. Chats hide the tab bar on iPhone, so the composer has the bottom edge.
+    @ViewBuilder private func destination(_ route: ChatRoute) -> some View {
+        Group {
+            switch route {
+            case .main:
+                timeline
+            case .job(let id):
+                JobScreen(model: model, jobId: id, onMainChat: { openChats([.main]) }, onOpenMessage: openMessage)
+            case .topic(let id, let focus):
+                TopicScreen(model: model, topicId: id, focus: focus, onMainChat: { openChats([.main]) }, onOpenMessage: openMessage)
+            case .newChat(let id):
+                TopicScreen(model: model, topicId: id, focus: nil, onMainChat: { openChats([.main]) }, isNew: true, onOpenMessage: openMessage)
+            case .archived:
+                ArchivedThreadsScreen(model: model) { path.append($0) }
+            case .page(let id):
+                PageScreen(model: model, messageId: id)
+            }
+        }
+        .toolbar(compact && route != .archived ? .hidden : .automatic, for: .tabBar)
+    }
+
+    /// ⌘1 Chats, ⌘2 Scheduled, ⌘F Search and ⌘, Settings, for a keyboard on iPad (owner, 2026-10-14).
+    private var shortcuts: some View {
+        Group {
+            Button("Chats") { section = .chats }.keyboardShortcut("1")
+            Button("Scheduled") { section = .scheduled }.keyboardShortcut("2")
+            Button("Search") { section = .search }.keyboardShortcut("f")
+            Button("Settings") { section = .settings }.keyboardShortcut(",")
+        }
+        .hidden()
+    }
+
+    /// The main chat, a page of Chats.
     private var timeline: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
@@ -261,24 +297,10 @@ struct ChatScreen: View {
                 }
             }
         }
-        .navigationTitle(listRoot ? String(localized: "Main chat") : String(localized: "Yorozu"))
+        .navigationTitle("Main chat")
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.shownStatus.label)
         .toolbar {
-            // As a page over the thread list, the back button replaces the Activities button and Settings stays on the list.
-            if !listRoot {
-                ToolbarItem(placement: .topBarLeading) {
-                    // A standard bar button: the whole glass circle is the target, and the badge is the bar's own.
-                    // The two-bubble symbol is wider than tall, so it is drawn a size down to sit inside the circle; the bar
-                    // ignores font and scale on a `Label`, only a bare image takes them (checked on iOS 27).
-                    Button { navigate([.topics]) } label: {
-                        Image(systemName: "bubble.left.and.bubble.right").font(.subheadline)
-                    }
-                        .accessibilityLabel("Activities")
-                        .badge(model.attentionTopics)
-                        .accessibilityValue(model.attentionTopics > 0 ? String(localized: "\(model.attentionTopics) need attention") : "")
-                }
-            }
             if !Self.hasSubtitle {
                 ToolbarItem(placement: .topBarLeading) {
                     Image(systemName: "circle.fill")
@@ -287,10 +309,6 @@ struct ChatScreen: View {
                         .accessibilityElement()
                         .accessibilityLabel(model.shownStatus.label)
                 }
-            }
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button("Search", systemImage: "magnifyingglass") { navigate([.search]) }
-                if !listRoot { Button("Settings", systemImage: "gearshape") { settings = true } }
             }
         }
     }
@@ -363,6 +381,12 @@ struct ChatScreen: View {
         path = route
     }
 
+    /// Chats at `route` from any section: a push tap, a citation or a search hit resets Chats to list → target (owner, 2026-10-14).
+    private func openChats(_ route: [ChatRoute]) {
+        section = .chats
+        navigate(route)
+    }
+
     /// At rest, back onto the end when the view is past it, over empty space (content shrank: a status row going away, a
     /// lazy row measuring shorter, the keyboard or composer getting smaller), or short of it while following. Never
     /// mid-gesture, so a bounce at the bottom is not fought.
@@ -407,18 +431,17 @@ struct ChatScreen: View {
 
     /// The newest stored message, while it is on screen: the app active, the chat shown, the view at the bottom.
     private var readTarget: String? {
-        guard scenePhase == .active, path == mainPath, !settings, details == nil, atBottom, model.state == .paired else { return nil }
+        guard scenePhase == .active, section == .chats, path == [.main], details == nil, atBottom, model.state == .paired else { return nil }
         return model.timeline.last { $0.seq != nil }?.id
     }
 
     /// The main timeline is on screen: pushes show no banner.
-    private var mainShown: Bool { scenePhase == .active && path == mainPath && !settings && details == nil }
+    private var mainShown: Bool { scenePhase == .active && section == .chats && path == [.main] && details == nil }
 
     /// A tapped push: its thread, or the main chat at its message once caught up (up to 10 s), else at the bottom.
     private func openPush() async {
         guard let request = model.pushOpen else { return }
-        path = []
-        settings = false
+        openChats([])
         details = nil
         var id: String?
         if let ref = request.ref {
@@ -432,21 +455,21 @@ struct ChatScreen: View {
         model.pushOpen = nil
         // A push for a thread's message opens the thread (owner, 2026-10-13).
         if let id, let thread = model.bubbles.first(where: { $0.id == id })?.threadId {
-            path = listRoot ? [.topic(thread, focus: id)] : [.topics, .topic(thread, focus: id)]
+            openChats([.topic(thread, focus: id)])
         } else if let id {
             showOnMain(id)
         } else {
-            path = mainPath
+            openChats([.main])
             atBottom = true
             scrollToEnd()
         }
     }
 
-    /// The main chat at one message: scrolled at once when it is the root, else once its page has been pushed (a scroll
-    /// view that does not exist yet ignores the position).
+    /// The main chat at one message: scrolled at once when its page is already shown, else once it has been pushed (a
+    /// scroll view that does not exist yet ignores the position).
     private func showOnMain(_ id: String) {
-        let pushed = path != mainPath
-        path = mainPath
+        let pushed = section != .chats || path != [.main]
+        openChats([.main])
         atBottom = false
         Task {
             if pushed { try? await Task.sleep(for: .milliseconds(400)) }
@@ -476,24 +499,24 @@ struct ChatScreen: View {
     /// One message by id (a cited link, a thread's source): its thread opens at it, the main timeline scrolls to it, and
     /// one not held here opens the host's page around it.
     private func openMessage(_ id: String) {
-        guard let bubble = model.bubbles.first(where: { $0.id == id }) else { path.append(.page(id)); return }
+        guard let bubble = model.bubbles.first(where: { $0.id == id }) else { openChats([.page(id)]); return }
         if let thread = bubble.threadId {
-            path.append(.topic(thread, focus: id))
+            openChats([.topic(thread, focus: id)])
         } else {
             showOnMain(id)
         }
     }
 
-    /// A search hit: the main timeline scrolls to it; a sub-chat opens over the search; a message
-    /// outside the cache opens `PageScreen`, which loads its page from the Mac.
+    /// A search hit, in Chats: the main timeline scrolls to it, a thread opens at it, and a message outside the cache
+    /// opens `PageScreen`, which loads its page from the Mac.
     private func open(_ hit: SearchHitData) {
         switch model.target(of: hit) {
         case .main(let id):
             showOnMain(id)
         case .topic(let topicId, let focus):
-            path.append(.topic(topicId, focus: focus))
+            openChats([.topic(topicId, focus: focus)])
         case .page(let id):
-            path.append(.page(id))
+            openChats([.page(id)])
         case .none:
             break
         }
@@ -611,14 +634,13 @@ private struct EmptyChat: View {
 }
 
 /// A Connection row that opens `ConnectionSettings`, notifications, the host's readiness, About (versions and links)
-/// and Copy diagnostics.
-private struct SettingsSheet: View {
+/// and Copy diagnostics: the Settings section.
+private struct SettingsScreen: View {
     let model: PhoneModel
     let onRepair: () -> Void
 
     @State private var copied = false
     @State private var notifications: UNAuthorizationStatus?
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -627,8 +649,8 @@ private struct SettingsSheet: View {
                 Section("Connection") {
                     NavigationLink {
                         ConnectionSettings(model: model, onRepair: onRepair) {
+                            // Without a host the app goes back to pairing.
                             Task { await model.remove() }
-                            dismiss()
                         }
                     } label: {
                         LabeledContent(model.hostName ?? String(localized: "Host"), value: connectionSummary)
@@ -687,11 +709,6 @@ private struct SettingsSheet: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
         .yorozuTint()
     }

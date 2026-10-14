@@ -145,8 +145,10 @@ final class PhoneModel {
 
     /// The Mac negotiated `jobs-v1`; nil until it has said. Jobs stay hidden unless true.
     private(set) var jobsSupported: Bool?
-    /// The Mac's latest `job_list`.
+    /// The Mac's latest `job_list`, kept in the cache.
     private(set) var jobs: [JobListData.Job] = []
+    /// When `jobs` arrived from the Mac; nil before any list.
+    private(set) var jobsUpdated: Date?
     /// `job_control` events awaiting their answer: event id -> job id. Those jobs' actions stay disabled.
     private(set) var jobControls: [String: String] = [:]
     /// The latest refusal per job.
@@ -154,7 +156,7 @@ final class PhoneModel {
     /// The cache was filled with `jobs-v1`, so it holds the job-only messages; without it a cursor skips them.
     private var cacheHasJobs = false
     /// Sub-chats that belong to jobs: reached through Jobs, not the topic list.
-    var jobTopicIds: Set<String> { jobsSupported == true ? Set(jobs.compactMap(\.topicId)) : [] }
+    var jobTopicIds: Set<String> { Set(jobs.compactMap(\.topicId)) }
 
     // Threads (`threads-v1`, owner 2026-10-13).
     /// Whether the host takes `threads-v1`; nil until known.
@@ -460,6 +462,7 @@ final class PhoneModel {
         attachmentsSupported = nil
         jobsSupported = nil
         jobs = []
+        jobsUpdated = nil
         jobRefusals = [:]
         cacheHasJobs = false
         draftFiles.forEach { $0.discard() }
@@ -1336,6 +1339,8 @@ final class PhoneModel {
             if let job = jobControls.removeValue(forKey: status.eventId), status.status == .rejected { jobRefusals[job] = status.reason }
         case .jobList(let list):
             jobs = list.jobs
+            jobsUpdated = Date()
+            scheduleSave()
         case .receipt(let receipt):
             stored(receipt.eventId, read: false)
         case .admissionStatus(let status) where status.status == .expired:
@@ -1488,6 +1493,8 @@ final class PhoneModel {
         workerEvents = Dictionary(snapshot.workerEvents.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         cacheHasJobs = snapshot.jobs == true
         cacheHasThreads = snapshot.threads == true
+        jobs = snapshot.jobList ?? []
+        jobsUpdated = snapshot.jobListAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         trim()
     }
 
@@ -1510,7 +1517,8 @@ final class PhoneModel {
         MirrorCache.shared.save(MirrorCache.Snapshot(
             owner: ownPub, cursor: cursor, readCursor: readCursor,
             messages: bubbles.filter { $0.seq != nil }, topics: Array(topics.values), tasks: Array(tasks.values),
-            amendments: Array(amendments.values), workerEvents: Array(workerEvents.values), jobs: cacheHasJobs, threads: cacheHasThreads))
+            amendments: Array(amendments.values), workerEvents: Array(workerEvents.values), jobs: cacheHasJobs, threads: cacheHasThreads,
+            jobList: jobs, jobListAt: jobsUpdated.map { Int($0.timeIntervalSince1970 * 1000) }))
     }
 
     /// The history window by the phone's clock and count: the newest 500 stored main-timeline messages
