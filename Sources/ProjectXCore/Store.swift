@@ -430,6 +430,34 @@ public actor Store {
         }
     }
     public static let mainID = "main"
+    /// Main-timeline messages filed in no chat that nothing else refers to (#405, Delete on the Main chat's row): what its
+    /// deletion removes. Filed ones belong to their chats and stay; so do messages a task or a change was started from.
+    static let mainOwn = """
+        threadID IS NULL AND topicID IS NULL AND kind NOT IN \(jobOnlyList)
+          AND NOT EXISTS (SELECT 1 FROM work w WHERE w.messageID=messages.id) AND NOT EXISTS (SELECT 1 FROM amendments a WHERE a.messageID=messages.id)
+        """
+    /// Deletes the Main chat's own messages created up to now, for good (their attachments returned for the caller to
+    /// remove; memory stays), and records the time, which clients apply. Returns that time and the removed files.
+    public func clearMain() throws -> (at: Double, removed: [Attachment]) {
+        let now = Date().timeIntervalSince1970
+        return try db.write { db in
+            let ids = try String.fetchAll(db,sql: "SELECT id FROM messages WHERE \(Self.mainOwn) AND created<=?",arguments: [now])
+            var removed: [Attachment] = []
+            for chunk in ids.chunked() {
+                removed += try Attachment.fetchAll(db,sql: "SELECT * FROM attachments WHERE messageID IN \(Self.marks(chunk))",arguments: StatementArguments(chunk))
+                for sql in ["DELETE FROM attachments WHERE messageID IN #","DELETE FROM memoryJobs WHERE messageID IN #","DELETE FROM memoryJobReasons WHERE messageID IN #","DELETE FROM messages WHERE id IN #"] {
+                    try db.execute(sql: sql.replacingOccurrences(of: "#",with: Self.marks(chunk)),arguments: StatementArguments(chunk))
+                }
+            }
+            if let cursor = try String.fetchOne(db,sql: "SELECT messageID FROM readCursor WHERE threadID='main'"), !(try Bool.fetchOne(db,sql: "SELECT EXISTS(SELECT 1 FROM messages WHERE id=?)",arguments: [cursor]) ?? false) {
+                try db.execute(sql: "DELETE FROM readCursor WHERE threadID='main'")
+            }
+            try db.execute(sql: "INSERT OR REPLACE INTO receipts VALUES ('main-cleared','main',?,?)",arguments: [String(now),now])
+            return (now,removed)
+        }
+    }
+    /// When the Main chat's own history was last deleted; nil if never.
+    public func mainCleared() throws -> Double? { try db.read { try String.fetchOne($0,sql: "SELECT body FROM receipts WHERE id='main-cleared'").flatMap(Double.init) } }
     /// A live, non-job topic for a thread action; throws a user-facing refusal otherwise.
     private static func liveThread(_ db: Database,_ id: String) throws -> Topic {
         guard let t = try Topic.fetchOne(db,key: id), t.deletedAt == nil else { throw ProjectError.invalid(String(localized: "That chat no longer exists.")) }

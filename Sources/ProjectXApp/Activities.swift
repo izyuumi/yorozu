@@ -82,7 +82,7 @@ struct ChatWindow: View {
                 Task { await model.control(thread: row.id,row.openWork ? .stopAndDelete : .delete) }
             }
         } message: { row in
-            Text(DeleteWording.message(running: row.openWork))
+            Text(row.isMain ? DeleteWording.main : DeleteWording.message(running: row.openWork))
         }
         .onChange(of: allChatIDs) { _,ids in
             // A deleted chat leaves the detail; a refused one stays, showing why.
@@ -186,9 +186,9 @@ struct ChatWindow: View {
             }
             ForEach(rows) { row in
                 MacChatRow(row: row,refusal: model.client?.threadRefusals[row.id]).tag(row.isMain ? Self.main : row.id)
-                    .contextMenu { if !row.isMain { ThreadActions(model: model,row: row,rename: start(renaming:),delete: { deleting = $0 }) } }
+                    .contextMenu { ThreadActions(model: model,row: row,rename: start(renaming:),delete: { deleting = $0 }) }
                     .swipeActions(edge: .trailing,allowsFullSwipe: true) {
-                        if !row.isMain {
+                        do {
                             Button(row.archived ? "Unarchive" : "Archive",systemImage: row.archived ? "tray.and.arrow.up" : "archivebox") {
                                 Task { await model.control(thread: row.id,row.archived ? .unarchive : .archive) }
                             }.tint(.indigo)
@@ -249,7 +249,7 @@ struct ChatWindow: View {
         draftThread = id; archivedShown = false; selection = id; pane = .chats; query = ""
     }
 
-    private func start(renaming row: ChatRow) { name = row.name; renaming = row }
+    private func start(renaming row: ChatRow) { name = row.shownName; renaming = row }
 }
 
 /// Rename, Archive or Unarchive, and Delete (Stop and Delete while work runs), for a row's context menu and a chat's ⋯ menu.
@@ -275,7 +275,7 @@ private struct MacChatRow: View {
     var body: some View {
         HStack(alignment: .top,spacing: 6) {
             VStack(alignment: .leading,spacing: 2) {
-                Text(row.isMain ? String(localized: "Main chat") : row.name).fontWeight(.semibold).lineLimit(1)
+                Text(row.shownName).fontWeight(.semibold).lineLimit(1)
                 Text(row.preview).font(.callout).foregroundStyle(.secondary).lineLimit(2)
                 if let refusal { Text(refusal).font(.caption).foregroundStyle(ChatPalette.warning) }
             }
@@ -300,7 +300,7 @@ private struct MacChatRow: View {
         return date.formatted(date: .numeric,time: .omitted)
     }
     static func label(_ row: ChatRow) -> String {
-        var parts = [row.isMain ? String(localized: "Main chat") : row.name]
+        var parts = [row.shownName]
         if row.dot == .attention { parts.append(String(localized: "Needs your attention")) } else if row.dot == .unread { parts.append(String(localized: "Unread")) }
         if row.running { parts.append(String(localized: "Working")) }
         if row.archived { parts.append(String(localized: "Archived")) }
@@ -383,7 +383,7 @@ private struct ThreadDetail: View {
                     Text("“\(sub.label)” was attached here").foregroundStyle(.secondary)
                 }
             }.font(.callout).frame(maxWidth: .infinity,alignment: .leading)
-            if let row, !row.isMain {
+            if let row {
                 Menu { ThreadActions(model: model,row: row,rename: rename,delete: delete) } label: { Image(systemName: "ellipsis.circle") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("More").accessibilityLabel("More")
             }

@@ -119,6 +119,13 @@ public actor Engine {
         }
         try await deleteThread(id)
     }
+    /// Delete on the Main chat's row (#405): its own unfiled messages go for good, from search too; chats it started, their
+    /// work and memory stay. Returns the time clients apply.
+    public func clearMain() async throws -> Double {
+        let (at,removed) = try await store.clearMain()
+        for a in removed { files?.remove(a) }
+        return at
+    }
     /// The Main chat's list row (#405).
     public func mainRow() async throws -> ThreadRow { try await store.mainRow() }
     /// Once the secretary has routed a user message (#405): the questions it answers are answered, so their chat's orange

@@ -224,10 +224,15 @@ struct TopicScreen: View {
                 if let task = model.tasks[focus], !task.isActive { toggled.insert(focus) }
                 atBottom = false
                 position.scrollTo(id: focus, anchor: .center)
-            } else if let mark = ReadingPositions.get(topicId), items.contains(where: { $0.id == mark }) {
-                // Where the reader left it.
-                atBottom = false
-                position.scrollTo(id: mark, anchor: .top)
+            } else if let mark = ReadingPositions.get(topicId) {
+                // Where the reader left it, once that message is loaded (a cold launch loads the history in batches).
+                while model.historyLoading, !model.bubbles.contains(where: { $0.id == mark }), !model.tasks.keys.contains(mark) {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                if model.bubbles.contains(where: { $0.id == mark }) || model.tasks[mark] != nil {
+                    atBottom = false
+                    position.scrollTo(id: mark, anchor: .top)
+                }
             }
             try? await Task.sleep(for: .milliseconds(300))
             restored = true

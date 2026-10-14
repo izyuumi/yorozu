@@ -33,6 +33,31 @@ extension AppModel {
     /// The global Main chat (owner, 2026-10-14; #405): one host-wide setting, `[general] main_chat`, off by default. A client
     /// Mac reads the host's value (`host_settings`), cached for offline use.
     var mainChat: Bool { client.map { $0.mainChat == true } ?? (resolved?.config.general.mainChat ?? false) }
+    /// What every client device shares (`host_settings`): the Main chat setting and its row's name, archive and deletion.
+    var hostSettings: HostSettingsData {
+        let g = resolved?.config.general ?? Config().general
+        return HostSettingsData(mainChat: g.mainChat,mainName: g.mainChatName.isEmpty ? nil : g.mainChatName,mainArchived: g.mainChatArchived ? true : nil,
+                                mainClearedAt: mainClearedAt.map { Int($0 * 1000) })
+    }
+    /// A client's change: the Main chat setting (#405).
+    func apply(hostSettings h: HostSettingsData) { setMainChat(h.mainChat) }
+    /// Rename, Archive, Unarchive and Delete on the Main chat's row (#405), on the host: the name and archive in
+    /// `config.toml`, Delete through the Engine; every client hears the result in `host_settings`.
+    func controlMain(_ action: ThreadControlData.Action,name: String?) async throws {
+        switch action {
+        case .rename:
+            let name = (name ?? "").split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            guard (1...80).contains(name.count) else { throw ProjectError.invalid(String(localized: "A chat name must be 1–80 characters.")) }
+            writeSettings { $0.general.mainChatName = name }
+        case .archive: writeSettings { $0.general.mainChatArchived = true }
+        case .unarchive: writeSettings { $0.general.mainChatArchived = false }
+        case .delete,.stopAndDelete:
+            guard let engine else { throw ProjectError.blocked(String(localized: "The host isn't ready yet.")) }
+            mainClearedAt = try await engine.clearMain()
+            snapshot = try await engine.snapshot()
+            await relay?.publishHostSettings(hostSettings)
+        }
+    }
     /// Turns the Main chat on or off: here in `config.toml`, from a client through the host. History is never touched.
     func setMainChat(_ on: Bool) {
         if let client { client.setMainChat(on); return }
@@ -92,7 +117,7 @@ extension AppModel {
         if runtimeMode == .live, next.config.relay.url != old.config.relay.url { await restartRelay() }
         else if runtimeMode == .live, let relay, (resolved ?? next).config.direct != old.config.direct { await relay.setDirect((resolved ?? next).config.direct) }
         await relay?.setAlerts(phoneAlerts)
-        await relay?.publishHostSettings(HostSettingsData(mainChat: (resolved ?? next).config.general.mainChat))
+        await relay?.publishHostSettings(hostSettings)
         // The popover becomes Quick Chat or the Main chat: its composer takes that one's draft (#405).
         if old.config.general.mainChat != next.config.general.mainChat { restorePopoverDraft(); await loadThreads() }
         // After the awaits a newer reload may have run: apply the settings in force now, not this reload's.

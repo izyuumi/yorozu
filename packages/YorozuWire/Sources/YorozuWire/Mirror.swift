@@ -519,7 +519,15 @@ public struct HostSettingsData: Codable, Equatable, Sendable {
     public static let capability = "host-settings-v1"
     /// The global Main chat and its cross-topic routing workflow (owner, 2026-10-14): off unless turned on.
     public var mainChat: Bool
-    public init(mainChat: Bool) { self.mainChat = mainChat }
+    /// The Main chat's row like any chat's (#405): its name (nil: the default), whether it is archived, and the time up to
+    /// which its own history was deleted (epoch ms): a client drops the Main chat's unfiled messages up to then that no task
+    /// or change refers to, as the host did, and never keeps them again.
+    public var mainName: String?
+    public var mainArchived: Bool?
+    public var mainClearedAt: Int?
+    public init(mainChat: Bool, mainName: String? = nil, mainArchived: Bool? = nil, mainClearedAt: Int? = nil) {
+        self.mainChat = mainChat; self.mainName = mainName; self.mainArchived = mainArchived; self.mainClearedAt = mainClearedAt
+    }
 }
 
 // MARK: Oversized record text (`history-v1`, #405)

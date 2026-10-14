@@ -163,11 +163,11 @@ private struct ChatRowButton: View {
     @Binding var deleting: ThreadRef?
 
     var body: some View {
-        let ref = ThreadRef(id: row.id, name: row.name, archived: row.archived, running: row.openWork)
+        let ref = ThreadRef(id: row.id, name: row.shownName, archived: row.archived, running: row.openWork)
         Button { open(row.isMain ? .main : .topic(row.id, focus: nil)) } label: { ChatRowLabel(row: row, refusal: model.threadRefusals[row.id]) }
             .foregroundStyle(.primary)
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                if !row.isMain {
+                do {
                     Button(row.archived ? String(localized: "Unarchive") : String(localized: "Archive"),
                            systemImage: row.archived ? "tray.and.arrow.up" : "archivebox") {
                         Task { await model.control(thread: ref.id, ref.archived ? .unarchive : .archive) }
@@ -175,7 +175,7 @@ private struct ChatRowButton: View {
                     .tint(.indigo)
                 }
             }
-            .contextMenu { if !row.isMain { ThreadMenu(model: model, ref: ref, renaming: $renaming, deleting: $deleting) } }
+            .contextMenu { ThreadMenu(model: model, ref: ref, renaming: $renaming, deleting: $deleting) }
             .disabled(model.threadControls.values.contains(row.id))
     }
 }
@@ -189,7 +189,7 @@ struct ChatRowLabel: View {
     var body: some View {
         HStack(alignment: .top, spacing: LayoutMetrics.stack) {
             VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
-                Text(row.isMain ? String(localized: "Main chat") : row.name).fontWeight(.semibold).lineLimit(1)
+                Text(row.shownName).fontWeight(.semibold).lineLimit(1)
                 Text(row.preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                 if let refusal { Text(refusal).font(.footnote).foregroundStyle(YorozuPalette.warning) }
             }
@@ -210,7 +210,7 @@ struct ChatRowLabel: View {
 
     /// Name, status, last message and time, in that order; the dot and spinner as words.
     static func label(_ row: ChatRow) -> String {
-        var parts = [row.isMain ? String(localized: "Main chat") : row.name]
+        var parts = [row.shownName]
         if row.dot == .attention { parts.append(String(localized: "Needs your attention")) }
         else if row.dot == .unread { parts.append(String(localized: "Unread")) }
         if row.running { parts.append(String(localized: "Working")) }
@@ -275,7 +275,7 @@ private struct ThreadDialogs: ViewModifier {
                     Task { if await model.control(thread: ref.id, stop ? .stopAndDelete : .delete) { onDeleted() } }
                 }
             } message: { ref in
-                Text(DeleteWording.message(running: ref.running))
+                Text(ref.id == ThreadData.mainId ? DeleteWording.main : DeleteWording.message(running: ref.running))
             }
     }
 }

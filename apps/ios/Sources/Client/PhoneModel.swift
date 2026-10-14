@@ -219,6 +219,8 @@ final class PhoneModel {
     /// The host's Main chat setting (`host-settings-v1`), the last value it confirmed, kept for offline use; nil until known.
     private(set) var mainChat: Bool?
     private(set) var hostSettingsSupported: Bool?
+    /// The host's last settings: the Main chat's name, archive and deletion time with the switch (#405).
+    private(set) var hostSettings: HostSettingsData?
     /// The newest message this device marked read per chat, so its row's unread dot goes before the host's row says so.
     private(set) var sentReads: [String: String] = [:]
     /// The Main chat's row from the host while it is on (`ThreadsPageData.main`), cached.
@@ -374,6 +376,11 @@ final class PhoneModel {
         pendingPairing = nil
         await sendDeviceRemove()
         let stored = PairingStore.Stored(pairing: pending.payload, identity: .generate())
+        // Written before the identity changes, so a crash between the two still finds the kept data (Repair only):
+        // the next launch adopts what the previous identity left, and only that.
+        if pending.repair, let ownPub {
+            UserDefaults.standard.set(["from": ownPub, "to": stored.identity.sessionPublicKey.base64URLEncodedString()], forKey: Self.repairKey)
+        }
         do { try PairingStore.save(stored) } catch {
             failure = error.localizedDescription
             return
@@ -381,7 +388,7 @@ final class PhoneModel {
         // Repair keeps the host (#405): its history, downloads, drafts and unsent messages stay with the new identity. Any
         // other host starts from nothing, so nothing of one host's chats reaches another.
         disconnect(keep: pending.repair)
-        connect(stored, adopt: pending.repair)
+        connect(stored)
         // Due until shown. A Repair keeps the host, so its guide is not shown again.
         if !pending.repair, let key = onboardingKey {
             UserDefaults.standard.set(false, forKey: key)
@@ -422,8 +429,10 @@ final class PhoneModel {
                                           payload: .deviceRemove(DeviceRemoveData(pub: ownPub))))
     }
 
-    /// `adopt`: the data a Repair of the same host kept is this identity's now.
-    private func connect(_ stored: PairingStore.Stored, adopt: Bool = false) {
+    /// A Repair of the same host in progress: the identity before it and after it (`confirm`).
+    private static let repairKey = "repairAdoptV1"
+
+    private func connect(_ stored: PairingStore.Stored) {
         let identity = stored.identity.sessionPublicKey
         let pushKey = "\(Self.pushKey).\(identity.base64URLEncodedString())"
         // The notification extension's key for this Mac's sealed previews, written on every connect so it follows the pairing.
@@ -461,15 +470,19 @@ final class PhoneModel {
         onboardingPending = onboardingKey.flatMap { UserDefaults.standard.object(forKey: $0) as? Bool } == false
         linked = stored.paired == true
         applyPush()
+        // A Repair's kept data becomes this identity's; the marker goes once all of it is written as this owner's.
+        let repair = UserDefaults.standard.dictionary(forKey: Self.repairKey) as? [String: String]
+        let adoptFrom = ownPub != nil && repair?["to"] == ownPub ? repair?["from"] : nil
+        var adopted = true
         if let ownPub {
-            openHistory(owner: ownPub, adopt: adopt)
-            drafts.load(owner: ownPub, adopt: adopt)
+            openHistory(owner: ownPub, adoptFrom: adoptFrom)
+            adopted = drafts.load(owner: ownPub, adoptFrom: adoptFrom)
             let main = drafts.draft(Drafts.chat(ThreadData.mainId))
             restoringDraft = true
             draft = main.text; draftFiles = main.files; replyingTo = main.replyTo
             restoringDraft = false
         }
-        if let ownPub, let saved = Outbox.file.load(Outbox.self), saved.owner == ownPub || adopt {
+        if let ownPub, let saved = Outbox.file.load(Outbox.self), saved.owner == ownPub || (adoptFrom != nil && saved.owner == adoptFrom) {
             outbox = saved.items
             marks = saved.marks
             reminderAt = saved.reminderAt
@@ -492,7 +505,13 @@ final class PhoneModel {
             restoringDraft = false
             // At once, and kept: a message waiting since before the update gets its reminder even if nothing changes (#405).
             saveOutbox()
+            if adoptFrom != nil {
+                adopted = adopted && Outbox.file.saveNow(Outbox(owner: ownPub, items: outbox, marks: marks, reminderAt: reminderAt,
+                                                                reminderCovered: reminderCovered, consumed: consumed.isEmpty ? nil : consumed))
+            }
         }
+        if adoptFrom != nil, adopted { UserDefaults.standard.removeObject(forKey: Self.repairKey) }
+        else if repair != nil, adoptFrom == nil { UserDefaults.standard.removeObject(forKey: Self.repairKey) } // another identity: never adopted
     }
 
     /// Forgets the pairing's link and its whole mirror, cache file included.
@@ -577,6 +596,7 @@ final class PhoneModel {
         historySynced = false
         hostSettingsSupported = nil
         mainChat = nil
+        hostSettings = nil
         mainRow = nil
         threadList = []
         archivedThreads = []
@@ -1146,7 +1166,16 @@ final class PhoneModel {
     /// A message has to wait in the outbox when the relay is out of reach: the moment to ask for
     /// notification permission (#314 open question 4).
     private func queued() {
-        if state != .joined && state != .paired { LocalNotices.requestPermission() }
+        if state != .joined && state != .paired {
+            // Once allowed, the reminder is scheduled again (one asked before the answer may not have been kept). iOS
+            // prompts only once; a denial is respected, never asked again.
+            Task { [weak self] in
+                guard await LocalNotices.askPermission() else { return }
+                self?.reminderAt = nil
+                self?.reminderCount = 0
+                self?.saveOutbox()
+            }
+        }
         flushOutbox(all: false)
     }
 
@@ -1371,6 +1400,7 @@ final class PhoneModel {
     /// counting every message due by then; Off, or none left, cancels it.
     func reconcileReminder() {
         let now = Self.now, delay = LocalNotices.reminderMinutes * 60_000
+        // A reminder whose time passed has fired: it covered every message sent by then.
         if let at = reminderAt, at <= now { reminderCovered = max(reminderCovered ?? 0, at); reminderAt = nil }
         let waiting = outbox.filter { !$0.stored && marks[$0.id] != .notDelivered && marks[$0.id] != .read }
         guard delay > 0, !waiting.isEmpty else {
@@ -1379,14 +1409,24 @@ final class PhoneModel {
             if waiting.isEmpty { reminderCovered = nil }
             return
         }
-        let due = waiting.map { $0.sentAt + delay }.filter { $0 > (reminderCovered ?? 0) }
-        guard let next = due.min() else { LocalNotices.cancelReminder(delivered: false); reminderAt = nil; return }
-        let at = max(next, now + 1000)
-        let count = waiting.filter { $0.sentAt + delay <= at }.count
-        if at != reminderAt || count != reminderCount {
-            LocalNotices.scheduleReminder(at: at, count: count)
-            reminderAt = at
-            reminderCount = count
+        // Grouped: one notice when the oldest uncovered message reaches the reminder age, counting every message still
+        // waiting then (sent by then), so a later one in the same group is covered even if the app stays suspended. A
+        // message sent after that gets the next notice.
+        let uncovered = waiting.filter { $0.sentAt > (reminderCovered ?? 0) }
+        guard let oldest = uncovered.map(\.sentAt).min() else { LocalNotices.cancelReminder(delivered: false); reminderAt = nil; return }
+        let at = max(oldest + delay, now + 1000)
+        let count = waiting.filter { $0.sentAt <= at }.count
+        guard at != reminderAt || count != reminderCount else { return }
+        reminderAt = at
+        reminderCount = count
+        LocalNotices.scheduleReminder(at: at, count: count) { ok in
+            // Kept only once the system took it; otherwise the next change schedules it again.
+            guard !ok else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.reminderAt == at else { return }
+                self.reminderAt = nil
+                self.reminderCount = 0
+            }
         }
     }
     @ObservationIgnored private var reminderCount = 0
@@ -1498,6 +1538,18 @@ final class PhoneModel {
         saveMeta()
     }
 
+    /// The Main chat's own messages up to `at` were deleted on the host (#405): the same ones go here, from search too, and
+    /// never come back from a later page. Messages a task or a change refers to stay, as on the host.
+    private func clearMain(upTo at: Int) {
+        let referenced = Set(tasks.values.map(\.messageId)).union(amendments.values.map(\.messageId))
+        for b in bubbles where b.seq != nil && Self.mainOwn(b) && b.ts <= at && !referenced.contains(b.id) { drop("message", b.id) }
+        bubbles.removeAll { $0.seq != nil && Self.mainOwn($0) && $0.ts <= at && !referenced.contains($0.id) }
+        if let cursor = readCursor, !bubbles.contains(where: { $0.id == cursor.messageId }) { readCursor = nil; drop("read", "main") }
+    }
+
+    /// A Main-chat message filed in no chat.
+    nonisolated static func mainOwn(_ b: Bubble) -> Bool { b.threadId == nil && b.topicId == nil && !jobOnlyKinds.contains(b.kind ?? "") }
+
     /// Turns the host's Main chat on or off (`host-settings-v1`): only while `.paired`; the host's answer is what shows.
     @discardableResult
     func setMainChat(_ on: Bool) -> Bool {
@@ -1525,16 +1577,18 @@ final class PhoneModel {
         flush()
         history?.drain()
         let archived = Set(archivedThreads.map(\.id)).union(topics.values.filter { $0.archivedAt != nil }.map(\.id))
+        // From the store's own rows, not what is in memory: a hit shows while the history is still loading (#405).
         return (history?.search(query, limit: limit) ?? []).compactMap { hit in
+            guard ![hit.thread, hit.topic].contains(where: { $0.map(deletedThreads.contains) == true }) else { return nil }
             if hit.kind == "message" {
-                guard let b = bubbles.first(where: { $0.id == hit.id }) else { return nil }
-                let place = b.threadId ?? b.topicId
-                return LocalHit(id: hit.id, messageId: hit.id, threadId: b.threadId, topicId: b.topicId, snippet: hit.snippet, ts: b.ts,
+                let place = hit.thread ?? hit.topic
+                return LocalHit(id: hit.id, messageId: hit.id, threadId: hit.thread, topicId: hit.topic, snippet: hit.snippet, ts: hit.ts,
                                 archived: place.map(archived.contains) == true)
             }
-            guard let w = workerEvents[hit.id], let task = tasks[w.taskId] else { return nil }
-            return LocalHit(id: hit.id, eventId: hit.id, taskId: task.id, topicId: task.topicId, snippet: hit.snippet, ts: w.created,
-                            archived: archived.contains(task.topicId))
+            let task = workerEvents[hit.id].flatMap { tasks[$0.taskId] }
+            guard let topic = task?.topicId ?? hit.topic, !deletedThreads.contains(topic) else { return nil }
+            return LocalHit(id: hit.id, eventId: hit.id, taskId: task?.id, topicId: topic, snippet: hit.snippet, ts: hit.ts,
+                            archived: archived.contains(topic))
         }
     }
 
@@ -1625,11 +1679,14 @@ final class PhoneModel {
         case .textSlice(let slice):
             receive(slice)
         case .hostSettings(let settings):
-            if mainChat != settings.mainChat {
+            if hostSettings != settings {
+                let refresh = mainChat != settings.mainChat
                 mainChat = settings.mainChat
+                hostSettings = settings
                 if !settings.mainChat { mainRow = nil }
+                if let at = settings.mainClearedAt { clearMain(upTo: at) }
                 saveMeta()
-                refreshThreads()
+                if refresh { refreshThreads() }
             }
         case .taskControlResult(let result):
             controlling.remove(result.taskId)
@@ -1726,6 +1783,9 @@ final class PhoneModel {
         switch event.payload {
         case .message(let message):
             if [message.threadId, message.topicId].contains(where: { $0.map(deletedThreads.contains) == true }) || message.taskId.map(deletedTasks.contains) == true { return }
+            // The Main chat's deleted history never comes back from an older page.
+            if let cleared = hostSettings?.mainClearedAt, message.threadId == nil, message.topicId == nil, event.ts <= cleared,
+               !Self.jobOnlyKinds.contains(message.kind ?? ""), !tasks.values.contains(where: { $0.messageId == event.id }) { return }
             let held = bubbles.first { $0.id == event.id }
             guard held?.seq == nil || newer(held?.seq, message.seq) else { return }
             merge(Bubble(record: event.id, ts: event.ts, message))
@@ -1942,6 +2002,7 @@ final class PhoneModel {
         var mainChat: Bool?
         var historySupported: Bool?
         var deletedTasks: [String]?
+        var hostSettings: HostSettingsData?
     }
     @ObservationIgnored private var metaDirty = false
     /// The history is being read from disk; `start()` waits for it.
@@ -1960,8 +2021,8 @@ final class PhoneModel {
 
     /// Opens this pairing's history and draws the mirror from it before any network request. A first launch after the
     /// update moves the window cache (`MirrorCache`) in and backfills the rest from the start, merging (#405).
-    private func openHistory(owner: String, adopt: Bool = false) {
-        let store = HistoryStore(owner: owner, adopt: adopt)
+    private func openHistory(owner: String, adoptFrom: String? = nil) {
+        let store = HistoryStore(owner: owner, adoptFrom: adoptFrom)
         history = store
         if store.isEmpty, let legacy = MirrorCache.shared.load(owner: owner) {
             restore(legacy)
@@ -1983,8 +2044,15 @@ final class PhoneModel {
         // at once, and the link dials once the history is in, so nothing from the host races the load.
         historyLoading = true
         Task.detached(priority: .userInitiated) { [weak self] in
-            let loaded = Self.decode(store.loadAll())
-            await MainActor.run { self?.adopt(loaded, from: store) }
+            var after: Int64 = 0
+            while true {
+                let batch = store.load(after: after)
+                guard !batch.records.isEmpty else { break }
+                after = batch.last
+                let loaded = Self.decode(batch.records)
+                guard await MainActor.run(body: { self?.merge(loaded, from: store) ?? false }) else { return }
+            }
+            await MainActor.run { self?.adopted(from: store) }
         }
         if let meta = store.meta("sync", as: Meta.self) {
             cursor = meta.cursor
@@ -1999,6 +2067,7 @@ final class PhoneModel {
             mainChat = meta.mainChat
             historySupported = meta.historySupported
             deletedTasks = Set(meta.deletedTasks ?? [])
+            hostSettings = meta.hostSettings
         }
     }
 
@@ -2030,24 +2099,29 @@ final class PhoneModel {
         return out
     }
 
-    /// The loaded history joins what this run already holds (sent bubbles from the outbox), then the link may dial.
-    private func adopt(_ loaded: Loaded, from store: HistoryStore) {
-        guard history === store else { return }
+    /// One loaded batch joins what this run holds (sent bubbles from the outbox, earlier batches); false once this store
+    /// is no longer the pairing's. The main actor takes each batch in turn, so the app stays responsive while it loads.
+    private func merge(_ loaded: Loaded, from store: HistoryStore) -> Bool {
+        guard history === store else { return false }
         receiving = true
-        let pendingBubbles = bubbles
-        bubbles = loaded.bubbles
-        for b in pendingBubbles where !bubbles.contains(where: { $0.id == b.id }) {
-            bubbles.insert(b, at: bubbles.lastIndex { $0.ts <= b.ts }.map { $0 + 1 } ?? 0)
-        }
-        topics = loaded.topics
+        let have = Set(bubbles.map(\.id))
+        bubbles += loaded.bubbles.filter { !have.contains($0.id) }
+        bubbles.sort { $0.ts < $1.ts }
+        topics.merge(loaded.topics) { held, _ in held }
         deletedThreads.formUnion(loaded.topics.values.filter { $0.deleted == true }.map(\.id))
-        tasks = loaded.tasks
-        amendments = loaded.amendments
-        workerEvents = loaded.events
-        readCursor = loaded.reads["main"]
-        threadReads = loaded.reads.filter { $0.key != "main" }
+        tasks.merge(loaded.tasks) { held, _ in held }
+        amendments.merge(loaded.amendments) { held, _ in held }
+        workerEvents.merge(loaded.events) { held, _ in held }
+        if let main = loaded.reads["main"] { readCursor = main }
+        threadReads.merge(loaded.reads.filter { $0.key != "main" }) { held, _ in held }
         receiving = false
         rebuildTimeline()
+        return true
+    }
+
+    /// The whole history is loaded: long text still cut is fetched again, and the link may dial.
+    private func adopted(from store: HistoryStore) {
+        guard history === store else { return }
         historyLoading = false
         // Long text still cut when the app last ran: fetched again from the start.
         for b in bubbles where b.truncated == true { if let seq = b.seq { textNeeds.append(TextNeed(kind: "message", id: b.id, field: "text", seq: seq)) } }
@@ -2127,7 +2201,7 @@ final class PhoneModel {
             meta["sync"] = try? encoder.encode(Meta(cursor: cursor, historySynced: historySynced, jobs: cacheHasJobs, threads: cacheHasThreads,
                                                     jobList: jobs, jobListAt: jobsUpdated.map { Int($0.timeIntervalSince1970 * 1000) },
                                                     threadList: threadList, archivedThreads: archivedThreads, mainRow: mainRow, mainChat: mainChat,
-                                                    historySupported: historySupported, deletedTasks: Array(deletedTasks)))
+                                                    historySupported: historySupported, deletedTasks: Array(deletedTasks), hostSettings: hostSettings))
         }
         // Held records are written as they are now: the in-memory upsert rule already decided, so the disk follows it.
         // What this batch carried is written again with the next one unless it committed, so a failed write (a full disk)

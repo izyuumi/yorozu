@@ -147,13 +147,14 @@ enum LocalNotices {
 
     /// One reminder for every message the host has not received by its time, grouped; scheduled with the system, so it
     /// fires while the app is suspended and with no network. `count` messages are past their reminder age then.
-    static func scheduleReminder(at ms: Int, count: Int) {
+    /// `done` hears whether the system took it.
+    static func scheduleReminder(at ms: Int, count: Int, done: @escaping @Sendable (Bool) -> Void = { _ in }) {
         let content = UNMutableNotificationContent()
         content.body = String(localized: "\(count) messages haven't reached your host yet. They'll go once it's back online.")
         content.sound = .default
         content.threadIdentifier = reminderId
         let delay = max(1, Double(ms) / 1000 - Date().timeIntervalSince1970)
-        center.add(UNNotificationRequest(identifier: reminderId, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)))
+        center.add(UNNotificationRequest(identifier: reminderId, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false))) { done($0 == nil) }
     }
 
     /// No message waits for the host any more (or reminders are off): nothing pending, and a shown one goes.

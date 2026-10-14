@@ -43,6 +43,8 @@ actor EngineBridge: RelayBackend {
     /// The host-wide settings clients share (`host-settings-v1`, #405): read for the Main chat row, written for a client's change.
     private let hostSettings: @Sendable () async -> HostSettingsData
     private let setHostSettings: @Sendable (HostSettingsData) async -> Void
+    /// Rename, Archive, Unarchive and Delete on the Main chat's row (#405), applied by the app (`AppModel.controlMain`).
+    private let controlMain: @Sendable (ThreadControlData) async throws -> Void
     /// Phone uploads waiting for their commit (#316).
     private var staging: UploadStaging
     /// Where phone thumbnails are cached.
@@ -54,7 +56,9 @@ actor EngineBridge: RelayBackend {
     /// `~/Library/Application Support/<bundle id>/uploads` and `~/Library/Caches/<bundle id>/thumbs`.
     init(engine: Engine, mode: RuntimeMode, scheduler: JobScheduler?, prepare: @escaping @Sendable () async -> Void = {},
          hostSettings: @escaping @Sendable () async -> HostSettingsData = { HostSettingsData(mainChat: false) },
-         setHostSettings: @escaping @Sendable (HostSettingsData) async -> Void = { _ in }) {
+         setHostSettings: @escaping @Sendable (HostSettingsData) async -> Void = { _ in },
+         controlMain: @escaping @Sendable (ThreadControlData) async throws -> Void = { _ in }) {
+        self.controlMain = controlMain
         self.engine = engine; self.mode = mode; self.scheduler = scheduler; self.prepare = prepare
         self.hostSettings = hostSettings; self.setHostSettings = setHostSettings
         let fm = FileManager.default, bundle = Bundle.main.bundleIdentifier ?? "to.yumi.yorozu"
@@ -241,12 +245,14 @@ actor EngineBridge: RelayBackend {
         if !mode.permitsInput(fixtureAcknowledged: false) { reason = String(localized: "The host is in fixture mode and doesn't take messages from client devices.") }
         else {
             do {
+                if c.threadId == ThreadData.mainId { try await controlMain(c) } else {
                 switch c.action {
                 case .rename: try await engine.renameThread(c.threadId, to: c.name ?? "")
                 case .archive: try await engine.archiveThread(c.threadId, true)
                 case .unarchive: try await engine.archiveThread(c.threadId, false)
                 case .delete: try await engine.deleteThread(c.threadId)
                 case .stopAndDelete: try await engine.stopAndDeleteThread(c.threadId)
+                }
                 }
             } catch { reason = error.localizedDescription }
         }

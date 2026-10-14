@@ -79,8 +79,9 @@ struct SearchScreen: View {
             Text("Not archived").tag(Scope.active)
         }
         .autocorrectionDisabled()
-        // Typing searches after a short pause, on the device: no host needed.
-        .task(id: trimmed) {
+        // Typing searches after a short pause, on the device: no host needed. Again as the history loads or changes (a
+        // chat deleted elsewhere drops out of the results at once).
+        .task(id: "\(trimmed)|\(model.historyLoading)|\(model.deletedThreads.count)|\(model.bubbles.count)") {
             guard !trimmed.isEmpty else { hits = []; searched = ""; return }
             guard (try? await Task.sleep(for: .milliseconds(200))) != nil else { return }
             hits = model.searchLocal(trimmed)

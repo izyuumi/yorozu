@@ -233,8 +233,11 @@ struct ChatScreen: View {
             ReadingPositions.set(atBottom ? nil : ids.first { $0 != Self.endId }, chat: ThreadData.mainId)
         }
         .onAppear {
-            guard model.pushOpen == nil, let mark = ReadingPositions.get(ThreadData.mainId), model.timeline.contains(where: { $0.id == mark }) else { return }
+            guard model.pushOpen == nil, let mark = ReadingPositions.get(ThreadData.mainId) else { return }
             Task {
+                // A link or a push takes priority; otherwise wait for the message while the history loads.
+                while model.historyLoading, !model.timeline.contains(where: { $0.id == mark }) { try? await Task.sleep(for: .milliseconds(200)) }
+                guard model.pushOpen == nil, model.timeline.contains(where: { $0.id == mark }) else { return }
                 try? await Task.sleep(for: .milliseconds(100))
                 position.scrollTo(id: mark, anchor: .top)
                 // After the jump: the end the first layout started at must not pull the view back (the settle follows only a follower).

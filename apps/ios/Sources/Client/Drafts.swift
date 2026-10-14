@@ -36,15 +36,19 @@ final class Drafts {
     }
 
     /// The drafts of this pairing; another pairing's are dropped with their files. Staged files no draft keeps go.
-    /// `adopt`: a Repair of the same host keeps the drafts for its new identity.
-    func load(owner: String, adopt: Bool = false) {
+    /// `adoptFrom`: a Repair of the same host keeps the drafts the previous identity (that owner) left; any other owner's
+    /// stay unread. False when adopting drafts could not be written yet (the caller tries again at the next launch).
+    @discardableResult
+    func load(owner: String, adoptFrom: String? = nil) -> Bool {
         self.owner = owner
         let saved = file.load(Saved.self)
-        all = saved?.owner == owner || adopt ? saved?.drafts ?? [:] : [:]
-        if adopt { save() }
+        let adopting = saved != nil && saved?.owner == adoptFrom
+        all = saved?.owner == owner || adopting ? saved?.drafts ?? [:] : [:]
+        if adopting, !saveNow() { return false }
         // A file the system removed (or a draft from an older build) drops out rather than failing the send.
         for (key, draft) in all { all[key]?.files = draft.files.filter(\.exists) }
         StagedFile.prune(keeping: Set(all.values.flatMap(\.files).map(\.id)))
+        return true
     }
 
     /// Remove host: every draft and its files.

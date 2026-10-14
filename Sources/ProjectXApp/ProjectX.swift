@@ -26,6 +26,8 @@ import YorozuWire
     @Published var quickSent = false
     /// The host's Main chat setting as a client Mac last applied it, to swap the popover's draft when it changes.
     var clientMainChat: Bool?
+    /// When the Main chat's own history was last deleted on this host (`Store.mainCleared`).
+    var mainClearedAt: Double?
     @Published var fileNotice: String?
     /// The popover's one-line status: startup progress or the last error, cleared by the next success.
     @Published var status: String? = String(localized: "Opening local workspace…") { didSet { statusDetail = nil } }
@@ -183,6 +185,7 @@ import YorozuWire
                     return
                 }
                 let store = try Store(root: root); self.store = store
+                mainClearedAt = try? await store.mainCleared()
                 if let problem = lastConfigError { await postInvalid(problem,body: "Settings not applied: \(problem.localizedDescription). Yorozu runs on its default settings until the file is fixed.") }
                 let memory = explicit != nil || runtimeMode == .fixture ? try MemoryStore(dataRoot: root) : try MemoryStore(
                     root: fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/memory",isDirectory: true),
@@ -323,13 +326,14 @@ import YorozuWire
         relayRetry?.cancel(); relayRetry = nil
         do {
             let bridge = EngineBridge(engine: engine,mode: runtimeMode,scheduler: jobScheduler,prepare: { [weak self] in await self?.ensureModels() },
-                                      hostSettings: { [weak self] in await MainActor.run { HostSettingsData(mainChat: self?.mainChat ?? false) } },
-                                      setHostSettings: { [weak self] h in await MainActor.run { self?.setMainChat(h.mainChat) } })
+                                      hostSettings: { [weak self] in await MainActor.run { self?.hostSettings ?? HostSettingsData(mainChat: false) } },
+                                      setHostSettings: { [weak self] h in await MainActor.run { self?.apply(hostSettings: h) } },
+                                      controlMain: { [weak self] c in try await self?.controlMain(c.action,name: c.name) })
             let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile,direct: resolved?.config.direct ?? Config().direct,alerts: phoneAlerts)
             self.bridge = bridge; relay = host
             Task { for await status in host.status where relay === host { relayStatus = status } }
             if let phoneReadiness { await host.publishReadiness(phoneReadiness) }
-            await host.publishHostSettings(HostSettingsData(mainChat: mainChat))
+            await host.publishHostSettings(hostSettings)
             await host.start()
         } catch {
             relayStatus.state = error.localizedDescription

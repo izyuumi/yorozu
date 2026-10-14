@@ -31,7 +31,7 @@ extension AppModel {
         if archived { if rows != archivedThreads { archivedThreads = rows }; archivedNext = nil }
         else {
             if rows != threads { threads = rows }; threadsNext = nil
-            let main = mainChat ? try? await engine.mainRow() : nil
+            let main = mainChat ? try? await engine.mainRow() : nil // archived or not: `chatRows` places it
             if main != mainThreadRow { mainThreadRow = main }
         }
     }
@@ -48,7 +48,11 @@ extension AppModel {
                            running: r.running,archived: r.topic.archivedAt != nil,openWork: r.openWork)
         }
         var rows = (archived ? archivedThreads : threads).filter { !jobTopics.contains($0.topic.id) }.map(row)
-        if !archived, mainChat, let main = mainThreadRow { rows.append(row(main)) }
+        // The Main chat is a row like any other (#405): its own name, and in the archived list once archived.
+        let g = resolved?.config.general
+        if mainChat, (g?.mainChatArchived ?? false) == archived, let main = mainThreadRow {
+            var r = row(main); r.name = g.map { $0.mainChatName }.flatMap { $0.isEmpty ? nil : $0 } ?? ""; r.archived = archived; r.openWork = false; rows.append(r)
+        }
         return rows.sorted(by: ChatRow.newestFirst)
     }
 
@@ -78,6 +82,10 @@ extension AppModel {
     func control(thread id: String,_ action: ThreadControlData.Action,name: String? = nil) async {
         if let client { await client.control(thread: id,action,name: name); return }
         guard let engine else { return }
+        if id == Store.mainID {
+            do { try await controlMain(action,name: name); threadNotice = nil } catch { threadNotice = error.localizedDescription }
+            await loadThreads(); return
+        }
         do {
             switch action {
             case .rename: try await engine.renameThread(id,to: name ?? "")

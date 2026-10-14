@@ -23,6 +23,8 @@ struct ChatRow: Identifiable, Equatable {
     /// Work not yet in a final state, running or not (an uncertain run, a stop not confirmed): Delete is Stop and Delete.
     var openWork = false
     var isMain: Bool { id == ThreadData.mainId }
+    /// The name as the list shows it: the Main chat's default unless it was renamed.
+    var shownName: String { isMain && name.isEmpty ? String(localized: "Main chat") : name }
     var thread: ThreadData?
 
     static func newestFirst(_ a: ChatRow, _ b: ChatRow) -> Bool { (a.time, a.id) > (b.time, b.id) }
@@ -42,11 +44,16 @@ extension PhoneModel {
         var rows: [ChatRow] = (archived ? archivedThreads : threadList)
             .filter { !jobTopicIds.contains($0.id) && !deletedThreads.contains($0.id) }
             .map { row(for: $0, known: known) }
-        if !archived, mainChat == true {
+        // The Main chat is a row like any other (#405): its name, and in the archived list once archived.
+        if mainChat == true, (hostSettings?.mainArchived == true) == archived {
             let main = mainRow ?? ThreadData(id: ThreadData.mainId, name: "", origin: "main", sourceMessageId: nil, summary: nil, created: 0,
                                              lastActivity: 0, archivedAt: nil, state: nil, lastMessageId: timeline.last?.id, unread: 0,
                                              lastMessageAt: timeline.last?.ts, preview: timeline.last?.shownPreview)
-            rows.append(row(for: main, known: known))
+            var r = row(for: main, known: known)
+            r.name = hostSettings?.mainName ?? ""
+            r.archived = archived
+            r.openWork = false
+            rows.append(r)
         }
         // The outbox: the newest unsent message of each chat, which the host's rows cannot know yet.
         let pending = Dictionary(grouping: bubbles.filter { $0.seq == nil && $0.user && !Self.jobOnlyKinds.contains($0.kind ?? "") }) {
@@ -106,6 +113,8 @@ enum ReadingPositions {
 
 /// What deleting a chat does, said before it happens: for good, on every device and in search; memories stay.
 enum DeleteWording {
+    /// Delete on the Main chat's row: its own messages; what it started stays.
+    static let main = String(localized: "The Main chat's own messages are deleted for good on every device, and from search. Chats it started, their work and long-term memories Yorozu saved stay.")
     static func message(running: Bool) -> String {
         let base = String(localized: "The chat and its messages are deleted for good on every device, and from search. Long-term memories Yorozu already saved from it stay.")
         return running ? base + "\n\n" + String(localized: "Work is running in this chat: it is stopped first. If the stop can't be confirmed, the chat is kept and nothing is deleted.") : base

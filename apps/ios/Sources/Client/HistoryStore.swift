@@ -41,12 +41,12 @@ final class HistoryStore: @unchecked Sendable {
     private let folder: URL
 
     /// Opens (or creates) the store for `owner`, the pairing's session key; another owner's file is removed first.
-    /// `adopt`: a Repair of the same host, whose file becomes the new identity's.
-    init(owner: String, adopt: Bool = false) {
+    /// `adoptFrom`: a Repair of the same host: the file that owner left becomes the new identity's; any other is wiped.
+    init(owner: String, adoptFrom: String? = nil) {
         folder = clientSupportDirectory.appending(path: "History", directoryHint: .isDirectory)
         queue.sync {
             open()
-            if let held = metaString("owner"), (held != owner && !adopt) || metaString("schema") != String(Self.schema) {
+            if let held = metaString("owner"), (held != owner && held != adoptFrom) || metaString("schema") != String(Self.schema) {
                 close()
                 try? FileManager.default.removeItem(at: folder)
                 open()
@@ -163,15 +163,17 @@ final class HistoryStore: @unchecked Sendable {
 
     // MARK: Reading
 
-    /// Every record, oldest first: what the client draws its mirror from at launch, before any network request.
-    func loadAll() -> [Record] {
+    /// One batch of records after row `after`, in row order, and the last row read: the client draws its mirror from these
+    /// batches at launch (#405), never the whole file at once. Empty at the end.
+    func load(after: Int64, limit: Int = 1000) -> (records: [Record], last: Int64) {
         queue.sync {
-            var out: [Record] = []
-            run("SELECT kind,id,seq,ts,thread,topic,json FROM records ORDER BY ts,rowid") { s in
+            var out: [Record] = [], last = after
+            run("SELECT kind,id,seq,ts,thread,topic,json,rowid FROM records WHERE rowid>? ORDER BY rowid LIMIT ?", [Int(after), limit]) { s in
                 out.append(Record(kind: Self.string(s, 0) ?? "", id: Self.string(s, 1) ?? "", seq: Int(sqlite3_column_int64(s, 2)),
                                   ts: Int(sqlite3_column_int64(s, 3)), thread: Self.string(s, 4), topic: Self.string(s, 5), json: Self.data(s, 6)))
+                last = sqlite3_column_int64(s, 7)
             }
-            return out
+            return (out, last)
         }
     }
 

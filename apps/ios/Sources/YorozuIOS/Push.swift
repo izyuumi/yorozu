@@ -39,7 +39,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     /// No banner over the main timeline; one anywhere else. #314's local notices stay unshown in the foreground.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        guard notification.request.trigger is UNPushNotificationTrigger else { return [] }
+        // The unsent reminder and the expiry notice (#405) show in the foreground too: they are about messages, not this screen.
+        guard notification.request.trigger is UNPushNotificationTrigger else { return [.banner, .list, .sound] }
         return await model.mainShown ? [] : [.banner, .list, .sound]
     }
 
