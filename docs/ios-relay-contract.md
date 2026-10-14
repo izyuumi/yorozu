@@ -913,7 +913,8 @@ client -> host to change `mainChat`, applied in `config.toml` (`[general] main_c
 
 - A client's change carries `requestId`; the host applies it (writing `config.toml` and reloading) and only then answers
   that client with the value in force, the same `requestId` and `error` when it was refused. The client shows the switch
-  pending until that answer (15 s at most), then the refusal if any.
+  pending until that answer (15 s at most), then the refusal if any. A host of the release before `read-marks-v1` (0.7.0 (24)) never answers by `requestId`; a
+  client sees that capability missing and ends the pending switch when the broadcast value is the one it asked for.
 - `mainChat`: the global Main chat and its routing (off by default). While off the host refuses a `message` for the main
   timeline with `admission_status rejected` and "The Main chat is off on the host. Turn it on in Settings, or send this in
   a chat.", so the client keeps it as Not delivered with Resend.

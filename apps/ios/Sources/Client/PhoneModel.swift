@@ -230,7 +230,7 @@ final class PhoneModel {
     /// Mark as Read or Unread sent from here: shown at once, until the host answers it (a refusal drops it) and then its
     /// cursor record arrives, which is the state from then on.
     /// `sentRead`: this device's read mark before the action, put back if it fails.
-    struct PendingMark: Equatable { var request: String; var unread: Bool; var sentRead: String? }
+    struct PendingMark: Equatable { var request: String; var unread: Bool; var sentRead: String?; var localRead: String? }
     private(set) var pendingMarks: [String: PendingMark] = [:]
     /// The unread mark as this device knows it: a pending action's value, else the host's cursor record.
     func markedUnread(_ thread: String) -> Bool? {
@@ -1539,6 +1539,7 @@ final class PhoneModel {
     @discardableResult
     func markRead(_ messageId: String, thread: String = "main", explicit: Bool = false) async -> Bool {
         guard state == .paired else { return false }
+        let badgeBefore = localRead
         if thread == "main" { localRead = messageId; updateBadge() }
         // Explicit only to a host that takes it (an older one gets the plain read it always did), and answered.
         // What shows at once goes in before the send (its answer can arrive before the send returns) and is rolled back
@@ -1547,9 +1548,12 @@ final class PhoneModel {
         let request = marks ? UUID().uuidString : nil
         let before = sentReads[thread]
         sentReads[thread] = messageId
-        if let request { pendingMarks[thread] = PendingMark(request: request, unread: false, sentRead: before) }
+        if let request { pendingMarks[thread] = PendingMark(request: request, unread: false, sentRead: before, localRead: badgeBefore) }
         guard await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId, unread: marks ? false : nil, requestId: request))) else {
-            if request == nil || pendingMarks[thread]?.request == request { pendingMarks[thread] = nil; sentReads[thread] = before }
+            if request == nil || pendingMarks[thread]?.request == request {
+                pendingMarks[thread] = nil; sentReads[thread] = before
+                if thread == "main" { localRead = badgeBefore; updateBadge() }
+            }
             if explicit { threadRefusals[thread] = String(localized: "Couldn't reach the host. Try again.") }
             return false
         }
@@ -1793,6 +1797,7 @@ final class PhoneModel {
             pendingMarks[answer.threadId] = nil
             if let error = answer.error {
                 sentReads[answer.threadId] = pending.sentRead
+                if answer.threadId == "main", !pending.unread { localRead = pending.localRead; updateBadge() }
                 threadRefusals[answer.threadId] = error
                 break
             }
@@ -1811,10 +1816,15 @@ final class PhoneModel {
             receive(slice)
         case .hostSettings(var settings):
             // An answer to this device's change: the refusal shows by the switch; the value is the host's either way.
+            // A host with `read-marks-v1` (the same release) answers each change by its `requestId`; an older one only
+            // broadcasts the value, so for it the pending switch ends when the value it asked for shows.
             if let request = settings.requestId, request == mainChatRequest {
                 mainChatPending = nil
                 mainChatRequest = nil
                 mainChatError = settings.error
+            } else if readMarksSupported != true, let pending = mainChatPending, settings.mainChat == pending {
+                mainChatPending = nil
+                mainChatRequest = nil
             }
             settings.error = nil
             settings.requestId = nil
