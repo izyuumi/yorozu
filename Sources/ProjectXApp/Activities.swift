@@ -82,7 +82,7 @@ struct ChatWindow: View {
                 Task { await model.control(thread: row.id,row.openWork ? .stopAndDelete : .delete) }
             }
         } message: { row in
-            Text(row.isMain ? DeleteWording.main : DeleteWording.message(running: row.openWork))
+            Text(row.isMain ? DeleteWording.main(running: row.openWork) : DeleteWording.message(running: row.openWork))
         }
         .onChange(of: allChatIDs) { _,ids in
             // A deleted chat leaves the detail; a refused one stays, showing why.

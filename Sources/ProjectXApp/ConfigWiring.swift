@@ -48,9 +48,9 @@ extension AppModel {
         case .rename:
             let name = (name ?? "").split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
             guard (1...80).contains(name.count) else { throw ProjectError.invalid(String(localized: "A chat name must be 1–80 characters.")) }
-            writeSettings { $0.general.mainChatName = name }
-        case .archive: writeSettings { $0.general.mainChatArchived = true }
-        case .unarchive: writeSettings { $0.general.mainChatArchived = false }
+            try writeSettingsOrThrow { $0.general.mainChatName = name }
+        case .archive: try writeSettingsOrThrow { $0.general.mainChatArchived = true }
+        case .unarchive: try writeSettingsOrThrow { $0.general.mainChatArchived = false }
         case .delete,.stopAndDelete:
             guard let engine else { throw ProjectError.blocked(String(localized: "The host isn't ready yet.")) }
             mainClearedAt = try await engine.clearMain()
@@ -89,9 +89,12 @@ extension AppModel {
     }
     /// A Settings change: read-modify-write through `Config.update`, applied at once; the watcher then sees the same file and skips it.
     func writeSettings(_ change: (inout Config) -> Void) {
-        guard let configFile else { return }
-        do { let file = try Config.update(configFile) { change(&$0) }; settingsError = nil; Task { await reload(.success(file)) } }
-        catch { settingsError = error.localizedDescription }
+        do { try writeSettingsOrThrow(change) } catch { settingsError = error.localizedDescription }
+    }
+    /// The same write, its failure thrown: a client's request answers with it rather than claiming success (#405).
+    func writeSettingsOrThrow(_ change: (inout Config) -> Void) throws {
+        guard let configFile else { throw ProjectError.blocked(String(localized: "The host's settings file isn't available.")) }
+        let file = try Config.update(configFile) { change(&$0) }; settingsError = nil; Task { await reload(.success(file)) }
     }
     func reload(_ result: Result<Config,ConfigError>) async {
         guard let configFile, let old = resolved else { return }

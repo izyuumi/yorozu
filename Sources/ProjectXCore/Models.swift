@@ -32,6 +32,8 @@ public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable
     /// The thread (a topic id) a message was typed in, or that a reply, acknowledgment or result to one inherits; nil
     /// = the main timeline (owner, 2026-10-13). A message with a thread never shows on the main timeline.
     public var threadID: String? = nil
+    /// A question's answer (#405): the user message the secretary found answers or withdraws it; nil while it is open.
+    public var answeredBy: String? = nil
     public var delay: Double? { sentAt.map { created - $0 }.flatMap { $0 > 60 ? $0 : nil } }
 }
 extension Message {
@@ -208,6 +210,8 @@ public struct Decision: Codable, Sendable {
     public var startNote: String?
     /// Owner, 2026-10-10: none of the candidate topics fits; `newTopic` names the new topic if no later round finds one.
     public var noMatch: Bool?
+    /// #405: ids from `RoutingInput.questions` this message answers or withdraws; their chat's orange dot clears.
+    public var answers: [String]?
     public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, approvalID: String? = nil, attachTo: String? = nil, startNote: String? = nil) {
         self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.approvalID = approvalID; self.attachTo = attachTo; self.startNote = startNote
     }
@@ -242,11 +246,15 @@ public struct RoutingInput: Codable, Sendable {
     /// the thread's name or "Main chat"; `link` is the citation, `[In <chat>](yorozu://message/<id>)`. Left out when there are none.
     public struct FoundView: Codable, Sendable { public var link: String; public var chat: String; public var role: String; public var body: String }
     public var found: [FoundView] = []
-    enum CodingKeys: String, CodingKey { case message, files, subject, found, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
+    /// #405: questions the secretary asked in this conversation that no answer resolved yet, so the decision can say which
+    /// one this message answers (`Decision.answers`). Left out when there are none.
+    public struct QuestionView: Codable, Sendable { public var id: String; public var topicID: String?; public var body: String }
+    public var questions: [QuestionView] = []
+    enum CodingKeys: String, CodingKey { case message, files, subject, found, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals, questions }
     /// Empty job lists are left out, so a workspace without jobs sends the pre-#319 context unchanged.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(subject,forKey: .subject); if !found.isEmpty { try c.encode(found,forKey: .found) }; try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
+        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(subject,forKey: .subject); if !found.isEmpty { try c.encode(found,forKey: .found) }; try c.encodeIfPresent(messageAge,forKey: .messageAge); if !questions.isEmpty { try c.encode(questions,forKey: .questions) }; try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
         try c.encodeIfPresent(latestTopic,forKey: .latestTopic); try c.encode(memory,forKey: .memory); try c.encodeIfPresent(sourceMessageID,forKey: .sourceMessageID); try c.encodeIfPresent(omitted,forKey: .omitted)
         if !jobs.isEmpty { try c.encode(jobs,forKey: .jobs) }; if !approvals.isEmpty { try c.encode(approvals,forKey: .approvals) }
     }

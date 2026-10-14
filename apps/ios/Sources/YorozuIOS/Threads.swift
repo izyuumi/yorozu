@@ -275,7 +275,7 @@ private struct ThreadDialogs: ViewModifier {
                     Task { if await model.control(thread: ref.id, stop ? .stopAndDelete : .delete) { onDeleted() } }
                 }
             } message: { ref in
-                Text(ref.id == ThreadData.mainId ? DeleteWording.main : DeleteWording.message(running: ref.running))
+                Text(ref.id == ThreadData.mainId ? DeleteWording.main(running: ref.running) : DeleteWording.message(running: ref.running))
             }
     }
 }

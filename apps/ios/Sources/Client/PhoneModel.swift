@@ -510,7 +510,7 @@ final class PhoneModel {
                                                                 reminderCovered: reminderCovered, consumed: consumed.isEmpty ? nil : consumed))
             }
         }
-        if adoptFrom != nil, adopted { UserDefaults.standard.removeObject(forKey: Self.repairKey) }
+        if adoptFrom != nil, adopted, history?.ownerWritten == true { UserDefaults.standard.removeObject(forKey: Self.repairKey) }
         else if repair != nil, adoptFrom == nil { UserDefaults.standard.removeObject(forKey: Self.repairKey) } // another identity: never adopted
     }
 
@@ -1541,14 +1541,22 @@ final class PhoneModel {
     /// The Main chat's own messages up to `at` were deleted on the host (#405): the same ones go here, from search too, and
     /// never come back from a later page. Messages a task or a change refers to stay, as on the host.
     private func clearMain(upTo at: Int) {
-        let referenced = Set(tasks.values.map(\.messageId)).union(amendments.values.map(\.messageId))
-        for b in bubbles where b.seq != nil && Self.mainOwn(b) && b.ts <= at && !referenced.contains(b.id) { drop("message", b.id) }
-        bubbles.removeAll { $0.seq != nil && Self.mainOwn($0) && $0.ts <= at && !referenced.contains($0.id) }
-        if let cursor = readCursor, !bubbles.contains(where: { $0.id == cursor.messageId }) { readCursor = nil; drop("read", "main") }
+        // As on the host (`Store.clearMain`): every Main-timeline message up to then, and the work they started.
+        let gone = Set(bubbles.filter { $0.seq != nil && Self.onMain($0) && $0.ts <= at }.map(\.id))
+        guard !gone.isEmpty else { return }
+        let goneTasks = Set(tasks.values.filter { gone.contains($0.messageId) }.map(\.id))
+        deletedTasks.formUnion(goneTasks)
+        gone.forEach { drop("message", $0) }
+        goneTasks.forEach { tasks[$0] = nil; drop("task", $0) }
+        for a in amendments.values where goneTasks.contains(a.taskId) || gone.contains(a.messageId) { amendments[a.id] = nil; drop("amendment", a.id) }
+        for w in workerEvents.values where goneTasks.contains(w.taskId) { workerEvents[w.id] = nil; drop("event", w.id) }
+        bubbles.removeAll { gone.contains($0.id) || ($0.taskId.map(goneTasks.contains) == true && $0.threadId == nil) }
+        readCursor = nil
+        drop("read", "main")
     }
 
-    /// A Main-chat message filed in no chat.
-    nonisolated static func mainOwn(_ b: Bubble) -> Bool { b.threadId == nil && b.topicId == nil && !jobOnlyKinds.contains(b.kind ?? "") }
+    /// A Main-timeline message (not in a thread, not job-only).
+    nonisolated static func onMain(_ b: Bubble) -> Bool { b.threadId == nil && !jobOnlyKinds.contains(b.kind ?? "") }
 
     /// Turns the host's Main chat on or off (`host-settings-v1`): only while `.paired`; the host's answer is what shows.
     @discardableResult
@@ -1784,8 +1792,7 @@ final class PhoneModel {
         case .message(let message):
             if [message.threadId, message.topicId].contains(where: { $0.map(deletedThreads.contains) == true }) || message.taskId.map(deletedTasks.contains) == true { return }
             // The Main chat's deleted history never comes back from an older page.
-            if let cleared = hostSettings?.mainClearedAt, message.threadId == nil, message.topicId == nil, event.ts <= cleared,
-               !Self.jobOnlyKinds.contains(message.kind ?? ""), !tasks.values.contains(where: { $0.messageId == event.id }) { return }
+            if let cleared = hostSettings?.mainClearedAt, message.threadId == nil, event.ts <= cleared, !Self.jobOnlyKinds.contains(message.kind ?? "") { return }
             let held = bubbles.first { $0.id == event.id }
             guard held?.seq == nil || newer(held?.seq, message.seq) else { return }
             merge(Bubble(record: event.id, ts: event.ts, message))

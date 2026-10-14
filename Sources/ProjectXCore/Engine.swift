@@ -121,24 +121,32 @@ public actor Engine {
     }
     /// Delete on the Main chat's row (#405): its own unfiled messages go for good, from search too; chats it started, their
     /// work and memory stay. Returns the time clients apply.
-    public func clearMain() async throws -> Double {
-        let (at,removed) = try await store.clearMain()
-        for a in removed { files?.remove(a) }
+    /// Stops the work the Main conversation started (again, if a stop was asked before), waits up to `wait` for every stop
+    /// to be confirmed, then deletes it (`Store.clearMain`); a stop that cannot be confirmed keeps everything and throws.
+    public func clearMain(wait: Duration = .seconds(30)) async throws -> Double {
+        let at = Date().timeIntervalSince1970
+        var problems: [String] = []
+        for w in try await store.mainOpenWork(upTo: at) {
+            let o = await stopTask(id: w.id)
+            if !o.accepted { problems.append(o.text) }
+        }
+        let end = ContinuousClock.now + wait
+        while try await !store.mainOpenWork(upTo: at).isEmpty {
+            guard ContinuousClock.now < end else {
+                let reason = problems.first.map { ": \($0)" } ?? "."
+                throw ProjectError.uncertain(String(localized: "Couldn't confirm that the Main chat's work stopped, so nothing was deleted\(reason) Try again once its tasks show Stopped."))
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        for a in try await store.clearMain(upTo: at) { files?.remove(a) }
         return at
     }
     /// The Main chat's list row (#405).
     public func mainRow() async throws -> ThreadRow { try await store.mainRow() }
-    /// Once the secretary has routed a user message (#405): the questions it answers are answered, so their chat's orange
-    /// dot clears. Those are the question it replies to, and the open questions before it in the topic routing filed it in
-    /// (in a message without a topic: its thread's, or the main timeline's unfiled ones). Reading never answers one.
-    private func answered(_ id: String) async {
-        guard let m = try? await store.message(id: id), m.role == "user", m.readAt != nil else { return }
-        try? await store.answer(questionsBefore: m)
-    }
     private func enqueueRoute(_ m: Message) {
         routingCount += 1
         let prior = routingTail
-        routingTail = Task { if let prior { await prior.value }; await self.route(m); await self.answered(m.id) }
+        routingTail = Task { if let prior { await prior.value }; await self.route(m) }
     }
     /// After launch: route user messages a quit left unrouted (under 24 h old, in order; older ones get one notice),
     /// queue never-dispatched work again and re-attach to runs a restart interrupted. A run that finished meanwhile is
@@ -296,6 +304,10 @@ public actor Engine {
             input.files = fileViews(message.id,snapshot) // descriptors only, never contents (#316)
             input.policy = Self.routingPolicy(settings(),jobs: !input.jobs.isEmpty || !input.approvals.isEmpty,delayed: input.messageAge != nil,files: !input.files.isEmpty || recent.contains { $0.files != nil })
             input.sourceMessageID = message.id
+            // Open questions of this conversation (#405): the decision names the ones this message answers.
+            let open = before.filter { $0.role == "assistant" && $0.answeredBy == nil && Store.asksUser($0) }.suffix(5)
+            input.questions = open.map { RoutingInput.QuestionView(id: $0.id,topicID: $0.topicID,body: utf8Excerpt($0.body,bytes: 300)) }
+            if !input.questions.isEmpty { input.policy += " questions lists questions you asked the user that are still open; set answers to the IDs of those this message answers or withdraws (it gives what was asked, or says to drop it). A message about something else answers none." }
             // A reply to a message in a topic belongs to that topic: the secretary picks the action, never the topic (owner, 2026-10-09).
             // A message typed in a thread belongs to the thread's topic: no classification of the subject, no new topic.
             let pinned = thread.map { Self.home($0.id,snapshot) } ?? message.replyTo.flatMap { r in snapshot.messages.first { $0.id == r }?.topicID }.map { Self.home($0,snapshot) }
@@ -374,6 +386,9 @@ public actor Engine {
                 } catch { /* Preserve the original clarification, not a guessed dispatch. */ }
             }
             try await apply(decision,to: message,snapshot: snapshot,latest: latest,memories: memories)
+            // The question it replies to, and those the decision says it answers: reading or other chat never clears one.
+            let answered = Set(decision.answers ?? []).intersection(input.questions.map(\.id)).union(message.replyTo.flatMap { r in snapshot.messages.first { $0.id == r && $0.role == "assistant" && Store.asksUser($0) }?.id }.map { [$0] } ?? [])
+            if !answered.isEmpty { try? await store.markAnswered(Array(answered),by: message.id) }
         } catch {
             let coded = error as? NoticeError, offline = { if case ProjectError.offline = error { return true }; return false }()
             let code = (error as? HarnessError)?.code ?? .routingFailed

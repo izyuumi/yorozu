@@ -39,6 +39,8 @@ final class HistoryStore: @unchecked Sendable {
     /// The trigram tokenizer (SQLite 3.34+) matches inside words and any script; without it search scans with LIKE.
     private var trigram = false
     private let folder: URL
+    /// The file is this owner's on disk (a Repair's adoption counts only once this is true).
+    private(set) var ownerWritten = false
 
     /// Opens (or creates) the store for `owner`, the pairing's session key; another owner's file is removed first.
     /// `adoptFrom`: a Repair of the same host: the file that owner left becomes the new identity's; any other is wiped.
@@ -51,8 +53,7 @@ final class HistoryStore: @unchecked Sendable {
                 try? FileManager.default.removeItem(at: folder)
                 open()
             }
-            setMeta("owner", Data(owner.utf8))
-            setMeta("schema", Data(String(Self.schema).utf8))
+            ownerWritten = setMeta("owner", Data(owner.utf8)) && setMeta("schema", Data(String(Self.schema).utf8))
         }
     }
 

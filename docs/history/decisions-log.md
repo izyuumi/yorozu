@@ -921,3 +921,16 @@ Source: owner, design interview on adding a tab bar.
 - ⌘1 Chats, ⌘2 Scheduled, ⌘N New chat, ⌘F search, ⌘, Settings.
 - Only the latest version runs: the layout for a host without `threads-v1` and the UI gates on `threads-v1` and `jobs-v1` go.
 - Delivery: branch `tab-bar`, PRs in order: decisions, docs and the `schedule` field; iOS; the Mac.
+
+## 2026-10-14 — Chat UX: native navigation, offline history, optional Main chat (#405)
+Source: owner, UX pass agreed on 2026-10-14 (issue #405).
+
+- Native SwiftUI components and behaviour; the search role tab and `.searchable` replace the custom search field.
+- Clients keep the whole history (not the 500-message / 30-day window), searchable offline; incomplete first sync is shown as such; attachments on demand and kept.
+- One chat list by last visible message; blue and orange dots, a running spinner; no groups, pins, origin icons or counts.
+- Main chat off by default, host-wide; it controls the global workflow; history kept when off.
+- Launch starts a new draft; Quick Chat when Main is off; device-local drafts with files; links save the draft.
+- Follow new messages only at the bottom; reading positions restored.
+- Swipe Archive; Rename and Delete in the context menu; search includes archived chats (marked, filterable); Delete is permanent everywhere, says long-term memories stay, and Stop and Delete waits for a confirmed stop.
+- Queued messages auto-send; 24 h expiry from Send; an unsent reminder at 30 minutes by default, configurable or Off, cleared by host receipt only; grouped.
+- Implementer readings: the Main chat's row takes the same actions (its Delete removes only its own unfiled messages that no task or change refers to); a Main message arriving while Main is off is refused with the reason, never rerouted; a grouped reminder fires when the oldest waiting message reaches the age and covers every message waiting then; Repair of the same host keeps that host's history, drafts and outbox.

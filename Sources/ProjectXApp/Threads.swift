@@ -50,8 +50,9 @@ extension AppModel {
         var rows = (archived ? archivedThreads : threads).filter { !jobTopics.contains($0.topic.id) }.map(row)
         // The Main chat is a row like any other (#405): its own name, and in the archived list once archived.
         let g = resolved?.config.general
-        if mainChat, (g?.mainChatArchived ?? false) == archived, let main = mainThreadRow {
-            var r = row(main); r.name = g.map { $0.mainChatName }.flatMap { $0.isEmpty ? nil : $0 } ?? ""; r.archived = archived; r.openWork = false; rows.append(r)
+        // A deleted Main chat leaves the list until its next message.
+        if mainChat, (g?.mainChatArchived ?? false) == archived, let main = mainThreadRow, main.last != nil {
+            var r = row(main); r.name = g.map { $0.mainChatName }.flatMap { $0.isEmpty ? nil : $0 } ?? ""; r.archived = archived; rows.append(r)
         }
         return rows.sorted(by: ChatRow.newestFirst)
     }

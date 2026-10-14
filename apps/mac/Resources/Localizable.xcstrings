@@ -1,6 +1,11 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The Main chat's messages and the work they started are deleted for good on every device, and from search. Chats you started and long-term memories Yorozu saved stay." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインチャットのメッセージと、そこから始まった作業は、すべての端末と検索から完全に削除されます。あなたが始めたチャットと、Yorozu が保存した長期記憶は残ります。" } } } },
+    "Couldn't confirm that the Main chat's work stopped, so nothing was deleted%@ Try again once its tasks show Stopped." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインチャットの作業の停止を確認できなかったため、何も削除していません%@ タスクが「停止済み」になってからもう一度お試しください。" } } } },
+    "Work the Main chat started is still running. Stop it first, then delete the Main chat." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインチャットから始まった作業がまだ実行中です。先に停止してから、メインチャットを削除してください。" } } } },
+    "The host's settings file isn't available." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストの設定ファイルを利用できません。" } } } },
+    "The host isn't ready yet." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストの準備がまだできていません。" } } } },
     "%lld messages haven't reached your host yet. They'll go once it's back online." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 件のメッセージがまだホストに届いていません。ホストがオンラインに戻ると送信されます。" } } } },
     "A long message didn't arrive whole. Trying again." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "長いメッセージを最後まで受け取れませんでした。もう一度試します。" } } } },
     "A message didn't reach your host within 24 hours, so it wasn't sent. Open Yorozu to resend it." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "メッセージが 24 時間以内にホストに届かなかったため、送信されませんでした。Yorozu を開いて再送してください。" } } } },

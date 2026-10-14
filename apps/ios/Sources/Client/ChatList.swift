@@ -45,14 +45,14 @@ extension PhoneModel {
             .filter { !jobTopicIds.contains($0.id) && !deletedThreads.contains($0.id) }
             .map { row(for: $0, known: known) }
         // The Main chat is a row like any other (#405): its name, and in the archived list once archived.
-        if mainChat == true, (hostSettings?.mainArchived == true) == archived {
+        // A deleted Main chat leaves the list until its next message.
+        if mainChat == true, (hostSettings?.mainArchived == true) == archived, mainRow?.lastMessageAt != nil || !timeline.isEmpty {
             let main = mainRow ?? ThreadData(id: ThreadData.mainId, name: "", origin: "main", sourceMessageId: nil, summary: nil, created: 0,
                                              lastActivity: 0, archivedAt: nil, state: nil, lastMessageId: timeline.last?.id, unread: 0,
                                              lastMessageAt: timeline.last?.ts, preview: timeline.last?.shownPreview)
             var r = row(for: main, known: known)
             r.name = hostSettings?.mainName ?? ""
             r.archived = archived
-            r.openWork = false
             rows.append(r)
         }
         // The outbox: the newest unsent message of each chat, which the host's rows cannot know yet.
@@ -114,7 +114,10 @@ enum ReadingPositions {
 /// What deleting a chat does, said before it happens: for good, on every device and in search; memories stay.
 enum DeleteWording {
     /// Delete on the Main chat's row: its own messages; what it started stays.
-    static let main = String(localized: "The Main chat's own messages are deleted for good on every device, and from search. Chats it started, their work and long-term memories Yorozu saved stay.")
+    static func main(running: Bool) -> String {
+        let base = String(localized: "The Main chat's messages and the work they started are deleted for good on every device, and from search. Chats you started and long-term memories Yorozu saved stay.")
+        return running ? base + "\n\n" + String(localized: "Work is running in this chat: it is stopped first. If the stop can't be confirmed, the chat is kept and nothing is deleted.") : base
+    }
     static func message(running: Bool) -> String {
         let base = String(localized: "The chat and its messages are deleted for good on every device, and from search. Long-term memories Yorozu already saved from it stay.")
         return running ? base + "\n\n" + String(localized: "Work is running in this chat: it is stopped first. If the stop can't be confirmed, the chat is kept and nothing is deleted.") : base

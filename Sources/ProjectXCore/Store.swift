@@ -355,17 +355,17 @@ public actor Store {
     /// milestone, steer and stop notes) and job-only kinds. Status changes, worker steps and renames never reorder.
     static let visible = "kind NOT IN ('acknowledgment','job_run','job_input','job_result','job_note')"
     /// A question or clarify (`questionKinds`) still waiting for the user's answer: no routed user message answered it
-    /// (`answer(questionsBefore:)`). Reading, or chat elsewhere, never answers one.
+    /// (`markAnswered`, from the routing decision or a reply). Reading, or chat elsewhere, never answers one.
     private static let asks = "role='assistant' AND \(questionKinds) AND answeredBy IS NULL"
     private static let questionKinds = "kind<>'approval_request' AND (kind='question' OR json_extract(notice,'$.code') IN ('question','question_topic','question_task'))"
-    /// Marks the questions a routed user message answers: the one it replies to, and the open ones before it in the topic
-    /// routing filed it in, or, filed nowhere, in its thread or among the main timeline's unfiled messages.
-    public func answer(questionsBefore m: Message) throws {
+    /// A question or clarify (`questionKinds`), in Swift.
+    public static func asksUser(_ m: Message) -> Bool {
+        m.kind != "approval_request" && (m.kind == "question" || ["question","question_topic","question_task"].contains(m.notice?.code ?? ""))
+    }
+    /// The questions a routed user message answered (#405): its reply target, and the ones the secretary named.
+    public func markAnswered(_ ids: [String],by message: String) throws {
         try db.write { db in
-            let place = m.topicID != nil ? "topicID=?" : m.threadID != nil ? "(topicID IS NULL AND threadID=?)" : "(topicID IS NULL AND threadID IS NULL)"
-            let arg: [DatabaseValueConvertible] = [m.topicID ?? m.threadID].compactMap { $0 }
-            try db.execute(sql: "UPDATE messages SET answeredBy=? WHERE answeredBy IS NULL AND role='assistant' AND \(Self.questionKinds) AND (id=? OR (\(place) AND created<=?))",
-                           arguments: StatementArguments([m.id,m.replyTo ?? ""] + arg + [m.created]))
+            for id in ids { try db.execute(sql: "UPDATE messages SET answeredBy=? WHERE id=? AND answeredBy IS NULL",arguments: [message,id]) }
         }
     }
     /// A job script's approval request whose approval is still the job's pending one: answered only by the approval itself.
@@ -430,30 +430,48 @@ public actor Store {
         }
     }
     public static let mainID = "main"
-    /// Main-timeline messages filed in no chat that nothing else refers to (#405, Delete on the Main chat's row): what its
-    /// deletion removes. Filed ones belong to their chats and stay; so do messages a task or a change was started from.
-    static let mainOwn = """
-        threadID IS NULL AND topicID IS NULL AND kind NOT IN \(jobOnlyList)
-          AND NOT EXISTS (SELECT 1 FROM work w WHERE w.messageID=messages.id) AND NOT EXISTS (SELECT 1 FROM amendments a WHERE a.messageID=messages.id)
-        """
-    /// Deletes the Main chat's own messages created up to now, for good (their attachments returned for the caller to
-    /// remove; memory stays), and records the time, which clients apply. Returns that time and the removed files.
-    public func clearMain() throws -> (at: Double, removed: [Attachment]) {
-        let now = Date().timeIntervalSince1970
-        return try db.write { db in
-            let ids = try String.fetchAll(db,sql: "SELECT id FROM messages WHERE \(Self.mainOwn) AND created<=?",arguments: [now])
+    /// The Main conversation (#405): every main-timeline message (no `threadID`, not job-only) created up to `at`.
+    static let mainConversation = "threadID IS NULL AND kind NOT IN \(jobOnlyList) AND created<=?"
+    /// Open work the Main conversation started: what Delete on its row must stop first.
+    public func mainOpenWork(upTo at: Double) throws -> [Work] {
+        try db.read { try Work.fetchAll($0,sql: "SELECT * FROM work WHERE state IN \(Self.active) AND messageID IN (SELECT id FROM messages WHERE \(Self.mainConversation))",arguments: [at]) }
+    }
+    /// Deletes the Main conversation up to `at` for good: its messages, the work they started with that work's steps,
+    /// changes and files, and the threads the secretary started from it that hold nothing else; refused while any of that
+    /// work is open. Chats typed in (`threadID`), jobs and memory stay. Records the time, which clients apply.
+    public func clearMain(upTo at: Double) throws -> [Attachment] {
+        try db.write { db in
+            let messages = try String.fetchAll(db,sql: "SELECT id FROM messages WHERE \(Self.mainConversation)",arguments: [at])
+            let work = try messages.chunked().flatMap { ids in try String.fetchAll(db,sql: "SELECT id FROM work WHERE messageID IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
+            guard try work.chunked().allSatisfy({ ids in try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM work WHERE id IN \(Self.marks(ids)) AND state IN \(Self.active)",arguments: StatementArguments(ids)) == 0 }) else {
+                throw ProjectError.blocked(String(localized: "Work the Main chat started is still running. Stop it first, then delete the Main chat."))
+            }
+            let topics = Set(try work.chunked().flatMap { ids in try String.fetchAll(db,sql: "SELECT DISTINCT topicID FROM work WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
+                             + (try String.fetchAll(db,sql: "SELECT DISTINCT topicID FROM messages WHERE \(Self.mainConversation) AND topicID IS NOT NULL",arguments: [at])))
             var removed: [Attachment] = []
-            for chunk in ids.chunked() {
-                removed += try Attachment.fetchAll(db,sql: "SELECT * FROM attachments WHERE messageID IN \(Self.marks(chunk))",arguments: StatementArguments(chunk))
-                for sql in ["DELETE FROM attachments WHERE messageID IN #","DELETE FROM memoryJobs WHERE messageID IN #","DELETE FROM memoryJobReasons WHERE messageID IN #","DELETE FROM messages WHERE id IN #"] {
-                    try db.execute(sql: sql.replacingOccurrences(of: "#",with: Self.marks(chunk)),arguments: StatementArguments(chunk))
+            for ids in work.chunked() {
+                removed += try Attachment.fetchAll(db,sql: "SELECT * FROM attachments WHERE eventID IN (SELECT id FROM events WHERE taskID IN \(Self.marks(ids)))",arguments: StatementArguments(ids))
+                for sql in ["DELETE FROM attachments WHERE eventID IN (SELECT id FROM events WHERE taskID IN #)","DELETE FROM workAttachments WHERE workID IN #","DELETE FROM amendments WHERE taskID IN #","DELETE FROM events WHERE taskID IN #"] {
+                    try db.execute(sql: sql.replacingOccurrences(of: "#",with: Self.marks(ids)),arguments: StatementArguments(ids))
                 }
             }
-            if let cursor = try String.fetchOne(db,sql: "SELECT messageID FROM readCursor WHERE threadID='main'"), !(try Bool.fetchOne(db,sql: "SELECT EXISTS(SELECT 1 FROM messages WHERE id=?)",arguments: [cursor]) ?? false) {
-                try db.execute(sql: "DELETE FROM readCursor WHERE threadID='main'")
+            for ids in messages.chunked() {
+                removed += try Attachment.fetchAll(db,sql: "SELECT * FROM attachments WHERE messageID IN \(Self.marks(ids))",arguments: StatementArguments(ids))
+                for sql in ["DELETE FROM attachments WHERE messageID IN #","DELETE FROM amendments WHERE messageID IN #","DELETE FROM memoryJobs WHERE messageID IN #","DELETE FROM memoryJobReasons WHERE messageID IN #"] {
+                    try db.execute(sql: sql.replacingOccurrences(of: "#",with: Self.marks(ids)),arguments: StatementArguments(ids))
+                }
             }
-            try db.execute(sql: "INSERT OR REPLACE INTO receipts VALUES ('main-cleared','main',?,?)",arguments: [String(now),now])
-            return (now,removed)
+            for ids in work.chunked() { try db.execute(sql: "DELETE FROM work WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
+            for ids in messages.chunked() { try db.execute(sql: "DELETE FROM messages WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
+            try db.execute(sql: "DELETE FROM readCursor WHERE threadID='main'")
+            // A thread the secretary started from Main with nothing else in it goes with it, as a tombstone.
+            for id in topics {
+                guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM topics t WHERE t.id=? AND t.origin='secretary' AND t.deletedAt IS NULL AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.topicID=t.id) AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.threadID=t.id OR m.topicID=t.id) AND NOT EXISTS (SELECT 1 FROM work w WHERE w.topicID=t.id)",arguments: [id]) == 1 else { continue }
+                try db.execute(sql: "UPDATE topics SET attachedTo=NULL,attachedAt=NULL WHERE attachedTo=?",arguments: [id])
+                try db.execute(sql: "UPDATE topics SET label='',summary=NULL,source=NULL,deletedAt=? WHERE id=?",arguments: [Date().timeIntervalSince1970,id])
+            }
+            try db.execute(sql: "INSERT OR REPLACE INTO receipts VALUES ('main-cleared','main',?,?)",arguments: [String(at),at])
+            return removed
         }
     }
     /// When the Main chat's own history was last deleted; nil if never.
