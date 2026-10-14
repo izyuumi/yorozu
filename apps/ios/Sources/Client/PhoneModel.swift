@@ -143,7 +143,7 @@ final class PhoneModel {
 
     // MARK: Jobs (#319)
 
-    /// The Mac negotiated `jobs-v1`; nil until it has said. Jobs stay hidden unless true.
+    /// The Mac negotiated `jobs-v1`; nil until it has said. Job input waits in the outbox unless true.
     private(set) var jobsSupported: Bool?
     /// The Mac's latest `job_list`, kept in the cache.
     private(set) var jobs: [JobListData.Job] = []
@@ -869,9 +869,10 @@ final class PhoneModel {
         #endif
     }
 
-    /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only.
+    /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only. Queued before the
+    /// handshake too (a job page from the cached list); the flush holds it until the Mac has said it takes `jobs-v1`.
     func send(_ text: String, toJob job: String, topic: String) {
-        guard canSend, jobsSupported == true, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard canSend, jobsSupported != false, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let ts = Self.now
         let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: ts, agentId: "device",
                                 payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, jobId: job)))
@@ -1015,6 +1016,8 @@ final class PhoneModel {
             guard self.relay === relay, state == .joined || state == .paired else { break }
             guard let item = outbox.first(where: { $0.id == id }), !item.stored,
                   marks[id] == .sending || marks[id] == .delivered else { continue }
+            // Job input waits until the Mac has said it takes `jobs-v1`: a job page from the cached list can queue it sooner.
+            if case .message(let message) = item.event.payload, message.jobId != nil, jobsSupported != true { continue }
             if let attached = item.files, !attached.isEmpty {
                 // Only over a live session with the Mac: the relay's buffer is too small for files.
                 guard state == .paired else { continue }

@@ -61,6 +61,7 @@ struct ChatScreen: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
+        .defaultAdaptableTabBarPlacement(.sidebar)
         .background { shortcuts }
         // The Mac's cursor moved by another device (or first loaded) moves the divider; this phone's own
         // does not, nor does any cursor at or before it, so the divider never lands on messages just read.

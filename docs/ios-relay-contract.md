@@ -791,7 +791,7 @@ download failed).
 
 Capability `jobs-v1` (`JobListData.capability`, #319). The Mac sends `job_list` and the job-only
 messages only to a phone that negotiated it, and that phone sends `job_control` and job input only
-to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
+to such a Mac (job input typed earlier, on a job page from the cached list, waits in the outbox). Types are in `Mirror.swift`.
 
 ### `job_list` (Mac -> phone): every job
 
