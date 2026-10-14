@@ -88,7 +88,10 @@ actor EngineBridge: RelayBackend {
                 } catch { refusal = error.localizedDescription }
             } else { refusal = String(localized: "That chat no longer exists.") }
             guard let request = r.requestId else { return [] }
-            return [.control(.readState(ReadStateData(threadId: r.threadId, messageId: r.messageId, unread: r.unread, requestId: request, error: refusal)))]
+            // The answer carries the cursor as it now is (message, mark, seq): the client takes it like the record.
+            let now = refusal == nil ? (try? await engine.store.readState(thread: r.threadId)) ?? nil : nil
+            return [.control(.readState(ReadStateData(threadId: r.threadId, messageId: now?.message ?? r.messageId, seq: now.map { Int($0.seq) },
+                                                      unread: now.map { $0.unread }, requestId: request, error: refusal ?? (now == nil ? String(localized: "Couldn't read the chat on the host.") : nil))))]
         case .threadsRequest(let r): return [await threadsPage(r)]
         case .threadControl(let c): return [await threadControl(c)]
         case .taskControl(let c):

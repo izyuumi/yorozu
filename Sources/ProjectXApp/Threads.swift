@@ -133,7 +133,9 @@ extension AppModel {
         guard let message = row.thread?.lastMessageId ?? lastMessageID(row) else { return false }
         if let client { return unread ? await client.markUnread(thread: row.id,messageId: message) : await client.markRead(message,thread: row.id,explicit: true) }
         guard let store else { return false }
-        let done = (try? await (unread ? store.markUnread(thread: row.id,message: message) : store.markRead(thread: row.id,message: message,explicit: true))) != nil
+        var done = true
+        do { _ = try await (unread ? store.markUnread(thread: row.id,message: message) : store.markRead(thread: row.id,message: message,explicit: true)); threadNotice = nil }
+        catch { threadNotice = error.localizedDescription; done = false }
         await loadThreads(); await loadThreads(archived: true)
         return done
     }

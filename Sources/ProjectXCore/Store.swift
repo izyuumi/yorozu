@@ -313,6 +313,10 @@ public actor Store {
         let args: [DatabaseValueConvertible] = thread == mainID ? [message] : [message,thread,thread]
         return try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE id=? AND \(scope)",arguments: StatementArguments(args)) == 1
     }
+    /// A chat's read cursor as held now: its message, Mark as Unread and change sequence; nil without one.
+    public func readState(thread: String) throws -> (message: String, unread: Bool, seq: Int64)? {
+        try db.read { db in try Row.fetchOne(db,sql: "SELECT messageID,unread,seq FROM readCursor WHERE threadID=?",arguments: [thread]).map { ($0["messageID"],$0["unread"],$0["seq"]) } }
+    }
     public func readCursor(thread: String) throws -> String? { try db.read { try String.fetchOne($0,sql: "SELECT messageID FROM readCursor WHERE threadID=?",arguments: [thread]) } }
     /// History window (#313 open question 1, the union): the newest 500 main-timeline messages plus every message of the
     /// last 30 days, that is every message created at or after `start`; job-only messages (#319) only from the last 30

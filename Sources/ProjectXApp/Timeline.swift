@@ -53,6 +53,8 @@ struct MainChat: View {
     @ObservedObject var search: ChatSearch
     /// In the chat window: on screen whenever it is shown there, not only while the popover is open.
     var inWindow = false
+    /// The chat window is in front: a hidden, minimized or background window reads nothing.
+    @Environment(\.controlActiveState) private var active
     @State private var position = ScrollPosition(idType: String.self)
     @State private var intent = NewestScrollIntent()
     @State private var phase = ScrollPhase.idle
@@ -88,6 +90,7 @@ struct MainChat: View {
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         .onAppear { if inWindow { markSeen() } }
+        .onChange(of: active) { _,state in if inWindow, state != .inactive { markSeen() } }
         .onDisappear { if inWindow { openedRead = false } }
         // Files or images dropped anywhere on the chat attach to the draft (#316).
         .onDrop(of: [.fileURL,.image],isTargeted: $dropping) { model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged) && model.attach(dropped: $0) }
@@ -162,7 +165,7 @@ struct MainChat: View {
         seenID = last
         // May repeat an id; AttentionCenter treats it as idempotent and markRead skips the cursor it already holds.
         // Read while it is on screen: the open popover, or the chat window's Main (its first read explicit, clearing Mark as Unread).
-        if model.popoverShown || inWindow {
+        if model.popoverShown || (inWindow && active != .inactive) {
             if model.popoverShown { model.onSeen?(last) }
             model.markRead(last,explicit: !openedRead); openedRead = true
         }

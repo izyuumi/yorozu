@@ -86,8 +86,12 @@ extension PhoneModel {
 
     private func row(for t: ThreadData, known: Bool) -> ChatRow {
         let preview = ChatRow.plain(t.previewNotice.map { NoticeText.text(code: $0.code, params: $0.params, fallback: t.preview ?? "") } ?? t.preview ?? "")
-        // Read or marked here a moment ago: the host's next row agrees.
-        let readHere = t.lastMessageId != nil && sentReads[t.id] == t.lastMessageId
+        // Read up to its last message: here a moment ago, or by the held cursor record (any device's, durable), which a
+        // stale row's count never overrides.
+        let held = t.id == ThreadData.mainId ? readCursor : threadReads[t.id]
+        let heldAt = held.flatMap { h in bubbles.first { $0.id == h.messageId }?.ts }
+        let readHere = t.lastMessageId != nil && (sentReads[t.id] == t.lastMessageId || held?.messageId == t.lastMessageId
+            || (heldAt != nil && t.lastMessageAt != nil && heldAt! >= t.lastMessageAt!))
         // The mark from the cursor record (or an action pending here), which another device's mark also moves; the row's
         // own flag only before any record is held.
         let unread = (markedUnread(t.id) ?? (t.markedUnread == true)) || (t.unread > 0 && !readHere && pendingMarks[t.id]?.unread != false)
