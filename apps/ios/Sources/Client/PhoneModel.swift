@@ -1855,9 +1855,14 @@ final class PhoneModel {
                 bubbles.removeAll { $0.id == d.id && $0.seq != nil }
                 drop("message", d.id)
             case "task":
+                // Its steps, changes and posts go with it, in the same history write (#405).
                 deletedTasks.insert(d.id)
                 tasks[d.id] = nil
                 drop("task", d.id)
+                for w in workerEvents.values where w.taskId == d.id { workerEvents[w.id] = nil; drop("event", w.id) }
+                for a in amendments.values where a.taskId == d.id { amendments[a.id] = nil; drop("amendment", a.id) }
+                for b in bubbles where b.taskId == d.id && b.seq != nil { drop("message", b.id); deletedMessages.insert(b.id) }
+                bubbles.removeAll { $0.taskId == d.id && $0.seq != nil }
             case "worker_event":
                 workerEvents[d.id] = nil
                 drop("event", d.id)

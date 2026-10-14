@@ -468,6 +468,17 @@ public actor Store {
             }
             let topics = Set(try work.chunked().flatMap { ids in try String.fetchAll(db,sql: "SELECT DISTINCT topicID FROM work WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
                              + (try String.fetchAll(db,sql: "SELECT DISTINCT topicID FROM messages WHERE \(Self.mainConversation) AND topicID IS NOT NULL",arguments: [at])))
+            // Named one by one for clients (`deletions`) before anything goes: every message, task, step and change removed,
+            // including changes another (surviving) task took from a Main message.
+            var manifest: [(String,String)] = messages.map { ("message",$0) } + work.map { ("task",$0) }
+            for ids in work.chunked() {
+                manifest += try String.fetchAll(db,sql: "SELECT id FROM events WHERE taskID IN \(Self.marks(ids))",arguments: StatementArguments(ids)).map { ("worker_event",$0) }
+                manifest += try String.fetchAll(db,sql: "SELECT id FROM amendments WHERE taskID IN \(Self.marks(ids))",arguments: StatementArguments(ids)).map { ("amendment",$0) }
+            }
+            for ids in messages.chunked() {
+                manifest += try String.fetchAll(db,sql: "SELECT id FROM amendments WHERE messageID IN \(Self.marks(ids))",arguments: StatementArguments(ids)).map { ("amendment",$0) }
+            }
+            for (kind,id) in manifest { try db.execute(sql: "INSERT OR REPLACE INTO deletions(kind,id) VALUES (?,?)",arguments: [kind,id]) }
             var removed: [Attachment] = []
             for ids in work.chunked() {
                 removed += try Attachment.fetchAll(db,sql: "SELECT * FROM attachments WHERE eventID IN (SELECT id FROM events WHERE taskID IN \(Self.marks(ids)))",arguments: StatementArguments(ids))
@@ -481,16 +492,6 @@ public actor Store {
                     try db.execute(sql: sql.replacingOccurrences(of: "#",with: Self.marks(ids)),arguments: StatementArguments(ids))
                 }
             }
-            // Named one by one for clients (`deletions`), with the steps and changes of that work.
-            for ids in work.chunked() {
-                for kind in ["events","amendments"] {
-                    for id in try String.fetchAll(db,sql: "SELECT id FROM \(kind) WHERE taskID IN \(Self.marks(ids))",arguments: StatementArguments(ids)) {
-                        try db.execute(sql: "INSERT OR REPLACE INTO deletions(kind,id) VALUES (?,?)",arguments: [kind == "events" ? "worker_event" : "amendment",id])
-                    }
-                }
-                for id in ids { try db.execute(sql: "INSERT OR REPLACE INTO deletions(kind,id) VALUES ('task',?)",arguments: [id]) }
-            }
-            for id in messages { try db.execute(sql: "INSERT OR REPLACE INTO deletions(kind,id) VALUES ('message',?)",arguments: [id]) }
             for ids in work.chunked() { try db.execute(sql: "DELETE FROM work WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
             for ids in messages.chunked() { try db.execute(sql: "DELETE FROM messages WHERE id IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
             try db.execute(sql: "DELETE FROM readCursor WHERE threadID='main'")
