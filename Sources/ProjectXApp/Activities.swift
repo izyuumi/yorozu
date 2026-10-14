@@ -212,7 +212,7 @@ struct ChatWindow: View {
                 }
                 Toggle(isOn: $archivedShown) { Label("Archived",systemImage: "archivebox") }
                     .toggleStyle(.button).buttonStyle(.accessoryBar)
-            }.frame(maxWidth: .infinity,alignment: .leading).padding(8)
+            }.frame(maxWidth: .infinity,alignment: .leading).padding(8).background(.bar)
         }
         .toolbar {
             Button { newChat() } label: { Image(systemName: "square.and.pencil") }.help("New chat").accessibilityLabel("New chat")

@@ -218,6 +218,8 @@ final class PhoneModel {
     @ObservationIgnored private var deletedTasks: Set<String> = []
     /// Messages the host deleted one by one (`deleted` records): never kept again.
     @ObservationIgnored private var deletedMessages: Set<String> = []
+    /// Steps and changes the host deleted one by one (`event:<id>`, `amendment:<id>`), even under a task that stays.
+    @ObservationIgnored private var deletedRecords: Set<String> = []
     /// The host's Main chat setting (`host-settings-v1`), the last value it confirmed, kept for offline use; nil until known.
     private(set) var mainChat: Bool?
     private(set) var hostSettingsSupported: Bool?
@@ -585,6 +587,7 @@ final class PhoneModel {
         deletedThreads = []
         deletedTasks = []
         deletedMessages = []
+        deletedRecords = []
         sentReads = [:]
         reminderAt = nil
         reminderCovered = nil
@@ -1838,12 +1841,12 @@ final class PhoneModel {
             touch("task", task.id)
             for field in task.truncated ?? [] { needText(TextNeed(kind: "task", id: task.id, field: field, seq: task.seq)) }
         case .amendment(let amendment):
-            guard !deletedTasks.contains(amendment.taskId), newer(amendments[amendment.id]?.seq, amendment.seq) else { return }
+            guard !deletedTasks.contains(amendment.taskId), !deletedRecords.contains("amendment:" + amendment.id), newer(amendments[amendment.id]?.seq, amendment.seq) else { return }
             amendments[amendment.id] = amendment
             touch("amendment", amendment.id)
             for field in amendment.truncated ?? [] { needText(TextNeed(kind: "amendment", id: amendment.id, field: field, seq: amendment.seq)) }
         case .workerEvent(let workerEvent):
-            guard !deletedTasks.contains(workerEvent.taskId), newer(workerEvents[workerEvent.id]?.seq, workerEvent.seq) else { return }
+            guard !deletedTasks.contains(workerEvent.taskId), !deletedRecords.contains("event:" + workerEvent.id), newer(workerEvents[workerEvent.id]?.seq, workerEvent.seq) else { return }
             workerEvents[workerEvent.id] = workerEvent
             touch("event", workerEvent.id)
             for field in workerEvent.truncated ?? [] { needText(TextNeed(kind: "worker_event", id: workerEvent.id, field: field, seq: workerEvent.seq)) }
@@ -1859,14 +1862,16 @@ final class PhoneModel {
                 deletedTasks.insert(d.id)
                 tasks[d.id] = nil
                 drop("task", d.id)
-                for w in workerEvents.values where w.taskId == d.id { workerEvents[w.id] = nil; drop("event", w.id) }
-                for a in amendments.values where a.taskId == d.id { amendments[a.id] = nil; drop("amendment", a.id) }
+                for w in workerEvents.values where w.taskId == d.id { workerEvents[w.id] = nil; drop("event", w.id); deletedRecords.insert("event:" + w.id) }
+                for a in amendments.values where a.taskId == d.id { amendments[a.id] = nil; drop("amendment", a.id); deletedRecords.insert("amendment:" + a.id) }
                 for b in bubbles where b.taskId == d.id && b.seq != nil { drop("message", b.id); deletedMessages.insert(b.id) }
                 bubbles.removeAll { $0.taskId == d.id && $0.seq != nil }
             case "worker_event":
+                deletedRecords.insert("event:" + d.id)
                 workerEvents[d.id] = nil
                 drop("event", d.id)
             case "amendment":
+                deletedRecords.insert("amendment:" + d.id)
                 amendments[d.id] = nil
                 drop("amendment", d.id)
             default: break
@@ -2060,6 +2065,7 @@ final class PhoneModel {
         var deletedTasks: [String]?
         var hostSettings: HostSettingsData?
         var deletedMessages: [String]?
+        var deletedRecords: [String]?
     }
     @ObservationIgnored private var metaDirty = false
     /// The history is being read from disk; `start()` waits for it.
@@ -2126,6 +2132,7 @@ final class PhoneModel {
             deletedTasks = Set(meta.deletedTasks ?? [])
             hostSettings = meta.hostSettings
             deletedMessages = Set(meta.deletedMessages ?? [])
+            deletedRecords = Set(meta.deletedRecords ?? [])
         }
     }
 
@@ -2260,7 +2267,7 @@ final class PhoneModel {
                                                     jobList: jobs, jobListAt: jobsUpdated.map { Int($0.timeIntervalSince1970 * 1000) },
                                                     threadList: threadList, archivedThreads: archivedThreads, mainRow: mainRow, mainChat: mainChat,
                                                     historySupported: historySupported, deletedTasks: Array(deletedTasks), hostSettings: hostSettings,
-                                                    deletedMessages: Array(deletedMessages)))
+                                                    deletedMessages: Array(deletedMessages), deletedRecords: Array(deletedRecords)))
         }
         // Held records are written as they are now: the in-memory upsert rule already decided, so the disk follows it.
         // What this batch carried is written again with the next one unless it committed, so a failed write (a full disk)

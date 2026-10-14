@@ -43,7 +43,7 @@ extension AppModel {
         let ms = { (t: Double) in Int(t * 1000) }
         func row(_ r: ThreadRow) -> ChatRow {
             let preview = r.last.map { m in m.notice.map { NoticeText.text(code: $0.code,params: $0.params,fallback: m.body) } ?? m.body }
-                .map { EngineBridge.excerpt($0) } ?? ""
+                .map { ChatRow.plain(EngineBridge.excerpt($0)) } ?? ""
             return ChatRow(id: r.topic.id,name: r.topic.label,preview: preview,time: ms(r.sortAt),dot: r.attention ? .attention : r.unread > 0 ? .unread : nil,
                            running: r.running,archived: r.topic.archivedAt != nil,openWork: r.openWork)
         }
