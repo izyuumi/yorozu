@@ -52,6 +52,14 @@ extension AppModel {
     func startClient() {
         let client = PhoneModel()
         self.client = client
+        drafts.load()
+        // A send a quit interrupted: its message is in the client's outbox or history when it went.
+        Task {
+            // Only once the client's history is loaded can a missing message mean it was never sent.
+            while client.historyLoading { try? await Task.sleep(for: .milliseconds(200)) }
+            await drafts.settle { id in client.bubbles.contains { $0.id == id } || client.hasQueued(id) }
+            restorePopoverDraft()
+        }
         client.resume()
         ready = true; status = nil
         clientPoll = Task { [weak self] in
@@ -70,6 +78,7 @@ extension AppModel {
         if client.readCursor?.messageId != readCursor { readCursor = client.readCursor?.messageId }
         if client.jobTopicIds != jobTopics { jobTopics = client.jobTopicIds }
         syncClientThreads(client)
+        if client.mainChat != clientMainChat { clientMainChat = client.mainChat; restorePopoverDraft() }
         let hostReadiness = client.readiness.map(Readiness.init(host:))
         if hostReadiness != readiness { readiness = hostReadiness }
         // Off the link the host's work state is unknown, never idle (as on the phone).
@@ -92,9 +101,15 @@ extension AppModel {
     /// Sends the draft through the client's outbox (text only for now: files go from the phone or the host).
     func sendFromClient() {
         guard let client else { return }
-        client.draft = draft
-        client.replyingTo = replyingTo?.id
-        client.send()
-        if client.draft.isEmpty { draft = ""; replyingTo = nil }
+        // Main chat off (#405): Quick Chat's first message creates its chat on the host.
+        // Marked with its message id first (#405): a quit mid-send leaves the draft or the queued message, never both.
+        let key = popoverDraftKey, id = UUID().uuidString, text = draft, reply = replyingTo?.id
+        guard drafts.markSending(key,text: text,replyTo: reply,id: id) else { status = MacDrafts.saveFailed; return }
+        let ok = mainChat ? client.send(text: text,files: [],replyTo: reply,id: id)
+                          : client.send(text: text,files: [],thread: quickThread,newThread: !snapshot.topics.contains { $0.id == quickThread },id: id)
+        drafts.finishSending(key,id: id,sent: ok)
+        guard ok else { return }
+        if !mainChat { quickSent = true }
+        restoringDraft = true; draft = ""; replyingTo = nil; restoringDraft = false
     }
 }

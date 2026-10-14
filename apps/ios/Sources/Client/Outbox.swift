@@ -44,6 +44,10 @@ struct Outbox: Codable, Sendable {
         var files: [AttachmentInfo]?
         /// A job's own input (#319): the job's sub-chat, where its bubble shows until the stored copy arrives.
         var topicId: String?
+        /// The draft this message was sent from and that draft's edit time (#405): a draft still saved with that time after a
+        /// crash is the sent one, and goes when the outbox loads, so it is never sent twice.
+        var draftKey: String?
+        var draftStamp: Int?
 
         var id: String { event.id }
         var deadline: Int {
@@ -56,6 +60,12 @@ struct Outbox: Codable, Sendable {
     var owner: String
     var items: [Item]
     var marks: [String: MarkState]
+    /// The unsent reminder (#405): when the one scheduled fires (epoch ms), and the latest fire time already passed, which
+    /// covers every message due by then. Optional so an older file still loads.
+    var reminderAt: Int?
+    var reminderCovered: Int?
+    /// Drafts sent but not yet removed from disk (key → the sent revision's edit time), kept until their removal is written.
+    var consumed: [String: Int]?
 
     /// The relay's buffer lifetime and every message's admission deadline: 24 h.
     static let lifetime = 86_400_000
@@ -121,10 +131,37 @@ struct Delivery: Equatable {
     var delayed: Bool { receivedAt.map { $0 - sentAt > 60_000 } ?? false }
 }
 
-/// The two local notifications (#314). Neither ever includes message content.
+/// The local notifications (#314, #405). None ever includes message content.
 enum LocalNotices {
     private static var center: UNUserNotificationCenter { .current() }
     private static let waitingId = "outbox-waiting"
+    private static let reminderId = "outbox-unsent"
+
+    /// Settings › Unsent reminder (#405): minutes after Send with no receipt from the host; 0 is Off. On this device only.
+    static let reminderKey = "unsentReminderMinutes"
+    static let reminderChoices = [0, 15, 30, 60, 120, 360]
+    static var reminderMinutes: Int {
+        get { UserDefaults.standard.object(forKey: reminderKey) as? Int ?? 30 }
+        set { UserDefaults.standard.set(newValue, forKey: reminderKey) }
+    }
+
+    /// One reminder for every message the host has not received by its time, grouped; scheduled with the system, so it
+    /// fires while the app is suspended and with no network. `count` messages are past their reminder age then.
+    /// `done` hears whether the system took it.
+    static func scheduleReminder(at ms: Int, count: Int, done: @escaping @Sendable (Bool) -> Void = { _ in }) {
+        let content = UNMutableNotificationContent()
+        content.body = String(localized: "\(count) messages haven't reached your host yet. They'll go once it's back online.")
+        content.sound = .default
+        content.threadIdentifier = reminderId
+        let delay = max(1, Double(ms) / 1000 - Date().timeIntervalSince1970)
+        center.add(UNNotificationRequest(identifier: reminderId, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false))) { done($0 == nil) }
+    }
+
+    /// No message waits for the host any more (or reminders are off): nothing pending, and a shown one goes.
+    static func cancelReminder(delivered: Bool) {
+        center.removePendingNotificationRequests(withIdentifiers: [reminderId])
+        if delivered { center.removeDeliveredNotifications(withIdentifiers: [reminderId]) }
+    }
 
     /// Asked the first time a message has to wait in the outbox or the relay holds one for an away
     /// Mac; iOS shows the prompt only once.
@@ -138,12 +175,12 @@ enum LocalNotices {
         (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
     }
 
-    /// 24 h after the relay buffered it (`accepted` with `buffered`), identified by the message id.
-    static func scheduleExpiry(_ id: String) {
+    /// At its 24-hour deadline (`at`, epoch ms, from Send), identified by the message id; canceled once the host has it.
+    static func scheduleExpiry(_ id: String, at ms: Int) {
         let content = UNMutableNotificationContent()
-        content.body = String(localized: "A message to the host expired without being read.")
+        content.body = String(localized: "A message didn't reach your host within 24 hours, so it wasn't sent. Open Yorozu to resend it.")
         content.sound = .default
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(Outbox.lifetime / 1000), repeats: false)
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, Double(ms) / 1000 - Date().timeIntervalSince1970), repeats: false)
         center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
     }
 

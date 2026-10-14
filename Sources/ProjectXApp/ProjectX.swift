@@ -12,11 +12,22 @@ import YorozuWire
     @Published var routing = false
     /// The main thread's read cursor (`Store.readCursor`), moved here or by a phone's `read_state`.
     @Published var readCursor: String?
-    @Published var draft = ""
+    /// The popover's composer: the Main chat's draft, or Quick Chat's while the Main chat is off; kept in `drafts` (#405).
+    @Published var draft = "" { didSet { savePopoverDraft() } }
     /// The message Reply quoted above the composer; the next send names it as `replyTo`.
-    @Published var replyingTo: Message?
+    @Published var replyingTo: Message? { didSet { savePopoverDraft() } }
     /// The composer's files (#316), sent with the draft; `fileNotice` says why one was refused.
-    @Published var files: [DraftFile] = []
+    @Published var files: [DraftFile] = [] { didSet { savePopoverDraft() } }
+    /// Unsent drafts on this Mac, files included (#405).
+    let drafts = MacDrafts()
+    var restoringDraft = false
+    /// Quick Chat (#405, the Main chat off): the chat its first message creates, and whether it was sent in this opening.
+    @Published var quickThread = UUID().uuidString.lowercased()
+    @Published var quickSent = false
+    /// The host's Main chat setting as a client Mac last applied it, to swap the popover's draft when it changes.
+    var clientMainChat: Bool?
+    /// When the Main chat's own history was last deleted on this host (`Store.mainCleared`).
+    var mainClearedAt: Double?
     @Published var fileNotice: String?
     /// The popover's one-line status: startup progress or the last error, cleared by the next success.
     @Published var status: String? = String(localized: "Opening local workspace…") { didSet { statusDetail = nil } }
@@ -138,6 +149,8 @@ import YorozuWire
     // Threads (owner, 2026-10-13; Threads.swift): the chat window's list, a page at a time, and its archived list.
     @Published var threads: [ThreadRow] = []; @Published var threadsNext: String?
     @Published var archivedThreads: [ThreadRow] = []; @Published var archivedNext: String?
+    /// The Main chat's list row while it is on (#405).
+    @Published var mainThreadRow: ThreadRow?
     /// The last thread action's refusal or send error, shown in the chat window.
     @Published var threadNotice: String?
     /// A thread (nil: Main) and message the chat window should show, from a notification or a message link.
@@ -172,6 +185,7 @@ import YorozuWire
                     return
                 }
                 let store = try Store(root: root); self.store = store
+                mainClearedAt = try? await store.mainCleared()
                 if let problem = lastConfigError { await postInvalid(problem,body: "Settings not applied: \(problem.localizedDescription). Yorozu runs on its default settings until the file is fixed.") }
                 let memory = explicit != nil || runtimeMode == .fixture ? try MemoryStore(dataRoot: root) : try MemoryStore(
                     root: fm.homeDirectoryForCurrentUser.appendingPathComponent("Yorozu/memory",isDirectory: true),
@@ -216,6 +230,7 @@ import YorozuWire
                 devicesFile = support.appendingPathComponent("relay-devices.json")
                 if runtimeMode == .live { await startRelay(engine,url: resolved.config.relay.url) }
                 status = nil; ready = true
+                drafts.load(); await drafts.settle { id in ((try? await store.message(id: id)) ?? nil) != nil }; restorePopoverDraft()
                 recheck()
                 if !file.setup.done, lastConfigError == nil { openSetup() }
                 applySystem(resolved.config.general)
@@ -310,11 +325,15 @@ import YorozuWire
         guard let devicesFile else { return }
         relayRetry?.cancel(); relayRetry = nil
         do {
-            let bridge = EngineBridge(engine: engine,mode: runtimeMode,scheduler: jobScheduler) { [weak self] in await self?.ensureModels() }
+            let bridge = EngineBridge(engine: engine,mode: runtimeMode,scheduler: jobScheduler,prepare: { [weak self] in await self?.ensureModels() },
+                                      hostSettings: { [weak self] in await MainActor.run { self?.hostSettings ?? HostSettingsData(mainChat: false) } },
+                                      setHostSettings: { [weak self] h in await MainActor.run { self?.apply(hostSettings: h) } },
+                                      controlMain: { [weak self] c in try await self?.controlMain(c.action,name: c.name) })
             let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile,direct: resolved?.config.direct ?? Config().direct,alerts: phoneAlerts)
             self.bridge = bridge; relay = host
             Task { for await status in host.status where relay === host { relayStatus = status } }
             if let phoneReadiness { await host.publishReadiness(phoneReadiness) }
+            await host.publishHostSettings(hostSettings)
             await host.start()
         } catch {
             relayStatus.state = error.localizedDescription
@@ -365,23 +384,35 @@ import YorozuWire
         guard let engine, !submitting, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return }
         submitting = true; defer { submitting = false }
         let text = draft, sent = files, reply = replyingTo?.id
+        // Where it goes is fixed now, before any wait (#405): turning the Main chat on or off meanwhile never sends it
+        // elsewhere; a Main message the host no longer takes is refused and its draft kept.
+        let key = popoverDraftKey, id = identifier(), quick: String? = mainChat ? nil : quickThread
+        guard drafts.markSending(key,text: text,files: sent,replyTo: reply,id: id) else { status = MacDrafts.saveFailed; return }
         if readiness.map({ $0.state != .ready }) ?? false { recheck() }
         await ensureModels()
         // Downscaling reads and re-encodes images, so it runs off the main actor; its scratch copies go once the Engine has
         // copied them into the file store (or failed).
         let prepared: (pending: [PendingFile], scratch: [URL])
         do { prepared = try await Task.detached { try DraftFile.prepare(sent) }.value; fileNotice = nil }
-        catch { fileNotice = error.localizedDescription; return }
+        catch { drafts.finishSending(key,id: id,sent: false); fileNotice = error.localizedDescription; return }
         defer { prepared.scratch.forEach(DraftFile.discard) }
         do {
-            try await engine.send(text,attachments: prepared.pending,replyTo: reply)
-            if draft == text { draft = "" }
-            if replyingTo?.id == reply { replyingTo = nil }
-            let ids = Set(sent.map(\.id)); files.removeAll { ids.contains($0.id) }
+            // Main chat off (#405): the popover is Quick Chat, whose first message creates its chat.
+            if let quick {
+                try await engine.send(text,attachments: prepared.pending,id: id,thread: quick,newThread: !snapshot.topics.contains { $0.id == quick })
+                if quickThread == quick { quickSent = true }
+            } else { try await engine.send(text,attachments: prepared.pending,id: id,replyTo: reply) }
+            drafts.finishSending(key,id: id,sent: true)
+            // The composer clears only if it still holds what was sent: text typed meanwhile, or another draft swapped in, stays.
+            if popoverDraftKey == key {
+                if draft == text { draft = "" }
+                if replyingTo?.id == reply { replyingTo = nil }
+                let ids = Set(sent.map(\.id)); files.removeAll { ids.contains($0.id) }
+            }
             sent.filter(\.temporary).forEach { DraftFile.discard($0.url) }
             status = nil; snapshot = try await engine.snapshot()
         }
-        catch { showError(error); recheck() }
+        catch { drafts.finishSending(key,id: id,sent: (try? await engine.store.message(id: id)) != nil); showError(error); recheck() }
     }
     /// Where a stored attachment is now, or nil when it is gone (deleted in Finder).
     func attachmentURL(_ file: Attachment) async -> URL? {
@@ -397,10 +428,13 @@ import YorozuWire
     }
     /// Chat search for the popover's ⌘F bar; the caller keeps only main-timeline message hits (open question 10).
     func search(_ query: String,limit: Int,offset: Int = 0) async throws -> (hits: [SearchHit], total: Int) {
-        if isClient {
-            // Over the mirror this Mac holds (the host's newest history window), newest first.
-            let hits = snapshot.messages.filter(\.onMainTimeline).reversed().filter { $0.body.localizedCaseInsensitiveContains(query) }
-                .map { SearchHit(mirroredMessage: $0.id,topicID: $0.topicID,snippet: String($0.body.prefix(200)),created: $0.created) }
+        if let client {
+            // Over the whole history this Mac holds, offline too (#405), newest first.
+            let hits = client.searchLocal(query,limit: offset + limit).map { h in
+                var hit = SearchHit(mirroredMessage: h.messageId ?? h.id,topicID: h.topicId,snippet: h.snippet,created: Double(h.ts) / 1000)
+                hit.threadID = h.threadId ?? "main"; hit.messageID = h.messageId; hit.eventID = h.eventId; hit.taskID = h.taskId
+                return hit
+            }
             return (Array(hits.dropFirst(offset).prefix(limit)),hits.count)
         }
         guard let engine else { return ([],0) }

@@ -6,7 +6,7 @@ import YorozuWire
 // Mac, over the relay through the client core (`threads-v1`).
 
 /// Where the chat window should go: a thread (nil: Main) and, optionally, a message to scroll to and ring.
-struct ChatFocus: Equatable { var thread: String?; var message: String? }
+struct ChatFocus: Equatable { var thread: String?; var message: String?; var task: String? = nil }
 
 extension ThreadRow {
     /// A row of a client's list, in the host's records. Wire times are epoch milliseconds.
@@ -18,16 +18,43 @@ extension ThreadRow {
 }
 
 extension AppModel {
-    /// The first page again, as many rows as are loaded (30 to 200), or with `more` the next page (Show more).
+    /// The whole list (#405), every page of it (a local query each), and the Main chat's row while it is on. A failed read
+    /// keeps the rows held.
     func loadThreads(archived: Bool = false,more: Bool = false) async {
         if let client { await client.loadThreads(archived: archived,more: more); return } // rows arrive with the client poll
         guard let engine else { return }
-        let held = archived ? archivedThreads : threads, after = more ? (archived ? archivedNext : threadsNext) : nil
-        if more, after == nil { return }
-        guard let page = try? await engine.threads(archived: archived,after: after,limit: more ? 30 : min(200,max(30,held.count))) else { return }
-        let rows = more ? held + page.rows.filter { r in !held.contains { $0.topic.id == r.topic.id } } : page.rows
-        if archived { if rows != archivedThreads { archivedThreads = rows }; archivedNext = page.next }
-        else { if rows != threads { threads = rows }; threadsNext = page.next }
+        var rows: [ThreadRow] = [], after: String?
+        repeat {
+            guard let page = try? await engine.threads(archived: archived,after: after,limit: 200) else { return }
+            rows += page.rows; after = page.next
+        } while after != nil
+        if archived { if rows != archivedThreads { archivedThreads = rows }; archivedNext = nil }
+        else {
+            if rows != threads { threads = rows }; threadsNext = nil
+            let main = mainChat ? try? await engine.mainRow() : nil // archived or not: `chatRows` places it
+            if main != mainThreadRow { mainThreadRow = main }
+        }
+    }
+
+    /// The one chat list (#405): every thread and, while it is on, the Main chat, newest last visible message first, from
+    /// the host's store or, on a client Mac, from the client core's cached rows.
+    func chatRows(archived: Bool = false) -> [ChatRow] {
+        if let client { return client.chatRows(archived: archived) }
+        let ms = { (t: Double) in Int(t * 1000) }
+        func row(_ r: ThreadRow) -> ChatRow {
+            let preview = r.last.map { m in m.notice.map { NoticeText.text(code: $0.code,params: $0.params,fallback: m.body) } ?? m.body }
+                .map { EngineBridge.excerpt($0) } ?? ""
+            return ChatRow(id: r.topic.id,name: r.topic.label,preview: preview,time: ms(r.sortAt),dot: r.attention ? .attention : r.unread > 0 ? .unread : nil,
+                           running: r.running,archived: r.topic.archivedAt != nil,openWork: r.openWork)
+        }
+        var rows = (archived ? archivedThreads : threads).filter { !jobTopics.contains($0.topic.id) }.map(row)
+        // The Main chat is a row like any other (#405): its own name, and in the archived list once archived.
+        let g = resolved?.config.general
+        // A deleted Main chat leaves the list until its next message.
+        if mainChat, (g?.mainChatArchived ?? false) == archived, let main = mainThreadRow, main.last != nil {
+            var r = row(main); r.name = g.map { $0.mainChatName }.flatMap { $0.isEmpty ? nil : $0 } ?? ""; r.archived = archived; rows.append(r)
+        }
+        return rows.sorted(by: ChatRow.newestFirst)
     }
 
     /// The client core's lists, on each client poll.
@@ -40,33 +67,52 @@ extension AppModel {
     }
 
     /// One message typed in a thread. `id` names a thread the host may not have yet (New chat): its first message creates it.
-    func send(_ text: String,thread id: String) async -> Bool {
-        let new = !snapshot.topics.contains { $0.id == id }
-        if let client { return client.send(text: text,files: [],thread: id,newThread: new) }
-        guard let engine, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return false }
+    /// `draftKey`: the draft it is sent from, marked with the message id before the send and cleared once it is stored, so
+    /// a quit mid-send never sends it twice (#405).
+    func send(_ text: String,thread id: String,draftKey: String? = nil) async -> Bool {
+        let new = !snapshot.topics.contains { $0.id == id }, messageID = identifier()
+        if let draftKey, !drafts.markSending(draftKey,text: text,id: messageID) { threadNotice = MacDrafts.saveFailed; return false }
+        if let client {
+            let ok = client.send(text: text,files: [],thread: id,newThread: new,id: messageID)
+            if let draftKey { drafts.finishSending(draftKey,id: messageID,sent: ok) }
+            return ok
+        }
+        guard let engine, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else {
+            if let draftKey { drafts.finishSending(draftKey,id: messageID,sent: false) }
+            return false
+        }
         await ensureModels()
         do {
-            try await engine.send(text,thread: id,newThread: new)
+            try await engine.send(text,id: messageID,thread: id,newThread: new)
+            if let draftKey { drafts.finishSending(draftKey,id: messageID,sent: true) }
             threadNotice = nil; snapshot = try await engine.snapshot(); await loadThreads()
             return true
-        } catch { threadNotice = error.localizedDescription; return false }
+        } catch {
+            if let draftKey { drafts.finishSending(draftKey,id: messageID,sent: (try? await engine.store.message(id: messageID)) != nil) }
+            threadNotice = error.localizedDescription; return false
+        }
     }
 
     /// Rename, archive, unarchive or delete. A client's refusal shows from `PhoneModel.threadRefusals`.
     func control(thread id: String,_ action: ThreadControlData.Action,name: String? = nil) async {
         if let client { await client.control(thread: id,action,name: name); return }
         guard let engine else { return }
+        if id == Store.mainID {
+            do { try await controlMain(action,name: name); threadNotice = nil } catch { threadNotice = error.localizedDescription }
+            await loadThreads(); return
+        }
         do {
             switch action {
             case .rename: try await engine.renameThread(id,to: name ?? "")
             case .archive: try await engine.archiveThread(id,true)
             case .unarchive: try await engine.archiveThread(id,false)
             case .delete: try await engine.deleteThread(id)
+            case .stopAndDelete: try await engine.stopAndDeleteThread(id)
             }
             threadNotice = nil; snapshot = try await engine.snapshot()
         } catch { threadNotice = error.localizedDescription }
         await loadThreads()
-        if !archivedThreads.isEmpty || archivedNext != nil || action == .archive { await loadThreads(archived: true) }
+        await loadThreads(archived: true)
     }
 
     /// The thread's read cursor moves to the newest message shown (forward only, in the Store).

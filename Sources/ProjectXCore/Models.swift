@@ -32,6 +32,8 @@ public struct Message: Codable, FetchableRecord, PersistableRecord, Identifiable
     /// The thread (a topic id) a message was typed in, or that a reply, acknowledgment or result to one inherits; nil
     /// = the main timeline (owner, 2026-10-13). A message with a thread never shows on the main timeline.
     public var threadID: String? = nil
+    /// A question's answer (#405): the user message the secretary found answers or withdraws it; nil while it is open.
+    public var answeredBy: String? = nil
     public var delay: Double? { sentAt.map { created - $0 }.flatMap { $0 > 60 ? $0 : nil } }
 }
 extension Message {
@@ -73,7 +75,8 @@ public struct Amendment: Codable, FetchableRecord, PersistableRecord, Identifiab
 public struct ReadCursor: Codable, FetchableRecord, Sendable, Equatable { public var threadID: String; public var messageID: String }
 /// One row with the change sequence of its last insert or update (`changeSeq`, bumped by triggers).
 public struct Change: Sendable {
-    public enum Record: Sendable { case topic(Topic), message(Message), work(Work), event(WorkerEvent), amendment(Amendment), readCursor(ReadCursor) }
+    /// `deletion` (#405): a record removed for good (`kind` `message`, `task`, `worker_event` or `amendment`).
+    public enum Record: Sendable { case topic(Topic), message(Message), work(Work), event(WorkerEvent), amendment(Amendment), readCursor(ReadCursor), deletion(kind: String, id: String) }
     public var seq: Int64; public var record: Record
 }
 /// Changes in sequence order. Apply a prefix and continue after its last `seq`; with `more` false, `latest` is the next cursor.
@@ -208,6 +211,8 @@ public struct Decision: Codable, Sendable {
     public var startNote: String?
     /// Owner, 2026-10-10: none of the candidate topics fits; `newTopic` names the new topic if no later round finds one.
     public var noMatch: Bool?
+    /// #405: ids from `RoutingInput.questions` this message answers or withdraws; their chat's orange dot clears.
+    public var answers: [String]?
     public init(action: String, topicID: String? = nil, newTopic: String? = nil, taskID: String? = nil, instruction: String? = nil, reply: String? = nil, memoryID: String? = nil, approvalID: String? = nil, attachTo: String? = nil, startNote: String? = nil) {
         self.action = action; self.topicID = topicID; self.newTopic = newTopic; self.taskID = taskID; self.instruction = instruction; self.reply = reply; self.memoryID = memoryID; self.approvalID = approvalID; self.attachTo = attachTo; self.startNote = startNote
     }
@@ -242,11 +247,15 @@ public struct RoutingInput: Codable, Sendable {
     /// the thread's name or "Main chat"; `link` is the citation, `[In <chat>](yorozu://message/<id>)`. Left out when there are none.
     public struct FoundView: Codable, Sendable { public var link: String; public var chat: String; public var role: String; public var body: String }
     public var found: [FoundView] = []
-    enum CodingKeys: String, CodingKey { case message, files, subject, found, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals }
+    /// #405: questions the secretary asked in this conversation that no answer resolved yet, so the decision can say which
+    /// one this message answers (`Decision.answers`). Left out when there are none.
+    public struct QuestionView: Codable, Sendable { public var id: String; public var topicID: String?; public var body: String }
+    public var questions: [QuestionView] = []
+    enum CodingKeys: String, CodingKey { case message, files, subject, found, messageAge, recent, topics, work, latestTopic, memory, sourceMessageID, omitted, jobs, approvals, questions }
     /// Empty job lists are left out, so a workspace without jobs sends the pre-#319 context unchanged.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(subject,forKey: .subject); if !found.isEmpty { try c.encode(found,forKey: .found) }; try c.encodeIfPresent(messageAge,forKey: .messageAge); try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
+        try c.encode(message,forKey: .message); if !files.isEmpty { try c.encode(files,forKey: .files) }; try c.encodeIfPresent(subject,forKey: .subject); if !found.isEmpty { try c.encode(found,forKey: .found) }; try c.encodeIfPresent(messageAge,forKey: .messageAge); if !questions.isEmpty { try c.encode(questions,forKey: .questions) }; try c.encode(recent,forKey: .recent); try c.encode(topics,forKey: .topics); try c.encode(work,forKey: .work)
         try c.encodeIfPresent(latestTopic,forKey: .latestTopic); try c.encode(memory,forKey: .memory); try c.encodeIfPresent(sourceMessageID,forKey: .sourceMessageID); try c.encodeIfPresent(omitted,forKey: .omitted)
         if !jobs.isEmpty { try c.encode(jobs,forKey: .jobs) }; if !approvals.isEmpty { try c.encode(approvals,forKey: .approvals) }
     }
@@ -371,7 +380,16 @@ extension SearchHit {
 /// the newest; nil without work), its newest message and how many messages from Yorozu in it are past its read cursor.
 public struct ThreadRow: Sendable, Equatable {
     public var topic: Topic; public var state: String?; public var lastMessageID: String?; public var unread: Int
-    public init(topic: Topic, state: String?, lastMessageID: String?, unread: Int) { self.topic = topic; self.state = state; self.lastMessageID = lastMessageID; self.unread = unread }
+    /// #405: the last visible message (the preview and the list's order), whether the chat needs the user (an unanswered
+    /// question or a blocker; reading never clears it) and whether work is running in it.
+    /// `openWork`: work not in a final state (running, uncertain, or a stop not confirmed): Delete must stop it first.
+    public var last: Message?; public var attention = false; public var running = false; public var openWork = false
+    public init(topic: Topic, state: String?, lastMessageID: String?, unread: Int, last: Message? = nil, attention: Bool = false, running: Bool = false, openWork: Bool = false) {
+        self.topic = topic; self.state = state; self.lastMessageID = lastMessageID; self.unread = unread; self.last = last; self.attention = attention; self.running = running; self.openWork = openWork
+    }
+    /// The list's order: newest last visible message first (else when the chat began), then the id.
+    public var sortAt: Double { last?.created ?? topic.created }
+    public static func newestFirst(_ a: ThreadRow,_ b: ThreadRow) -> Bool { (a.sortAt,a.topic.id) > (b.sortAt,b.topic.id) }
 }
 /// `next`: the cursor of the following page (Show more); nil on the last.
 public struct ThreadPage: Sendable, Equatable { public var rows: [ThreadRow]; public var next: String? }

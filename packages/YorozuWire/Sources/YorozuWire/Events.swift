@@ -111,6 +111,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadControlResult = "thread_control_result"
         case threadsRequest = "threads_request"
         case threadsPage = "threads_page"
+        case hostSettings = "host_settings"
+        case textRequest = "text_request"
+        case textSlice = "text_slice"
+        case deleted
     }
 
     public enum Payload: Equatable, Sendable {
@@ -185,6 +189,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case threadControlResult(ThreadControlResultData)
         case threadsRequest(ThreadsRequestData)
         case threadsPage(ThreadsPageData)
+        case hostSettings(HostSettingsData)
+        case textRequest(TextRequestData)
+        case textSlice(TextSliceData)
+        case deleted(DeletedData)
 
         public var kind: Kind {
             switch self {
@@ -259,6 +267,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadControlResult: .threadControlResult
             case .threadsRequest: .threadsRequest
             case .threadsPage: .threadsPage
+            case .hostSettings: .hostSettings
+            case .textRequest: .textRequest
+            case .textSlice: .textSlice
+            case .deleted: .deleted
             }
         }
 
@@ -368,6 +380,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
             case .threadControlResult: payload = .threadControlResult(try c.decode(ThreadControlResultData.self, forKey: .data))
             case .threadsRequest: payload = .threadsRequest(try c.decode(ThreadsRequestData.self, forKey: .data))
             case .threadsPage: payload = .threadsPage(try c.decode(ThreadsPageData.self, forKey: .data))
+            case .hostSettings: payload = .hostSettings(try c.decode(HostSettingsData.self, forKey: .data))
+            case .textRequest: payload = .textRequest(try c.decode(TextRequestData.self, forKey: .data))
+            case .textSlice: payload = .textSlice(try c.decode(TextSliceData.self, forKey: .data))
+            case .deleted: payload = .deleted(try c.decode(DeletedData.self, forKey: .data))
             }
         } catch {
             payload = .unknown(kind: rawKind, data: rawData)
@@ -460,6 +476,10 @@ public struct YorozuEvent: Codable, Equatable, Sendable {
         case .threadControlResult(let d): try c.encode(d, forKey: .data)
         case .threadsRequest(let d): try c.encode(d, forKey: .data)
         case .threadsPage(let d): try c.encode(d, forKey: .data)
+        case .hostSettings(let d): try c.encode(d, forKey: .data)
+        case .textRequest(let d): try c.encode(d, forKey: .data)
+        case .textSlice(let d): try c.encode(d, forKey: .data)
+        case .deleted(let d): try c.encode(d, forKey: .data)
         }
     }
 }
@@ -605,6 +625,9 @@ public struct MessageData: Codable, Equatable, Sendable {
     public var threadId: String?
     /// 0.7 `threads-v1`, phone -> Mac: New chat's first message, which creates `threadId` with that id.
     public var newThread: Bool?
+    /// `history-v1` (#405), host -> client: the text is only the head of a record too large to send (past what 256 chunks
+    /// carry); the client keeps the flag and says the full text is on the host, never treating the head as the whole.
+    public var truncated: Bool?
 
     public init(
         role: Role,
@@ -658,7 +681,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         self.completionId = completionId
     }
 
-    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt, files, jobId, threadId, newThread }
+    private enum CodingKeys: String, CodingKey { case role, text, streamRevision, done, failed, interrupted, attachments, admissionDeadline, runId, completionId, delivery, channelModel, kind, topicId, taskId, replyTo, notice, seq, readAt, sentAt, files, jobId, threadId, newThread, truncated }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -689,6 +712,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         jobId = try c.decodeIfPresent(String.self, forKey: .jobId)
         threadId = try c.decodeIfPresent(String.self, forKey: .threadId)
         newThread = try c.decodeIfPresent(Bool.self, forKey: .newThread)
+        truncated = try c.decodeIfPresent(Bool.self, forKey: .truncated)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -717,6 +741,7 @@ public struct MessageData: Codable, Equatable, Sendable {
         try c.encodeIfPresent(jobId, forKey: .jobId)
         try c.encodeIfPresent(threadId, forKey: .threadId)
         try c.encodeIfPresent(newThread, forKey: .newThread)
+        try c.encodeIfPresent(truncated, forKey: .truncated)
     }
 }
 
@@ -1585,8 +1610,12 @@ public struct SyncRequestData: Codable, Equatable, Sendable {
     public var includeCurrent: Bool?
     /// 0.7: the `latestSeq` of the last page the phone applied; nil or 0 = no cache (start at the history window).
     public var afterSeq: Int?
+    /// `history-v1` (#405): every record, not the history window, so the client keeps the whole history. A reply page
+    /// then has `reset` only for a cursor past the host's latest sequence (another database).
+    public var full: Bool?
     public init(lastSeen: [String: String] = [:], threadId: String? = nil, focusThreadId: String? = nil,
-                includeCurrent: Bool? = nil, afterSeq: Int? = nil) {
+                includeCurrent: Bool? = nil, afterSeq: Int? = nil, full: Bool? = nil) {
+        self.full = full
         self.lastSeen = lastSeen
         self.threadId = threadId
         self.focusThreadId = focusThreadId

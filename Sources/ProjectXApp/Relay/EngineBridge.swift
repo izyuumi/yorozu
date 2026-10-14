@@ -40,6 +40,11 @@ actor EngineBridge: RelayBackend {
 
     /// Awaited before a phone message reaches the Engine (the model metadata retry, #312).
     private let prepare: @Sendable () async -> Void
+    /// The host-wide settings clients share (`host-settings-v1`, #405): read for the Main chat row, written for a client's change.
+    private let hostSettings: @Sendable () async -> HostSettingsData
+    private let setHostSettings: @Sendable (HostSettingsData) async -> Void
+    /// Rename, Archive, Unarchive and Delete on the Main chat's row (#405), applied by the app (`AppModel.controlMain`).
+    private let controlMain: @Sendable (ThreadControlData) async throws -> Void
     /// Phone uploads waiting for their commit (#316).
     private var staging: UploadStaging
     /// Where phone thumbnails are cached.
@@ -49,8 +54,13 @@ actor EngineBridge: RelayBackend {
 
     /// The relay runs in live mode only, so staging and thumbnails sit beside the live data:
     /// `~/Library/Application Support/<bundle id>/uploads` and `~/Library/Caches/<bundle id>/thumbs`.
-    init(engine: Engine, mode: RuntimeMode, scheduler: JobScheduler?, prepare: @escaping @Sendable () async -> Void = {}) {
+    init(engine: Engine, mode: RuntimeMode, scheduler: JobScheduler?, prepare: @escaping @Sendable () async -> Void = {},
+         hostSettings: @escaping @Sendable () async -> HostSettingsData = { HostSettingsData(mainChat: false) },
+         setHostSettings: @escaping @Sendable (HostSettingsData) async -> Void = { _ in },
+         controlMain: @escaping @Sendable (ThreadControlData) async throws -> Void = { _ in }) {
+        self.controlMain = controlMain
         self.engine = engine; self.mode = mode; self.scheduler = scheduler; self.prepare = prepare
+        self.hostSettings = hostSettings; self.setHostSettings = setHostSettings
         let fm = FileManager.default, bundle = Bundle.main.bundleIdentifier ?? "to.yumi.yorozu"
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundle, isDirectory: true)
         staging = UploadStaging(root: support.appendingPathComponent("uploads", isDirectory: true))
@@ -83,6 +93,11 @@ actor EngineBridge: RelayBackend {
         case .pageRequest(let r): return [await page(r)]
         case .threadList: return [.control(.threadList(ThreadListData(threads: [main])))]
         case .jobControl(let c): return [await jobControl(c, id: e.id, ts: e.ts)]
+        case .textRequest(let r): return [await slice(r)]
+        case .hostSettings(let h):
+            // Applied through `config.toml`; every client hears the result from `RelayHost.publishHostSettings`.
+            if mode.permitsInput(fixtureAcknowledged: false) { await setHostSettings(h) }
+            return []
         default: return []
         }
     }
@@ -110,7 +125,8 @@ actor EngineBridge: RelayBackend {
         defer { if updates.isEmpty { (self.working, self.routing) = flags } }
         do {
             repeat {
-                let p = try await engine.store.changes(after: after, limit: 200)
+                // Every change, not only the window's (#405): a client holding the whole history needs old rows' changes too.
+                let p = try await engine.store.changes(after: after, limit: 200, full: true)
                 let (events, next, more) = Self.fit(p, thread: "main", files: Self.carriesFiles(p.changes) ? await files() : [:])
                 updates.append(delta(events, thread: "main", after: after, latest: next))
                 after = next
@@ -199,7 +215,10 @@ actor EngineBridge: RelayBackend {
     private func threadsPage(_ r: ThreadsRequestData) async -> YorozuEvent {
         do {
             let page = try await engine.threads(archived: r.archived == true, after: r.after, limit: r.limit ?? 30)
-            return .control(.threadsPage(ThreadsPageData(requestId: r.requestId, threads: page.rows.map(Self.thread), next: page.next)))
+            // The Main chat's row joins the first page of the active list while it is on (#405), sorted in by the client.
+            let mainOn = await hostSettings().mainChat
+            let main = r.archived != true && r.after == nil && mainOn ? try await engine.mainRow() : nil
+            return .control(.threadsPage(ThreadsPageData(requestId: r.requestId, threads: page.rows.map(Self.thread), next: page.next, main: main.map(Self.thread))))
         } catch {
             return .control(.threadsPage(ThreadsPageData(requestId: r.requestId, threads: [], error: String(localized: "Couldn't read the chat on the host: \(error.localizedDescription)"))))
         }
@@ -208,7 +227,14 @@ actor EngineBridge: RelayBackend {
     static func thread(_ row: ThreadRow) -> ThreadData {
         let t = row.topic, ms = { (d: Double) in Int(d * 1000) }
         return ThreadData(id: t.id, name: t.label, origin: t.origin, sourceMessageId: t.source, summary: t.summary, created: ms(t.created),
-                          lastActivity: ms(t.activity ?? t.created), archivedAt: t.archivedAt.map(ms), state: row.state, lastMessageId: row.lastMessageID, unread: row.unread)
+                          lastActivity: ms(t.activity ?? t.created), archivedAt: t.archivedAt.map(ms), state: row.state, lastMessageId: row.lastMessageID, unread: row.unread,
+                          lastMessageAt: row.last.map { ms($0.created) }, preview: row.last.map { Self.excerpt($0.body) }, previewNotice: row.last?.notice.map(notice),
+                          previewUser: row.last.map { $0.role == "user" }, attention: row.attention, running: row.running, openWork: row.openWork)
+    }
+
+    /// A list row's subtitle: the message's first 200 characters on one line (the row cuts it to fit).
+    static func excerpt(_ body: String) -> String {
+        String(body.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(200))
     }
 
     /// Rename, archive, unarchive or delete; the change reaches phones as the thread's topic record. A replayed
@@ -219,11 +245,14 @@ actor EngineBridge: RelayBackend {
         if !mode.permitsInput(fixtureAcknowledged: false) { reason = String(localized: "The host is in fixture mode and doesn't take messages from client devices.") }
         else {
             do {
+                if c.threadId == ThreadData.mainId { try await controlMain(c) } else {
                 switch c.action {
                 case .rename: try await engine.renameThread(c.threadId, to: c.name ?? "")
                 case .archive: try await engine.archiveThread(c.threadId, true)
                 case .unarchive: try await engine.archiveThread(c.threadId, false)
                 case .delete: try await engine.deleteThread(c.threadId)
+                case .stopAndDelete: try await engine.stopAndDeleteThread(c.threadId)
+                }
                 }
             } catch { reason = error.localizedDescription }
         }
@@ -333,10 +362,13 @@ actor EngineBridge: RelayBackend {
         let routing = await engine.routing
         guard Self.threads.contains(thread) else { return delta([], thread: thread, after: r.afterSeq.map(Int64.init), routing: routing, error: String(localized: "Unknown thread.")) }
         do {
-            let bounds = try await engine.store.cursorBounds()
+            // `full` (#405): the whole history from the cursor; only a cursor past the latest sequence (another database)
+            // starts over, and a client asking from 0 merges rather than drops.
+            let full = r.full == true
+            let bounds = try await engine.store.cursorBounds(full: full)
             let cursor = Int64(r.afterSeq ?? 0)
             let reset = cursor <= 0 || cursor > bounds.latest || bounds.floor.map { cursor < $0 } == true
-            let p = try await engine.store.changes(after: reset ? 0 : cursor, limit: 200)
+            let p = try await engine.store.changes(after: reset ? 0 : cursor, limit: 200, full: full)
             let (events, next, more) = Self.fit(p, thread: thread, files: Self.carriesFiles(p.changes) ? await files() : [:])
             return delta(events, thread: thread, after: r.afterSeq.map(Int64.init), latest: next, more: more, reset: reset, routing: routing)
         } catch {
@@ -365,6 +397,19 @@ actor EngineBridge: RelayBackend {
         } catch {
             return delta([], thread: r.threadId, routing: routing, requestId: r.requestId, error: String(localized: "Couldn't read the chat on the host: \(error.localizedDescription)"))
         }
+    }
+
+    /// One slice of a record's long text field (#405): at most `TextSliceData.bytes` of its UTF-8 from `offset`, cut on a
+    /// byte boundary (the client joins the bytes before decoding), with the record's `seq` so a stale slice is dropped.
+    private func slice(_ r: TextRequestData) async -> YorozuEvent {
+        func answer(_ total: Int = 0, _ seq: Int = 0, _ data: Data = Data(), error: String? = nil) -> YorozuEvent {
+            .control(.textSlice(TextSliceData(kind: r.kind, id: r.id, field: r.field, offset: r.offset, total: total, seq: seq, data: data.base64EncodedString(), error: error)))
+        }
+        guard Self.isID(r.id) || r.id.range(of: #"^[A-Za-z0-9:_-]{1,200}\z"#, options: .regularExpression) != nil, r.offset >= 0 else { return answer(error: "Invalid request.") }
+        guard let found = try? await engine.store.text(kind: r.kind, id: r.id, field: r.field) else { return answer(error: String(localized: "Message not found.")) }
+        let bytes = Data(found.text.utf8)
+        guard r.offset <= bytes.count else { return answer(bytes.count, Int(found.seq), error: "Invalid request.") }
+        return answer(bytes.count, Int(found.seq), bytes.subdata(in: r.offset..<min(bytes.count, r.offset + TextSliceData.bytes)))
     }
 
     private func search(_ r: SearchRequestData) async -> YorozuEvent {
@@ -443,17 +488,21 @@ actor EngineBridge: RelayBackend {
         case .event(let w):
             e = event(w.id, thread, ms(w.created), .workerEvent(WorkerEventData(id: w.id, taskId: w.taskID, kind: w.kind, body: w.body, created: ms(w.created), seq: seq, files: files[w.id])))
         case .readCursor(let c): e = event(c.threadID, thread, now, .readState(ReadStateData(threadId: c.threadID, messageId: c.messageID, seq: seq)))
+        case .deletion(let kind, let id): e = event(id, thread, now, .deleted(DeletedData(kind: kind, id: id, seq: seq)))
         }
         // Shrinks the long text fields until the record fits; a few passes always do, since each one cuts in proportion.
         for _ in 0..<4 {
             let size = (try? JSONEncoder().encode(e).count) ?? 0
             guard size > hardCap else { return (e, size) }
             let cut = { (s: String) in head(s, Double(hardCap) / Double(size) * 0.9) }
+            // Each cut field is marked (#405), so a client fetches it whole with `text_request` before it counts its history complete.
             switch e.payload {
-            case .message(var m): m.text = cut(m.text); e.payload = .message(m)
-            case .task(var t): t.instruction = cut(t.instruction); t.result = t.result.map(cut); t.error = t.error.map(cut); e.payload = .task(t)
-            case .amendment(var a): a.instruction = cut(a.instruction); e.payload = .amendment(a)
-            case .workerEvent(var w): w.body = cut(w.body); e.payload = .workerEvent(w)
+            case .message(var m): m.text = cut(m.text); m.truncated = true; e.payload = .message(m)
+            case .task(var t):
+                t.instruction = cut(t.instruction); t.result = t.result.map(cut); t.error = t.error.map(cut)
+                t.truncated = ["instruction"] + (t.result == nil ? [] : ["result"]) + (t.error == nil ? [] : ["error"]); e.payload = .task(t)
+            case .amendment(var a): a.instruction = cut(a.instruction); a.truncated = ["instruction"]; e.payload = .amendment(a)
+            case .workerEvent(var w): w.body = cut(w.body); w.truncated = ["body"]; e.payload = .workerEvent(w)
             default: return (e, size)
             }
             log.error("record \(e.id, privacy: .public) over \(hardCap) bytes; sending its head")

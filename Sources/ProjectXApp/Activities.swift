@@ -53,7 +53,7 @@ struct ChatWindow: View {
     @StateObject private var search = ChatSearch()
     @StateObject private var jobs = JobList()
     @State private var pane: Pane? = .chats
-    @State private var selection: String? = ChatWindow.main
+    @State private var selection: String?
     @State private var job: String?
     @State private var deletingJob: JobStatus?
     @State private var query = ""
@@ -61,15 +61,42 @@ struct ChatWindow: View {
     /// A New chat not sent yet: shown as an empty thread until its first message creates it.
     @State private var draftThread: String?
     @State private var archivedShown = false
-    @State private var renaming: ThreadRow?
+    @State private var renaming: ChatRow?
     @State private var name = ""
-    @State private var deleting: ThreadRow?
+    @State private var deleting: ChatRow?
     private enum Metrics { static let minWidth: CGFloat = 860, minHeight: CGFloat = 480, sections: CGFloat = 160, sidebar: CGFloat = 250 }
 
-    var body: some View {
+    var body: some View { chatDialogs(window) }
+
+    /// Rename and Delete for the list's rows, apart from the window so each type-checks in time.
+    private func chatDialogs<Content: View>(_ content: Content) -> some View {
+        content
+        .alert("Rename Chat",isPresented: Binding(get: { renaming != nil },set: { if !$0 { renaming = nil } }),presenting: renaming) { row in
+            TextField("Name",text: $name)
+            Button("Rename") { Task { await model.control(thread: row.id,.rename,name: name) } }
+            Button("Cancel",role: .cancel) {}
+        }
+        .confirmationDialog("Delete “\(deleting?.name ?? "")”?",isPresented: Binding(get: { deleting != nil },set: { if !$0 { deleting = nil } }),presenting: deleting) { row in
+            // Stop and Delete: the chat goes only once its work's stop is confirmed; otherwise it stays with the reason.
+            Button(row.openWork ? String(localized: "Stop and Delete") : String(localized: "Delete"),role: .destructive) {
+                Task { await model.control(thread: row.id,row.openWork ? .stopAndDelete : .delete) }
+            }
+        } message: { row in
+            Text(row.isMain ? DeleteWording.main(running: row.openWork) : DeleteWording.message(running: row.openWork))
+        }
+        .onChange(of: allChatIDs) { _,ids in
+            // A deleted chat leaves the detail; a refused one stays, showing why.
+            if let id = selection, id != Self.main, id != draftThread, !ids.contains(id), !model.drafts.all.keys.contains(Drafts.new(id)),
+               !model.snapshot.topics.contains(where: { $0.id == id && $0.deletedAt == nil }) { selection = nil }
+        }
+    }
+
+    private var allChatIDs: [String] { (model.chatRows() + model.chatRows(archived: true)).map(\.id) }
+
+    private var window: some View {
         NavigationSplitView {
             List(selection: $pane) {
-                SectionRow(title: "Chats",symbol: "bubble.left.and.bubble.right",dot: model.snapshot.activities(excluding: model.jobTopics).contains { $0.state == .attention })
+                SectionRow(title: "Chats",symbol: "bubble.left.and.bubble.right",dot: model.chatRows().contains { $0.dot == .attention })
                     .tag(Pane.chats)
                 if !model.isClient { SectionRow(title: "Scheduled",symbol: "clock",dot: jobs.needsAttention).tag(Pane.scheduled) }
             }
@@ -89,13 +116,23 @@ struct ChatWindow: View {
                     JobDetail(model: model,job: job,problem: $jobs.problem,
                               actions: AnyView(JobActions(model: model,list: jobs,job: job,deleting: $deletingJob))).id(job.id)
                 } else { Text("Select a job to see its chat.").foregroundStyle(.secondary).frame(maxWidth: .infinity,maxHeight: .infinity) }
-            } else if selection == Self.main || selection == nil {
-                MainChat(model: model,search: search)
+            } else if selection == Self.main {
+                VStack(spacing: 0) {
+                    // Off (#405): its history stays readable here; new messages go in chats.
+                    if !model.mainChat {
+                        Label("The Main chat is off. Its history stays here; turn it on in Settings › General to write in it.",systemImage: "info.circle")
+                            .font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity,alignment: .leading).padding(10)
+                        Divider()
+                    }
+                    MainChat(model: model,search: search)
+                }
             } else if let id = selection {
-                let row = (model.threads + model.archivedThreads).first { $0.topic.id == id }
+                let row = (model.chatRows() + model.chatRows(archived: true)).first { $0.id == id }
                 ThreadDetail(model: model,id: id,row: row,rename: { start(renaming: $0) },delete: { deleting = $0 },
                              showMain: { message in selection = Self.main; model.focusMessageID = message },
                              sent: { if draftThread == id { draftThread = nil } }).id(id)
+            } else {
+                Text("Select a chat, or start a new one with ⌘N.").foregroundStyle(.secondary).frame(maxWidth: .infinity,maxHeight: .infinity)
             }
         }
         .background { shortcuts }
@@ -121,19 +158,8 @@ struct ChatWindow: View {
             if focus.thread == nil { if let m = focus.message { model.focusMessageID = m }; model.chatFocus = nil }
         }
         .onChange(of: selection) { _,_ in model.threadNotice = nil }
-        .alert("Rename Chat",isPresented: Binding(get: { renaming != nil },set: { if !$0 { renaming = nil } }),presenting: renaming) { row in
-            TextField("Name",text: $name)
-            Button("Rename") { Task { await model.control(thread: row.topic.id,.rename,name: name) } }
-            Button("Cancel",role: .cancel) {}
-        }
-        .confirmationDialog("Delete this chat?",isPresented: Binding(get: { deleting != nil },set: { if !$0 { deleting = nil } }),presenting: deleting) { row in
-            Button("Delete",role: .destructive) {
-                if selection == row.topic.id { selection = Self.main }
-                Task { await model.control(thread: row.topic.id,.delete) }
-            }
-        } message: { _ in
-            Text("Its messages are removed for good, from search and from Yorozu's recall. Memory already taken from them stays.")
-        }
+        // Opening the window starts a new chat (#405), unless a link or notification asked for a place.
+        .onAppear { if model.chatFocus == nil, selection == nil { newChat() } }
         .confirmationDialog("Delete this job?",isPresented: Binding(get: { deletingJob != nil },set: { if !$0 { deletingJob = nil } }),presenting: deletingJob) { job in
             Button("Delete",role: .destructive) { jobs.act(model) { try await $0.deleteJob(job.id) } }
         } message: { job in
@@ -141,25 +167,50 @@ struct ChatWindow: View {
         }
     }
 
+    /// One list (#405): New chat drafts, then every chat by its last visible message, the Main chat among them while on.
     private var threadList: some View {
-        let rows = archivedShown ? model.archivedThreads : model.threads
+        let rows = model.chatRows(archived: archivedShown)
         return List(selection: $selection) {
             if !archivedShown {
-                Label("Main",systemImage: "bubble.left").tag(Self.main)
-                if let draftThread { Label("New chat",systemImage: "square.and.pencil").tag(draftThread) }
-                section("Needs attention",rows.filter { ActivityState(current: $0.state) == .attention })
-                section("Running",rows.filter { ActivityState(current: $0.state) == .running })
-                section("Recent",rows.filter { ActivityState(current: $0.state) > .running })
-            } else {
-                section("Archived",rows)
+                if let draftThread, model.drafts.saved(Drafts.new(draftThread)).isEmpty {
+                    Label("New chat",systemImage: "square.and.pencil").tag(draftThread)
+                }
+                ForEach(model.drafts.newChats,id: \.id) { item in
+                    VStack(alignment: .leading,spacing: 2) {
+                        HStack { Text("Draft").fontWeight(.semibold).foregroundStyle(Color.accentColor); Spacer()
+                            Text(Date(timeIntervalSince1970: item.draft.updated),format: .relative(presentation: .named)).font(.caption).foregroundStyle(.secondary) }
+                        Text(item.draft.text).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                    }.tag(item.id)
+                    .contextMenu { Button("Discard Draft",role: .destructive) { model.drafts.clear(Drafts.new(item.id),discardFiles: true) } }
+                }
             }
-            if (archivedShown ? model.archivedNext : model.threadsNext) != nil {
-                Button("Show more") { Task { await model.loadThreads(archived: archivedShown,more: true) } }.buttonStyle(.link)
+            ForEach(rows) { row in
+                MacChatRow(row: row,refusal: model.client?.threadRefusals[row.id]).tag(row.isMain ? Self.main : row.id)
+                    .contextMenu { ThreadActions(model: model,row: row,rename: start(renaming:),delete: { deleting = $0 }) }
+                    .swipeActions(edge: .trailing,allowsFullSwipe: true) {
+                        do {
+                            Button(row.archived ? "Unarchive" : "Archive",systemImage: row.archived ? "tray.and.arrow.up" : "archivebox") {
+                                Task { await model.control(thread: row.id,row.archived ? .unarchive : .archive) }
+                            }.tint(.indigo)
+                        }
+                    }
+            }
+        }
+        .overlay {
+            if rows.isEmpty && (archivedShown || model.drafts.newChats.isEmpty && draftThread == nil) {
+                Text(archivedShown ? "No archived chats" : model.isClient && model.client?.historySynced != true ? "Downloading your chats…" : "No chats yet")
+                    .foregroundStyle(.secondary)
             }
         }
         .safeAreaInset(edge: .bottom) {
-            Toggle(isOn: $archivedShown) { Label("Archived",systemImage: "archivebox") }
-                .toggleStyle(.button).buttonStyle(.accessoryBar).frame(maxWidth: .infinity,alignment: .leading).padding(8)
+            VStack(alignment: .leading,spacing: 4) {
+                if let client = model.client, !client.historySynced, client.hasPairing {
+                    Label(client.state == .paired ? "Downloading chat history…" : "Chat history is incomplete on this Mac until the host is connected.",
+                          systemImage: client.state == .paired ? "arrow.down.circle" : "icloud.slash").font(.caption).foregroundStyle(.secondary)
+                }
+                Toggle(isOn: $archivedShown) { Label("Archived",systemImage: "archivebox") }
+                    .toggleStyle(.button).buttonStyle(.accessoryBar)
+            }.frame(maxWidth: .infinity,alignment: .leading).padding(8)
         }
         .toolbar {
             Button { newChat() } label: { Image(systemName: "square.and.pencil") }.help("New chat").accessibilityLabel("New chat")
@@ -186,83 +237,77 @@ struct ChatWindow: View {
                 pane = .scheduled; self.job = job.id
                 return
             }
-            pane = .chats; archivedShown = false; selection = hit.threadID != "main" ? hit.threadID : hit.topicID ?? Self.main
+            // A worker step: its chat, with its task card opened and in view (#405).
+            pane = .chats; archivedShown = false
+            model.chatFocus = ChatFocus(thread: hit.threadID != "main" ? hit.threadID : hit.topicID,message: nil,task: hit.taskID)
             return
         }
         model.open(message: id)
     }
 
-    @ViewBuilder private func section(_ title: LocalizedStringKey,_ items: [ThreadRow]) -> some View {
-        if !items.isEmpty {
-            Section(title) {
-                ForEach(items,id: \.topic.id) { row in
-                    ThreadListRow(row: row).tag(row.topic.id).contextMenu { ThreadActions(model: model,row: row,rename: start(renaming:),delete: { deleting = $0 }) }
-                }
-            }
-        }
-    }
-
     private func newChat() {
-        let id = draftThread ?? UUID().uuidString.lowercased()
+        // An untouched New chat is reused; one with a draft stays in the list and a fresh one starts.
+        let id = draftThread.flatMap { model.drafts.saved(Drafts.new($0)).isEmpty ? $0 : nil } ?? UUID().uuidString.lowercased()
         draftThread = id; archivedShown = false; selection = id; pane = .chats; query = ""
     }
 
-    private func start(renaming row: ThreadRow) { name = row.topic.label; renaming = row }
+    private func start(renaming row: ChatRow) { name = row.shownName; renaming = row }
 }
 
-/// Rename, Archive or Unarchive, and Delete, for a row's context menu and a thread's ⋯ menu.
+/// Rename, Archive or Unarchive, and Delete (Stop and Delete while work runs), for a row's context menu and a chat's ⋯ menu.
 private struct ThreadActions: View {
     @ObservedObject var model: AppModel
-    let row: ThreadRow
-    let rename: (ThreadRow) -> Void
-    let delete: (ThreadRow) -> Void
+    let row: ChatRow
+    let rename: (ChatRow) -> Void
+    let delete: (ChatRow) -> Void
     var body: some View {
         Button("Rename…") { rename(row) }
-        if row.topic.archivedAt == nil { Button("Archive") { Task { await model.control(thread: row.topic.id,.archive) } } }
-        else { Button("Unarchive") { Task { await model.control(thread: row.topic.id,.unarchive) } } }
+        if !row.archived { Button("Archive") { Task { await model.control(thread: row.id,.archive) } } }
+        else { Button("Unarchive") { Task { await model.control(thread: row.id,.unarchive) } } }
         Divider()
-        Button("Delete…",role: .destructive) { delete(row) }
+        Button(row.openWork ? "Stop and Delete…" : "Delete…",role: .destructive) { delete(row) }
     }
 }
 
-private struct ThreadListRow: View {
-    let row: ThreadRow
+/// One chat (#405): its name, an excerpt of its last message, the time with a small spinner while work runs, one dot.
+private struct MacChatRow: View {
+    let row: ChatRow
+    var refusal: String?
+    private enum Metrics { static let dot: CGFloat = 8 }
     var body: some View {
-        let state = ActivityState(current: row.state)
-        VStack(alignment: .leading,spacing: 2) {
-            HStack(spacing: 6) {
-                // Started by the secretary from the main chat (owner, 2026-10-13).
-                if row.topic.origin != Topic.user {
-                    Image(systemName: "arrow.triangle.branch").foregroundStyle(.secondary).help("Started by Secretary").accessibilityLabel("Started by Secretary")
-                }
-                Text(row.topic.label).fontWeight(.semibold).lineLimit(1)
-                Spacer(minLength: 4)
-                if row.unread > 0 {
-                    Text(row.unread,format: .number).font(.caption2.weight(.bold)).foregroundStyle(.white)
-                        .padding(.horizontal,5).background(Color.accentColor,in: Capsule())
-                        .accessibilityLabel(Text("\(row.unread) unread"))
-                }
-                Text(Date(timeIntervalSince1970: row.topic.activity ?? row.topic.created),format: .relative(presentation: .named)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        HStack(alignment: .top,spacing: 6) {
+            VStack(alignment: .leading,spacing: 2) {
+                Text(row.shownName).fontWeight(.semibold).lineLimit(1)
+                Text(row.preview).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                if let refusal { Text(refusal).font(.caption).foregroundStyle(ChatPalette.warning) }
             }
-            if let summary = row.topic.summary, !summary.isEmpty {
-                Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            Spacer(minLength: 4)
+            VStack(alignment: .trailing,spacing: 4) {
+                HStack(spacing: 4) {
+                    if row.running { ProgressView().controlSize(.mini) }
+                    Text(Self.time(row.time)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                if let dot = row.dot { Circle().fill(dot == .attention ? Color.orange : Color.blue).frame(width: Metrics.dot,height: Metrics.dot) }
             }
-            ActivityStateLabel(state: state).font(.caption)
-        }.padding(.vertical,2)
-    }
-}
-
-/// Words and a symbol, so a state is never told by colour alone.
-private struct ActivityStateLabel: View {
-    let state: ActivityState
-    var body: some View {
-        switch state {
-        // Only the symbol in amber: amber words were unreadable on a selected row's accent fill.
-        case .attention: Label { Text("Needs attention") } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(ChatPalette.warning) }.foregroundStyle(.secondary)
-        case .running: Label { Text("Running") } icon: { ProgressView().controlSize(.mini) }.foregroundStyle(.secondary)
-        case .done: Label("Done",systemImage: "checkmark.circle").foregroundStyle(.secondary)
-        case .idle: EmptyView()
         }
+        .padding(.vertical,2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.label(row))
+    }
+    static func time(_ ms: Int) -> String {
+        let date = Date(timeIntervalSince1970: Double(ms) / 1000), calendar = Calendar.current
+        if calendar.isDateInToday(date) { return date.formatted(date: .omitted,time: .shortened) }
+        if calendar.isDateInYesterday(date) { return String(localized: "Yesterday") }
+        if let week = calendar.date(byAdding: .day,value: -6,to: .now), date > week { return date.formatted(.dateTime.weekday(.wide)) }
+        return date.formatted(date: .numeric,time: .omitted)
+    }
+    static func label(_ row: ChatRow) -> String {
+        var parts = [row.shownName]
+        if row.dot == .attention { parts.append(String(localized: "Needs your attention")) } else if row.dot == .unread { parts.append(String(localized: "Unread")) }
+        if row.running { parts.append(String(localized: "Working")) }
+        if row.archived { parts.append(String(localized: "Archived")) }
+        parts += [row.preview,time(row.time)]
+        return parts.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }
 
@@ -272,15 +317,24 @@ private struct ActivityStateLabel: View {
 private struct ThreadDetail: View {
     @ObservedObject var model: AppModel
     let id: String
-    let row: ThreadRow?
-    let rename: (ThreadRow) -> Void
-    let delete: (ThreadRow) -> Void
+    let row: ChatRow?
+    let rename: (ChatRow) -> Void
+    let delete: (ChatRow) -> Void
     let showMain: (String?) -> Void
     let sent: () -> Void
     @State private var position = ScrollPosition(idType: String.self)
     @State private var draft = ""
     @State private var height: CGFloat = 0
     @State private var flashed: String?
+    /// Following the newest message is the reader's intent (#405): only their own scrolling clears it.
+    @State private var intent = NewestScrollIntent()
+    @State private var phase = ScrollPhase.idle
+    @State private var atBottom = true
+    @State private var unseen = 0
+    @State private var restored = false
+    @State private var sending = false
+    /// A task a search hit or link asked for: its card opens.
+    @State private var openTask: String?
     private enum Metrics { static let rowSpacing: CGFloat = 10, composerShare: CGFloat = 1.0 / 3, sendSide: CGFloat = 28, fieldRadius: CGFloat = 15 }
 
     private enum Item: Identifiable {
@@ -288,7 +342,9 @@ private struct ThreadDetail: View {
         var id: String { switch self { case .day(let d): "day-\(d.timeIntervalSince1970)"; case .message(let m): m.id; case .task(let w): "task-" + w.id } }
     }
 
-    private var topic: Topic? { row?.topic ?? model.snapshot.topics.first { $0.id == id && $0.deletedAt == nil } }
+    private var topic: Topic? { model.snapshot.topics.first { $0.id == id && $0.deletedAt == nil } }
+    /// A New chat not sent yet keeps its draft as one; once its chat exists, as that chat's.
+    private var draftKey: String { topic == nil ? Drafts.new(id) : Drafts.chat(id) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -303,10 +359,14 @@ private struct ThreadDetail: View {
             composer
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        // The draft this chat had (#405), kept as it is typed.
+        .onAppear { draft = model.drafts.saved(draftKey).text }
+        .onChange(of: draft) { _,text in model.drafts.update(draftKey,text: text) }
         .onChange(of: model.chatFocus,initial: true) { _,focus in
-            guard let focus, focus.thread == id, let m = focus.message else { return }
+            guard let focus, focus.thread == id, focus.message != nil || focus.task != nil else { return }
             model.chatFocus = nil
-            Task { try? await Task.sleep(for: .milliseconds(200)); reveal(m) }
+            if let task = focus.task { openTask = task }
+            Task { try? await Task.sleep(for: .milliseconds(200)); reveal(focus.message ?? "task-" + (focus.task ?? "")) }
         }
     }
 
@@ -365,17 +425,45 @@ private struct ThreadDetail: View {
                                 MessageRow(message: m,header: m.replyTo.flatMap { byID[$0] }.map { ReplyHeader($0,shown: shown,labels: labels) },highlighted: flashed == m.id,
                                            reveal: reveal,files: files[m.id] ?? [],locate: { [model] in await model.attachmentURL($0) })
                             }
-                        case .task(let w): TaskCard(model: model,work: w,events: events[w.id] ?? [])
+                        case .task(let w): TaskCard(model: model,work: w,events: events[w.id] ?? [],forceOpen: openTask == w.id)
                         }
                     }
                     if model.routing, messages.last?.role == "user" { ThinkingBubble() }
                 }.scrollTargetLayout().padding(.horizontal,14).padding(.vertical,12)
             }
             .scrollPosition($position)
-            .defaultScrollAnchor(.bottom)
-            .onChange(of: messages.last?.id,initial: true) { _,last in
-                position.scrollTo(edge: .bottom)
-                if let last { model.markRead(last,thread: id) }
+            .defaultScrollAnchor(.bottom,for: .initialOffset)
+            .onScrollGeometryChange(for: Bool.self) { $0.visibleRect.maxY >= $0.contentSize.height - 24 } action: { _,bottom in
+                atBottom = bottom; intent.observe(atBottom: bottom,phase: phase)
+                if bottom { unseen = 0; if restored { ReadingPositions.set(nil,chat: id) }; if let last = messages.last?.id { model.markRead(last,thread: id) } }
+            }
+            // Rows sizing themselves or a growing task card: keep the newest in view while following it.
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _,_ in if restored, intent.shouldPinLatest(during: phase) { position.scrollTo(edge: .bottom) } }
+            .onScrollPhaseChange { _,next in phase = next; intent.observe(atBottom: atBottom,phase: next) }
+            .onScrollTargetVisibilityChange(idType: String.self) { ids in
+                if restored, !intent.followsLatest, let first = ids.first(where: { !$0.hasPrefix("day-") }) { ReadingPositions.set(first,chat: id) }
+            }
+            .onChange(of: messages.last?.id) { _,last in
+                // Follow only a reader at the bottom; one reading older messages stays put and the pill counts.
+                if intent.followsLatest { position.scrollTo(edge: .bottom); if let last { model.markRead(last,thread: id) } } else { unseen += 1 }
+            }
+            .overlay(alignment: .bottom) {
+                if !atBottom {
+                    Button { intent.followLatest(); unseen = 0; withAnimation(.snappy) { position.scrollTo(edge: .bottom) } } label: {
+                        Image(systemName: "arrow.down").font(.callout.weight(.semibold)).foregroundStyle(Color.accentColor).padding(8)
+                            .background(.thickMaterial,in: Circle()).overlay { Circle().strokeBorder(.separator,lineWidth: 0.5) }
+                    }.buttonStyle(.plain).padding(.bottom,10)
+                        .accessibilityLabel(unseen > 0 ? Text("\(unseen) new messages, scroll to bottom") : Text("Scroll to bottom"))
+                }
+            }
+            .task {
+                // Where the reader left this chat, unless a link asked for a message.
+                if model.chatFocus?.thread != id, let mark = ReadingPositions.get(id), items.contains(where: { $0.id == mark }) {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    intent.targetMessage(); position.scrollTo(id: mark,anchor: .top)
+                } else if let last = messages.last?.id { model.markRead(last,thread: id) }
+                try? await Task.sleep(for: .milliseconds(300))
+                restored = true
             }
         }
     }
@@ -398,16 +486,25 @@ private struct ThreadDetail: View {
         }.padding(.horizontal,10).padding(.vertical,8)
     }
 
+    /// The draft stays in the field until the send succeeds; then it clears only if it is still what was sent, so text typed
+    /// meanwhile is kept, and a failed send keeps its text.
     private func send() {
-        let text = draft
-        draft = ""
+        let text = draft, key = draftKey
+        guard !sending else { return }
+        sending = true
+        intent.followLatest()
         Task {
-            if await model.send(text,thread: id) { sent() } else if draft.isEmpty { draft = text }
+            defer { sending = false }
+            guard await model.send(text,thread: id,draftKey: key) else { return }
+            if key != Drafts.new(id), model.drafts.saved(Drafts.new(id)).text == text { model.drafts.clear(Drafts.new(id)) }
+            if draft == text { draft = "" }
+            sent()
         }
     }
 
     /// Scrolls to a message and rings it for two seconds.
     private func reveal(_ id: String) {
+        intent.targetMessage()
         withAnimation(.snappy) { position.scrollTo(id: id,anchor: .center) }
         flashed = id
         Task { try? await Task.sleep(for: .seconds(2)); if flashed == id { flashed = nil } }
@@ -419,6 +516,7 @@ private struct ThreadDetail: View {
 private struct TaskCard: View {
     @ObservedObject var model: AppModel
     let work: Work, events: [WorkerEvent]
+    var forceOpen = false
     @State private var expanded: Bool?
     @State private var busy = false
     private enum Metrics { static let radius: CGFloat = 10, padding: CGFloat = 10 }
@@ -450,7 +548,7 @@ private struct TaskCard: View {
         .overlay { RoundedRectangle(cornerRadius: Metrics.radius,style: .continuous).strokeBorder(.separator,lineWidth: 0.5) }
     }
 
-    private var isExpanded: Bool { expanded ?? work.active }
+    private var isExpanded: Bool { expanded ?? (forceOpen || work.active) }
 
     @ViewBuilder private var state: some View {
         let label = Self.label(work.state)
@@ -506,19 +604,25 @@ private struct SearchResults: View {
     @State private var total = 0
     @State private var failure: String?
     @State private var searching = false
-    private static let limit = 100
+    /// Archived chats are searched too (#405), marked; this leaves them out.
+    @State private var hideArchived = false
+    private static let limit = 300
 
     var body: some View {
         let labels = Dictionary(model.snapshot.topics.map { ($0.id,$0.label) }) { a,_ in a }
+        let archived = Set(model.snapshot.topics.filter { $0.archivedAt != nil }.map(\.id))
+        let isArchived = { (hit: SearchHit) in [hit.threadID,hit.topicID ?? ""].contains { archived.contains($0) } }
+        let shown = hideArchived ? hits.filter { !isArchived($0) } : hits
         List {
             Section {
-                ForEach(hits.indices,id: \.self) { i in
-                    let hit = hits[i]
+                ForEach(shown.indices,id: \.self) { i in
+                    let hit = shown[i]
                     Button { open(hit) } label: {
                         VStack(alignment: .leading,spacing: 2) {
                             HStack {
                                 Text(hit.threadID != "main" ? labels[hit.threadID] ?? "" : hit.topicID.flatMap { labels[$0] } ?? String(localized: "Main chat"))
                                     .fontWeight(.semibold).lineLimit(1)
+                                if isArchived(hit) { Text("Archived").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal,5).background(.quaternary,in: Capsule()) }
                                 Spacer(minLength: 4)
                                 Text(Date(timeIntervalSince1970: hit.created),format: .relative(presentation: .named)).font(.caption).foregroundStyle(.secondary)
                             }
@@ -527,8 +631,12 @@ private struct SearchResults: View {
                     }.buttonStyle(.plain)
                 }
             } header: {
-                if let failure { Text(failure) }
-                else if !searching { Text(hits.isEmpty ? String(localized: "No matches") : String(localized: "\(total) results")) }
+                HStack {
+                    if let failure { Text(failure) }
+                    else if !searching { Text(shown.isEmpty ? String(localized: "No matches") : String(localized: "\(shown.count) results")) }
+                    Spacer()
+                    Toggle("Include archived chats",isOn: Binding(get: { !hideArchived },set: { hideArchived = !$0 })).toggleStyle(.checkbox).controlSize(.small)
+                }
             }
         }
         .navigationTitle("Search")

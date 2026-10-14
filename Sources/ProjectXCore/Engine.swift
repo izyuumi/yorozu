@@ -57,6 +57,10 @@ public actor Engine {
         // Job runs do not count (open question 10).
         let jobs = pending.filter { jobWork.contains($0) }.count + running.keys.filter { jobWork.contains($0) }.count
         guard routingCount + pending.count + running.count - jobs < 32 else { throw ProjectError.blocked(String(localized: "32 requests pending; wait for work to finish.")) }
+        // The Main chat is opt-in (owner, 2026-10-14; #405): while it is off, a message for it (an older client, or one queued
+        // before it was turned off) is refused with the reason, so the client keeps it as Not delivered with Resend: never
+        // dropped, never rewritten into another chat. Messages it already stored are still routed in it.
+        guard thread != nil || settings().mainChat else { throw ProjectError.blocked(String(localized: "The Main chat is off on the host. Turn it on in Settings, or send this in a chat.")) }
         try await bindRuntime()
         if let thread {
             if newThread, try await store.topic(id: thread) == nil { try await createThread(id: thread,firstMessage: body) }
@@ -93,6 +97,52 @@ public actor Engine {
         guard !jobTopics.values.contains(id) else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Scheduled.")) }
         for a in try await store.delete(thread: id) { files?.remove(a) }
     }
+    /// Stop and Delete (#405): stops every running or uncertain task of the thread, waits up to `wait` for each stop to be
+    /// confirmed (the run acknowledged it, so the task is cancelled, not merely asked to stop), then deletes. A stop that
+    /// cannot be confirmed keeps the chat and throws what went wrong; nothing is deleted.
+    public func stopAndDeleteThread(_ id: String,wait: Duration = .seconds(30)) async throws {
+        guard !jobTopics.values.contains(id) else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Scheduled.")) }
+        guard let topic = try await store.topic(id: id), topic.deletedAt == nil else { throw ProjectError.invalid(String(localized: "That chat no longer exists.")) }
+        var problems: [String] = []
+        // Suppressed work too: a stop asked for earlier but never confirmed is asked again, and only a confirmed one counts.
+        for w in try await store.openWork(topic: id) {
+            let o = await stopTask(id: w.id)
+            if !o.accepted { problems.append(o.text) }
+        }
+        let end = ContinuousClock.now + wait
+        while try await !store.openWork(topic: id).isEmpty {
+            guard ContinuousClock.now < end else {
+                let reason = problems.first.map { ": \($0)" } ?? "."
+                throw ProjectError.uncertain(String(localized: "Couldn't confirm that this chat's work stopped, so the chat was kept\(reason) Try again, or stop the task and delete the chat once it shows Stopped."))
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        try await deleteThread(id)
+    }
+    /// Delete on the Main chat's row (#405): its own unfiled messages go for good, from search too; chats it started, their
+    /// work and memory stay. Returns the time clients apply.
+    /// Stops the work the Main conversation started (again, if a stop was asked before), waits up to `wait` for every stop
+    /// to be confirmed, then deletes it (`Store.clearMain`); a stop that cannot be confirmed keeps everything and throws.
+    public func clearMain(wait: Duration = .seconds(30)) async throws -> Double {
+        let at = Date().timeIntervalSince1970
+        var problems: [String] = []
+        for w in try await store.mainOpenWork(upTo: at) {
+            let o = await stopTask(id: w.id)
+            if !o.accepted { problems.append(o.text) }
+        }
+        let end = ContinuousClock.now + wait
+        while try await !store.mainOpenWork(upTo: at).isEmpty {
+            guard ContinuousClock.now < end else {
+                let reason = problems.first.map { ": \($0)" } ?? "."
+                throw ProjectError.uncertain(String(localized: "Couldn't confirm that the Main chat's work stopped, so nothing was deleted\(reason) Try again once its tasks show Stopped."))
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        for a in try await store.clearMain(upTo: at) { files?.remove(a) }
+        return at
+    }
+    /// The Main chat's list row (#405).
+    public func mainRow() async throws -> ThreadRow { try await store.mainRow() }
     private func enqueueRoute(_ m: Message) {
         routingCount += 1
         let prior = routingTail
@@ -254,6 +304,10 @@ public actor Engine {
             input.files = fileViews(message.id,snapshot) // descriptors only, never contents (#316)
             input.policy = Self.routingPolicy(settings(),jobs: !input.jobs.isEmpty || !input.approvals.isEmpty,delayed: input.messageAge != nil,files: !input.files.isEmpty || recent.contains { $0.files != nil })
             input.sourceMessageID = message.id
+            // Open questions of this conversation (#405): the decision names the ones this message answers.
+            let open = before.filter { $0.role == "assistant" && $0.answeredBy == nil && Store.asksUser($0) }.suffix(5)
+            input.questions = open.map { RoutingInput.QuestionView(id: $0.id,topicID: $0.topicID,body: utf8Excerpt($0.body,bytes: 300)) }
+            if !input.questions.isEmpty { input.policy += " questions lists questions you asked the user that are still open; set answers to the IDs of those this message answers or withdraws (it gives what was asked, or says to drop it). A message about something else answers none." }
             // A reply to a message in a topic belongs to that topic: the secretary picks the action, never the topic (owner, 2026-10-09).
             // A message typed in a thread belongs to the thread's topic: no classification of the subject, no new topic.
             let pinned = thread.map { Self.home($0.id,snapshot) } ?? message.replyTo.flatMap { r in snapshot.messages.first { $0.id == r }?.topicID }.map { Self.home($0,snapshot) }
@@ -332,6 +386,9 @@ public actor Engine {
                 } catch { /* Preserve the original clarification, not a guessed dispatch. */ }
             }
             try await apply(decision,to: message,snapshot: snapshot,latest: latest,memories: memories)
+            // The question it replies to, and those the decision says it answers: reading or other chat never clears one.
+            let answered = Set(decision.answers ?? []).intersection(input.questions.map(\.id)).union(message.replyTo.flatMap { r in snapshot.messages.first { $0.id == r && $0.role == "assistant" && Store.asksUser($0) }?.id }.map { [$0] } ?? [])
+            if !answered.isEmpty { try? await store.markAnswered(Array(answered),by: message.id) }
         } catch {
             let coded = error as? NoticeError, offline = { if case ProjectError.offline = error { return true }; return false }()
             let code = (error as? HarnessError)?.code ?? .routingFailed

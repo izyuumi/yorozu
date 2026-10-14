@@ -33,10 +33,12 @@ struct DraftFile: Identifiable, Equatable {
     /// Yorozu's own scratch files live under `$TMPDIR/Yorozu-attachments/<uuid>/<name>`, one folder each; `name` (often a
     /// dropped item's suggested name) is sanitized, so it can never leave that folder.
     static func temporaryURL(named name: String) throws -> URL {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Yorozu-attachments/\(UUID().uuidString)",isDirectory: true)
+        let dir = scratchRoot.appendingPathComponent(UUID().uuidString,isDirectory: true)
         try FileManager.default.createDirectory(at: dir,withIntermediateDirectories: true)
         return dir.appendingPathComponent(FileStore.sanitize(name),isDirectory: false)
     }
+    /// In Application Support rather than `$TMPDIR` (#405): a draft keeps its pasted and dropped files across relaunches.
+    static let scratchRoot = URL.applicationSupportDirectory.appendingPathComponent("\(Bundle.main.bundleIdentifier ?? "to.yumi.yorozu")/Yorozu-attachments",isDirectory: true)
     /// Deletes a scratch file and its folder; anything outside the scratch root is left alone.
     static func discard(_ url: URL) {
         let dir = url.deletingLastPathComponent()

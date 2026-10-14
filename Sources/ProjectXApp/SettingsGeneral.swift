@@ -7,6 +7,7 @@ struct GeneralSettings: View {
     @ObservedObject var model: AppModel
     @State private var shortcut = ""
     @State private var shortcutProblem: String?
+    @State private var reminderMinutes = LocalNotices.reminderMinutes
     private static let shortcutPreset = "option+space"
 
     var body: some View {
@@ -45,6 +46,25 @@ struct GeneralSettings: View {
                         Text("Updates install on their own once no task is running.")
                     }
                     Button("Check for Updates…") { Updates.shared.check() }
+                }
+            }
+            // Host-wide (#405): one setting all client devices share; a client Mac changes it on the host.
+            Section("Main chat") {
+                Toggle(isOn: Binding(get: { model.mainChat },set: { model.setMainChat($0) })) {
+                    Text("Main chat")
+                    Text("One conversation where the secretary files work into chats across topics. Off: every chat stands on its own, and the menu-bar icon opens Quick Chat. Its history stays either way.")
+                }.disabled(model.isClient && (model.client?.state != .paired || model.client?.hostSettingsSupported != true))
+            }
+            if model.isClient {
+                Section("Unsent messages") {
+                    Picker(selection: Binding(get: { LocalNotices.reminderMinutes },set: { model.client?.setReminder(minutes: $0); reminderMinutes = $0 })) {
+                        ForEach(LocalNotices.reminderChoices,id: \.self) { m in
+                            Text(m == 0 ? String(localized: "Off") : Duration.seconds(m * 60).formatted(.units(allowed: [.hours,.minutes],width: .wide))).tag(m)
+                        }
+                    } label: {
+                        Text("Reminder")
+                        Text("A notification when a message hasn't reached the host this long after you sent it.")
+                    }.id(reminderMinutes)
                 }
             }
             Section("Notifications") {

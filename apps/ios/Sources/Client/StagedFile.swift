@@ -3,9 +3,10 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// One file staged in the composer, in its own folder under `tmp/Drafts/`.
-struct StagedFile: Identifiable, Equatable, Sendable {
-    struct Variant: Equatable, Sendable {
+/// One file staged in the composer, in its own folder under `Application Support/Drafts/files/` (#405: a draft and its files
+/// survive a relaunch). Encoded by folder and file name, so it still resolves when iOS moves the app's container.
+struct StagedFile: Identifiable, Equatable, Sendable, Codable {
+    struct Variant: Equatable, Sendable, Codable {
         var url: URL
         var name: String
         var mime: String
@@ -13,7 +14,52 @@ struct StagedFile: Identifiable, Equatable, Sendable {
         var sha256: String
 
         var size: String { ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file) }
+
+        private enum CodingKeys: String, CodingKey { case file, name, mime, bytes, sha256 }
+        /// `folder` is filled in by the enclosing file, which knows where its folder is now.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            url = StagedFile.drafts.appending(path: try c.decode(String.self, forKey: .file))
+            name = try c.decode(String.self, forKey: .name)
+            mime = try c.decode(String.self, forKey: .mime)
+            bytes = try c.decode(Int.self, forKey: .bytes)
+            sha256 = try c.decode(String.self, forKey: .sha256)
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            // Relative to the drafts folder: `<folder>/<file>`.
+            try c.encode(url.deletingLastPathComponent().lastPathComponent + "/" + url.lastPathComponent, forKey: .file)
+            try c.encode(name, forKey: .name)
+            try c.encode(mime, forKey: .mime)
+            try c.encode(bytes, forKey: .bytes)
+            try c.encode(sha256, forKey: .sha256)
+        }
+        init(url: URL, name: String, mime: String, bytes: Int, sha256: String) {
+            self.url = url; self.name = name; self.mime = mime; self.bytes = bytes; self.sha256 = sha256
+        }
     }
+
+    private enum CodingKeys: String, CodingKey { case id, file, original, sendOriginal }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        file = try c.decode(Variant.self, forKey: .file)
+        original = try c.decodeIfPresent(Variant.self, forKey: .original)
+        sendOriginal = try c.decodeIfPresent(Bool.self, forKey: .sendOriginal) ?? false
+        folder = Self.drafts.appending(path: id.uuidString, directoryHint: .isDirectory)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(file, forKey: .file)
+        try c.encodeIfPresent(original, forKey: .original)
+        try c.encode(sendOriginal, forKey: .sendOriginal)
+    }
+    init(id: UUID, file: Variant, original: Variant? = nil, sendOriginal: Bool = false, folder: URL) {
+        self.id = id; self.file = file; self.original = original; self.sendOriginal = sendOriginal; self.folder = folder
+    }
+    /// The file is still there (a draft restored after a relaunch).
+    var exists: Bool { FileManager.default.fileExists(atPath: chosen.url.path) }
 
     let id: UUID
     /// What is sent by default: an image reduced to ``imageMaxPixels`` when it needed it, anything else as picked.
@@ -28,9 +74,19 @@ struct StagedFile: Identifiable, Equatable, Sendable {
 
     func discard() { try? FileManager.default.removeItem(at: folder) }
 
-    static let drafts = FileManager.default.temporaryDirectory.appending(path: "Drafts", directoryHint: .isDirectory)
+    static let drafts = clientSupportDirectory.appending(path: "Drafts/files", directoryHint: .isDirectory)
 
-    /// Drafts do not outlive the app.
+    /// Removes staged files no saved draft refers to (left by a crash or a discarded composer); `keeping` are the ids
+    /// the drafts hold, which always stay. The old `tmp/Drafts` folder goes too.
+    static func prune(keeping: Set<UUID>) {
+        try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appending(path: "Drafts", directoryHint: .isDirectory))
+        let folders = (try? FileManager.default.contentsOfDirectory(at: drafts, includingPropertiesForKeys: nil)) ?? []
+        for folder in folders where UUID(uuidString: folder.lastPathComponent).map(keeping.contains) != true {
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    /// Every staged file, with no draft left to keep them (Remove host).
     static func clearAll() { try? FileManager.default.removeItem(at: drafts) }
 
     enum Refusal: Error {
@@ -50,6 +106,7 @@ struct StagedFile: Identifiable, Equatable, Sendable {
     static func stage(_ source: URL, name: String) throws -> StagedFile {
         let id = UUID()
         let folder = drafts.appending(path: id.uuidString, directoryHint: .isDirectory)
+        try makeProtectedDirectory(drafts)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         do {
             let name = safeFileName(name)

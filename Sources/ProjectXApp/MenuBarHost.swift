@@ -114,7 +114,10 @@ import SwiftUI
 
     func popoverWillShow(_ notification: Notification) { model?.popoverShown = true }
 
-    func popoverDidClose(_ notification: Notification) { closedAt = Date(); model?.popoverShown = false; attention.popoverAtBottom = false }
+    func popoverDidClose(_ notification: Notification) {
+        closedAt = Date(); model?.popoverShown = false; attention.popoverAtBottom = false
+        model?.drafts.save(); model?.quickChatClosed()
+    }
 
     @objc private func checkForUpdates() { Updates.shared.check() }
 

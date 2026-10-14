@@ -39,7 +39,8 @@ struct PopoverContent: View {
             }
             if search.shown { SearchBar(search: search).padding(.horizontal,10).padding(.bottom,8) }
             Divider()
-            MainChat(model: model,search: search)
+            // The Main chat while it is on; otherwise Quick Chat, a new chat each time it opens after a send (#405).
+            if model.mainChat { MainChat(model: model,search: search) } else { QuickChat(model: model) }
         }
         .background { Button("Search",action: showSearch).keyboardShortcut("f").hidden() }
         // The secretary's citations, `yorozu://message/<id>`, open the message where it is (owner, 2026-10-13).
@@ -59,7 +60,7 @@ struct PopoverContent: View {
             Spacer()
             HStack(spacing: 2) {
                 // The chat window (Main and the threads); a dot while a thread needs attention (failed, uncertain or stopping), not merely running.
-                let attention = model.snapshot.activities(excluding: model.jobTopics).filter { $0.state == .attention }.count
+                let attention = model.chatRows().filter { $0.dot == .attention }.count
                 Button(action: openActivities) {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .overlay(alignment: .topTrailing) { if attention > 0 { Circle().fill(ChatPalette.warning).frame(width: 6,height: 6).offset(x: 3,y: -2) } }
@@ -101,6 +102,75 @@ struct PopoverContent: View {
     }
 
     private func showSearch() { search.shown = true }
+}
+
+/// Quick Chat (#405, the Main chat off): a New chat in the popover. Its unsent draft, files included, comes back when the
+/// popover reopens; its first message creates the chat, which the popover then shows until it closes. Discard drops the draft.
+struct QuickChat: View {
+    @ObservedObject var model: AppModel
+    @State private var height: CGFloat = 0
+    @State private var position = ScrollPosition(idType: String.self)
+    @State private var intent = NewestScrollIntent()
+    @State private var phase = ScrollPhase.idle
+    @State private var atBottom = true
+    @State private var unseen = 0
+    var body: some View {
+        let id = model.quickThread
+        let messages = model.quickSent ? model.snapshot.messages.filter { $0.threadID == id || $0.topicID == id } : []
+        let files = Dictionary(grouping: model.snapshot.attachments.filter { $0.messageID != nil }) { $0.messageID! }
+        VStack(spacing: 0) {
+            HStack {
+                Text(model.snapshot.topics.first { $0.id == id }?.label ?? String(localized: "New chat")).font(.headline).lineLimit(1)
+                Spacer()
+                if model.quickSent {
+                    Button("Open in Chats") { model.chatFocus = ChatFocus(thread: id,message: nil); model.openChatWindow?() }.buttonStyle(.link)
+                } else if !model.draft.isEmpty || !model.files.isEmpty {
+                    Button("Discard",role: .destructive) { model.discardQuickChat() }.buttonStyle(.link)
+                }
+            }.padding(.horizontal,14).padding(.vertical,8)
+            Divider()
+            Group {
+                if messages.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "square.and.pencil").font(.largeTitle).foregroundStyle(Color.accentColor).accessibilityHidden(true)
+                        Text("A new chat").font(.title3.weight(.semibold))
+                        Text("It's saved once you send its first message. Closing keeps what you've written.").foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }.padding(30).frame(maxWidth: .infinity,maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading,spacing: 10) {
+                            ForEach(messages) { m in
+                                MessageRow(message: m,header: nil,highlighted: false,reveal: { _ in },files: files[m.id] ?? [],locate: { [model] in await model.attachmentURL($0) })
+                            }
+                            if model.routing, messages.last?.role == "user" { ThinkingBubble() }
+                        }.scrollTargetLayout().padding(.horizontal,14).padding(.vertical,12)
+                    }
+                    .scrollPosition($position)
+                    .defaultScrollAnchor(.bottom,for: .initialOffset)
+                    // Follow only a reader at the bottom (#405); one reading earlier messages stays put, with ↓.
+                    .onScrollGeometryChange(for: Bool.self) { $0.visibleRect.maxY >= $0.contentSize.height - 24 } action: { _,bottom in
+                        atBottom = bottom; intent.observe(atBottom: bottom,phase: phase); if bottom { unseen = 0 }
+                    }
+                    .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _,_ in if intent.shouldPinLatest(during: phase) { position.scrollTo(edge: .bottom) } }
+                    .onScrollPhaseChange { _,next in phase = next; intent.observe(atBottom: atBottom,phase: next) }
+                    .onChange(of: messages.last?.id) { _,_ in if intent.followsLatest { position.scrollTo(edge: .bottom) } else { unseen += 1 } }
+                    .overlay(alignment: .bottom) {
+                        if !atBottom {
+                            Button { intent.followLatest(); unseen = 0; withAnimation(.snappy) { position.scrollTo(edge: .bottom) } } label: {
+                                Image(systemName: "arrow.down").font(.callout.weight(.semibold)).foregroundStyle(Color.accentColor).padding(8)
+                                    .background(.thickMaterial,in: Circle()).overlay { Circle().strokeBorder(.separator,lineWidth: 0.5) }
+                            }.buttonStyle(.plain).padding(.bottom,10)
+                                .accessibilityLabel(unseen > 0 ? Text("\(unseen) new messages, scroll to bottom") : Text("Scroll to bottom"))
+                        }
+                    }
+                }
+            }.frame(maxHeight: .infinity)
+            Divider()
+            Composer(model: model,maxHeight: height / 3) { intent.followLatest(); Task { await model.send() } }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .onDrop(of: [.fileURL,.image],isTargeted: nil) { model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged) && model.attach(dropped: $0) }
+    }
 }
 
 /// No messages yet (approved design): what Yorozu does, an example that fills the composer, and where memory lives.

@@ -63,6 +63,9 @@ the platform withholds the width, use the platform view that has it (the system 
 - The menu-bar icon is a custom component: `Logo.side` (18 points) and the notch position in
   `Sources/ProjectXApp/MenuBarHost.swift` draw the template image, and `AttentionDot.radius`
   sizes the dot that sits in the notch. The button centers the image; nothing else is fixed.
+- A chat row's dot is a custom component's own geometry: `ChatRowLabel.Metrics.dot` in
+  `apps/ios/Sources/YorozuIOS/Threads.swift` and `MacChatRow.Metrics.dot` in `Sources/ProjectXApp/Activities.swift`; the
+  row itself is a plain list row sized by the list.
 - The shared block renderer keeps its spacing, insets and radii in one `MarkdownMetrics`
   enum in `Sources/ProjectXApp/ChatMarkdown.swift`; its width always comes from the row. A
   wide code block or table scrolls sideways instead of setting a width.
