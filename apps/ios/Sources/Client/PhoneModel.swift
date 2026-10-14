@@ -8,7 +8,8 @@ import YorozuWire
 
 /// The phone's half of docs/ios-relay-contract.md: the one pairing, the `RelayClient` it drives,
 /// and the mirror of the Mac's history window (bubbles, topics, tasks, amendments, worker events,
-/// read cursor), kept in `MirrorCache` and caught up by change sequence.
+/// read cursor), kept on disk in `HistoryStore` and caught up by change sequence. With a host that takes `history-v1`
+/// (#405) the mirror is the whole history, backfilled page by page from the start and kept for offline reading and search.
 @MainActor
 @Observable
 final class PhoneModel {
@@ -36,6 +37,8 @@ final class PhoneModel {
         var attachments: [AttachmentInfo]?
         /// `threads-v1`: the thread it is in, which keeps it off the main timeline; nil there. Optional so an older cache loads.
         var threadId: String?
+        /// `history-v1` (#405): the host sent only the head of the text; the whole is being fetched (`text_request`).
+        var truncated: Bool?
 
         var files: [AttachmentInfo] { attachments ?? [] }
 
@@ -64,6 +67,7 @@ final class PhoneModel {
             self.init(id: id, user: m.role == .user, ts: ts, text: m.text, failed: m.failed == true || m.kind == "failure",
                       kind: m.kind, topicId: m.topicId, taskId: m.taskId, replyTo: m.replyTo, notice: m.notice, seq: m.seq,
                       readAt: m.readAt, sentAt: m.sentAt, attachments: m.attachmentInfos, threadId: m.threadId)
+            truncated = m.truncated
         }
     }
 
@@ -177,6 +181,42 @@ final class PhoneModel {
     private var threadsRequests: [String: (archived: Bool, append: Bool)] = [:]
     private var threadsRefresh: Task<Void, Never>?
     private var cacheHasThreads = false
+
+    // MARK: History (#405)
+
+    /// The whole history on disk, for this pairing; nil without a pairing.
+    @ObservationIgnored private var history: HistoryStore?
+    /// Records changed or removed since the last write, written in one batch at most once a second.
+    @ObservationIgnored private var dirty: Set<HistoryStore.Key> = []
+    @ObservationIgnored private var removed: Set<HistoryStore.Key> = []
+    /// The host serves the whole history (`history-v1`); nil until it has said.
+    private(set) var historySupported: Bool?
+    /// Every record the host has is here, text included: the backfill reached the host's latest sequence and no long text
+    /// is still being fetched. False on a first sync, after an upgrade from the window cache and while a backfill resumes.
+    private(set) var historySynced = false
+    /// A reset from a cursor the host no longer knows (another database): incoming records replace held ones whatever
+    /// their `seq`, until that catch-up ends. Nothing held is dropped.
+    @ObservationIgnored private var replacing = false
+    /// Deleted threads (their tombstones): nothing of them is kept or shown again, whatever a later page carries.
+    private(set) var deletedThreads: Set<String> = []
+    /// Long text fields the host cut to send (`truncated`), fetched whole one slice at a time.
+    private struct TextNeed: Hashable { var kind: String; var id: String; var field: String; var seq: Int }
+    @ObservationIgnored private var textNeeds: [TextNeed] = []
+    @ObservationIgnored private var textFetch: (need: TextNeed, bytes: Data)?
+    @ObservationIgnored private var textDeadline: Task<Void, Never>?
+    /// Why the last long-text fetch failed; it is retried. Cleared by the next whole text.
+    private(set) var textError: String?
+    /// Tasks of deleted threads (from their tombstones): their steps and changes are never kept again.
+    @ObservationIgnored private var deletedTasks: Set<String> = []
+    /// The host's Main chat setting (`host-settings-v1`), the last value it confirmed, kept for offline use; nil until known.
+    private(set) var mainChat: Bool?
+    private(set) var hostSettingsSupported: Bool?
+    /// The newest message this device marked read per chat, so its row's unread dot goes before the host's row says so.
+    private(set) var sentReads: [String: String] = [:]
+    /// The Main chat's row from the host while it is on (`ThreadsPageData.main`), cached.
+    private(set) var mainRow: ThreadData?
+    /// Thread pages being gathered for a refresh, so the shown list is replaced only when its last page is in.
+    @ObservationIgnored private var gathering: [Bool: [ThreadData]] = [:]
     func canControlThread(_ id: String) -> Bool { state == .paired && threadsSupported == true && !threadControls.values.contains(id) }
     /// The bubbles of one thread: typed or answered in it, or filed in its topic (a secretary-started thread), oldest first.
     func bubbles(inThread id: String) -> [Bubble] { bubbles.filter { $0.threadId == id || $0.topicId == id } }
@@ -411,7 +451,7 @@ final class PhoneModel {
         onboardingPending = onboardingKey.flatMap { UserDefaults.standard.object(forKey: $0) as? Bool } == false
         linked = stored.paired == true
         applyPush()
-        if let ownPub, let snapshot = MirrorCache.shared.load(owner: ownPub) { restore(snapshot) }
+        if let ownPub { openHistory(owner: ownPub) }
         if let ownPub, let saved = Outbox.file.load(Outbox.self), saved.owner == ownPub {
             outbox = saved.items
             marks = saved.marks
@@ -481,7 +521,23 @@ final class PhoneModel {
         cursor = nil
         saveTask?.cancel()
         saveTask = nil
+        dirty = []
+        removed = []
+        history?.wipe()
+        history = nil
         MirrorCache.shared.wipe()
+        historySupported = nil
+        historySynced = false
+        hostSettingsSupported = nil
+        mainChat = nil
+        mainRow = nil
+        threadList = []
+        archivedThreads = []
+        threadsNext = nil
+        archivedNext = nil
+        gathering = [:]
+        textNeeds = []
+        textFetch = nil
     }
 
     // MARK: Connection
@@ -740,6 +796,9 @@ final class PhoneModel {
                     cacheHasThreads = true
                     cursor = nil
                 }
+                historySupported = capabilities.contains(ThreadData.historyCapability)
+                hostSettingsSupported = capabilities.contains(HostSettingsData.capability)
+                saveMeta()
             }
         case .failed(let reason):
             failure = reason
@@ -753,6 +812,9 @@ final class PhoneModel {
 
     /// Off `.paired`: the flags are unknown, and nothing in flight will be answered.
     private func unlinked() {
+        // A slice in flight is asked for again from the start on the next `.paired`; the need itself stays.
+        textFetch = nil
+        textDeadline?.cancel()
         working = nil
         routing = nil
         readiness = nil
@@ -779,14 +841,18 @@ final class PhoneModel {
         // The relay dropped a page request that went out before the link fell: ask again.
         if let page, page.bubbles.isEmpty, page.error == nil { Task { await requestPage() } }
         flushOutbox(all: true)
-        Task { await loadThreads() }
+        requestText()
+        Task {
+            await loadThreads()
+            await loadThreads(archived: true)
+        }
     }
 
     /// Asks for the changes after the cursor, and again after 15 s with neither a reply page nor a chunk.
     private func requestSync() {
         requestedAfter = cursor ?? 0
         let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: Self.now, agentId: "device",
-                                payload: .syncRequest(SyncRequestData(threadId: "main", afterSeq: cursor)))
+                                payload: .syncRequest(SyncRequestData(threadId: "main", afterSeq: cursor, full: historySupported == true ? true : nil)))
         armDeadline()
         Task { [relay] in try? await relay?.send(event) }
     }
@@ -1243,6 +1309,7 @@ final class PhoneModel {
     func markRead(_ messageId: String, thread: String = "main") async {
         guard state == .paired else { return }
         if thread == "main" { localRead = messageId; updateBadge() }
+        sentReads[thread] = messageId
         _ = await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId)))
     }
 
@@ -1258,8 +1325,8 @@ final class PhoneModel {
         let loaded = archived ? archivedThreads.count : threadList.count
         let id = UUID().uuidString
         threadsRequests[id] = (archived, more)
-        let ok = await sendNow(.threadsRequest(ThreadsRequestData(requestId: id, archived: archived ? true : nil, after: after,
-                                                                  limit: more ? 30 : min(200, max(30, loaded)))))
+        _ = loaded
+        let ok = await sendNow(.threadsRequest(ThreadsRequestData(requestId: id, archived: archived ? true : nil, after: after, limit: 200)))
         if !ok { threadsRequests[id] = nil }
         return ok
     }
@@ -1276,13 +1343,64 @@ final class PhoneModel {
         return ok
     }
 
+    /// Every page is gathered (#405): the whole list is cached for offline use and replaces the shown one only once its last
+    /// page is in, so a refresh never empties it and an error keeps the list held.
     private func receive(_ page: ThreadsPageData) {
         guard let request = threadsRequests.removeValue(forKey: page.requestId) else { return }
         threadsError = page.error
-        guard page.error == nil else { return }
-        let held = request.append ? (request.archived ? archivedThreads : threadList) : []
+        guard page.error == nil else { gathering[request.archived] = nil; return }
+        if !request.append, !request.archived { mainRow = mainChat == true ? page.main : nil }
+        let held = request.append ? gathering[request.archived] ?? [] : []
         let rows = held + page.threads.filter { row in !held.contains { $0.id == row.id } }
-        if request.archived { archivedThreads = rows; archivedNext = page.next } else { threadList = rows; threadsNext = page.next }
+        if let next = page.next {
+            gathering[request.archived] = rows
+            if request.archived { archivedNext = next } else { threadsNext = next }
+            Task { await loadThreads(archived: request.archived, more: true) }
+            return
+        }
+        gathering[request.archived] = nil
+        if request.archived { archivedThreads = rows; archivedNext = nil } else { threadList = rows; threadsNext = nil }
+        saveMeta()
+    }
+
+    /// Turns the host's Main chat on or off (`host-settings-v1`): only while `.paired`; the host's answer is what shows.
+    @discardableResult
+    func setMainChat(_ on: Bool) -> Bool {
+        guard state == .paired, hostSettingsSupported == true else { return false }
+        Task { _ = await sendNow(.hostSettings(HostSettingsData(mainChat: on))) }
+        return true
+    }
+
+    /// A hit of the local search: a message or a worker step, where it is, and whether its chat is archived.
+    struct LocalHit: Identifiable, Equatable {
+        var id: String
+        var messageId: String?
+        var eventId: String?
+        var taskId: String?
+        /// The thread it is in, nil for the main timeline.
+        var threadId: String?
+        var topicId: String?
+        var snippet: String
+        var ts: Int
+        var archived: Bool
+    }
+
+    /// Search over the history on this device, offline (#405): every chat, archived ones included and marked.
+    func searchLocal(_ query: String, limit: Int = 300) -> [LocalHit] {
+        flush()
+        history?.drain()
+        let archived = Set(archivedThreads.map(\.id)).union(topics.values.filter { $0.archivedAt != nil }.map(\.id))
+        return (history?.search(query, limit: limit) ?? []).compactMap { hit in
+            if hit.kind == "message" {
+                guard let b = bubbles.first(where: { $0.id == hit.id }) else { return nil }
+                let place = b.threadId ?? b.topicId
+                return LocalHit(id: hit.id, messageId: hit.id, threadId: b.threadId, topicId: b.topicId, snippet: hit.snippet, ts: b.ts,
+                                archived: place.map(archived.contains) == true)
+            }
+            guard let w = workerEvents[hit.id], let task = tasks[w.taskId] else { return nil }
+            return LocalHit(id: hit.id, eventId: hit.id, taskId: task.id, topicId: task.topicId, snippet: hit.snippet, ts: w.created,
+                            archived: archived.contains(task.topicId))
+        }
     }
 
     private func receive(_ result: ThreadControlResultData) {
@@ -1292,7 +1410,7 @@ final class PhoneModel {
         archivedThreads.removeAll { $0.id == thread }
         Task {
             await loadThreads()
-            if !archivedThreads.isEmpty || archivedNext != nil { await loadThreads(archived: true) }
+            await loadThreads(archived: true)
         }
     }
 
@@ -1304,12 +1422,22 @@ final class PhoneModel {
             guard let self, !Task.isCancelled else { return }
             self.threadsRefresh = nil
             await self.loadThreads()
+            await self.loadThreads(archived: true)
         }
     }
 
     /// A deleted thread (its tombstone record): everything of it goes from the mirror and the lists.
     private func purge(thread id: String) {
+        deletedThreads.insert(id)
         let taskIds = Set(tasks.values.filter { $0.topicId == id }.map(\.id))
+        deletedTasks.formUnion(taskIds)
+        // Off the disk and out of local search as well (#405); the tombstone stays, so a later page cannot bring them back.
+        for b in bubbles where b.threadId == id || b.topicId == id || b.taskId.map(taskIds.contains) == true { drop("message", b.id) }
+        taskIds.forEach { drop("task", $0) }
+        amendments.values.filter { taskIds.contains($0.taskId) }.forEach { drop("amendment", $0.id) }
+        workerEvents.values.filter { taskIds.contains($0.taskId) }.forEach { drop("event", $0.id) }
+        drop("read", id)
+        textNeeds.removeAll { need in need.kind == "message" ? !bubbles.contains { $0.id == need.id && $0.threadId != id && $0.topicId != id } : taskIds.contains(need.id) }
         bubbles.removeAll { $0.threadId == id || $0.topicId == id || $0.taskId.map(taskIds.contains) == true }
         tasks = tasks.filter { !taskIds.contains($0.key) }
         amendments = amendments.filter { !taskIds.contains($0.value.taskId) }
@@ -1359,6 +1487,15 @@ final class PhoneModel {
             receive(page)
         case .threadControlResult(let result):
             receive(result)
+        case .textSlice(let slice):
+            receive(slice)
+        case .hostSettings(let settings):
+            if mainChat != settings.mainChat {
+                mainChat = settings.mainChat
+                if !settings.mainChat { mainRow = nil }
+                saveMeta()
+                refreshThreads()
+            }
         case .taskControlResult(let result):
             controlling.remove(result.taskId)
             controlResults[result.taskId] = result
@@ -1392,22 +1529,38 @@ final class PhoneModel {
             return
         }
         let reply = requestedAfter != nil && (delta.reset == true || (delta.afterSeq ?? 0) == requestedAfter)
+        let requestedAfterReply = requestedAfter
         if reply {
             // An error page keeps the cursor; the deadline asks again.
             guard delta.error == nil else { return }
             pageDeadline?.cancel()
             pageDeadline = nil
             requestedAfter = nil
-            if delta.reset == true { clearMirror(keepPending: true) }
+            // A reset never drops the history held (#405): from cursor 0 the pages merge by the upsert rule; from a cursor the
+            // host no longer knows (another database) they replace what is held until the catch-up ends.
+            if delta.reset == true {
+                if historySupported != true { clearMirror(keepPending: true) }
+                else if (requestedAfterReply ?? 0) > 0 { replacing = true }
+                historySynced = false
+            }
             delta.events.forEach(applyRecord)
             if let latest = delta.latestSeq { cursor = latest }
-            if delta.more == true { requestSync() } else { catchingUp = false }
+            if delta.more == true { requestSync() } else {
+                catchingUp = false
+                replacing = false
+                if historySupported == true {
+                    collectOrphans()
+                    historySynced = textNeeds.isEmpty && textFetch == nil && !holdsCutText
+                }
+            }
+            saveMeta()
         } else {
             delta.events.forEach(applyRecord)
             if !delta.events.isEmpty { refreshThreads() }
             if !catchingUp, let latest = delta.latestSeq {
                 if (delta.afterSeq ?? 0) <= (cursor ?? 0) {
                     cursor = max(cursor ?? 0, latest)
+                    saveMeta()
                 } else if state == .paired {
                     // A live update was missed: catch up now rather than at the next `.paired`.
                     catchingUp = true
@@ -1432,48 +1585,201 @@ final class PhoneModel {
     }
 
     /// The upsert rule: a held record is replaced only by one with a higher `seq` (a `worker_event` too: its shared
-    /// images arrive later, re-stamped).
+    /// images arrive later, re-stamped), or by any while `replacing`. Nothing of a deleted thread is kept again.
     private func applyRecord(_ event: YorozuEvent) {
+        func newer(_ held: Int?, _ incoming: Int?) -> Bool { replacing || held == nil || (held ?? 0) < (incoming ?? 0) }
         switch event.payload {
         case .message(let message):
+            if [message.threadId, message.topicId].contains(where: { $0.map(deletedThreads.contains) == true }) || message.taskId.map(deletedTasks.contains) == true { return }
             let held = bubbles.first { $0.id == event.id }
-            guard held?.seq == nil || (held?.seq ?? 0) < (message.seq ?? 0) else { return }
+            guard held?.seq == nil || newer(held?.seq, message.seq) else { return }
             merge(Bubble(record: event.id, ts: event.ts, message))
+            if message.truncated == true, let seq = message.seq { needText(TextNeed(kind: "message", id: event.id, field: "text", seq: seq)) }
             if message.role == .user, message.seq != nil { stored(event.id, read: message.readAt != nil) }
         case .topic(let topic) where topic.deleted == true:
             purge(thread: topic.id)
+            topics[topic.id] = topic
+            touch("topic", topic.id)
         case .topic(let topic):
-            if (topics[topic.id]?.seq ?? -1) < topic.seq { topics[topic.id] = topic }
+            guard !deletedThreads.contains(topic.id), newer(topics[topic.id]?.seq, topic.seq) else { return }
+            topics[topic.id] = topic
+            touch("topic", topic.id)
         case .task(let task):
-            if (tasks[task.id]?.seq ?? -1) < task.seq {
-                tasks[task.id] = task
-                controlling.remove(task.id)
-                // The result answered the record this replaces.
-                controlResults[task.id] = nil
-            }
+            guard !deletedThreads.contains(task.topicId), !deletedTasks.contains(task.id), newer(tasks[task.id]?.seq, task.seq) else { return }
+            tasks[task.id] = task
+            controlling.remove(task.id)
+            // The result answered the record this replaces.
+            controlResults[task.id] = nil
+            touch("task", task.id)
+            for field in task.truncated ?? [] { needText(TextNeed(kind: "task", id: task.id, field: field, seq: task.seq)) }
         case .amendment(let amendment):
-            if (amendments[amendment.id]?.seq ?? -1) < amendment.seq { amendments[amendment.id] = amendment }
+            guard !deletedTasks.contains(amendment.taskId), newer(amendments[amendment.id]?.seq, amendment.seq) else { return }
+            amendments[amendment.id] = amendment
+            touch("amendment", amendment.id)
+            for field in amendment.truncated ?? [] { needText(TextNeed(kind: "amendment", id: amendment.id, field: field, seq: amendment.seq)) }
         case .workerEvent(let workerEvent):
-            if (workerEvents[workerEvent.id]?.seq ?? -1) < workerEvent.seq { workerEvents[workerEvent.id] = workerEvent }
+            guard !deletedTasks.contains(workerEvent.taskId), newer(workerEvents[workerEvent.id]?.seq, workerEvent.seq) else { return }
+            workerEvents[workerEvent.id] = workerEvent
+            touch("event", workerEvent.id)
+            for field in workerEvent.truncated ?? [] { needText(TextNeed(kind: "worker_event", id: workerEvent.id, field: field, seq: workerEvent.seq)) }
         case .readState(let read) where read.threadId == "main":
-            if (readCursor?.seq ?? -1) < (read.seq ?? 0) { readCursor = read }
+            if newer(readCursor?.seq, read.seq ?? 0) { readCursor = read; touch("read", read.threadId) }
         case .readState(let read):
-            if (threadReads[read.threadId]?.seq ?? -1) < (read.seq ?? 0) { threadReads[read.threadId] = read }
+            if newer(threadReads[read.threadId]?.seq, read.seq ?? 0) { threadReads[read.threadId] = read; touch("read", read.threadId) }
         default:
             break
         }
     }
 
-    /// Placed by `ts`, ties in arrival order: pages, live updates and sends can interleave out of Mac order.
+    /// Placed by `ts`, ties in arrival order: pages, live updates and sends can interleave out of Mac order. A stored
+    /// message is written to the history; one still in the outbox is drawn from there.
     private func merge(_ bubble: Bubble) {
         bubbles.removeAll { $0.id == bubble.id }
         bubbles.insert(bubble, at: bubbles.lastIndex { $0.ts <= bubble.ts }.map { $0 + 1 } ?? 0)
+        if bubble.seq != nil { touch("message", bubble.id) }
+    }
+
+    private func touch(_ kind: String, _ id: String) {
+        let key = HistoryStore.Key(kind: kind, id: id)
+        dirty.insert(key)
+        removed.remove(key)
+    }
+
+    private func drop(_ kind: String, _ id: String) {
+        let key = HistoryStore.Key(kind: kind, id: id)
+        removed.insert(key)
+        dirty.remove(key)
+    }
+
+    /// After a whole catch-up every task the host has is held, so steps and changes whose task is not are what a deleted
+    /// thread left (a page brought them before its tasks, then the thread was deleted): they go, from search too.
+    private func collectOrphans() {
+        for a in amendments.values where tasks[a.taskId] == nil { amendments[a.id] = nil; drop("amendment", a.id) }
+        for w in workerEvents.values where tasks[w.taskId] == nil { workerEvents[w.id] = nil; drop("event", w.id) }
+        textNeeds.removeAll { !holds($0) }
+    }
+
+    // MARK: Long text (#405)
+
+    /// A field the host cut to send: fetched whole, a slice at a time, while `.paired`; until then history is not complete.
+    private func needText(_ need: TextNeed) {
+        textNeeds.removeAll { $0.kind == need.kind && $0.id == need.id && $0.field == need.field }
+        textNeeds.append(need)
+        historySynced = false
+        requestText()
+    }
+
+    private func requestText(offset: Int = 0) {
+        guard state == .paired, historySupported == true else { return }
+        if textFetch == nil {
+            guard let next = textNeeds.first else { return }
+            textFetch = (next, Data())
+        }
+        guard let fetch = textFetch else { return }
+        // No answer in 20 s (or a send that did not go): the field starts over; the need stays until its text is in.
+        textDeadline?.cancel()
+        textDeadline = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled, let self, self.textFetch?.need == fetch.need else { return }
+            self.textFetch = nil
+            self.requestText()
+        }
+        Task { [weak self] in
+            if await self?.sendNow(.textRequest(TextRequestData(kind: fetch.need.kind, id: fetch.need.id, field: fetch.need.field, offset: offset))) == false {
+                self?.textError = String(localized: "Couldn't ask the host for a long message. Trying again.")
+            }
+        }
+    }
+
+    /// The held record that `need` would fill still has that version (`seq`).
+    private func holds(_ need: TextNeed) -> Bool {
+        switch need.kind {
+        case "message": bubbles.contains { $0.id == need.id && $0.seq == need.seq }
+        case "task": tasks[need.id]?.seq == need.seq
+        case "amendment": amendments[need.id]?.seq == need.seq
+        default: workerEvents[need.id]?.seq == need.seq
+        }
+    }
+
+    private func receive(_ slice: TextSliceData) {
+        guard var fetch = textFetch, fetch.need.kind == slice.kind, fetch.need.id == slice.id, fetch.need.field == slice.field,
+              slice.offset == fetch.bytes.count else { return }
+        textDeadline?.cancel()
+        // A record no longer held as that version (a newer one replaced it, bringing its own need if still cut; or its
+        // thread was deleted) needs nothing more. Anything else that went wrong keeps the need and asks again later.
+        guard holds(fetch.need) else { textFetch = nil; textNeeds.removeAll { $0 == fetch.need }; return textDone() }
+        guard slice.error == nil, slice.seq == fetch.need.seq, let data = Data(base64Encoded: slice.data) else {
+            textError = slice.error ?? String(localized: "A long message didn't arrive whole. Trying again.")
+            textFetch = nil
+            textNeeds.append(textNeeds.removeFirst()) // the next one first; this one again after it
+            textDeadline = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled else { return }
+                self?.requestText()
+            }
+            return
+        }
+        fetch.bytes.append(data)
+        textFetch = fetch
+        if fetch.bytes.count < slice.total, !data.isEmpty { return requestText(offset: fetch.bytes.count) }
+        guard fetch.bytes.count == slice.total, let text = String(data: fetch.bytes, encoding: .utf8) else {
+            textError = String(localized: "A long message didn't arrive whole. Trying again.")
+            textFetch = nil
+            return requestText()
+        }
+        finishText(text)
+    }
+
+    /// The whole text replaces the cut one in the held record (only while it is still that version), then the next field.
+    private func finishText(_ text: String) {
+        guard let need = textFetch?.need else { return }
+        textFetch = nil
+        textNeeds.removeAll { $0 == need }
+        textError = nil
+        do {
+            switch need.kind {
+            case "message":
+                if var b = bubbles.first(where: { $0.id == need.id }), b.seq == need.seq { b.text = text; b.truncated = nil; merge(b) }
+            case "task":
+                if var t = tasks[need.id], t.seq == need.seq {
+                    switch need.field { case "instruction": t.instruction = text; case "result": t.result = text; default: t.error = text }
+                    t.truncated = t.truncated?.filter { $0 != need.field }
+                    tasks[need.id] = t; touch("task", need.id)
+                }
+            case "amendment":
+                if var a = amendments[need.id], a.seq == need.seq { a.instruction = text; a.truncated = nil; amendments[need.id] = a; touch("amendment", need.id) }
+            default:
+                if var w = workerEvents[need.id], w.seq == need.seq { w.body = text; w.truncated = nil; workerEvents[need.id] = w; touch("event", need.id) }
+            }
+        }
+        textDone()
+    }
+
+    /// History is complete once caught up with nothing cut left; the next field, if any.
+    private func textDone() {
+        if textNeeds.isEmpty, textFetch == nil { historySynced = historySupported == true && !catchingUp && cursor != nil && !holdsCutText }
+        saveMeta()
+        requestText()
+    }
+
+    /// Any held record still carries only the head of a field.
+    private var holdsCutText: Bool {
+        bubbles.contains { $0.truncated == true } || tasks.values.contains { !($0.truncated ?? []).isEmpty }
+            || amendments.values.contains { !($0.truncated ?? []).isEmpty } || workerEvents.values.contains { !($0.truncated ?? []).isEmpty }
     }
 
     // MARK: Cache
 
-    /// `keepPending`: sent bubbles whose stored copy has not arrived survive a `reset`.
+    /// `keepPending`: sent bubbles whose stored copy has not arrived survive a `reset`. Only a host without `history-v1`
+    /// resets this way, or a pairing being removed; the disk follows at the next write.
     private func clearMirror(keepPending: Bool) {
+        for b in bubbles where b.seq != nil { drop("message", b.id) }
+        topics.keys.forEach { drop("topic", $0) }
+        tasks.keys.forEach { drop("task", $0) }
+        amendments.keys.forEach { drop("amendment", $0) }
+        workerEvents.keys.forEach { drop("event", $0) }
+        threadReads.keys.forEach { drop("read", $0) }
+        drop("read", "main")
         bubbles = keepPending ? bubbles.filter { $0.seq == nil } : []
         topics = [:]
         tasks = [:]
@@ -1481,11 +1787,101 @@ final class PhoneModel {
         workerEvents = [:]
         readCursor = nil
         threadReads = [:]
+        deletedThreads = []
         page = nil
         search = nil
         controlResults = [:]
     }
 
+    /// The sync state kept beside the records, written in the same transaction as them.
+    private struct Meta: Codable {
+        var cursor: Int?
+        var historySynced: Bool?
+        var jobs: Bool?
+        var threads: Bool?
+        var jobList: [JobListData.Job]?
+        var jobListAt: Int?
+        var threadList: [ThreadData]?
+        var archivedThreads: [ThreadData]?
+        var mainRow: ThreadData?
+        var mainChat: Bool?
+        var historySupported: Bool?
+        var deletedTasks: [String]?
+    }
+    @ObservationIgnored private var metaDirty = false
+    /// The last history write failed (a full disk): it is retried, and the chat says history is not saved.
+    private(set) var historyWriteFailed = false
+
+    private func saveMeta() {
+        metaDirty = true
+        scheduleSave()
+    }
+
+    /// Opens this pairing's history and draws the mirror from it before any network request. A first launch after the
+    /// update moves the window cache (`MirrorCache`) in and backfills the rest from the start, merging (#405).
+    private func openHistory(owner: String) {
+        let store = HistoryStore(owner: owner)
+        history = store
+        if store.isEmpty, let legacy = MirrorCache.shared.load(owner: owner) {
+            restore(legacy)
+            // Its cursor counted the window only: the whole history comes again from 0, merged by the upsert rule.
+            cursor = nil
+            historySynced = false
+            for b in bubbles where b.seq != nil { touch("message", b.id) }
+            topics.keys.forEach { touch("topic", $0) }
+            tasks.keys.forEach { touch("task", $0) }
+            amendments.keys.forEach { touch("amendment", $0) }
+            workerEvents.keys.forEach { touch("event", $0) }
+            if readCursor != nil { touch("read", "main") }
+            metaDirty = true
+            // The window cache stays until its records are durable in the history; a failed move tries again next launch.
+            flush { MirrorCache.shared.wipe() }
+            return
+        }
+        let decoder = JSONDecoder()
+        var held: [Bubble] = []
+        for r in store.loadAll() {
+            switch r.kind {
+            case "message": if let b = try? decoder.decode(Bubble.self, from: r.json) { held.append(b) }
+            case "topic":
+                if let t = try? decoder.decode(TopicData.self, from: r.json) {
+                    topics[t.id] = t
+                    if t.deleted == true { deletedThreads.insert(t.id) }
+                }
+            case "task": if let t = try? decoder.decode(TaskData.self, from: r.json) { tasks[t.id] = t }
+            case "amendment": if let a = try? decoder.decode(AmendmentData.self, from: r.json) { amendments[a.id] = a }
+            case "event": if let w = try? decoder.decode(WorkerEventData.self, from: r.json) { workerEvents[w.id] = w }
+            case "read":
+                if let read = try? decoder.decode(ReadStateData.self, from: r.json) {
+                    if read.threadId == "main" { readCursor = read } else { threadReads[read.threadId] = read }
+                }
+            default: break
+            }
+        }
+        bubbles = held.sorted { $0.ts < $1.ts }
+        if let meta = store.meta("sync", as: Meta.self) {
+            cursor = meta.cursor
+            historySynced = meta.historySynced == true
+            cacheHasJobs = meta.jobs == true
+            cacheHasThreads = meta.threads == true
+            jobs = meta.jobList ?? []
+            jobsUpdated = meta.jobListAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
+            threadList = meta.threadList ?? []
+            archivedThreads = meta.archivedThreads ?? []
+            mainRow = meta.mainRow
+            mainChat = meta.mainChat
+            historySupported = meta.historySupported
+            deletedTasks = Set(meta.deletedTasks ?? [])
+        }
+        // Long text still cut when the app last ran: fetched again from the start.
+        for b in bubbles where b.truncated == true { if let seq = b.seq { textNeeds.append(TextNeed(kind: "message", id: b.id, field: "text", seq: seq)) } }
+        for t in tasks.values { for f in t.truncated ?? [] { textNeeds.append(TextNeed(kind: "task", id: t.id, field: f, seq: t.seq)) } }
+        for a in amendments.values { for f in a.truncated ?? [] { textNeeds.append(TextNeed(kind: "amendment", id: a.id, field: f, seq: a.seq)) } }
+        for w in workerEvents.values { for f in w.truncated ?? [] { textNeeds.append(TextNeed(kind: "worker_event", id: w.id, field: f, seq: w.seq)) } }
+        if !textNeeds.isEmpty { historySynced = false }
+    }
+
+    /// The window cache of builds before #405, read once to move it into the history.
     private func restore(_ snapshot: MirrorCache.Snapshot) {
         cursor = snapshot.cursor
         readCursor = snapshot.readCursor
@@ -1498,7 +1894,6 @@ final class PhoneModel {
         cacheHasThreads = snapshot.threads == true
         jobs = snapshot.jobList ?? []
         jobsUpdated = snapshot.jobListAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
-        trim()
     }
 
     /// Records arrive often while workers run; one write a second is enough.
@@ -1511,48 +1906,68 @@ final class PhoneModel {
         }
     }
 
-    /// Trims to the window and writes the cache now.
-    private func flush() {
+    /// Writes what changed since the last write, and the sync state, in one transaction: only those records, never the
+    /// whole history.
+    /// `committed` runs once this write is durable (the window cache's move waits for it).
+    private func flush(committed: (@MainActor () -> Void)? = nil) {
         saveTask?.cancel()
         saveTask = nil
-        guard let ownPub else { return }
-        trim()
-        MirrorCache.shared.save(MirrorCache.Snapshot(
-            owner: ownPub, cursor: cursor, readCursor: readCursor,
-            messages: bubbles.filter { $0.seq != nil }, topics: Array(topics.values), tasks: Array(tasks.values),
-            amendments: Array(amendments.values), workerEvents: Array(workerEvents.values), jobs: cacheHasJobs, threads: cacheHasThreads,
-            jobList: jobs, jobListAt: jobsUpdated.map { Int($0.timeIntervalSince1970 * 1000) }))
-    }
-
-    /// The history window by the phone's clock and count: the newest 500 stored main-timeline messages
-    /// plus every one younger than 30 days (job-only ones only then), and the topics, tasks, amendments
-    /// and worker events they reach, plus unsuppressed active or uncertain tasks (the Mac's work scope).
-    private func trim() {
-        let cutoff = Self.now - Self.windowDays * 86_400_000
-        let stored = bubbles.filter { $0.seq != nil }
-        let newest = Set(stored.filter { !Self.jobOnlyKinds.contains($0.kind ?? "") && $0.threadId == nil }.suffix(Self.windowCount).map(\.id))
-        bubbles.removeAll { $0.seq != nil && $0.ts < cutoff && !newest.contains($0.id) }
-        let kept = Set(bubbles.map(\.id))
-        let keptTasks = Set(bubbles.compactMap(\.taskId))
-        tasks = tasks.filter {
-            kept.contains($0.value.messageId) || keptTasks.contains($0.key) || $0.value.created >= cutoff
-                || (!$0.value.suppressed && Self.liveStates.contains($0.value.state))
+        guard let history, !dirty.isEmpty || !removed.isEmpty || metaDirty else { return }
+        let encoder = JSONEncoder()
+        let byId = Dictionary(bubbles.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+        var upserts: [HistoryStore.Record] = []
+        for key in dirty {
+            switch key.kind {
+            case "message":
+                guard let b = byId[key.id], let seq = b.seq, let json = try? encoder.encode(b) else { continue }
+                upserts.append(.init(kind: key.kind, id: key.id, seq: seq, ts: b.ts, thread: b.threadId, topic: b.topicId, text: b.text, json: json))
+            case "topic":
+                guard let t = topics[key.id], let json = try? encoder.encode(t) else { continue }
+                upserts.append(.init(kind: key.kind, id: key.id, seq: t.seq, ts: t.created, thread: nil, topic: t.id, text: nil, json: json))
+            case "task":
+                guard let t = tasks[key.id], let json = try? encoder.encode(t) else { continue }
+                upserts.append(.init(kind: key.kind, id: key.id, seq: t.seq, ts: t.created, thread: nil, topic: t.topicId, text: nil, json: json))
+            case "amendment":
+                guard let a = amendments[key.id], let json = try? encoder.encode(a) else { continue }
+                upserts.append(.init(kind: key.kind, id: key.id, seq: a.seq, ts: 0, thread: nil, topic: nil, text: nil, json: json))
+            case "event":
+                guard let w = workerEvents[key.id], let json = try? encoder.encode(w) else { continue }
+                upserts.append(.init(kind: key.kind, id: key.id, seq: w.seq, ts: w.created, thread: nil, topic: tasks[w.taskId]?.topicId, text: w.body, json: json))
+            case "read":
+                guard let r = key.id == "main" ? readCursor : threadReads[key.id], let json = try? encoder.encode(r) else { continue }
+                upserts.append(.init(kind: key.kind, id: key.id, seq: r.seq ?? 0, ts: 0, thread: key.id, topic: nil, text: nil, json: json))
+            default: continue
+            }
         }
-        let topicIds = Set(bubbles.compactMap(\.topicId)).union(tasks.values.map(\.topicId))
-        topics = topics.filter { topicIds.contains($0.key) || $0.value.created >= cutoff }
-        amendments = amendments.filter { tasks[$0.value.taskId] != nil }
-        workerEvents = workerEvents.filter { tasks[$0.value.taskId] != nil }
-        // A stored message that left the window is never Read here: its times go with it.
-        let before = outbox.count
-        outbox.removeAll { $0.stored && !kept.contains($0.id) }
-        let queued = Set(outbox.map(\.id))
-        let pruned = marks.keys.filter { !kept.contains($0) && !queued.contains($0) }
-        pruned.forEach { marks[$0] = nil; LocalNotices.cancelExpiry($0) }
-        if outbox.count != before || !pruned.isEmpty { saveOutbox() }
+        var meta: [String: Data?] = [:]
+        if metaDirty {
+            meta["sync"] = try? encoder.encode(Meta(cursor: cursor, historySynced: historySynced, jobs: cacheHasJobs, threads: cacheHasThreads,
+                                                    jobList: jobs, jobListAt: jobsUpdated.map { Int($0.timeIntervalSince1970 * 1000) },
+                                                    threadList: threadList, archivedThreads: archivedThreads, mainRow: mainRow, mainChat: mainChat,
+                                                    historySupported: historySupported, deletedTasks: Array(deletedTasks)))
+        }
+        // Held records are written as they are now: the in-memory upsert rule already decided, so the disk follows it.
+        // What this batch carried is written again with the next one unless it committed, so a failed write (a full disk)
+        // leaves no gap behind a cursor that moved on: the cursor travels in the same transaction.
+        let batch = (dirty, removed, metaDirty)
+        dirty = []
+        removed = []
+        metaDirty = false
+        history.write(upserts: upserts, deletes: Array(batch.1), meta: meta, force: true) { ok in
+            Task { @MainActor [weak self, weak history] in
+                guard let self, let history, self.history === history else { return }
+                self.historyWriteFailed = !ok
+                guard !ok else { committed?(); return }
+                // Not rewritten over newer state: a key changed meanwhile is already dirty again.
+                self.dirty.formUnion(batch.0.subtracting(self.removed))
+                self.removed.formUnion(batch.1.subtracting(self.dirty))
+                self.metaDirty = self.metaDirty || batch.2
+                try? await Task.sleep(for: .seconds(5))
+                self.scheduleSave()
+            }
+        }
     }
 
-    private static let windowCount = 500
-    private static let windowDays = 30
     private static let liveStates: Set = ["queued", "working", "amendment_pending", "cancellation_requested", "uncertain"]
     private static var now: Int { Int(Date().timeIntervalSince1970 * 1000) }
 

@@ -310,11 +310,14 @@ import YorozuWire
         guard let devicesFile else { return }
         relayRetry?.cancel(); relayRetry = nil
         do {
-            let bridge = EngineBridge(engine: engine,mode: runtimeMode,scheduler: jobScheduler) { [weak self] in await self?.ensureModels() }
+            let bridge = EngineBridge(engine: engine,mode: runtimeMode,scheduler: jobScheduler,prepare: { [weak self] in await self?.ensureModels() },
+                                      hostSettings: { [weak self] in await MainActor.run { HostSettingsData(mainChat: self?.mainChat ?? false) } },
+                                      setHostSettings: { [weak self] h in await MainActor.run { self?.setMainChat(h.mainChat) } })
             let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile,direct: resolved?.config.direct ?? Config().direct,alerts: phoneAlerts)
             self.bridge = bridge; relay = host
             Task { for await status in host.status where relay === host { relayStatus = status } }
             if let phoneReadiness { await host.publishReadiness(phoneReadiness) }
+            await host.publishHostSettings(HostSettingsData(mainChat: mainChat))
             await host.start()
         } catch {
             relayStatus.state = error.localizedDescription

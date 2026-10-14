@@ -58,6 +58,9 @@ public struct TaskData: Codable, Equatable, Sendable {
     public var result: String?
     public var created: Int
     public var seq: Int
+    /// `history-v1` (#405): long text fields the host cut to send this record; the client fetches each whole with
+    /// `text_request` before it counts its history as complete.
+    public var truncated: [String]? = nil
     public init(id: String, topicId: String, messageId: String, instruction: String, executor: String?, state: String,
                 revision: Int, suppressed: Bool, error: String?, result: String?, created: Int, seq: Int) {
         self.id = id
@@ -84,6 +87,9 @@ public struct AmendmentData: Codable, Equatable, Sendable {
     public var instruction: String
     public var state: String
     public var seq: Int
+    /// `history-v1` (#405): long text fields the host cut to send this record; the client fetches each whole with
+    /// `text_request` before it counts its history as complete.
+    public var truncated: [String]? = nil
     public init(id: String, taskId: String, messageId: String, revision: Int, instruction: String, state: String, seq: Int) {
         self.id = id
         self.taskId = taskId
@@ -106,6 +112,9 @@ public struct WorkerEventData: Codable, Equatable, Sendable {
     public var seq: Int
     /// 0.7 `attachments-v1`: descriptors of the images the worker shared in this step. Never bytes.
     public var files: [AttachmentDescriptor]?
+    /// `history-v1` (#405): long text fields the host cut to send this record; the client fetches each whole with
+    /// `text_request` before it counts its history as complete.
+    public var truncated: [String]? = nil
     public init(id: String, taskId: String, kind: String, body: String, created: Int, seq: Int, files: [AttachmentDescriptor]? = nil) {
         self.id = id
         self.taskId = taskId
@@ -378,6 +387,11 @@ public struct ChunkAssembler: Sendable {
 /// typed or answered in it past its read cursor. Times are epoch ms.
 public struct ThreadData: Codable, Equatable, Sendable, Identifiable {
     public static let capability = "threads-v1"
+    /// #405: full history (`SyncRequestData.full`), the row summary below, `ThreadsPageData.main`, Stop and Delete and
+    /// `MessageData.truncated`.
+    public static let historyCapability = "history-v1"
+    /// The Main chat's row id in `ThreadsPageData.main`.
+    public static let mainId = "main"
     public var id: String
     public var name: String
     /// `secretary` or `user`, as text so a new origin still decodes.
@@ -390,8 +404,20 @@ public struct ThreadData: Codable, Equatable, Sendable, Identifiable {
     public var state: String?
     public var lastMessageId: String?
     public var unread: Int
+    /// `history-v1` (#405): the last visible message (progress acknowledgments never count), which orders the list,
+    /// newest first: its time (epoch ms), its text as a short excerpt, its notice (rendered in the reader's language) and
+    /// whether the user wrote it. Absent on a thread with no visible message (then `created` orders it).
+    public var lastMessageAt: Int?
+    public var preview: String?
+    public var previewNotice: NoticeData?
+    public var previewUser: Bool?
+    /// `history-v1`: an unanswered question, a pending approval or a blocker needs the user (the orange dot); it clears
+    /// only when that is resolved, never by reading. `running`: work is running (the spinner), independent of the dots.
+    public var attention: Bool?
+    public var running: Bool?
     public init(id: String, name: String, origin: String, sourceMessageId: String?, summary: String?, created: Int, lastActivity: Int,
-                archivedAt: Int?, state: String?, lastMessageId: String?, unread: Int) {
+                archivedAt: Int?, state: String?, lastMessageId: String?, unread: Int, lastMessageAt: Int? = nil, preview: String? = nil,
+                previewNotice: NoticeData? = nil, previewUser: Bool? = nil, attention: Bool? = nil, running: Bool? = nil) {
         self.id = id
         self.name = name
         self.origin = origin
@@ -403,7 +429,17 @@ public struct ThreadData: Codable, Equatable, Sendable, Identifiable {
         self.state = state
         self.lastMessageId = lastMessageId
         self.unread = unread
+        self.lastMessageAt = lastMessageAt
+        self.preview = preview
+        self.previewNotice = previewNotice
+        self.previewUser = previewUser
+        self.attention = attention
+        self.running = running
     }
+
+    /// The list's order (#405): newest last visible message first, then the id, so rows never trade places on a tie.
+    public var sortKey: (Int, String) { (lastMessageAt ?? created, id) }
+    public static func newestFirst(_ a: ThreadData, _ b: ThreadData) -> Bool { a.sortKey > b.sortKey }
 }
 
 /// `threads_request` (phone -> Mac): one page of the thread list, newest activity first. `after` is the previous page's
@@ -427,7 +463,11 @@ public struct ThreadsPageData: Codable, Equatable, Sendable {
     public var threads: [ThreadData]
     public var next: String?
     public var error: String?
-    public init(requestId: String, threads: [ThreadData], next: String? = nil, error: String? = nil) {
+    /// `history-v1` (#405): the Main chat's row (id `main`) on the first page of the active list while the host's Main
+    /// chat is on; absent while it is off. The client sorts it in with the threads, never pinned.
+    public var main: ThreadData?
+    public init(requestId: String, threads: [ThreadData], next: String? = nil, error: String? = nil, main: ThreadData? = nil) {
+        self.main = main
         self.requestId = requestId
         self.threads = threads
         self.next = next
@@ -438,7 +478,9 @@ public struct ThreadsPageData: Codable, Equatable, Sendable {
 /// `thread_control` (phone -> Mac): rename, archive, unarchive or delete one thread. A thread is created by its first
 /// message (`MessageData.newThread`). Answered with `thread_control_result`; a replayed `requestId` gets its first answer.
 public struct ThreadControlData: Codable, Equatable, Sendable {
-    public enum Action: String, Codable, Sendable { case rename, archive, unarchive, delete }
+    /// `stopAndDelete` (`history-v1`, #405): stop the thread's running work, wait for each stop to be confirmed, then
+    /// delete; refused, with the chat kept, when a stop cannot be confirmed.
+    public enum Action: String, Codable, Sendable { case rename, archive, unarchive, delete, stopAndDelete = "stop_and_delete" }
     public var requestId: String
     public var threadId: String
     public var action: Action
@@ -463,5 +505,62 @@ public struct ThreadControlResultData: Codable, Equatable, Sendable {
         self.threadId = threadId
         self.accepted = accepted
         self.reason = reason
+    }
+}
+
+// MARK: Host settings (`host-settings-v1`, #405)
+
+/// `host_settings` (both ways): host-wide settings every client shares. Host -> client after each compatible handshake and
+/// on every change; client -> host to change one (`mainChat`), answered by the next host -> client value.
+public struct HostSettingsData: Codable, Equatable, Sendable {
+    public static let capability = "host-settings-v1"
+    /// The global Main chat and its cross-topic routing workflow (owner, 2026-10-14): off unless turned on.
+    public var mainChat: Bool
+    public init(mainChat: Bool) { self.mainChat = mainChat }
+}
+
+// MARK: Oversized record text (`history-v1`, #405)
+
+/// `text_request` (client -> host): the next slice of one long text field of a record the host sent cut
+/// (`MessageData.truncated`, or a `task`, `amendment` or `worker_event` whose field was cut). The client fetches the
+/// whole text this way before it counts its history as complete. Answered with `text_slice`.
+public struct TextRequestData: Codable, Equatable, Sendable {
+    /// The record kind (`message`, `task`, `amendment`, `worker_event`), its id and the field (`text`, `instruction`,
+    /// `result`, `error`, `body`).
+    public var kind: String
+    public var id: String
+    public var field: String
+    /// A byte offset into the field's UTF-8.
+    public var offset: Int
+    public init(kind: String, id: String, field: String, offset: Int) {
+        self.kind = kind
+        self.id = id
+        self.field = field
+        self.offset = offset
+    }
+}
+
+/// `text_slice` (host -> client): up to `TextSliceData.bytes` of the field's UTF-8 from `offset`, base64; `total` is the
+/// field's whole length and `seq` the record's sequence, so a slice of an older version is dropped. `error` when the
+/// record or field is gone.
+public struct TextSliceData: Codable, Equatable, Sendable {
+    public static let bytes = 163_840
+    public var kind: String
+    public var id: String
+    public var field: String
+    public var offset: Int
+    public var total: Int
+    public var seq: Int
+    public var data: String
+    public var error: String?
+    public init(kind: String, id: String, field: String, offset: Int, total: Int, seq: Int, data: String, error: String? = nil) {
+        self.kind = kind
+        self.id = id
+        self.field = field
+        self.offset = offset
+        self.total = total
+        self.seq = seq
+        self.data = data
+        self.error = error
     }
 }

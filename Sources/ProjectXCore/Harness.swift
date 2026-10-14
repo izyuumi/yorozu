@@ -44,6 +44,8 @@ public extension Harness {
 public struct HarnessSettings: Sendable {
     /// Role models as "<provider>/<model>". Empty means none set.
     public var secretaryModel = "", extractionModel = "", workerModel = "", reviewModel = ""
+    /// `[general] main_chat` (#405): the global Main chat takes new messages only while on.
+    public var mainChat = false
     /// Yorozu's MCP servers; nil leaves OpenClaw's own MCP setup untouched.
     public var mcpServers: [String:MCPServer]?
     /// Lifts the ask-first rules for requested outward-facing steps and the risky cua tools (owner, 2026-10-09).

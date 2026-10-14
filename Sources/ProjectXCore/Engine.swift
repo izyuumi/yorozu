@@ -57,6 +57,10 @@ public actor Engine {
         // Job runs do not count (open question 10).
         let jobs = pending.filter { jobWork.contains($0) }.count + running.keys.filter { jobWork.contains($0) }.count
         guard routingCount + pending.count + running.count - jobs < 32 else { throw ProjectError.blocked(String(localized: "32 requests pending; wait for work to finish.")) }
+        // The Main chat is opt-in (owner, 2026-10-14; #405): while it is off, a message for it (an older client, or one queued
+        // before it was turned off) is refused with the reason, so the client keeps it as Not delivered with Resend: never
+        // dropped, never rewritten into another chat. Messages it already stored are still routed in it.
+        guard thread != nil || settings().mainChat else { throw ProjectError.blocked(String(localized: "The Main chat is off on the host. Turn it on in Settings, or send this in a chat.")) }
         try await bindRuntime()
         if let thread {
             if newThread, try await store.topic(id: thread) == nil { try await createThread(id: thread,firstMessage: body) }
@@ -93,10 +97,41 @@ public actor Engine {
         guard !jobTopics.values.contains(id) else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Scheduled.")) }
         for a in try await store.delete(thread: id) { files?.remove(a) }
     }
+    /// Stop and Delete (#405): stops every running or uncertain task of the thread, waits up to `wait` for each stop to be
+    /// confirmed (the run acknowledged it, so the task is cancelled, not merely asked to stop), then deletes. A stop that
+    /// cannot be confirmed keeps the chat and throws what went wrong; nothing is deleted.
+    public func stopAndDeleteThread(_ id: String,wait: Duration = .seconds(30)) async throws {
+        guard !jobTopics.values.contains(id) else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Scheduled.")) }
+        guard let topic = try await store.topic(id: id), topic.deletedAt == nil else { throw ProjectError.invalid(String(localized: "That chat no longer exists.")) }
+        var problems: [String] = []
+        // Suppressed work too: a stop asked for earlier but never confirmed is asked again, and only a confirmed one counts.
+        for w in try await store.openWork(topic: id) {
+            let o = await stopTask(id: w.id)
+            if !o.accepted { problems.append(o.text) }
+        }
+        let end = ContinuousClock.now + wait
+        while try await !store.openWork(topic: id).isEmpty {
+            guard ContinuousClock.now < end else {
+                let reason = problems.first.map { ": \($0)" } ?? "."
+                throw ProjectError.uncertain(String(localized: "Couldn't confirm that this chat's work stopped, so the chat was kept\(reason) Try again, or stop the task and delete the chat once it shows Stopped."))
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        try await deleteThread(id)
+    }
+    /// The Main chat's list row (#405).
+    public func mainRow() async throws -> ThreadRow { try await store.mainRow() }
+    /// Once the secretary has routed a user message (#405): the questions it answers are answered, so their chat's orange
+    /// dot clears. Those are the question it replies to, and the open questions before it in the topic routing filed it in
+    /// (in a message without a topic: its thread's, or the main timeline's unfiled ones). Reading never answers one.
+    private func answered(_ id: String) async {
+        guard let m = try? await store.message(id: id), m.role == "user", m.readAt != nil else { return }
+        try? await store.answer(questionsBefore: m)
+    }
     private func enqueueRoute(_ m: Message) {
         routingCount += 1
         let prior = routingTail
-        routingTail = Task { if let prior { await prior.value }; await self.route(m) }
+        routingTail = Task { if let prior { await prior.value }; await self.route(m); await self.answered(m.id) }
     }
     /// After launch: route user messages a quit left unrouted (under 24 h old, in order; older ones get one notice),
     /// queue never-dispatched work again and re-attach to runs a restart interrupted. A run that finished meanwhile is

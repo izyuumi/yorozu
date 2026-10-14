@@ -371,7 +371,15 @@ extension SearchHit {
 /// the newest; nil without work), its newest message and how many messages from Yorozu in it are past its read cursor.
 public struct ThreadRow: Sendable, Equatable {
     public var topic: Topic; public var state: String?; public var lastMessageID: String?; public var unread: Int
-    public init(topic: Topic, state: String?, lastMessageID: String?, unread: Int) { self.topic = topic; self.state = state; self.lastMessageID = lastMessageID; self.unread = unread }
+    /// #405: the last visible message (the preview and the list's order), whether the chat needs the user (an unanswered
+    /// question or a blocker; reading never clears it) and whether work is running in it.
+    public var last: Message?; public var attention = false; public var running = false
+    public init(topic: Topic, state: String?, lastMessageID: String?, unread: Int, last: Message? = nil, attention: Bool = false, running: Bool = false) {
+        self.topic = topic; self.state = state; self.lastMessageID = lastMessageID; self.unread = unread; self.last = last; self.attention = attention; self.running = running
+    }
+    /// The list's order: newest last visible message first (else when the chat began), then the id.
+    public var sortAt: Double { last?.created ?? topic.created }
+    public static func newestFirst(_ a: ThreadRow,_ b: ThreadRow) -> Bool { (a.sortAt,a.topic.id) > (b.sortAt,b.topic.id) }
 }
 /// `next`: the cursor of the following page (Show more); nil on the last.
 public struct ThreadPage: Sendable, Equatable { public var rows: [ThreadRow]; public var next: String? }

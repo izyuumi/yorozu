@@ -1,6 +1,7 @@
 import AppKit
 import ProjectXCore
 import ServiceManagement
+import YorozuWire
 
 /// The settings the harness and the Engine read at the start of each route, task or extraction (#312).
 final class SettingsBox: @unchecked Sendable {
@@ -22,12 +23,21 @@ extension AppModel {
         var s = HarnessSettings()
         s.secretaryModel = m.secretary.id ?? ""; s.extractionModel = m.extraction.id ?? ""; s.workerModel = m.worker.id ?? ""; s.reviewModel = m.review.id ?? ""
         s.mcpServers = c.effectiveMCPServers; s.integrations = c.enabledIntegrations; s.yolo = c.general.yolo; s.configFile = configFile
-        s.personalKnowledge = c.routing.personalKnowledge; s.selfTopic = c.routing.selfTopic
+        s.personalKnowledge = c.routing.personalKnowledge; s.selfTopic = c.routing.selfTopic; s.mainChat = c.general.mainChat
         s.filesRoot = filesRoot
         s.workspace = dataRoot.map { c.workspace.url(dataRoot: $0,isolated: isolatedData) }; s.restrict = c.workspace.restrict
         s.codingAgents = c.effectiveCodingAgents
         if let agentHost, let exe = Bundle.main.executablePath { s.agentCLI = (exe,agentHost.socket.path) }
         return s
+    }
+    /// The global Main chat (owner, 2026-10-14; #405): one host-wide setting, `[general] main_chat`, off by default. A client
+    /// Mac reads the host's value (`host_settings`), cached for offline use.
+    var mainChat: Bool { client.map { $0.mainChat == true } ?? (resolved?.config.general.mainChat ?? false) }
+    /// Turns the Main chat on or off: here in `config.toml`, from a client through the host. History is never touched.
+    func setMainChat(_ on: Bool) {
+        if let client { client.setMainChat(on); return }
+        guard on != (resolved?.config.general.mainChat ?? false) else { return }
+        writeSettings { $0.general.mainChat = on }
     }
     /// Phone pushes (#320): `[notifications]` on with destination `phones`.
     var phoneAlerts: Bool { resolved.map { $0.config.notifications.enabled && $0.config.notifications.destination == .phones } ?? false }
@@ -82,6 +92,7 @@ extension AppModel {
         if runtimeMode == .live, next.config.relay.url != old.config.relay.url { await restartRelay() }
         else if runtimeMode == .live, let relay, (resolved ?? next).config.direct != old.config.direct { await relay.setDirect((resolved ?? next).config.direct) }
         await relay?.setAlerts(phoneAlerts)
+        await relay?.publishHostSettings(HostSettingsData(mainChat: (resolved ?? next).config.general.mainChat))
         // After the awaits a newer reload may have run: apply the settings in force now, not this reload's.
         applySystem((resolved ?? next).config.general)
         if runtimeMode == .live, launched?.config.harness.kind == .hermes { recheck() } // the Hermes profiles may be out of date now

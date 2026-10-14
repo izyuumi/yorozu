@@ -13,6 +13,9 @@ public struct Config: Sendable, Equatable {
     public enum HarnessKind: String, CaseIterable, Sendable { case openclaw, hermes }
     public struct General: Sendable, Equatable {
         public var startAtLogin = true, keepMacAwake = false, yolo = false, sendKey = SendKey.cmdEnter, globalShortcut = "", appearance = Appearance.system, showAdvanced = false, role = Role.host
+        /// The global Main chat and its cross-topic routing workflow (owner, 2026-10-14): off unless set. One host-wide setting
+        /// every client shares (`host_settings`); toggling it never touches history.
+        public var mainChat = false
     }
     public struct Notifications: Sendable, Equatable { public var enabled = true, destination = Destination.mac }
     public struct Routing: Sendable, Equatable { public var personalKnowledge = "", selfTopic = "Yorozu" }
@@ -131,6 +134,7 @@ public struct Config: Sendable, Equatable {
         field("general.global_shortcut",\.general.globalShortcut,"Shortcut that brings up Yorozu; empty is off."),
         field("general.appearance",\.general.appearance,"\"system\", \"light\" or \"dark\"."),
         field("general.show_advanced",\.general.showAdvanced,"Show the Advanced tab in Settings."),
+        field("general.main_chat",\.general.mainChat,"The Main chat: one global conversation whose secretary files work into chats across topics. Off: every conversation is its own chat. Its history stays either way."),
         field("general.role",\.general.role,"\"host\" (Yorozu runs on this Mac) or \"client\" (this Mac uses another host Mac, like a phone). Applies from the next launch."),
         field("notifications.enabled",\.notifications.enabled,"Post notifications."),
         field("notifications.destination",\.notifications.destination,"Where notifications appear: \"mac\" (the host) or \"phones\" (client devices)."),

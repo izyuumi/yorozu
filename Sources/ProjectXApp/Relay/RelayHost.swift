@@ -81,6 +81,8 @@ actor RelayHost {
     private var readiness: ReadinessData?
     /// The job list (#319): sent to each phone that takes `jobs-v1` after its claim, and on every change.
     private var jobs: JobListData?
+    /// The host-wide settings (`host-settings-v1`, #405): sent to each phone that takes them after its claim, and on every change.
+    private var hostSettings: HostSettingsData?
     private var state = RelayStatus().state
     private var link: String?
     private var justPaired: String?
@@ -295,6 +297,13 @@ actor RelayHost {
         guard jobs != self.jobs else { return }
         self.jobs = jobs
         deliver(peers.keys.filter { takes(JobListData.capability, $0) }.map { ($0, .control(.jobList(jobs))) })
+    }
+
+    /// Changed host settings go to every served phone that takes them now; each handshake sends the latest again.
+    func publishHostSettings(_ settings: HostSettingsData) {
+        guard settings != hostSettings else { return }
+        hostSettings = settings
+        deliver(peers.keys.filter { takes(HostSettingsData.capability, $0) }.map { ($0, .control(.hostSettings(settings))) })
     }
 
     private func takes(_ capability: String, _ pub: String) -> Bool {
@@ -614,6 +623,7 @@ actor RelayHost {
         if case .compatible = result { release(pub, serve: true) } else { release(pub, serve: false) }
         if let readiness, takes(ReadinessData.capability, pub) { deliver([(pub, .control(.readiness(readiness)))]) }
         if let jobs, takes(JobListData.capability, pub) { deliver([(pub, .control(.jobList(jobs)))]) }
+        if let hostSettings, takes(HostSettingsData.capability, pub) { deliver([(pub, .control(.hostSettings(hostSettings)))]) }
     }
 
     /// Handshake thread lists leave at once, ahead of any frames waiting for the phone, so a long chunk set

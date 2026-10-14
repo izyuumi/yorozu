@@ -117,6 +117,13 @@ public actor Store {
                 UPDATE topics SET activity=new.created WHERE id IN (new.topicID,new.threadID) AND (activity IS NULL OR activity<new.created); END;
             """) }
         // Chats started on an iPhone before the key was lowercased never got a Gateway session.
+        // #405. Nullable: the user message that answered a question, set once routing filed it with the question (older
+        // builds never set it). Questions answered before are taken as answered, so history lights no stale dot.
+        migration.registerMigration("question-answered") { db in try db.execute(sql: """
+            ALTER TABLE messages ADD COLUMN answeredBy TEXT;
+            UPDATE messages SET answeredBy=(SELECT u.id FROM messages u WHERE u.role='user' AND (u.created,u.rowid)>(messages.created,messages.rowid) ORDER BY u.created,u.rowid LIMIT 1)
+              WHERE role='assistant' AND kind<>'approval_request' AND (kind='question' OR json_extract(notice,'$.code') IN ('question','question_topic','question_task'));
+            """) }
         migration.registerMigration("session-key-lower") { db in try db.execute(sql: "UPDATE topics SET sessionKey=lower(sessionKey) WHERE sessionKey<>lower(sessionKey)") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
@@ -161,9 +168,19 @@ public actor Store {
         var m = Message(id: id, role: role, body: body, topicID: topic, taskID: task, replyTo: replyTo, kind: kind, created: Date().timeIntervalSince1970, notice: notice, sentAt: sentAt, threadID: thread)
         // Attachments go in with their message, in one transaction (#316).
         try db.write { db in
+            try Self.fence(db,topics: [topic,thread],replyTo: replyTo,task: task)
             if m.threadID == nil { m.threadID = try Self.inheritedThread(db,replyTo: replyTo,task: task) }
             try m.insert(db); for var a in attachments { a.messageID = m.id; a.eventID = nil; try a.insert(db) }
         }; return m
+    }
+    /// A late write for a deleted chat is refused in its transaction (#405): a deleted thread's topic, a reply to a
+    /// message or a step of a task that no longer exists (deleted with its thread), so nothing of it comes back, on the main
+    /// timeline or in search.
+    static func fence(_ db: Database,topics: [String?],replyTo: String? = nil,task: String? = nil) throws {
+        let gone = ProjectError.invalid(String(localized: "That chat no longer exists."))
+        for id in topics.compactMap({ $0 }) where try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM topics WHERE id=? AND deletedAt IS NOT NULL",arguments: [id]) ?? 0 > 0 { throw gone }
+        if let replyTo, try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE id=?",arguments: [replyTo]) == 0 { throw gone }
+        if let task, try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM work WHERE id=?",arguments: [task]) == 0 { throw gone }
     }
     private static func inheritedThread(_ db: Database,replyTo: String?,task: String?) throws -> String? {
         if let replyTo, let t = try String.fetchOne(db,sql: "SELECT threadID FROM messages WHERE id=?",arguments: [replyTo]) { return t }
@@ -274,14 +291,15 @@ public actor Store {
         default: return "1"
         }
     }
-    /// Rows of the window changed after `seq`, at most `limit` (1–1000), in sequence order.
-    public func changes(after seq: Int64, limit: Int = 200) throws -> ChangePage {
+    /// Rows of the window changed after `seq`, at most `limit` (1–1000), in sequence order. `full` (#405): every row, not
+    /// only the window's, so a client can hold the whole history.
+    public func changes(after seq: Int64, limit: Int = 200, full: Bool = false) throws -> ChangePage {
         let limit = max(1,min(limit,1000))
         return try db.read { db in
-            let start = try Self.windowStart(db)
+            let start = full ? 0 : try Self.windowStart(db)
             var all: [Change] = []
             for t in Self.synced {
-                for row in try Row.fetchAll(db,sql: "WITH w(s) AS (SELECT ?) SELECT * FROM \(t) WHERE seq>? AND \(Self.scope(t)) ORDER BY seq LIMIT ?",arguments: [start,seq,limit + 1]) {
+                for row in try Row.fetchAll(db,sql: "WITH w(s) AS (SELECT ?) SELECT * FROM \(t) WHERE seq>? AND \(full ? "1" : Self.scope(t)) ORDER BY seq LIMIT ?",arguments: [start,seq,limit + 1]) {
                     all.append(Change(seq: row["seq"],record: try Self.record(t,row)))
                 }
             }
@@ -291,10 +309,11 @@ public actor Store {
     }
     /// The latest change sequence and the smallest `seq` of a message in the window (nil when it has none): a phone
     /// cursor above the first or below the second is stale (docs/ios-relay-contract.md, "History window").
-    public func cursorBounds() throws -> (latest: Int64, floor: Int64?) {
+    /// `full` (#405): a client holding the whole history has no floor.
+    public func cursorBounds(full: Bool = false) throws -> (latest: Int64, floor: Int64?) {
         try db.read { db in
             (try Int64.fetchOne(db,sql: "SELECT value FROM changeSeq") ?? 0,
-             try Int64.fetchOne(db,sql: "WITH w(s) AS (SELECT ?) SELECT MIN(seq) FROM messages WHERE \(Self.scope("messages"))",arguments: [try Self.windowStart(db)]))
+             full ? nil : try Int64.fetchOne(db,sql: "WITH w(s) AS (SELECT ?) SELECT MIN(seq) FROM messages WHERE \(Self.scope("messages"))",arguments: [try Self.windowStart(db)]))
         }
     }
     /// `Message.jobOnlyKinds` as an SQL list.
@@ -332,27 +351,84 @@ public actor Store {
     /// A thread's messages: typed in it or inheriting it (`threadID`), or filed in its topic. Binds the thread id twice.
     static let inThread = "(threadID=? OR topicID=?)"
     private static let active = "('queued','working','amendment_pending','cancellation_requested','uncertain')"
-    /// One page of the thread list, newest activity first: threads of both origins, never a job's or a deleted one,
-    /// archived ones only with `archived`. `after` is the previous page's `next`; `limit` 1–200. One index range scan,
-    /// so a page costs the same at 40 threads or 4,000.
+    /// Messages that move a chat in the list and give its preview (#405): everything but progress acknowledgments (start,
+    /// milestone, steer and stop notes) and job-only kinds. Status changes, worker steps and renames never reorder.
+    static let visible = "kind NOT IN ('acknowledgment','job_run','job_input','job_result','job_note')"
+    /// A question or clarify (`questionKinds`) still waiting for the user's answer: no routed user message answered it
+    /// (`answer(questionsBefore:)`). Reading, or chat elsewhere, never answers one.
+    private static let asks = "role='assistant' AND \(questionKinds) AND answeredBy IS NULL"
+    private static let questionKinds = "kind<>'approval_request' AND (kind='question' OR json_extract(notice,'$.code') IN ('question','question_topic','question_task'))"
+    /// Marks the questions a routed user message answers: the one it replies to, and the open ones before it in the topic
+    /// routing filed it in, or, filed nowhere, in its thread or among the main timeline's unfiled messages.
+    public func answer(questionsBefore m: Message) throws {
+        try db.write { db in
+            let place = m.topicID != nil ? "topicID=?" : m.threadID != nil ? "(topicID IS NULL AND threadID=?)" : "(topicID IS NULL AND threadID IS NULL)"
+            let arg: [DatabaseValueConvertible] = [m.topicID ?? m.threadID].compactMap { $0 }
+            try db.execute(sql: "UPDATE messages SET answeredBy=? WHERE answeredBy IS NULL AND role='assistant' AND \(Self.questionKinds) AND (id=? OR (\(place) AND created<=?))",
+                           arguments: StatementArguments([m.id,m.replyTo ?? ""] + arg + [m.created]))
+        }
+    }
+    /// A job script's approval request whose approval is still the job's pending one: answered only by the approval itself.
+    private static let approving = """
+        kind='approval_request' AND EXISTS (SELECT 1 FROM jobApprovals a JOIN jobs j ON j.pendingApprovalID=a.id
+          WHERE a.id=json_extract(q.notice,'$.params.approvalID') AND a.state='pending')
+        """
+    private static let running = "(state IN ('queued','working','cancellation_requested') OR (state='amendment_pending' AND result IS NULL))"
+    /// Needs the user: a blocker only they can clear (an uncertain run, a finished task whose change was not confirmed).
+    /// Suppressed too: an uncertain run whose stop was asked for but never confirmed still blocks the chat's new work.
+    private static let blocked = "(state='uncertain' OR (state='amendment_pending' AND result IS NOT NULL))"
+    /// The row summary over the messages `scope` selects (`?` binds the thread id as often as `binds`): the last visible
+    /// message, Yorozu's visible messages past the `cursor` thread's read cursor, an unanswered question (no user message
+    /// after it) and `work`'s running and blocking state.
+    private static func summary(scope: String, cursor: String, work: String) -> String {
+        """
+        (SELECT id FROM messages WHERE \(scope) AND \(visible) ORDER BY created DESC,rowid DESC LIMIT 1) AS lastID,
+        (SELECT COUNT(*) FROM messages WHERE \(scope) AND role='assistant' AND \(visible) AND created>COALESCE((SELECT x.created FROM readCursor c JOIN messages x ON x.id=c.messageID WHERE c.threadID=\(cursor)),0)) AS unread,
+        EXISTS (SELECT 1 FROM messages q WHERE \(scope) AND ((\(asks)) OR (\(approving)))) AS asking,
+        EXISTS (SELECT 1 FROM work WHERE \(work) AND \(running)) AS running,
+        EXISTS (SELECT 1 FROM work WHERE \(work) AND \(blocked)) AS blocked
+        """
+    }
+    private static func row(_ db: Database,_ r: Row,topic: Topic) throws -> ThreadRow {
+        let last: Message? = try (r["lastID"] as String?).flatMap { try Message.fetchOne(db,key: $0) }
+        return ThreadRow(topic: topic,state: r["current"],lastMessageID: r["lastID"],unread: r["unread"],last: last,attention: (r["asking"] as Bool) || (r["blocked"] as Bool),running: r["running"])
+    }
+    /// One page of the thread list, newest last visible message first (#405): threads of both origins, never a job's or a
+    /// deleted one, archived ones only with `archived`. `after` is the previous page's `next`; `limit` 1–200.
     public func threads(archived: Bool = false, after: String? = nil, limit: Int = 30) throws -> ThreadPage {
         let limit = max(1,min(limit,200))
         var bound = "", args: [DatabaseValueConvertible] = []
-        if let after, let bar = after.lastIndex(of: "|"), let at = Double(after[..<bar]) { bound = " AND (t.activity,t.id)<(?,?)"; args = [at,String(after[after.index(after: bar)...])] }
+        if let after, let bar = after.lastIndex(of: "|"), let at = Double(after[..<bar]) { bound = " WHERE (sortAt,id)<(?,?)"; args = [at,String(after[after.index(after: bar)...])] }
+        // In the summary, `threadID`/`topicID` name the thread's messages (t.id bound by correlation).
+        let scope = "(threadID=t.id OR topicID=t.id)"
         return try db.read { db in
             let rows = try Row.fetchAll(db,sql: """
-                SELECT t.*,
-                  (SELECT state FROM work w WHERE w.topicID=t.id ORDER BY w.state IN \(Self.active) DESC,w.created DESC,w.rowid DESC LIMIT 1) AS current,
-                  (SELECT id FROM messages m WHERE m.threadID=t.id OR m.topicID=t.id ORDER BY m.created DESC,m.rowid DESC LIMIT 1) AS last,
-                  (SELECT COUNT(*) FROM messages m WHERE m.threadID=t.id AND m.role='assistant' AND m.created>COALESCE((SELECT x.created FROM readCursor c JOIN messages x ON x.id=c.messageID WHERE c.threadID=t.id),0)) AS unread
-                FROM topics t WHERE t.deletedAt IS NULL AND t.activity IS NOT NULL AND t.archivedAt IS \(archived ? "NOT " : "")NULL\(bound)
-                  AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.topicID=t.id)
-                ORDER BY t.activity DESC,t.id DESC LIMIT ?
+                SELECT * FROM (SELECT r.*,COALESCE((SELECT created FROM messages WHERE id=r.lastID),r.created) AS sortAt FROM (
+                  SELECT t.*,
+                    (SELECT state FROM work w WHERE w.topicID=t.id ORDER BY w.state IN \(Self.active) DESC,w.created DESC,w.rowid DESC LIMIT 1) AS current,
+                    \(Self.summary(scope: scope,cursor: "t.id",work: "topicID=t.id"))
+                  FROM topics t WHERE t.deletedAt IS NULL AND t.activity IS NOT NULL AND t.archivedAt IS \(archived ? "NOT " : "")NULL
+                    AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.topicID=t.id)) r)\(bound)
+                ORDER BY sortAt DESC,id DESC LIMIT ?
                 """,arguments: StatementArguments(args + [limit + 1]))
-            let page = try rows.prefix(limit).map { ThreadRow(topic: try Topic(row: $0),state: $0["current"],lastMessageID: $0["last"],unread: $0["unread"]) }
-            return ThreadPage(rows: page,next: rows.count > limit ? page.last.map { "\($0.topic.activity ?? 0)|\($0.topic.id)" } : nil)
+            let page = try rows.prefix(limit).map { try Self.row(db,$0,topic: try Topic(row: $0)) }
+            let next = rows.count > limit ? rows[limit - 1] : nil
+            return ThreadPage(rows: page,next: next.map { "\($0["sortAt"] as Double)|\($0["id"] as String)" })
         }
     }
+    /// The Main chat's row (#405, the list shows it while the Main chat is on): the main timeline's last visible message,
+    /// its unread count, an unanswered question, and running or blocking work started from it (outside job topics).
+    public func mainRow() throws -> ThreadRow {
+        let scope = "(threadID IS NULL AND kind NOT IN \(Self.jobOnlyList))"
+        let work = "messageID IN (SELECT id FROM messages WHERE threadID IS NULL AND kind NOT IN \(Self.jobOnlyList)) AND topicID NOT IN (SELECT topicID FROM jobs)"
+        return try db.read { db in
+            let r = try Row.fetchOne(db,sql: "SELECT NULL AS current,\(Self.summary(scope: scope,cursor: "'main'",work: work))")!
+            let first = try Double.fetchOne(db,sql: "SELECT MIN(created) FROM messages WHERE \(scope)") ?? 0
+            let topic = Topic(id: Self.mainID,label: String(localized: "Main chat"),sessionKey: "",created: first,activity: first)
+            return try Self.row(db,r,topic: topic)
+        }
+    }
+    public static let mainID = "main"
     /// A live, non-job topic for a thread action; throws a user-facing refusal otherwise.
     private static func liveThread(_ db: Database,_ id: String) throws -> Topic {
         guard let t = try Topic.fetchOne(db,key: id), t.deletedAt == nil else { throw ProjectError.invalid(String(localized: "That chat no longer exists.")) }
@@ -386,7 +462,8 @@ public actor Store {
     public func delete(thread id: String) throws -> [Attachment] {
         try db.write { db in
             _ = try Self.liveThread(db,id)
-            guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM work WHERE topicID=? AND state IN \(Self.active) AND suppressed=0",arguments: [id]) == 0 else {
+            // Suppressed too: a stop that was asked for but never confirmed may still be running (#405).
+            guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM work WHERE topicID=? AND state IN \(Self.active)",arguments: [id]) == 0 else {
                 throw ProjectError.blocked(String(localized: "This chat has a task running. Stop it first, then delete the chat."))
             }
             let topicWork = try String.fetchAll(db,sql: "SELECT id FROM work WHERE topicID=?",arguments: [id])
@@ -439,12 +516,16 @@ public actor Store {
     }
     /// Assign only the newly received, previously unrouted message. Never migrate an old exchange.
     public func assign(message: String, topic: String) throws {
-        try db.write { try $0.execute(sql: "UPDATE messages SET topicID=? WHERE id=? AND topicID IS NULL", arguments: [topic,message]) }
+        try db.write { db in
+            try Self.fence(db,topics: [topic])
+            try db.execute(sql: "UPDATE messages SET topicID=? WHERE id=? AND topicID IS NULL", arguments: [topic,message])
+        }
     }
     /// `files`: attachment ids the work carries (#316), linked in the same transaction.
     public func insertWork(_ work: Work, files: [String] = []) throws {
         try db.write { db in
             // One active task per (topic, executor id; NULL = thinking): a long coding run never blocks thinking work in the same topic.
+            try Self.fence(db,topics: [work.topicID],replyTo: work.messageID)
             guard try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM work WHERE topicID=? AND executor IS ? AND (state IN ('queued','working','amendment_pending','cancellation_requested','uncertain'))", arguments: [work.topicID,work.executor]) == 0 else { throw ProjectError.blocked("This topic already has active or uncertain work. Steer it or reconcile before retrying.") }
             try work.insert(db)
             try Self.link(db,work: work.id,files: files)
@@ -694,6 +775,25 @@ public actor Store {
         try db.write { db in
             try db.execute(sql: "INSERT OR REPLACE INTO memoryJobs VALUES (?,?)", arguments: [id,state])
             if let reason { try db.execute(sql: "INSERT OR REPLACE INTO memoryJobReasons VALUES (?,?)", arguments: [id,reason]) }
+        }
+    }
+}
+extension Store {
+    /// One long text field of a record and the record's change sequence (#405, `text_request`): a message's `text`, a
+    /// task's `instruction`, `result` or `error`, an amendment's `instruction` or a worker event's `body`. Nil when the
+    /// record or the field is not there.
+    public func text(kind: String, id: String, field: String) throws -> (text: String, seq: Int64)? {
+        let column: (table: String, column: String)? = switch (kind, field) {
+        case ("message", "text"): ("messages", "body")
+        case ("task", "instruction"), ("task", "result"), ("task", "error"): ("work", field)
+        case ("amendment", "instruction"): ("amendments", "instruction")
+        case ("worker_event", "body"): ("events", "body")
+        default: nil
+        }
+        guard let column else { return nil }
+        return try db.read { db in
+            try Row.fetchOne(db, sql: "SELECT \(column.column) AS t, seq FROM \(column.table) WHERE id=?", arguments: [id])
+                .flatMap { row in (row["t"] as String?).map { ($0, row["seq"] as Int64) } }
         }
     }
 }
