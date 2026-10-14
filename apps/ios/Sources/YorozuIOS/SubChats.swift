@@ -136,6 +136,7 @@ struct TopicScreen: View {
     @State private var atBottom = true
     @State private var unseen = 0
     @State private var restored = false
+    @State private var phase = ScrollPhase.idle
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
@@ -307,13 +308,22 @@ struct TopicScreen: View {
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .onScrollGeometryChange(for: Bool.self) { g in
-            g.contentOffset.y + g.containerSize.height - g.contentInsets.top >= g.contentSize.height - 24
-        } action: { _, bottom in
-            guard restored || bottom == false else { return }
-            atBottom = bottom
-            if bottom { unseen = 0; ReadingPositions.set(nil, chat: topicId) }
+        // Following is the reader's intent: only their own scroll away clears it, and reaching the end restores it. Content
+        // growing under a follower (a task card's new steps, a longer answer) keeps the newest in view (#405).
+        .onScrollGeometryChange(for: [CGFloat].self) { g in
+            [g.contentOffset.y + g.containerSize.height - g.contentInsets.top, g.contentSize.height]
+        } action: { old, new in
+            let atEnd = new[0] >= new[1] - 24
+            if [.tracking, .interacting, .decelerating].contains(phase) {
+                if restored { atBottom = atEnd }
+            } else if atEnd {
+                atBottom = true
+            } else if atBottom, restored, old.count == 2, new[1] != old[1] {
+                position.scrollTo(edge: .bottom)
+            }
+            if atBottom, restored { unseen = 0; ReadingPositions.set(nil, chat: topicId) }
         }
+        .onScrollPhaseChange { _, new in phase = new }
         .onScrollTargetVisibilityChange(idType: String.self) { ids in
             if restored, !atBottom, let first = ids.first { ReadingPositions.set(first, chat: topicId) }
         }
@@ -343,7 +353,9 @@ struct TopicScreen: View {
                     // New chat's first message creates the thread; until its record arrives every send says so, which
                     // the host ignores once the thread exists.
                     let key = draftKey
-                    if model.send(text: draft, files: files, thread: topicId, newThread: isNew && model.topics[topicId] == nil) {
+                    model.drafts.update(key, text: draft, files: files)
+                    model.drafts.save()
+                    if model.send(text: draft, files: files, thread: topicId, newThread: isNew && model.topics[topicId] == nil, draftKey: key) {
                         // A draft becomes a chat only now, with its first message (#405); its files went to the outbox.
                         model.drafts.clear(key)
                         model.drafts.clear(Drafts.new(topicId))

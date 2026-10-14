@@ -44,6 +44,10 @@ struct Outbox: Codable, Sendable {
         var files: [AttachmentInfo]?
         /// A job's own input (#319): the job's sub-chat, where its bubble shows until the stored copy arrives.
         var topicId: String?
+        /// The draft this message was sent from and that draft's edit time (#405): a draft still saved with that time after a
+        /// crash is the sent one, and goes when the outbox loads, so it is never sent twice.
+        var draftKey: String?
+        var draftStamp: Int?
 
         var id: String { event.id }
         var deadline: Int {

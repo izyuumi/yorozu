@@ -481,8 +481,13 @@ final class PhoneModel {
                 }
             }
             expireOverdue()
-            // At once: a message waiting since before the update gets its reminder even if nothing changes (#405).
-            reconcileReminder()
+            drafts.dropSent(outbox.compactMap { item in item.draftKey.flatMap { key in item.draftStamp.map { (key, $0) } } })
+            let main = drafts.draft(Drafts.chat(ThreadData.mainId))
+            restoringDraft = true
+            draft = main.text; draftFiles = main.files; replyingTo = main.replyTo
+            restoringDraft = false
+            // At once, and kept: a message waiting since before the update gets its reminder even if nothing changes (#405).
+            saveOutbox()
         }
     }
 
@@ -913,7 +918,10 @@ final class PhoneModel {
     }
 
     func send() {
-        guard send(text: draft, files: draftFiles, replyTo: replyingTo) else { return }
+        drafts.save()
+        guard send(text: draft, files: draftFiles, replyTo: replyingTo, draftKey: Drafts.chat(ThreadData.mainId)) else { return }
+        restoringDraft = true
+        defer { restoringDraft = false }
         draft = ""
         draftFiles = []
         replyingTo = nil
@@ -923,7 +931,8 @@ final class PhoneModel {
     @discardableResult
     /// `thread` (`threads-v1`): the thread it is typed in; `newThread`: New chat's first message, which creates that thread
     /// on the host with this id, so it works offline through the outbox like any message.
-    func send(text: String, files picked: [StagedFile], replyTo: String? = nil, thread: String? = nil, newThread: Bool = false) -> Bool {
+    /// `draftKey`: the draft it is sent from, consumed in step with the outbox (#405).
+    func send(text: String, files picked: [StagedFile], replyTo: String? = nil, thread: String? = nil, newThread: Bool = false, draftKey: String? = nil) -> Bool {
         guard canSend, thread == nil || threadsSupported == true, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !picked.isEmpty else { return false }
         let ts = Self.now
         let id = UUID().uuidString
@@ -942,14 +951,16 @@ final class PhoneModel {
         let event = YorozuEvent(id: id, threadId: thread ?? "main", ts: ts, agentId: "device",
                                 payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, replyTo: replyTo,
                                                               threadId: thread, newThread: newThread ? true : nil)))
-        guard enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos, topicId: thread),
+        guard enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos, topicId: thread,
+                                  draftKey: draftKey, draftStamp: draftKey.map { drafts.draft($0).updated }),
                       Bubble(id: id, user: true, ts: ts, text: text, topicId: thread, replyTo: replyTo, attachments: infos, threadId: thread)) else {
             UploadStore.remove(id)
             uploadOffsets[id] = nil
             attachFailure = String(localized: "Couldn't save the message on this device, so it wasn't sent. Your draft is kept. Free up some space and try again.")
             return false
         }
-        // Durably queued: the draft's own copies can go now.
+        // Durably queued: the draft goes (on disk too), then its own copies.
+        if let draftKey { drafts.consume(draftKey) }
         picked.forEach { $0.discard() }
         return true
     }

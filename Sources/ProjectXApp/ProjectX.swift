@@ -12,11 +12,18 @@ import YorozuWire
     @Published var routing = false
     /// The main thread's read cursor (`Store.readCursor`), moved here or by a phone's `read_state`.
     @Published var readCursor: String?
-    @Published var draft = ""
+    /// The popover's composer: the Main chat's draft, or Quick Chat's while the Main chat is off; kept in `drafts` (#405).
+    @Published var draft = "" { didSet { savePopoverDraft() } }
     /// The message Reply quoted above the composer; the next send names it as `replyTo`.
-    @Published var replyingTo: Message?
+    @Published var replyingTo: Message? { didSet { savePopoverDraft() } }
     /// The composer's files (#316), sent with the draft; `fileNotice` says why one was refused.
-    @Published var files: [DraftFile] = []
+    @Published var files: [DraftFile] = [] { didSet { savePopoverDraft() } }
+    /// Unsent drafts on this Mac, files included (#405).
+    let drafts = MacDrafts()
+    var restoringDraft = false
+    /// Quick Chat (#405, the Main chat off): the chat its first message creates, and whether it was sent in this opening.
+    @Published var quickThread = UUID().uuidString.lowercased()
+    @Published var quickSent = false
     @Published var fileNotice: String?
     /// The popover's one-line status: startup progress or the last error, cleared by the next success.
     @Published var status: String? = String(localized: "Opening local workspace…") { didSet { statusDetail = nil } }

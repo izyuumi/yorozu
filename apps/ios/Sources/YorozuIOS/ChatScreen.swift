@@ -228,6 +228,19 @@ struct ChatScreen: View {
             phase = new
             scheduleSettle()
         }
+        // Where the reader left the Main chat (#405): kept while reading older messages, cleared at the bottom.
+        .onScrollTargetVisibilityChange(idType: String.self) { ids in
+            ReadingPositions.set(atBottom ? nil : ids.first { $0 != Self.endId }, chat: ThreadData.mainId)
+        }
+        .onAppear {
+            guard model.pushOpen == nil, let mark = ReadingPositions.get(ThreadData.mainId), model.timeline.contains(where: { $0.id == mark }) else { return }
+            Task {
+                try? await Task.sleep(for: .milliseconds(100))
+                position.scrollTo(id: mark, anchor: .top)
+                // After the jump: the end the first layout started at must not pull the view back (the settle follows only a follower).
+                atBottom = false
+            }
+        }
         .onChange(of: model.timeline.last?.id) { _, _ in
             guard let last = model.timeline.last else { return }
             if atBottom {
@@ -469,8 +482,8 @@ struct ChatScreen: View {
         }
         model.pushOpen = nil
         // A push for a thread's message opens the thread (owner, 2026-10-13).
-        if let id, let thread = model.bubbles.first(where: { $0.id == id })?.threadId {
-            openChats([.topic(thread, focus: id)])
+        if let id, let bubble = model.bubbles.first(where: { $0.id == id }), let thread = bubble.threadId {
+            openChats([.topic(thread, focus: focus(bubble))])
         } else if let id {
             showOnMain(id)
         } else {
@@ -518,10 +531,15 @@ struct ChatScreen: View {
         model.drafts.save()
         guard let bubble = model.bubbles.first(where: { $0.id == id }) else { openChats([.page(id)]); return }
         if let thread = bubble.threadId {
-            openChats([.topic(thread, focus: id)])
+            openChats([.topic(thread, focus: focus(bubble))])
         } else {
             showOnMain(id)
         }
+    }
+
+    /// Where a chat scrolls for a message: the message, or for a result its task card shows instead, that card (opened).
+    private func focus(_ bubble: PhoneModel.Bubble) -> String {
+        model.hidesInTopic(bubble) ? bubble.taskId ?? bubble.id : bubble.id
     }
 
     /// A search hit, in Chats (#405): its thread at the message (a result its task card shows: the card), a worker step's
@@ -530,9 +548,9 @@ struct ChatScreen: View {
         model.drafts.save()
         if let id = hit.messageId {
             guard let bubble = model.bubbles.first(where: { $0.id == id }) else { return openChats([.page(id)]) }
-            if let thread = bubble.threadId { return openChats([.topic(thread, focus: id)]) }
-            if let topic = bubble.topicId, model.topics[topic] != nil, model.hidesInTopic(bubble), let task = bubble.taskId {
-                return openChats([.topic(topic, focus: task)])
+            if let thread = bubble.threadId { return openChats([.topic(thread, focus: focus(bubble))]) }
+            if let topic = bubble.topicId, model.topics[topic] != nil, model.hidesInTopic(bubble) {
+                return openChats([.topic(topic, focus: focus(bubble))])
             }
             return showOnMain(id)
         }

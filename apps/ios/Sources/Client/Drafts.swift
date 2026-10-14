@@ -90,6 +90,21 @@ final class Drafts {
         }
     }
 
+    /// Sent: the draft goes now, on disk too, before its files are removed (#405).
+    func consume(_ key: String) {
+        guard all.removeValue(forKey: key) != nil, let owner else { return }
+        saveTask?.cancel(); saveTask = nil
+        _ = file.saveNow(Saved(owner: owner, drafts: all))
+    }
+
+    /// Drafts the outbox says were sent (same key and edit time) but whose removal a crash cut short.
+    func dropSent(_ sent: [(key: String, stamp: Int)]) {
+        let gone = sent.filter { all[$0.key]?.updated == $0.stamp }
+        guard !gone.isEmpty else { return }
+        gone.forEach { all[$0.key] = nil }
+        save()
+    }
+
     /// Now: before the app goes to the background or a link navigates away.
     func save() {
         saveTask?.cancel()
