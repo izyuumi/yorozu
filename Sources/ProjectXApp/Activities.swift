@@ -27,13 +27,13 @@ struct Activity: Identifiable {
 }
 
 extension Snapshot {
-    /// Every sub-chat but the jobs' (Settings › Jobs has those), newest activity first.
+    /// Every sub-chat but the jobs' (Scheduled has those) and the archived ones, newest activity first.
     func activities(excluding jobs: Set<String>) -> [Activity] {
         let tasks = Dictionary(grouping: work,by: \.topicID)
         var last = Dictionary(topics.map { ($0.id,$0.created) }) { a,_ in a }
         for m in messages { if let t = m.topicID { last[t] = max(last[t] ?? 0,m.created) } }
         for w in work { last[w.topicID] = max(last[w.topicID] ?? 0,w.created) }
-        return topics.filter { !jobs.contains($0.id) && $0.deletedAt == nil }
+        return topics.filter { !jobs.contains($0.id) && $0.deletedAt == nil && $0.archivedAt == nil }
             .map { Activity(topic: $0,state: ActivityState(tasks[$0.id] ?? []),last: last[$0.id] ?? $0.created) }
             .sorted { $0.last > $1.last }
     }
@@ -44,7 +44,7 @@ extension Snapshot {
 /// search field. Chats lists Main pinned on top and New chat, the threads in Needs attention, Running and Recent, each by
 /// latest activity, a page at a time behind Show more, and the archived ones behind Archived; beside it Main or the
 /// selected thread with a composer. Scheduled lists the jobs; beside it the selected job's pane. A search shows its hits
-/// in the detail column, and a hit opens in Chats.
+/// in the detail column, and a hit opens in Chats, or, for a job run's output, its job in Scheduled.
 struct ChatWindow: View {
     static let id = "activities"
     static let main = "main"
@@ -69,7 +69,7 @@ struct ChatWindow: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $pane) {
-                SectionRow(title: "Chats",symbol: "bubble.left.and.bubble.right",dot: model.threads.contains { ActivityState(current: $0.state) == .attention })
+                SectionRow(title: "Chats",symbol: "bubble.left.and.bubble.right",dot: model.snapshot.activities(excluding: model.jobTopics).contains { $0.state == .attention })
                     .tag(Pane.chats)
                 if !model.isClient { SectionRow(title: "Scheduled",symbol: "clock",dot: jobs.needsAttention).tag(Pane.scheduled) }
             }
@@ -178,10 +178,14 @@ struct ChatWindow: View {
         .hidden()
     }
 
-    /// A search hit, in Chats: Main scrolled to it, or its thread at it.
+    /// A search hit, in Chats: Main scrolled to it, or its thread at it; a job's run output, in Scheduled: the job's page.
     private func open(_ hit: SearchHit) {
         query = ""
         guard let id = hit.messageID else {
+            if let job = jobs.jobs.first(where: { $0.topicID != nil && $0.topicID == hit.topicID }) {
+                pane = .scheduled; self.job = job.id
+                return
+            }
             pane = .chats; archivedShown = false; selection = hit.threadID != "main" ? hit.threadID : hit.topicID ?? Self.main
             return
         }

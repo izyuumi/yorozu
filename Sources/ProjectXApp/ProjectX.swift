@@ -130,7 +130,7 @@ import YorozuWire
     var jobsConsumer: Task<Void,Never>?
     var jobObservers: [(NotificationCenter, NSObjectProtocol)] = []
     var lastJobsError: ConfigError?
-    /// The last valid job set, once the Engine and the scheduler hold it: Settings › Jobs refreshes on it.
+    /// The last valid job set, once the Engine and the scheduler hold it: Scheduled refreshes on it.
     @Published var jobSpecs: [JobSpec] = []
     /// Topics bound to jobs, deleted ones included: their work never turns on the working indicator (open question 10).
     @Published var jobTopics = Set<String>()

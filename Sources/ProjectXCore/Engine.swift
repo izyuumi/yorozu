@@ -90,7 +90,7 @@ public actor Engine {
     public func archiveThread(_ id: String,_ archived: Bool = true) async throws { try await store.archive(thread: id,archived) }
     /// Deletes a thread's messages, work and their files for good; memory already extracted from them stays.
     public func deleteThread(_ id: String) async throws {
-        guard !jobTopics.values.contains(id) else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Settings › Jobs.")) }
+        guard !jobTopics.values.contains(id) else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Scheduled.")) }
         for a in try await store.delete(thread: id) { files?.remove(a) }
     }
     private func enqueueRoute(_ m: Message) {

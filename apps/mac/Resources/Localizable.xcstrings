@@ -193,13 +193,13 @@
         }
       }
     },
-    "A job's chat is changed in Settings › Jobs." : {
+    "A job's chat is changed in Scheduled." : {
       "extractionState" : "manual",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ジョブのチャットは 設定 › ジョブ で変更します。"
+            "value" : "ジョブのチャットは スケジュール で変更します。"
           }
         }
       }

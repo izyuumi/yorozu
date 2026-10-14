@@ -125,12 +125,21 @@ private struct JobRow: View {
         VStack(alignment: .leading,spacing: 2) {
             Text(job.name).fontWeight(.semibold).lineLimit(1)
             Text(job.schedule).foregroundStyle(.secondary).lineLimit(2)
-            Group {
-                if let state = job.stateLabel { Label(state.text,systemImage: state.icon).foregroundStyle([.needsAttention,.needsApproval].contains(job.state) ? ChatPalette.warning : .secondary) }
-                Text(job.nextLine)
-                if let last = job.lastLine { Text(last).foregroundStyle(job.lastResult == "failed" ? ChatPalette.warning : .secondary) }
-            }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            JobStatusLines(job: job)
         }.padding(.vertical,2)
+    }
+}
+
+/// State, next run and last result, under a list row and on the job's page, where the state in the warning colour is the
+/// banner while the job waits on the user, who answers in its chat below (owner, 2026-10-14).
+private struct JobStatusLines: View {
+    let job: JobStatus
+    var body: some View {
+        Group {
+            if let state = job.stateLabel { Label(state.text,systemImage: state.icon).foregroundStyle([.needsAttention,.needsApproval].contains(job.state) ? ChatPalette.warning : .secondary) }
+            Text(job.nextLine)
+            if let last = job.lastLine { Text(last).foregroundStyle(job.lastResult == "failed" ? ChatPalette.warning : .secondary) }
+        }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
     }
 }
 
@@ -155,6 +164,7 @@ struct JobDetail: View {
             VStack(alignment: .leading,spacing: 6) {
                 Text(job.name).font(.headline).lineLimit(1)
                 Text(job.schedule).foregroundStyle(.secondary).lineLimit(3)
+                JobStatusLines(job: job)
                 HStack { actions }.controlSize(.small)
                 if let problem {
                     Label { Text(problem).textSelection(.enabled) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(ChatPalette.warning) }.font(.callout)
