@@ -237,7 +237,9 @@ struct ChatWindow: View {
                 pane = .scheduled; self.job = job.id
                 return
             }
-            pane = .chats; archivedShown = false; selection = hit.threadID != "main" ? hit.threadID : hit.topicID ?? Self.main
+            // A worker step: its chat, with its task card opened and in view (#405).
+            pane = .chats; archivedShown = false
+            model.chatFocus = ChatFocus(thread: hit.threadID != "main" ? hit.threadID : hit.topicID,message: nil,task: hit.taskID)
             return
         }
         model.open(message: id)
@@ -331,6 +333,8 @@ private struct ThreadDetail: View {
     @State private var unseen = 0
     @State private var restored = false
     @State private var sending = false
+    /// A task a search hit or link asked for: its card opens.
+    @State private var openTask: String?
     private enum Metrics { static let rowSpacing: CGFloat = 10, composerShare: CGFloat = 1.0 / 3, sendSide: CGFloat = 28, fieldRadius: CGFloat = 15 }
 
     private enum Item: Identifiable {
@@ -359,9 +363,10 @@ private struct ThreadDetail: View {
         .onAppear { draft = model.drafts.saved(draftKey).text }
         .onChange(of: draft) { _,text in model.drafts.update(draftKey,text: text) }
         .onChange(of: model.chatFocus,initial: true) { _,focus in
-            guard let focus, focus.thread == id, let m = focus.message else { return }
+            guard let focus, focus.thread == id, focus.message != nil || focus.task != nil else { return }
             model.chatFocus = nil
-            Task { try? await Task.sleep(for: .milliseconds(200)); reveal(m) }
+            if let task = focus.task { openTask = task }
+            Task { try? await Task.sleep(for: .milliseconds(200)); reveal(focus.message ?? "task-" + (focus.task ?? "")) }
         }
     }
 
@@ -420,7 +425,7 @@ private struct ThreadDetail: View {
                                 MessageRow(message: m,header: m.replyTo.flatMap { byID[$0] }.map { ReplyHeader($0,shown: shown,labels: labels) },highlighted: flashed == m.id,
                                            reveal: reveal,files: files[m.id] ?? [],locate: { [model] in await model.attachmentURL($0) })
                             }
-                        case .task(let w): TaskCard(model: model,work: w,events: events[w.id] ?? [])
+                        case .task(let w): TaskCard(model: model,work: w,events: events[w.id] ?? [],forceOpen: openTask == w.id)
                         }
                     }
                     if model.routing, messages.last?.role == "user" { ThinkingBubble() }
@@ -511,6 +516,7 @@ private struct ThreadDetail: View {
 private struct TaskCard: View {
     @ObservedObject var model: AppModel
     let work: Work, events: [WorkerEvent]
+    var forceOpen = false
     @State private var expanded: Bool?
     @State private var busy = false
     private enum Metrics { static let radius: CGFloat = 10, padding: CGFloat = 10 }
@@ -542,7 +548,7 @@ private struct TaskCard: View {
         .overlay { RoundedRectangle(cornerRadius: Metrics.radius,style: .continuous).strokeBorder(.separator,lineWidth: 0.5) }
     }
 
-    private var isExpanded: Bool { expanded ?? work.active }
+    private var isExpanded: Bool { expanded ?? (forceOpen || work.active) }
 
     @ViewBuilder private var state: some View {
         let label = Self.label(work.state)

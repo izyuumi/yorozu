@@ -6,7 +6,7 @@ import YorozuWire
 // Mac, over the relay through the client core (`threads-v1`).
 
 /// Where the chat window should go: a thread (nil: Main) and, optionally, a message to scroll to and ring.
-struct ChatFocus: Equatable { var thread: String?; var message: String? }
+struct ChatFocus: Equatable { var thread: String?; var message: String?; var task: String? = nil }
 
 extension ThreadRow {
     /// A row of a client's list, in the host's records. Wire times are epoch milliseconds.
