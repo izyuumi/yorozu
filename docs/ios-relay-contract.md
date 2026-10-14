@@ -228,7 +228,7 @@ next `.paired` catches up. A device that had finished the exchange stays served 
 
 The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15 s deadline,
 `RelayClient.swift`). Both ends advertise `PeerInfoData.local`: protocol 2 (`protocolMin` =
-`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1","jobs-v1","push-preview-v1","threads-v1"]`,
+`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1","jobs-v1","push-preview-v1","threads-v1","history-v1","host-settings-v1"]`,
 required `["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update
 required". Until a device's exchange succeeds, the host passes none of its other events to the
 backend; a known device whose last result on file is compatible counts as succeeded (Mac-side
@@ -262,6 +262,9 @@ talk to this iPhone." (`PeerInfoData.compatibility(with:)` words both from the p
 since the phone is where they are read).
 
 ## History window
+
+With [`history-v1`](#full-history-history-v1) (#405) a client keeps the whole history instead; the window below applies
+only to a peer without it.
 
 The phone caches, and catch-up serves, the **history window**: the newest 500 main-timeline messages plus every
 message younger than 30 days (the union; a job sub-chat's own messages only the latter), with the topics, tasks, amendments, worker events and
@@ -849,6 +852,60 @@ to such a Mac (job input typed earlier, on a job page from the cached list, wait
   (`job_run`) reaches no phone; its tasks and worker events are ordinary records.
 - A cache filled without `jobs-v1` has a cursor past the job-only messages, so the first
   `jobs-v1` handshake asks from no cursor (a window start); the cache records that it holds them.
+
+## Full history (`history-v1`)
+
+Capability `ThreadData.historyCapability` (#405, owner 2026-10-14). Additive within 0.7; both apps ship it together.
+
+- `sync_request` gains `full: true`: the host's reply pages and every live update carry every row by change sequence, not
+  only the window's (`Store.changes(after:limit:full:)`). A reply page has `reset` only for a cursor past the host's
+  latest sequence (another database). A client never drops what it holds on `reset`: from cursor 0 the pages merge by the
+  upsert rule; after a cursor the host no longer knows, incoming records replace held ones until that catch-up ends.
+- A client's first sync, and its first one after updating from the window cache, starts at 0 and merges, a page at a time,
+  persisting the cursor with each page's records (one transaction), so an interrupted backfill resumes on relaunch. It
+  counts its history complete (`historySynced`) only once a reply page ends with no `more` and no record is still cut.
+- Cut records: a record past what 256 chunks carry keeps the head of its long fields and names them: `MessageData.truncated`
+  (the text) and `truncated: [field]` on `task`, `amendment` and `worker_event`. The client fetches each field whole:
+
+```swift
+// client -> host
+.textRequest(TextRequestData(kind: "message", id: id, field: "text", offset: 0))
+// host -> client, threadId ""
+.textSlice(TextSliceData(kind: "message", id: id, field: "text", offset: 0, total: bytes, seq: seq, data: base64))
+```
+
+  Slices are at most 160 KiB of the field's UTF-8 (`TextSliceData.bytes`); the client asks from the bytes it has, one field
+  at a time, again after 20 s without an answer and on every `.paired`, and keeps the need until the whole text is in. A
+  slice whose `seq` is not the held record's, or an `error`, is retried later (or dropped once a newer record replaced it).
+- Tombstones fence the archive: a deleted thread's `topic` record (`deleted: true`) is kept, its messages, tasks, steps and
+  changes are removed from the client's store and search, and no later record of that thread or its tasks is kept.
+- Thread rows (`threads_page`) gain `lastMessageAt`, `preview`, `previewNotice` and `previewUser` (the last visible message:
+  every kind but `acknowledgment` and job-only ones), `attention` (an unanswered question, a pending approval or a blocker),
+  `running` and `openWork` (work not in a final state, uncertain included). The list orders by `lastMessageAt` (else
+  `created`), then the id, newest first. `ThreadsPageData.main` carries the Main chat's row (id `main`) on the first page of
+  the active list while the Main chat is on. A client asks for every page (200 a page) and caches the whole list.
+- `thread_control` gains `stop_and_delete`: the host stops every open task of the thread (again if a stop was asked
+  before), waits up to 30 s for each stop to be confirmed, then deletes; otherwise it answers `accepted: false` with the
+  reason and keeps the chat. Plain `delete` is refused while any task is open, suppressed ones included. With thread id
+  `main`, Rename and Archive set the Main chat's name and archive (`config.toml`) and Delete stops the work Main started,
+  then deletes Main's messages and that work.
+
+## Host settings (`host-settings-v1`)
+
+`host_settings` (`HostSettingsData`), both ways: host -> client after each compatible handshake and on every change;
+client -> host to change `mainChat`, applied in `config.toml` (`[general] main_chat`) and answered by the next host value.
+
+```json
+{"kind":"host_settings","threadId":"","agentId":"main","id":"…","ts":0,
+ "data":{"mainChat":false,"mainName":"Home","mainArchived":true,"mainClearedAt":1760000000000}}
+```
+
+- `mainChat`: the global Main chat and its routing (off by default). While off the host refuses a `message` for the main
+  timeline with `admission_status rejected` and "The Main chat is off on the host. Turn it on in Settings, or send this in
+  a chat.", so the client keeps it as Not delivered with Resend.
+- `mainName`, `mainArchived`: its row's name (absent: the default) and archive. `mainClearedAt` (epoch ms): Main's history
+  up to then was deleted; a client drops its Main-timeline messages up to then and the work they started, and keeps none
+  again. Clients cache the last value for offline use.
 
 ## Threads
 
