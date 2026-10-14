@@ -2,48 +2,50 @@ import AppKit
 import ProjectXCore
 import SwiftUI
 
-/// Settings › Jobs (#319): the jobs of `jobs.toml` with their controls, and the selected job's sub-chat with its own input
-/// (open question 14), the one place besides the main chat to type.
-struct JobsSettings: View {
-    @ObservedObject var model: AppModel
-    @State private var jobs: [JobStatus] = []
-    @State private var selection: String?
-    @State private var deleting: JobStatus?
-    @State private var problem: String?
-    @State private var width: CGFloat = 0
-    @State private var refreshing: Task<Void,Never>?
-    private enum Metrics {
-        /// The tab's least height: nothing proposes a height to a Settings window, and the sub-chat needs room.
-        static let minHeight: CGFloat = 460
-        /// The list's least share of the tab's width; the split view would otherwise shrink it to its narrowest.
-        static let listShare: CGFloat = 0.38
+/// Scheduled (#319; a section of the chat window, owner 2026-10-14): the jobs of `jobs.toml` with their controls, read
+/// while the window is open so the section's dot and the list stay current.
+@MainActor final class JobList: ObservableObject {
+    @Published private(set) var jobs: [JobStatus] = []
+    /// The latest refusal or skipped Run Now, shown in the job's pane.
+    @Published var problem: String?
+    private var refreshing: Task<Void,Never>?
+
+    /// A job waits on the user: the section's dot.
+    var needsAttention: Bool { jobs.contains { [.needsAttention,.needsApproval].contains($0.state) } }
+
+    /// One read at a time: a newer one cancels the older, so a stale list never lands last.
+    func refresh(_ model: AppModel) {
+        refreshing?.cancel()
+        refreshing = Task {
+            guard let engine = model.engine else { return }
+            let rows = await engine.jobStatus(nextRuns: await model.jobScheduler?.nextRuns ?? [:])
+            guard !Task.isCancelled else { return }
+            if rows != jobs { jobs = rows }
+        }
     }
 
+    func act(_ model: AppModel,_ control: @escaping (Engine) async throws -> Void) {
+        guard let engine = model.engine else { return }
+        Task {
+            do { try await control(engine); problem = nil } catch { problem = error.localizedDescription }
+            refresh(model)
+        }
+    }
+}
+
+/// The job list column: rows with their actions in a context menu, or an empty state.
+struct JobsColumn: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var list: JobList
+    @Binding var selection: String?
+    @Binding var deleting: JobStatus?
+
     var body: some View {
-        Group {
-            if jobs.isEmpty { empty } else {
-                HSplitView {
-                    List(jobs,id: \.id,selection: $selection) { job in
-                        JobRow(job: job,schedule: job.schedule).contextMenu { actions(job) }
-                    }.frame(minWidth: width * Metrics.listShare)
-                    Group {
-                        if let job = jobs.first(where: { $0.id == selection }) {
-                            JobDetail(model: model,job: job,schedule: job.schedule,problem: $problem,actions: AnyView(actions(job))).id(job.id)
-                        } else { Text("Select a job to see its chat.").foregroundStyle(.secondary).frame(maxWidth: .infinity,maxHeight: .infinity) }
-                    }.layoutPriority(1)
-                }.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-            }
+        List(list.jobs,id: \.id,selection: $selection) { job in
+            JobRow(job: job).contextMenu { JobActions(model: model,list: list,job: job,deleting: $deleting) }
         }
-        .frame(maxWidth: .infinity,minHeight: Metrics.minHeight)
-        .onChange(of: model.snapshot) { refresh() }
-        .onChange(of: model.jobSpecs) { refresh() }
-        // Next runs move on with the clock: a modest poll while the tab shows.
-        .task { while !Task.isCancelled { refresh(); try? await Task.sleep(for: .seconds(30)) } }
-        .confirmationDialog("Delete this job?",isPresented: Binding(get: { deleting != nil },set: { if !$0 { deleting = nil } }),presenting: deleting) { job in
-            Button("Delete",role: .destructive) { act { try await $0.deleteJob(job.id) } }
-        } message: { job in
-            Text("“\(job.name)” is removed from jobs.toml and won’t run again. Its chat and its folder stay.")
-        }
+        .overlay { if list.jobs.isEmpty { empty } }
+        .navigationTitle("Scheduled")
     }
 
     private var empty: some View {
@@ -58,38 +60,26 @@ struct JobsSettings: View {
             }
         }.padding().frame(maxWidth: .infinity,maxHeight: .infinity)
     }
+}
 
-    @ViewBuilder private func actions(_ job: JobStatus) -> some View {
-        if job.state == .paused { Button("Resume") { act { try await $0.resumeJob(job.id) } } }
-        else { Button("Pause") { act { try await $0.pauseJob(job.id) } } }
+/// Pause or Resume, Run Now, and Delete… (confirmed by the window) for one job.
+struct JobActions: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var list: JobList
+    let job: JobStatus
+    @Binding var deleting: JobStatus?
+
+    var body: some View {
+        if job.state == .paused { Button("Resume") { list.act(model) { try await $0.resumeJob(job.id) } } }
+        else { Button("Pause") { list.act(model) { try await $0.pauseJob(job.id) } } }
         Button("Run Now") {
-            act { engine in
+            list.act(model) { engine in
                 if case .skipped(let reason) = try await engine.runJobNow(job.id) {
                     throw ProjectError.blocked(String(localized: "Didn’t run.") + " " + (NoticeText.skipReason(reason.rawValue) ?? reason.rawValue))
                 }
             }
         }
         Button("Delete…",role: .destructive) { deleting = job }
-    }
-
-    private func act(_ control: @escaping (Engine) async throws -> Void) {
-        guard let engine = model.engine else { return }
-        Task {
-            do { try await control(engine); problem = nil } catch { problem = error.localizedDescription }
-            refresh()
-        }
-    }
-
-    /// One read at a time: a newer one cancels the older, so a stale list never lands last.
-    private func refresh() {
-        refreshing?.cancel()
-        refreshing = Task {
-            guard let engine = model.engine else { return }
-            let rows = await engine.jobStatus(nextRuns: await model.jobScheduler?.nextRuns ?? [:])
-            guard !Task.isCancelled else { return }
-            if rows != jobs { jobs = rows }
-            if !rows.contains(where: { $0.id == selection }) { selection = rows.first?.id }
-        }
     }
 }
 
@@ -130,11 +120,11 @@ private func stamp(_ d: Date) -> String {
 
 /// A list row: name and state, schedule, next run, last result.
 private struct JobRow: View {
-    let job: JobStatus, schedule: String
+    let job: JobStatus
     var body: some View {
         VStack(alignment: .leading,spacing: 2) {
             Text(job.name).fontWeight(.semibold).lineLimit(1)
-            Text(schedule).foregroundStyle(.secondary).lineLimit(2)
+            Text(job.schedule).foregroundStyle(.secondary).lineLimit(2)
             Group {
                 if let state = job.stateLabel { Label(state.text,systemImage: state.icon).foregroundStyle([.needsAttention,.needsApproval].contains(job.state) ? ChatPalette.warning : .secondary) }
                 Text(job.nextLine)
@@ -145,9 +135,9 @@ private struct JobRow: View {
 }
 
 /// The selected job: its controls, its sub-chat (messages, job-only kinds included, and its work's events) and its input.
-private struct JobDetail: View {
+struct JobDetail: View {
     @ObservedObject var model: AppModel
-    let job: JobStatus, schedule: String
+    let job: JobStatus
     @Binding var problem: String?
     let actions: AnyView
     @State private var draft = ""
@@ -164,7 +154,7 @@ private struct JobDetail: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading,spacing: 6) {
                 Text(job.name).font(.headline).lineLimit(1)
-                Text(schedule).foregroundStyle(.secondary).lineLimit(3)
+                Text(job.schedule).foregroundStyle(.secondary).lineLimit(3)
                 HStack { actions }.controlSize(.small)
                 if let problem {
                     Label { Text(problem).textSelection(.enabled) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(ChatPalette.warning) }.font(.callout)
