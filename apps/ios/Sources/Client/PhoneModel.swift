@@ -435,6 +435,8 @@ final class PhoneModel {
 
     /// A Repair of the same host in progress: the identity before it and after it (`confirm`).
     private static let repairKey = "repairAdoptV1"
+    /// Per identity: the host key whose kept history a Repair adopted, shown while the new identity is not yet joined.
+    private static let repairedKey = "repairedHostV1"
 
     private func connect(_ stored: PairingStore.Stored) {
         let identity = stored.identity.sessionPublicKey
@@ -514,6 +516,11 @@ final class PhoneModel {
                                                                 reminderCovered: reminderCovered, consumed: consumed.isEmpty ? nil : consumed))
             }
         }
+        // A Repair of the same host keeps that host's chats readable before the new identity first reaches the relay
+        // (#405): the link itself still waits for the relay and the peer-info check; only the cached history shows.
+        let trustKey = "\(Self.repairedKey).\(ownPub ?? "")"
+        if adoptFrom != nil, history?.ownerWritten == true { UserDefaults.standard.set(stored.pairing.macPubkey, forKey: trustKey) }
+        if !linked, ownPub != nil, UserDefaults.standard.string(forKey: trustKey) == stored.pairing.macPubkey { linked = true }
         if adoptFrom != nil, adopted, history?.ownerWritten == true { UserDefaults.standard.removeObject(forKey: Self.repairKey) }
         else if repair != nil, adoptFrom == nil { UserDefaults.standard.removeObject(forKey: Self.repairKey) } // another identity: never adopted
     }
@@ -533,6 +540,7 @@ final class PhoneModel {
         files.transfers = nil
         pairing = nil
         if let onboardingKey { UserDefaults.standard.removeObject(forKey: onboardingKey) }
+        if let ownPub { UserDefaults.standard.removeObject(forKey: "\(Self.repairedKey).\(ownPub)") }
         onboardingPending = false
         ownPub = nil
         linked = false
