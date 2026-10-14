@@ -172,7 +172,7 @@ struct TopicScreen: View {
         let source = threads && (row?.bySecretary ?? (model.topics[topicId]?.origin.map { $0 != "user" } ?? false))
             ? row?.sourceMessageId ?? model.topics[topicId]?.sourceMessageId : nil
         let ref = ThreadRef(id: topicId, name: model.threadName(topicId) ?? "", archived: row?.archivedAt != nil || model.topics[topicId]?.archivedAt != nil,
-                            running: row?.running == true || tasks.contains(where: \.isActive))
+                            running: row?.openWork == true || row?.running == true || tasks.contains { $0.isActive || $0.state == "uncertain" })
         // Grouped once for every card, not filtered per card.
         let taskIds = Set(tasks.map(\.id))
         let events = Dictionary(grouping: model.workerEvents.values.filter { taskIds.contains($0.taskId) }, by: \.taskId)

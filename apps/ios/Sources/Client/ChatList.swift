@@ -20,6 +20,8 @@ struct ChatRow: Identifiable, Equatable {
     /// Work is running: a small spinner by the time, whatever the dot.
     var running: Bool
     var archived: Bool
+    /// Work not yet in a final state, running or not (an uncertain run, a stop not confirmed): Delete is Stop and Delete.
+    var openWork = false
     var isMain: Bool { id == ThreadData.mainId }
     var thread: ThreadData?
 
@@ -27,6 +29,12 @@ struct ChatRow: Identifiable, Equatable {
 }
 
 extension PhoneModel {
+    /// A thread's row from either list, when loaded.
+    func thread(_ id: String) -> ThreadData? { threadList.first { $0.id == id } ?? archivedThreads.first { $0.id == id } }
+
+    /// A thread's name: its row, else its topic record.
+    func threadName(_ id: String) -> String? { thread(id)?.name ?? topics[id]?.label }
+
     /// The list as the host last said, cached for offline use, with what this device knows sooner on top: messages still in
     /// its outbox (a new chat sent offline shows at once), and a chat it has just read losing its unread dot.
     func chatRows(archived: Bool = false) -> [ChatRow] {
@@ -62,7 +70,7 @@ extension PhoneModel {
         let readHere = t.lastMessageId != nil && sentReads[t.id] == t.lastMessageId
         let dot: ChatRow.Dot? = t.attention == true ? .attention : (t.unread > 0 && !readHere ? .unread : nil)
         return ChatRow(id: t.id, name: t.name, preview: preview, time: t.lastMessageAt ?? t.created, dot: dot,
-                       running: known && t.running == true, archived: t.archivedAt != nil, thread: t)
+                       running: known && t.running == true, archived: t.archivedAt != nil, openWork: t.openWork == true || t.running == true, thread: t)
     }
 
     /// A new chat's name until the host names it: its first line, as the host does.
@@ -95,3 +103,12 @@ enum ReadingPositions {
         UserDefaults.standard.set(all, forKey: key)
     }
 }
+
+/// What deleting a chat does, said before it happens: for good, on every device and in search; memories stay.
+enum DeleteWording {
+    static func message(running: Bool) -> String {
+        let base = String(localized: "The chat and its messages are deleted for good on every device, and from search. Long-term memories Yorozu already saved from it stay.")
+        return running ? base + "\n\n" + String(localized: "Work is running in this chat: it is stopped first. If the stop can't be confirmed, the chat is kept and nothing is deleted.") : base
+    }
+}
+

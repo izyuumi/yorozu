@@ -24,6 +24,8 @@ import YorozuWire
     /// Quick Chat (#405, the Main chat off): the chat its first message creates, and whether it was sent in this opening.
     @Published var quickThread = UUID().uuidString.lowercased()
     @Published var quickSent = false
+    /// The host's Main chat setting as a client Mac last applied it, to swap the popover's draft when it changes.
+    var clientMainChat: Bool?
     @Published var fileNotice: String?
     /// The popover's one-line status: startup progress or the last error, cleared by the next success.
     @Published var status: String? = String(localized: "Opening local workspace…") { didSet { statusDetail = nil } }
@@ -145,6 +147,8 @@ import YorozuWire
     // Threads (owner, 2026-10-13; Threads.swift): the chat window's list, a page at a time, and its archived list.
     @Published var threads: [ThreadRow] = []; @Published var threadsNext: String?
     @Published var archivedThreads: [ThreadRow] = []; @Published var archivedNext: String?
+    /// The Main chat's list row while it is on (#405).
+    @Published var mainThreadRow: ThreadRow?
     /// The last thread action's refusal or send error, shown in the chat window.
     @Published var threadNotice: String?
     /// A thread (nil: Main) and message the chat window should show, from a notification or a message link.
@@ -223,6 +227,7 @@ import YorozuWire
                 devicesFile = support.appendingPathComponent("relay-devices.json")
                 if runtimeMode == .live { await startRelay(engine,url: resolved.config.relay.url) }
                 status = nil; ready = true
+                drafts.load(); restorePopoverDraft()
                 recheck()
                 if !file.setup.done, lastConfigError == nil { openSetup() }
                 applySystem(resolved.config.general)
@@ -384,7 +389,14 @@ import YorozuWire
         catch { fileNotice = error.localizedDescription; return }
         defer { prepared.scratch.forEach(DraftFile.discard) }
         do {
-            try await engine.send(text,attachments: prepared.pending,replyTo: reply)
+            // Main chat off (#405): the popover is Quick Chat, whose first message creates its chat.
+            if mainChat { try await engine.send(text,attachments: prepared.pending,replyTo: reply) }
+            else {
+                let new = !snapshot.topics.contains { $0.id == quickThread }
+                try await engine.send(text,attachments: prepared.pending,thread: quickThread,newThread: new)
+                quickSent = true
+            }
+            drafts.clear(popoverDraftKey)
             if draft == text { draft = "" }
             if replyingTo?.id == reply { replyingTo = nil }
             let ids = Set(sent.map(\.id)); files.removeAll { ids.contains($0.id) }
@@ -407,10 +419,13 @@ import YorozuWire
     }
     /// Chat search for the popover's ⌘F bar; the caller keeps only main-timeline message hits (open question 10).
     func search(_ query: String,limit: Int,offset: Int = 0) async throws -> (hits: [SearchHit], total: Int) {
-        if isClient {
-            // Over the mirror this Mac holds (the host's newest history window), newest first.
-            let hits = snapshot.messages.filter(\.onMainTimeline).reversed().filter { $0.body.localizedCaseInsensitiveContains(query) }
-                .map { SearchHit(mirroredMessage: $0.id,topicID: $0.topicID,snippet: String($0.body.prefix(200)),created: $0.created) }
+        if let client {
+            // Over the whole history this Mac holds, offline too (#405), newest first.
+            let hits = client.searchLocal(query,limit: offset + limit).map { h in
+                var hit = SearchHit(mirroredMessage: h.messageId ?? h.id,topicID: h.topicId,snippet: h.snippet,created: Double(h.ts) / 1000)
+                hit.threadID = h.threadId ?? "main"; hit.messageID = h.messageId; hit.eventID = h.eventId; hit.taskID = h.taskId
+                return hit
+            }
             return (Array(hits.dropFirst(offset).prefix(limit)),hits.count)
         }
         guard let engine else { return ([],0) }

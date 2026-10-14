@@ -386,12 +386,13 @@ public actor Store {
         (SELECT COUNT(*) FROM messages WHERE \(scope) AND role='assistant' AND \(visible) AND created>COALESCE((SELECT x.created FROM readCursor c JOIN messages x ON x.id=c.messageID WHERE c.threadID=\(cursor)),0)) AS unread,
         EXISTS (SELECT 1 FROM messages q WHERE \(scope) AND ((\(asks)) OR (\(approving)))) AS asking,
         EXISTS (SELECT 1 FROM work WHERE \(work) AND \(running)) AS running,
-        EXISTS (SELECT 1 FROM work WHERE \(work) AND \(blocked)) AS blocked
+        EXISTS (SELECT 1 FROM work WHERE \(work) AND \(blocked)) AS blocked,
+        EXISTS (SELECT 1 FROM work WHERE \(work) AND state IN \(active)) AS open
         """
     }
     private static func row(_ db: Database,_ r: Row,topic: Topic) throws -> ThreadRow {
         let last: Message? = try (r["lastID"] as String?).flatMap { try Message.fetchOne(db,key: $0) }
-        return ThreadRow(topic: topic,state: r["current"],lastMessageID: r["lastID"],unread: r["unread"],last: last,attention: (r["asking"] as Bool) || (r["blocked"] as Bool),running: r["running"])
+        return ThreadRow(topic: topic,state: r["current"],lastMessageID: r["lastID"],unread: r["unread"],last: last,attention: (r["asking"] as Bool) || (r["blocked"] as Bool),running: r["running"],openWork: r["open"])
     }
     /// One page of the thread list, newest last visible message first (#405): threads of both origins, never a job's or a
     /// deleted one, archived ones only with `archived`. `after` is the previous page's `next`; `limit` 1–200.

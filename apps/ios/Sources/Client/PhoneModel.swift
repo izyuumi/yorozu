@@ -591,6 +591,8 @@ final class PhoneModel {
 
     /// Dials unless already dialling; `RelayClient` redials by itself after a drop until `suspend()`.
     func start() {
+        // Dials once the history is loaded (`adopt`).
+        if historyLoading { startWanted = true; return }
         guard let relay, listener == nil else { return }
         let closing = closing
         generation += 1
@@ -1942,6 +1944,9 @@ final class PhoneModel {
         var deletedTasks: [String]?
     }
     @ObservationIgnored private var metaDirty = false
+    /// The history is being read from disk; `start()` waits for it.
+    private(set) var historyLoading = false
+    @ObservationIgnored private var startWanted = false
     /// A history write is in flight; `afterCommit` runs once what it and the writes before it carried is durable.
     @ObservationIgnored private var writing = false
     @ObservationIgnored private var afterCommit: [@MainActor () -> Void] = []
@@ -1974,27 +1979,13 @@ final class PhoneModel {
             flush { MirrorCache.shared.wipe() }
             return
         }
-        let decoder = JSONDecoder()
-        var held: [Bubble] = []
-        for r in store.loadAll() {
-            switch r.kind {
-            case "message": if let b = try? decoder.decode(Bubble.self, from: r.json) { held.append(b) }
-            case "topic":
-                if let t = try? decoder.decode(TopicData.self, from: r.json) {
-                    topics[t.id] = t
-                    if t.deleted == true { deletedThreads.insert(t.id) }
-                }
-            case "task": if let t = try? decoder.decode(TaskData.self, from: r.json) { tasks[t.id] = t }
-            case "amendment": if let a = try? decoder.decode(AmendmentData.self, from: r.json) { amendments[a.id] = a }
-            case "event": if let w = try? decoder.decode(WorkerEventData.self, from: r.json) { workerEvents[w.id] = w }
-            case "read":
-                if let read = try? decoder.decode(ReadStateData.self, from: r.json) {
-                    if read.threadId == "main" { readCursor = read } else { threadReads[read.threadId] = read }
-                }
-            default: break
-            }
+        // The records load off the main actor, in one pass on the store's queue (#405): the list shows from its cached rows
+        // at once, and the link dials once the history is in, so nothing from the host races the load.
+        historyLoading = true
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let loaded = Self.decode(store.loadAll())
+            await MainActor.run { self?.adopt(loaded, from: store) }
         }
-        bubbles = held.sorted { $0.ts < $1.ts }
         if let meta = store.meta("sync", as: Meta.self) {
             cursor = meta.cursor
             historySynced = meta.historySynced == true
@@ -2009,12 +2000,63 @@ final class PhoneModel {
             historySupported = meta.historySupported
             deletedTasks = Set(meta.deletedTasks ?? [])
         }
+    }
+
+    /// What `loadAll` held, decoded.
+    private struct Loaded: Sendable {
+        var bubbles: [Bubble] = []
+        var topics: [String: TopicData] = [:]
+        var tasks: [String: TaskData] = [:]
+        var amendments: [String: AmendmentData] = [:]
+        var events: [String: WorkerEventData] = [:]
+        var reads: [String: ReadStateData] = [:]
+    }
+
+    nonisolated private static func decode(_ records: [HistoryStore.Record]) -> Loaded {
+        let decoder = JSONDecoder()
+        var out = Loaded()
+        for r in records {
+            switch r.kind {
+            case "message": if let b = try? decoder.decode(Bubble.self, from: r.json) { out.bubbles.append(b) }
+            case "topic": if let t = try? decoder.decode(TopicData.self, from: r.json) { out.topics[t.id] = t }
+            case "task": if let t = try? decoder.decode(TaskData.self, from: r.json) { out.tasks[t.id] = t }
+            case "amendment": if let a = try? decoder.decode(AmendmentData.self, from: r.json) { out.amendments[a.id] = a }
+            case "event": if let w = try? decoder.decode(WorkerEventData.self, from: r.json) { out.events[w.id] = w }
+            case "read": if let read = try? decoder.decode(ReadStateData.self, from: r.json) { out.reads[read.threadId] = read }
+            default: break
+            }
+        }
+        out.bubbles.sort { $0.ts < $1.ts }
+        return out
+    }
+
+    /// The loaded history joins what this run already holds (sent bubbles from the outbox), then the link may dial.
+    private func adopt(_ loaded: Loaded, from store: HistoryStore) {
+        guard history === store else { return }
+        receiving = true
+        let pendingBubbles = bubbles
+        bubbles = loaded.bubbles
+        for b in pendingBubbles where !bubbles.contains(where: { $0.id == b.id }) {
+            bubbles.insert(b, at: bubbles.lastIndex { $0.ts <= b.ts }.map { $0 + 1 } ?? 0)
+        }
+        topics = loaded.topics
+        deletedThreads.formUnion(loaded.topics.values.filter { $0.deleted == true }.map(\.id))
+        tasks = loaded.tasks
+        amendments = loaded.amendments
+        workerEvents = loaded.events
+        readCursor = loaded.reads["main"]
+        threadReads = loaded.reads.filter { $0.key != "main" }
+        receiving = false
+        rebuildTimeline()
+        historyLoading = false
         // Long text still cut when the app last ran: fetched again from the start.
         for b in bubbles where b.truncated == true { if let seq = b.seq { textNeeds.append(TextNeed(kind: "message", id: b.id, field: "text", seq: seq)) } }
         for t in tasks.values { for f in t.truncated ?? [] { textNeeds.append(TextNeed(kind: "task", id: t.id, field: f, seq: t.seq)) } }
         for a in amendments.values { for f in a.truncated ?? [] { textNeeds.append(TextNeed(kind: "amendment", id: a.id, field: f, seq: a.seq)) } }
         for w in workerEvents.values { for f in w.truncated ?? [] { textNeeds.append(TextNeed(kind: "worker_event", id: w.id, field: f, seq: w.seq)) } }
         if !textNeeds.isEmpty { historySynced = false }
+        updateBadge()
+        if startWanted { startWanted = false; start() }
     }
 
     /// The window cache of builds before #405, read once to move it into the history.

@@ -212,7 +212,8 @@ actor EngineBridge: RelayBackend {
         do {
             let page = try await engine.threads(archived: r.archived == true, after: r.after, limit: r.limit ?? 30)
             // The Main chat's row joins the first page of the active list while it is on (#405), sorted in by the client.
-            let main = r.archived != true && r.after == nil && (await hostSettings()).mainChat ? try await engine.mainRow() : nil
+            let mainOn = await hostSettings().mainChat
+            let main = r.archived != true && r.after == nil && mainOn ? try await engine.mainRow() : nil
             return .control(.threadsPage(ThreadsPageData(requestId: r.requestId, threads: page.rows.map(Self.thread), next: page.next, main: main.map(Self.thread))))
         } catch {
             return .control(.threadsPage(ThreadsPageData(requestId: r.requestId, threads: [], error: String(localized: "Couldn't read the chat on the host: \(error.localizedDescription)"))))
@@ -224,7 +225,7 @@ actor EngineBridge: RelayBackend {
         return ThreadData(id: t.id, name: t.label, origin: t.origin, sourceMessageId: t.source, summary: t.summary, created: ms(t.created),
                           lastActivity: ms(t.activity ?? t.created), archivedAt: t.archivedAt.map(ms), state: row.state, lastMessageId: row.lastMessageID, unread: row.unread,
                           lastMessageAt: row.last.map { ms($0.created) }, preview: row.last.map { Self.excerpt($0.body) }, previewNotice: row.last?.notice.map(notice),
-                          previewUser: row.last.map { $0.role == "user" }, attention: row.attention, running: row.running)
+                          previewUser: row.last.map { $0.role == "user" }, attention: row.attention, running: row.running, openWork: row.openWork)
     }
 
     /// A list row's subtitle: the message's first 200 characters on one line (the row cuts it to fit).

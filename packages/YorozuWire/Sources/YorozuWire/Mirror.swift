@@ -415,9 +415,12 @@ public struct ThreadData: Codable, Equatable, Sendable, Identifiable {
     /// only when that is resolved, never by reading. `running`: work is running (the spinner), independent of the dots.
     public var attention: Bool?
     public var running: Bool?
+    /// `history-v1`: work not in a final state (running, uncertain, or a stop not yet confirmed), so Delete stops it first.
+    public var openWork: Bool?
     public init(id: String, name: String, origin: String, sourceMessageId: String?, summary: String?, created: Int, lastActivity: Int,
                 archivedAt: Int?, state: String?, lastMessageId: String?, unread: Int, lastMessageAt: Int? = nil, preview: String? = nil,
-                previewNotice: NoticeData? = nil, previewUser: Bool? = nil, attention: Bool? = nil, running: Bool? = nil) {
+                previewNotice: NoticeData? = nil, previewUser: Bool? = nil, attention: Bool? = nil, running: Bool? = nil, openWork: Bool? = nil) {
+        self.openWork = openWork
         self.id = id
         self.name = name
         self.origin = origin

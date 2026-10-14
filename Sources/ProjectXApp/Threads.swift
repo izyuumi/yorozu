@@ -18,16 +18,38 @@ extension ThreadRow {
 }
 
 extension AppModel {
-    /// The first page again, as many rows as are loaded (30 to 200), or with `more` the next page (Show more).
+    /// The whole list (#405), every page of it (a local query each), and the Main chat's row while it is on. A failed read
+    /// keeps the rows held.
     func loadThreads(archived: Bool = false,more: Bool = false) async {
         if let client { await client.loadThreads(archived: archived,more: more); return } // rows arrive with the client poll
         guard let engine else { return }
-        let held = archived ? archivedThreads : threads, after = more ? (archived ? archivedNext : threadsNext) : nil
-        if more, after == nil { return }
-        guard let page = try? await engine.threads(archived: archived,after: after,limit: more ? 30 : min(200,max(30,held.count))) else { return }
-        let rows = more ? held + page.rows.filter { r in !held.contains { $0.topic.id == r.topic.id } } : page.rows
-        if archived { if rows != archivedThreads { archivedThreads = rows }; archivedNext = page.next }
-        else { if rows != threads { threads = rows }; threadsNext = page.next }
+        var rows: [ThreadRow] = [], after: String?
+        repeat {
+            guard let page = try? await engine.threads(archived: archived,after: after,limit: 200) else { return }
+            rows += page.rows; after = page.next
+        } while after != nil
+        if archived { if rows != archivedThreads { archivedThreads = rows }; archivedNext = nil }
+        else {
+            if rows != threads { threads = rows }; threadsNext = nil
+            let main = mainChat ? try? await engine.mainRow() : nil
+            if main != mainThreadRow { mainThreadRow = main }
+        }
+    }
+
+    /// The one chat list (#405): every thread and, while it is on, the Main chat, newest last visible message first, from
+    /// the host's store or, on a client Mac, from the client core's cached rows.
+    func chatRows(archived: Bool = false) -> [ChatRow] {
+        if let client { return client.chatRows(archived: archived) }
+        let ms = { (t: Double) in Int(t * 1000) }
+        func row(_ r: ThreadRow) -> ChatRow {
+            let preview = r.last.map { m in m.notice.map { NoticeText.text(code: $0.code,params: $0.params,fallback: m.body) } ?? m.body }
+                .map { EngineBridge.excerpt($0) } ?? ""
+            return ChatRow(id: r.topic.id,name: r.topic.label,preview: preview,time: ms(r.sortAt),dot: r.attention ? .attention : r.unread > 0 ? .unread : nil,
+                           running: r.running,archived: r.topic.archivedAt != nil,openWork: r.openWork)
+        }
+        var rows = (archived ? archivedThreads : threads).filter { !jobTopics.contains($0.topic.id) }.map(row)
+        if !archived, mainChat, let main = mainThreadRow { rows.append(row(main)) }
+        return rows.sorted(by: ChatRow.newestFirst)
     }
 
     /// The client core's lists, on each client poll.
@@ -62,11 +84,12 @@ extension AppModel {
             case .archive: try await engine.archiveThread(id,true)
             case .unarchive: try await engine.archiveThread(id,false)
             case .delete: try await engine.deleteThread(id)
+            case .stopAndDelete: try await engine.stopAndDeleteThread(id)
             }
             threadNotice = nil; snapshot = try await engine.snapshot()
         } catch { threadNotice = error.localizedDescription }
         await loadThreads()
-        if !archivedThreads.isEmpty || archivedNext != nil || action == .archive { await loadThreads(archived: true) }
+        await loadThreads(archived: true)
     }
 
     /// The thread's read cursor moves to the newest message shown (forward only, in the Store).

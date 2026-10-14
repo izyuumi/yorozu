@@ -52,6 +52,7 @@ extension AppModel {
     func startClient() {
         let client = PhoneModel()
         self.client = client
+        drafts.load(); restorePopoverDraft()
         client.resume()
         ready = true; status = nil
         clientPoll = Task { [weak self] in
@@ -70,6 +71,7 @@ extension AppModel {
         if client.readCursor?.messageId != readCursor { readCursor = client.readCursor?.messageId }
         if client.jobTopicIds != jobTopics { jobTopics = client.jobTopicIds }
         syncClientThreads(client)
+        if client.mainChat != clientMainChat { clientMainChat = client.mainChat; restorePopoverDraft() }
         let hostReadiness = client.readiness.map(Readiness.init(host:))
         if hostReadiness != readiness { readiness = hostReadiness }
         // Off the link the host's work state is unknown, never idle (as on the phone).
@@ -92,9 +94,15 @@ extension AppModel {
     /// Sends the draft through the client's outbox (text only for now: files go from the phone or the host).
     func sendFromClient() {
         guard let client else { return }
+        // Main chat off (#405): Quick Chat's first message creates its chat on the host.
+        if !mainChat {
+            guard client.send(text: draft,files: [],thread: quickThread,newThread: !snapshot.topics.contains { $0.id == quickThread }) else { return }
+            quickSent = true; drafts.clear(popoverDraftKey); draft = ""; replyingTo = nil
+            return
+        }
         client.draft = draft
         client.replyingTo = replyingTo?.id
         client.send()
-        if client.draft.isEmpty { draft = ""; replyingTo = nil }
+        if client.draft.isEmpty { drafts.clear(popoverDraftKey); draft = ""; replyingTo = nil }
     }
 }

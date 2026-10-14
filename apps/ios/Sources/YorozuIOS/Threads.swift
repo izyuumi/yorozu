@@ -5,12 +5,6 @@ import YorozuWire
 // threads while it is on; New chat drafts on top of it; swipe to Archive, Rename and Delete in the context menu.
 
 extension PhoneModel {
-    /// A thread's row from either list, when loaded.
-    func thread(_ id: String) -> ThreadData? { threadList.first { $0.id == id } ?? archivedThreads.first { $0.id == id } }
-
-    /// A thread's name: its row, else its topic record.
-    func threadName(_ id: String) -> String? { thread(id)?.name ?? topics[id]?.label }
-
     /// The Chats dot: a chat needs the user (orange). Unread replies and running work are no reason to look.
     var attentionChats: Bool { chatRows().contains { $0.dot == .attention } }
 }
@@ -169,7 +163,7 @@ private struct ChatRowButton: View {
     @Binding var deleting: ThreadRef?
 
     var body: some View {
-        let ref = ThreadRef(id: row.id, name: row.name, archived: row.archived, running: row.running)
+        let ref = ThreadRef(id: row.id, name: row.name, archived: row.archived, running: row.openWork)
         Button { open(row.isMain ? .main : .topic(row.id, focus: nil)) } label: { ChatRowLabel(row: row, refusal: model.threadRefusals[row.id]) }
             .foregroundStyle(.primary)
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -251,14 +245,6 @@ extension View {
     /// The rename alert and the delete confirmation; `onDeleted` runs once a delete was sent.
     func threadDialogs(model: PhoneModel, renaming: Binding<ThreadRef?>, deleting: Binding<ThreadRef?>, onDeleted: @escaping () -> Void = {}) -> some View {
         modifier(ThreadDialogs(model: model, renaming: renaming, deleting: deleting, onDeleted: onDeleted))
-    }
-}
-
-/// What deleting a chat does, said before it happens: for good, on every device and in search; memories stay.
-enum DeleteWording {
-    static func message(running: Bool) -> String {
-        let base = String(localized: "The chat and its messages are deleted for good on every device, and from search. Long-term memories Yorozu already saved from it stay.")
-        return running ? base + "\n\n" + String(localized: "Work is running in this chat: it is stopped first. If the stop can't be confirmed, the chat is kept and nothing is deleted.") : base
     }
 }
 

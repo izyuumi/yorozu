@@ -93,6 +93,8 @@ extension AppModel {
         else if runtimeMode == .live, let relay, (resolved ?? next).config.direct != old.config.direct { await relay.setDirect((resolved ?? next).config.direct) }
         await relay?.setAlerts(phoneAlerts)
         await relay?.publishHostSettings(HostSettingsData(mainChat: (resolved ?? next).config.general.mainChat))
+        // The popover becomes Quick Chat or the Main chat: its composer takes that one's draft (#405).
+        if old.config.general.mainChat != next.config.general.mainChat { restorePopoverDraft(); await loadThreads() }
         // After the awaits a newer reload may have run: apply the settings in force now, not this reload's.
         applySystem((resolved ?? next).config.general)
         if runtimeMode == .live, launched?.config.harness.kind == .hermes { recheck() } // the Hermes profiles may be out of date now
