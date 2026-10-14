@@ -55,6 +55,8 @@ struct ChatWindow: View {
     @State private var pane: Pane? = .chats
     @State private var selection: String?
     @State private var job: String?
+    /// A step of the selected job's chat a search hit asked for.
+    @State private var jobFocus: String?
     @State private var deletingJob: JobStatus?
     @State private var query = ""
     @FocusState private var searchFocused: Bool
@@ -113,7 +115,7 @@ struct ChatWindow: View {
                 SearchResults(model: model,query: query) { open($0) }
             } else if pane == .scheduled {
                 if let job = jobs.jobs.first(where: { $0.id == self.job }) {
-                    JobDetail(model: model,job: job,problem: $jobs.problem,
+                    JobDetail(model: model,job: job,problem: $jobs.problem,focus: jobFocus,
                               actions: AnyView(JobActions(model: model,list: jobs,job: job,deleting: $deletingJob))).id(job.id)
                 } else { Text("Select a job to see its chat.").foregroundStyle(.secondary).frame(maxWidth: .infinity,maxHeight: .infinity) }
             } else if selection == Self.main {
@@ -210,7 +212,7 @@ struct ChatWindow: View {
                 }
                 Toggle(isOn: $archivedShown) { Label("Archived",systemImage: "archivebox") }
                     .toggleStyle(.button).buttonStyle(.accessoryBar)
-            }.frame(maxWidth: .infinity,alignment: .leading).padding(8)
+            }.frame(maxWidth: .infinity,alignment: .leading).padding(8).background(.bar)
         }
         .toolbar {
             Button { newChat() } label: { Image(systemName: "square.and.pencil") }.help("New chat").accessibilityLabel("New chat")
@@ -234,7 +236,8 @@ struct ChatWindow: View {
         query = ""
         guard let id = hit.messageID else {
             if let job = jobs.jobs.first(where: { $0.topicID != nil && $0.topicID == hit.topicID }) {
-                pane = .scheduled; self.job = job.id
+                // A job run's step: its job's page, at that step.
+                pane = .scheduled; self.job = job.id; jobFocus = hit.eventID.map { "event-" + $0 }
                 return
             }
             // A worker step: its chat, with its task card opened and in view (#405).

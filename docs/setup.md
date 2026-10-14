@@ -388,7 +388,7 @@ The relay and Gateway items are `WhenUnlockedThisDeviceOnly`; the phone item is 
 | Attachments (files users attach and workers return, `<YYYY-MM>/<YYYY-MM-DD_HHMMSS>_<name>`; directories 0700, files 0600; kept until deleted in Finder) | `~/Yorozu/files/` | `<dir>/files/` | `…/Fixture/files/` |
 | Phone upload staging (`<device key>/<message id>/<index>-<sha256>.part`, 0700/0600; at most 1 GB and 64 messages, pruned after 48 h untouched) | `~/Library/Application Support/<bundle id>/uploads/` | same as live | none (no relay) |
 | Attachment thumbnails (the popover's previews as `<id>-<px>.png`, phones' 512 px previews as `<id>.jpg`; rebuildable) | `~/Library/Caches/<bundle id>/thumbs/` | same as live | same as live |
-| Composer scratch files (pasted or dropped image data, downscaled images, Send as Text File; deleted once sent or removed) | `$TMPDIR/Yorozu-attachments/<uuid>/` | same | same |
+| Composer scratch files (pasted or dropped image data, downscaled images, Send as Text File; deleted once sent or removed, kept while a draft refers to them) | `~/Library/Application Support/<bundle id>/Yorozu-attachments/<uuid>/` | same | same |
 | Workspace (one folder per task, `<label slug>-<topic id prefix>/`, mode 700, created at first use; downloads, clones and files workers make) | `~/Yorozu/workspace/` (`[workspace] path`) | `<dir>/workspace/` | `…/Fixture/workspace/` |
 | Coding-agent logs (`agent-runs/<task folder name>/<time>-<agent>.log`, 0600 in 0700 folders) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
 | Coding-agent socket (`agents.sock`, mode 600, while the app runs) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |

@@ -148,6 +148,8 @@ struct JobDetail: View {
     @ObservedObject var model: AppModel
     let job: JobStatus
     @Binding var problem: String?
+    /// An item to bring into view and ring (a search hit's step).
+    var focus: String? = nil
     let actions: AnyView
     @State private var draft = ""
     @State private var sending = false
@@ -214,6 +216,11 @@ struct JobDetail: View {
             }
             .scrollPosition($position)
             .defaultScrollAnchor(.bottom)
+            .task(id: focus) {
+                guard let focus, items.contains(where: { $0.id == focus }) else { return }
+                try? await Task.sleep(for: .milliseconds(200))
+                withAnimation(.snappy) { position.scrollTo(id: focus,anchor: .center) }
+            }
         }
     }
 

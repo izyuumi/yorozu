@@ -28,6 +28,11 @@ struct ChatRow: Identifiable, Equatable {
     var thread: ThreadData?
 
     static func newestFirst(_ a: ChatRow, _ b: ChatRow) -> Bool { (a.time, a.id) > (b.time, b.id) }
+
+    /// A preview's words without Markdown markers (`**`, `` ` ``, links), as the row shows them.
+    static func plain(_ text: String) -> String {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))).map { String($0.characters) } ?? text
+    }
 }
 
 extension PhoneModel {
@@ -72,7 +77,7 @@ extension PhoneModel {
     }
 
     private func row(for t: ThreadData, known: Bool) -> ChatRow {
-        let preview = t.previewNotice.map { NoticeText.text(code: $0.code, params: $0.params, fallback: t.preview ?? "") } ?? t.preview ?? ""
+        let preview = ChatRow.plain(t.previewNotice.map { NoticeText.text(code: $0.code, params: $0.params, fallback: t.preview ?? "") } ?? t.preview ?? "")
         // Read here a moment ago: the host's next row agrees.
         let readHere = t.lastMessageId != nil && sentReads[t.id] == t.lastMessageId
         let dot: ChatRow.Dot? = t.attention == true ? .attention : (t.unread > 0 && !readHere ? .unread : nil)
@@ -91,7 +96,7 @@ extension PhoneModel.Bubble {
     /// One line of a message for a list row.
     var shownPreview: String {
         let text = notice.map { NoticeText.text(code: $0.code, params: $0.params, fallback: self.text) } ?? self.text
-        let line = String(text.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(200))
+        let line = ChatRow.plain(String(text.split(whereSeparator: \.isNewline).joined(separator: " ").prefix(200)))
         return line.isEmpty && !files.isEmpty ? files.map(\.name).joined(separator: ", ") : line
     }
 }
