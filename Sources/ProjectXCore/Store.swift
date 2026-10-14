@@ -117,11 +117,11 @@ public actor Store {
                 UPDATE topics SET activity=new.created WHERE id IN (new.topicID,new.threadID) AND (activity IS NULL OR activity<new.created); END;
             """) }
         // Chats started on an iPhone before the key was lowercased never got a Gateway session.
-        // #405. Nullable: the user message that answered a question, set once routing filed it with the question (older
-        // builds never set it). Questions answered before are taken as answered, so history lights no stale dot.
+        // #405. Nullable: the user message that answered a question (older builds never set it). Only explicit evidence
+        // carries over: a user reply to the question. Any other earlier question stays open, shown until it is answered.
         migration.registerMigration("question-answered") { db in try db.execute(sql: """
             ALTER TABLE messages ADD COLUMN answeredBy TEXT;
-            UPDATE messages SET answeredBy=(SELECT u.id FROM messages u WHERE u.role='user' AND (u.created,u.rowid)>(messages.created,messages.rowid) ORDER BY u.created,u.rowid LIMIT 1)
+            UPDATE messages SET answeredBy=(SELECT u.id FROM messages u WHERE u.role='user' AND u.replyTo=messages.id ORDER BY u.created,u.rowid LIMIT 1)
               WHERE role='assistant' AND kind<>'approval_request' AND (kind='question' OR json_extract(notice,'$.code') IN ('question','question_topic','question_task'));
             """) }
         migration.registerMigration("session-key-lower") { db in try db.execute(sql: "UPDATE topics SET sessionKey=lower(sessionKey) WHERE sessionKey<>lower(sessionKey)") }
@@ -441,8 +441,13 @@ public actor Store {
     /// work is open. Chats typed in (`threadID`), jobs and memory stay. Records the time, which clients apply.
     public func clearMain(upTo at: Double) throws -> [Attachment] {
         try db.write { db in
-            let messages = try String.fetchAll(db,sql: "SELECT id FROM messages WHERE \(Self.mainConversation)",arguments: [at])
-            let work = try messages.chunked().flatMap { ids in try String.fetchAll(db,sql: "SELECT id FROM work WHERE messageID IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
+            let requests = try String.fetchAll(db,sql: "SELECT id FROM messages WHERE \(Self.mainConversation)",arguments: [at])
+            let work = try requests.chunked().flatMap { ids in try String.fetchAll(db,sql: "SELECT id FROM work WHERE messageID IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
+            // With them, whenever they were written: what that work posted and Yorozu's replies to those requests, so a
+            // result that landed just after the cutoff never outlives its request.
+            let linked = try work.chunked().flatMap { ids in try String.fetchAll(db,sql: "SELECT id FROM messages WHERE taskID IN \(Self.marks(ids))",arguments: StatementArguments(ids)) }
+                + (try requests.chunked().flatMap { ids in try String.fetchAll(db,sql: "SELECT id FROM messages WHERE role='assistant' AND replyTo IN \(Self.marks(ids))",arguments: StatementArguments(ids)) })
+            let messages = Array(Set(requests + linked))
             guard try work.chunked().allSatisfy({ ids in try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM work WHERE id IN \(Self.marks(ids)) AND state IN \(Self.active)",arguments: StatementArguments(ids)) == 0 }) else {
                 throw ProjectError.blocked(String(localized: "Work the Main chat started is still running. Stop it first, then delete the Main chat."))
             }

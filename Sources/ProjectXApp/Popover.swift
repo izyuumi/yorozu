@@ -110,6 +110,10 @@ struct QuickChat: View {
     @ObservedObject var model: AppModel
     @State private var height: CGFloat = 0
     @State private var position = ScrollPosition(idType: String.self)
+    @State private var intent = NewestScrollIntent()
+    @State private var phase = ScrollPhase.idle
+    @State private var atBottom = true
+    @State private var unseen = 0
     var body: some View {
         let id = model.quickThread
         let messages = model.quickSent ? model.snapshot.messages.filter { $0.threadID == id || $0.topicID == id } : []
@@ -142,12 +146,27 @@ struct QuickChat: View {
                         }.scrollTargetLayout().padding(.horizontal,14).padding(.vertical,12)
                     }
                     .scrollPosition($position)
-                    .defaultScrollAnchor(.bottom)
-                    .onChange(of: messages.last?.id) { _,_ in position.scrollTo(edge: .bottom) }
+                    .defaultScrollAnchor(.bottom,for: .initialOffset)
+                    // Follow only a reader at the bottom (#405); one reading earlier messages stays put, with ↓.
+                    .onScrollGeometryChange(for: Bool.self) { $0.visibleRect.maxY >= $0.contentSize.height - 24 } action: { _,bottom in
+                        atBottom = bottom; intent.observe(atBottom: bottom,phase: phase); if bottom { unseen = 0 }
+                    }
+                    .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _,_ in if intent.shouldPinLatest(during: phase) { position.scrollTo(edge: .bottom) } }
+                    .onScrollPhaseChange { _,next in phase = next; intent.observe(atBottom: atBottom,phase: next) }
+                    .onChange(of: messages.last?.id) { _,_ in if intent.followsLatest { position.scrollTo(edge: .bottom) } else { unseen += 1 } }
+                    .overlay(alignment: .bottom) {
+                        if !atBottom {
+                            Button { intent.followLatest(); unseen = 0; withAnimation(.snappy) { position.scrollTo(edge: .bottom) } } label: {
+                                Image(systemName: "arrow.down").font(.callout.weight(.semibold)).foregroundStyle(Color.accentColor).padding(8)
+                                    .background(.thickMaterial,in: Circle()).overlay { Circle().strokeBorder(.separator,lineWidth: 0.5) }
+                            }.buttonStyle(.plain).padding(.bottom,10)
+                                .accessibilityLabel(unseen > 0 ? Text("\(unseen) new messages, scroll to bottom") : Text("Scroll to bottom"))
+                        }
+                    }
                 }
             }.frame(maxHeight: .infinity)
             Divider()
-            Composer(model: model,maxHeight: height / 3) { Task { await model.send() } }
+            Composer(model: model,maxHeight: height / 3) { intent.followLatest(); Task { await model.send() } }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         .onDrop(of: [.fileURL,.image],isTargeted: nil) { model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged) && model.attach(dropped: $0) }

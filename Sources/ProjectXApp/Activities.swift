@@ -490,8 +490,8 @@ private struct ThreadDetail: View {
         intent.followLatest()
         Task {
             defer { sending = false }
-            guard await model.send(text,thread: id) else { return }
-            for k in [key,Drafts.new(id)] where model.drafts.saved(k).text == text { model.drafts.clear(k) }
+            guard await model.send(text,thread: id,draftKey: key) else { return }
+            if key != Drafts.new(id), model.drafts.saved(Drafts.new(id)).text == text { model.drafts.clear(Drafts.new(id)) }
             if draft == text { draft = "" }
             sent()
         }

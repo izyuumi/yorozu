@@ -11,6 +11,9 @@ import ProjectXCore
         var files: [File] = []
         var replyTo: String?
         var updated = Date().timeIntervalSince1970
+        /// A send of this draft in progress (#405): the id its message gets. A relaunch finds whether that message was
+        /// stored (the draft was sent: it goes) or not (it stays), so a crash never sends a draft twice or loses it.
+        var sending: String?
         var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty && replyTo == nil }
     }
     @Published private(set) var all: [String: Saved] = [:]
@@ -39,11 +42,31 @@ import ProjectXCore
 
     func update(_ key: String,text: String,files: [DraftFile] = [],replyTo: String? = nil) {
         var next = Saved(text: text,files: files.map { File(path: $0.url.path,temporary: $0.temporary,sendOriginal: $0.sendOriginal) },replyTo: replyTo)
-        if let old = all[key], old.text == next.text, old.files == next.files, old.replyTo == next.replyTo { next.updated = old.updated }
+        if let old = all[key], old.text == next.text, old.files == next.files, old.replyTo == next.replyTo { next.updated = old.updated; next.sending = old.sending }
         let value = next.isEmpty ? nil : next
         guard all[key] != value else { return }
         all[key] = value
         scheduleSave()
+    }
+
+    /// Before a send: the draft as it is, with the message id it will be stored under, written now.
+    func markSending(_ key: String,text: String,files: [DraftFile] = [],replyTo: String? = nil,id: String) {
+        update(key,text: text,files: files,replyTo: replyTo)
+        if all[key] == nil { all[key] = Saved(text: text) }
+        all[key]?.sending = id
+        save()
+    }
+    /// After a send: stored, the draft goes now (not after the usual pause); refused, it stays without the mark.
+    func finishSending(_ key: String,id: String,sent: Bool) {
+        guard all[key]?.sending == id else { return }
+        if sent { all[key] = nil } else { all[key]?.sending = nil }
+        save()
+    }
+    /// At launch: drafts whose send a quit interrupted go if their message was stored, and stay otherwise.
+    func settle(stored: (String) async -> Bool) async {
+        var changed = false
+        for (key,draft) in all { if let id = draft.sending { if await stored(id) { all[key] = nil } else { all[key]?.sending = nil }; changed = true } }
+        if changed { save() }
     }
 
     /// Sent (its files went with it) or discarded (Yorozu's own files go too).

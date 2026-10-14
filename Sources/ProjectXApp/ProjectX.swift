@@ -230,7 +230,7 @@ import YorozuWire
                 devicesFile = support.appendingPathComponent("relay-devices.json")
                 if runtimeMode == .live { await startRelay(engine,url: resolved.config.relay.url) }
                 status = nil; ready = true
-                drafts.load(); restorePopoverDraft()
+                drafts.load(); await drafts.settle { id in ((try? await store.message(id: id)) ?? nil) != nil }; restorePopoverDraft()
                 recheck()
                 if !file.setup.done, lastConfigError == nil { openSetup() }
                 applySystem(resolved.config.general)
@@ -384,30 +384,35 @@ import YorozuWire
         guard let engine, !submitting, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return }
         submitting = true; defer { submitting = false }
         let text = draft, sent = files, reply = replyingTo?.id
+        // Where it goes is fixed now, before any wait (#405): turning the Main chat on or off meanwhile never sends it
+        // elsewhere; a Main message the host no longer takes is refused and its draft kept.
+        let key = popoverDraftKey, id = identifier(), quick: String? = mainChat ? nil : quickThread
+        drafts.markSending(key,text: text,files: sent,replyTo: reply,id: id)
         if readiness.map({ $0.state != .ready }) ?? false { recheck() }
         await ensureModels()
         // Downscaling reads and re-encodes images, so it runs off the main actor; its scratch copies go once the Engine has
         // copied them into the file store (or failed).
         let prepared: (pending: [PendingFile], scratch: [URL])
         do { prepared = try await Task.detached { try DraftFile.prepare(sent) }.value; fileNotice = nil }
-        catch { fileNotice = error.localizedDescription; return }
+        catch { drafts.finishSending(key,id: id,sent: false); fileNotice = error.localizedDescription; return }
         defer { prepared.scratch.forEach(DraftFile.discard) }
         do {
             // Main chat off (#405): the popover is Quick Chat, whose first message creates its chat.
-            if mainChat { try await engine.send(text,attachments: prepared.pending,replyTo: reply) }
-            else {
-                let new = !snapshot.topics.contains { $0.id == quickThread }
-                try await engine.send(text,attachments: prepared.pending,thread: quickThread,newThread: new)
-                quickSent = true
+            if let quick {
+                try await engine.send(text,attachments: prepared.pending,id: id,thread: quick,newThread: !snapshot.topics.contains { $0.id == quick })
+                if quickThread == quick { quickSent = true }
+            } else { try await engine.send(text,attachments: prepared.pending,id: id,replyTo: reply) }
+            drafts.finishSending(key,id: id,sent: true)
+            // The composer clears only if it still holds what was sent: text typed meanwhile, or another draft swapped in, stays.
+            if popoverDraftKey == key {
+                if draft == text { draft = "" }
+                if replyingTo?.id == reply { replyingTo = nil }
+                let ids = Set(sent.map(\.id)); files.removeAll { ids.contains($0.id) }
             }
-            drafts.clear(popoverDraftKey)
-            if draft == text { draft = "" }
-            if replyingTo?.id == reply { replyingTo = nil }
-            let ids = Set(sent.map(\.id)); files.removeAll { ids.contains($0.id) }
             sent.filter(\.temporary).forEach { DraftFile.discard($0.url) }
             status = nil; snapshot = try await engine.snapshot()
         }
-        catch { showError(error); recheck() }
+        catch { drafts.finishSending(key,id: id,sent: (try? await engine.store.message(id: id)) != nil); showError(error); recheck() }
     }
     /// Where a stored attachment is now, or nil when it is gone (deleted in Finder).
     func attachmentURL(_ file: Attachment) async -> URL? {

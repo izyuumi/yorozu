@@ -964,10 +964,11 @@ final class PhoneModel {
     /// `thread` (`threads-v1`): the thread it is typed in; `newThread`: New chat's first message, which creates that thread
     /// on the host with this id, so it works offline through the outbox like any message.
     /// `draftKey`: the draft it is sent from, consumed in step with the outbox (#405).
-    func send(text: String, files picked: [StagedFile], replyTo: String? = nil, thread: String? = nil, newThread: Bool = false, draftKey: String? = nil) -> Bool {
+    func send(text: String, files picked: [StagedFile], replyTo: String? = nil, thread: String? = nil, newThread: Bool = false, draftKey: String? = nil,
+              id chosen: String? = nil) -> Bool {
         guard canSend, thread == nil || threadsSupported == true, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !picked.isEmpty else { return false }
         let ts = Self.now
-        let id = UUID().uuidString
+        let id = chosen ?? UUID().uuidString
         var infos: [AttachmentInfo] = []
         if !picked.isEmpty {
             do {
@@ -1031,6 +1032,9 @@ final class PhoneModel {
         if let draftKey, let stamp { consumeDraft(draftKey, stamp: stamp) }
         return true
     }
+
+    /// A message with this id waits in the outbox.
+    func hasQueued(_ id: String) -> Bool { outbox.contains { $0.id == id } }
 
     /// The sent draft leaves the disk; until that write succeeds a marker beside the outbox keeps it from coming back.
     private func consumeDraft(_ key: String, stamp: Int) {
@@ -1404,6 +1408,7 @@ final class PhoneModel {
         if let at = reminderAt, at <= now { reminderCovered = max(reminderCovered ?? 0, at); reminderAt = nil }
         let waiting = outbox.filter { !$0.stored && marks[$0.id] != .notDelivered && marks[$0.id] != .read }
         guard delay > 0, !waiting.isEmpty else {
+            if scheduling != nil { reminderGeneration += 1; scheduling = nil }
             if reminderAt != nil || reminderCovered != nil { LocalNotices.cancelReminder(delivered: waiting.isEmpty) }
             reminderAt = nil
             if waiting.isEmpty { reminderCovered = nil }
@@ -1413,27 +1418,39 @@ final class PhoneModel {
         // waiting then (sent by then), so a later one in the same group is covered even if the app stays suspended. A
         // message sent after that gets the next notice.
         let uncovered = waiting.filter { $0.sentAt > (reminderCovered ?? 0) }
-        guard let oldest = uncovered.map(\.sentAt).min() else { LocalNotices.cancelReminder(delivered: false); reminderAt = nil; return }
+        guard let oldest = uncovered.map(\.sentAt).min() else {
+            reminderGeneration += 1; scheduling = nil
+            LocalNotices.cancelReminder(delivered: false); reminderAt = nil; return
+        }
         let at = max(oldest + delay, now + 1000)
         let count = waiting.filter { $0.sentAt <= at }.count
-        guard at != reminderAt || count != reminderCount else { return }
-        reminderAt = at
-        reminderCount = count
+        guard at != reminderAt || count != reminderCount, scheduling?.at != at || scheduling?.count != count else { return }
+        reminderGeneration += 1
+        let generation = reminderGeneration
+        scheduling = (at, count)
         LocalNotices.scheduleReminder(at: at, count: count) { ok in
-            // Kept only once the system took it; otherwise the next change schedules it again.
-            guard !ok else { return }
             Task { @MainActor [weak self] in
-                guard let self, self.reminderAt == at else { return }
-                self.reminderAt = nil
-                self.reminderCount = 0
+                // A newer schedule, a cancellation or a receipt since: this answer is stale.
+                guard let self, self.reminderGeneration == generation else { return }
+                self.scheduling = nil
+                // Recorded (and written with the outbox) only once the system took it; a failure is tried again.
+                guard ok else { return }
+                self.reminderAt = at
+                self.reminderCount = count
+                self.saveOutbox()
             }
         }
     }
+    /// A schedule handed to the system and not yet confirmed; bumped generations make late answers stale.
+    @ObservationIgnored private var scheduling: (at: Int, count: Int)?
+    @ObservationIgnored private var reminderGeneration = 0
     @ObservationIgnored private var reminderCount = 0
 
     /// Settings › Unsent reminder.
     func setReminder(minutes: Int) {
         LocalNotices.reminderMinutes = minutes
+        reminderGeneration += 1
+        scheduling = nil
         reminderAt = nil
         reminderCount = 0
         LocalNotices.cancelReminder(delivered: false)
@@ -1542,15 +1559,17 @@ final class PhoneModel {
     /// never come back from a later page. Messages a task or a change refers to stay, as on the host.
     private func clearMain(upTo at: Int) {
         // As on the host (`Store.clearMain`): every Main-timeline message up to then, and the work they started.
-        let gone = Set(bubbles.filter { $0.seq != nil && Self.onMain($0) && $0.ts <= at }.map(\.id))
-        guard !gone.isEmpty else { return }
-        let goneTasks = Set(tasks.values.filter { gone.contains($0.messageId) }.map(\.id))
+        let requests = Set(bubbles.filter { $0.seq != nil && Self.onMain($0) && $0.ts <= at }.map(\.id))
+        guard !requests.isEmpty else { return }
+        let goneTasks = Set(tasks.values.filter { requests.contains($0.messageId) }.map(\.id))
+        // With them, whenever they were written: what that work posted and the replies to those requests (as on the host).
+        let gone = requests.union(bubbles.filter { b in b.taskId.map(goneTasks.contains) == true || (!b.user && b.replyTo.map(requests.contains) == true) }.map(\.id))
         deletedTasks.formUnion(goneTasks)
         gone.forEach { drop("message", $0) }
         goneTasks.forEach { tasks[$0] = nil; drop("task", $0) }
         for a in amendments.values where goneTasks.contains(a.taskId) || gone.contains(a.messageId) { amendments[a.id] = nil; drop("amendment", a.id) }
         for w in workerEvents.values where goneTasks.contains(w.taskId) { workerEvents[w.id] = nil; drop("event", w.id) }
-        bubbles.removeAll { gone.contains($0.id) || ($0.taskId.map(goneTasks.contains) == true && $0.threadId == nil) }
+        bubbles.removeAll { gone.contains($0.id) }
         readCursor = nil
         drop("read", "main")
     }

@@ -67,16 +67,30 @@ extension AppModel {
     }
 
     /// One message typed in a thread. `id` names a thread the host may not have yet (New chat): its first message creates it.
-    func send(_ text: String,thread id: String) async -> Bool {
-        let new = !snapshot.topics.contains { $0.id == id }
-        if let client { return client.send(text: text,files: [],thread: id,newThread: new) }
-        guard let engine, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else { return false }
+    /// `draftKey`: the draft it is sent from, marked with the message id before the send and cleared once it is stored, so
+    /// a quit mid-send never sends it twice (#405).
+    func send(_ text: String,thread id: String,draftKey: String? = nil) async -> Bool {
+        let new = !snapshot.topics.contains { $0.id == id }, messageID = identifier()
+        if let draftKey { drafts.markSending(draftKey,text: text,id: messageID) }
+        if let client {
+            let ok = client.send(text: text,files: [],thread: id,newThread: new,id: messageID)
+            if let draftKey { drafts.finishSending(draftKey,id: messageID,sent: ok) }
+            return ok
+        }
+        guard let engine, runtimeMode.permitsInput(fixtureAcknowledged: fixtureAcknowledged) else {
+            if let draftKey { drafts.finishSending(draftKey,id: messageID,sent: false) }
+            return false
+        }
         await ensureModels()
         do {
-            try await engine.send(text,thread: id,newThread: new)
+            try await engine.send(text,id: messageID,thread: id,newThread: new)
+            if let draftKey { drafts.finishSending(draftKey,id: messageID,sent: true) }
             threadNotice = nil; snapshot = try await engine.snapshot(); await loadThreads()
             return true
-        } catch { threadNotice = error.localizedDescription; return false }
+        } catch {
+            if let draftKey { drafts.finishSending(draftKey,id: messageID,sent: (try? await engine.store.message(id: messageID)) != nil) }
+            threadNotice = error.localizedDescription; return false
+        }
     }
 
     /// Rename, archive, unarchive or delete. A client's refusal shows from `PhoneModel.threadRefusals`.
