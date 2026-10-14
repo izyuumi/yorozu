@@ -64,6 +64,8 @@ struct Outbox: Codable, Sendable {
     /// covers every message due by then. Optional so an older file still loads.
     var reminderAt: Int?
     var reminderCovered: Int?
+    /// Drafts sent but not yet removed from disk (key → the sent revision's edit time), kept until their removal is written.
+    var consumed: [String: Int]?
 
     /// The relay's buffer lifetime and every message's admission deadline: 24 h.
     static let lifetime = 86_400_000

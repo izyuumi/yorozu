@@ -378,8 +378,10 @@ final class PhoneModel {
             failure = error.localizedDescription
             return
         }
-        disconnect()
-        connect(stored)
+        // Repair keeps the host (#405): its history, downloads, drafts and unsent messages stay with the new identity. Any
+        // other host starts from nothing, so nothing of one host's chats reaches another.
+        disconnect(keep: pending.repair)
+        connect(stored, adopt: pending.repair)
         // Due until shown. A Repair keeps the host, so its guide is not shown again.
         if !pending.repair, let key = onboardingKey {
             UserDefaults.standard.set(false, forKey: key)
@@ -420,7 +422,8 @@ final class PhoneModel {
                                           payload: .deviceRemove(DeviceRemoveData(pub: ownPub))))
     }
 
-    private func connect(_ stored: PairingStore.Stored) {
+    /// `adopt`: the data a Repair of the same host kept is this identity's now.
+    private func connect(_ stored: PairingStore.Stored, adopt: Bool = false) {
         let identity = stored.identity.sessionPublicKey
         let pushKey = "\(Self.pushKey).\(identity.base64URLEncodedString())"
         // The notification extension's key for this Mac's sealed previews, written on every connect so it follows the pairing.
@@ -459,14 +462,14 @@ final class PhoneModel {
         linked = stored.paired == true
         applyPush()
         if let ownPub {
-            openHistory(owner: ownPub)
-            drafts.load(owner: ownPub)
+            openHistory(owner: ownPub, adopt: adopt)
+            drafts.load(owner: ownPub, adopt: adopt)
             let main = drafts.draft(Drafts.chat(ThreadData.mainId))
             restoringDraft = true
             draft = main.text; draftFiles = main.files; replyingTo = main.replyTo
             restoringDraft = false
         }
-        if let ownPub, let saved = Outbox.file.load(Outbox.self), saved.owner == ownPub {
+        if let ownPub, let saved = Outbox.file.load(Outbox.self), saved.owner == ownPub || adopt {
             outbox = saved.items
             marks = saved.marks
             reminderAt = saved.reminderAt
@@ -481,7 +484,8 @@ final class PhoneModel {
                 }
             }
             expireOverdue()
-            drafts.dropSent(outbox.compactMap { item in item.draftKey.flatMap { key in item.draftStamp.map { (key, $0) } } })
+            consumed = saved.consumed ?? [:]
+            drafts.dropSent(outbox.compactMap { item in item.draftKey.flatMap { key in item.draftStamp.map { (key, $0) } } } + consumed.map { ($0.key, $0.value) })
             let main = drafts.draft(Drafts.chat(ThreadData.mainId))
             restoringDraft = true
             draft = main.text; draftFiles = main.files; replyingTo = main.replyTo
@@ -492,7 +496,8 @@ final class PhoneModel {
     }
 
     /// Forgets the pairing's link and its whole mirror, cache file included.
-    private func disconnect() {
+    /// `keep`: a Repair of the same host, whose data on this device stays for the new identity.
+    private func disconnect(keep: Bool = false) {
         // Nothing to wait for: the old link's late events must not reach the next pairing's mirror.
         inFlight = []
         suspend()
@@ -508,7 +513,7 @@ final class PhoneModel {
         onboardingPending = false
         ownPub = nil
         linked = false
-        outbox.forEach { LocalNotices.cancelExpiry($0.id) }
+        if !keep { outbox.forEach { LocalNotices.cancelExpiry($0.id) } }
         #if os(iOS)
         PushNotices.update(badge: 0, read: nil)
         #endif
@@ -516,9 +521,11 @@ final class PhoneModel {
         clearedTo = nil
         outbox = []
         marks = [:]
-        Outbox.file.wipe()
-        UploadStore.wipe()
-        files.wipe()
+        if !keep {
+            Outbox.file.wipe()
+            UploadStore.wipe()
+            files.wipe()
+        }
         uploading = []
         uploadProgress = [:]
         uploadOffsets = [:]
@@ -533,7 +540,7 @@ final class PhoneModel {
         draft = ""
         replyingTo = nil
         restoringDraft = false
-        drafts.wipe()
+        if keep { drafts.saveNow() } else { drafts.wipe() }
         failure = nil
         updateRequired = nil
         hostName = nil
@@ -559,8 +566,11 @@ final class PhoneModel {
         sentReads = [:]
         reminderAt = nil
         reminderCovered = nil
-        LocalNotices.cancelReminder(delivered: true)
-        history?.wipe()
+        if !keep {
+            LocalNotices.cancelReminder(delivered: true)
+            history?.wipe()
+        }
+        history?.drain()
         history = nil
         MirrorCache.shared.wipe()
         historySupported = nil
@@ -918,7 +928,7 @@ final class PhoneModel {
     }
 
     func send() {
-        drafts.save()
+        drafts.saveNow()
         guard send(text: draft, files: draftFiles, replyTo: replyingTo, draftKey: Drafts.chat(ThreadData.mainId)) else { return }
         restoringDraft = true
         defer { restoringDraft = false }
@@ -960,7 +970,7 @@ final class PhoneModel {
             return false
         }
         // Durably queued: the draft goes (on disk too), then its own copies.
-        if let draftKey { drafts.consume(draftKey) }
+        if let draftKey { consumeDraft(draftKey, stamp: drafts.draft(draftKey).updated) }
         picked.forEach { $0.discard() }
         return true
     }
@@ -988,13 +998,31 @@ final class PhoneModel {
     /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only. Queued before the
     /// handshake too (a job page from the cached list); the flush holds it until the Mac has said it takes `jobs-v1`.
     @discardableResult
-    func send(_ text: String, toJob job: String, topic: String) -> Bool {
+    func send(_ text: String, toJob job: String, topic: String, draftKey: String? = nil) -> Bool {
         guard canSend, jobsSupported != false, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let ts = Self.now
         let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: ts, agentId: "device",
                                 payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, jobId: job)))
-        return enqueue(Outbox.Item(event: event, sentAt: ts, topicId: topic),
-                Bubble(id: event.id, user: true, ts: ts, text: text, kind: "job_input", topicId: topic))
+        let stamp = draftKey.map { drafts.draft($0).updated }
+        guard enqueue(Outbox.Item(event: event, sentAt: ts, topicId: topic, draftKey: draftKey, draftStamp: stamp),
+                      Bubble(id: event.id, user: true, ts: ts, text: text, kind: "job_input", topicId: topic)) else { return false }
+        if let draftKey, let stamp { consumeDraft(draftKey, stamp: stamp) }
+        return true
+    }
+
+    /// The sent draft leaves the disk; until that write succeeds a marker beside the outbox keeps it from coming back.
+    private func consumeDraft(_ key: String, stamp: Int) {
+        if drafts.consume(key) { return }
+        consumed[key] = max(consumed[key] ?? 0, stamp)
+        saveOutbox()
+    }
+    @ObservationIgnored private var consumed: [String: Int] = [:]
+
+    /// Retries the draft removals a failed write left, with the outbox's own write.
+    private func settleConsumed() {
+        guard !consumed.isEmpty else { return }
+        drafts.dropSent(consumed.map { ($0.key, $0.value) })
+        if drafts.saveNow() { consumed = consumed.filter { key, stamp in drafts.all[key].map { $0.updated <= stamp } == true } }
     }
 
     /// Into the outbox, written to disk before Send counts as done (#405): false, with nothing queued, when it was not.
@@ -1002,7 +1030,7 @@ final class PhoneModel {
     private func enqueue(_ item: Outbox.Item, _ bubble: Bubble) -> Bool {
         outbox.append(item)
         setMark(item.id, .sending)
-        guard let ownPub, Outbox.file.saveNow(Outbox(owner: ownPub, items: outbox, marks: marks, reminderAt: reminderAt, reminderCovered: reminderCovered)) else {
+        guard let ownPub, Outbox.file.saveNow(Outbox(owner: ownPub, items: outbox, marks: marks, reminderAt: reminderAt, reminderCovered: reminderCovered, consumed: consumed.isEmpty ? nil : consumed)) else {
             outbox.removeAll { $0.id == item.id }
             marks[item.id] = nil
             LocalNotices.cancelExpiry(item.id)
@@ -1326,7 +1354,9 @@ final class PhoneModel {
     private func saveOutbox() {
         guard let ownPub else { return }
         reconcileReminder()
-        Outbox.file.save(Outbox(owner: ownPub, items: outbox, marks: marks, reminderAt: reminderAt, reminderCovered: reminderCovered))
+        settleConsumed()
+        Outbox.file.save(Outbox(owner: ownPub, items: outbox, marks: marks, reminderAt: reminderAt, reminderCovered: reminderCovered,
+                                consumed: consumed.isEmpty ? nil : consumed))
     }
 
     /// The unsent reminder's schedule, kept with the outbox so a relaunch does not reset it.
@@ -1925,8 +1955,8 @@ final class PhoneModel {
 
     /// Opens this pairing's history and draws the mirror from it before any network request. A first launch after the
     /// update moves the window cache (`MirrorCache`) in and backfills the rest from the start, merging (#405).
-    private func openHistory(owner: String) {
-        let store = HistoryStore(owner: owner)
+    private func openHistory(owner: String, adopt: Bool = false) {
+        let store = HistoryStore(owner: owner, adopt: adopt)
         history = store
         if store.isEmpty, let legacy = MirrorCache.shared.load(owner: owner) {
             restore(legacy)

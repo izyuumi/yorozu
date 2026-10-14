@@ -36,10 +36,12 @@ final class Drafts {
     }
 
     /// The drafts of this pairing; another pairing's are dropped with their files. Staged files no draft keeps go.
-    func load(owner: String) {
+    /// `adopt`: a Repair of the same host keeps the drafts for its new identity.
+    func load(owner: String, adopt: Bool = false) {
         self.owner = owner
         let saved = file.load(Saved.self)
-        all = saved?.owner == owner ? saved?.drafts ?? [:] : [:]
+        all = saved?.owner == owner || adopt ? saved?.drafts ?? [:] : [:]
+        if adopt { save() }
         // A file the system removed (or a draft from an older build) drops out rather than failing the send.
         for (key, draft) in all { all[key]?.files = draft.files.filter(\.exists) }
         StagedFile.prune(keeping: Set(all.values.flatMap(\.files).map(\.id)))
@@ -90,19 +92,29 @@ final class Drafts {
         }
     }
 
-    /// Sent: the draft goes now, on disk too, before its files are removed (#405).
-    func consume(_ key: String) {
-        guard all.removeValue(forKey: key) != nil, let owner else { return }
-        saveTask?.cancel(); saveTask = nil
-        _ = file.saveNow(Saved(owner: owner, drafts: all))
+    /// Sent: the draft goes now, on disk too, before its files are removed (#405). False when that write failed: the
+    /// caller keeps its record of the send until a later write succeeds, so the draft cannot come back.
+    @discardableResult
+    func consume(_ key: String) -> Bool {
+        guard all.removeValue(forKey: key) != nil else { return true }
+        return saveNow()
     }
 
-    /// Drafts the outbox says were sent (same key and edit time) but whose removal a crash cut short.
+    /// Drafts the outbox says were sent but whose removal did not reach the disk (a crash, a full disk): the draft at that
+    /// key is dropped when it is not newer than the sent revision; a later edit stays.
     func dropSent(_ sent: [(key: String, stamp: Int)]) {
-        let gone = sent.filter { all[$0.key]?.updated == $0.stamp }
+        let gone = sent.filter { s in all[s.key].map { $0.updated <= s.stamp } == true }
         guard !gone.isEmpty else { return }
         gone.forEach { all[$0.key] = nil }
-        save()
+        saveNow()
+    }
+
+    /// Written now; true once on disk. Before a send, so the revision on disk is the one the outbox records.
+    @discardableResult
+    func saveNow() -> Bool {
+        saveTask?.cancel(); saveTask = nil
+        guard let owner else { return false }
+        return file.saveNow(Saved(owner: owner, drafts: all))
     }
 
     /// Now: before the app goes to the background or a link navigates away.

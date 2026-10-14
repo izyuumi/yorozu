@@ -340,7 +340,9 @@ struct TopicScreen: View {
             }
             if let job {
                 Composer(text: $draft, files: $noFiles, attachments: false, working: false, enabled: model.canSend, allowsFiles: false) {
-                    guard model.send(draft, toJob: job.id, topic: topicId) else { return }
+                    model.drafts.update(draftKey, text: draft, files: [])
+                    model.drafts.saveNow()
+                    guard model.send(draft, toJob: job.id, topic: topicId, draftKey: draftKey) else { return }
                     draft = ""
                     model.drafts.clear(draftKey)
                     position.scrollTo(edge: .bottom)
@@ -354,7 +356,7 @@ struct TopicScreen: View {
                     // the host ignores once the thread exists.
                     let key = draftKey
                     model.drafts.update(key, text: draft, files: files)
-                    model.drafts.save()
+                    model.drafts.saveNow()
                     if model.send(text: draft, files: files, thread: topicId, newThread: isNew && model.topics[topicId] == nil, draftKey: key) {
                         // A draft becomes a chat only now, with its first message (#405); its files went to the outbox.
                         model.drafts.clear(key)

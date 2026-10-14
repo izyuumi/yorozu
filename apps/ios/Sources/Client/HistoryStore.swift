@@ -41,11 +41,12 @@ final class HistoryStore: @unchecked Sendable {
     private let folder: URL
 
     /// Opens (or creates) the store for `owner`, the pairing's session key; another owner's file is removed first.
-    init(owner: String) {
+    /// `adopt`: a Repair of the same host, whose file becomes the new identity's.
+    init(owner: String, adopt: Bool = false) {
         folder = clientSupportDirectory.appending(path: "History", directoryHint: .isDirectory)
         queue.sync {
             open()
-            if let held = metaString("owner"), held != owner || metaString("schema") != String(Self.schema) {
+            if let held = metaString("owner"), (held != owner && !adopt) || metaString("schema") != String(Self.schema) {
                 close()
                 try? FileManager.default.removeItem(at: folder)
                 open()
