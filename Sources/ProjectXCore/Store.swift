@@ -116,6 +116,8 @@ public actor Store {
             CREATE TRIGGER messages_activity_ai AFTER INSERT ON messages WHEN new.topicID IS NOT NULL OR new.threadID IS NOT NULL BEGIN
                 UPDATE topics SET activity=new.created WHERE id IN (new.topicID,new.threadID) AND (activity IS NULL OR activity<new.created); END;
             """) }
+        // Chats started on an iPhone before the key was lowercased never got a Gateway session.
+        migration.registerMigration("session-key-lower") { db in try db.execute(sql: "UPDATE topics SET sessionKey=lower(sessionKey) WHERE sessionKey<>lower(sessionKey)") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
         try db.write { db in
@@ -149,7 +151,8 @@ public actor Store {
     public func topic(label: String, agent: String = "yorozu", origin: String = Topic.secretary, source: String? = nil, id: String = identifier()) throws -> Topic {
         guard !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, label.count <= 80 else { throw ProjectError.invalid("Topic label must be 1–80 characters.") }
         let now = Date().timeIntervalSince1970
-        let t = Topic(id: id, label: label, sessionKey: "agent:\(agent):projectx:\(id)", created: now, origin: origin, source: source, activity: now)
+        // The Gateway lowercases session keys; an iPhone's chat id is an uppercase UUID.
+        let t = Topic(id: id, label: label, sessionKey: "agent:\(agent):projectx:\(id.lowercased())", created: now, origin: origin, source: source, activity: now)
         try db.write { try t.insert($0) }; return t
     }
     /// `thread`: the thread a user message was typed in. Any other message without one inherits the thread of the

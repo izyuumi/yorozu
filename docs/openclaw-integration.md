@@ -40,7 +40,7 @@ The transport is chosen once per launch: a launch that fell back to the CLI keep
 
 ## Sessions and runs
 
-All sessions belong to the configured agent, `[harness] agent` (default `yorozu`; the owner's `config.toml` sets `projectx`). Keys put the app namespace `projectx` after the agent, so only the agent segment changes with it: agent `projectx` keeps `agent:projectx:projectx:<topicID>`, agent `yorozu` gets `agent:yorozu:projectx:<topicID>`, and idempotency keys keep their `projectx-` prefixes for every agent. The harness refuses a worker session key outside `agent:<agent>:projectx:`, so a topic made under another agent id starts no worker. The models below are the role models from [setup.md](setup.md#models).
+All sessions belong to the configured agent, `[harness] agent` (default `yorozu`; the owner's `config.toml` sets `projectx`). Keys put the app namespace `projectx` after the agent, so only the agent segment changes with it: agent `projectx` keeps `agent:projectx:projectx:<topicID>`, agent `yorozu` gets `agent:yorozu:projectx:<topicID>`, with the topic id lowercased because the Gateway lowercases keys and echoes them back that way (an iPhone chat id is an uppercase UUID), and idempotency keys keep their `projectx-` prefixes for every agent. The harness refuses a worker session key outside `agent:<agent>:projectx:`, so a topic made under another agent id starts no worker. The models below are the role models from [setup.md](setup.md#models).
 
 | Session | Key | `sessions.create` params | Runs in it |
 |---|---|---|---|

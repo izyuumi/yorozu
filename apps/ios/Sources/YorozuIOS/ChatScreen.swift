@@ -45,7 +45,7 @@ struct ChatScreen: View {
                     timeline
                 case .topics:
                     if model.threadsSupported == true {
-                        ThreadsScreen(model: model) { navigate(mainPath) } onNewChat: { path.append(.newChat(UUID().uuidString)) }
+                        ThreadsScreen(model: model) { navigate(mainPath) } onNewChat: { path.append(.newChat(UUID().uuidString.lowercased())) }
                     } else {
                         TopicsScreen(model: model)
                     }
@@ -109,7 +109,7 @@ struct ChatScreen: View {
     private var mainPath: [ChatRoute] { listRoot ? [.main] : [] }
 
     private var threadList: some View {
-        ThreadsScreen(model: model) { navigate([.main]) } onNewChat: { navigate([.newChat(UUID().uuidString)]) }
+        ThreadsScreen(model: model) { navigate([.main]) } onNewChat: { navigate([.newChat(UUID().uuidString.lowercased())]) }
             .navigationSubtitleIfAvailable(model.shownStatus.label)
             .toolbar {
                 ToolbarItemGroup(placement: .topBarLeading) {
