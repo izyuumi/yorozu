@@ -39,8 +39,18 @@ extension AppModel {
         return HostSettingsData(mainChat: g.mainChat,mainName: g.mainChatName.isEmpty ? nil : g.mainChatName,mainArchived: g.mainChatArchived ? true : nil,
                                 mainClearedAt: mainClearedAt.map { Int($0 * 1000) })
     }
-    /// A client's change: the Main chat setting (#405).
-    func apply(hostSettings h: HostSettingsData) { setMainChat(h.mainChat) }
+    /// A client's change: the Main chat setting (#405). The refusal, if `config.toml` could not be written.
+    /// Returns once the settings are reloaded, so the answer the client gets is the value in force.
+    func apply(hostSettings h: HostSettingsData) async -> String? {
+        guard h.mainChat != (resolved?.config.general.mainChat ?? false) else { return nil }
+        guard let configFile else { return String(localized: "The host's settings file isn't available.") }
+        do {
+            let file = try Config.update(configFile) { $0.general.mainChat = h.mainChat }
+            settingsError = nil
+            await reload(.success(file))
+            return resolved?.config.general.mainChat == h.mainChat ? nil : (lastConfigError?.localizedDescription ?? String(localized: "The host couldn't apply the change."))
+        } catch { return error.localizedDescription }
+    }
     /// Rename, Archive, Unarchive and Delete on the Main chat's row (#405), on the host: the name and archive in
     /// `config.toml`, Delete through the Engine; every client hears the result in `host_settings`.
     func controlMain(_ action: ThreadControlData.Action,name: String?) async throws {

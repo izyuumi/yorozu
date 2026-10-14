@@ -135,6 +135,9 @@ public actor Store {
                 CREATE INDEX deletions_seq ON deletions(seq);
                 """)
         }
+        // Mark as Unread (owner, 2026-10-14): a flag beside the forward-only cursor, never a cursor moved back. Defaulted,
+        // so older builds' inserts keep working; the cursor's update trigger re-stamps it for clients.
+        migration.registerMigration("read-unread") { db in try db.execute(sql: "ALTER TABLE readCursor ADD COLUMN unread BOOLEAN NOT NULL DEFAULT 0") }
         migration.registerMigration("session-key-lower") { db in try db.execute(sql: "UPDATE topics SET sessionKey=lower(sessionKey) WHERE sessionKey<>lower(sessionKey)") }
         try migration.migrate(db)
         // Restart never replays uncertain work or silently declares it stopped.
@@ -277,12 +280,42 @@ public actor Store {
         try db.read { try Message.fetchAll($0,sql: "SELECT * FROM messages m WHERE role='user' AND readAt IS NULL AND (topicID IS NULL OR threadID IS NOT NULL) AND kind='conversation' AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.replyTo=m.id) AND NOT EXISTS (SELECT 1 FROM work w WHERE w.messageID=m.id) ORDER BY created,rowid") }
     }
     /// Moves a thread's read cursor forward to `message` in timeline order; false when that is not newer or unknown.
-    public func markRead(thread: String, message: String) throws -> Bool {
+    /// `explicit` (Mark as Read, or opening the chat): also clears Mark as Unread, even when the cursor is already there.
+    /// An automatic read clears it only when it moves the cursor, that is when there was something new to see. A message
+    /// outside the chat is refused.
+    public func markRead(thread: String, message: String, explicit: Bool = false) throws -> Bool {
         try db.write { db in
-            guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE id=?",arguments: [message]) == 1,
-                  try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM readCursor c JOIN messages m ON m.id=c.messageID JOIN messages n ON n.id=? WHERE c.threadID=? AND (m.created,m.rowid)>=(n.created,n.rowid)",arguments: [message,thread]) == 0 else { return false }
-            try db.execute(sql: "INSERT INTO readCursor(threadID,messageID) VALUES (?,?) ON CONFLICT(threadID) DO UPDATE SET messageID=excluded.messageID",arguments: [thread,message]); return true
+            guard try Self.inChat(db,thread: thread,message: message) else {
+                if explicit { throw ProjectError.invalid(String(localized: "That message isn't in this chat.")) }
+                return false
+            }
+            let ahead = try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM readCursor c JOIN messages m ON m.id=c.messageID JOIN messages n ON n.id=? WHERE c.threadID=? AND (m.created,m.rowid)>=(n.created,n.rowid)",arguments: [message,thread]) == 0
+            if ahead {
+                try db.execute(sql: "INSERT INTO readCursor(threadID,messageID,unread) VALUES (?,?,0) ON CONFLICT(threadID) DO UPDATE SET messageID=excluded.messageID,unread=0",arguments: [thread,message]); return true
+            }
+            guard explicit else { return false }
+            try db.execute(sql: "UPDATE readCursor SET unread=0 WHERE threadID=? AND unread<>0",arguments: [thread])
+            return db.changesCount > 0
         }
+    }
+    /// Mark as Unread (owner, 2026-10-14): the chat shows unread until it is read again; the cursor stays. A chat with
+    /// no cursor yet gets one at `message`, a message of that chat. False for a message outside the chat.
+    public func markUnread(thread: String, message: String) throws -> Bool {
+        try db.write { db in
+            guard try Self.inChat(db,thread: thread,message: message) else { throw ProjectError.invalid(String(localized: "That message isn't in this chat.")) }
+            try db.execute(sql: "INSERT INTO readCursor(threadID,messageID,unread) VALUES (?,?,1) ON CONFLICT(threadID) DO UPDATE SET unread=1 WHERE unread=0",arguments: [thread,message])
+            return true
+        }
+    }
+    /// A message of `thread`: typed or filed in it, or for `main` on the main timeline (not job-only).
+    private static func inChat(_ db: Database,thread: String,message: String) throws -> Bool {
+        let scope = thread == mainID ? "threadID IS NULL AND kind NOT IN \(jobOnlyList)" : "(threadID=? OR topicID=?)"
+        let args: [DatabaseValueConvertible] = thread == mainID ? [message] : [message,thread,thread]
+        return try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM messages WHERE id=? AND \(scope)",arguments: StatementArguments(args)) == 1
+    }
+    /// A chat's read cursor as held now: its message, Mark as Unread and change sequence; nil without one.
+    public func readState(thread: String) throws -> (message: String, unread: Bool, seq: Int64)? {
+        try db.read { db in try Row.fetchOne(db,sql: "SELECT messageID,unread,seq FROM readCursor WHERE threadID=?",arguments: [thread]).map { ($0["messageID"],$0["unread"],$0["seq"]) } }
     }
     public func readCursor(thread: String) throws -> String? { try db.read { try String.fetchOne($0,sql: "SELECT messageID FROM readCursor WHERE threadID=?",arguments: [thread]) } }
     /// History window (#313 open question 1, the union): the newest 500 main-timeline messages plus every message of the
@@ -402,12 +435,13 @@ public actor Store {
         EXISTS (SELECT 1 FROM messages q WHERE \(scope) AND ((\(asks)) OR (\(approving)))) AS asking,
         EXISTS (SELECT 1 FROM work WHERE \(work) AND \(running)) AS running,
         EXISTS (SELECT 1 FROM work WHERE \(work) AND \(blocked)) AS blocked,
-        EXISTS (SELECT 1 FROM work WHERE \(work) AND state IN \(active)) AS open
+        EXISTS (SELECT 1 FROM work WHERE \(work) AND state IN \(active)) AS open,
+        COALESCE((SELECT unread FROM readCursor WHERE threadID=\(cursor)),0) AS marked
         """
     }
     private static func row(_ db: Database,_ r: Row,topic: Topic) throws -> ThreadRow {
         let last: Message? = try (r["lastID"] as String?).flatMap { try Message.fetchOne(db,key: $0) }
-        return ThreadRow(topic: topic,state: r["current"],lastMessageID: r["lastID"],unread: r["unread"],last: last,attention: (r["asking"] as Bool) || (r["blocked"] as Bool),running: r["running"],openWork: r["open"])
+        return ThreadRow(topic: topic,state: r["current"],lastMessageID: r["lastID"],unread: r["unread"],last: last,attention: (r["asking"] as Bool) || (r["blocked"] as Bool),running: r["running"],openWork: r["open"],markedUnread: r["marked"])
     }
     /// One page of the thread list, newest last visible message first (#405): threads of both origins, never a job's or a
     /// deleted one, archived ones only with `archived`. `after` is the previous page's `next`; `limit` 1–200.

@@ -243,10 +243,13 @@ struct TopicScreen: View {
             if let pageAround, model.state == .paired, model.page?.messageId != pageAround { await model.loadPage(around: pageAround, thread: topicId) }
         }
         // A thread's own read cursor: its newest stored message while it is on screen and the app is active.
+        // The first read of an opening is explicit: it also clears Mark as Unread, even with the cursor already there.
         .onChange(of: readTarget, initial: true) { _, id in
-            guard let id, id != sentRead, id != model.threadReads[topicId]?.messageId else { return }
+            guard let id else { return }
+            let opening = sentRead == nil
+            guard opening || (id != sentRead && id != model.threadReads[topicId]?.messageId) else { return }
             sentRead = id
-            Task { await model.markRead(id, thread: topicId) }
+            Task { await model.markRead(id, thread: topicId, explicit: opening) }
         }
         .yorozuBottomBar { bottomBar(job: job, threads: threads, working: tasks.contains(where: \.isActive)) }
         .navigationTitle(job?.name ?? model.threadName(topicId) ?? (isNew ? String(localized: "New chat") : ""))

@@ -166,6 +166,11 @@ private struct ChatRowButton: View {
         let ref = ThreadRef(id: row.id, name: row.shownName, archived: row.archived, running: row.openWork)
         Button { open(row.isMain ? .main : .topic(row.id, focus: nil)) } label: { ChatRowLabel(row: row, refusal: model.threadRefusals[row.id]) }
             .foregroundStyle(.primary)
+            // Left to right (owner, 2026-10-14): Mark as Read or Unread, from the chat's unread state whatever its dot.
+            // Offered only while the host can take it; orange (a question, approval or blocker) stays until resolved.
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                if model.canMarkRead, row.time > 0 { ReadMarkButton(model: model, row: row) }
+            }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 do {
                     Button(row.archived ? String(localized: "Unarchive") : String(localized: "Archive"),
@@ -175,8 +180,29 @@ private struct ChatRowButton: View {
                     .tint(.indigo)
                 }
             }
-            .contextMenu { ThreadMenu(model: model, ref: ref, renaming: $renaming, deleting: $deleting) }
+            .contextMenu {
+                ReadMarkButton(model: model, row: row).disabled(!model.canMarkRead || row.time == 0)
+                ThreadMenu(model: model, ref: ref, renaming: $renaming, deleting: $deleting)
+            }
             .disabled(model.threadControls.values.contains(row.id))
+    }
+}
+
+/// Mark as Read or Mark as Unread for one row, by its unread state.
+struct ReadMarkButton: View {
+    let model: PhoneModel
+    let row: ChatRow
+
+    var body: some View {
+        Button(row.unread ? String(localized: "Mark as Read") : String(localized: "Mark as Unread"),
+               systemImage: row.unread ? "envelope.open" : "envelope.badge") {
+            guard let message = row.thread?.lastMessageId ?? (row.isMain ? model.timeline.last(where: { $0.seq != nil })?.id : nil) else { return }
+            Task {
+                if row.unread { await model.markRead(message, thread: row.id, explicit: true) }
+                else { await model.markUnread(thread: row.id, messageId: message) }
+            }
+        }
+        .tint(.blue)
     }
 }
 
@@ -190,14 +216,14 @@ struct ChatRowLabel: View {
         HStack(alignment: .top, spacing: LayoutMetrics.stack) {
             VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                 Text(row.shownName).fontWeight(.semibold).lineLimit(1)
-                Text(row.preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                Text(row.shownPreview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                 if let refusal { Text(refusal).font(.footnote).foregroundStyle(YorozuPalette.warning) }
             }
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: LayoutMetrics.inner) {
                 HStack(spacing: LayoutMetrics.tight) {
                     if row.running { ProgressView().controlSize(.mini) }
-                    Text(ChatTime.label(row.time)).font(.footnote).foregroundStyle(.secondary)
+                    if row.time > 0 { Text(ChatTime.label(row.time)).font(.footnote).foregroundStyle(.secondary) }
                 }
                 if let dot = row.dot {
                     Circle().fill(dot == .attention ? Color.orange : Color.blue).frame(width: Metrics.dot, height: Metrics.dot)
@@ -212,11 +238,11 @@ struct ChatRowLabel: View {
     static func label(_ row: ChatRow) -> String {
         var parts = [row.shownName]
         if row.dot == .attention { parts.append(String(localized: "Needs your attention")) }
-        else if row.dot == .unread { parts.append(String(localized: "Unread")) }
+        if row.unread { parts.append(String(localized: "Unread")) }
         if row.running { parts.append(String(localized: "Working")) }
         if row.archived { parts.append(String(localized: "Archived")) }
-        parts.append(row.preview)
-        parts.append(ChatTime.label(row.time))
+        parts.append(row.shownPreview)
+        if row.time > 0 { parts.append(ChatTime.label(row.time)) }
         return parts.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }

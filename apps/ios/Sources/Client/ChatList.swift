@@ -17,12 +17,16 @@ struct ChatRow: Identifiable, Equatable {
     /// The last visible message's time, epoch ms; what orders the list.
     var time: Int
     var dot: Dot?
+    /// Unread, whatever the dot shows (orange wins over blue): what Mark as Read and Mark as Unread act on.
+    var unread = false
     /// Work is running: a small spinner by the time, whatever the dot.
     var running: Bool
     var archived: Bool
     /// Work not yet in a final state, running or not (an uncertain run, a stop not confirmed): Delete is Stop and Delete.
     var openWork = false
     var isMain: Bool { id == ThreadData.mainId }
+    /// The subtitle: the last message, or for a Main chat with none yet, a note (nothing is stored for it).
+    var shownPreview: String { preview.isEmpty && isMain ? String(localized: "No messages yet") : preview }
     /// The name as the list shows it: the Main chat's default unless it was renamed.
     var shownName: String { isMain && name.isEmpty ? String(localized: "Main chat") : name }
     var thread: ThreadData?
@@ -36,6 +40,9 @@ struct ChatRow: Identifiable, Equatable {
 }
 
 extension PhoneModel {
+    /// Mark as Read and Unread act now: linked, and the host takes them (`read-marks-v1`; a 0.7.0 (24) host does not).
+    var canMarkRead: Bool { state == .paired && readMarksSupported == true }
+
     /// A thread's row from either list, when loaded.
     func thread(_ id: String) -> ThreadData? { threadList.first { $0.id == id } ?? archivedThreads.first { $0.id == id } }
 
@@ -50,8 +57,9 @@ extension PhoneModel {
             .filter { !jobTopicIds.contains($0.id) && !deletedThreads.contains($0.id) }
             .map { row(for: $0, known: known) }
         // The Main chat is a row like any other (#405): its name, and in the archived list once archived.
-        // A deleted Main chat leaves the list until its next message.
-        if mainChat == true, (hostSettings?.mainArchived == true) == archived, mainRow?.lastMessageAt != nil || !timeline.isEmpty {
+        // On, Main is a row even before its first message; one whose history was deleted leaves the list until its next.
+        if mainChat == true, (hostSettings?.mainArchived == true) == archived,
+           mainRow?.lastMessageAt != nil || !timeline.isEmpty || hostSettings?.mainClearedAt == nil {
             let main = mainRow ?? ThreadData(id: ThreadData.mainId, name: "", origin: "main", sourceMessageId: nil, summary: nil, created: 0,
                                              lastActivity: 0, archivedAt: nil, state: nil, lastMessageId: timeline.last?.id, unread: 0,
                                              lastMessageAt: timeline.last?.ts, preview: timeline.last?.shownPreview)
@@ -78,10 +86,17 @@ extension PhoneModel {
 
     private func row(for t: ThreadData, known: Bool) -> ChatRow {
         let preview = ChatRow.plain(t.previewNotice.map { NoticeText.text(code: $0.code, params: $0.params, fallback: t.preview ?? "") } ?? t.preview ?? "")
-        // Read here a moment ago: the host's next row agrees.
-        let readHere = t.lastMessageId != nil && sentReads[t.id] == t.lastMessageId
-        let dot: ChatRow.Dot? = t.attention == true ? .attention : (t.unread > 0 && !readHere ? .unread : nil)
-        return ChatRow(id: t.id, name: t.name, preview: preview, time: t.lastMessageAt ?? t.created, dot: dot,
+        // Read up to its last message: here a moment ago, or by the held cursor record (any device's, durable), which a
+        // stale row's count never overrides.
+        let held = t.id == ThreadData.mainId ? readCursor : threadReads[t.id]
+        let heldAt = held.flatMap { h in bubbles.first { $0.id == h.messageId }?.ts }
+        let readHere = t.lastMessageId != nil && (sentReads[t.id] == t.lastMessageId || held?.messageId == t.lastMessageId
+            || (heldAt != nil && t.lastMessageAt != nil && heldAt! >= t.lastMessageAt!))
+        // The mark from the cursor record (or an action pending here), which another device's mark also moves; the row's
+        // own flag only before any record is held.
+        let unread = (markedUnread(t.id) ?? (t.markedUnread == true)) || (t.unread > 0 && !readHere && pendingMarks[t.id]?.unread != false)
+        let dot: ChatRow.Dot? = t.attention == true ? .attention : (unread ? .unread : nil)
+        return ChatRow(id: t.id, name: t.name, preview: preview, time: t.lastMessageAt ?? t.created, dot: dot, unread: unread,
                        running: known && t.running == true, archived: t.archivedAt != nil, openWork: t.openWork == true || t.running == true, thread: t)
     }
 

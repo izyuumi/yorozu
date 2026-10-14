@@ -72,7 +72,8 @@ public struct Amendment: Codable, FetchableRecord, PersistableRecord, Identifiab
     public var instruction: String; public var state: String
 }
 /// The last message seen in a thread; it only moves forward (`Store.markRead`).
-public struct ReadCursor: Codable, FetchableRecord, Sendable, Equatable { public var threadID: String; public var messageID: String }
+/// `unread` (#405 follow-up): the user marked the chat unread; reading it again, or Mark as Read, clears it.
+public struct ReadCursor: Codable, FetchableRecord, Sendable, Equatable { public var threadID: String; public var messageID: String; public var unread = false }
 /// One row with the change sequence of its last insert or update (`changeSeq`, bumped by triggers).
 public struct Change: Sendable {
     /// `deletion` (#405): a record removed for good (`kind` `message`, `task`, `worker_event` or `amendment`).
@@ -383,9 +384,10 @@ public struct ThreadRow: Sendable, Equatable {
     /// #405: the last visible message (the preview and the list's order), whether the chat needs the user (an unanswered
     /// question or a blocker; reading never clears it) and whether work is running in it.
     /// `openWork`: work not in a final state (running, uncertain, or a stop not confirmed): Delete must stop it first.
-    public var last: Message?; public var attention = false; public var running = false; public var openWork = false
-    public init(topic: Topic, state: String?, lastMessageID: String?, unread: Int, last: Message? = nil, attention: Bool = false, running: Bool = false, openWork: Bool = false) {
-        self.topic = topic; self.state = state; self.lastMessageID = lastMessageID; self.unread = unread; self.last = last; self.attention = attention; self.running = running; self.openWork = openWork
+    /// `markedUnread`: Mark as Unread is on (owner, 2026-10-14); the chat reads as unread whatever `unread` counts.
+    public var last: Message?; public var attention = false; public var running = false; public var openWork = false; public var markedUnread = false
+    public init(topic: Topic, state: String?, lastMessageID: String?, unread: Int, last: Message? = nil, attention: Bool = false, running: Bool = false, openWork: Bool = false, markedUnread: Bool = false) {
+        self.topic = topic; self.state = state; self.lastMessageID = lastMessageID; self.unread = unread; self.last = last; self.attention = attention; self.running = running; self.openWork = openWork; self.markedUnread = markedUnread
     }
     /// The list's order: newest last visible message first (else when the chat began), then the id.
     public var sortAt: Double { last?.created ?? topic.created }

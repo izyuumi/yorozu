@@ -228,7 +228,7 @@ next `.paired` catches up. A device that had finished the exchange stays served 
 
 The host answers steps 1 and 3 on its own actor, never waiting on the Engine (15 s deadline,
 `RelayClient.swift`). Both ends advertise `PeerInfoData.local`: protocol 2 (`protocolMin` =
-`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1","jobs-v1","push-preview-v1","threads-v1","history-v1","host-settings-v1"]`,
+`protocolMax` = 2), capabilities `["peer-info","host-name","channel-sequence","yorozu-v2","direct-v1","attachments-v1","readiness-v1","jobs-v1","push-preview-v1","threads-v1","history-v1","host-settings-v1","read-marks-v1"]`,
 required `["channel-sequence","yorozu-v2"]`. A v1 peer on either side therefore ends in "Update
 required". Until a device's exchange succeeds, the host passes none of its other events to the
 backend; a known device whose last result on file is compatible counts as succeeded (Mac-side
@@ -890,6 +890,17 @@ Capability `ThreadData.historyCapability` (#405, owner 2026-10-14). Additive wit
   `main`, Rename and Archive set the Main chat's name and archive (`config.toml`) and Delete stops the work Main started,
   then deletes Main's messages and that work.
 
+## Read marks (`read-marks-v1`)
+
+`ReadStateData.marksCapability` (owner, 2026-10-14). `read_state` from a client gains `unread`: `true` marks the chat
+unread (the cursor stays; `messageId` must be a message of that chat), `false` is an explicit read (Mark as Read, or
+opening the chat) that also clears the mark; absent is the automatic read, which clears it only by moving the cursor.
+With `requestId`, the host answers that client with a top-level `read_state` naming the request, with `error` when it
+refused (a message outside the chat, an unreadable store). The cursor record (`read_state` inside `sync_delta`) carries
+`unread: true` while the mark is on, so every client shows it; a client keeps its own action's value only until the
+answer and the record that follows. A host without the capability ignores `unread`; a client offers the actions only to
+a host that takes it.
+
 ## Host settings (`host-settings-v1`)
 
 `host_settings` (`HostSettingsData`), both ways: host -> client after each compatible handshake and on every change;
@@ -900,6 +911,10 @@ client -> host to change `mainChat`, applied in `config.toml` (`[general] main_c
  "data":{"mainChat":false,"mainName":"Home","mainArchived":true,"mainClearedAt":1760000000000}}
 ```
 
+- A client's change carries `requestId`; the host applies it (writing `config.toml` and reloading) and only then answers
+  that client with the value in force, the same `requestId` and `error` when it was refused. The client shows the switch
+  pending until that answer (15 s at most), then the refusal if any. A host of the release before `read-marks-v1` (0.7.0 (24)) never answers by `requestId`; a
+  client sees that capability missing and ends the pending switch when the broadcast value is the one it asked for.
 - `mainChat`: the global Main chat and its routing (off by default). While off the host refuses a `message` for the main
   timeline with `admission_status rejected` and "The Main chat is off on the host. Turn it on in Settings, or send this in
   a chat.", so the client keeps it as Not delivered with Resend.

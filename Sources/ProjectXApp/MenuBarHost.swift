@@ -86,7 +86,7 @@ import SwiftUI
             let item = menu.addItem(withTitle: String(localized: title), action: enabled ? action : nil, keyEquivalent: key)
             item.target = self; if let on { item.state = on ? .on : .off }
         }
-        add("Open Quick Chat", #selector(openChat))
+        add(model?.mainChat == true ? String.LocalizationValue("Open Main Chat") : String.LocalizationValue("Open Quick Chat"), #selector(openChat))
         // A client Mac hosts nothing: no pairing of devices, direct listener or keep-awake of its own.
         if model?.isClient != true {
             add("Pair a Client Device…", #selector(pair), enabled: model?.relay != nil)
