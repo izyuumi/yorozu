@@ -227,6 +227,15 @@ final class PhoneModel {
     private(set) var hostSettings: HostSettingsData?
     /// The newest message this device marked read per chat, so its row's unread dot goes before the host's row says so.
     private(set) var sentReads: [String: String] = [:]
+    /// Mark as Unread or Read sent from here, shown until the host's next row agrees.
+    private(set) var markedUnread: [String: Bool] = [:]
+    /// A Main chat switch sent from here and not answered yet, and the host's last refusal of one.
+    private(set) var mainChatPending: Bool?
+    private(set) var mainChatError: String?
+    /// The request the pending switch waits for: only its own answer ends it.
+    @ObservationIgnored private var mainChatRequest: String?
+    /// The host takes Mark as Read and Unread (`read-marks-v1`); nil until it has said.
+    private(set) var readMarksSupported: Bool?
     /// The Main chat's row from the host while it is on (`ThreadsPageData.main`), cached.
     private(set) var mainRow: ThreadData?
     /// Thread pages being gathered for a refresh, so the shown list is replaced only when its last page is in.
@@ -597,6 +606,11 @@ final class PhoneModel {
         deletedMessages = []
         deletedRecords = []
         sentReads = [:]
+        markedUnread = [:]
+        mainChatRequest = nil
+        readMarksSupported = nil
+        mainChatPending = nil
+        mainChatError = nil
         reminderAt = nil
         reminderCovered = nil
         if !keep {
@@ -881,6 +895,7 @@ final class PhoneModel {
                 }
                 historySupported = capabilities.contains(ThreadData.historyCapability)
                 hostSettingsSupported = capabilities.contains(HostSettingsData.capability)
+                readMarksSupported = capabilities.contains(ReadStateData.marksCapability)
                 saveMeta()
             }
         case .failed(let reason):
@@ -1512,11 +1527,34 @@ final class PhoneModel {
 
     /// Moves the Mac's read cursor to the newest message seen, of the main timeline or of one thread (`threads-v1`).
     /// Only while `.paired`; not queued.
-    func markRead(_ messageId: String, thread: String = "main") async {
-        guard state == .paired else { return }
+    /// `explicit` (opening the chat, or Mark as Read): also clears Mark as Unread on the host (owner, 2026-10-14).
+    @discardableResult
+    func markRead(_ messageId: String, thread: String = "main", explicit: Bool = false) async -> Bool {
+        guard state == .paired else { return false }
         if thread == "main" { localRead = messageId; updateBadge() }
+        // Explicit only to a host that takes it; an older one gets the plain read it always did.
+        let mark: Bool? = explicit && readMarksSupported == true ? false : nil
+        guard await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId, unread: mark))) else {
+            if explicit { threadRefusals[thread] = String(localized: "Couldn't reach the host. Try again.") }
+            return false
+        }
         sentReads[thread] = messageId
-        _ = await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId)))
+        if mark != nil { markedUnread[thread] = false }
+        return true
+    }
+
+    /// Mark as Unread (owner, 2026-10-14): the host keeps the flag and every client shows it; the cursor stays. Needs
+    /// `.paired`, like the other chat actions; false when it did not go. `messageId`: a message of that chat.
+    @discardableResult
+    func markUnread(thread: String, messageId: String) async -> Bool {
+        guard state == .paired, readMarksSupported == true else { return false }
+        guard await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId, unread: true))) else {
+            threadRefusals[thread] = String(localized: "Couldn't reach the host. Try again.")
+            return false
+        }
+        sentReads[thread] = nil
+        markedUnread[thread] = true
+        return true
     }
 
     // MARK: Threads (`threads-v1`, owner 2026-10-13)
@@ -1566,6 +1604,8 @@ final class PhoneModel {
         }
         gathering[request.archived] = nil
         if request.archived { archivedThreads = rows; archivedNext = nil } else { threadList = rows; threadsNext = nil }
+        // A mark sent from here stays shown until the host's row for that chat says the same.
+        for row in rows where markedUnread[row.id] == (row.markedUnread == true) { markedUnread[row.id] = nil }
         saveMeta()
     }
 
@@ -1594,8 +1634,23 @@ final class PhoneModel {
     /// Turns the host's Main chat on or off (`host-settings-v1`): only while `.paired`; the host's answer is what shows.
     @discardableResult
     func setMainChat(_ on: Bool) -> Bool {
-        guard state == .paired, hostSettingsSupported == true else { return false }
-        Task { _ = await sendNow(.hostSettings(HostSettingsData(mainChat: on))) }
+        guard state == .paired, hostSettingsSupported == true else {
+            mainChatError = String(localized: "Connect to the host to change this.")
+            return false
+        }
+        let request = UUID().uuidString
+        mainChatPending = on
+        mainChatRequest = request
+        mainChatError = nil
+        Task {
+            guard await sendNow(.hostSettings(HostSettingsData(mainChat: on, requestId: request))) else {
+                if mainChatRequest == request { mainChatPending = nil; mainChatRequest = nil; mainChatError = String(localized: "Couldn't reach the host. Try again.") }
+                return
+            }
+            // No answer to this request in 15 s: say so rather than leave the switch waiting.
+            try? await Task.sleep(for: .seconds(15))
+            if mainChatRequest == request { mainChatPending = nil; mainChatRequest = nil; mainChatError = String(localized: "The host didn't answer. Try again.") }
+        }
         return true
     }
 
@@ -1719,7 +1774,15 @@ final class PhoneModel {
             receive(result)
         case .textSlice(let slice):
             receive(slice)
-        case .hostSettings(let settings):
+        case .hostSettings(var settings):
+            // An answer to this device's change: the refusal shows by the switch; the value is the host's either way.
+            if let request = settings.requestId, request == mainChatRequest {
+                mainChatPending = nil
+                mainChatRequest = nil
+                mainChatError = settings.error
+            }
+            settings.error = nil
+            settings.requestId = nil
             if hostSettings != settings {
                 let refresh = mainChat != settings.mainChat
                 mainChat = settings.mainChat

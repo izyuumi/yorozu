@@ -44,7 +44,8 @@ extension AppModel {
         func row(_ r: ThreadRow) -> ChatRow {
             let preview = r.last.map { m in m.notice.map { NoticeText.text(code: $0.code,params: $0.params,fallback: m.body) } ?? m.body }
                 .map { ChatRow.plain(EngineBridge.excerpt($0)) } ?? ""
-            return ChatRow(id: r.topic.id,name: r.topic.label,preview: preview,time: ms(r.sortAt),dot: r.attention ? .attention : r.unread > 0 ? .unread : nil,
+            let unread = r.markedUnread || r.unread > 0
+            return ChatRow(id: r.topic.id,name: r.topic.label,preview: preview,time: ms(r.sortAt),dot: r.attention ? .attention : unread ? .unread : nil,unread: unread,
                            running: r.running,archived: r.topic.archivedAt != nil,openWork: r.openWork)
         }
         var rows = (archived ? archivedThreads : threads).filter { !jobTopics.contains($0.topic.id) }.map(row)
@@ -116,11 +117,34 @@ extension AppModel {
     }
 
     /// The thread's read cursor moves to the newest message shown (forward only, in the Store).
-    func markRead(_ id: String,thread: String) {
-        if let client { Task { await client.markRead(id,thread: thread) }; return }
+    /// `explicit` (opening the chat, Mark as Read): also clears Mark as Unread (owner, 2026-10-14).
+    func markRead(_ id: String,thread: String,explicit: Bool = false) {
+        if let client { Task { await client.markRead(id,thread: thread,explicit: explicit) }; return }
         guard let store else { return }
-        Task { if (try? await store.markRead(thread: thread,message: id)) == true { await loadThreads() } }
+        Task { if (try? await store.markRead(thread: thread,message: id,explicit: explicit)) == true { await loadThreads() } }
     }
+
+    /// The chat list's Mark as Read and Mark as Unread (owner, 2026-10-14), on the host's store or through the client's
+    /// host. Never touches orange: questions, approvals and blockers clear only when resolved. A client needs its host
+    /// connected; false when it could not act (the row offers nothing then).
+    @discardableResult
+    func setUnread(_ row: ChatRow,_ unread: Bool) async -> Bool {
+        guard let message = row.thread?.lastMessageId ?? lastMessageID(row) else { return false }
+        if let client { return unread ? await client.markUnread(thread: row.id,messageId: message) : await client.markRead(message,thread: row.id,explicit: true) }
+        guard let store else { return false }
+        let done = (try? await (unread ? store.markUnread(thread: row.id,message: message) : store.markRead(thread: row.id,message: message,explicit: true))) != nil
+        await loadThreads(); await loadThreads(archived: true)
+        return done
+    }
+
+    /// The newest message of a chat on this host (a row without the client's thread data).
+    private func lastMessageID(_ row: ChatRow) -> String? {
+        if row.isMain { return mainThreadRow?.lastMessageID }
+        return (threads + archivedThreads).first { $0.topic.id == row.id }?.lastMessageID
+    }
+
+    /// Whether Mark as Read and Unread can act now: always on the host; on a client, while its host is connected.
+    var canMarkRead: Bool { client.map { $0.state == .paired && $0.historySupported == true } ?? true }
 
     /// A `yorozu://message/<id>` link (the secretary's citations) or a tapped notification: the message in its place. On the
     /// main timeline the popover or the window's Main scrolls to it; in a thread the chat window opens there.

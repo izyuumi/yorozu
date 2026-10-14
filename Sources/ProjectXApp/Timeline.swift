@@ -64,6 +64,8 @@ struct MainChat: View {
     @State private var height: CGFloat = 0
     /// Files are being dragged over the chat.
     @State private var dropping = false
+    /// This opening's first read has gone, explicitly (it clears Mark as Unread).
+    @State private var openedRead = false
     private enum Metrics {
         /// How near the end still counts as the bottom.
         static let bottomSlack: CGFloat = 24
@@ -87,7 +89,7 @@ struct MainChat: View {
         .onDrop(of: [.fileURL,.image],isTargeted: $dropping) { model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged) && model.attach(dropped: $0) }
         .overlay { if dropping { RoundedRectangle(cornerRadius: Metrics.dropRadius,style: .continuous).strokeBorder(Color.accentColor,lineWidth: Metrics.dropRing).padding(Metrics.dropRing).allowsHitTesting(false) } }
         .onChange(of: model.popoverShown,initial: true) { _,shown in
-            guard shown else { return }
+            guard shown else { openedRead = false; return }
             unreadFrom = TimelineItem.firstUnread(model.timeline,all: model.snapshot.messages,cursor: model.readCursor)
             model.onBottomChanged?(atBottom); markSeen()
         }
@@ -155,7 +157,7 @@ struct MainChat: View {
         guard atBottom, let last = model.timeline.last?.id else { return }
         seenID = last
         // May repeat an id; AttentionCenter treats it as idempotent and markRead skips the cursor it already holds.
-        if model.popoverShown { model.onSeen?(last); model.markRead(last) }
+        if model.popoverShown { model.onSeen?(last); model.markRead(last,explicit: !openedRead); openedRead = true }
     }
 
     private func send() {

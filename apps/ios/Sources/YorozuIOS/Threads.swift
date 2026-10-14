@@ -166,6 +166,11 @@ private struct ChatRowButton: View {
         let ref = ThreadRef(id: row.id, name: row.shownName, archived: row.archived, running: row.openWork)
         Button { open(row.isMain ? .main : .topic(row.id, focus: nil)) } label: { ChatRowLabel(row: row, refusal: model.threadRefusals[row.id]) }
             .foregroundStyle(.primary)
+            // Left to right (owner, 2026-10-14): Mark as Read or Unread, from the chat's unread state whatever its dot.
+            // Offered only while the host can take it; orange (a question, approval or blocker) stays until resolved.
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                if model.canMarkRead { ReadMarkButton(model: model, row: row) }
+            }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 do {
                     Button(row.archived ? String(localized: "Unarchive") : String(localized: "Archive"),
@@ -175,9 +180,35 @@ private struct ChatRowButton: View {
                     .tint(.indigo)
                 }
             }
-            .contextMenu { ThreadMenu(model: model, ref: ref, renaming: $renaming, deleting: $deleting) }
+            .contextMenu {
+                ReadMarkButton(model: model, row: row).disabled(!model.canMarkRead)
+                ThreadMenu(model: model, ref: ref, renaming: $renaming, deleting: $deleting)
+            }
             .disabled(model.threadControls.values.contains(row.id))
     }
+}
+
+/// Mark as Read or Mark as Unread for one row, by its unread state.
+struct ReadMarkButton: View {
+    let model: PhoneModel
+    let row: ChatRow
+
+    var body: some View {
+        Button(row.unread ? String(localized: "Mark as Read") : String(localized: "Mark as Unread"),
+               systemImage: row.unread ? "envelope.open" : "envelope.badge") {
+            guard let message = row.thread?.lastMessageId ?? (row.isMain ? model.timeline.last(where: { $0.seq != nil })?.id : nil) else { return }
+            Task {
+                if row.unread { await model.markRead(message, thread: row.id, explicit: true) }
+                else { await model.markUnread(thread: row.id, messageId: message) }
+            }
+        }
+        .tint(.blue)
+    }
+}
+
+extension PhoneModel {
+    /// Mark as Read and Unread act now: linked and the host takes them.
+    var canMarkRead: Bool { state == .paired && readMarksSupported == true }
 }
 
 struct ChatRowLabel: View {
@@ -212,7 +243,7 @@ struct ChatRowLabel: View {
     static func label(_ row: ChatRow) -> String {
         var parts = [row.shownName]
         if row.dot == .attention { parts.append(String(localized: "Needs your attention")) }
-        else if row.dot == .unread { parts.append(String(localized: "Unread")) }
+        if row.unread { parts.append(String(localized: "Unread")) }
         if row.running { parts.append(String(localized: "Working")) }
         if row.archived { parts.append(String(localized: "Archived")) }
         parts.append(row.preview)

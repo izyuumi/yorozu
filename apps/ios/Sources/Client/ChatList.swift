@@ -17,6 +17,8 @@ struct ChatRow: Identifiable, Equatable {
     /// The last visible message's time, epoch ms; what orders the list.
     var time: Int
     var dot: Dot?
+    /// Unread, whatever the dot shows (orange wins over blue): what Mark as Read and Mark as Unread act on.
+    var unread = false
     /// Work is running: a small spinner by the time, whatever the dot.
     var running: Bool
     var archived: Bool
@@ -78,10 +80,11 @@ extension PhoneModel {
 
     private func row(for t: ThreadData, known: Bool) -> ChatRow {
         let preview = ChatRow.plain(t.previewNotice.map { NoticeText.text(code: $0.code, params: $0.params, fallback: t.preview ?? "") } ?? t.preview ?? "")
-        // Read here a moment ago: the host's next row agrees.
+        // Read or marked here a moment ago: the host's next row agrees.
         let readHere = t.lastMessageId != nil && sentReads[t.id] == t.lastMessageId
-        let dot: ChatRow.Dot? = t.attention == true ? .attention : (t.unread > 0 && !readHere ? .unread : nil)
-        return ChatRow(id: t.id, name: t.name, preview: preview, time: t.lastMessageAt ?? t.created, dot: dot,
+        let unread = markedUnread[t.id] ?? (t.markedUnread == true || (t.unread > 0 && !readHere))
+        let dot: ChatRow.Dot? = t.attention == true ? .attention : (unread ? .unread : nil)
+        return ChatRow(id: t.id, name: t.name, preview: preview, time: t.lastMessageAt ?? t.created, dot: dot, unread: unread,
                        running: known && t.running == true, archived: t.archivedAt != nil, openWork: t.openWork == true || t.running == true, thread: t)
     }
 

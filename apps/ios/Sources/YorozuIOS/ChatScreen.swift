@@ -34,6 +34,8 @@ struct ChatScreen: View {
     /// The last message this phone sent as read.
     @State private var sentRead: String?
     @State private var launched = false
+    /// The Main chat's first read since it was opened has gone (explicit); reset whenever it closes.
+    @State private var mainOpenedRead = false
     @Environment(\.scenePhase) private var scenePhase
 
     /// How far above the end the view still counts as at the bottom.
@@ -52,7 +54,7 @@ struct ChatScreen: View {
             }
             .badge(model.jobs.contains(where: \.needsAttention) ? Self.dotBadge : nil)
             Tab("Settings", systemImage: "gearshape", value: AppSection.settings) {
-                SettingsScreen(model: model, onRepair: onRepair)
+                SettingsScreen(model: model, onRepair: onRepair) { openChats([.main]) }
             }
             // The system's search tab (#405): its field and transitions are the platform's.
             Tab(value: AppSection.search, role: .search) {
@@ -71,7 +73,7 @@ struct ChatScreen: View {
             if phase == .active { unreadAfter = model.readCursor?.messageId }
         }
         .onChange(of: readTarget, initial: true) { _, id in markRead(id) }
-        .onChange(of: mainShown, initial: true) { _, shown in model.mainShown = shown }
+        .onChange(of: mainShown, initial: true) { _, shown in model.mainShown = shown; if !shown { mainOpenedRead = false } }
         .onDisappear { model.mainShown = false }
         .task(id: model.pushOpen?.id) { await openPush() }
         // Opening the app starts a new chat (#405), not the last screen; earlier drafts stay in the list.
@@ -519,7 +521,15 @@ struct ChatScreen: View {
 
     /// Forward only: never a message at or before the Mac's cursor.
     private func markRead(_ id: String?) {
-        guard let id, id != sentRead, id != model.readCursor?.messageId else { return }
+        guard let id else { return }
+        // The first read of an opening of the Main chat is explicit: it clears Mark as Unread at an equal cursor too.
+        if !mainOpenedRead {
+            mainOpenedRead = true
+            sentRead = id
+            Task { await model.markRead(id, explicit: true) }
+            return
+        }
+        guard id != sentRead, id != model.readCursor?.messageId else { return }
         if let cursor = model.readCursor?.messageId,
            let held = model.timeline.firstIndex(where: { $0.id == cursor }),
            let new = model.timeline.firstIndex(where: { $0.id == id }), new <= held { return }
@@ -676,6 +686,7 @@ private struct EmptyChat: View {
 private struct SettingsScreen: View {
     let model: PhoneModel
     let onRepair: () -> Void
+    var onOpenMain: () -> Void = {}
 
     @State private var copied = false
     @State private var notifications: UNAuthorizationStatus?
@@ -697,15 +708,23 @@ private struct SettingsScreen: View {
                 }
                 // Host-wide (#405): one setting every client shares; the host's value shows, cached offline.
                 Section {
-                    Toggle(isOn: Binding(get: { model.mainChat == true }, set: { model.setMainChat($0) })) {
-                        Text("Main chat")
+                    // The host's value shows; while a change waits for its answer, that value with a spinner.
+                    Toggle(isOn: Binding(get: { model.mainChatPending ?? (model.mainChat == true) }, set: { model.setMainChat($0) })) {
+                        HStack(spacing: LayoutMetrics.inner) {
+                            Text("Main chat")
+                            if model.mainChatPending != nil { ProgressView().controlSize(.small).accessibilityLabel("Applying on the host") }
+                        }
                         Text("One conversation where the secretary files work into chats across topics. Off: every chat stands on its own. Its history stays either way.")
                     }
-                    .disabled(model.state != .paired || model.hostSettingsSupported != true || model.mainChat == nil)
+                    .disabled(model.state != .paired || model.hostSettingsSupported != true || model.mainChat == nil || model.mainChatPending != nil)
+                    if model.mainChat == true {
+                        Button("Open Main chat", systemImage: "bubble.left") { onOpenMain() }
+                    }
                 } header: {
                     Text("Host")
                 } footer: {
-                    if model.state != .paired { Text("Changes need the host connected.") }
+                    if let error = model.mainChatError { Text(error).foregroundStyle(YorozuPalette.warning) }
+                    else if model.state != .paired { Text("Changes need the host connected.") }
                 }
                 Section {
                     Picker(selection: Binding(get: { LocalNotices.reminderMinutes }, set: { model.setReminder(minutes: $0); reminder = $0 })) {

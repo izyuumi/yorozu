@@ -188,7 +188,13 @@ struct ChatWindow: View {
             }
             ForEach(rows) { row in
                 MacChatRow(row: row,refusal: model.client?.threadRefusals[row.id]).tag(row.isMain ? Self.main : row.id)
-                    .contextMenu { ThreadActions(model: model,row: row,rename: start(renaming:),delete: { deleting = $0 }) }
+                    .contextMenu {
+                        MacReadMark(model: model,row: row).disabled(!model.canMarkRead)
+                        Divider()
+                        ThreadActions(model: model,row: row,rename: start(renaming:),delete: { deleting = $0 })
+                    }
+                    // Left to right (owner, 2026-10-14): Mark as Read or Unread; never clears orange.
+                    .swipeActions(edge: .leading,allowsFullSwipe: true) { if model.canMarkRead { MacReadMark(model: model,row: row) } }
                     .swipeActions(edge: .trailing,allowsFullSwipe: true) {
                         do {
                             Button(row.archived ? "Unarchive" : "Archive",systemImage: row.archived ? "tray.and.arrow.up" : "archivebox") {
@@ -272,6 +278,17 @@ private struct ThreadActions: View {
     }
 }
 
+/// Mark as Read or Mark as Unread for one row, by its unread state (whatever the dot shows).
+private struct MacReadMark: View {
+    @ObservedObject var model: AppModel
+    let row: ChatRow
+    var body: some View {
+        Button(row.unread ? "Mark as Read" : "Mark as Unread",systemImage: row.unread ? "envelope.open" : "envelope.badge") {
+            Task { await model.setUnread(row,!row.unread) }
+        }.tint(.blue)
+    }
+}
+
 /// One chat (#405): its name, an excerpt of its last message, the time with a small spinner while work runs, one dot.
 private struct MacChatRow: View {
     let row: ChatRow
@@ -306,7 +323,8 @@ private struct MacChatRow: View {
     }
     static func label(_ row: ChatRow) -> String {
         var parts = [row.shownName]
-        if row.dot == .attention { parts.append(String(localized: "Needs your attention")) } else if row.dot == .unread { parts.append(String(localized: "Unread")) }
+        if row.dot == .attention { parts.append(String(localized: "Needs your attention")) }
+        if row.unread { parts.append(String(localized: "Unread")) }
         if row.running { parts.append(String(localized: "Working")) }
         if row.archived { parts.append(String(localized: "Archived")) }
         parts += [row.preview,time(row.time)]
@@ -464,7 +482,7 @@ private struct ThreadDetail: View {
                 if model.chatFocus?.thread != id, let mark = ReadingPositions.get(id), items.contains(where: { $0.id == mark }) {
                     try? await Task.sleep(for: .milliseconds(100))
                     intent.targetMessage(); position.scrollTo(id: mark,anchor: .top)
-                } else if let last = messages.last?.id { model.markRead(last,thread: id) }
+                } else if let last = messages.last?.id { model.markRead(last,thread: id,explicit: true) } // opening clears Mark as Unread
                 try? await Task.sleep(for: .milliseconds(300))
                 restored = true
             }

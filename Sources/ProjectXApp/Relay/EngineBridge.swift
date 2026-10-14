@@ -42,7 +42,8 @@ actor EngineBridge: RelayBackend {
     private let prepare: @Sendable () async -> Void
     /// The host-wide settings clients share (`host-settings-v1`, #405): read for the Main chat row, written for a client's change.
     private let hostSettings: @Sendable () async -> HostSettingsData
-    private let setHostSettings: @Sendable (HostSettingsData) async -> Void
+    /// Applies a client's change; the refusal, if any, as user-facing text.
+    private let setHostSettings: @Sendable (HostSettingsData) async -> String?
     /// Rename, Archive, Unarchive and Delete on the Main chat's row (#405), applied by the app (`AppModel.controlMain`).
     private let controlMain: @Sendable (ThreadControlData) async throws -> Void
     /// Phone uploads waiting for their commit (#316).
@@ -56,7 +57,7 @@ actor EngineBridge: RelayBackend {
     /// `~/Library/Application Support/<bundle id>/uploads` and `~/Library/Caches/<bundle id>/thumbs`.
     init(engine: Engine, mode: RuntimeMode, scheduler: JobScheduler?, prepare: @escaping @Sendable () async -> Void = {},
          hostSettings: @escaping @Sendable () async -> HostSettingsData = { HostSettingsData(mainChat: false) },
-         setHostSettings: @escaping @Sendable (HostSettingsData) async -> Void = { _ in },
+         setHostSettings: @escaping @Sendable (HostSettingsData) async -> String? = { _ in nil },
          controlMain: @escaping @Sendable (ThreadControlData) async throws -> Void = { _ in }) {
         self.controlMain = controlMain
         self.engine = engine; self.mode = mode; self.scheduler = scheduler; self.prepare = prepare
@@ -77,7 +78,11 @@ actor EngineBridge: RelayBackend {
         case .readState(let r):
             // Forward-only in the Store; a cursor that moved reaches every phone as a record in the next live update.
             // Each thread has its own (owner, 2026-10-13).
-            if Self.threads.contains(r.threadId) || Self.isID(r.threadId) { _ = try? await engine.store.markRead(thread: r.threadId, message: r.messageId) }
+            // Mark as Unread and explicit reads (owner, 2026-10-14) ride on the same event; the message must be the chat's.
+            if Self.threads.contains(r.threadId) || Self.isID(r.threadId) {
+                if r.unread == true { _ = try? await engine.store.markUnread(thread: r.threadId, message: r.messageId) }
+                else { _ = try? await engine.store.markRead(thread: r.threadId, message: r.messageId, explicit: r.unread == false) }
+            }
             return []
         case .threadsRequest(let r): return [await threadsPage(r)]
         case .threadControl(let c): return [await threadControl(c)]
@@ -95,9 +100,15 @@ actor EngineBridge: RelayBackend {
         case .jobControl(let c): return [await jobControl(c, id: e.id, ts: e.ts)]
         case .textRequest(let r): return [await slice(r)]
         case .hostSettings(let h):
-            // Applied through `config.toml`; every client hears the result from `RelayHost.publishHostSettings`.
-            if mode.permitsInput(fixtureAcknowledged: false) { await setHostSettings(h) }
-            return []
+            // Applied through `config.toml`; every client hears the result from `RelayHost.publishHostSettings`, and the
+            // one that asked gets an answer at once: the value now in force, with the refusal when there was one.
+            // The answer is read after the change is in force (the settings reloaded), never assumed.
+            let refusal = mode.permitsInput(fixtureAcknowledged: false) ? await setHostSettings(h)
+                : String(localized: "The host is in fixture mode and doesn't take messages from client devices.")
+            var answer = await hostSettings()
+            answer.error = refusal
+            answer.requestId = h.requestId
+            return [.control(.hostSettings(answer))]
         default: return []
         }
     }
@@ -229,7 +240,8 @@ actor EngineBridge: RelayBackend {
         return ThreadData(id: t.id, name: t.label, origin: t.origin, sourceMessageId: t.source, summary: t.summary, created: ms(t.created),
                           lastActivity: ms(t.activity ?? t.created), archivedAt: t.archivedAt.map(ms), state: row.state, lastMessageId: row.lastMessageID, unread: row.unread,
                           lastMessageAt: row.last.map { ms($0.created) }, preview: row.last.map { Self.excerpt($0.body) }, previewNotice: row.last?.notice.map(notice),
-                          previewUser: row.last.map { $0.role == "user" }, attention: row.attention, running: row.running, openWork: row.openWork)
+                          previewUser: row.last.map { $0.role == "user" }, attention: row.attention, running: row.running, openWork: row.openWork,
+                          markedUnread: row.markedUnread ? true : nil)
     }
 
     /// A list row's subtitle: the message's first 200 characters on one line (the row cuts it to fit).
@@ -487,7 +499,7 @@ actor EngineBridge: RelayBackend {
                                                                   instruction: a.instruction, state: a.state, seq: seq)))
         case .event(let w):
             e = event(w.id, thread, ms(w.created), .workerEvent(WorkerEventData(id: w.id, taskId: w.taskID, kind: w.kind, body: w.body, created: ms(w.created), seq: seq, files: files[w.id])))
-        case .readCursor(let c): e = event(c.threadID, thread, now, .readState(ReadStateData(threadId: c.threadID, messageId: c.messageID, seq: seq)))
+        case .readCursor(let c): e = event(c.threadID, thread, now, .readState(ReadStateData(threadId: c.threadID, messageId: c.messageID, seq: seq, unread: c.unread ? true : nil)))
         case .deletion(let kind, let id): e = event(id, thread, now, .deleted(DeletedData(kind: kind, id: id, seq: seq)))
         }
         // Shrinks the long text fields until the record fits; a few passes always do, since each one cuts in proportion.

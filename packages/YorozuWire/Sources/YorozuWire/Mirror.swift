@@ -129,13 +129,20 @@ public struct WorkerEventData: Codable, Equatable, Sendable {
 /// `read_state` (both directions): the newest message seen in a thread. Held by the Mac, forward-only;
 /// `seq` is set by the Mac only.
 public struct ReadStateData: Codable, Equatable, Sendable {
+    /// Mark as Read and Unread from a client (owner, 2026-10-14): a host without it ignores `unread`.
+    public static let marksCapability = "read-marks-v1"
     public var threadId: String
     public var messageId: String
     public var seq: Int?
-    public init(threadId: String, messageId: String, seq: Int? = nil) {
+    /// `history-v1` (owner, 2026-10-14): Mark as Unread. Client -> host: `true` marks the chat unread (the cursor stays;
+    /// `messageId` is a message of that chat), `false` is an explicit read (Mark as Read, or opening the chat) that also
+    /// clears it; absent is an automatic read, which clears it only by moving the cursor. Host -> client: the flag as held.
+    public var unread: Bool?
+    public init(threadId: String, messageId: String, seq: Int? = nil, unread: Bool? = nil) {
         self.threadId = threadId
         self.messageId = messageId
         self.seq = seq
+        self.unread = unread
     }
 }
 
@@ -417,10 +424,13 @@ public struct ThreadData: Codable, Equatable, Sendable, Identifiable {
     public var running: Bool?
     /// `history-v1`: work not in a final state (running, uncertain, or a stop not yet confirmed), so Delete stops it first.
     public var openWork: Bool?
+    /// `history-v1`: Mark as Unread is on; the chat reads as unread whatever `unread` counts.
+    public var markedUnread: Bool?
     public init(id: String, name: String, origin: String, sourceMessageId: String?, summary: String?, created: Int, lastActivity: Int,
                 archivedAt: Int?, state: String?, lastMessageId: String?, unread: Int, lastMessageAt: Int? = nil, preview: String? = nil,
-                previewNotice: NoticeData? = nil, previewUser: Bool? = nil, attention: Bool? = nil, running: Bool? = nil, openWork: Bool? = nil) {
+                previewNotice: NoticeData? = nil, previewUser: Bool? = nil, attention: Bool? = nil, running: Bool? = nil, openWork: Bool? = nil, markedUnread: Bool? = nil) {
         self.openWork = openWork
+        self.markedUnread = markedUnread
         self.id = id
         self.name = name
         self.origin = origin
@@ -535,8 +545,13 @@ public struct HostSettingsData: Codable, Equatable, Sendable {
     public var mainName: String?
     public var mainArchived: Bool?
     public var mainClearedAt: Int?
-    public init(mainChat: Bool, mainName: String? = nil, mainArchived: Bool? = nil, mainClearedAt: Int? = nil) {
-        self.mainChat = mainChat; self.mainName = mainName; self.mainArchived = mainArchived; self.mainClearedAt = mainClearedAt
+    /// Host -> the client that asked for a change, only: why it was not applied (user-facing). Never cached.
+    public var error: String?
+    /// Client -> host: names a change; host -> that client: the answer to it, with the value then in force.
+    public var requestId: String?
+    public init(mainChat: Bool, mainName: String? = nil, mainArchived: Bool? = nil, mainClearedAt: Int? = nil, error: String? = nil, requestId: String? = nil) {
+        self.mainChat = mainChat; self.mainName = mainName; self.mainArchived = mainArchived; self.mainClearedAt = mainClearedAt; self.error = error
+        self.requestId = requestId
     }
 }
 

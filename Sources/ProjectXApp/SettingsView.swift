@@ -5,13 +5,14 @@ import SwiftUI
 /// The `Settings` scene (⌘, and Settings… in the menus): native grouped forms over `config.toml` (#312). Harness and
 /// Advanced show only while General › Show Advanced settings is on.
 struct SettingsView: View {
-    enum Tab: Hashable { case general, devices, connection, storage, harness, advanced, host }
+    enum Tab: Hashable { case general, chats, devices, connection, storage, harness, advanced, host }
     @ObservedObject var model: AppModel
     /// The window's width, the one size this pane owns: nothing proposes a width to a Settings window.
     private let width: CGFloat = 560
     var body: some View {
         TabView(selection: $model.settingsTab) {
             GeneralSettings(model: model).tabItem { Label("General", systemImage: "gearshape") }.tag(Tab.general)
+            ChatsSettings(model: model).tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }.tag(Tab.chats)
             // A client runs nothing of its own: its host and the general settings are all it has.
             if model.isClient {
                 HostSettings(model: model).tabItem { Label("Host", systemImage: "desktopcomputer") }.tag(Tab.host)

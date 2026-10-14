@@ -327,7 +327,7 @@ import YorozuWire
         do {
             let bridge = EngineBridge(engine: engine,mode: runtimeMode,scheduler: jobScheduler,prepare: { [weak self] in await self?.ensureModels() },
                                       hostSettings: { [weak self] in await MainActor.run { self?.hostSettings ?? HostSettingsData(mainChat: false) } },
-                                      setHostSettings: { [weak self] h in await MainActor.run { self?.apply(hostSettings: h) } },
+                                      setHostSettings: { [weak self] h in await self?.apply(hostSettings: h) ?? String(localized: "The host isn't ready yet.") },
                                       controlMain: { [weak self] c in try await self?.controlMain(c.action,name: c.name) })
             let host = try RelayHost(backend: bridge,relayURL: url,devicesFile: devicesFile,direct: resolved?.config.direct ?? Config().direct,alerts: phoneAlerts)
             self.bridge = bridge; relay = host
@@ -421,10 +421,11 @@ import YorozuWire
     }
     /// The popover showed this message at its bottom: the main read cursor moves to it (forward only, in the Store); the
     /// poll picks it up into `readCursor`, and the relay's next publish sends it to phones as `read_state`.
-    func markRead(_ id: String) {
-        if let client { if id != readCursor { Task { await client.markRead(id) } }; return }
-        guard id != readCursor, let store else { return }
-        Task { _ = try? await store.markRead(thread: "main", message: id) }
+    /// `explicit`: the popover's first read as it opens, which also clears Mark as Unread (owner, 2026-10-14).
+    func markRead(_ id: String,explicit: Bool = false) {
+        if let client { if id != readCursor || explicit { Task { await client.markRead(id,explicit: explicit) } }; return }
+        guard id != readCursor || explicit, let store else { return }
+        Task { _ = try? await store.markRead(thread: "main", message: id, explicit: explicit) }
     }
     /// Chat search for the popover's ⌘F bar; the caller keeps only main-timeline message hits (open question 10).
     func search(_ query: String,limit: Int,offset: Int = 0) async throws -> (hits: [SearchHit], total: Int) {
