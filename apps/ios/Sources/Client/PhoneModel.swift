@@ -227,8 +227,15 @@ final class PhoneModel {
     private(set) var hostSettings: HostSettingsData?
     /// The newest message this device marked read per chat, so its row's unread dot goes before the host's row says so.
     private(set) var sentReads: [String: String] = [:]
-    /// Mark as Unread or Read sent from here, shown until the host's next row agrees.
-    private(set) var markedUnread: [String: Bool] = [:]
+    /// Mark as Read or Unread sent from here: shown at once, until the host answers it (a refusal drops it) and then its
+    /// cursor record arrives, which is the state from then on.
+    struct PendingMark: Equatable { var request: String; var unread: Bool; var acked = false }
+    private(set) var pendingMarks: [String: PendingMark] = [:]
+    /// The unread mark as this device knows it: a pending action's value, else the host's cursor record.
+    func markedUnread(_ thread: String) -> Bool? {
+        if let pending = pendingMarks[thread] { return pending.unread }
+        return (thread == ThreadData.mainId ? readCursor : threadReads[thread])?.unread
+    }
     /// A Main chat switch sent from here and not answered yet, and the host's last refusal of one.
     private(set) var mainChatPending: Bool?
     private(set) var mainChatError: String?
@@ -606,7 +613,7 @@ final class PhoneModel {
         deletedMessages = []
         deletedRecords = []
         sentReads = [:]
-        markedUnread = [:]
+        pendingMarks = [:]
         mainChatRequest = nil
         readMarksSupported = nil
         mainChatPending = nil
@@ -1532,14 +1539,16 @@ final class PhoneModel {
     func markRead(_ messageId: String, thread: String = "main", explicit: Bool = false) async -> Bool {
         guard state == .paired else { return false }
         if thread == "main" { localRead = messageId; updateBadge() }
-        // Explicit only to a host that takes it; an older one gets the plain read it always did.
-        let mark: Bool? = explicit && readMarksSupported == true ? false : nil
-        guard await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId, unread: mark))) else {
+        // Explicit only to a host that takes it (an older one gets the plain read it always did), and answered.
+        let marks = explicit && readMarksSupported == true
+        let request = marks ? UUID().uuidString : nil
+        if let request { pendingMarks[thread] = PendingMark(request: request, unread: false) }
+        guard await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId, unread: marks ? false : nil, requestId: request))) else {
+            if let request, pendingMarks[thread]?.request == request { pendingMarks[thread] = nil }
             if explicit { threadRefusals[thread] = String(localized: "Couldn't reach the host. Try again.") }
             return false
         }
         sentReads[thread] = messageId
-        if mark != nil { markedUnread[thread] = false }
         return true
     }
 
@@ -1548,12 +1557,14 @@ final class PhoneModel {
     @discardableResult
     func markUnread(thread: String, messageId: String) async -> Bool {
         guard state == .paired, readMarksSupported == true else { return false }
-        guard await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId, unread: true))) else {
+        let request = UUID().uuidString
+        pendingMarks[thread] = PendingMark(request: request, unread: true)
+        guard await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId, unread: true, requestId: request))) else {
+            if pendingMarks[thread]?.request == request { pendingMarks[thread] = nil }
             threadRefusals[thread] = String(localized: "Couldn't reach the host. Try again.")
             return false
         }
         sentReads[thread] = nil
-        markedUnread[thread] = true
         return true
     }
 
@@ -1604,8 +1615,7 @@ final class PhoneModel {
         }
         gathering[request.archived] = nil
         if request.archived { archivedThreads = rows; archivedNext = nil } else { threadList = rows; threadsNext = nil }
-        // A mark sent from here stays shown until the host's row for that chat says the same.
-        for row in rows where markedUnread[row.id] == (row.markedUnread == true) { markedUnread[row.id] = nil }
+
         saveMeta()
     }
 
@@ -1772,6 +1782,15 @@ final class PhoneModel {
             receive(page)
         case .threadControlResult(let result):
             receive(result)
+        case .readState(let answer) where answer.requestId != nil:
+            // The host's answer to a Mark as Read or Unread from here.
+            guard let pending = pendingMarks[answer.threadId], pending.request == answer.requestId else { break }
+            if let error = answer.error { pendingMarks[answer.threadId] = nil; threadRefusals[answer.threadId] = error; break }
+            pendingMarks[answer.threadId]?.acked = true
+            // Already as asked (nothing to change, so no new record): the held record is the state.
+            let held = (answer.threadId == ThreadData.mainId ? readCursor : threadReads[answer.threadId])?.unread == true
+            if held == pending.unread { pendingMarks[answer.threadId] = nil }
+            refreshThreads()
         case .textSlice(let slice):
             receive(slice)
         case .hostSettings(var settings):
@@ -1950,9 +1969,9 @@ final class PhoneModel {
             textNeeds.removeAll { $0.id == d.id }
             metaDirty = true
         case .readState(let read) where read.threadId == "main":
-            if newer(readCursor?.seq, read.seq ?? 0) { readCursor = read; touch("read", read.threadId) }
+            if newer(readCursor?.seq, read.seq ?? 0) { readCursor = read; touch("read", read.threadId); settleMark(read.threadId) }
         case .readState(let read):
-            if newer(threadReads[read.threadId]?.seq, read.seq ?? 0) { threadReads[read.threadId] = read; touch("read", read.threadId) }
+            if newer(threadReads[read.threadId]?.seq, read.seq ?? 0) { threadReads[read.threadId] = read; touch("read", read.threadId); settleMark(read.threadId) }
         default:
             break
         }
@@ -1976,6 +1995,11 @@ final class PhoneModel {
         let key = HistoryStore.Key(kind: kind, id: id)
         removed.insert(key)
         dirty.remove(key)
+    }
+
+    /// A cursor record arrived: an acknowledged mark from here is now the host's state, so the record speaks for it.
+    private func settleMark(_ thread: String) {
+        if pendingMarks[thread]?.acked == true { pendingMarks[thread] = nil }
     }
 
     /// After a whole catch-up every task the host has is held, so steps and changes whose task is not are what a deleted

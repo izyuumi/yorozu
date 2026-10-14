@@ -122,11 +122,11 @@ struct ChatWindow: View {
                 VStack(spacing: 0) {
                     // Off (#405): its history stays readable here; new messages go in chats.
                     if !model.mainChat {
-                        Label("The Main chat is off. Its history stays here; turn it on in Settings › General to write in it.",systemImage: "info.circle")
+                        Label("The Main chat is off. Its history stays here; turn it on in Settings › Chats to write in it.",systemImage: "info.circle")
                             .font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity,alignment: .leading).padding(10)
                         Divider()
                     }
-                    MainChat(model: model,search: search)
+                    MainChat(model: model,search: search,inWindow: true)
                 }
             } else if let id = selection {
                 let row = (model.chatRows() + model.chatRows(archived: true)).first { $0.id == id }
@@ -189,12 +189,12 @@ struct ChatWindow: View {
             ForEach(rows) { row in
                 MacChatRow(row: row,refusal: model.client?.threadRefusals[row.id]).tag(row.isMain ? Self.main : row.id)
                     .contextMenu {
-                        MacReadMark(model: model,row: row).disabled(!model.canMarkRead)
+                        MacReadMark(model: model,row: row).disabled(!model.canMarkRead || row.time == 0)
                         Divider()
                         ThreadActions(model: model,row: row,rename: start(renaming:),delete: { deleting = $0 })
                     }
                     // Left to right (owner, 2026-10-14): Mark as Read or Unread; never clears orange.
-                    .swipeActions(edge: .leading,allowsFullSwipe: true) { if model.canMarkRead { MacReadMark(model: model,row: row) } }
+                    .swipeActions(edge: .leading,allowsFullSwipe: true) { if model.canMarkRead, row.time > 0 { MacReadMark(model: model,row: row) } }
                     .swipeActions(edge: .trailing,allowsFullSwipe: true) {
                         do {
                             Button(row.archived ? "Unarchive" : "Archive",systemImage: row.archived ? "tray.and.arrow.up" : "archivebox") {
@@ -298,14 +298,14 @@ private struct MacChatRow: View {
         HStack(alignment: .top,spacing: 6) {
             VStack(alignment: .leading,spacing: 2) {
                 Text(row.shownName).fontWeight(.semibold).lineLimit(1)
-                Text(row.preview).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                Text(row.shownPreview).font(.callout).foregroundStyle(.secondary).lineLimit(2)
                 if let refusal { Text(refusal).font(.caption).foregroundStyle(ChatPalette.warning) }
             }
             Spacer(minLength: 4)
             VStack(alignment: .trailing,spacing: 4) {
                 HStack(spacing: 4) {
                     if row.running { ProgressView().controlSize(.mini) }
-                    Text(Self.time(row.time)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if row.time > 0 { Text(Self.time(row.time)).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
                 }
                 if let dot = row.dot { Circle().fill(dot == .attention ? Color.orange : Color.blue).frame(width: Metrics.dot,height: Metrics.dot) }
             }
@@ -327,7 +327,7 @@ private struct MacChatRow: View {
         if row.unread { parts.append(String(localized: "Unread")) }
         if row.running { parts.append(String(localized: "Working")) }
         if row.archived { parts.append(String(localized: "Archived")) }
-        parts += [row.preview,time(row.time)]
+        parts += [row.shownPreview,row.time > 0 ? time(row.time) : ""]
         return parts.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }
@@ -482,6 +482,8 @@ private struct ThreadDetail: View {
                 if model.chatFocus?.thread != id, let mark = ReadingPositions.get(id), items.contains(where: { $0.id == mark }) {
                     try? await Task.sleep(for: .milliseconds(100))
                     intent.targetMessage(); position.scrollTo(id: mark,anchor: .top)
+                    // Opening still clears Mark as Unread; the cursor stays where it was (an older message never moves it).
+                    if let first = messages.first?.id { model.markRead(first,thread: id,explicit: true) }
                 } else if let last = messages.last?.id { model.markRead(last,thread: id,explicit: true) } // opening clears Mark as Unread
                 try? await Task.sleep(for: .milliseconds(300))
                 restored = true

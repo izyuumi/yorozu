@@ -138,11 +138,18 @@ public struct ReadStateData: Codable, Equatable, Sendable {
     /// `messageId` is a message of that chat), `false` is an explicit read (Mark as Read, or opening the chat) that also
     /// clears it; absent is an automatic read, which clears it only by moving the cursor. Host -> client: the flag as held.
     public var unread: Bool?
-    public init(threadId: String, messageId: String, seq: Int? = nil, unread: Bool? = nil) {
+    /// `read-marks-v1`, client -> host: names an explicit Mark as Read or Unread; host -> that client, a top-level
+    /// `read_state` (not a record) answering it, with `error` when the host refused it (a message outside the chat, an
+    /// unreadable store). The record that follows carries the state.
+    public var requestId: String?
+    public var error: String?
+    public init(threadId: String, messageId: String, seq: Int? = nil, unread: Bool? = nil, requestId: String? = nil, error: String? = nil) {
         self.threadId = threadId
         self.messageId = messageId
         self.seq = seq
         self.unread = unread
+        self.requestId = requestId
+        self.error = error
     }
 }
 

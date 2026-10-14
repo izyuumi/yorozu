@@ -51,8 +51,9 @@ extension AppModel {
         var rows = (archived ? archivedThreads : threads).filter { !jobTopics.contains($0.topic.id) }.map(row)
         // The Main chat is a row like any other (#405): its own name, and in the archived list once archived.
         let g = resolved?.config.general
-        // A deleted Main chat leaves the list until its next message.
-        if mainChat, (g?.mainChatArchived ?? false) == archived, let main = mainThreadRow, main.last != nil {
+        // On, Main is a row even before its first message (lightweight: nothing is stored for it); a Main whose history was
+        // deleted leaves the list until its next message.
+        if mainChat, (g?.mainChatArchived ?? false) == archived, let main = mainThreadRow, main.last != nil || mainClearedAt == nil {
             var r = row(main); r.name = g.map { $0.mainChatName }.flatMap { $0.isEmpty ? nil : $0 } ?? ""; r.archived = archived; rows.append(r)
         }
         return rows.sorted(by: ChatRow.newestFirst)
@@ -144,7 +145,7 @@ extension AppModel {
     }
 
     /// Whether Mark as Read and Unread can act now: always on the host; on a client, while its host is connected.
-    var canMarkRead: Bool { client.map { $0.state == .paired && $0.historySupported == true } ?? true }
+    var canMarkRead: Bool { client.map { $0.canMarkRead } ?? true }
 
     /// A `yorozu://message/<id>` link (the secretary's citations) or a tapped notification: the message in its place. On the
     /// main timeline the popover or the window's Main scrolls to it; in a thread the chat window opens there.

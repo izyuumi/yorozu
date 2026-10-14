@@ -169,7 +169,7 @@ private struct ChatRowButton: View {
             // Left to right (owner, 2026-10-14): Mark as Read or Unread, from the chat's unread state whatever its dot.
             // Offered only while the host can take it; orange (a question, approval or blocker) stays until resolved.
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                if model.canMarkRead { ReadMarkButton(model: model, row: row) }
+                if model.canMarkRead, row.time > 0 { ReadMarkButton(model: model, row: row) }
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 do {
@@ -181,7 +181,7 @@ private struct ChatRowButton: View {
                 }
             }
             .contextMenu {
-                ReadMarkButton(model: model, row: row).disabled(!model.canMarkRead)
+                ReadMarkButton(model: model, row: row).disabled(!model.canMarkRead || row.time == 0)
                 ThreadMenu(model: model, ref: ref, renaming: $renaming, deleting: $deleting)
             }
             .disabled(model.threadControls.values.contains(row.id))
@@ -206,11 +206,6 @@ struct ReadMarkButton: View {
     }
 }
 
-extension PhoneModel {
-    /// Mark as Read and Unread act now: linked and the host takes them.
-    var canMarkRead: Bool { state == .paired && readMarksSupported == true }
-}
-
 struct ChatRowLabel: View {
     let row: ChatRow
     var refusal: String?
@@ -221,14 +216,14 @@ struct ChatRowLabel: View {
         HStack(alignment: .top, spacing: LayoutMetrics.stack) {
             VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                 Text(row.shownName).fontWeight(.semibold).lineLimit(1)
-                Text(row.preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                Text(row.shownPreview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                 if let refusal { Text(refusal).font(.footnote).foregroundStyle(YorozuPalette.warning) }
             }
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: LayoutMetrics.inner) {
                 HStack(spacing: LayoutMetrics.tight) {
                     if row.running { ProgressView().controlSize(.mini) }
-                    Text(ChatTime.label(row.time)).font(.footnote).foregroundStyle(.secondary)
+                    if row.time > 0 { Text(ChatTime.label(row.time)).font(.footnote).foregroundStyle(.secondary) }
                 }
                 if let dot = row.dot {
                     Circle().fill(dot == .attention ? Color.orange : Color.blue).frame(width: Metrics.dot, height: Metrics.dot)
@@ -246,8 +241,8 @@ struct ChatRowLabel: View {
         if row.unread { parts.append(String(localized: "Unread")) }
         if row.running { parts.append(String(localized: "Working")) }
         if row.archived { parts.append(String(localized: "Archived")) }
-        parts.append(row.preview)
-        parts.append(ChatTime.label(row.time))
+        parts.append(row.shownPreview)
+        if row.time > 0 { parts.append(ChatTime.label(row.time)) }
         return parts.filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }

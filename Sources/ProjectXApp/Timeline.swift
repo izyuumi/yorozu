@@ -51,6 +51,8 @@ enum TimelineItem: Identifiable {
 struct MainChat: View {
     @ObservedObject var model: AppModel
     @ObservedObject var search: ChatSearch
+    /// In the chat window: on screen whenever it is shown there, not only while the popover is open.
+    var inWindow = false
     @State private var position = ScrollPosition(idType: String.self)
     @State private var intent = NewestScrollIntent()
     @State private var phase = ScrollPhase.idle
@@ -85,6 +87,8 @@ struct MainChat: View {
             Composer(model: model,maxHeight: height * Metrics.composerShare,send: send)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .onAppear { if inWindow { markSeen() } }
+        .onDisappear { if inWindow { openedRead = false } }
         // Files or images dropped anywhere on the chat attach to the draft (#316).
         .onDrop(of: [.fileURL,.image],isTargeted: $dropping) { model.runtimeMode.permitsInput(fixtureAcknowledged: model.fixtureAcknowledged) && model.attach(dropped: $0) }
         .overlay { if dropping { RoundedRectangle(cornerRadius: Metrics.dropRadius,style: .continuous).strokeBorder(Color.accentColor,lineWidth: Metrics.dropRing).padding(Metrics.dropRing).allowsHitTesting(false) } }
@@ -157,7 +161,11 @@ struct MainChat: View {
         guard atBottom, let last = model.timeline.last?.id else { return }
         seenID = last
         // May repeat an id; AttentionCenter treats it as idempotent and markRead skips the cursor it already holds.
-        if model.popoverShown { model.onSeen?(last); model.markRead(last,explicit: !openedRead); openedRead = true }
+        // Read while it is on screen: the open popover, or the chat window's Main (its first read explicit, clearing Mark as Unread).
+        if model.popoverShown || inWindow {
+            if model.popoverShown { model.onSeen?(last) }
+            model.markRead(last,explicit: !openedRead); openedRead = true
+        }
     }
 
     private func send() {

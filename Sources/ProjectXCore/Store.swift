@@ -285,7 +285,10 @@ public actor Store {
     /// outside the chat is refused.
     public func markRead(thread: String, message: String, explicit: Bool = false) throws -> Bool {
         try db.write { db in
-            guard try Self.inChat(db,thread: thread,message: message) else { return false }
+            guard try Self.inChat(db,thread: thread,message: message) else {
+                if explicit { throw ProjectError.invalid(String(localized: "That message isn't in this chat.")) }
+                return false
+            }
             let ahead = try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM readCursor c JOIN messages m ON m.id=c.messageID JOIN messages n ON n.id=? WHERE c.threadID=? AND (m.created,m.rowid)>=(n.created,n.rowid)",arguments: [message,thread]) == 0
             if ahead {
                 try db.execute(sql: "INSERT INTO readCursor(threadID,messageID,unread) VALUES (?,?,0) ON CONFLICT(threadID) DO UPDATE SET messageID=excluded.messageID,unread=0",arguments: [thread,message]); return true
@@ -299,7 +302,7 @@ public actor Store {
     /// no cursor yet gets one at `message`, a message of that chat. False for a message outside the chat.
     public func markUnread(thread: String, message: String) throws -> Bool {
         try db.write { db in
-            guard try Self.inChat(db,thread: thread,message: message) else { return false }
+            guard try Self.inChat(db,thread: thread,message: message) else { throw ProjectError.invalid(String(localized: "That message isn't in this chat.")) }
             try db.execute(sql: "INSERT INTO readCursor(threadID,messageID,unread) VALUES (?,?,1) ON CONFLICT(threadID) DO UPDATE SET unread=1 WHERE unread=0",arguments: [thread,message])
             return true
         }

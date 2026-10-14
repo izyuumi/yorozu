@@ -79,11 +79,16 @@ actor EngineBridge: RelayBackend {
             // Forward-only in the Store; a cursor that moved reaches every phone as a record in the next live update.
             // Each thread has its own (owner, 2026-10-13).
             // Mark as Unread and explicit reads (owner, 2026-10-14) ride on the same event; the message must be the chat's.
+            // An explicit one (`requestId`) is answered, with the refusal when it failed; the cursor record follows.
+            var refusal: String?
             if Self.threads.contains(r.threadId) || Self.isID(r.threadId) {
-                if r.unread == true { _ = try? await engine.store.markUnread(thread: r.threadId, message: r.messageId) }
-                else { _ = try? await engine.store.markRead(thread: r.threadId, message: r.messageId, explicit: r.unread == false) }
-            }
-            return []
+                do {
+                    if r.unread == true { _ = try await engine.store.markUnread(thread: r.threadId, message: r.messageId) }
+                    else { _ = try await engine.store.markRead(thread: r.threadId, message: r.messageId, explicit: r.unread == false) }
+                } catch { refusal = error.localizedDescription }
+            } else { refusal = String(localized: "That chat no longer exists.") }
+            guard let request = r.requestId else { return [] }
+            return [.control(.readState(ReadStateData(threadId: r.threadId, messageId: r.messageId, unread: r.unread, requestId: request, error: refusal)))]
         case .threadsRequest(let r): return [await threadsPage(r)]
         case .threadControl(let c): return [await threadControl(c)]
         case .taskControl(let c):
