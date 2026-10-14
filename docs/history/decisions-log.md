@@ -907,3 +907,17 @@ Source: owner, after the thread implementation: the root view should be the thre
 
 - The iPhone opens on the thread list (Main chat pinned on top, New chat, the threads); the main chat and every thread are pushed from it, with the back button returning to the list. Search and Settings sit on the list.
 - Implementer reading: a host that has said it does not take `threads-v1` keeps the main chat as the root, as before; until the first handshake the app assumes threads and opens on the list. The Mac's chat window is unchanged (its sidebar is already the list).
+
+## 2026-10-14 — Sections: a tab bar on iPhone, a sidebar on iPad and the Mac
+Source: owner, design interview on adding a tab bar.
+
+- iPhone and iPad get one `TabView` with `.sidebarAdaptable`; the Mac chat window is reorganized into the same sections as a sidebar. Settings stays the macOS Settings window and the popover stays main-only.
+- Sections, in order: Chats (`bubble.left.and.bubble.right`), Scheduled (`clock`), Settings (`gearshape`, iPhone and iPad), Search (the search role; the sidebar's search field on iPad and the Mac, ⌘F in the Mac window). No section customization. Wording ("sub-chat" or "thread") is not standardized in this change.
+- The main chat stays pinned on top of Chats (the 2026-10-14 root decision stands). On iPad and the Mac Chats is three columns: sections, thread list, open chat. The app always opens on Chats.
+- Scheduled is its own section on every platform: job list, then the job's page with status, schedule, Pause, Resume, Run now, Delete, a banner when the job needs the user (answered in its sub-chat; no Approve button), and its sub-chat with the direct input. Settings › Jobs leaves the Mac. A job with no sub-chat yet opens with no runs. The phone caches the job list on disk and shows its time.
+- `job_list` gains an optional `schedule`, the Mac's wording (the summary's first line, or the cron text until a summary exists).
+- Badges: a small dot, no number, on Chats when a thread needs attention and on Scheduled when a job does. Settings and Search have none.
+- The tab bar hides inside a chat. A push tap, citation or search hit switches to Chats and resets it to list → target.
+- ⌘1 Chats, ⌘2 Scheduled, ⌘N New chat, ⌘F search, ⌘, Settings.
+- Only the latest version runs: the layout for a host without `threads-v1` and the UI gates on `threads-v1` and `jobs-v1` go.
+- Delivery: branch `tab-bar`, PRs in order: decisions, docs and the `schedule` field; iOS; the Mac.

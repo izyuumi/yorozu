@@ -797,12 +797,12 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
 
 ```json
 {"kind":"job_list","threadId":"","agentId":"main","id":"…","ts":0,
- "data":{"jobs":[{"id":"backup-check","name":"Backup check","summary":"Every day at 07:00 · script, then AI if it changed\n…",
+ "data":{"jobs":[{"id":"backup-check","name":"Backup check","summary":"Every day at 07:00 · script, then AI if it changed\n…","schedule":"Every day at 07:00",
    "nextRun":1760000000000,"lastRun":1759913000000,"lastResult":"done","lastNotable":false,"state":"idle","topicId":"…"}]}}
 ```
 
 - One row per job of the Mac's current valid set (`Engine.jobStatus(nextRuns:)` with
-  `JobScheduler.nextRuns`). `summary`'s first line is the schedule in words; it is nil until written.
+  `JobScheduler.nextRuns`). `summary` is the Mac's plain-words description, nil until written. `schedule` is the schedule in words as the Mac shows it: `summary`'s first line, or the cron text until a summary exists; every client shows it as is.
   `nextRun`, `lastRun` are epoch ms, `nextRun` nil while paused or retired (or with no next slot),
   `lastRun` the latest run's start. `lastResult` is `uncertain` while the latest run is, else the
   last finished run's state (`done`, `failed`, `stopped`), and `lastNotable` whether it was notable.
@@ -813,9 +813,7 @@ to such a Mac; a phone without it shows no Jobs. Types are in `Mirror.swift`.
   phone when it changes. `EngineBridge` reads it on its snapshot poll only when the change sequence
   or the next runs moved, or 5 s passed, and `RelayHost.publishJobs(_:)` sends it only when it
   differs from the last one.
-- The phone keeps the latest in memory (not in its cache). Its Activities list (sub-chats) shows a Scheduled row
-  ("N scheduled · M need attention", counting `needsAttention` and `needsApproval`) and leaves job
-  topics out of the list and of the running count.
+- The phone keeps the latest in memory and on disk next to its thread cache, and shows the cached list with its time until a fresh one arrives. Its Scheduled tab badges when a job is `needsAttention` or `needsApproval`; job topics stay out of the thread list and of the running count.
 
 ### `job_control` (phone -> Mac): one action
 

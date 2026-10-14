@@ -5,8 +5,6 @@ import YorozuWire
 // Run now and Delete. A job's sub-chat is `TopicScreen` with the job's own input.
 
 extension JobListData.Job {
-    /// The schedule in words: the first line of the Mac's summary.
-    var schedule: String { summary?.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? "" }
     /// Waiting on the user: an uncertain run to retry or stop, or a script to approve.
     var needsAttention: Bool { state == "needsAttention" || state == "needsApproval" }
 }
@@ -88,7 +86,7 @@ struct JobsScreen: View {
                         Text(job.name).font(.headline).lineLimit(1)
                         badge(job.state).layoutPriority(1)
                     }
-                    if !job.schedule.isEmpty { Text(job.schedule).font(.subheadline) }
+                    if let schedule = job.schedule, !schedule.isEmpty { Text(schedule).font(.subheadline) }
                     next(job).font(.footnote).foregroundStyle(.secondary)
                     last(job).font(.footnote)
                     if let refusal = model.jobRefusals[job.id] {

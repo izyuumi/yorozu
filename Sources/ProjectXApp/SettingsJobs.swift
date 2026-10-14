@@ -24,11 +24,11 @@ struct JobsSettings: View {
             if jobs.isEmpty { empty } else {
                 HSplitView {
                     List(jobs,id: \.id,selection: $selection) { job in
-                        JobRow(job: job,schedule: job.schedule(model.jobSpecs)).contextMenu { actions(job) }
+                        JobRow(job: job,schedule: job.schedule).contextMenu { actions(job) }
                     }.frame(minWidth: width * Metrics.listShare)
                     Group {
                         if let job = jobs.first(where: { $0.id == selection }) {
-                            JobDetail(model: model,job: job,schedule: job.schedule(model.jobSpecs),problem: $problem,actions: AnyView(actions(job))).id(job.id)
+                            JobDetail(model: model,job: job,schedule: job.schedule,problem: $problem,actions: AnyView(actions(job))).id(job.id)
                         } else { Text("Select a job to see its chat.").foregroundStyle(.secondary).frame(maxWidth: .infinity,maxHeight: .infinity) }
                     }.layoutPriority(1)
                 }.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
@@ -99,10 +99,6 @@ extension AppModel {
 }
 
 private extension JobStatus {
-    /// The schedule in plain words: the summary's first line, or the cron text until a summary exists.
-    func schedule(_ specs: [JobSpec]) -> String {
-        summary?.split(separator: "\n").first.map(String.init) ?? specs.first { $0.id == id }?.schedule.joined(separator: ", ") ?? ""
-    }
     var stateLabel: (text: String,icon: String)? {
         switch state {
         case .running: (String(localized: "Running"),"play.circle")

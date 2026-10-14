@@ -341,7 +341,7 @@ struct TopicScreen: View {
         .yorozuBottomBar { bottomBar(job: job, threads: threads, working: tasks.contains(where: \.isActive)) }
         .navigationTitle(job?.name ?? model.threadName(topicId) ?? (isNew ? String(localized: "New chat") : ""))
         .navigationBarTitleDisplayMode(.inline)
-        .navigationSubtitleIfAvailable(job.map(\.schedule) ?? (threads ? "" : String(localized: "Inspect only")))
+        .navigationSubtitleIfAvailable(job.map { $0.schedule ?? "" } ?? (threads ? "" : String(localized: "Inspect only")))
         .toolbar {
             if controls {
                 ToolbarItem(placement: .topBarTrailing) {

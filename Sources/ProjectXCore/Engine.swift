@@ -998,7 +998,8 @@ extension Engine {
             let latest = runs.first, done = runs.first { $0.finished != nil }
             let state: JobStatus.State = latest?.state == "running" ? .running : latest?.state == "uncertain" ? .needsAttention
                 : record?.pendingApprovalID != nil ? .needsApproval : spec.retired ? .finished : spec.paused ? .paused : .idle
-            rows.append(JobStatus(id: spec.id,name: spec.name,topicID: record?.topicID,summary: record?.summary,nextRun: nextRuns[spec.id],
+            rows.append(JobStatus(id: spec.id,name: spec.name,topicID: record?.topicID,summary: record?.summary,
+                                  schedule: record?.summary?.split(separator: "\n").first.map(String.init) ?? spec.schedule.joined(separator: ", "),nextRun: nextRuns[spec.id],
                                   lastRun: latest.map { Date(timeIntervalSince1970: $0.started) },lastResult: latest?.state == "uncertain" ? "uncertain" : done?.state,lastNotable: done?.notable,state: state,pendingApprovalID: record?.pendingApprovalID))
         }
         return rows
