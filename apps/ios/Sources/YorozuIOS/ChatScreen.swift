@@ -33,6 +33,7 @@ struct ChatScreen: View {
     @State private var unreadAfter: String?
     /// The last message this phone sent as read.
     @State private var sentRead: String?
+    @State private var launched = false
     @Environment(\.scenePhase) private var scenePhase
 
     /// How far above the end the view still counts as at the bottom.
@@ -42,7 +43,7 @@ struct ChatScreen: View {
         // The sections (owner, 2026-10-14): a tab bar on iPhone, a sidebar on iPad. The app always opens on Chats.
         TabView(selection: $section) {
             Tab("Chats", systemImage: "bubble.left.and.bubble.right", value: AppSection.chats) { chats }
-                .badge(model.attentionTopics > 0 ? Self.dotBadge : nil)
+                .badge(model.attentionChats ? Self.dotBadge : nil)
             Tab("Scheduled", systemImage: "clock", value: AppSection.scheduled) {
                 NavigationStack(path: $jobsPath) {
                     JobsScreen(model: model) { jobsPath = [.job($0)] }
@@ -53,11 +54,9 @@ struct ChatScreen: View {
             Tab("Settings", systemImage: "gearshape", value: AppSection.settings) {
                 SettingsScreen(model: model, onRepair: onRepair)
             }
+            // The system's search tab (#405): its field and transitions are the platform's.
             Tab(value: AppSection.search, role: .search) {
-                NavigationStack {
-                    SearchScreen(model: model, onOpen: open) { section = .chats }
-                        .toolbar(compact ? .hidden : .automatic, for: .tabBar)
-                }
+                NavigationStack { SearchScreen(model: model, onOpen: open) }
             }
         }
         .tabViewStyle(.sidebarAdaptable)
@@ -75,6 +74,12 @@ struct ChatScreen: View {
         .onChange(of: mainShown, initial: true) { _, shown in model.mainShown = shown }
         .onDisappear { model.mainShown = false }
         .task(id: model.pushOpen?.id) { await openPush() }
+        // Opening the app starts a new chat (#405), not the last screen; earlier drafts stay in the list.
+        .task {
+            guard !launched else { return }
+            launched = true
+            if model.pushOpen == nil { navigate([.newChat(UUID().uuidString.lowercased())]) }
+        }
         .sheet(item: $details) { bubble in
             MessageDetails(bubble: bubble, delivery: model.delivery(of: bubble),
                            onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
@@ -118,7 +123,7 @@ struct ChatScreen: View {
     }
 
     private var threadList: some View {
-        ThreadsScreen(model: model) { navigate([.main]) } onNewChat: {
+        ThreadsScreen(model: model) {
             navigate([.newChat(UUID().uuidString.lowercased())])
         } onOpen: { navigate([$0]) }
             .navigationSubtitleIfAvailable(model.shownStatus.label)
@@ -284,8 +289,15 @@ struct ChatScreen: View {
         }
         .yorozuBottomBar {
             VStack(spacing: 0) {
+                if model.mainChat == false {
+                    // Off (#405): its history stays readable; new messages go in chats. The draft here is kept.
+                    Text("The Main chat is off. Its history stays here; turn it on in Settings to write in it.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, LayoutMetrics.gutter)
+                }
                 Composer(text: $model.draft, files: $model.draftFiles, attachments: model.attachmentsSupported != false,
-                         working: model.working == true, enabled: model.canSend,
+                         working: model.working == true, enabled: model.canSend && model.mainChat != false,
                          replyQuote: replyQuote, onCancelReply: { model.replyingTo = nil }) {
                     // Sending jumps to the bottom, so the sent message and its answer are followed.
                     atBottom = true
@@ -442,6 +454,8 @@ struct ChatScreen: View {
     /// A tapped push: its thread, or the main chat at its message once caught up (up to 10 s), else at the bottom.
     private func openPush() async {
         guard let request = model.pushOpen else { return }
+        // The composer's draft and files are already kept; written now, so the target opens over a saved draft (#405).
+        model.drafts.save()
         openChats([])
         details = nil
         var id: String?
@@ -500,6 +514,8 @@ struct ChatScreen: View {
     /// One message by id (a cited link, a thread's source): its thread opens at it, the main timeline scrolls to it, and
     /// one not held here opens the host's page around it.
     private func openMessage(_ id: String) {
+        // The composer's draft and files are already kept; written now, so the target opens over a saved draft (#405).
+        model.drafts.save()
         guard let bubble = model.bubbles.first(where: { $0.id == id }) else { openChats([.page(id)]); return }
         if let thread = bubble.threadId {
             openChats([.topic(thread, focus: id)])
@@ -508,19 +524,19 @@ struct ChatScreen: View {
         }
     }
 
-    /// A search hit, in Chats: the main timeline scrolls to it, a thread opens at it, and a message outside the cache
-    /// opens `PageScreen`, which loads its page from the Mac.
-    private func open(_ hit: SearchHitData) {
-        switch model.target(of: hit) {
-        case .main(let id):
-            showOnMain(id)
-        case .topic(let topicId, let focus):
-            openChats([.topic(topicId, focus: focus)])
-        case .page(let id):
-            openChats([.page(id)])
-        case .none:
-            break
+    /// A search hit, in Chats (#405): its thread at the message (a result its task card shows: the card), a worker step's
+    /// task, or the main timeline at the message. Everything is on the device, so nothing waits for the host.
+    private func open(_ hit: PhoneModel.LocalHit) {
+        model.drafts.save()
+        if let id = hit.messageId {
+            guard let bubble = model.bubbles.first(where: { $0.id == id }) else { return openChats([.page(id)]) }
+            if let thread = bubble.threadId { return openChats([.topic(thread, focus: id)]) }
+            if let topic = bubble.topicId, model.topics[topic] != nil, model.hidesInTopic(bubble), let task = bubble.taskId {
+                return openChats([.topic(topic, focus: task)])
+            }
+            return showOnMain(id)
         }
+        if let topic = hit.topicId { openChats([.topic(topic, focus: hit.taskId)]) }
     }
 }
 
@@ -642,6 +658,7 @@ private struct SettingsScreen: View {
 
     @State private var copied = false
     @State private var notifications: UNAuthorizationStatus?
+    @State private var reminder = LocalNotices.reminderMinutes
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -656,6 +673,29 @@ private struct SettingsScreen: View {
                     } label: {
                         LabeledContent(model.hostName ?? String(localized: "Host"), value: connectionSummary)
                     }
+                }
+                // Host-wide (#405): one setting every client shares; the host's value shows, cached offline.
+                Section {
+                    Toggle(isOn: Binding(get: { model.mainChat == true }, set: { model.setMainChat($0) })) {
+                        Text("Main chat")
+                        Text("One conversation where the secretary files work into chats across topics. Off: every chat stands on its own. Its history stays either way.")
+                    }
+                    .disabled(model.state != .paired || model.hostSettingsSupported != true || model.mainChat == nil)
+                } header: {
+                    Text("Host")
+                } footer: {
+                    if model.state != .paired { Text("Changes need the host connected.") }
+                }
+                Section {
+                    Picker(selection: Binding(get: { LocalNotices.reminderMinutes }, set: { model.setReminder(minutes: $0); reminder = $0 })) {
+                        ForEach(LocalNotices.reminderChoices, id: \.self) { minutes in
+                            Text(minutes == 0 ? String(localized: "Off") : Duration.seconds(minutes * 60).formatted(.units(allowed: [.hours, .minutes], width: .wide))).tag(minutes)
+                        }
+                    } label: {
+                        Text("Unsent message reminder")
+                        Text("A notification when a message hasn't reached your host this long after you sent it.")
+                    }
+                    .id(reminder)
                 }
                 Section {
                     LabeledContent("Notifications") { Text(LocalizedStringKey(notificationsName)) }

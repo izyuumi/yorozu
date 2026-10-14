@@ -81,6 +81,17 @@ final class ProtectedFile: Sendable {
         }
     }
 
+    /// Written now, in order after earlier writes: false when it did not reach the disk (the caller keeps what it saved).
+    func saveNow<Value: Encodable & Sendable>(_ value: Value) -> Bool {
+        queue.sync { [directory, file] in
+            do {
+                if !FileManager.default.fileExists(atPath: directory.path) { try makeProtectedDirectory(directory) }
+                try JSONEncoder().encode(value).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                return true
+            } catch { return false }
+        }
+    }
+
     func wipe() {
         queue.async { [directory] in try? FileManager.default.removeItem(at: directory) }
     }

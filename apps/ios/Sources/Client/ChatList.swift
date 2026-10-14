@@ -80,3 +80,18 @@ extension PhoneModel.Bubble {
         return line.isEmpty && !files.isEmpty ? files.map(\.name).joined(separator: ", ") : line
     }
 }
+
+/// Where the reader left each chat (#405): the first message on screen while not at the bottom; nil means at the bottom,
+/// following new messages. On this device only, across relaunches.
+enum ReadingPositions {
+    private static let key = "readingPositionsV1"
+    static func get(_ chat: String) -> String? { (UserDefaults.standard.dictionary(forKey: key) as? [String: String])?[chat] }
+    static func set(_ message: String?, chat: String) {
+        var all = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+        guard all[chat] != message else { return }
+        all[chat] = message
+        // A bounded map: the newest positions matter.
+        if all.count > 500 { all.keys.prefix(all.count - 500).forEach { all[$0] = nil } }
+        UserDefaults.standard.set(all, forKey: key)
+    }
+}

@@ -127,14 +127,15 @@ enum UploadStore {
     static func store(_ drafts: [StagedFile], for messageId: String) throws -> [AttachmentInfo] {
         try makeProtectedDirectory(root)
         try makeProtectedDirectory(folder(messageId))
+        // Copies: the draft's files stay until the message is durably in the outbox (#405), so a failure on a later file,
+        // or on the outbox write, leaves the draft whole. The caller discards the draft's files after that write.
         do {
             return try drafts.enumerated().map { index, draft in
                 let chosen = draft.chosen
                 let target = url(messageId, index)
-                try FileManager.default.moveItem(at: chosen.url, to: target)
+                try FileManager.default.copyItem(at: chosen.url, to: target)
                 try FileManager.default.setAttributes(
                     [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: target.path)
-                draft.discard()
                 return AttachmentInfo(id: UUID().uuidString, name: chosen.name, mime: chosen.mime, bytes: chosen.bytes, sha256: chosen.sha256)
             }
         } catch {

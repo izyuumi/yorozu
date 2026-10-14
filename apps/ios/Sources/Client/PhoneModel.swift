@@ -92,9 +92,17 @@ final class PhoneModel {
         var error: String?
     }
 
-    var draft = ""
+    /// The Main chat's composer, kept as its draft (#405).
+    var draft = "" { didSet { saveMainDraft() } }
     /// Files staged in the composer (#316).
-    var draftFiles: [StagedFile] = []
+    var draftFiles: [StagedFile] = [] { didSet { saveMainDraft() } }
+    /// Every unsent draft on this device, with its files (#405).
+    let drafts = Drafts()
+    @ObservationIgnored private var restoringDraft = false
+    private func saveMainDraft() {
+        guard !restoringDraft, ownPub != nil else { return }
+        drafts.update(Drafts.chat(ThreadData.mainId), text: draft, files: draftFiles, replyTo: replyingTo)
+    }
     var pendingPairing: PendingPairing?
 
     // MARK: Attachments (#316)
@@ -340,7 +348,6 @@ final class PhoneModel {
     /// Loads the pairing and its cache; the first `resume()` dials.
     init() {
         savedStatus = SavedStatus.load()
-        StagedFile.clearAll()
         do {
             if let stored = try PairingStore.loadRequired() { connect(stored) }
         } catch {
@@ -451,10 +458,19 @@ final class PhoneModel {
         onboardingPending = onboardingKey.flatMap { UserDefaults.standard.object(forKey: $0) as? Bool } == false
         linked = stored.paired == true
         applyPush()
-        if let ownPub { openHistory(owner: ownPub) }
+        if let ownPub {
+            openHistory(owner: ownPub)
+            drafts.load(owner: ownPub)
+            let main = drafts.draft(Drafts.chat(ThreadData.mainId))
+            restoringDraft = true
+            draft = main.text; draftFiles = main.files; replyingTo = main.replyTo
+            restoringDraft = false
+        }
         if let ownPub, let saved = Outbox.file.load(Outbox.self), saved.owner == ownPub {
             outbox = saved.items
             marks = saved.marks
+            reminderAt = saved.reminderAt
+            reminderCovered = saved.reminderCovered
             // The cache keeps stored messages only: draw the rest from the outbox.
             for item in outbox where !item.stored {
                 // Files still in the outbox show from there.
@@ -465,6 +481,8 @@ final class PhoneModel {
                 }
             }
             expireOverdue()
+            // At once: a message waiting since before the update gets its reminder even if nothing changes (#405).
+            reconcileReminder()
         }
     }
 
@@ -505,9 +523,12 @@ final class PhoneModel {
         jobsUpdated = nil
         jobRefusals = [:]
         cacheHasJobs = false
-        draftFiles.forEach { $0.discard() }
+        restoringDraft = true
         draftFiles = []
+        draft = ""
         replyingTo = nil
+        restoringDraft = false
+        drafts.wipe()
         failure = nil
         updateRequired = nil
         hostName = nil
@@ -523,6 +544,17 @@ final class PhoneModel {
         saveTask = nil
         dirty = []
         removed = []
+        metaDirty = false
+        // A write still in flight belongs to this history: its late answer is ignored, and the next pairing starts clean.
+        writing = false
+        afterCommit = []
+        historyWriteFailed = false
+        deletedThreads = []
+        deletedTasks = []
+        sentReads = [:]
+        reminderAt = nil
+        reminderCovered = nil
+        LocalNotices.cancelReminder(delivered: true)
         history?.wipe()
         history = nil
         MirrorCache.shared.wipe()
@@ -596,6 +628,7 @@ final class PhoneModel {
     func enterBackground() {
         savedStatus = SavedStatus(status: shownStatus, time: Date())
         savedStatus?.save()
+        drafts.save()
         flush()
         inBackground = true
         guard sendingCount > 0 else { return waking ? () : suspend() }
@@ -606,8 +639,7 @@ final class PhoneModel {
     /// Background time ran out with messages still Sending: say so, and hang up.
     private func backgroundExpired() {
         backgroundTime = nil
-        let count = sendingCount
-        if count > 0 { LocalNotices.postWaiting(count) }
+        // The unsent reminder, scheduled with the system, covers what is still waiting (#405).
         suspend()
     }
 
@@ -910,8 +942,15 @@ final class PhoneModel {
         let event = YorozuEvent(id: id, threadId: thread ?? "main", ts: ts, agentId: "device",
                                 payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, replyTo: replyTo,
                                                               threadId: thread, newThread: newThread ? true : nil)))
-        enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos, topicId: thread),
-                Bubble(id: id, user: true, ts: ts, text: text, topicId: thread, replyTo: replyTo, attachments: infos, threadId: thread))
+        guard enqueue(Outbox.Item(event: event, sentAt: ts, files: infos.isEmpty ? nil : infos, topicId: thread),
+                      Bubble(id: id, user: true, ts: ts, text: text, topicId: thread, replyTo: replyTo, attachments: infos, threadId: thread)) else {
+            UploadStore.remove(id)
+            uploadOffsets[id] = nil
+            attachFailure = String(localized: "Couldn't save the message on this device, so it wasn't sent. Your draft is kept. Free up some space and try again.")
+            return false
+        }
+        // Durably queued: the draft's own copies can go now.
+        picked.forEach { $0.discard() }
         return true
     }
 
@@ -937,21 +976,31 @@ final class PhoneModel {
 
     /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only. Queued before the
     /// handshake too (a job page from the cached list); the flush holds it until the Mac has said it takes `jobs-v1`.
-    func send(_ text: String, toJob job: String, topic: String) {
-        guard canSend, jobsSupported != false, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    @discardableResult
+    func send(_ text: String, toJob job: String, topic: String) -> Bool {
+        guard canSend, jobsSupported != false, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let ts = Self.now
         let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: ts, agentId: "device",
                                 payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, jobId: job)))
-        enqueue(Outbox.Item(event: event, sentAt: ts, topicId: topic),
+        return enqueue(Outbox.Item(event: event, sentAt: ts, topicId: topic),
                 Bubble(id: event.id, user: true, ts: ts, text: text, kind: "job_input", topicId: topic))
     }
 
-    private func enqueue(_ item: Outbox.Item, _ bubble: Bubble) {
+    /// Into the outbox, written to disk before Send counts as done (#405): false, with nothing queued, when it was not.
+    @discardableResult
+    private func enqueue(_ item: Outbox.Item, _ bubble: Bubble) -> Bool {
         outbox.append(item)
         setMark(item.id, .sending)
+        guard let ownPub, Outbox.file.saveNow(Outbox(owner: ownPub, items: outbox, marks: marks, reminderAt: reminderAt, reminderCovered: reminderCovered)) else {
+            outbox.removeAll { $0.id == item.id }
+            marks[item.id] = nil
+            LocalNotices.cancelExpiry(item.id)
+            return false
+        }
         merge(bubble)
         saveOutbox()
         queued()
+        return true
     }
 
     /// Pause, Resume, Run now or Delete one job. One at a time per job, only while `.paired`, never queued; the
@@ -984,7 +1033,7 @@ final class PhoneModel {
     }
 
     /// The main-timeline message the next `send()` replies to (`MessageData.replyTo`); the host files the reply with it.
-    var replyingTo: String?
+    var replyingTo: String? { didSet { saveMainDraft() } }
 
     /// Why the last send with files did not go; the composer shows it.
     var attachFailure: String?
@@ -1190,10 +1239,8 @@ final class PhoneModel {
         outbox[index].deliveredAt = Self.now
         outbox[index].buffered = buffered
         setMark(id, .delivered)
-        if buffered {
-            LocalNotices.requestPermission()
-            LocalNotices.scheduleExpiry(id)
-        }
+        // Held by the relay is not on the host: the reminder and the expiry notice stay (#405).
+        if buffered { LocalNotices.requestPermission() }
         saveOutbox()
         finishBackgroundIfDone()
     }
@@ -1239,7 +1286,9 @@ final class PhoneModel {
     /// Never accepted by the relay and past its deadline: Not delivered here, without the Mac.
     private func expireOverdue() {
         let now = Self.now
-        for item in outbox where marks[item.id] == .sending && item.deliveredAt == nil && !item.stored && now > item.deadline {
+        // Past its deadline the host refuses it anyway (host check 5), so a message the relay holds expires here too and is
+        // never sent late; Resend starts a new 24 hours.
+        for item in outbox where (marks[item.id] == .sending || marks[item.id] == .delivered) && !item.stored && now > item.deadline {
             notDelivered(item.id, reason: String(localized: "This device couldn’t send it within 24 hours."))
         }
     }
@@ -1252,7 +1301,10 @@ final class PhoneModel {
         switch new {
         case .delivered:
             break
-        case .sending, .read:
+        case .sending:
+            // A send or a resend: its own 24 hours from now.
+            if let item = outbox.first(where: { $0.id == id }), !item.stored { LocalNotices.scheduleExpiry(id, at: item.deadline) }
+        case .read:
             LocalNotices.cancelExpiry(id)
         case .notDelivered:
             LocalNotices.cancelExpiry(id)
@@ -1262,7 +1314,47 @@ final class PhoneModel {
 
     private func saveOutbox() {
         guard let ownPub else { return }
-        Outbox.file.save(Outbox(owner: ownPub, items: outbox, marks: marks))
+        reconcileReminder()
+        Outbox.file.save(Outbox(owner: ownPub, items: outbox, marks: marks, reminderAt: reminderAt, reminderCovered: reminderCovered))
+    }
+
+    /// The unsent reminder's schedule, kept with the outbox so a relaunch does not reset it.
+    @ObservationIgnored private var reminderAt: Int?
+    @ObservationIgnored private var reminderCovered: Int?
+
+    /// The unsent reminder from the outbox's durable state (#405), on every change to it, at launch and on a timing change.
+    /// A message counts until the host has it (its `receipt` or stored copy): the relay's `accepted` is not the host, and
+    /// whether the assistant has read it does not matter. One notification at the earliest message's age past Send,
+    /// counting every message due by then; Off, or none left, cancels it.
+    func reconcileReminder() {
+        let now = Self.now, delay = LocalNotices.reminderMinutes * 60_000
+        if let at = reminderAt, at <= now { reminderCovered = max(reminderCovered ?? 0, at); reminderAt = nil }
+        let waiting = outbox.filter { !$0.stored && marks[$0.id] != .notDelivered && marks[$0.id] != .read }
+        guard delay > 0, !waiting.isEmpty else {
+            if reminderAt != nil || reminderCovered != nil { LocalNotices.cancelReminder(delivered: waiting.isEmpty) }
+            reminderAt = nil
+            if waiting.isEmpty { reminderCovered = nil }
+            return
+        }
+        let due = waiting.map { $0.sentAt + delay }.filter { $0 > (reminderCovered ?? 0) }
+        guard let next = due.min() else { LocalNotices.cancelReminder(delivered: false); reminderAt = nil; return }
+        let at = max(next, now + 1000)
+        let count = waiting.filter { $0.sentAt + delay <= at }.count
+        if at != reminderAt || count != reminderCount {
+            LocalNotices.scheduleReminder(at: at, count: count)
+            reminderAt = at
+            reminderCount = count
+        }
+    }
+    @ObservationIgnored private var reminderCount = 0
+
+    /// Settings › Unsent reminder.
+    func setReminder(minutes: Int) {
+        LocalNotices.reminderMinutes = minutes
+        reminderAt = nil
+        reminderCount = 0
+        LocalNotices.cancelReminder(delivered: false)
+        saveOutbox()
     }
 
     /// Stop or Retry one task. One per tap, only while `.paired`, never queued or resent; returns
@@ -1809,6 +1901,9 @@ final class PhoneModel {
         var deletedTasks: [String]?
     }
     @ObservationIgnored private var metaDirty = false
+    /// A history write is in flight; `afterCommit` runs once what it and the writes before it carried is durable.
+    @ObservationIgnored private var writing = false
+    @ObservationIgnored private var afterCommit: [@MainActor () -> Void] = []
     /// The last history write failed (a full disk): it is retried, and the chat says history is not saved.
     private(set) var historyWriteFailed = false
 
@@ -1912,7 +2007,12 @@ final class PhoneModel {
     private func flush(committed: (@MainActor () -> Void)? = nil) {
         saveTask?.cancel()
         saveTask = nil
-        guard let history, !dirty.isEmpty || !removed.isEmpty || metaDirty else { return }
+        if let committed { afterCommit.append(committed) }
+        // One write at a time: the next waits for this one's commit, so no later batch (and its cursor) lands without it.
+        guard let history, !writing, !dirty.isEmpty || !removed.isEmpty || metaDirty else {
+            if !writing, !afterCommit.isEmpty { let done = afterCommit; afterCommit = []; done.forEach { $0() } }
+            return
+        }
         let encoder = JSONEncoder()
         let byId = Dictionary(bubbles.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         var upserts: [HistoryStore.Record] = []
@@ -1949,19 +2049,27 @@ final class PhoneModel {
         // Held records are written as they are now: the in-memory upsert rule already decided, so the disk follows it.
         // What this batch carried is written again with the next one unless it committed, so a failed write (a full disk)
         // leaves no gap behind a cursor that moved on: the cursor travels in the same transaction.
-        let batch = (dirty, removed, metaDirty)
+        let batch = (dirty, removed, metaDirty), waiting = afterCommit
         dirty = []
         removed = []
         metaDirty = false
+        afterCommit = []
+        writing = true
         history.write(upserts: upserts, deletes: Array(batch.1), meta: meta, force: true) { ok in
             Task { @MainActor [weak self, weak history] in
                 guard let self, let history, self.history === history else { return }
+                self.writing = false
                 self.historyWriteFailed = !ok
-                guard !ok else { committed?(); return }
+                if ok {
+                    waiting.forEach { $0() }
+                    if !self.dirty.isEmpty || !self.removed.isEmpty || self.metaDirty { self.scheduleSave() }
+                    return
+                }
                 // Not rewritten over newer state: a key changed meanwhile is already dirty again.
                 self.dirty.formUnion(batch.0.subtracting(self.removed))
                 self.removed.formUnion(batch.1.subtracting(self.dirty))
                 self.metaDirty = self.metaDirty || batch.2
+                self.afterCommit = waiting + self.afterCommit
                 try? await Task.sleep(for: .seconds(5))
                 self.scheduleSave()
             }

@@ -132,6 +132,10 @@ struct TopicScreen: View {
     @State private var renaming: ThreadRef?
     @State private var deleting: ThreadRef?
     @State private var sentRead: String?
+    /// The reader is at the newest message, so new ones are followed; otherwise the view stays put and the pill counts.
+    @State private var atBottom = true
+    @State private var unseen = 0
+    @State private var restored = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
@@ -166,7 +170,8 @@ struct TopicScreen: View {
         let messages = pageAround != nil && model.page?.messageId == pageAround ? model.page?.bubbles ?? [] : held
         let source = threads && (row?.bySecretary ?? (model.topics[topicId]?.origin.map { $0 != "user" } ?? false))
             ? row?.sourceMessageId ?? model.topics[topicId]?.sourceMessageId : nil
-        let ref = ThreadRef(id: topicId, name: model.threadName(topicId) ?? "", archived: row?.archivedAt != nil || model.topics[topicId]?.archivedAt != nil)
+        let ref = ThreadRef(id: topicId, name: model.threadName(topicId) ?? "", archived: row?.archivedAt != nil || model.topics[topicId]?.archivedAt != nil,
+                            running: row?.running == true || tasks.contains(where: \.isActive))
         // Grouped once for every card, not filtered per card.
         let taskIds = Set(tasks.map(\.id))
         let events = Dictionary(grouping: model.workerEvents.values.filter { taskIds.contains($0.taskId) }, by: \.taskId)
@@ -176,20 +181,58 @@ struct TopicScreen: View {
         let missing = model.topics[topicId] == nil && job == nil && !(threads && (isNew || row != nil || !messages.isEmpty))
         let controls = threads && (model.topics[topicId] != nil || row != nil)
         list(items, source: source, threads: threads, events: events, amendments: amendments)
+        .overlay(alignment: .bottom) {
+            if !atBottom {
+                Button {
+                    unseen = 0
+                    withAnimation(.snappy) { position.scrollTo(edge: .bottom) }
+                } label: {
+                    Image(systemName: "arrow.down").font(.body.weight(.semibold)).frame(width: controlTarget, height: controlTarget).contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+                .yorozuGlass(in: Circle())
+                .padding(.bottom, LayoutMetrics.inner)
+                .accessibilityLabel(unseen > 0 ? String(localized: "\(unseen) new") : String(localized: "Scroll to bottom"))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: atBottom)
+        .onChange(of: items.last?.id) { old, new in
+            guard restored, old != nil, new != old else { return }
+            // Follow only a reader already at the bottom (#405); anyone reading older messages stays where they are.
+            if atBottom { position.scrollTo(edge: .bottom) } else { unseen += 1 }
+        }
+        // A deleted chat (its tombstone) leaves; a refused delete keeps it open with the reason below.
+        .onChange(of: model.deletedThreads.contains(topicId)) { _, gone in if gone { dismiss() } }
         .overlay {
             if missing {
-                ContentUnavailableView("Not on this device", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("This activity is older than what this device keeps. Open it on the host."))
+                ContentUnavailableView(model.historySynced ? "This chat isn't here" : "Not downloaded yet", systemImage: "bubble.left.and.bubble.right",
+                                       description: Text(model.historySynced ? "It may have been deleted on another device." : "It appears once this device has the whole chat history from the host."))
             } else if isNew && items.isEmpty {
                 ContentUnavailableView("New chat", systemImage: "square.and.pencil",
                                        description: Text("Yorozu answers here and names the chat from your first message."))
             }
         }
         .task {
-            guard let focus else { return }
-            if let task = model.tasks[focus], !task.isActive { toggled.insert(focus) }
-            position.scrollTo(id: focus, anchor: .center)
+            // The draft this chat had, files included (#405).
+            let saved = model.drafts.draft(draftKey)
+            draft = saved.text
+            files = saved.files
+            if let focus {
+                if let task = model.tasks[focus], !task.isActive { toggled.insert(focus) }
+                atBottom = false
+                position.scrollTo(id: focus, anchor: .center)
+            } else if let mark = ReadingPositions.get(topicId), items.contains(where: { $0.id == mark }) {
+                // Where the reader left it.
+                atBottom = false
+                position.scrollTo(id: mark, anchor: .top)
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            restored = true
         }
+        .onChange(of: draft) { _, text in model.drafts.update(draftKey, text: text, files: files) }
+        .onChange(of: files) { _, files in model.drafts.update(draftKey, text: draft, files: files) }
         .task(id: model.state == .paired) {
             if let pageAround, model.state == .paired, model.page?.messageId != pageAround { await model.loadPage(around: pageAround, thread: topicId) }
         }
@@ -215,7 +258,7 @@ struct TopicScreen: View {
                 }
             }
         }
-        .threadDialogs(model: model, renaming: $renaming, deleting: $deleting) { dismiss() }
+        .threadDialogs(model: model, renaming: $renaming, deleting: $deleting)
         .sheet(item: $details) { bubble in
             MessageDetails(bubble: bubble, delivery: model.delivery(of: bubble),
                            onResend: { model.resend(bubble.id) }, onDelete: { model.delete(bubble.id) })
@@ -264,6 +307,16 @@ struct TopicScreen: View {
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .onScrollGeometryChange(for: Bool.self) { g in
+            g.contentOffset.y + g.containerSize.height - g.contentInsets.top >= g.contentSize.height - 24
+        } action: { _, bottom in
+            guard restored || bottom == false else { return }
+            atBottom = bottom
+            if bottom { unseen = 0; ReadingPositions.set(nil, chat: topicId) }
+        }
+        .onScrollTargetVisibilityChange(idType: String.self) { ids in
+            if restored, !atBottom, let first = ids.first { ReadingPositions.set(first, chat: topicId) }
+        }
         .background(Color(.systemGroupedBackground))
     }
 
@@ -277,8 +330,9 @@ struct TopicScreen: View {
             }
             if let job {
                 Composer(text: $draft, files: $noFiles, attachments: false, working: false, enabled: model.canSend, allowsFiles: false) {
-                    model.send(draft, toJob: job.id, topic: topicId)
+                    guard model.send(draft, toJob: job.id, topic: topicId) else { return }
                     draft = ""
+                    model.drafts.clear(draftKey)
                     position.scrollTo(edge: .bottom)
                 } onSendAsTextFile: {}
             } else if threads {
@@ -288,9 +342,14 @@ struct TopicScreen: View {
                 Composer(text: $draft, files: $files, attachments: model.attachmentsSupported != false, working: working, enabled: model.canSend) {
                     // New chat's first message creates the thread; until its record arrives every send says so, which
                     // the host ignores once the thread exists.
+                    let key = draftKey
                     if model.send(text: draft, files: files, thread: topicId, newThread: isNew && model.topics[topicId] == nil) {
+                        // A draft becomes a chat only now, with its first message (#405); its files went to the outbox.
+                        model.drafts.clear(key)
+                        model.drafts.clear(Drafts.new(topicId))
                         draft = ""
                         files = []
+                        atBottom = true
                         position.scrollTo(edge: .bottom)
                     }
                 } onSendAsTextFile: {
@@ -300,6 +359,12 @@ struct TopicScreen: View {
                 inspectOnly
             }
         }
+    }
+
+    /// A New chat not sent yet keeps its draft as one; once its chat exists, as that chat's.
+    private var draftKey: String {
+        isNew && model.topics[topicId] == nil && model.thread(topicId) == nil && !model.bubbles.contains(where: { $0.threadId == topicId })
+            ? Drafts.new(topicId) : Drafts.chat(topicId)
     }
 
     private var inspectOnly: some View {
