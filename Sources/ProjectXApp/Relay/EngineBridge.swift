@@ -188,7 +188,7 @@ actor EngineBridge: RelayBackend {
         jobsRead = (latest, next, .now)
         let ms = { (d: Date) in Int(d.timeIntervalSince1970 * 1000) }
         await host.publishJobs(JobListData(jobs: await engine.jobStatus(nextRuns: next).map {
-            JobListData.Job(id: $0.id, name: $0.name, summary: $0.summary, nextRun: $0.nextRun.map(ms), lastRun: $0.lastRun.map(ms),
+            JobListData.Job(id: $0.id, name: $0.name, summary: $0.summary, schedule: $0.schedule, nextRun: $0.nextRun.map(ms), lastRun: $0.lastRun.map(ms),
                             lastResult: $0.lastResult, lastNotable: $0.lastNotable, state: $0.state.rawValue, topicId: $0.topicID)
         }))
     }

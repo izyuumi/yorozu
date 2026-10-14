@@ -163,6 +163,8 @@ public enum JobRunOutcome: Sendable, Equatable {
 public struct JobStatus: Sendable, Equatable {
     public enum State: String, Sendable { case running, paused, needsApproval, needsAttention, finished, idle }
     public var id: String; public var name: String; public var topicID: String?; public var summary: String?
+    /// The schedule in plain words: the summary's first line, or the cron text until a summary exists.
+    public var schedule: String
     public var nextRun: Date?; public var lastRun: Date?
     /// The last finished run's state (done|failed|stopped|uncertain) and whether it was notable.
     public var lastResult: String?; public var lastNotable: Bool?

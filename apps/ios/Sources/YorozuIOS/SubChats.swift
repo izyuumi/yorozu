@@ -102,149 +102,10 @@ extension PhoneModel {
         }
     }
 
-    /// The newest thing that happened in each topic, epoch ms, in one pass: orders the list.
-    func lastActivities() -> [String: Int] {
-        var latest = topics.mapValues(\.created)
-        for task in tasks.values { latest[task.topicId] = Swift.max(latest[task.topicId] ?? 0, task.created) }
-        for bubble in bubbles {
-            if let id = bubble.topicId { latest[id] = Swift.max(latest[id] ?? 0, bubble.ts) }
-        }
-        return latest
-    }
-
-    /// The Activities badge: topics in the list's Needs attention section. Running work is no reason to look.
+    /// The Chats dot: a topic needs attention. Running work is no reason to look.
     var attentionTopics: Int {
         let byTopic = tasksByTopic, jobs = jobTopicIds
         return topics.keys.filter { !jobs.contains($0) && status(of: $0, tasks: byTopic[$0] ?? []) == .attention }.count
-    }
-}
-
-/// The sub-chat list: Running, Needs attention and Recent, or one list while the status is unknown.
-struct TopicsScreen: View {
-    let model: PhoneModel
-
-    /// Per topic, computed once a render: its tasks, oldest first, and its last activity.
-    private struct Facts {
-        var tasks: [String: [TaskData]]
-        var activity: [String: Int]
-    }
-
-    var body: some View {
-        let facts = Facts(tasks: model.tasksByTopic, activity: model.lastActivities())
-        let jobTopics = model.jobTopicIds
-        let ids = model.topics.keys.filter { !jobTopics.contains($0) }.sorted { facts.activity[$0, default: 0] > facts.activity[$1, default: 0] }
-        let showsJobs = model.jobsSupported == true
-        List {
-            if showsJobs { JobsRow(jobs: model.jobs) }
-            if !model.statusKnown {
-                Section {
-                    ForEach(ids, id: \.self) { row($0, nil, facts) }
-                } footer: {
-                    if model.working == nil {
-                        Text("Status unknown until the host is connected.")
-                    } else {
-                        Text("Status unknown until this device has caught up with the host.")
-                    }
-                }
-            } else {
-                let statuses = Dictionary(uniqueKeysWithValues: ids.map { ($0, model.status(of: $0, tasks: facts.tasks[$0] ?? []) ?? .idle) })
-                section(String(localized: "Running"), ids.filter { statuses[$0] == .running }, statuses, facts)
-                section(String(localized: "Needs attention"), ids.filter { statuses[$0] == .attention }, statuses, facts)
-                section(String(localized: "topics.section.recent", defaultValue: "Recent"),
-                        ids.filter { statuses[$0] == .done || statuses[$0] == .idle }, statuses, facts)
-            }
-        }
-        .listStyle(.insetGrouped)
-        .overlay {
-            if ids.isEmpty && !showsJobs {
-                ContentUnavailableView("No activities yet", systemImage: "bubble.left.and.bubble.right",
-                                       description: Text("Bigger work runs in the background on the host. It shows up here."))
-            }
-        }
-        .navigationTitle("Activities")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    @ViewBuilder
-    private func section(_ title: String, _ ids: [String], _ statuses: [String: TopicStatus], _ facts: Facts) -> some View {
-        if !ids.isEmpty {
-            Section(title) {
-                ForEach(ids, id: \.self) { row($0, statuses[$0], facts) }
-            }
-        }
-    }
-
-    private func row(_ id: String, _ status: TopicStatus?, _ facts: Facts) -> some View {
-        NavigationLink(value: ChatRoute.topic(id, focus: nil)) {
-            HStack(spacing: LayoutMetrics.stack) {
-                TopicSymbol(status: status)
-                VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
-                    Text(model.topics[id]?.label ?? "").lineLimit(1)
-                    Group {
-                        if let target = model.attachedTarget(of: id) {
-                            Text("Attached to “\(target)”").foregroundStyle(.secondary)
-                        } else {
-                            subtitle(status, current: (facts.tasks[id] ?? []).current, when: facts.activity[id] ?? 0)
-                        }
-                    }
-                    .font(.footnote)
-                    .lineLimit(1)
-                }
-            }
-        }
-    }
-
-    private func subtitle(_ status: TopicStatus?, current: TaskData?, when: Int) -> some View {
-        let when = MessageTime.day.string(from: MessageTime.date(when))
-        return Group {
-            switch status {
-            case nil:
-                Text("Status unknown").foregroundStyle(.secondary)
-            case .running:
-                if let current {
-                    Text("\(current.executorName) · \(Text(MessageTime.date(current.created), style: .relative))")
-                        .foregroundStyle(.secondary)
-                }
-            case .attention:
-                if let current, current.state == "failed", let error = current.error {
-                    Text("Failed: \(error)").foregroundStyle(YorozuPalette.warning)
-                } else {
-                    Text(verbatim: current?.stateLabel ?? "").foregroundStyle(YorozuPalette.warning)
-                }
-            case .done:
-                Text("Done · \(when)").foregroundStyle(.secondary)
-            case .idle:
-                Text("Idle · \(when)").foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-/// The status symbol of a topic row, with its name for VoiceOver.
-private struct TopicSymbol: View {
-    let status: TopicStatus?
-
-    var body: some View {
-        Group {
-            switch status {
-            case nil:
-                Image(systemName: "questionmark.circle").foregroundStyle(.secondary)
-                    .accessibilityLabel("Status unknown")
-            case .running:
-                ProgressView().controlSize(.small).tint(YorozuPalette.vermilion)
-                    .accessibilityLabel("Running")
-            case .attention:
-                Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
-                    .accessibilityLabel("Needs attention")
-            case .done:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(YorozuPalette.sage)
-                    .accessibilityLabel("Done")
-            case .idle:
-                Image(systemName: "circle").foregroundStyle(.secondary)
-                    .accessibilityLabel("Idle")
-            }
-        }
-        .font(.title3)
     }
 }
 
@@ -295,9 +156,9 @@ struct TopicScreen: View {
 
     var body: some View {
         let tasks = model.tasks(in: topicId)
-        let job = model.jobsSupported == true ? model.jobs.first { $0.topicId == topicId } : nil
-        // A thread (`threads-v1`): its own messages too, typed or answered in it; a composer instead of inspect only.
-        let threads = model.threadsSupported == true && job == nil
+        let job = model.jobs.first { $0.topicId == topicId }
+        // A thread: its own messages too, typed or answered in it, with a composer. A job's sub-chat has the job's input instead.
+        let threads = job == nil
         let row = model.thread(topicId)
         let held = (threads ? model.bubbles(inThread: topicId) : model.bubbles.filter { $0.topicId == topicId }).filter { !model.hidesInTopic($0) }
         // Nothing of an older thread held here: the host's page around its newest message.
@@ -341,7 +202,7 @@ struct TopicScreen: View {
         .yorozuBottomBar { bottomBar(job: job, threads: threads, working: tasks.contains(where: \.isActive)) }
         .navigationTitle(job?.name ?? model.threadName(topicId) ?? (isNew ? String(localized: "New chat") : ""))
         .navigationBarTitleDisplayMode(.inline)
-        .navigationSubtitleIfAvailable(job.map(\.schedule) ?? (threads ? "" : String(localized: "Inspect only")))
+        .navigationSubtitleIfAvailable(job?.schedule ?? "")
         .toolbar {
             if controls {
                 ToolbarItem(placement: .topBarTrailing) {

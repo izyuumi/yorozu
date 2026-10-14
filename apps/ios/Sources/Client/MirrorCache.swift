@@ -22,6 +22,9 @@ final class MirrorCache: Sendable {
         var jobs: Bool?
         /// Filled with `threads-v1`, so it holds thread messages. Optional so an older cache still loads.
         var threads: Bool?
+        /// The latest `job_list` and when it arrived (epoch ms), shown until a fresh one comes (owner, 2026-10-14).
+        var jobList: [JobListData.Job]?
+        var jobListAt: Int?
     }
 
     static let shared = MirrorCache()

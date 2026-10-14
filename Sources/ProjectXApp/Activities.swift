@@ -27,67 +27,70 @@ struct Activity: Identifiable {
 }
 
 extension Snapshot {
-    /// Every sub-chat but the jobs' (Settings › Jobs has those), newest activity first.
+    /// Every sub-chat but the jobs' (Scheduled has those) and the archived ones, newest activity first.
     func activities(excluding jobs: Set<String>) -> [Activity] {
         let tasks = Dictionary(grouping: work,by: \.topicID)
         var last = Dictionary(topics.map { ($0.id,$0.created) }) { a,_ in a }
         for m in messages { if let t = m.topicID { last[t] = max(last[t] ?? 0,m.created) } }
         for w in work { last[w.topicID] = max(last[w.topicID] ?? 0,w.created) }
-        return topics.filter { !jobs.contains($0.id) && $0.deletedAt == nil }
+        return topics.filter { !jobs.contains($0.id) && $0.deletedAt == nil && $0.archivedAt == nil }
             .map { Activity(topic: $0,state: ActivityState(tasks[$0.id] ?? []),last: last[$0.id] ?? $0.created) }
             .sorted { $0.last > $1.last }
     }
 }
 
-/// The chat window (owner, 2026-10-13; it was the inspect-only Activities window): the thread list as its sidebar with
-/// Main pinned on top and New chat, the threads in Needs attention, Running and Recent, each by latest activity, a page at
-/// a time behind Show more, and the archived ones behind Archived; beside it Main or the selected thread with a composer.
+/// The chat window (owner, 2026-10-13; sections 2026-10-14): three columns, like Mail. The sidebar has the sections, Chats
+/// and Scheduled (the host only: a client Mac runs no jobs), each with a dot while something needs attention, and the
+/// search field. Chats lists Main pinned on top and New chat, the threads in Needs attention, Running and Recent, each by
+/// latest activity, a page at a time behind Show more, and the archived ones behind Archived; beside it Main or the
+/// selected thread with a composer. Scheduled lists the jobs; beside it the selected job's pane. A search shows its hits
+/// in the detail column, and a hit opens in Chats, or, for a job run's output, its job in Scheduled.
 struct ChatWindow: View {
     static let id = "activities"
     static let main = "main"
+    enum Pane: Hashable { case chats, scheduled }
     @ObservedObject var model: AppModel
     @StateObject private var search = ChatSearch()
+    @StateObject private var jobs = JobList()
+    @State private var pane: Pane? = .chats
     @State private var selection: String? = ChatWindow.main
+    @State private var job: String?
+    @State private var deletingJob: JobStatus?
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
     /// A New chat not sent yet: shown as an empty thread until its first message creates it.
     @State private var draftThread: String?
     @State private var archivedShown = false
     @State private var renaming: ThreadRow?
     @State private var name = ""
     @State private var deleting: ThreadRow?
-    private enum Metrics { static let minWidth: CGFloat = 720, minHeight: CGFloat = 480, sidebar: CGFloat = 250 }
+    private enum Metrics { static let minWidth: CGFloat = 860, minHeight: CGFloat = 480, sections: CGFloat = 160, sidebar: CGFloat = 250 }
 
     var body: some View {
-        let rows = archivedShown ? model.archivedThreads : model.threads
         NavigationSplitView {
-            List(selection: $selection) {
-                if !archivedShown {
-                    Label("Main",systemImage: "bubble.left").tag(Self.main)
-                    if let draftThread { Label("New chat",systemImage: "square.and.pencil").tag(draftThread) }
-                    section("Needs attention",rows.filter { ActivityState(current: $0.state) == .attention })
-                    section("Running",rows.filter { ActivityState(current: $0.state) == .running })
-                    section("Recent",rows.filter { ActivityState(current: $0.state) > .running })
-                } else {
-                    section("Archived",rows)
-                }
-                if (archivedShown ? model.archivedNext : model.threadsNext) != nil {
-                    Button("Show more") { Task { await model.loadThreads(archived: archivedShown,more: true) } }.buttonStyle(.link)
-                }
+            List(selection: $pane) {
+                SectionRow(title: "Chats",symbol: "bubble.left.and.bubble.right",dot: model.snapshot.activities(excluding: model.jobTopics).contains { $0.state == .attention })
+                    .tag(Pane.chats)
+                if !model.isClient { SectionRow(title: "Scheduled",symbol: "clock",dot: jobs.needsAttention).tag(Pane.scheduled) }
             }
-            .safeAreaInset(edge: .bottom) {
-                Toggle(isOn: $archivedShown) { Label("Archived",systemImage: "archivebox") }
-                    .toggleStyle(.button).buttonStyle(.accessoryBar).frame(maxWidth: .infinity,alignment: .leading).padding(8)
-            }
-            .toolbar {
-                Button { newChat() } label: { Image(systemName: "square.and.pencil") }.help("New chat").accessibilityLabel("New chat")
+            .searchable(text: $query,placement: .sidebar)
+            .searchFocused($searchFocused)
+            .navigationSplitViewColumnWidth(min: Metrics.sections * 0.8,ideal: Metrics.sections)
+        } content: {
+            Group {
+                if pane == .scheduled { JobsColumn(model: model,list: jobs,selection: $job,deleting: $deletingJob) } else { threadList }
             }
             .navigationSplitViewColumnWidth(min: Metrics.sidebar * 0.8,ideal: Metrics.sidebar)
         } detail: {
-            if selection == Self.main || selection == nil {
-                VStack(spacing: 0) {
-                    if search.shown { SearchBar(search: search).padding(10) }
-                    MainChat(model: model,search: search)
-                }
-                .background { Button("Search") { search.shown = true }.keyboardShortcut("f").hidden() }
+            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                SearchResults(model: model,query: query) { open($0) }
+            } else if pane == .scheduled {
+                if let job = jobs.jobs.first(where: { $0.id == self.job }) {
+                    JobDetail(model: model,job: job,problem: $jobs.problem,
+                              actions: AnyView(JobActions(model: model,list: jobs,job: job,deleting: $deletingJob))).id(job.id)
+                } else { Text("Select a job to see its chat.").foregroundStyle(.secondary).frame(maxWidth: .infinity,maxHeight: .infinity) }
+            } else if selection == Self.main || selection == nil {
+                MainChat(model: model,search: search)
             } else if let id = selection {
                 let row = (model.threads + model.archivedThreads).first { $0.topic.id == id }
                 ThreadDetail(model: model,id: id,row: row,rename: { start(renaming: $0) },delete: { deleting = $0 },
@@ -95,15 +98,10 @@ struct ChatWindow: View {
                              sent: { if draftThread == id { draftThread = nil } }).id(id)
             }
         }
+        .background { shortcuts }
         .frame(minWidth: Metrics.minWidth,minHeight: Metrics.minHeight)
         .navigationTitle("Chats")
         .environment(\.openURL,OpenURLAction { url in model.openLink(url) ? .handled : .systemAction })
-        .task(id: search.shown ? search.query : nil) {
-            guard search.shown else { return }
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            await search.run(model,timeline: Set(model.timeline.map(\.id)))
-        }
         // The list follows the store: re-read the loaded rows when anything changed (a cheap, paged query).
         .task(id: model.snapshot) {
             try? await Task.sleep(for: .milliseconds(300))
@@ -111,9 +109,14 @@ struct ChatWindow: View {
             await model.loadThreads()
         }
         .task(id: archivedShown) { if archivedShown { await model.loadThreads(archived: true) } }
+        .onChange(of: model.snapshot) { jobs.refresh(model) }
+        .onChange(of: model.jobSpecs) { jobs.refresh(model) }
+        // Next runs move on with the clock: a modest poll while the window is open.
+        .task { while !Task.isCancelled { jobs.refresh(model); try? await Task.sleep(for: .seconds(30)) } }
+        .onChange(of: jobs.jobs.map(\.id)) { _,ids in if !ids.contains(where: { $0 == job }) { job = ids.first } }
         .onChange(of: model.chatFocus,initial: true) { _,focus in
             guard let focus else { return }
-            archivedShown = false
+            pane = .chats; query = ""; archivedShown = false
             selection = focus.thread ?? Self.main
             if focus.thread == nil { if let m = focus.message { model.focusMessageID = m }; model.chatFocus = nil }
         }
@@ -131,6 +134,62 @@ struct ChatWindow: View {
         } message: { _ in
             Text("Its messages are removed for good, from search and from Yorozu's recall. Memory already taken from them stays.")
         }
+        .confirmationDialog("Delete this job?",isPresented: Binding(get: { deletingJob != nil },set: { if !$0 { deletingJob = nil } }),presenting: deletingJob) { job in
+            Button("Delete",role: .destructive) { jobs.act(model) { try await $0.deleteJob(job.id) } }
+        } message: { job in
+            Text("“\(job.name)” is removed from jobs.toml and won’t run again. Its chat and its folder stay.")
+        }
+    }
+
+    private var threadList: some View {
+        let rows = archivedShown ? model.archivedThreads : model.threads
+        return List(selection: $selection) {
+            if !archivedShown {
+                Label("Main",systemImage: "bubble.left").tag(Self.main)
+                if let draftThread { Label("New chat",systemImage: "square.and.pencil").tag(draftThread) }
+                section("Needs attention",rows.filter { ActivityState(current: $0.state) == .attention })
+                section("Running",rows.filter { ActivityState(current: $0.state) == .running })
+                section("Recent",rows.filter { ActivityState(current: $0.state) > .running })
+            } else {
+                section("Archived",rows)
+            }
+            if (archivedShown ? model.archivedNext : model.threadsNext) != nil {
+                Button("Show more") { Task { await model.loadThreads(archived: archivedShown,more: true) } }.buttonStyle(.link)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            Toggle(isOn: $archivedShown) { Label("Archived",systemImage: "archivebox") }
+                .toggleStyle(.button).buttonStyle(.accessoryBar).frame(maxWidth: .infinity,alignment: .leading).padding(8)
+        }
+        .toolbar {
+            Button { newChat() } label: { Image(systemName: "square.and.pencil") }.help("New chat").accessibilityLabel("New chat")
+        }
+        .navigationTitle("Chats")
+    }
+
+    /// ⌘1 Chats, ⌘2 Scheduled, ⌘N New chat and ⌘F the search field (owner, 2026-10-14).
+    private var shortcuts: some View {
+        Group {
+            Button("Chats") { pane = .chats }.keyboardShortcut("1")
+            if !model.isClient { Button("Scheduled") { pane = .scheduled }.keyboardShortcut("2") }
+            Button("New chat") { newChat() }.keyboardShortcut("n")
+            Button("Search") { searchFocused = true }.keyboardShortcut("f")
+        }
+        .hidden()
+    }
+
+    /// A search hit, in Chats: Main scrolled to it, or its thread at it; a job's run output, in Scheduled: the job's page.
+    private func open(_ hit: SearchHit) {
+        query = ""
+        guard let id = hit.messageID else {
+            if let job = jobs.jobs.first(where: { $0.topicID != nil && $0.topicID == hit.topicID }) {
+                pane = .scheduled; self.job = job.id
+                return
+            }
+            pane = .chats; archivedShown = false; selection = hit.threadID != "main" ? hit.threadID : hit.topicID ?? Self.main
+            return
+        }
+        model.open(message: id)
     }
 
     @ViewBuilder private func section(_ title: LocalizedStringKey,_ items: [ThreadRow]) -> some View {
@@ -145,7 +204,7 @@ struct ChatWindow: View {
 
     private func newChat() {
         let id = draftThread ?? UUID().uuidString.lowercased()
-        draftThread = id; archivedShown = false; selection = id
+        draftThread = id; archivedShown = false; selection = id; pane = .chats; query = ""
     }
 
     private func start(renaming row: ThreadRow) { name = row.topic.label; renaming = row }
@@ -422,5 +481,66 @@ private struct TaskCard: View {
     private func control(_ action: TaskControlData.Action) {
         busy = true
         Task { await model.control(task: work.id,action); busy = false }
+    }
+}
+
+/// A section in the window's sidebar, with a small dot (no number) while something in it needs attention.
+private struct SectionRow: View {
+    let title: LocalizedStringKey, symbol: String, dot: Bool
+    private enum Metrics { static let dot: CGFloat = 7 }
+    var body: some View {
+        HStack {
+            Label(title,systemImage: symbol)
+            Spacer(minLength: 0)
+            if dot { Circle().fill(ChatPalette.warning).frame(width: Metrics.dot,height: Metrics.dot).accessibilityLabel("Needs attention") }
+        }
+    }
+}
+
+/// The window's search: hits across the main chat, threads and their work, newest first. A hit opens in Chats.
+private struct SearchResults: View {
+    @ObservedObject var model: AppModel
+    let query: String
+    let open: (SearchHit) -> Void
+    @State private var hits: [SearchHit] = []
+    @State private var total = 0
+    @State private var failure: String?
+    @State private var searching = false
+    private static let limit = 100
+
+    var body: some View {
+        let labels = Dictionary(model.snapshot.topics.map { ($0.id,$0.label) }) { a,_ in a }
+        List {
+            Section {
+                ForEach(hits.indices,id: \.self) { i in
+                    let hit = hits[i]
+                    Button { open(hit) } label: {
+                        VStack(alignment: .leading,spacing: 2) {
+                            HStack {
+                                Text(hit.threadID != "main" ? labels[hit.threadID] ?? "" : hit.topicID.flatMap { labels[$0] } ?? String(localized: "Main chat"))
+                                    .fontWeight(.semibold).lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text(Date(timeIntervalSince1970: hit.created),format: .relative(presentation: .named)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text(hit.snippet).foregroundStyle(.secondary).lineLimit(3)
+                        }.frame(maxWidth: .infinity,alignment: .leading).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                }
+            } header: {
+                if let failure { Text(failure) }
+                else if !searching { Text(hits.isEmpty ? String(localized: "No matches") : String(localized: "\(total) results")) }
+            }
+        }
+        .navigationTitle("Search")
+        .task(id: query) {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            searching = true; defer { searching = false }
+            do {
+                let found = try await model.search(query.trimmingCharacters(in: .whitespacesAndNewlines),limit: Self.limit)
+                guard !Task.isCancelled else { return }
+                hits = found.hits; total = found.total; failure = nil
+            } catch { if !Task.isCancelled { hits = []; failure = error.localizedDescription } }
+        }
     }
 }

@@ -356,7 +356,7 @@ public actor Store {
     /// A live, non-job topic for a thread action; throws a user-facing refusal otherwise.
     private static func liveThread(_ db: Database,_ id: String) throws -> Topic {
         guard let t = try Topic.fetchOne(db,key: id), t.deletedAt == nil else { throw ProjectError.invalid(String(localized: "That chat no longer exists.")) }
-        guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM jobs WHERE topicID=?",arguments: [id]) == 0 else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Settings › Jobs.")) }
+        guard try Int.fetchOne(db,sql: "SELECT COUNT(*) FROM jobs WHERE topicID=?",arguments: [id]) == 0 else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Scheduled.")) }
         return t
     }
     /// 1–80 characters after trimming, on one line.

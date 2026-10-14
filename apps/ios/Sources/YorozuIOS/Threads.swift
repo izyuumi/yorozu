@@ -1,7 +1,7 @@
 import SwiftUI
 import YorozuWire
 
-// Threads on the phone (`threads-v1`, owner 2026-10-13): the thread list as a navigation stack, with the main chat
+// Threads on the phone (`threads-v1`, owner 2026-10-13): the thread list, with the main chat
 // pinned on top, New chat, Show more, the archived list, and rename, archive and delete.
 
 extension ThreadData {
@@ -34,11 +34,13 @@ struct ThreadRef: Identifiable, Equatable {
 }
 
 /// The thread list: the main chat, then threads by latest activity in Needs attention, Running and Recent, a page at a
-/// time behind Show more; the Scheduled row and the archived list below.
+/// time behind Show more, and the archived list below.
 struct ThreadsScreen: View {
     let model: PhoneModel
     let onMainChat: () -> Void
     let onNewChat: () -> Void
+    /// Opens a thread or the archived list: a page of the stack on iPhone, the detail column on iPad.
+    let onOpen: (ChatRoute) -> Void
 
     @State private var renaming: ThreadRef?
     @State private var deleting: ThreadRef?
@@ -52,7 +54,6 @@ struct ThreadsScreen: View {
                 }
                 .foregroundStyle(.primary)
             }
-            if model.jobsSupported == true { JobsRow(jobs: model.jobs) }
             section(String(localized: "Needs attention"), rows.filter { $0.status == .attention })
             section(String(localized: "Running"), rows.filter { $0.status == .running })
             section(String(localized: "topics.section.recent", defaultValue: "Recent"), rows.filter { $0.status == .done || $0.status == .idle })
@@ -60,7 +61,8 @@ struct ThreadsScreen: View {
                 if model.threadsNext != nil {
                     Button("Show more") { Task { await model.loadThreads(more: true) } }
                 }
-                NavigationLink(value: ChatRoute.archived) { Label("Archived", systemImage: "archivebox") }
+                Button { onOpen(.archived) } label: { Label("Archived", systemImage: "archivebox") }
+                    .foregroundStyle(.primary)
             } footer: {
                 if let error = model.threadsError { Text(error) }
                 else if model.state != .paired { Text("Status unknown until the host is connected.") }
@@ -72,6 +74,7 @@ struct ThreadsScreen: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: onNewChat) { Image(systemName: "square.and.pencil") }
+                    .keyboardShortcut("n")
                     .accessibilityLabel("New chat")
                     .help("New chat")
             }
@@ -84,7 +87,7 @@ struct ThreadsScreen: View {
     private func section(_ title: String, _ rows: [ThreadData]) -> some View {
         if !rows.isEmpty {
             Section(title) {
-                ForEach(rows) { ThreadRow(model: model, thread: $0, renaming: $renaming, deleting: $deleting) }
+                ForEach(rows) { ThreadRow(model: model, thread: $0, open: onOpen, renaming: $renaming, deleting: $deleting) }
             }
         }
     }
@@ -93,13 +96,14 @@ struct ThreadsScreen: View {
 /// The archived threads, a page at a time; each can come back with Unarchive.
 struct ArchivedThreadsScreen: View {
     let model: PhoneModel
+    let onOpen: (ChatRoute) -> Void
 
     @State private var renaming: ThreadRef?
     @State private var deleting: ThreadRef?
 
     var body: some View {
         List {
-            ForEach(model.archivedThreads) { ThreadRow(model: model, thread: $0, renaming: $renaming, deleting: $deleting) }
+            ForEach(model.archivedThreads) { ThreadRow(model: model, thread: $0, open: onOpen, renaming: $renaming, deleting: $deleting) }
             if model.archivedNext != nil {
                 Button("Show more") { Task { await model.loadThreads(archived: true, more: true) } }
             }
@@ -122,12 +126,13 @@ struct ArchivedThreadsScreen: View {
 private struct ThreadRow: View {
     let model: PhoneModel
     let thread: ThreadData
+    let open: (ChatRoute) -> Void
     @Binding var renaming: ThreadRef?
     @Binding var deleting: ThreadRef?
 
     var body: some View {
         let ref = ThreadRef(id: thread.id, name: thread.name, archived: thread.archivedAt != nil)
-        NavigationLink(value: ChatRoute.topic(thread.id, focus: nil)) {
+        Button { open(.topic(thread.id, focus: nil)) } label: {
             HStack(spacing: LayoutMetrics.stack) {
                 ThreadSymbol(status: model.state == .paired ? thread.status : nil)
                 VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
@@ -160,6 +165,7 @@ private struct ThreadRow: View {
                 }
             }
         }
+        .foregroundStyle(.primary)
         .swipeActions(edge: .trailing) {
             Button("Delete", systemImage: "trash", role: .destructive) { deleting = ref }
             Button(ref.archived ? String(localized: "Unarchive") : String(localized: "Archive"),

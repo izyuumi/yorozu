@@ -260,6 +260,8 @@ public struct JobListData: Codable, Equatable, Sendable {
         public var name: String
         /// The Mac's plain-words description; its first line is the schedule in words. nil until written.
         public var summary: String?
+        /// The schedule in words, written by the Mac: the summary's first line, or the cron text until a summary exists.
+        public var schedule: String?
         /// Epoch ms; nil while paused, retired or unscheduled.
         public var nextRun: Int?
         public var lastRun: Int?
@@ -270,11 +272,12 @@ public struct JobListData: Codable, Equatable, Sendable {
         public var state: String
         /// The job's sub-chat; nil until the Mac has bound one.
         public var topicId: String?
-        public init(id: String, name: String, summary: String?, nextRun: Int?, lastRun: Int?, lastResult: String?,
+        public init(id: String, name: String, summary: String?, schedule: String? = nil, nextRun: Int?, lastRun: Int?, lastResult: String?,
                     lastNotable: Bool?, state: String, topicId: String?) {
             self.id = id
             self.name = name
             self.summary = summary
+            self.schedule = schedule
             self.nextRun = nextRun
             self.lastRun = lastRun
             self.lastResult = lastResult

@@ -143,10 +143,12 @@ final class PhoneModel {
 
     // MARK: Jobs (#319)
 
-    /// The Mac negotiated `jobs-v1`; nil until it has said. Jobs stay hidden unless true.
+    /// The Mac negotiated `jobs-v1`; nil until it has said. Job input waits in the outbox unless true.
     private(set) var jobsSupported: Bool?
-    /// The Mac's latest `job_list`.
+    /// The Mac's latest `job_list`, kept in the cache.
     private(set) var jobs: [JobListData.Job] = []
+    /// When `jobs` arrived from the Mac; nil before any list.
+    private(set) var jobsUpdated: Date?
     /// `job_control` events awaiting their answer: event id -> job id. Those jobs' actions stay disabled.
     private(set) var jobControls: [String: String] = [:]
     /// The latest refusal per job.
@@ -154,7 +156,7 @@ final class PhoneModel {
     /// The cache was filled with `jobs-v1`, so it holds the job-only messages; without it a cursor skips them.
     private var cacheHasJobs = false
     /// Sub-chats that belong to jobs: reached through Jobs, not the topic list.
-    var jobTopicIds: Set<String> { jobsSupported == true ? Set(jobs.compactMap(\.topicId)) : [] }
+    var jobTopicIds: Set<String> { Set(jobs.compactMap(\.topicId)) }
 
     // Threads (`threads-v1`, owner 2026-10-13).
     /// Whether the host takes `threads-v1`; nil until known.
@@ -460,6 +462,7 @@ final class PhoneModel {
         attachmentsSupported = nil
         jobsSupported = nil
         jobs = []
+        jobsUpdated = nil
         jobRefusals = [:]
         cacheHasJobs = false
         draftFiles.forEach { $0.discard() }
@@ -866,9 +869,10 @@ final class PhoneModel {
         #endif
     }
 
-    /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only.
+    /// A job's own input (#319): through the outbox like any message, filed in the job's sub-chat. Text only. Queued before the
+    /// handshake too (a job page from the cached list); the flush holds it until the Mac has said it takes `jobs-v1`.
     func send(_ text: String, toJob job: String, topic: String) {
-        guard canSend, jobsSupported == true, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard canSend, jobsSupported != false, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let ts = Self.now
         let event = YorozuEvent(id: UUID().uuidString, threadId: "main", ts: ts, agentId: "device",
                                 payload: .message(MessageData(role: .user, text: text, admissionDeadline: ts + Outbox.lifetime, jobId: job)))
@@ -1012,6 +1016,8 @@ final class PhoneModel {
             guard self.relay === relay, state == .joined || state == .paired else { break }
             guard let item = outbox.first(where: { $0.id == id }), !item.stored,
                   marks[id] == .sending || marks[id] == .delivered else { continue }
+            // Job input waits until the Mac has said it takes `jobs-v1`: a job page from the cached list can queue it sooner.
+            if case .message(let message) = item.event.payload, message.jobId != nil, jobsSupported != true { continue }
             if let attached = item.files, !attached.isEmpty {
                 // Only over a live session with the Mac: the relay's buffer is too small for files.
                 guard state == .paired else { continue }
@@ -1336,6 +1342,8 @@ final class PhoneModel {
             if let job = jobControls.removeValue(forKey: status.eventId), status.status == .rejected { jobRefusals[job] = status.reason }
         case .jobList(let list):
             jobs = list.jobs
+            jobsUpdated = Date()
+            scheduleSave()
         case .receipt(let receipt):
             stored(receipt.eventId, read: false)
         case .admissionStatus(let status) where status.status == .expired:
@@ -1488,6 +1496,8 @@ final class PhoneModel {
         workerEvents = Dictionary(snapshot.workerEvents.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         cacheHasJobs = snapshot.jobs == true
         cacheHasThreads = snapshot.threads == true
+        jobs = snapshot.jobList ?? []
+        jobsUpdated = snapshot.jobListAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
         trim()
     }
 
@@ -1510,7 +1520,8 @@ final class PhoneModel {
         MirrorCache.shared.save(MirrorCache.Snapshot(
             owner: ownPub, cursor: cursor, readCursor: readCursor,
             messages: bubbles.filter { $0.seq != nil }, topics: Array(topics.values), tasks: Array(tasks.values),
-            amendments: Array(amendments.values), workerEvents: Array(workerEvents.values), jobs: cacheHasJobs, threads: cacheHasThreads))
+            amendments: Array(amendments.values), workerEvents: Array(workerEvents.values), jobs: cacheHasJobs, threads: cacheHasThreads,
+            jobList: jobs, jobListAt: jobsUpdated.map { Int($0.timeIntervalSince1970 * 1000) }))
     }
 
     /// The history window by the phone's clock and count: the newest 500 stored main-timeline messages

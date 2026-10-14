@@ -90,7 +90,7 @@ public actor Engine {
     public func archiveThread(_ id: String,_ archived: Bool = true) async throws { try await store.archive(thread: id,archived) }
     /// Deletes a thread's messages, work and their files for good; memory already extracted from them stays.
     public func deleteThread(_ id: String) async throws {
-        guard !jobTopics.values.contains(id) else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Settings › Jobs.")) }
+        guard !jobTopics.values.contains(id) else { throw ProjectError.invalid(String(localized: "A job's chat is changed in Scheduled.")) }
         for a in try await store.delete(thread: id) { files?.remove(a) }
     }
     private func enqueueRoute(_ m: Message) {
@@ -998,7 +998,8 @@ extension Engine {
             let latest = runs.first, done = runs.first { $0.finished != nil }
             let state: JobStatus.State = latest?.state == "running" ? .running : latest?.state == "uncertain" ? .needsAttention
                 : record?.pendingApprovalID != nil ? .needsApproval : spec.retired ? .finished : spec.paused ? .paused : .idle
-            rows.append(JobStatus(id: spec.id,name: spec.name,topicID: record?.topicID,summary: record?.summary,nextRun: nextRuns[spec.id],
+            rows.append(JobStatus(id: spec.id,name: spec.name,topicID: record?.topicID,summary: record?.summary,
+                                  schedule: record?.summary?.split(separator: "\n").first.map(String.init) ?? spec.schedule.joined(separator: ", "),nextRun: nextRuns[spec.id],
                                   lastRun: latest.map { Date(timeIntervalSince1970: $0.started) },lastResult: latest?.state == "uncertain" ? "uncertain" : done?.state,lastNotable: done?.notable,state: state,pendingApprovalID: record?.pendingApprovalID))
         }
         return rows

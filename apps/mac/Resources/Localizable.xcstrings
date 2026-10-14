@@ -1,6 +1,36 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Scheduled" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スケジュール"
+          }
+        }
+      }
+    },
+    "%lld results" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 件"
+          }
+        }
+      }
+    },
+    "Main chat" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メインチャット"
+          }
+        }
+      }
+    },
     "Chats" : {
       "localizations" : {
         "ja" : {
@@ -163,13 +193,13 @@
         }
       }
     },
-    "A job's chat is changed in Settings › Jobs." : {
+    "A job's chat is changed in Scheduled." : {
       "extractionState" : "manual",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ジョブのチャットは 設定 › ジョブ で変更します。"
+            "value" : "ジョブのチャットは スケジュール で変更します。"
           }
         }
       }

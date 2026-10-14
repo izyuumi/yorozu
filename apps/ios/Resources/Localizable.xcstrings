@@ -1,6 +1,36 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "No chat selected" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "チャットが選択されていません" } }
+      }
+    },
+    "No runs yet" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "未実行" } }
+      }
+    },
+    "Its activity shows here once it has run." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "実行されると、ここにアクティビティが表示されます。" } }
+      }
+    },
+    "Updated %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ に更新" } }
+      }
+    },
+    "Retry or stop it below" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "下で再試行または停止" } }
+      }
+    },
+    "Its script waits for your yes. Answer below." : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スクリプトがあなたの承認を待っています。下で答えてください。" } }
+      }
+    },
     "Main chat" : {
       "localizations" : {
         "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインチャット" } }

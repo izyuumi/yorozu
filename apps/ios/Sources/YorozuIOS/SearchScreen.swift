@@ -3,15 +3,13 @@ import YorozuWire
 
 /// Where the chat's navigation stack can go.
 enum ChatRoute: Hashable {
-    case topics
-    /// The job list (#319), while the Mac takes `jobs-v1`.
-    case jobs
+    /// A job's page in Scheduled (#319), by job id.
+    case job(String)
     /// `focus`: a message or task to scroll to.
     case topic(String, focus: String?)
-    case search
     /// The Mac's page around a message outside the cache.
     case page(String)
-    /// `threads-v1`: the main chat as a page over the thread list (owner, 2026-10-14), the archived threads, and New
+    /// The main chat as a page over the thread list (owner, 2026-10-14), the archived threads, and New
     /// chat's empty thread with the id its first message creates.
     case main
     case archived
