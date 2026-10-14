@@ -1,6 +1,7 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Couldn't confirm this with the host. Try again." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストで確認できませんでした。もう一度お試しください。" } } } },
     "Mark as Read" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "既読にする" } } } },
     "Mark as Unread" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "未読にする" } } } },
     "Open Main chat" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "メインチャットを開く" } } } },

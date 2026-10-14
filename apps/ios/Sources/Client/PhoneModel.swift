@@ -235,7 +235,25 @@ final class PhoneModel {
     /// The unread mark as this device knows it: a pending action's value, else the host's cursor record.
     func markedUnread(_ thread: String) -> Bool? {
         if let pending = pendingMarks[thread] { return pending.unread }
-        return (thread == ThreadData.mainId ? readCursor : threadReads[thread])?.unread
+        // A held record is the state, unset meaning not marked; nil only without a record.
+        return (thread == ThreadData.mainId ? readCursor : threadReads[thread]).map { $0.unread == true }
+    }
+
+    /// A mark whose answer never came (no answer in 15 s, or the link dropped): it is undone here and said so; the
+    /// host's record, whenever it comes, is the state.
+    private func abandonMark(_ thread: String, request: String? = nil) {
+        guard let pending = pendingMarks[thread], request == nil || pending.request == request else { return }
+        pendingMarks[thread] = nil
+        sentReads[thread] = pending.sentRead
+        if thread == "main", !pending.unread { localRead = pending.localRead; updateBadge() }
+        threadRefusals[thread] = String(localized: "Couldn't confirm this with the host. Try again.")
+    }
+
+    private func armMarkTimeout(_ thread: String, _ request: String) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            self?.abandonMark(thread, request: request)
+        }
     }
     /// A Main chat switch sent from here and not answered yet, and the host's last refusal of one.
     private(set) var mainChatPending: Bool?
@@ -918,6 +936,8 @@ final class PhoneModel {
 
     /// Off `.paired`: the flags are unknown, and nothing in flight will be answered.
     private func unlinked() {
+        // Marks waiting for an answer on this link are not confirmed: undone, and said so.
+        for thread in Array(pendingMarks.keys) { abandonMark(thread) }
         // A slice in flight is asked for again from the start on the next `.paired`; the need itself stays.
         textFetch = nil
         textDeadline?.cancel()
@@ -1548,7 +1568,7 @@ final class PhoneModel {
         let request = marks ? UUID().uuidString : nil
         let before = sentReads[thread]
         sentReads[thread] = messageId
-        if let request { pendingMarks[thread] = PendingMark(request: request, unread: false, sentRead: before, localRead: badgeBefore) }
+        if let request { pendingMarks[thread] = PendingMark(request: request, unread: false, sentRead: before, localRead: badgeBefore); armMarkTimeout(thread, request) }
         guard await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId, unread: marks ? false : nil, requestId: request))) else {
             if request == nil || pendingMarks[thread]?.request == request {
                 pendingMarks[thread] = nil; sentReads[thread] = before
@@ -1569,6 +1589,7 @@ final class PhoneModel {
         let before = sentReads[thread]
         sentReads[thread] = nil
         pendingMarks[thread] = PendingMark(request: request, unread: true, sentRead: before)
+        armMarkTimeout(thread, request)
         guard await sendNow(.readState(ReadStateData(threadId: thread, messageId: messageId, unread: true, requestId: request))) else {
             if pendingMarks[thread]?.request == request { pendingMarks[thread] = nil; sentReads[thread] = before }
             threadRefusals[thread] = String(localized: "Couldn't reach the host. Try again.")

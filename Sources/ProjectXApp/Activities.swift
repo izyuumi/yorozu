@@ -212,6 +212,10 @@ struct ChatWindow: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading,spacing: 4) {
+                // A chat action's refusal (Mark as Read or Unread, rename, delete), whichever chat is open.
+                if let notice = model.threadNotice {
+                    Label(notice,systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                }
                 if let client = model.client, !client.historySynced, client.hasPairing {
                     Label(client.state == .paired ? "Downloading chat history…" : "Chat history is incomplete on this Mac until the host is connected.",
                           systemImage: client.state == .paired ? "arrow.down.circle" : "icloud.slash").font(.caption).foregroundStyle(.secondary)
