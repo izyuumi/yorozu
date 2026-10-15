@@ -21,6 +21,9 @@ export type MessageRef = { convId: string; messageId: string };
 export type Typing = { convId: string; active: boolean };
 export type Reply = { convId: string; messageId: string; text: string; ts: number };
 export type ErrorInfo = { code: string; message: string; convId?: string; messageId?: string };
+/** One tool call of the run answering `messageId`, for a collapsed row; `callId` groups its updates. */
+export type Tool = { convId: string; messageId: string; callId: string; name: string; status: ToolStatus };
+export type ToolStatus = "running" | "done" | "failed";
 
 export type Event =
   | { kind: "peer_info"; data: PeerInfo }
@@ -29,7 +32,8 @@ export type Event =
   | { kind: "run_started"; data: MessageRef }
   | { kind: "typing"; data: Typing }
   | { kind: "reply"; data: Reply }
-  | { kind: "error"; data: ErrorInfo };
+  | { kind: "error"; data: ErrorInfo }
+  | { kind: "tool"; data: Tool };
 
 export type Received = Event | { kind: "unknown"; name: string };
 
@@ -65,6 +69,8 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   typing: (d) => isId(d.convId) && typeof d.active === "boolean",
   reply: (d) => ref(d) && str(d.text) && int(d.ts),
   error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId),
+  tool: (d) =>
+    ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),
 };
 
 /** Null only for bytes that are not an envelope at all; extra fields are kept and ignored. */

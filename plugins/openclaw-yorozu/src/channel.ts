@@ -1,11 +1,14 @@
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import {
+  buildThreadAwareOutboundSessionRoute,
   createChatChannelPlugin,
   type ChannelPlugin,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/channel-core";
+import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
+import { DEFAULT_CHUNK_LIMIT, handleMessage, PEER, resolveOwnerRoute, sendConversationText } from "./conversation.js";
 import { loadHostKeys } from "./keys.js";
 import { runRelayHost } from "./relay.js";
 
@@ -54,6 +57,8 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       keys,
       signal: abortSignal,
       log: ctx.log,
+      onMessage: (message) =>
+        void handleMessage({ cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent }, message),
       onStatus: ({ connected, error }) =>
         ctx.setStatus(
           connected
@@ -87,6 +92,34 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         return { enabled, configured };
       },
     },
+    capabilities: { chatTypes: ["direct"] },
     gateway: { startAccount },
+    messaging: {
+      normalizeTarget: () => PEER,
+      // A delivery's thread is its conversation: `agent:<agent>:yorozu:direct:owner:thread:<convId>`.
+      resolveOutboundSessionRoute: ({ cfg, agentId, accountId, threadId, currentSessionKey }) => {
+        const route = resolveOwnerRoute(cfg, agentId, accountId);
+        return buildThreadAwareOutboundSessionRoute({
+          route: {
+            sessionKey: route.sessionKey,
+            baseSessionKey: route.sessionKey,
+            peer: { kind: "direct", id: PEER },
+            chatType: "direct",
+            from: `${CHANNEL_ID}:${PEER}`,
+            to: PEER,
+          },
+          threadId: typeof threadId === "string" ? threadId.toLowerCase() : threadId,
+          currentSessionKey,
+          precedence: ["threadId", "currentSession"],
+        });
+      },
+    },
+  },
+  outbound: {
+    deliveryMode: "direct",
+    chunker: chunkMarkdownText,
+    chunkerMode: "markdown",
+    textChunkLimit: DEFAULT_CHUNK_LIMIT,
+    sendText: async ({ threadId, text }) => ({ channel: CHANNEL_ID, messageId: sendConversationText({ threadId, text }) }),
   },
 });

@@ -4,7 +4,8 @@
  * backoff until the account stops. It answers v3 handshakes from allowlisted devices, and from a device proving a
  * pending pairing, which it then adds to the allowlist; it keeps one session per device in memory, across its own
  * reconnects. `beginPairing` and `unpairDevice` are what the Gateway methods behind `openclaw yorozu` call.
- * Message handling is #424.
+ * A device's `message` is answered `delivered` and handed to `onMessage` once per `messageId`; `broadcast` sends
+ * events to every served device (src/conversation.ts).
  */
 import { randomBytes } from "node:crypto";
 import os from "node:os";
@@ -13,7 +14,15 @@ import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
 import { computeBackoff, sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { WebSocket } from "openclaw/plugin-sdk/websocket-runtime";
 import { getDevice, listDevices, putDevice, removeDevice } from "./devices.js";
-import { encodeEvent, negotiate, parseEvent, PROTOCOL_VERSION, type Event, type PeerInfo } from "./envelope.js";
+import {
+  encodeEvent,
+  negotiate,
+  parseEvent,
+  PROTOCOL_VERSION,
+  type Event,
+  type Message,
+  type PeerInfo,
+} from "./envelope.js";
 import type { HostKeys } from "./keys.js";
 import {
   acceptHandshake,
@@ -33,6 +42,12 @@ const PONG = JSON.stringify({ type: "pong" });
 /** A ping every 30 s; one still unanswered at the next means a half-open socket, which is dropped. */
 const HEARTBEAT_MS = 30_000;
 const BACKOFF = { initialMs: 1_000, maxMs: 30_000, factor: 2, jitter: 0.3 };
+/** A host batch: at most 16 frames and 1 MiB in all (docs/ios-relay-contract.md, "Relay"); slack for the JSON. */
+const BATCH_FRAMES = 16;
+const BATCH_BYTES = 1024 * 1024 - 4096;
+/** Taken `messageId`s are remembered this long, as long as the relay replays buffered frames. */
+const TAKEN_MS = 24 * 60 * 60 * 1000;
+const TAKEN_MAX = 10_000;
 
 const PEER_INFO: PeerInfo = {
   protocolMin: PROTOCOL_VERSION,
@@ -51,6 +66,8 @@ export type RelayHostOptions = {
   signal: AbortSignal;
   log?: ChannelGatewayContext["log"];
   onStatus: (status: Status) => void;
+  /** A device's message, once per `messageId`, after `delivered` went out. */
+  onMessage: (message: Message) => void;
 };
 
 /** What `openclaw yorozu pair` prints. */
@@ -79,7 +96,17 @@ let host: {
   mint: (() => Promise<{ token: string; expiresAt: number }>) | null;
   /** Drops the devices' sessions and makes the relay forget them and close their sockets. */
   forget: (deviceKeys: string[]) => void;
+  /** Seals each event for every served device and sends them, in order; null while not registered. */
+  broadcast: ((events: Event[]) => number) | null;
 } | null = null;
+
+/**
+ * Sends the events to every device with a live session, each sealed under that device's session. Returns how
+ * many devices that was: 0 while the relay is not reachable or no device is connected (the transcript keeps it).
+ */
+export function broadcast(events: Event[]): number {
+  return host?.broadcast?.(events) ?? 0;
+}
 
 /** Mints a one-time relay token and a secret for one new device; throws while the relay is not reachable. */
 export async function beginPairing(): Promise<Pairing> {
@@ -126,6 +153,8 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   const bySid = new Map<string, string>();
   /** Answered sids -> until when a replay of them is still fresh enough to need refusing. */
   const answered = new Map<string, number>();
+  /** Taken messageIds -> when; a repeat is answered `delivered` again and not run twice. */
+  const taken = new Map<string, number>();
 
   const url = new URL(opts.relayUrl);
   // The Worker relay routes on the room before the socket says anything.
@@ -143,6 +172,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     relayUrl: opts.relayUrl,
     keys,
     mint: null,
+    broadcast: null,
     forget: (deviceKeys) => {
       for (const key of deviceKeys) {
         endSession(key);
@@ -167,9 +197,28 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           .initiate(() => ws.send(raw))
           .catch((error: unknown) => log?.warn(`yorozu: relay send failed: ${String(error)}`));
       };
+      /** Signs the payloads and sends them in as few batches as the relay's limits allow. */
       const sendFrames = (payloads: string[]): void => {
-        const frames = payloads.map((payload) => ({ payload, sig: signFrame(keys.signing.privateKey, payload) }));
-        send(JSON.stringify(frames.length === 1 ? { type: "frame", ...frames[0] } : { type: "frame", frames }));
+        let batch: { payload: string; sig: string }[] = [];
+        let bytes = 0;
+        const flush = () => {
+          if (batch.length) send(JSON.stringify(batch.length === 1 ? { type: "frame", ...batch[0] } : { type: "frame", frames: batch }));
+          batch = [];
+          bytes = 0;
+        };
+        for (const payload of payloads) {
+          const frame = { payload, sig: signFrame(keys.signing.privateKey, payload) };
+          const size = payload.length + frame.sig.length + 32;
+          if (batch.length === BATCH_FRAMES || (batch.length && bytes + size > BATCH_BYTES)) flush();
+          batch.push(frame);
+          bytes += size;
+        }
+        flush();
+      };
+      const broadcastHere = (events: Event[]): number => {
+        const live = [...served.values()].filter((entry) => entry.peer);
+        sendFrames(events.flatMap((event) => live.map((entry) => seal(entry.session, event))));
+        return live.length;
       };
       const seal = (session: Session, event: Event): string => session.seal(encodeEvent(event));
 
@@ -229,7 +278,19 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           if (device && name && device.name !== name) await putDevice({ ...device, name });
           return log?.info(`yorozu: peer_info received (protocol ${PROTOCOL_VERSION})`);
         }
-        // Message kinds arrive with #424.
+        if (event?.kind === "message") {
+          const { convId, messageId } = event.data;
+          broadcastHere([{ kind: "delivered", data: { convId, messageId } }]);
+          const now = Date.now();
+          if (taken.has(messageId)) return;
+          for (const [id, at] of taken) {
+            if (at > now - TAKEN_MS && taken.size < TAKEN_MAX) break;
+            taken.delete(id);
+          }
+          taken.set(messageId, now);
+          return opts.onMessage(event.data);
+        }
+        if (event?.kind === "error") log?.info(`yorozu: device error ${event.data.code}`);
       }
 
       async function receive(raw: string): Promise<void> {
@@ -256,6 +317,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           case "registered": {
             registered = true;
             relaySend = send;
+            me.broadcast = broadcastHere;
             me.mint = () =>
               new Promise((resolve, reject) => {
                 const waiter = { resolve, reject };
@@ -327,6 +389,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         if (registered) {
           relaySend = null;
           me.mint = null;
+          me.broadcast = null;
           for (const waiter of minting.splice(0)) waiter.reject(new Error("the relay connection closed"));
         }
         if (!signal.aborted) {

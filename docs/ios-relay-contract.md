@@ -123,7 +123,7 @@ Every box's plaintext is one UTF-8 JSON object:
 - **Ids**: `convId` and `messageId` are lowercase UUIDs (`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`; `V3Event.newId()`, `isId`). OpenClaw lowercases session keys, and a conversation's session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`. A known kind with a malformed id is treated as unknown.
 - Times are epoch milliseconds (integers).
 
-Names later issues add, so nothing else takes them: `conv_list`, `history`, `conv_patch`, `read_cursor`, attachment kinds, `cron_list`, tool-call events (`tool`), and foreground and notify registration.
+Names later issues add, so nothing else takes them: `conv_list`, `history`, `conv_patch`, `read_cursor`, attachment kinds, `cron_list`, and foreground and notify registration.
 
 ### Kinds
 
@@ -136,10 +136,15 @@ Names later issues add, so nothing else takes them: `conv_list`, `history`, `con
 | `typing` | plugin → clients | `convId`, `active` (bool) |
 | `reply` | plugin → clients | `convId`, `messageId` (made by the plugin), `text`, `ts` |
 | `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`? |
+| `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
 
 #### `peer_info`
 
 Each side sends its own as its first box and sends nothing else until it has the peer's. Each computes the highest version inside both ranges (`V3PeerInfo.negotiate` / `negotiate`). With none, the plugin sends `error {code: "update_required"}` and serves that session nothing more; the client shows "Update required" and stops. `capabilities` of both sides decide which optional features are used.
+
+#### `tool`
+
+One tool call of an agent run, for a collapsed row under the message it answers. `callId` is OpenClaw's tool call id (any string up to 128 characters, not a UUID); every update of one call carries the same one, and the last `status` wins: `running` when the call starts, then `done` or `failed`. `name` is the tool's name as the agent calls it (`exec`, `web_search`). Arguments and results stay in the transcript. A `tool` with another `status` value is treated as unknown.
 
 #### `error` codes
 
@@ -159,8 +164,9 @@ All paired devices share one channel peer (the owner), so the plugin sends `deli
 - ✓ sent: the relay's `accepted` for the frame that carried the `message`.
 - ✓✓ delivered: `delivered` for its `messageId`, sent as soon as the box opens.
 - read: `run_started`.
-- Typing: `typing {active: true}` from run start, repeated at least every 10 seconds while the run lasts; `typing {active: false}` when it ends. A client also hides it after 30 seconds without a repeat.
-- Replies arrive whole, one `reply` per chunk of a long reply (chunked by `textChunkLimit`), never edited in place.
+- Typing: `typing {active: true}` from run start, repeated at least every 10 seconds while the run lasts; `typing {active: false}` when it ends. A client also hides it after 30 seconds without a repeat. A command such as `/new` may answer with a `reply` and no typing at all.
+- Replies arrive whole, one `reply` per chunk of a long reply (chunked by `channels.yorozu.textChunkLimit`, default 4000 characters), never edited in place. A cron job delivering into a conversation (`delivery: {channel: "yorozu", to: "owner", threadId: <convId>}`) arrives as `reply` too, with no `run_started` or `typing`.
+- A `message`'s `text` is bounded only by the relay's 1 MiB frame (about 700 KiB of text). Slash commands are plain text: `/new` and `/reset` reset only that conversation's session, other commands go to OpenClaw as typed.
 - A client sends `message`s only inside an established session. Until it sees `delivered` it keeps the message and sends it again in its next session. The plugin drops a `messageId` it has already taken and answers `delivered` again.
 
 ## Known-answer vectors
