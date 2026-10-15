@@ -6,6 +6,8 @@ import VisionKit
 /// Pairing screen: scans the QR the Mac shows. `DataScannerViewController` does the
 /// camera, framing and recognition, so there is no AVCaptureSession to own here.
 struct ScannerView: View {
+    /// What to scan, above the camera.
+    var prompt: LocalizedStringKey = "On the host, open Settings › Devices › Pair a Client Device and scan its QR code."
     /// Called with the raw QR string; returns an error message when it is not a Yorozu payload.
     let onScan: (String) -> String?
     let onManualEntry: () -> Void
@@ -23,7 +25,7 @@ struct ScannerView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    Text("On the host, open Settings › Devices › Pair a Client Device and scan its QR code.")
+                    Text(prompt)
                         .font(.headline)
                         .multilineTextAlignment(.center)
 

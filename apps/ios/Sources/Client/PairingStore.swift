@@ -14,6 +14,8 @@ enum Keychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            // Never iCloud Keychain: the keys stay on this device (#415).
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
         ]
     }
 
@@ -30,6 +32,8 @@ enum Keychain {
     }
 
     static func save(_ data: Data, account: String) throws {
+        // This device only. After first unlock rather than `WhenUnlocked`: a silent push (#431) reconnects and
+        // handshakes in the background, while the phone may be locked, and needs the keys for that.
         let values: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,

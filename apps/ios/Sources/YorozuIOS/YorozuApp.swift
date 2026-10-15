@@ -2,17 +2,13 @@ import SwiftUI
 
 @main
 struct YorozuApp: App {
-    #if os(iOS)
-    @UIApplicationDelegateAdaptor private var delegate: AppDelegate
-    private var model: PhoneModel { delegate.model }
-    #else
-    // No push on the Mac client yet: the app owns the model itself.
-    @State private var model = PhoneModel()
-    #endif
+    // Wire v3 (#425) is the app. The v2 screens (`RootView`, `PhoneModel`, `AppDelegate`) stay compiled but unused
+    // until #426 deletes them; push comes back with #431.
+    @State private var model = V3Model()
 
     var body: some Scene {
         WindowGroup {
-            RootView(model: model)
+            V3RootView(model: model)
                 #if os(macOS)
                 // A window proposes no size: the least that holds the sidebar beside a chat.
                 .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
