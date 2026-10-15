@@ -11,6 +11,7 @@ public enum V3Event: Equatable, Sendable {
     case typing(V3Typing)
     case reply(V3Reply)
     case error(V3ErrorInfo)
+    case tool(V3Tool)
     case unknown(kind: String, data: JSONValue?)
 
     public var kind: String {
@@ -22,6 +23,7 @@ public enum V3Event: Equatable, Sendable {
         case .typing: "typing"
         case .reply: "reply"
         case .error: "error"
+        case .tool: "tool"
         case .unknown(let kind, _): kind
         }
     }
@@ -138,6 +140,28 @@ public struct V3ErrorInfo: Codable, Equatable, Sendable {
     }
 }
 
+/// Plugin -> clients: one tool call of the run answering `messageId`, for a collapsed row. Updates of one call share
+/// `callId` (OpenClaw's tool call id, not a UUID); the last status wins.
+public struct V3Tool: Codable, Equatable, Sendable {
+    public enum Status: String, Codable, Sendable { case running, done, failed }
+
+    public var convId: String
+    /// The user message whose run made the call.
+    public var messageId: String
+    public var callId: String
+    /// The tool's name, as the agent calls it ("exec", "web_search").
+    public var name: String
+    public var status: Status
+
+    public init(convId: String, messageId: String, callId: String, name: String, status: Status) {
+        self.convId = convId
+        self.messageId = messageId
+        self.callId = callId
+        self.name = name
+        self.status = status
+    }
+}
+
 extension V3Event: Codable {
     private enum Keys: String, CodingKey { case kind, data }
 
@@ -161,6 +185,8 @@ extension V3Event: Codable {
             if let v = data(V3Reply.self), ids(v.convId, v.messageId) { self = .reply(v); return }
         case "error":
             if let v = data(V3ErrorInfo.self) { self = .error(v); return }
+        case "tool":
+            if let v = data(V3Tool.self), ids(v.convId, v.messageId) { self = .tool(v); return }
         default:
             break
         }
@@ -177,6 +203,7 @@ extension V3Event: Codable {
         case .typing(let v): try c.encode(v, forKey: .data)
         case .reply(let v): try c.encode(v, forKey: .data)
         case .error(let v): try c.encode(v, forKey: .data)
+        case .tool(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }
     }

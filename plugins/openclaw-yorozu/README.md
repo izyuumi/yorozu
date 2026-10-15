@@ -1,6 +1,6 @@
 # openclaw-yorozu
 
-OpenClaw channel plugin for Yorozu (#415). The Yorozu apps reach the Gateway through this channel. The `yorozu` channel holds the host keys and the relay connection: it registers as the host of its relay room, redials with backoff, and answers wire v3 handshakes ([docs/ios-relay-contract.md](../../docs/ios-relay-contract.md); `src/wire.ts`, `src/envelope.ts`) from allowlisted devices. `openclaw yorozu pair` pairs a device; message handling is not there yet. SDK facts behind it are in [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
+OpenClaw channel plugin for Yorozu (#415). The Yorozu apps reach the Gateway through this channel. The `yorozu` channel holds the host keys and the relay connection: it registers as the host of its relay room, redials with backoff, and answers wire v3 handshakes ([docs/ios-relay-contract.md](../../docs/ios-relay-contract.md); `src/wire.ts`, `src/envelope.ts`) from allowlisted devices. `openclaw yorozu pair` pairs a device, and text messages run agent turns in per-conversation sessions (below). SDK facts behind it are in [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
 
 ## Install
 
@@ -33,6 +33,15 @@ openclaw yorozu devices remove <id>   # the id, or a unique start of it
 - **pair**: the plugin asks the relay for a one-time join token (`mint`, 10 minutes) and makes a 32-byte secret, kept in memory with the token's expiry. The QR carries `https://yorozu.yumi.to/pair#<query>`; the link is `yorozu://pair?<query>` with the same query ([contract](../../docs/ios-relay-contract.md#pairing)). The fingerprint is the one the app shows. Output goes straight to stdout, since OpenClaw's console capture redacts key- and token-like text.
 - **Joining**: the relay spends the token; the plugin adds the device (its two keys, then its model from `peer_info`) when the handshake's `helloProof` matches a pending secret, and drops that secret. A reused token is refused by the relay (`unknown token`), an expired one too (`expired token` or `unknown token`); a spent or expired secret behind a fresh token is refused by the plugin, which revokes the device at the relay. A Gateway restart forgets pending secrets: run `pair` again.
 - **remove**: the row goes, the device's session is dropped and the relay gets `revoke`, which forgets the device and closes its sockets now. If the relay is unreachable at that moment, the next registration's `devices` list does the same.
+
+## Conversations
+
+`src/conversation.ts`. Every paired device is the same channel peer, `owner`, so every conversation shows on every device.
+
+- **In**: a device's `message` is answered `delivered` at once (again for a repeated `messageId`, which is not run twice) and runs one agent turn (`runChannelInboundEvent`) in the session `agent:<agent>:yorozu:direct:owner:thread:<convId>`, `<agent>` from `channels.yorozu.agent`. Text is limited only by the relay's 1 MiB frame. Slash commands go through as text: `/new` resets that conversation's session only.
+- **Out**, to every device with a live session: `run_started` when the run begins, `typing` while it runs (repeated every 8 s), `tool` per tool call (name and `running`/`done`/`failed`), then the reply, one `reply` per chunk of `textChunkLimit` characters. A failed run sends `error run_failed`. Nothing is queued for devices that are offline; the transcript keeps the reply.
+- **Cron**: a job with `delivery: { mode: "announce", channel: "yorozu", to: "owner", threadId: "<convId>" }` delivers into that conversation through the outbound adapter (`sendText`), and its text is mirrored into that session's transcript once the session exists. `openclaw cron add --thread-id` takes only Telegram's numeric ids, so such a job is made with the agent's cron tool or `cron.add`.
+- **Owner authority**: OpenClaw treats Yorozu turns as non-owner, so owner-only tools (`automations` for cron edits, `sessions`, `gateway`, `nodes`) are denied in them, until the owner adds `"yorozu:owner"` to `commands.ownerAllowFrom`.
 
 ## Trying it without the main Gateway
 
