@@ -2,11 +2,21 @@ import SwiftUI
 
 @main
 struct YorozuApp: App {
+    #if os(iOS)
     @UIApplicationDelegateAdaptor private var delegate: AppDelegate
+    private var model: PhoneModel { delegate.model }
+    #else
+    // No push on the Mac client yet: the app owns the model itself.
+    @State private var model = PhoneModel()
+    #endif
 
     var body: some Scene {
         WindowGroup {
-            RootView(model: delegate.model)
+            RootView(model: model)
+                #if os(macOS)
+                // A window proposes no size: the least that holds the sidebar beside a chat.
+                .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
+                #endif
         }
     }
 }
@@ -58,7 +68,10 @@ struct RootView: View {
         // that ran down while nothing was executing.
         .onChange(of: scenePhase, initial: true) { _, phase in
             switch phase {
+            // iOS suspends a background app; a Mac app keeps running and keeps its link.
+            #if os(iOS)
             case .background: model.enterBackground()
+            #endif
             case .active: model.resume(); model.sendShares()
             default: break
             }

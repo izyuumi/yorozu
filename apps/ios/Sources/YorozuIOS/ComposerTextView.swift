@@ -1,9 +1,28 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // The iOS half of v1 packages/shared-swift ComposerTextView.swift, without image paste, question
 // options, prompt history and Send now.
 
+#if os(macOS)
+/// The Mac's message field: the system's growing text field, up to five lines, then it scrolls inside. Return sends,
+/// Option-Return is a new line, as in the field's own convention.
+struct ComposerTextView: View {
+    @Binding var text: String
+    let placeholder: String
+    let onSubmit: () -> Void
+
+    var body: some View {
+        TextField(placeholder, text: $text, axis: .vertical)
+            .textFieldStyle(.plain)
+            .lineLimit(1...5)
+            .onSubmit(onSubmit)
+            .accessibilityLabel(Text("Message"))
+    }
+}
+#else
 /// The phone's message field: a `UITextView` that grows to five lines, then scrolls inside. The
 /// software keyboard's Return is a new line; a hardware keyboard has smart Enter (see
 /// `ComposerUITextView.pressesBegan`).
@@ -96,3 +115,4 @@ final class ComposerUITextView: UITextView {
         super.pressesBegan(presses, with: event)
     }
 }
+#endif

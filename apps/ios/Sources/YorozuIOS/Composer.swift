@@ -150,7 +150,9 @@ struct Composer: View {
         .buttonStyle(.plain)
         .frame(width: controlTarget, height: controlTarget)
         // A pointer hovering over a plain-styled button gets the system highlight on iPad.
+        #if os(iOS)
         .hoverEffect(.highlight)
+        #endif
         .disabled(!canSend)
         .accessibilityLabel("Send")
     }

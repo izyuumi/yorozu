@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 /// How a message is drawn, from the Mac's kind and notice (docs/ios-relay-contract.md, "Notice codes").
 enum RowStyle {
@@ -318,6 +320,7 @@ private struct ReplySwipe: ViewModifier {
     let onReply: () -> Void
 
     func body(content: Content) -> some View {
+        #if os(iOS)
         if enabled {
             content
                 .offset(x: pull)
@@ -341,9 +344,14 @@ private struct ReplySwipe: ViewModifier {
         } else {
             content
         }
+        #else
+        // A pointer has no swipe: Reply is in the context menu.
+        content
+        #endif
     }
 }
 
+#if os(iOS)
 /// The reply swipe's pan, a UIKit recognizer: it begins only for a pan moving right more than twice as fast as it
 /// moves vertically, so any other drag fails it before it starts, and it recognises alongside the scroll view's pan.
 /// A touch inside a sideways scroller (a wide code block) never reaches it.
@@ -392,6 +400,7 @@ private struct ReplyPan: UIGestureRecognizerRepresentable {
         }
     }
 }
+#endif
 
 /// VoiceOver's actions on a user bubble: Details, plus Resend and Delete when it was not delivered.
 private struct MarkActions: ViewModifier {
@@ -533,6 +542,21 @@ struct SelectTextSheet: View {
     }
 }
 
+#if os(macOS)
+/// A Mac's text selection selects part of a `Text`, unlike iOS's.
+private struct SelectableText: View {
+    let text: String
+
+    var body: some View {
+        ScrollView {
+            Text(text)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(LayoutMetrics.gutter)
+        }
+    }
+}
+#else
 private struct SelectableText: UIViewRepresentable {
     let text: String
 
@@ -554,3 +578,4 @@ private struct SelectableText: UIViewRepresentable {
         if view.text != text { view.text = text }
     }
 }
+#endif

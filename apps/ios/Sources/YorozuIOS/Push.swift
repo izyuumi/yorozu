@@ -1,3 +1,4 @@
+#if os(iOS)
 import UIKit
 import UserNotifications
 
@@ -83,3 +84,4 @@ enum PushNotices {
         }
     }
 }
+#endif

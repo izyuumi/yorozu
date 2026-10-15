@@ -33,7 +33,9 @@ struct JobsScreen: View {
                 }
             }
         }
+        #if os(iOS)
         .listStyle(.insetGrouped)
+        #endif
         .overlay {
             if model.jobs.isEmpty {
                 ContentUnavailableView("Nothing scheduled yet", systemImage: "clock",

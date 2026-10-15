@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // The system look (#311): system backgrounds, materials and standard bars, with Yorozu's vermilion
 // accent and a few state colours. Every colour has an explicit dark counterpart.
@@ -30,10 +32,17 @@ enum YorozuPalette {
         light: (Double, Double, Double),
         dark: (Double, Double, Double)
     ) -> Color {
+        #if os(macOS)
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let value = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(red: CGFloat(value.0), green: CGFloat(value.1), blue: CGFloat(value.2), alpha: 1)
+        })
+        #else
         Color(uiColor: UIColor { traits in
             let value = traits.userInterfaceStyle == .dark ? dark : light
             return UIColor(red: CGFloat(value.0), green: CGFloat(value.1), blue: CGFloat(value.2), alpha: 1)
         })
+        #endif
     }
 }
 
@@ -59,7 +68,7 @@ extension View {
 
     /// Liquid Glass on iOS 26, the regular material before it.
     @ViewBuilder func yorozuGlass(in shape: some Shape) -> some View {
-        if #available(iOS 26, *) {
+        if #available(iOS 26, macOS 26, *) {
             glassEffect(.regular, in: shape)
         } else {
             background(.regularMaterial, in: shape)
@@ -69,7 +78,7 @@ extension View {
     /// A bar along the bottom edge: content scrolls under it with the system's edge effect on
     /// iOS 26, over the bar material before it.
     @ViewBuilder func yorozuBottomBar(@ViewBuilder _ content: () -> some View) -> some View {
-        if #available(iOS 26, *) {
+        if #available(iOS 26, macOS 26, *) {
             safeAreaBar(edge: .bottom, spacing: 0, content: content)
         } else {
             safeAreaInset(edge: .bottom, spacing: 0) { content().background(.bar) }
@@ -78,7 +87,7 @@ extension View {
 
     /// The system subtitle under the navigation title on iOS 26; nothing before it.
     @ViewBuilder func navigationSubtitleIfAvailable(_ text: String) -> some View {
-        if #available(iOS 26, *) {
+        if #available(iOS 26, macOS 26, *) {
             navigationSubtitle(text)
         } else {
             self
