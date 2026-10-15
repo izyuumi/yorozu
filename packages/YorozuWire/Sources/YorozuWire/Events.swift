@@ -1844,12 +1844,13 @@ public struct QrPayload: Codable, Equatable, Sendable {
     }
 
     public func encoded() throws -> String {
-        guard v == 1 else { throw YorozuCrypto.CryptoError.malformed(String(localized: "not a Yorozu v1 pairing string")) }
+        // v3 (docs/ios-relay-contract.md, "Pairing") keeps the v1 fields; only `v` tells a v3 code from a v1 one.
+        guard v == 1 || v == 3 else { throw YorozuCrypto.CryptoError.malformed(String(localized: "not a Yorozu v1 pairing string")) }
         var components = URLComponents()
         components.scheme = "yorozu"
         components.host = "pair"
         components.queryItems = [
-            URLQueryItem(name: "v", value: "1"),
+            URLQueryItem(name: "v", value: String(v)),
             URLQueryItem(name: "relay", value: relayUrl),
             URLQueryItem(name: "key", value: macPubkey),
             URLQueryItem(name: "token", value: token),
@@ -1928,10 +1929,11 @@ public struct QrPayload: Codable, Equatable, Sendable {
         }
         let items = components.queryItems ?? []
         let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
-        guard query["v"] == "1", let relayUrl = query["relay"], isAcceptableRelayUrl(relayUrl) else {
+        guard let v = ["1": 1, "3": 3][query["v"] ?? ""], let relayUrl = query["relay"], isAcceptableRelayUrl(relayUrl) else {
             throw malformed()
         }
         return QrPayload(
+            v: v,
             relayUrl: relayUrl,
             macPubkey: try base64Url(query["key"]),
             token: try base64Url(query["token"]),

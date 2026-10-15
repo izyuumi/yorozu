@@ -1,6 +1,6 @@
 # openclaw-yorozu
 
-OpenClaw channel plugin for Yorozu (#415). The Yorozu apps reach the Gateway through this channel. For now it is a skeleton: the `yorozu` channel starts and stops, and has no relay, crypto or messages yet. SDK facts behind it are in [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
+OpenClaw channel plugin for Yorozu (#415). The Yorozu apps reach the Gateway through this channel. For now the `yorozu` channel only starts and stops; it has no relay connection or message handling yet. `src/wire.ts` and `src/envelope.ts` implement wire v3 (the Noise handshake, frames, boxes and envelope, [docs/ios-relay-contract.md](../../docs/ios-relay-contract.md)) and are not wired in. SDK facts behind it are in [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
 
 ## Install
 
