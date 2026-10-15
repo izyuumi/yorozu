@@ -9,10 +9,11 @@ import {
 import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { DEFAULT_CHUNK_LIMIT, handleMessage, PEER, resolveOwnerRoute, sendConversationText } from "./conversation.js";
+import { isId } from "./envelope.js";
 import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
 import { loadHostKeys } from "./keys.js";
-import { runRelayHost } from "./relay.js";
+import { notifyReply, runRelayHost } from "./relay.js";
 
 export const CHANNEL_ID = "yorozu";
 // Same default as the Mac app's `relay.url` (docs/setup.md).
@@ -133,5 +134,11 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     chunkerMode: "markdown",
     textChunkLimit: DEFAULT_CHUNK_LIMIT,
     sendText: async ({ threadId, text }) => ({ channel: CHANNEL_ID, messageId: sendConversationText({ threadId, text }) }),
+    // A delivery (cron) pushes once per payload, after all its chunks went out, like a turn's reply (#431).
+    afterDeliverPayload: async ({ target, payload, results }) => {
+      const convId = String(target.threadId ?? "").toLowerCase();
+      const messageId = results[0]?.messageId;
+      if (isId(convId) && messageId && payload.text?.trim()) await notifyReply(convId, messageId, payload.text);
+    },
   },
 });

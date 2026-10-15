@@ -19,6 +19,7 @@ public enum V3Event: Equatable, Sendable {
     /// `history`, plugin -> the asking client: that page.
     case history(V3History)
     case readCursor(V3ReadCursor)
+    case foreground(V3Foreground)
     case cronList(V3CronList)
     case unknown(kind: String, data: JSONValue?)
 
@@ -35,6 +36,7 @@ public enum V3Event: Equatable, Sendable {
         case .convList: "conv_list"
         case .historyRequest, .history: "history"
         case .readCursor: "read_cursor"
+        case .foreground: "foreground"
         case .cronList: "cron_list"
         case .unknown(let kind, _): kind
         }
@@ -299,6 +301,14 @@ public struct V3ReadCursor: Codable, Equatable, Sendable {
     }
 }
 
+/// Client -> plugin: the conversation on this device's screen while the app is in the foreground, or nil (#431). The
+/// plugin sends no push for a reply in it to this device while its session lasts.
+public struct V3Foreground: Codable, Equatable, Sendable {
+    public var convId: String?
+
+    public init(convId: String?) { self.convId = convId }
+}
+
 /// The Crons tab (#432). Client -> plugin: empty, a request. Plugin -> that client: `jobs`, or `error` when the
 /// plugin cannot read the cron store.
 public struct V3CronList: Codable, Equatable, Sendable {
@@ -370,6 +380,8 @@ extension V3Event: Codable {
             if let v = data(V3HistoryRequest.self), V3Event.isId(v.convId) { self = .historyRequest(v); return }
         case "read_cursor":
             if let v = data(V3ReadCursor.self), ids(v.convId, v.messageId) { self = .readCursor(v); return }
+        case "foreground":
+            if let v = data(V3Foreground.self), v.convId.map(V3Event.isId) ?? true { self = .foreground(v); return }
         case "cron_list":
             if let v = data(V3CronList.self) { self = .cronList(v); return }
         default:
@@ -393,6 +405,7 @@ extension V3Event: Codable {
         case .historyRequest(let v): try c.encode(v, forKey: .data)
         case .history(let v): try c.encode(v, forKey: .data)
         case .readCursor(let v): try c.encode(v, forKey: .data)
+        case .foreground(let v): try c.encode(v, forKey: .data)
         case .cronList(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }

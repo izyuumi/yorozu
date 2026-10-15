@@ -44,6 +44,8 @@ export type HistoryItem =
  * Mark as Unread: the conversation counts as unread whatever the cursor says, until a read clears it.
  */
 export type ReadCursor = { convId: string; messageId: string; ts: number; unread: boolean };
+/** The conversation on this device's screen while the app is in the foreground, or none (#431): no push for it there. */
+export type Foreground = { convId?: string | null };
 /** One cron job of the configured agent, for the Crons tab (#432). Times are epoch ms. */
 export type CronJob = {
   id: string;
@@ -75,6 +77,7 @@ export type Event =
   | { kind: "conv_list"; data: Partial<ConvList> }
   | { kind: "history"; data: HistoryRequest | History }
   | { kind: "read_cursor"; data: ReadCursor }
+  | { kind: "foreground"; data: Foreground }
   | { kind: "cron_list"; data: CronList };
 
 export type Received = Event | { kind: "unknown"; name: string };
@@ -118,6 +121,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   conv_list: (d) => d.conversations === undefined || Array.isArray(d.conversations),
   history: (d) => isId(d.convId) && optInt(d.before) && optInt(d.after) && (d.items === undefined || Array.isArray(d.items)),
   read_cursor: (d) => ref(d) && int(d.ts) && typeof d.unread === "boolean",
+  foreground: (d) => d.convId === undefined || d.convId === null || isId(d.convId),
   cron_list: (d) => (d.jobs === undefined || Array.isArray(d.jobs)) && optStr(d.error),
 };
 

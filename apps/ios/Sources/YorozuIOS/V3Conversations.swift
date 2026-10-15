@@ -24,6 +24,7 @@ struct ConversationsView: View {
             }
         }
         .sheet(isPresented: $showingHost) { HostSheet(model: model) }
+        .opensRequestedConversation(model, selection: $selection)
     }
 
     private var list: some View {

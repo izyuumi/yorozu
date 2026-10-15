@@ -65,6 +65,10 @@ public actor V3Connection {
     private var pinger: Task<Void, Never>?
     private var pongDeadline: Task<Void, Never>?
     private var handshakeDeadline: Task<Void, Never>?
+    /// The APNs token (lowercase hex), told to the relay after every `joined` (#431).
+    private var pushToken: String?
+    /// The current socket got `joined`: the relay drops a socket that sends `push` before it.
+    private var joined = false
 
     static let pingInterval: Duration = .seconds(25)
     static let pongTimeout: Duration = .seconds(10)
@@ -120,6 +124,12 @@ public actor V3Connection {
         set(.offline)
     }
 
+    /// The device's APNs token for the relay's alerts (`{"type":"push"}`): sent now when joined, and after every join.
+    public func registerPush(deviceToken: String) {
+        pushToken = deviceToken
+        if joined, let socket { send(["type": "push", "deviceToken": deviceToken], on: socket) }
+    }
+
     /// Seals and sends a user message. False when no session is ready: the caller keeps it for the next one.
     @discardableResult
     public func send(_ message: V3Message) -> Bool {
@@ -146,6 +156,7 @@ public actor V3Connection {
         retry?.cancel()
         retry = nil
         generation += 1
+        joined = false
         let gen = generation
         let task = urlSession.webSocketTask(with: dial)
         // The relay's own cap is 1 MiB per message; room for its JSON around it.
@@ -267,6 +278,8 @@ public actor V3Connection {
                 continuation?.yield(.relayJoined)
             }
             attempt = 0
+            joined = true
+            if let pushToken { send(["type": "push", "deviceToken": pushToken], on: socket) }
             flowControl = message["flowControl"] as? Bool == true
             lastFlowAck = 0
             framesSinceAck = 0

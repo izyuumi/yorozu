@@ -43,7 +43,11 @@ struct V3ChatView: View {
         .onChange(of: typing) { position.scrollTo(edge: .bottom) }
         // Opening reads it on every device (#429), Mark as Unread included; a reply that arrives while it is on screen
         // only moves the cursor, and so does coming back to the foreground with it open.
-        .onAppear { model.markRead(convId, explicit: true) }
+        .onAppear {
+            model.markRead(convId, explicit: true)
+            model.setVisible(convId)
+        }
+        .onDisappear { model.setVisible(nil, leaving: convId) }
         .onChange(of: model.conversations[convId]?.latestReply?.id) { readIfActive() }
         .onChange(of: scenePhase) { readIfActive() }
         .overlay {
