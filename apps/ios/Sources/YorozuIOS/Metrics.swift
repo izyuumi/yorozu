@@ -15,8 +15,6 @@ public enum LayoutMetrics {
     public static let composerWidth: CGFloat = 640
 
     #if os(macOS)
-        public static let cardPadding: CGFloat = 12
-        public static let controlRadius: CGFloat = 6
         public static let cardRadius: CGFloat = 10
         public static let bubbleRadius: CGFloat = 10
         public static let sidebarMinWidth: CGFloat = 220
@@ -25,32 +23,22 @@ public enum LayoutMetrics {
         public static let windowMinWidth: CGFloat = 640
         public static let windowMinHeight: CGFloat = 420
     #else
-        public static let cardPadding: CGFloat = 14
-        public static let controlRadius: CGFloat = 10
         public static let cardRadius: CGFloat = 14
         public static let bubbleRadius: CGFloat = 16
     #endif
 }
 
-/// The two sizes that differ because a finger and a pointer are not the same instrument.
+/// The size that differs because a finger and a pointer are not the same instrument.
 ///
 /// A phone control has to be 44 points before it can be hit reliably, and everything in the
 /// shared chat is sized from that. A pointer lands where it is aimed, so the same 44 points on a Mac
 /// buys nothing and costs the composer a third of its height — it reads as a phone app blown
-/// up. These two constants are the whole of the difference; every control in the chat takes
-/// its size from them rather than from a literal, so shared chat controls cannot drift apart.
+/// up. This constant is the whole of the difference; every control in the chat takes
+/// its size from it rather than from a literal, so shared chat controls cannot drift apart.
 
 /// The smallest a control may be and still be easy to hit.
 #if os(macOS)
     public let controlTarget: CGFloat = 28
 #else
     public let controlTarget: CGFloat = 44
-#endif
-
-/// What the composer's text field pads itself by, above and below. Four points beyond the
-/// control-centering minimum gives typed text room to breathe on both platforms.
-#if os(macOS)
-    public let composerPadding: CGFloat = 9
-#else
-    public let composerPadding: CGFloat = 15
 #endif
