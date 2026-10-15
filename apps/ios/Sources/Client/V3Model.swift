@@ -22,6 +22,12 @@ final class V3Model {
     var pendingPairing: QrPayload?
     /// Why the last pairing attempt failed, for the pairing screen.
     var pairingError: String?
+    /// The Crons tab (#432): the configured agent's jobs as the plugin last sent them, nil before the first answer.
+    private(set) var crons: [V3CronJob]?
+    /// Why the plugin could not list them, from its last answer.
+    private(set) var cronsError: String?
+    /// Text waiting for a conversation's composer ("Edit in chat"); the chat takes it once, unsent.
+    var drafts: [String: String] = [:]
 
     @ObservationIgnored private var connection: V3Connection?
     @ObservationIgnored private var listener: Task<Void, Never>?
@@ -31,6 +37,7 @@ final class V3Model {
     /// again on every session, so they need no disk.
     @ObservationIgnored private var unplacedReads: [String: V3ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
+    @ObservationIgnored private var cronWaiters: [CheckedContinuation<Void, Never>] = []
 
     static let typingTimeout: Duration = .seconds(30)
 
@@ -98,6 +105,8 @@ final class V3Model {
         typing = []
         unplacedReads = [:]
         updateBadge()
+        crons = nil
+        cronsError = nil
     }
 
     // MARK: Link
@@ -227,9 +236,35 @@ final class V3Model {
                 : String(localized: "The host couldn’t handle this: \(error.message)")
             append(ChatItem(id: id, kind: .error, text: text, ts: Self.now), to: convId)
             setTyping(convId, false)
+        case .cronList(let list):
+            // A request has neither; only the plugin's answer does.
+            guard list.jobs != nil || list.error != nil else { return }
+            // A failed read keeps the last list on screen, under the error.
+            if let jobs = list.jobs, list.error == nil { crons = jobs }
+            cronsError = list.error
+            finishCronWait()
         case .peerInfo, .message, .unknown:
             break
         }
+    }
+
+    // MARK: Crons
+
+    /// Asks the plugin for the jobs and returns once it answers, or after 10 s; at once while there is no session.
+    func refreshCrons() async {
+        guard let connection, await connection.send(.cronList(V3CronList())) else { return }
+        await withCheckedContinuation { continuation in
+            cronWaiters.append(continuation)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                self?.finishCronWait()
+            }
+        }
+    }
+
+    private func finishCronWait() {
+        for waiter in cronWaiters { waiter.resume() }
+        cronWaiters = []
     }
 
     /// A message's mark only moves forward. `convId` nil: look it up (the relay's `accepted` names no conversation).

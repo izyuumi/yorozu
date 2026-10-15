@@ -46,6 +46,12 @@ struct V3ChatView: View {
                 draft = ""
             }
         }
+        // "Edit in chat" (#432) leaves its text here, unsent.
+        .onChange(of: model.drafts[convId], initial: true) { _, seed in
+            guard let seed else { return }
+            draft = seed
+            model.drafts[convId] = nil
+        }
         .navigationTitle(model.conversations[convId]?.preview.firstLine ?? String(localized: "New Conversation"))
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.state == .ready ? "" : model.state.label)
