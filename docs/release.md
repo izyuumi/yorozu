@@ -53,6 +53,23 @@ env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme Y
     CODE_SIGNING_ALLOWED=NO
 ```
 
+The same command with `generic/platform=iOS` covers iPad: one target, device families iPhone and iPad.
+
+## Mac client: build and launch
+
+The client app also has a native macOS destination (SwiftUI, not Catalyst; #419). Nothing scripts it yet and nothing uploads it: `upload_ios.sh` archives `generic/platform=iOS` only. Build it unsigned into a derived-data folder of its own and open it from there, never into `/Applications`:
+
+```sh
+tuist generate --no-open --path apps/ios
+env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \
+    -destination 'platform=macOS' -derivedDataPath .build/xcode-mac \
+    -clonedSourcePackagesDirPath .build/xcode-packages -skipPackagePluginValidation \
+    CODE_SIGNING_ALLOWED=NO
+open -n .build/xcode-mac/Build/Products/Debug/YorozuIOS.app
+```
+
+The linker signs it ad hoc, so it runs only on the Mac that built it, and its Keychain items ask for access again after a rebuild. Distributing it later needs, at least: team signing with the entitlements in their macOS form (`com.apple.developer.aps-environment`, a team-prefixed App Group) and a provisioning profile for `to.yumi.yorozu.ios` on macOS; then either the Mac App Store / TestFlight for Mac on the same App Store Connect app (universal purchase: one bundle id), or Developer ID signing, hardened runtime, notarization and an update feed (Sparkle, as `apps/mac` does).
+
 ## Website
 
 https://yorozu.yumi.to is the Astro site in `apps/web` on `main`, not on `projectx`. `.github/workflows/deploy-web.yml` deploys it on every push to `main` that touches `apps/web/**`, so merging is deploying. `Start.md` on `main` is the guide the site's one-line prompt points agents at; it changes in the same PR as the site.
