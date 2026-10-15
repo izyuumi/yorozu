@@ -523,7 +523,7 @@ export class Room implements DurableObject {
   }
 
   /**
-   * Alerts every paired device; background catch-up only wakes devices not already watching.
+   * Alerts every paired device, or those the notify names; background catch-up only wakes devices not already watching.
    *
    * Every registered phone gets the alert. iOS can suspend an app while its WebSocket still
    * looks open from the server, so socket presence cannot prove somebody is watching. The app
@@ -544,9 +544,11 @@ export class Room implements DurableObject {
         .map((ws) => (ws.deserializeAttachment() as Conn | null)?.key)
         .filter((key): key is string => key !== null && key !== undefined),
     );
-    const records = await this.state.storage.list<PushRecord>({ prefix: pushPrefix });
+    const named = notify.devices ? new Set(notify.devices.map((key) => pushPrefix + key)) : null;
+    const records = [...(await this.state.storage.list<PushRecord>({ prefix: pushPrefix }))]
+      .filter(([key]) => !named || named.has(key));
     await Promise.all(
-      [...records].map(([key, record]) => this.wakeDevice(key, record, notify, now, watching)),
+      records.map(([key, record]) => this.wakeDevice(key, record, notify, now, watching)),
     );
   }
 

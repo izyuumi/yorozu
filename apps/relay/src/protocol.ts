@@ -293,6 +293,11 @@ export type Notify = {
    * notification category; what the action is stays in the sealed frame.
    */
   actions?: boolean;
+  /**
+   * The devices (Ed25519 relay keys) to alert, when the host names them: a v3 host leaves out a device that has the
+   * conversation on screen. Absent, every registered device is alerted, as before.
+   */
+  devices?: string[];
 };
 
 /**
@@ -320,6 +325,12 @@ const parsePreviews = (value: unknown): Record<string, EncryptedPreview> | null 
   return previews;
 };
 
+const parseDeviceList = (value: unknown): string[] | null | undefined => {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_DEVICES) return null;
+  return value.every((key) => typeof key === "string" && key.length === 43 && base64url.test(key)) ? value : null;
+};
+
 // APNs tokens have variable byte lengths; 512 bytes is our resource limit, not an APNs size guarantee.
 // https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/HandlingRemoteNotifications.html
 export const parsePush = (msg: Record<string, unknown>): Push | null =>
@@ -335,11 +346,14 @@ export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
   const previews = parsePreviews(msg.previews);
   if (previews === null) return null;
   if (msg.actions !== undefined && typeof msg.actions !== "boolean") return null;
+  const devices = parseDeviceList(msg.devices);
+  if (devices === null) return null;
   return {
     class: msg.class as NotifyClass,
     threadRef: msg.threadRef,
     ...(typeof msg.eventRef === "string" ? { eventRef: msg.eventRef } : {}),
     ...(previews ? { previews } : {}),
+    ...(devices ? { devices } : {}),
     // Only an approval has buttons to offer; the bit is meaningless on any other class.
     ...(msg.actions === true && msg.class === "approval" ? { actions: true } : {}),
   };
