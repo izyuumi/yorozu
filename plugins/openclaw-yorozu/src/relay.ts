@@ -425,8 +425,12 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           }
           case "state":
             return log?.info(`yorozu: relay state: ${String(msg.state).slice(0, 64)}`);
+          case "phones":
+            // No device socket left: none has a conversation on screen, whatever it last said (#431).
+            if (msg.count === 0) for (const entry of served.values()) entry.foreground = undefined;
+            return;
           default:
-            return; // `owner`, `phones`: not needed yet.
+            return; // `owner`: not needed yet.
         }
       }
 
