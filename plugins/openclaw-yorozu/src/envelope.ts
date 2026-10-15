@@ -32,6 +32,24 @@ export type ToolStatus = "running" | "done" | "failed";
 export type ReadCursor = { convId: string; messageId: string; ts: number; unread: boolean };
 /** The conversation on this device's screen while the app is in the foreground, or none (#431): no push for it there. */
 export type Foreground = { convId?: string | null };
+/** One cron job of the configured agent, for the Crons tab (#432). Times are epoch ms. */
+export type CronJob = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** OpenClaw's schedule object as stored (`kind` plus its fields), for a client that words it itself. */
+  schedule: Record<string, unknown>;
+  /** The plugin's English wording of `schedule` ("Daily at 09:00 (Asia/Tokyo)"). */
+  scheduleText: string;
+  nextRunAt?: number;
+  lastRunAt?: number;
+  lastStatus?: "ok" | "error" | "skipped";
+  lastError?: string;
+  /** Only when the job delivers into a Yorozu conversation: `threadId` is its `convId`. */
+  delivery?: { channel: "yorozu"; threadId: string };
+};
+/** Client -> plugin: `{}`, a request. Plugin -> that client: `jobs`, or `error` when the store cannot be read. */
+export type CronList = { jobs?: CronJob[]; error?: string };
 
 export type Event =
   | { kind: "peer_info"; data: PeerInfo }
@@ -43,7 +61,8 @@ export type Event =
   | { kind: "error"; data: ErrorInfo }
   | { kind: "tool"; data: Tool }
   | { kind: "read_cursor"; data: ReadCursor }
-  | { kind: "foreground"; data: Foreground };
+  | { kind: "foreground"; data: Foreground }
+  | { kind: "cron_list"; data: CronList };
 
 export type Received = Event | { kind: "unknown"; name: string };
 
@@ -83,6 +102,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),
   read_cursor: (d) => ref(d) && int(d.ts) && typeof d.unread === "boolean",
   foreground: (d) => d.convId === undefined || d.convId === null || isId(d.convId),
+  cron_list: (d) => (d.jobs === undefined || Array.isArray(d.jobs)) && optStr(d.error),
 };
 
 /** Null only for bytes that are not an envelope at all; extra fields are kept and ignored. */

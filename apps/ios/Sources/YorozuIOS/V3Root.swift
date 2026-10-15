@@ -9,7 +9,7 @@ struct V3RootView: View {
     var body: some View {
         Group {
             if model.paired {
-                ConversationsView(model: model)
+                V3HomeView(model: model)
             } else {
                 V3PairingView(model: model)
             }

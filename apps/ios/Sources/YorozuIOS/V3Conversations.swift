@@ -5,8 +5,8 @@ import YorozuWire
 /// collapses by itself). "+" opens a new `convId`, which joins the list with its first message.
 struct ConversationsView: View {
     let model: V3Model
-
-    @State private var selection: String?
+    /// The open conversation; the Crons tab sets it too (#432).
+    @Binding var selection: String?
     @State private var showingHost = false
 
     var body: some View {

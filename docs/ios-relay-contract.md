@@ -139,6 +139,7 @@ Names later issues add, so nothing else takes them: `conv_list`, `history`, `con
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
 | `read_cursor` | both | `convId`, `messageId` (the last reply read), `ts` (that reply's `ts`), `unread` (bool) |
 | `foreground` | client → plugin | `convId`? (the conversation on screen with the app active; absent or null: none). See [Push](#push) |
+| `cron_list` | client → plugin, then plugin → that client | request: `{}`; answer: `jobs` (array of [jobs](#cron_list)), or `jobs: []` and `error` |
 
 #### `peer_info`
 
@@ -155,6 +156,24 @@ One conversation's read state, the same on every device (#429). Replies whose `t
 - A client sends one when the user opens a conversation (cursor at the newest reply, `unread: false`), when a reply arrives while it is open and the app is in the foreground (cursor at the newest reply, `unread` kept: an automatic read does not undo Mark as Unread), on Mark as Read (as opening) and on Mark as Unread (cursor unchanged, `unread: true`). Mark as Unread is offered only once the conversation has a reply and is read.
 - The plugin keeps one per `convId` in its keyed state store (namespace `read`). It merges: the cursor only moves forward (the stored one stays if its `ts` is greater), `unread` is the sender's. It sends the merged cursor to every device, the sender included, and every stored cursor to a device right after that device's `peer_info`, so a new or returning device knows them.
 - A client applies the plugin's cursor as it comes, except while its own is unanswered: then it keeps the further `ts` and its own `unread` until a cursor at least as far with the same `unread` arrives, and it sends its own again on its next session.
+
+#### `cron_list`
+
+The Crons tab (#432). A client sends `cron_list {}`; the plugin answers that device only (not every served session) with every cron job of `channels.yorozu.agent`, disabled ones included, sorted by name. A job with no `agentId` counts as the Gateway's default agent's. Read-only: Yorozu has no admin kind; "Edit in chat" asks the agent instead. A data with neither `jobs` nor `error` is a request, so a client ignores one.
+
+| Field | Meaning |
+|---|---|
+| `id` | OpenClaw's job id |
+| `name` | The job's `displayName`, else its `name` |
+| `enabled` | false: the client shows the job greyed |
+| `schedule` | OpenClaw's schedule object as stored: `kind` (`at`, `every`, `cron`, `on-exit`, `stream`) and its fields |
+| `scheduleText` | The plugin's English wording of `schedule`: `Every 30 minutes`, `Daily at 09:00 (Asia/Tokyo)`, `Weekdays at 08:30`, `Once`; any other cron expression as `Cron <expr>`. Clients show it as it is |
+| `nextRunAt`?, `lastRunAt`? | Epoch ms, the scheduler's |
+| `lastStatus`? | `ok`, `error` or `skipped`; absent before the first run |
+| `lastError`? | The last run's error, at most 2,000 characters |
+| `delivery`? | Only when the job delivers into a Yorozu conversation: `{channel: "yorozu", threadId: <convId>}`. The client opens that conversation from the row |
+
+The wording lives in the plugin so every client says the same thing without a cron parser of its own; `schedule` travels raw for a client that wants to word it itself later. When the plugin cannot read the cron store the answer is `{jobs: [], error}` and the client keeps its last list under the error. "Edit in chat" opens the job's delivery conversation, or a new one, with `Change cron job "<name>" (id <id>): ` in the composer, unsent.
 
 #### `error` codes
 

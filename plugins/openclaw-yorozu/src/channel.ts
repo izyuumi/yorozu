@@ -10,6 +10,7 @@ import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { DEFAULT_CHUNK_LIMIT, handleMessage, PEER, resolveOwnerRoute, sendConversationText } from "./conversation.js";
 import { isId } from "./envelope.js";
+import { listCronJobs } from "./cron.js";
 import { loadHostKeys } from "./keys.js";
 import { notifyReply, runRelayHost } from "./relay.js";
 
@@ -60,6 +61,15 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       log: ctx.log,
       onMessage: (message) =>
         void handleMessage({ cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent }, message),
+      onRequest: async (event) => {
+        if (event.kind !== "cron_list") return undefined;
+        try {
+          return { kind: "cron_list", data: { jobs: await listCronJobs(ctx.cfg, account.agent) } };
+        } catch (error) {
+          ctx.log?.warn?.(`yorozu: cron list failed: ${String(error)}`);
+          return { kind: "cron_list", data: { jobs: [], error: String(error).slice(0, 500) } };
+        }
+      },
       onStatus: ({ connected, error }) =>
         ctx.setStatus(
           connected

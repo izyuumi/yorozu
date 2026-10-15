@@ -14,6 +14,7 @@ public enum V3Event: Equatable, Sendable {
     case tool(V3Tool)
     case readCursor(V3ReadCursor)
     case foreground(V3Foreground)
+    case cronList(V3CronList)
     case unknown(kind: String, data: JSONValue?)
 
     public var kind: String {
@@ -28,6 +29,7 @@ public enum V3Event: Equatable, Sendable {
         case .tool: "tool"
         case .readCursor: "read_cursor"
         case .foreground: "foreground"
+        case .cronList: "cron_list"
         case .unknown(let kind, _): kind
         }
     }
@@ -192,6 +194,45 @@ public struct V3Foreground: Codable, Equatable, Sendable {
     public init(convId: String?) { self.convId = convId }
 }
 
+/// The Crons tab (#432). Client -> plugin: empty, a request. Plugin -> that client: `jobs`, or `error` when the
+/// plugin cannot read the cron store.
+public struct V3CronList: Codable, Equatable, Sendable {
+    public var jobs: [V3CronJob]?
+    public var error: String?
+
+    public init(jobs: [V3CronJob]? = nil, error: String? = nil) {
+        self.jobs = jobs
+        self.error = error
+    }
+}
+
+/// One cron job of the configured agent. Times are epoch milliseconds.
+public struct V3CronJob: Codable, Equatable, Sendable, Identifiable {
+    public struct Delivery: Codable, Equatable, Sendable {
+        /// Always "yorozu": the plugin names only deliveries into a Yorozu conversation.
+        public var channel: String
+        /// The conversation's `convId`.
+        public var threadId: String
+    }
+
+    public var id: String
+    public var name: String
+    public var enabled: Bool
+    /// OpenClaw's schedule object as stored (`kind` plus its fields).
+    public var schedule: JSONValue
+    /// The plugin's English wording of `schedule`.
+    public var scheduleText: String
+    public var nextRunAt: Int64?
+    public var lastRunAt: Int64?
+    /// "ok", "error" or "skipped".
+    public var lastStatus: String?
+    public var lastError: String?
+    public var delivery: Delivery?
+
+    /// The conversation the job delivers into, if it is a well-formed Yorozu one.
+    public var convId: String? { delivery.flatMap { $0.channel == "yorozu" && V3Event.isId($0.threadId) ? $0.threadId : nil } }
+}
+
 extension V3Event: Codable {
     private enum Keys: String, CodingKey { case kind, data }
 
@@ -221,6 +262,8 @@ extension V3Event: Codable {
             if let v = data(V3ReadCursor.self), ids(v.convId, v.messageId) { self = .readCursor(v); return }
         case "foreground":
             if let v = data(V3Foreground.self), v.convId.map(V3Event.isId) ?? true { self = .foreground(v); return }
+        case "cron_list":
+            if let v = data(V3CronList.self) { self = .cronList(v); return }
         default:
             break
         }
@@ -240,6 +283,7 @@ extension V3Event: Codable {
         case .tool(let v): try c.encode(v, forKey: .data)
         case .readCursor(let v): try c.encode(v, forKey: .data)
         case .foreground(let v): try c.encode(v, forKey: .data)
+        case .cronList(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }
     }
