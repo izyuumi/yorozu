@@ -1,11 +1,8 @@
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
-import { createPluginRuntimeStore, type PluginRuntime } from "openclaw/plugin-sdk/runtime-store";
 import { yorozuPlugin } from "./src/channel.js";
+import { yorozuRuntime } from "./src/runtime.js";
 
-export const yorozuRuntime = createPluginRuntimeStore<PluginRuntime>({
-  pluginId: "yorozu",
-  errorMessage: "Yorozu runtime not initialised",
-});
+export { yorozuRuntime };
 
 export default defineChannelPluginEntry({
   id: "yorozu",
