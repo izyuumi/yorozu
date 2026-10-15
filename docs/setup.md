@@ -302,7 +302,7 @@ args = ["mcp"]
 
 ### Direct connection
 
-Paired client devices can reach the host without the relay when both are on the same LAN or the same private VPN (#315; wire in [ios-relay-contract.md](ios-relay-contract.md#direct-path)). The relay stays the fallback.
+Paired client devices can reach the host without the relay when both are on the same LAN or the same private VPN (#315; wire in [ios-relay-contract.md](history/ios-relay-contract-v2.md#direct-path)). The relay stays the fallback.
 
 - Mac: with `[direct] enabled = true` (the default) the app listens for WebSockets on `[direct] port` (8738) and accepts connections only on Wi-Fi/Ethernet (`en*`) and `utun` interfaces; loopback, AWDL and bridges are refused, so `127.0.0.1` never gets in. Only a phone whose key is in `relay-devices.json` gets past the join: pairing still goes over the relay. The addresses phones are told are the Mac's private Wi-Fi/Ethernet addresses (`lan`) and its private `utun` addresses (`vpn`: RFC 1918, 100.64.0.0/10, ULA), never loopback or link-local. Settings › Connection › Direct connection shows the listener, the addresses, each phone's route and the last refused connection.
 - macOS firewall: when the application firewall is on, macOS asks whether Yorozu may accept incoming connections. An unsigned or ad hoc build asks again after each rebuild, since its signature changes; a Developer ID signed build may ask once. Deny keeps phones on the relay.
@@ -340,7 +340,7 @@ Coding agents use their own model settings (their own configuration, or a `--mod
 
 ## Push notifications
 
-Phones are woken through the relay's APNs path (#320; flow in [architecture.md](architecture.md#push-notifications), wire in [ios-relay-contract.md](ios-relay-contract.md#push)). Alerts carry the message's excerpt, sealed for each phone and opened on the phone ([sealed previews](ios-relay-contract.md#sealed-previews)).
+Phones are woken through the relay's APNs path (#320; flow in [architecture.md](architecture.md#push-notifications), wire in [ios-relay-contract.md](history/ios-relay-contract-v2.md#push)). Alerts carry the message's excerpt, sealed for each phone and opened on the phone ([sealed previews](history/ios-relay-contract-v2.md#sealed-previews)).
 
 - iOS app (`apps/ios/Project.swift`): the entitlement `aps-environment: production`, since TestFlight builds use production APNs (as on v1), and `UIBackgroundModes: ["remote-notification"]` for the silent catch-up. v1 ships push on the same bundle id, so the App ID already has the capability; if automatic signing reports that it lacks push, enable it in the Apple Developer portal.
 - Notification service extension (`YorozuNotificationService`, bundle id `to.yumi.yorozu.ios.notification-service`, v1's): opens sealed previews. It shares one Keychain access group with the app, `<team>.to.yumi.yorozu.notifications` (v1's), which holds only the preview key; no app group. Automatic signing registers the extension's App ID and issues its App Store profile during `upload_ios.sh` if v1's are gone. Keychain sharing needs no capability in the portal.

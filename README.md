@@ -23,7 +23,7 @@ Requirements: [docs/setup.md](docs/setup.md). Releases: [docs/release.md](docs/r
 - [Status and roadmap](docs/status.md)
 - [Architecture](docs/architecture.md)
 - [OpenClaw integration](docs/openclaw-integration.md)
-- [iOS relay contract](docs/ios-relay-contract.md)
+- [Relay wire contract (v3)](docs/ios-relay-contract.md)
 - [cua integration (R3 design)](docs/cua-integration.md)
 - [Owner decisions](OWNER_DECISIONS.md)
 - [Working rules](AGENTS.md)
