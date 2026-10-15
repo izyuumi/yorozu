@@ -48,6 +48,10 @@ struct Conversation: Codable, Identifiable, Equatable {
     var read: V3ReadCursor?
     /// `read` was set here and the plugin has not sent it back: sent again on the next session.
     var readPending: Bool?
+    /// The host's title (#428): the manual rename, else the generated one; nil before either.
+    var title: String?
+    /// Archived on the host: shown under Archived, not in the main list.
+    var archived: Bool?
 
     /// Agent replies after the read cursor; at least 1 while marked unread.
     var unreadCount: Int {
@@ -58,9 +62,13 @@ struct Conversation: Codable, Identifiable, Equatable {
     /// The newest reply by the plugin's clock: what a read moves the cursor to.
     var latestReply: ChatItem? { items.filter { $0.kind == .agent }.max { $0.ts < $1.ts } }
 
-    /// The list's label until titles land (#428): the first message's text.
-    var preview: String {
-        (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.summary ?? ""
+    /// The list's and the chat's label: the host's title, else (until the first reply makes one) the first message's
+    /// first line, else "New Conversation".
+    var displayTitle: String {
+        if let title, !title.isEmpty { return title }
+        let first = (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.summary ?? ""
+        let line = first.split(separator: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+        return line ?? String(localized: "New Conversation")
     }
 
     var lastText: String { items.last { $0.kind == .user || $0.kind == .agent }?.summary ?? "" }
@@ -220,6 +228,12 @@ final class ConversationCache: Sendable {
                 try JSONEncoder().encode(conversation).write(to: directory.appending(path: "\(conversation.id).json"), options: options)
             } catch {}
         }
+    }
+
+    /// A conversation deleted on the host.
+    func remove(_ id: String) {
+        guard V3Event.isId(id) else { return }
+        queue.async { [directory] in try? FileManager.default.removeItem(at: directory.appending(path: "\(id).json")) }
     }
 
     func wipe() {

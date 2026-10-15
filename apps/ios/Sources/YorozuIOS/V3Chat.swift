@@ -83,7 +83,7 @@ struct V3ChatView: View {
             draft = seed
             model.drafts[convId] = nil
         }
-        .navigationTitle(model.conversations[convId]?.preview.firstLine ?? String(localized: "New Conversation"))
+        .navigationTitle(model.conversations[convId]?.displayTitle ?? String(localized: "New Conversation"))
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.state == .ready ? "" : model.state.label)
     }
@@ -106,10 +106,6 @@ extension V3ChatView {
     private func readIfActive() {
         if scenePhase == .active { model.markRead(convId, explicit: false) }
     }
-}
-
-private extension String {
-    var firstLine: String { split(separator: "\n", maxSplits: 1).first.map(String.init) ?? self }
 }
 
 struct V3ItemRow: View {

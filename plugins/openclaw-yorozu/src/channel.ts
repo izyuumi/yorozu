@@ -22,6 +22,7 @@ import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
 import { loadHostKeys } from "./keys.js";
 import { notifyReply, runRelayHost } from "./relay.js";
+import { applyPatch, watchSessions } from "./sessions.js";
 
 export const CHANNEL_ID = "yorozu";
 // Same default as the Mac app's `relay.url` (docs/setup.md).
@@ -64,6 +65,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
   const maxBytes = mediaMaxBytes(ctx.cfg, account.accountId);
   ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
+  watchSessions(account.agent, abortSignal, ctx.log);
   try {
     await runRelayHost({
       relayUrl: account.relayUrl,
@@ -78,6 +80,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
         ),
       onRequest: async (event) => {
         if (event.kind === "conv_list" || event.kind === "history") return answerRequest(ctx.cfg, account.agent, event, ctx.log);
+        if (event.kind === "conv_patch") return applyPatch(account.agent, event.data, ctx.log);
         if (event.kind !== "cron_list") return undefined;
         try {
           return { kind: "cron_list", data: { jobs: await listCronJobs(ctx.cfg, account.agent) } };

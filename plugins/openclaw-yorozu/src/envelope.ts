@@ -50,8 +50,18 @@ export type Tool = { convId: string; messageId: string; callId: string; name: st
 export type ToolStatus = "running" | "done" | "failed";
 /** `conv_list`, plugin -> the asking device: the owner's Yorozu conversations, newest first. Asked with `{}`. */
 export type ConvList = { conversations: ConvSummary[] };
-/** `rev`: the transcript's newest event seq; a client holding it has the conversation's whole history so far. */
-export type ConvSummary = { convId: string; updatedAt: number; rev: number };
+/**
+ * `rev`: the transcript's newest event seq; a client holding it has the conversation's whole history so far.
+ * `title`: the manual rename, else the generated title (#428); absent before either. `archived`: only when true.
+ */
+export type ConvSummary = { convId: string; updatedAt: number; rev: number; title?: string; archived?: true };
+/**
+ * `conv_patch`, device -> plugin (#428): rename (`title`, "" clears the rename), archive or unarchive, or delete.
+ * Answered by the `conv_update` every device gets, or `error` to the sender.
+ */
+export type ConvPatch = { convId: string; title?: string; archived?: boolean; deleted?: true };
+/** `conv_update`, plugin -> every device: a conversation's title and archive state now, or that it is gone. */
+export type ConvUpdate = { convId: string; title?: string; archived?: true; deleted?: true };
 /** `history`, device -> plugin: one page of a conversation. `before`/`after` are item seqs; neither: the newest. */
 export type HistoryRequest = { convId: string; before?: number; after?: number };
 /** `history`, plugin -> the asking device: the request's fields again, then the page, oldest first. */
@@ -103,6 +113,8 @@ export type Event =
   | { kind: "read_cursor"; data: ReadCursor }
   | { kind: "foreground"; data: Foreground }
   | { kind: "cron_list"; data: CronList }
+  | { kind: "conv_patch"; data: ConvPatch }
+  | { kind: "conv_update"; data: ConvUpdate }
   | { kind: "upload"; data: Upload }
   | { kind: "upload_ack"; data: UploadAck }
   | { kind: "download"; data: Download }
@@ -167,6 +179,13 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   upload_ack: (d) => part(d) && typeof d.done === "boolean",
   download: part,
   chunk: (d) => part(d) && int(d.count) && d.count >= 1 && (d.index as number) < d.count && str(d.data),
+  conv_patch: (d) =>
+    isId(d.convId) &&
+    optStr(d.title) &&
+    (d.archived === undefined || typeof d.archived === "boolean") &&
+    (d.deleted === undefined || d.deleted === true),
+  // Sent only by the plugin.
+  conv_update: (d) => isId(d.convId),
 };
 
 /** Null only for bytes that are not an envelope at all; extra fields are kept and ignored. */

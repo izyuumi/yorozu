@@ -26,6 +26,7 @@ import { liveReplyIds } from "./history.js";
 import { noteFirstMessage } from "./push.js";
 import { broadcast, notifyReply } from "./relay.js";
 import { yorozuRuntime } from "./runtime.js";
+import { maybeTitle } from "./sessions.js";
 
 const CHANNEL_ID = "yorozu";
 /** The one channel peer: all devices are the owner's. */
@@ -216,6 +217,8 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
       );
     }
   }
+  // A conversation's first turn gets its generated title (#428); a later one only if that failed.
+  void maybeTitle(cfg, route.agentId, convId, log);
 }
 
 const deliveryConv = (threadId: string | number | null | undefined): string => {

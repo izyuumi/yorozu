@@ -81,7 +81,10 @@ export type RelayHostOptions = {
   onStatus: (status: Status) => void;
   /** A device's message, once per `messageId`, after `delivered` went out. */
   onMessage: (message: Message) => void;
-  /** A device's request (`cron_list`, `conv_list`, `history`); what it returns goes to that device only. */
+  /**
+   * A device's request (`cron_list`, `conv_list`, `history`, `conv_patch`); what it returns goes to that device
+   * only (a `conv_patch` answers every device itself, with `conv_update`, and returns only an error).
+   */
   onRequest?: (event: Event) => Promise<Event | undefined>;
   /** The attachment limit (`mediaMaxMb`), told to devices in `peer_info` and enforced on uploads. */
   mediaMaxBytes: number;
@@ -373,7 +376,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           return;
         }
         if (event?.kind === "error") return log?.info(`yorozu: device error ${event.data.code}`);
-        if (event?.kind === "cron_list" || event?.kind === "conv_list" || event?.kind === "history") {
+        if (event?.kind === "cron_list" || event?.kind === "conv_list" || event?.kind === "history" || event?.kind === "conv_patch") {
           const answer = await opts.onRequest?.(event);
           // The device's session as it is now: it may have handshaken again meanwhile.
           const now = served.get(deviceKey);

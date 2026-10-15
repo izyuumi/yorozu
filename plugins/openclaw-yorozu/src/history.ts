@@ -32,6 +32,7 @@ import {
   type HistoryTool,
   type ToolStatus,
 } from "./envelope.js";
+import { titleOf } from "./sessions.js";
 
 const CHANNEL_ID = "yorozu";
 /** Items per page, and the page's JSON budget: one box, far below the relay's 1 MiB, paced one page at a time. */
@@ -70,7 +71,14 @@ export function listConversations(agent: string): ConvList {
   for (const { sessionKey, entry } of listSessionEntries({ agentId: agent, readOnly: true })) {
     const convId = sessionKey.startsWith(start) ? sessionKey.slice(start.length) : "";
     if (!isId(convId) || !entry.sessionId) continue;
-    conversations.push({ convId, updatedAt: entry.updatedAt ?? 0, rev: stats(agent, sessionKey, entry.sessionId) });
+    const title = titleOf(entry);
+    conversations.push({
+      convId,
+      updatedAt: entry.updatedAt ?? 0,
+      rev: stats(agent, sessionKey, entry.sessionId),
+      ...(title ? { title } : {}),
+      ...(entry.archivedAt !== undefined ? { archived: true as const } : {}),
+    });
   }
   conversations.sort((a, b) => b.updatedAt - a.updatedAt);
   return { conversations: conversations.slice(0, LIST_MAX) };
