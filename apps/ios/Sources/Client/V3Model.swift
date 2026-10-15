@@ -74,8 +74,13 @@ final class V3Model {
     var paired: Bool { pairing?.paired == true }
     var connecting: Bool { pairing != nil && !paired }
 
-    /// Newest first.
-    var list: [Conversation] {
+    /// Newest first, archived ones left out.
+    var list: [Conversation] { sorted.filter { $0.archived != true } }
+
+    /// The Archived view (#428), newest first.
+    var archivedList: [Conversation] { sorted.filter { $0.archived == true } }
+
+    private var sorted: [Conversation] {
         conversations.values.sorted { ($0.updatedAt, $0.id) > ($1.updatedAt, $1.id) }
     }
 
@@ -315,7 +320,7 @@ final class V3Model {
             #if os(macOS)
             // No relay push reaches the Mac: a local notice while it runs, for a conversation not in front.
             if reply.convId != foreground, conversations[reply.convId]?.items.contains(where: { $0.id == reply.messageId }) != true {
-                V3Notices.reply(convId: reply.convId, title: conversations[reply.convId]?.preview ?? "", text: reply.text)
+                V3Notices.reply(convId: reply.convId, title: conversations[reply.convId]?.displayTitle ?? "", text: reply.text)
             }
             #endif
             append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts), to: reply.convId)
@@ -335,10 +340,23 @@ final class V3Model {
         case .convList(let list):
             guard let summaries = list.conversations else { return }
             settle()
+            // Deleted on the host while this device was away: a conversation the host does not list although this
+            // device synced it before (it has a `rev`), or one it holds no message of. A new conversation whose first
+            // message the host may not have recorded yet has neither and stays. Not when the list may be cut at 2000.
+            let listed = Set(summaries.map(\.convId))
+            if summaries.count < 2000 {
+                for gone in conversations.values where !listed.contains(gone.id) && (gone.rev != nil || gone.items.isEmpty) {
+                    forget(gone.id)
+                }
+            }
             for summary in summaries {
                 var conversation = conversations[summary.convId]
                     ?? Conversation(id: summary.convId, createdAt: summary.updatedAt, updatedAt: summary.updatedAt)
-                if conversations[summary.convId] == nil || summary.updatedAt > conversation.updatedAt {
+                let isNew = conversations[summary.convId] == nil
+                let changed = conversation.title != summary.title || (conversation.archived == true) != (summary.archived == true)
+                conversation.title = summary.title
+                conversation.archived = summary.archived == true ? true : nil
+                if isNew || changed || summary.updatedAt > conversation.updatedAt {
                     conversation.updatedAt = max(conversation.updatedAt, summary.updatedAt)
                     store(conversation)
                 }
@@ -354,7 +372,9 @@ final class V3Model {
             if let jobs = list.jobs, list.error == nil { crons = jobs }
             cronsError = list.error
             finishCronWait()
-        case .peerInfo, .message, .foreground, .historyRequest, .unknown:
+        case .convUpdate(let update):
+            apply(update)
+        case .peerInfo, .message, .foreground, .historyRequest, .convPatch, .unknown:
             break
         }
     }
@@ -511,6 +531,61 @@ final class V3Model {
     private func store(_ conversation: Conversation) {
         conversations[conversation.id] = conversation
         cache.save(conversation)
+        updateBadge()
+    }
+
+    // MARK: Titles, archive, delete (#428)
+
+    /// Rename: `title` empty (or only spaces) goes back to the generated title. Shown here at once; every device gets
+    /// the host's `conv_update`. Nothing happens without a session: the menu items are off then.
+    func rename(_ convId: String, to title: String) {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        patch(V3ConvPatch(convId: convId, title: title)) { $0.title = title.isEmpty ? $0.title : title }
+    }
+
+    func setArchived(_ convId: String, _ archived: Bool) {
+        patch(V3ConvPatch(convId: convId, archived: archived)) { $0.archived = archived ? true : nil }
+    }
+
+    /// Delete on the host (archive, then delete with its transcript) and on every device.
+    func delete(_ convId: String) {
+        patch(V3ConvPatch(convId: convId, deleted: true)) { _ in }
+    }
+
+    /// A rename, archive or delete needs a live session; the host answers every device.
+    var canPatch: Bool { state == .ready }
+
+    private func patch(_ patch: V3ConvPatch, local: @escaping (inout Conversation) -> Void) {
+        guard let connection, V3Event.isId(patch.convId) else { return }
+        Task {
+            guard await connection.send(.convPatch(patch)) else { return }
+            if patch.deleted == true { return forget(patch.convId) }
+            guard var conversation = conversations[patch.convId] else { return }
+            local(&conversation)
+            store(conversation)
+        }
+    }
+
+    /// The host's word on a conversation: its title and archive state now, or that it is gone.
+    private func apply(_ update: V3ConvUpdate) {
+        if update.deleted == true { return forget(update.convId) }
+        var conversation = conversations[update.convId]
+            ?? Conversation(id: update.convId, createdAt: Self.now, updatedAt: Self.now, read: unplacedReads.removeValue(forKey: update.convId))
+        conversation.title = update.title
+        conversation.archived = update.archived == true ? true : nil
+        guard conversation != conversations[update.convId] else { return }
+        store(conversation)
+    }
+
+    /// The conversation deleted last (on any device): a view showing it closes it.
+    private(set) var deleted: String?
+
+    private func forget(_ convId: String) {
+        guard conversations.removeValue(forKey: convId) != nil else { return }
+        deleted = convId
+        cache.remove(convId)
+        typing.remove(convId)
+        drafts[convId] = nil
         updateBadge()
     }
 

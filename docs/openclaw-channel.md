@@ -269,6 +269,7 @@ Alternatives:
 - Rename: `patchSessionEntry({ label })`. Archive: `{ archivedAt }`. Delete: `deleteSessionEntry`.
 - Push list updates from `api.runtime.gateway.subscribeSessionChanges`.
 - Enforce label uniqueness yourself if wanted; the direct patch skips `sessions.patch` validation.
+- Chosen (#428): `src/sessions.ts`. The title is made after the turn (not before the reply) from the transcript's first non-command user message, with core's `DASHBOARD_SESSION_TITLE_PROMPT` and its normalization, and written only while neither `label` nor `displayName` is set. All writes pass `preserveActivity: true`, so they leave `updatedAt` and the list order alone. Labels are not made unique: a Yorozu rename is a display name. Delete follows `sessions.delete`'s rules: archive first, then `deleteSessionEntry({ archiveTranscript: true })` (its `deleteTranscript` default), which moves the transcript rows to `session_transcript_archives`. Checked live on an isolated profile: `subscribeSessionChanges` fires for turns and for a `sessions.patch` rename made through the Gateway (it reached both devices), so one watcher, deduplicated per conversation, sends every `conv_update`; the generator ran on the configured `utilityModel` (a second mock model) a second or two after the reply.
 
 **#429 read marks**
 - Cursor per `convId` in `openKeyedStore({ namespace: "read", retention: "retained" })`.

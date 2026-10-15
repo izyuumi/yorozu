@@ -6,6 +6,7 @@
  */
 import { createCipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { yorozuRuntime } from "./runtime.js";
+import { conversationTitle } from "./sessions.js";
 import { b64u, dh, fromB64u } from "./wire.js";
 
 /** The relay refuses a preview over 256 bytes of plaintext (and drops the host's socket with "bad notify"). */
@@ -62,8 +63,9 @@ export function sealPreview(key: Uint8Array, plaintext: Uint8Array): { n: string
 }
 
 /**
- * The push title until generated titles land (#428): the conversation's first message, first line. Kept in the
- * plugin's keyed state store (namespace `push-titles`), first one wins; slash commands do not count.
+ * The push title: the conversation's title (#428, rename or generated) once it has one. Until then (the first reply's
+ * push goes before the title is made) its first message, first line, kept in the plugin's keyed state store
+ * (namespace `push-titles`), first one wins; slash commands do not count.
  */
 const titles = () =>
   yorozuRuntime.getRuntime().state.openKeyedStore<{ title: string }>({ namespace: "push-titles", retention: "retained" });
@@ -74,4 +76,5 @@ export async function noteFirstMessage(convId: string, text: string): Promise<vo
   await titles().register(convId, { title: cut(line, TITLE_CHARS) });
 }
 
-export const pushTitle = async (convId: string): Promise<string | undefined> => (await titles().lookup(convId))?.title;
+export const pushTitle = async (convId: string): Promise<string | undefined> =>
+  conversationTitle(convId) ?? (await titles().lookup(convId))?.title;

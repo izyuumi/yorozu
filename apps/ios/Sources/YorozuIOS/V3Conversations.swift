@@ -8,6 +8,11 @@ struct ConversationsView: View {
     /// The open conversation; the Crons tab sets it too (#432).
     @Binding var selection: String?
     @State private var showingHost = false
+    /// The Archived rows are shown below the list (#428).
+    @State private var showingArchived = false
+    @State private var renaming: Conversation?
+    @State private var newTitle = ""
+    @State private var deleting: Conversation?
 
     var body: some View {
         NavigationSplitView {
@@ -25,6 +30,8 @@ struct ConversationsView: View {
         }
         .sheet(isPresented: $showingHost) { HostSheet(model: model) }
         .opensRequestedConversation(model, selection: $selection)
+        // Deleted on another device while open here.
+        .onChange(of: model.deleted) { _, convId in if convId != nil, selection == convId { selection = nil } }
     }
 
     private var list: some View {
@@ -38,16 +45,51 @@ struct ConversationsView: View {
                     Button(String(localized: "Pair Again")) { model.unpair() }
                 }
             }
-            ForEach(conversations) { conversation in
-                ConversationRow(conversation: conversation, typing: model.typing.contains(conversation.id))
-                    .tag(conversation.id)
-                    // Left to right, as in #410: Mark as Read or Unread by the row's unread state, here and in its menu.
-                    .swipeActions(edge: .leading, allowsFullSwipe: true) { V3ReadMarkButton(model: model, conversation: conversation) }
-                    .contextMenu { V3ReadMarkButton(model: model, conversation: conversation) }
+            Section {
+                ForEach(conversations, content: row)
+            }
+            let archived = model.archivedList
+            if !archived.isEmpty {
+                // One row at the list's end opens and closes the Archived rows below it, the same on every device.
+                Section {
+                    Button {
+                        withAnimation { showingArchived.toggle() }
+                    } label: {
+                        Label {
+                            Text("Archived")
+                        } icon: {
+                            Image(systemName: "archivebox")
+                        }
+                        .badge(archived.count)
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityValue(showingArchived ? Text("Shown") : Text("Hidden"))
+                    .accessibilityIdentifier("conversations.archived")
+                    if showingArchived { ForEach(archived, content: row) }
+                }
             }
         }
+        .alert(String(localized: "Rename Conversation"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
+            presenting: renaming) { conversation in
+            TextField(String(localized: "Title"), text: $newTitle)
+                .accessibilityIdentifier("conversations.rename.field")
+            Button(String(localized: "Rename")) { model.rename(conversation.id, to: newTitle) }
+            Button(String(localized: "Cancel"), role: .cancel) {}
+        } message: { _ in
+            Text("Leave it empty to use the automatic title.")
+        }
+        .confirmationDialog(String(localized: "Delete this conversation?"),
+            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+            titleVisibility: .visible, presenting: deleting) { conversation in
+            Button(String(localized: "Delete"), role: .destructive) {
+                if selection == conversation.id { selection = nil }
+                model.delete(conversation.id)
+            }
+        } message: { _ in
+            Text("It is deleted on the host and on every device, with its history.")
+        }
         .overlay {
-            if conversations.isEmpty {
+            if conversations.isEmpty && model.archivedList.isEmpty {
                 ContentUnavailableView("No conversations yet", systemImage: "bubble.left.and.bubble.right",
                     description: Text("Start one with +."))
             }
@@ -66,6 +108,38 @@ struct ConversationsView: View {
                     .accessibilityIdentifier("conversations.new")
             }
         }
+    }
+
+    /// One conversation's row with its actions: Mark as Read or Unread from the leading edge (as in #410), Archive and
+    /// Delete from the trailing edge, all of them and Rename in its menu. Changes need the host, so they wait for a session.
+    private func row(_ conversation: Conversation) -> some View {
+        let archived = conversation.archived == true
+        let archive = Button(archived ? String(localized: "Unarchive") : String(localized: "Archive"),
+            systemImage: archived ? "tray.and.arrow.up" : "archivebox") {
+            if !archived, selection == conversation.id { selection = nil }
+            model.setArchived(conversation.id, !archived)
+        }
+        let delete = { (title: String) in Button(title, systemImage: "trash", role: .destructive) { deleting = conversation } }
+        return ConversationRow(conversation: conversation, typing: model.typing.contains(conversation.id))
+            .tag(conversation.id)
+            .swipeActions(edge: .leading, allowsFullSwipe: true) { V3ReadMarkButton(model: model, conversation: conversation) }
+            .swipeActions(edge: .trailing) {
+                delete(String(localized: "Delete")).disabled(!model.canPatch)
+                archive.tint(.indigo).disabled(!model.canPatch)
+            }
+            .contextMenu {
+                V3ReadMarkButton(model: model, conversation: conversation)
+                Group {
+                    Button(String(localized: "Rename…"), systemImage: "pencil") {
+                        newTitle = conversation.title ?? ""
+                        renaming = conversation
+                    }
+                    archive
+                    Divider()
+                    delete(String(localized: "Delete…"))
+                }
+                .disabled(!model.canPatch)
+            }
     }
 
     /// A state the user must act on, instead of a list that silently never updates.
@@ -95,7 +169,7 @@ private struct V3ReadMarkButton: View {
     }
 }
 
-/// The first message stands for the title until titles land (#428); the latest message below it.
+/// The title (#428; the first message until the host has made one), the latest message below it.
 private struct ConversationRow: View {
     let conversation: Conversation
     let typing: Bool
@@ -103,7 +177,7 @@ private struct ConversationRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
             HStack(alignment: .firstTextBaseline) {
-                Text(conversation.preview.isEmpty ? String(localized: "New Conversation") : conversation.preview)
+                Text(conversation.displayTitle)
                     .font(.headline)
                     .fontWeight(conversation.unreadCount > 0 ? .bold : nil)
                     .lineLimit(1)
