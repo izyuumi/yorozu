@@ -6,7 +6,7 @@ How the Mac dev app is rebuilt, how iOS builds reach TestFlight and how the webs
 
 `version.txt` holds one numeric `major.minor.patch` for both apps. Both Tuist manifests stop with a fatal error on any other format. Both scripts pass `MARKETING_VERSION` to `xcodebuild` explicitly, because Tuist caches the manifest and a `version.txt` change alone may not reach the build. Bump `version.txt` when a new version is needed, for example to bring iOS build numbers back to 1.
 
-A minor version that breaks the relay wire also raises the peer-info protocol ([ios-relay-contract.md](ios-relay-contract.md#versioning)). 0.7.0 is protocol 2: a Mac rebuilt at 0.7.0 refuses every 0.6.x phone with "Update Yorozu on this iPhone to talk to this Mac.", so it goes with a 0.7.0 iOS upload, and the dev Mac moves to it only when the owner chooses. Pairings survive the move; nothing needs pairing again.
+A minor version that breaks the relay wire also raises the peer-info protocol ([ios-relay-contract.md](history/ios-relay-contract-v2.md#versioning)). 0.7.0 is protocol 2: a Mac rebuilt at 0.7.0 refuses every 0.6.x phone with "Update Yorozu on this iPhone to talk to this Mac.", so it goes with a 0.7.0 iOS upload, and the dev Mac moves to it only when the owner chooses. Pairings survive the move; nothing needs pairing again.
 
 ## Mac: rebuild the dev app
 

@@ -93,7 +93,7 @@ Yorozu sets no size limit on worker answers (owner decision, 2026-10-09). A thin
 
 The reads do not use `chat.history` at its 500,000 maximum: a message over 128 KiB is dropped from `chat.history` whatever `maxChars` is, and with large texts the 512 KiB response budget keeps fewer of the newest messages, so a reconcile could miss the run's own turn. Small previews keep the response small and `chat.message.get` returns the one message needed.
 
-Limits that remain: an `agent` response is bounded by the 2 MB stdout cap (8 MB frames on the native transport), a sub-chat event over 16,000 bytes keeps its last 8,000 characters, and phone frames follow [ios-relay-contract.md](ios-relay-contract.md).
+Limits that remain: an `agent` response is bounded by the 2 MB stdout cap (8 MB frames on the native transport), a sub-chat event over 16,000 bytes keeps its last 8,000 characters, and phone frames follow [ios-relay-contract.md](history/ios-relay-contract-v2.md).
 
 ## Attachments and media
 
