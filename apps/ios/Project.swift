@@ -1,7 +1,8 @@
 import Foundation
 import ProjectDescription
 
-/// Generates Yorozu.xcworkspace (not checked in): `tuist generate --no-open --path apps/ios`.
+/// Generates Yorozu.xcworkspace (not checked in): `tuist generate --no-open --path apps/ios`. One client app for iPhone, iPad and
+/// Mac (native SwiftUI, not Catalyst); the extensions are iOS-only and uploads archive iOS only (docs/release.md).
 /// Identity matches Yorozu v1 (bundle id, team, ASC app 6811274963) so TestFlight takes it as the same app.
 let versionFile = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("../../version.txt").standardizedFileURL
@@ -33,10 +34,10 @@ let project = Project(
     targets: [
         .target(
             name: "YorozuIOS",
-            destinations: .iOS,
+            destinations: [.iPhone, .iPad, .mac],
             product: .app,
             bundleId: "to.yumi.yorozu.ios",
-            deploymentTargets: .iOS("18.0"),
+            deploymentTargets: .multiplatform(iOS: "18.0", macOS: "15.0"),
             infoPlist: .extendingDefault(with: [
                 // Build settings, so scripts/upload_ios.sh passes both on the xcodebuild command line.
                 "CFBundleShortVersionString": "$(MARKETING_VERSION)",
@@ -44,6 +45,8 @@ let project = Project(
                 "UILaunchScreen": [:],
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
+                // The Mac's app menu and Dock name, rather than the target's.
+                "CFBundleName": "Yorozu",
                 "LSApplicationCategoryType": "public.app-category.productivity",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message.",
                 // "Save Image" in the share sheet of a file opened from a message.
@@ -78,7 +81,11 @@ let project = Project(
                 "keychain-access-groups": ["$(AppIdentifierPrefix)to.yumi.yorozu.ios", .string(notificationKeychainGroup)],
                 "com.apple.security.application-groups": [.string(appGroup)],
             ]),
-            dependencies: [.package(product: "YorozuWire"), .target(name: "YorozuNotificationService"), .target(name: "YorozuShare")],
+            dependencies: [
+                .package(product: "YorozuWire"),
+                .target(name: "YorozuNotificationService", condition: .when([.ios])),
+                .target(name: "YorozuShare", condition: .when([.ios])),
+            ],
             // Automatic signing plus `xcodebuild -allowProvisioningUpdates` and an App Store Connect key:
             // Xcode issues the distribution certificate and the App Store profiles (app and extension) itself.
             settings: signing(["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"])

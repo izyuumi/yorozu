@@ -1,3 +1,4 @@
+#if os(iOS)
 import AVFoundation
 import SwiftUI
 import VisionKit
@@ -173,3 +174,4 @@ private struct Scanner: UIViewControllerRepresentable {
         }
     }
 }
+#endif

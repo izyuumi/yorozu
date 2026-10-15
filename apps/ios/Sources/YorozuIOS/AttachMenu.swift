@@ -2,7 +2,9 @@ import CoreTransferable
 import ImageIO
 import PhotosUI
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 import UniformTypeIdentifiers
 
 // v1 packages/shared-swift AttachButton.swift, ImageDownscale.swift and AttachmentAcquisition.swift,
@@ -54,15 +56,19 @@ struct AttachMenu: View {
         Menu {
             // A flag rather than a PhotosPicker in the menu: a picker inside a Menu never presents.
             Button("Photo Library", systemImage: "photo.on.rectangle") { choosingPhotos = true }
+            #if os(iOS)
             // Only where there is a camera to open: a simulator has none.
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button("Take Photo", systemImage: "camera") { takingPhoto = true }
             }
+            #endif
             Button("Files", systemImage: "folder") { browsingFiles = true }
+            #if os(iOS)
             // `hasImages` asks without reading, so it raises no paste banner; the tap reads.
             if UIPasteboard.general.hasImages {
                 Button("Paste", systemImage: "doc.on.clipboard") { pasteImages() }
             }
+            #endif
         } label: {
             Group {
                 if loading { ProgressView().controlSize(.small) } else { Image(systemName: "plus").font(.body.weight(.semibold)) }
@@ -92,6 +98,7 @@ struct AttachMenu: View {
                 failure = String(localized: "Couldn’t open the selected files. Choose them again and check that they’re available on this device.")
             }
         }
+        #if os(iOS)
         .fullScreenCover(isPresented: $takingPhoto) {
             CameraPicker { data in
                 Task {
@@ -106,6 +113,7 @@ struct AttachMenu: View {
             }
             .ignoresSafeArea()
         }
+        #endif
     }
 
     private var hint: String {
@@ -148,6 +156,7 @@ struct AttachMenu: View {
         }
     }
 
+    #if os(iOS)
     private func pasteImages() {
         let providers = UIPasteboard.general.itemProviders
         Task {
@@ -158,6 +167,7 @@ struct AttachMenu: View {
             })
         }
     }
+    #endif
 
     /// Loads, stages and checks each source in order; one alert for whatever did not make it.
     private func load(_ sources: [AttachmentSource]) async {
@@ -213,6 +223,7 @@ private extension NSItemProvider {
     }
 }
 
+#if os(iOS)
 /// The system camera: `UIImagePickerController` is still the way to take one picture without a capture session.
 private struct CameraPicker: UIViewControllerRepresentable {
     let onCapture: (Data) -> Void
@@ -251,6 +262,7 @@ private struct CameraPicker: UIViewControllerRepresentable {
         }
     }
 }
+#endif
 
 /// What is staged above the field: a horizontal run of tiles, each with its remove button and, for a
 /// reduced image, "Send original".
@@ -277,7 +289,7 @@ private struct StagedTile: View {
     @Binding var file: StagedFile
     let onRemove: () -> Void
 
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
 
     /// The tile's picture: a custom component's own geometry.
     private static let side: CGFloat = 64

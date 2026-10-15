@@ -5,12 +5,9 @@ import YorozuWire
 /// Private keys stay in the app's Keychain. Updating an item must never delete its previous
 /// value before the write succeeds.
 enum Keychain {
-    /// The phone's own; a Mac client's is separate from the Mac host's items and from v1's `to.yumi.yorozu.mac-client`.
-    #if os(macOS)
-    private static let service = "to.yumi.yorozu.client"
-    #else
-    private static let service = "to.yumi.yorozu.ios"
-    #endif
+    /// The client app's own, on iPhone, iPad and Mac (#419). The Mac host's client role keeps its
+    /// `to.yumi.yorozu.client`, apart from the host's items and from v1's `to.yumi.yorozu.mac-client`, until the host goes.
+    private static let service = Bundle.main.bundleIdentifier == "to.yumi.yorozu" ? "to.yumi.yorozu.client" : "to.yumi.yorozu.ios"
 
     private static func query(_ account: String) -> [String: Any] {
         [

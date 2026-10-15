@@ -15,7 +15,9 @@ struct ChatScreen: View {
     @State private var section = AppSection.chats
     /// Scheduled's own stack; Chats uses `path`.
     @State private var jobsPath: [ChatRoute] = []
+    #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
     @State private var details: PhoneModel.Bubble?
     @State private var position = ScrollPosition(edge: .bottom)
     /// The view follows the newest message: an intent only the reader's own scrolling clears. The lazy stack measuring its
@@ -62,7 +64,9 @@ struct ChatScreen: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
+        #if os(iOS)
         .defaultAdaptableTabBarPlacement(.sidebar)
+        #endif
         .background { shortcuts }
         // The Mac's cursor moved by another device (or first loaded) moves the divider; this phone's own
         // does not, nor does any cursor at or before it, so the divider never lands on messages just read.
@@ -104,7 +108,12 @@ struct ChatScreen: View {
     /// A small dot on a section, no number (owner, 2026-10-14).
     private static let dotBadge = Text(verbatim: " ")
 
+    #if os(iOS)
     private var compact: Bool { sizeClass == .compact }
+    #else
+    /// A Mac window always has the list beside the chat.
+    private let compact = false
+    #endif
 
     /// Chats: the thread list as the stack's root on iPhone; on iPad the list beside the open chat.
     @ViewBuilder private var chats: some View {
@@ -149,7 +158,9 @@ struct ChatScreen: View {
                 PageScreen(model: model, messageId: id)
             }
         }
+        #if os(iOS)
         .toolbar(compact && route != .archived ? .hidden : .automatic, for: .tabBar)
+        #endif
     }
 
     /// ⌘1 Chats, ⌘2 Scheduled, ⌘F Search and ⌘, Settings, for a keyboard on iPad (owner, 2026-10-14).
@@ -408,7 +419,9 @@ struct ChatScreen: View {
     /// Moves to `route` with the keyboard down first. A field still first responder when its screen is covered is
     /// remembered by UIKit and raised again when the screen comes back, which popped the keyboard up on return.
     private func navigate(_ route: [ChatRoute]) {
+        #if os(iOS)
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        #endif
         path = route
     }
 
@@ -451,7 +464,7 @@ struct ChatScreen: View {
     }
 
     private static let hasSubtitle: Bool = {
-        if #available(iOS 26, *) { return true } else { return false }
+        if #available(iOS 26, macOS 26, *) { return true } else { return false }
     }()
 
     /// The first message from Yorozu after the read cursor: the user's own messages are never unread.
@@ -741,7 +754,13 @@ private struct SettingsScreen: View {
                     LabeledContent("Notifications") { Text(LocalizedStringKey(notificationsName)) }
                     if notifications == .denied {
                         Button("Open Settings") {
+                            #if os(iOS)
                             if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
+                            #else
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                                NSWorkspace.shared.open(url)
+                            }
+                            #endif
                         }
                     }
                 }
@@ -800,6 +819,12 @@ private struct SettingsScreen: View {
             .joined(separator: " · ")
     }
 
+    #if os(iOS)
+    private static var system: String { "iOS: \(UIDevice.current.systemVersion)" }
+    #else
+    private static var system: String { "macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)" }
+    #endif
+
     /// Plain English text for a bug report, whatever the interface language. Only what Settings
     /// shows: no message content, keys (the fingerprint is a prefix of the public key) or tokens.
     private var diagnostics: String {
@@ -807,7 +832,7 @@ private struct SettingsScreen: View {
         return [
             "Yorozu diagnostics \(date(Date()))",
             "Client app: \(Self.version)",
-            "iOS: \(UIDevice.current.systemVersion)",
+            Self.system,
             "Host app: \(model.macVersion ?? "unknown")",
             "Status: \(model.status)",
             "Relay host: \(model.relayHost ?? "none")",

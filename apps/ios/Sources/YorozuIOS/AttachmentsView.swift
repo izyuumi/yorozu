@@ -1,6 +1,8 @@
 import QuickLook
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // v1 packages/shared-swift MessageBubble.swift's AttachmentsView, for files that live on the Mac:
 // images as thumbnails that download when shown, other files as rows; a tap downloads the full file
@@ -33,7 +35,9 @@ struct AttachmentsView: View {
             }
             ForEach(others) { fileRow($0) }
         }
+        #if os(iOS)
         .sheet(item: $sharing) { ShareSheet(url: $0.url).ignoresSafeArea() }
+        #endif
     }
 
     private func missing(_ info: AttachmentInfo) -> Bool { store?.missing.contains(info.cacheKey) == true }
@@ -122,7 +126,12 @@ struct AttachmentsView: View {
     private func open(_ info: AttachmentInfo) {
         Task {
             guard let url = await store?.open(info) else { return }
+            #if os(macOS)
+            // The Mac opens a file in its own app (Preview for most), which has Share and Save itself.
+            NSWorkspace.shared.open(url)
+            #else
             if QLPreviewController.canPreview(url as NSURL) { FilePreview.present(url) } else { sharing = SharedFile(url: url) }
+            #endif
         }
     }
 }
@@ -132,6 +141,7 @@ private struct SharedFile: Identifiable {
     var id: URL { url }
 }
 
+#if os(iOS)
 /// The system share sheet for one file: Save Image, Save to Files, AirDrop, other apps.
 private struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
@@ -169,3 +179,4 @@ private final class FilePreview: QLPreviewController, QLPreviewControllerDataSou
 
     func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem { url as NSURL }
 }
+#endif

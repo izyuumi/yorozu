@@ -9,14 +9,26 @@ struct OnboardingView: View {
     @State private var page = Page.howItWorks
 
     var body: some View {
+        pages
+            .interactiveDismissDisabled()
+            .yorozuTint()
+    }
+
+    @ViewBuilder private var pages: some View {
+        #if os(iOS)
         TabView(selection: $page) {
             howItWorks.tag(Page.howItWorks)
             notifications.tag(Page.notifications)
         }
         .tabViewStyle(.page(indexDisplayMode: .always))
         .indexViewStyle(.page(backgroundDisplayMode: .always))
-        .interactiveDismissDisabled()
-        .yorozuTint()
+        #else
+        // No paged style on a Mac: Continue moves to the next page.
+        switch page {
+        case .howItWorks: howItWorks
+        case .notifications: notifications
+        }
+        #endif
     }
 
     private var howItWorks: some View {
@@ -47,7 +59,11 @@ struct OnboardingView: View {
             Button {
                 Task {
                     // The token is asked for at every launch already; asking again once allowed is harmless.
+                    #if os(iOS)
                     if await LocalNotices.askPermission() { UIApplication.shared.registerForRemoteNotifications() }
+                    #else
+                    _ = await LocalNotices.askPermission()
+                    #endif
                     onFinish()
                 }
             } label: {

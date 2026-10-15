@@ -38,6 +38,7 @@ struct PairingFlowView: View {
                     if updatedFromV1 && onCancel == nil { updated.padding(.top, 8) }
                     guide.padding(.top, 8)
                     Spacer()
+                    #if os(iOS)
                     Button { destination = .scanner } label: {
                         Label("Scan pairing code", systemImage: "qrcode.viewfinder")
                             .frame(maxWidth: .infinity)
@@ -48,6 +49,15 @@ struct PairingFlowView: View {
                     Button("Enter code manually") { destination = .manual }
                         .frame(minHeight: 44)
                         .disabled(connecting)
+                    #else
+                    // No camera scanner on a Mac: the pasted code is the way in.
+                    Button { destination = .manual } label: {
+                        Text("Enter code manually").frame(maxWidth: .infinity)
+                    }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(connecting)
+                    #endif
                     if let onCancel {
                         Button("Cancel", action: onCancel)
                             .frame(minHeight: 44)
@@ -73,6 +83,7 @@ struct PairingFlowView: View {
         .yorozuTint()
         .sheet(item: $destination) { shown in
             switch shown {
+            #if os(iOS)
             case .scanner:
                 ScannerView(onScan: { text in
                     let failure = submit(text)
@@ -80,6 +91,9 @@ struct PairingFlowView: View {
                     return failure
                 }, onManualEntry: { destination = .manual })
                 .yorozuTint()
+            #else
+            case .scanner: EmptyView()
+            #endif
             case .manual:
                 PairView(onPair: submit)
                     .yorozuTint()
@@ -145,7 +159,9 @@ struct PairView: View {
                 Section {
                     TextField("Paste pairing code", text: $code, axis: .vertical)
                         .font(.system(.footnote, design: .monospaced))
+                        #if os(iOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                         .autocorrectionDisabled()
                         .lineLimit(3...6)
                 } footer: {
