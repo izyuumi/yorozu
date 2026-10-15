@@ -1,22 +1,27 @@
 /**
  * The host side of the relay (apps/relay; docs/ios-relay-contract.md): one outbound WebSocket to the room
  * `base64url(sha256(host Ed25519 pub))`, registered with a signature over the relay's nonce, redialled with
- * backoff until the account stops. It answers v3 handshakes from allowlisted devices and keeps one session per
- * device in memory, across its own reconnects. Message handling is #424.
+ * backoff until the account stops. It answers v3 handshakes from allowlisted devices, and from a device proving a
+ * pending pairing, which it then adds to the allowlist; it keeps one session per device in memory, across its own
+ * reconnects. `beginPairing` and `unpairDevice` are what the Gateway methods behind `openclaw yorozu` call.
+ * Message handling is #424.
  */
+import { randomBytes } from "node:crypto";
 import os from "node:os";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
 import { computeBackoff, sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { WebSocket } from "openclaw/plugin-sdk/websocket-runtime";
-import { getDevice, listDevices } from "./devices.js";
+import { getDevice, listDevices, putDevice, removeDevice } from "./devices.js";
 import { encodeEvent, negotiate, parseEvent, PROTOCOL_VERSION, type Event, type PeerInfo } from "./envelope.js";
 import type { HostKeys } from "./keys.js";
 import {
   acceptHandshake,
   b64u,
   decodeFrame,
+  fingerprint,
   HANDSHAKE_MAX_AGE_MS,
+  helloProof,
   signFrame,
   type Frame,
   type Session,
@@ -48,6 +53,71 @@ export type RelayHostOptions = {
   onStatus: (status: Status) => void;
 };
 
+/** What `openclaw yorozu pair` prints. */
+export type Pairing = {
+  /** `yorozu://pair?v=3&…` (docs/ios-relay-contract.md, "Pairing"). */
+  link: string;
+  /** The same query in the web link's fragment: what the QR carries, so a phone's camera opens the app. */
+  webLink: string;
+  fingerprint: string;
+  /** Epoch ms, the relay's: the token and the secret both stop working after it. */
+  expiresAt: number;
+  /** Paired devices before this one; at `MAX_DEVICES` the oldest makes way. */
+  devices: number;
+};
+
+/** The web link a pairing QR carries (`QrPayload.link`). */
+const PAIR_WEB_LINK = "https://yorozu.yumi.to/pair";
+const MINT_TIMEOUT_MS = 10_000;
+
+/** Secrets of pairings minted and not yet used -> their expiry (epoch ms). In memory: a restart voids them. */
+const pending = new Map<string, number>();
+/** The running host, while `runRelayHost` runs; `mint` only while it is registered at the relay. */
+let host: {
+  relayUrl: string;
+  keys: HostKeys;
+  mint: (() => Promise<{ token: string; expiresAt: number }>) | null;
+  /** Drops the devices' sessions and makes the relay forget them and close their sockets. */
+  forget: (deviceKeys: string[]) => void;
+} | null = null;
+
+/** Mints a one-time relay token and a secret for one new device; throws while the relay is not reachable. */
+export async function beginPairing(): Promise<Pairing> {
+  if (!host?.mint) throw new Error("the yorozu channel is not connected to its relay; check `openclaw channels status`");
+  const { relayUrl, keys } = host;
+  const { token, expiresAt } = await host.mint();
+  const secret = b64u(randomBytes(32));
+  const now = Date.now();
+  for (const [old, until] of pending) if (until < now) pending.delete(old);
+  pending.set(secret, expiresAt);
+  // URLComponents' spelling (QrPayload.encoded): `:` and `/` stay as they are in a query.
+  const q = (value: string) => encodeURIComponent(value).replace(/%3A/gi, ":").replace(/%2F/gi, "/");
+  const query = `v=3&relay=${q(relayUrl)}&key=${b64u(keys.static.publicKey)}&token=${q(token)}&room=${keys.room}&secret=${secret}`;
+  return {
+    link: `yorozu://pair?${query}`,
+    webLink: `${PAIR_WEB_LINK}#${query}`,
+    fingerprint: fingerprint(keys.static.publicKey),
+    expiresAt,
+    devices: (await listDevices()).length,
+  };
+}
+
+/** Takes a device off the allowlist, drops its session and has the relay forget it. False if it was not there. */
+export async function unpairDevice(deviceKey: string): Promise<boolean> {
+  const removed = await removeDevice(deviceKey);
+  host?.forget([deviceKey]);
+  return removed;
+}
+
+/** The pending secret `proof` proves for this device, if any. */
+function provenSecret(proof: string | undefined, staticPub: string, signingPub: string, now: number): string | undefined {
+  if (!proof) return undefined;
+  for (const [secret, until] of pending) {
+    if (until >= now && helloProof(secret, staticPub, signingPub) === proof) return secret;
+  }
+  return undefined;
+}
+
 /** Stays pending until `signal` aborts, then settles once the socket is closed. */
 export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   const { keys, signal, log } = opts;
@@ -62,6 +132,24 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   url.searchParams.set("room", keys.room);
 
   const drop = (reason: string) => log?.info(`yorozu: handshake dropped (${reason})`);
+  /** Sends to the relay while registered; replaced on every connection. */
+  let relaySend: ((raw: string) => void) | null = null;
+  const endSession = (deviceKey: string): void => {
+    const old = served.get(deviceKey);
+    if (old) bySid.delete(b64u(old.session.sid));
+    served.delete(deviceKey);
+  };
+  const me: NonNullable<typeof host> = (host = {
+    relayUrl: opts.relayUrl,
+    keys,
+    mint: null,
+    forget: (deviceKeys) => {
+      for (const key of deviceKeys) {
+        endSession(key);
+        relaySend?.(JSON.stringify({ type: "revoke", pubkey: key }));
+      }
+    },
+  });
 
   function connect(): Promise<boolean> {
     return new Promise((resolve) => {
@@ -69,6 +157,8 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       let registered = false;
       let pongDue = false;
       let queue = Promise.resolve();
+      /** `mint` requests in flight; the relay answers them in order. */
+      const minting: { resolve: (t: { token: string; expiresAt: number }) => void; reject: (e: Error) => void }[] = [];
 
       /** Every send is behind the effect-authority fence; outside a host scope that just sends. */
       const send = (raw: string): void => {
@@ -88,20 +178,31 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         const accepted = acceptHandshake({ host: keys.static, room: keys.room, payload, sig, now });
         if (!accepted) return drop("invalid or stale");
         const deviceKey = b64u(accepted.deviceSigningKey);
-        const device = await getDevice(deviceKey);
-        if (!device || device.staticPub !== b64u(accepted.deviceStatic)) return drop("device not allowlisted");
+        const staticPub = b64u(accepted.deviceStatic);
         for (const [sid, until] of answered) if (until < now) answered.delete(sid);
         if (answered.has(accepted.sid)) return drop("replayed");
+        const known = (await getDevice(deviceKey))?.staticPub === staticPub;
+        const secret = known ? undefined : provenSecret(accepted.payload.proof, staticPub, deviceKey, now);
+        if (!known && !secret) {
+          // Only a device the relay let into the room can send a frame; one this host does not know goes too.
+          send(JSON.stringify({ type: "revoke", pubkey: deviceKey }));
+          return drop("device not allowlisted");
+        }
         answered.set(accepted.sid, accepted.payload.ts + HANDSHAKE_MAX_AGE_MS);
-        const old = served.get(deviceKey);
-        if (old) bySid.delete(b64u(old.session.sid));
+        if (secret) {
+          pending.delete(secret);
+          const evicted = await putDevice({ signingPub: deviceKey, staticPub, pairedAt: now });
+          me.forget(evicted);
+          log?.info(`yorozu: device paired${evicted.length ? " (the oldest made way)" : ""}`);
+        }
+        endSession(deviceKey);
         served.set(deviceKey, { session: accepted.session });
         bySid.set(accepted.sid, deviceKey);
         sendFrames([accepted.response, seal(accepted.session, { kind: "peer_info", data: PEER_INFO })]);
         log?.info(`yorozu: session open (${served.size} device${served.size === 1 ? "" : "s"})`);
       }
 
-      function box(frame: Frame): void {
+      async function box(frame: Frame): Promise<void> {
         const deviceKey = frame.type === "box" ? bySid.get(b64u(frame.sid)) : undefined;
         const entry = deviceKey ? served.get(deviceKey) : undefined;
         const plain = entry?.session.open(frame);
@@ -122,6 +223,10 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             return log?.info("yorozu: session closed (update required)");
           }
           entry.peer = event.data;
+          // The device's model, diagnostic only, kept for `openclaw yorozu devices`.
+          const name = event.data.name?.trim().slice(0, 64);
+          const device = name ? await getDevice(deviceKey) : undefined;
+          if (device && name && device.name !== name) await putDevice({ ...device, name });
           return log?.info(`yorozu: peer_info received (protocol ${PROTOCOL_VERSION})`);
         }
         // Message kinds arrive with #424.
@@ -150,6 +255,19 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             );
           case "registered": {
             registered = true;
+            relaySend = send;
+            me.mint = () =>
+              new Promise((resolve, reject) => {
+                const waiter = { resolve, reject };
+                minting.push(waiter);
+                setTimeout(() => {
+                  const i = minting.indexOf(waiter);
+                  if (i < 0) return;
+                  minting.splice(i, 1);
+                  reject(new Error("the relay did not answer the token request"));
+                }, MINT_TIMEOUT_MS).unref();
+                send(JSON.stringify({ type: "mint" }));
+              });
             log?.info(`yorozu: registered at relay, room ${keys.room}`);
             opts.onStatus({ connected: true });
             // The allowlist is the source of truth for which devices may rejoin the room.
@@ -163,16 +281,23 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             if (typeof msg.payload === "string" && typeof msg.sig === "string") {
               const frame = decodeFrame(msg.payload);
               if (frame?.type === "init") await handshake(msg.payload, msg.sig);
-              else if (frame?.type === "box") box(frame);
+              else if (frame?.type === "box") await box(frame);
             }
             // A frame the relay buffered while this host was away comes with a `seq` and replays until acked.
             if (Number.isSafeInteger(msg.seq)) send(JSON.stringify({ type: "ack", seq: msg.seq }));
             return;
           }
+          case "token": {
+            const waiter = minting.shift();
+            if (typeof msg.token === "string" && Number.isSafeInteger(msg.expiresAt)) {
+              waiter?.resolve({ token: msg.token, expiresAt: msg.expiresAt as number });
+            } else waiter?.reject(new Error("the relay sent a malformed token"));
+            return;
+          }
           case "state":
             return log?.info(`yorozu: relay state: ${String(msg.state).slice(0, 64)}`);
           default:
-            return; // `owner`, `phones`, `token`: not needed yet.
+            return; // `owner`, `phones`: not needed yet.
         }
       }
 
@@ -199,6 +324,11 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       ws.on("close", (code, reason) => {
         clearInterval(heartbeat);
         signal.removeEventListener("abort", stop);
+        if (registered) {
+          relaySend = null;
+          me.mint = null;
+          for (const waiter of minting.splice(0)) waiter.reject(new Error("the relay connection closed"));
+        }
         if (!signal.aborted) {
           const why = `relay closed (${code}${reason.length ? ` ${reason.toString().slice(0, 64)}` : ""})`;
           log?.warn(`yorozu: ${why}`);
@@ -217,4 +347,5 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     log?.info(`yorozu: reconnecting in ${Math.round(delay / 100) / 10} s`);
     await sleepWithAbort(delay, signal).catch(() => {});
   }
+  if (host === me) host = null;
 }

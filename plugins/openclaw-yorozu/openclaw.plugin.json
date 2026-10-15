@@ -4,6 +4,7 @@
   "description": "Yorozu channel: the Yorozu apps talk to the Gateway through an end-to-end-encrypted relay.",
   "categories": ["channels"],
   "channels": ["yorozu"],
+  "cliCommands": [{ "name": "yorozu", "description": "Pair and manage Yorozu devices", "hasSubcommands": true }],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

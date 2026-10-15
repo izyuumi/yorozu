@@ -90,7 +90,7 @@ The plugin (`acceptHandshake`), for each init frame:
 
 1. Verifies `sig` against the frame's own Ed25519 key and reads message 1. Anything that fails is dropped without an answer, the same as a stranger's frame.
 2. Checks [freshness](#freshness-and-replays) of `ts`.
-3. Decides whether to serve the device: a stored device whose Ed25519 key **and** X25519 static key (authenticated by the handshake) both match, or a pending pairing whose `helloProof` equals `proof` (it then stores the device, at most 16). Otherwise it drops the frame. (`acceptHandshake` returns the keys and payload; this decision and the allowlist are #422 and #423.)
+3. Decides whether to serve the device: a stored device whose Ed25519 key **and** X25519 static key (authenticated by the handshake) both match, or a pending pairing whose `helloProof` equals `proof` (it then stores the device, at most 16, and spends the secret: one device per pairing, until the token expires). Otherwise it drops the frame and sends the relay `revoke` for that device. (`acceptHandshake` returns the keys and payload; the decision is in `src/relay.ts`.)
 4. Drops a `sid` it has already answered within the freshness window.
 5. Sends the response frame, then its own `peer_info` box, both may go in one batch. The new session replaces any older one of that device.
 
@@ -254,7 +254,7 @@ The same run also checks that the second box opened again is refused as a replay
 | Keys | `PhoneIdentity.generate()` | `x25519Keypair()`, `ed25519Keypair()` |
 | Relay signature | `YorozuCrypto.signFrame` / `verifyFrame` | `signFrame(priv, payload)`, `verifyFrame(pub, payload, sig)` |
 | Room, fingerprint, proof | `DirectProof.roomId`, `QrPayload.fingerprint`, `YorozuCrypto.helloProof` | `roomId`, `fingerprint`, `helloProof` |
-| Pairing link | `QrPayload(v: 3, …).encoded()`, `QrPayload.decode` | (#423) |
+| Pairing link | `QrPayload(v: 3, …).encoded()`, `QrPayload.decode` | `beginPairing()` (`src/relay.ts`) |
 | Handshake | `V3ClientHandshake(identity:pairing:)`, `.frame`, `.finish(_:) -> V3Session` | `acceptHandshake({host, room, payload, sig}) -> AcceptedHandshake \| null` |
 | Frames | `V3Frame(payload:)`, `.payload`, `.sid` | `decodeFrame`, `encodeFrame`, `frameSid` |
 | Boxes | `V3Session.seal(_:)`, `.open(_:)`, `.openEvent(_:)` | `Session.seal(bytes) -> payload`, `.open(frame) -> Buffer \| null` |
