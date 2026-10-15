@@ -24,6 +24,7 @@ import {
   type PeerInfo,
 } from "./envelope.js";
 import type { HostKeys } from "./keys.js";
+import { listCursors, mergeCursor } from "./reads.js";
 import {
   acceptHandshake,
   b64u,
@@ -276,6 +277,9 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           const name = event.data.name?.trim().slice(0, 64);
           const device = name ? await getDevice(deviceKey) : undefined;
           if (device && name && device.name !== name) await putDevice({ ...device, name });
+          // A device that was away (or is new) learns every conversation's read state.
+          const cursors = await listCursors();
+          if (cursors.length) sendFrames(cursors.map((data) => seal(entry.session, { kind: "read_cursor", data })));
           return log?.info(`yorozu: peer_info received (protocol ${PROTOCOL_VERSION})`);
         }
         if (event?.kind === "message") {
@@ -289,6 +293,10 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           }
           taken.set(messageId, now);
           return opts.onMessage(event.data);
+        }
+        if (event?.kind === "read_cursor") {
+          // To every device, the sender too: one behind the stored cursor catches up.
+          return void broadcastHere([{ kind: "read_cursor", data: await mergeCursor(event.data) }]);
         }
         if (event?.kind === "error") log?.info(`yorozu: device error ${event.data.code}`);
       }

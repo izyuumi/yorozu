@@ -12,6 +12,7 @@ public enum V3Event: Equatable, Sendable {
     case reply(V3Reply)
     case error(V3ErrorInfo)
     case tool(V3Tool)
+    case readCursor(V3ReadCursor)
     case unknown(kind: String, data: JSONValue?)
 
     public var kind: String {
@@ -24,6 +25,7 @@ public enum V3Event: Equatable, Sendable {
         case .reply: "reply"
         case .error: "error"
         case .tool: "tool"
+        case .readCursor: "read_cursor"
         case .unknown(let kind, _): kind
         }
     }
@@ -162,6 +164,24 @@ public struct V3Tool: Codable, Equatable, Sendable {
     }
 }
 
+/// Both ways: a conversation's read state, the same on every device (#429). Replies up to and including the one at `ts`
+/// (the reply's own plugin-clock `ts`; `messageId` is that reply) are read, later ones unread. `unread` is Mark as
+/// Unread: the conversation counts as unread whatever the cursor says, until a read clears it. The plugin keeps the
+/// cursor forward-only, sends the merged one to every device, and every stored one to a device whose session opens.
+public struct V3ReadCursor: Codable, Equatable, Sendable {
+    public var convId: String
+    public var messageId: String
+    public var ts: Int64
+    public var unread: Bool
+
+    public init(convId: String, messageId: String, ts: Int64, unread: Bool) {
+        self.convId = convId
+        self.messageId = messageId
+        self.ts = ts
+        self.unread = unread
+    }
+}
+
 extension V3Event: Codable {
     private enum Keys: String, CodingKey { case kind, data }
 
@@ -187,6 +207,8 @@ extension V3Event: Codable {
             if let v = data(V3ErrorInfo.self) { self = .error(v); return }
         case "tool":
             if let v = data(V3Tool.self), ids(v.convId, v.messageId) { self = .tool(v); return }
+        case "read_cursor":
+            if let v = data(V3ReadCursor.self), ids(v.convId, v.messageId) { self = .readCursor(v); return }
         default:
             break
         }
@@ -204,6 +226,7 @@ extension V3Event: Codable {
         case .reply(let v): try c.encode(v, forKey: .data)
         case .error(let v): try c.encode(v, forKey: .data)
         case .tool(let v): try c.encode(v, forKey: .data)
+        case .readCursor(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }
     }

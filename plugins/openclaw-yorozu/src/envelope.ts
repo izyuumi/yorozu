@@ -24,6 +24,12 @@ export type ErrorInfo = { code: string; message: string; convId?: string; messag
 /** One tool call of the run answering `messageId`, for a collapsed row; `callId` groups its updates. */
 export type Tool = { convId: string; messageId: string; callId: string; name: string; status: ToolStatus };
 export type ToolStatus = "running" | "done" | "failed";
+/**
+ * A conversation's read state, one per conversation, the same on every device: replies up to and including the one
+ * at `ts` (plugin clock, the reply's own `ts`; `messageId` is that reply) are read, later ones unread. `unread` is
+ * Mark as Unread: the conversation counts as unread whatever the cursor says, until a read clears it.
+ */
+export type ReadCursor = { convId: string; messageId: string; ts: number; unread: boolean };
 
 export type Event =
   | { kind: "peer_info"; data: PeerInfo }
@@ -33,7 +39,8 @@ export type Event =
   | { kind: "typing"; data: Typing }
   | { kind: "reply"; data: Reply }
   | { kind: "error"; data: ErrorInfo }
-  | { kind: "tool"; data: Tool };
+  | { kind: "tool"; data: Tool }
+  | { kind: "read_cursor"; data: ReadCursor };
 
 export type Received = Event | { kind: "unknown"; name: string };
 
@@ -71,6 +78,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId),
   tool: (d) =>
     ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),
+  read_cursor: (d) => ref(d) && int(d.ts) && typeof d.unread === "boolean",
 };
 
 /** Null only for bytes that are not an envelope at all; extra fields are kept and ignored. */
