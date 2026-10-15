@@ -1,6 +1,11 @@
 import Foundation
 import Observation
 import YorozuWire
+#if os(iOS)
+import UserNotifications
+#else
+import AppKit
+#endif
 
 /// The v3 client (#425): one pairing with the OpenClaw plugin, the conversations cached on this device, and the link.
 /// User messages without `delivered` are the outbox: each new session sends them again, and the plugin drops a
@@ -21,6 +26,12 @@ final class V3Model {
     var pendingPairing: QrPayload?
     /// Why the last pairing attempt failed, for the pairing screen.
     var pairingError: String?
+    /// The Crons tab (#432): the configured agent's jobs as the plugin last sent them, nil before the first answer.
+    private(set) var crons: [V3CronJob]?
+    /// Why the plugin could not list them, from its last answer.
+    private(set) var cronsError: String?
+    /// Text waiting for a conversation's composer ("Edit in chat"); the chat takes it once, unsent.
+    var drafts: [String: String] = [:]
 
     @ObservationIgnored private var connection: V3Connection?
     @ObservationIgnored private var listener: Task<Void, Never>?
@@ -30,6 +41,11 @@ final class V3Model {
     @ObservationIgnored private var requests: [V3Event] = []
     @ObservationIgnored private var inFlight: V3Event?
     @ObservationIgnored private var inFlightTimer: Task<Void, Never>?
+    /// Cursors the plugin sent for conversations not cached here yet; applied when one arrives. The plugin sends them
+    /// again on every session, so they need no disk.
+    @ObservationIgnored private var unplacedReads: [String: V3ReadCursor] = [:]
+    @ObservationIgnored private var badge: Int?
+    @ObservationIgnored private var cronWaiters: [CheckedContinuation<Void, Never>] = []
 
     static let typingTimeout: Duration = .seconds(30)
     /// No answer within this: the request is dropped and the next one goes (the session may have died meanwhile).
@@ -43,6 +59,7 @@ final class V3Model {
         }
         guard pairing != nil else { return }
         for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
+        updateBadge()
         connect()
     }
 
@@ -96,6 +113,10 @@ final class V3Model {
         pairing = nil
         conversations = [:]
         typing = []
+        unplacedReads = [:]
+        updateBadge()
+        crons = nil
+        cronsError = nil
     }
 
     // MARK: Link
@@ -154,6 +175,9 @@ final class V3Model {
             if !paired { updatePairing { $0.paired = true; $0.pairedAt = Date(); $0.pairing.secret = nil } }
             resendOutbox()
             startSync()
+            for conversation in conversations.values where conversation.readPending == true {
+                if let cursor = conversation.read { transmit(.readCursor(cursor)) }
+            }
         case .accepted(let id):
             mark(id, .sent)
         case .event(let event):
@@ -213,6 +237,8 @@ final class V3Model {
             append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts), to: reply.convId)
         case .tool(let tool):
             self.tool(tool)
+        case .readCursor(let cursor):
+            receive(cursor)
         case .error(let error):
             if error.code == "internal", inFlight != nil { settle() }
             guard let convId = error.convId, V3Event.isId(convId) else { return }
@@ -237,6 +263,13 @@ final class V3Model {
         case .history(let page):
             settle()
             history(page)
+        case .cronList(let list):
+            // A request has neither; only the plugin's answer does.
+            guard list.jobs != nil || list.error != nil else { return }
+            // A failed read keeps the last list on screen, under the error.
+            if let jobs = list.jobs, list.error == nil { crons = jobs }
+            cronsError = list.error
+            finishCronWait()
         case .peerInfo, .message, .historyRequest, .unknown:
             break
         }
@@ -296,11 +329,25 @@ final class V3Model {
         }
         Task {
             // Not on the socket: the next session starts the sync again.
-            let sent = await connection.request(request)
+            let sent = await connection.send(request)
             if !sent, inFlight == request {
                 inFlight = nil
                 inFlightTimer?.cancel()
                 if case .historyRequest(let r) = request { loadingOlder.remove(r.convId) }
+            }
+        }
+    }
+
+    // MARK: Crons
+
+    /// Asks the plugin for the jobs and returns once it answers, or after 10 s; at once while there is no session.
+    func refreshCrons() async {
+        guard let connection, await connection.send(.cronList(V3CronList())) else { return }
+        await withCheckedContinuation { continuation in
+            cronWaiters.append(continuation)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                self?.finishCronWait()
             }
         }
     }
@@ -330,6 +377,11 @@ final class V3Model {
         store(conversation)
     }
 
+    private func finishCronWait() {
+        for waiter in cronWaiters { waiter.resume() }
+        cronWaiters = []
+    }
+
     /// A message's mark only moves forward. `convId` nil: look it up (the relay's `accepted` names no conversation).
     private func mark(_ messageId: String, _ status: SendStatus, in convId: String? = nil) {
         guard let convId = convId ?? conversations.first(where: { $0.value.items.contains { $0.id == messageId } })?.key,
@@ -344,7 +396,8 @@ final class V3Model {
     private func append(_ item: ChatItem, to convId: String) {
         guard V3Event.isId(convId) else { return }
         let now = Self.now
-        var conversation = conversations[convId] ?? Conversation(id: convId, createdAt: now, updatedAt: now)
+        var conversation = conversations[convId]
+            ?? Conversation(id: convId, createdAt: now, updatedAt: now, read: unplacedReads.removeValue(forKey: convId))
         guard !conversation.items.contains(where: { $0.id == item.id }) else { return }
         conversation.items.append(item)
         conversation.updatedAt = now
@@ -374,6 +427,74 @@ final class V3Model {
     private func store(_ conversation: Conversation) {
         conversations[conversation.id] = conversation
         cache.save(conversation)
+        updateBadge()
+    }
+
+    // MARK: Read marks (#429)
+
+    /// The conversation is on screen. `explicit` (it was opened, or Mark as Read) also clears Mark as Unread; an
+    /// automatic read (a reply arrived while it is open) only moves the cursor up to the newest reply.
+    func markRead(_ convId: String, explicit: Bool) {
+        guard let conversation = conversations[convId], let latest = conversation.latestReply else { return }
+        let held = conversation.read
+        let unread = explicit ? false : held?.unread == true
+        let ahead = latest.ts > (held?.ts ?? .min)
+        guard ahead || held?.unread != unread else { return }
+        setRead(V3ReadCursor(convId: convId, messageId: ahead ? latest.id : held!.messageId,
+            ts: ahead ? latest.ts : held!.ts, unread: unread), in: conversation)
+    }
+
+    /// Mark as Unread: the cursor stays where it is (it never moves back), the flag holds until the next read.
+    func markUnread(_ convId: String) {
+        guard let conversation = conversations[convId], var cursor = conversation.read, !cursor.unread else { return }
+        cursor.unread = true
+        setRead(cursor, in: conversation)
+    }
+
+    private func setRead(_ cursor: V3ReadCursor, in conversation: Conversation) {
+        var conversation = conversation
+        conversation.read = cursor
+        conversation.readPending = true
+        store(conversation)
+        transmit(.readCursor(cursor))
+    }
+
+    /// The plugin's merged cursor. While this device's own is unanswered, the cursor takes the further of the two and
+    /// the flag stays this device's, until the plugin's answer to it (at least as far, same flag) arrives.
+    private func receive(_ cursor: V3ReadCursor) {
+        guard var conversation = conversations[cursor.convId] else {
+            unplacedReads[cursor.convId] = cursor
+            return
+        }
+        if conversation.readPending == true, let mine = conversation.read {
+            if cursor.ts >= mine.ts && cursor.unread == mine.unread {
+                conversation.readPending = nil
+                conversation.read = cursor
+            } else if cursor.ts > mine.ts {
+                conversation.read = V3ReadCursor(convId: cursor.convId, messageId: cursor.messageId, ts: cursor.ts, unread: mine.unread)
+            }
+        } else {
+            conversation.read = cursor
+        }
+        guard conversation != conversations[cursor.convId] else { return }
+        store(conversation)
+    }
+
+    private func transmit(_ event: V3Event) {
+        guard let connection else { return }
+        Task { await connection.send(event) }
+    }
+
+    /// Every unread reply, on the app icon (iOS: shown once notifications are allowed, #431) or the Dock tile.
+    private func updateBadge() {
+        let total = conversations.values.reduce(0) { $0 + $1.unreadCount }
+        guard total != badge else { return }
+        badge = total
+        #if os(iOS)
+        Task { try? await UNUserNotificationCenter.current().setBadgeCount(total) }
+        #else
+        NSApplication.shared.dockTile.badgeLabel = total > 0 ? String(total) : nil
+        #endif
     }
 
     private func setTyping(_ convId: String, _ active: Bool) {

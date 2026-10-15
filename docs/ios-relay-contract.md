@@ -139,6 +139,8 @@ Names later issues add, so nothing else takes them: `conv_patch`, `read_cursor`,
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
 | `conv_list` | client → plugin, then plugin → that client | asked with `{}`; answered with `conversations`: [`convId`, `updatedAt`, `rev`] |
 | `history` | client → plugin, then plugin → that client | asked with `convId`, `before`?, `after`?; answered with those, `items`, `more`, `rev` |
+| `read_cursor` | both | `convId`, `messageId` (the last reply read), `ts` (that reply's `ts`), `unread` (bool) |
+| `cron_list` | client → plugin, then plugin → that client | request: `{}`; answer: `jobs` (array of [jobs](#cron_list)), or `jobs: []` and `error` |
 
 #### `peer_info`
 
@@ -169,6 +171,32 @@ Items (`kind`, `id`, `seq`, `ts`, then by kind):
 - An item kind the client does not know is skipped.
 
 **Client order.** Items from pages carry their `seq`; live items have none until a page holds them. A page item replaces the item with its id (or a live agent item of the same text placed after the items known to be older) and goes after the last item with a lower seq and before the first with a higher seq or a live one with a later timestamp. Live items keep arrival order between those. A client syncs on every new session: `conv_list`, then `after: <newest cached seq>` (or the newest page) for each conversation whose `rev` changed; opening a conversation does the same for it first; reaching the top asks `before: <oldest cached seq>` until `more` is false. A freshly paired device so lists every conversation and loads any of its history.
+
+#### `read_cursor`
+
+One conversation's read state, the same on every device (#429). Replies whose `ts` is at or below the cursor's `ts` are read; later ones are unread, and a client badges each conversation with their count and the app with the sum. `messageId` names the reply the cursor stands on; `ts` (the plugin clock every `reply` carries) is what orders, so a device that lacks some replies still agrees. `unread` is Mark as Unread: the conversation counts as unread (at least 1) whatever the cursor says, until a read clears it.
+
+- A client sends one when the user opens a conversation (cursor at the newest reply, `unread: false`), when a reply arrives while it is open and the app is in the foreground (cursor at the newest reply, `unread` kept: an automatic read does not undo Mark as Unread), on Mark as Read (as opening) and on Mark as Unread (cursor unchanged, `unread: true`). Mark as Unread is offered only once the conversation has a reply and is read.
+- The plugin keeps one per `convId` in its keyed state store (namespace `read`). It merges: the cursor only moves forward (the stored one stays if its `ts` is greater), `unread` is the sender's. It sends the merged cursor to every device, the sender included, and every stored cursor to a device right after that device's `peer_info`, so a new or returning device knows them.
+- A client applies the plugin's cursor as it comes, except while its own is unanswered: then it keeps the further `ts` and its own `unread` until a cursor at least as far with the same `unread` arrives, and it sends its own again on its next session.
+
+#### `cron_list`
+
+The Crons tab (#432). A client sends `cron_list {}`; the plugin answers that device only (not every served session) with every cron job of `channels.yorozu.agent`, disabled ones included, sorted by name. A job with no `agentId` counts as the Gateway's default agent's. Read-only: Yorozu has no admin kind; "Edit in chat" asks the agent instead. A data with neither `jobs` nor `error` is a request, so a client ignores one.
+
+| Field | Meaning |
+|---|---|
+| `id` | OpenClaw's job id |
+| `name` | The job's `displayName`, else its `name` |
+| `enabled` | false: the client shows the job greyed |
+| `schedule` | OpenClaw's schedule object as stored: `kind` (`at`, `every`, `cron`, `on-exit`, `stream`) and its fields |
+| `scheduleText` | The plugin's English wording of `schedule`: `Every 30 minutes`, `Daily at 09:00 (Asia/Tokyo)`, `Weekdays at 08:30`, `Once`; any other cron expression as `Cron <expr>`. Clients show it as it is |
+| `nextRunAt`?, `lastRunAt`? | Epoch ms, the scheduler's |
+| `lastStatus`? | `ok`, `error` or `skipped`; absent before the first run |
+| `lastError`? | The last run's error, at most 2,000 characters |
+| `delivery`? | Only when the job delivers into a Yorozu conversation: `{channel: "yorozu", threadId: <convId>}`. The client opens that conversation from the row |
+
+The wording lives in the plugin so every client says the same thing without a cron parser of its own; `schedule` travels raw for a client that wants to word it itself later. When the plugin cannot read the cron store the answer is `{jobs: [], error}` and the client keeps its last list under the error. "Edit in chat" opens the job's delivery conversation, or a new one, with `Change cron job "<name>" (id <id>): ` in the composer, unsent.
 
 #### `error` codes
 

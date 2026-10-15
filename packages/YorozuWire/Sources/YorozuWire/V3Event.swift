@@ -18,6 +18,8 @@ public enum V3Event: Equatable, Sendable {
     case historyRequest(V3HistoryRequest)
     /// `history`, plugin -> the asking client: that page.
     case history(V3History)
+    case readCursor(V3ReadCursor)
+    case cronList(V3CronList)
     case unknown(kind: String, data: JSONValue?)
 
     public var kind: String {
@@ -32,6 +34,8 @@ public enum V3Event: Equatable, Sendable {
         case .tool: "tool"
         case .convList: "conv_list"
         case .historyRequest, .history: "history"
+        case .readCursor: "read_cursor"
+        case .cronList: "cron_list"
         case .unknown(let kind, _): kind
         }
     }
@@ -277,6 +281,63 @@ private struct Lossy<T: Decodable>: Decodable {
     init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }
 
+/// Both ways: a conversation's read state, the same on every device (#429). Replies up to and including the one at `ts`
+/// (the reply's own plugin-clock `ts`; `messageId` is that reply) are read, later ones unread. `unread` is Mark as
+/// Unread: the conversation counts as unread whatever the cursor says, until a read clears it. The plugin keeps the
+/// cursor forward-only, sends the merged one to every device, and every stored one to a device whose session opens.
+public struct V3ReadCursor: Codable, Equatable, Sendable {
+    public var convId: String
+    public var messageId: String
+    public var ts: Int64
+    public var unread: Bool
+
+    public init(convId: String, messageId: String, ts: Int64, unread: Bool) {
+        self.convId = convId
+        self.messageId = messageId
+        self.ts = ts
+        self.unread = unread
+    }
+}
+
+/// The Crons tab (#432). Client -> plugin: empty, a request. Plugin -> that client: `jobs`, or `error` when the
+/// plugin cannot read the cron store.
+public struct V3CronList: Codable, Equatable, Sendable {
+    public var jobs: [V3CronJob]?
+    public var error: String?
+
+    public init(jobs: [V3CronJob]? = nil, error: String? = nil) {
+        self.jobs = jobs
+        self.error = error
+    }
+}
+
+/// One cron job of the configured agent. Times are epoch milliseconds.
+public struct V3CronJob: Codable, Equatable, Sendable, Identifiable {
+    public struct Delivery: Codable, Equatable, Sendable {
+        /// Always "yorozu": the plugin names only deliveries into a Yorozu conversation.
+        public var channel: String
+        /// The conversation's `convId`.
+        public var threadId: String
+    }
+
+    public var id: String
+    public var name: String
+    public var enabled: Bool
+    /// OpenClaw's schedule object as stored (`kind` plus its fields).
+    public var schedule: JSONValue
+    /// The plugin's English wording of `schedule`.
+    public var scheduleText: String
+    public var nextRunAt: Int64?
+    public var lastRunAt: Int64?
+    /// "ok", "error" or "skipped".
+    public var lastStatus: String?
+    public var lastError: String?
+    public var delivery: Delivery?
+
+    /// The conversation the job delivers into, if it is a well-formed Yorozu one.
+    public var convId: String? { delivery.flatMap { $0.channel == "yorozu" && V3Event.isId($0.threadId) ? $0.threadId : nil } }
+}
+
 extension V3Event: Codable {
     private enum Keys: String, CodingKey { case kind, data }
 
@@ -307,6 +368,10 @@ extension V3Event: Codable {
         case "history":
             if let v = data(V3History.self), V3Event.isId(v.convId) { self = .history(v); return }
             if let v = data(V3HistoryRequest.self), V3Event.isId(v.convId) { self = .historyRequest(v); return }
+        case "read_cursor":
+            if let v = data(V3ReadCursor.self), ids(v.convId, v.messageId) { self = .readCursor(v); return }
+        case "cron_list":
+            if let v = data(V3CronList.self) { self = .cronList(v); return }
         default:
             break
         }
@@ -327,6 +392,8 @@ extension V3Event: Codable {
         case .convList(let v): try c.encode(v, forKey: .data)
         case .historyRequest(let v): try c.encode(v, forKey: .data)
         case .history(let v): try c.encode(v, forKey: .data)
+        case .readCursor(let v): try c.encode(v, forKey: .data)
+        case .cronList(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }
     }

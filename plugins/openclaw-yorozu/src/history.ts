@@ -49,17 +49,17 @@ export function answerRequest(
   cfg: OpenClawConfig,
   agent: string,
   request: Event,
-  answer: (event: Event) => void,
   log?: ChannelGatewayContext["log"],
-): void {
+): Event | undefined {
   try {
-    if (request.kind === "conv_list") answer({ kind: "conv_list", data: listConversations(agent) });
-    else if (request.kind === "history") answer({ kind: "history", data: historyPage(cfg, agent, request.data) });
+    if (request.kind === "conv_list") return { kind: "conv_list", data: listConversations(agent) };
+    if (request.kind === "history") return { kind: "history", data: historyPage(cfg, agent, request.data) };
   } catch (error) {
     log?.warn(`yorozu: ${request.kind} failed: ${String(error)}`);
     const convId = request.kind === "history" ? request.data.convId : undefined;
-    answer({ kind: "error", data: { code: "internal", message: String(error).slice(0, 500), ...(convId ? { convId } : {}) } });
+    return { kind: "error", data: { code: "internal", message: String(error).slice(0, 500), ...(convId ? { convId } : {}) } };
   }
+  return undefined;
 }
 
 export function listConversations(agent: string): ConvList {

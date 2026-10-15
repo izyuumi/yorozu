@@ -44,6 +44,19 @@ struct Conversation: Codable, Identifiable, Equatable {
     var complete: Bool?
     /// The transcript `rev` of the last page that reached the newest item: equal to `conv_list`'s, nothing to fetch.
     var rev: Int?
+    /// The read state (#429): the plugin's, or what this device set and the plugin has not answered yet.
+    var read: V3ReadCursor?
+    /// `read` was set here and the plugin has not sent it back: sent again on the next session.
+    var readPending: Bool?
+
+    /// Agent replies after the read cursor; at least 1 while marked unread.
+    var unreadCount: Int {
+        let after = read?.ts ?? .min
+        return max(items.count { $0.kind == .agent && $0.ts > after }, read?.unread == true ? 1 : 0)
+    }
+
+    /// The newest reply by the plugin's clock: what a read moves the cursor to.
+    var latestReply: ChatItem? { items.filter { $0.kind == .agent }.max { $0.ts < $1.ts } }
 
     /// The list's label until titles land (#428): the first message's text.
     var preview: String {
