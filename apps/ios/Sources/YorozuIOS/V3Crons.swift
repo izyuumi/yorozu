@@ -159,7 +159,7 @@ private struct V3CronRow: View {
     @ViewBuilder private var status: some View {
         switch job.lastStatus {
         case "ok":
-            Image(systemName: "checkmark.circle").foregroundStyle(YorozuPalette.sage).accessibilityLabel(Text("Last run succeeded"))
+            Image(systemName: "checkmark.circle").foregroundStyle(.green).accessibilityLabel(Text("Last run succeeded"))
         case "skipped":
             Image(systemName: "forward.circle").foregroundStyle(.secondary).accessibilityLabel(Text("Last run skipped"))
         default:

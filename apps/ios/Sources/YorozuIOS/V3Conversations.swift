@@ -40,6 +40,9 @@ struct ConversationsView: View {
             ForEach(conversations) { conversation in
                 ConversationRow(conversation: conversation, typing: model.typing.contains(conversation.id))
                     .tag(conversation.id)
+                    // Left to right, as in #410: Mark as Read or Unread by the row's unread state, here and in its menu.
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) { V3ReadMarkButton(model: model, conversation: conversation) }
+                    .contextMenu { V3ReadMarkButton(model: model, conversation: conversation) }
             }
         }
         .overlay {
@@ -74,6 +77,23 @@ struct ConversationsView: View {
     }
 }
 
+/// Mark as Read or Mark as Unread for one conversation; nothing before its first reply.
+private struct V3ReadMarkButton: View {
+    let model: V3Model
+    let conversation: Conversation
+
+    var body: some View {
+        if conversation.latestReply != nil {
+            let unread = conversation.unreadCount > 0
+            Button(unread ? String(localized: "Mark as Read") : String(localized: "Mark as Unread"),
+                systemImage: unread ? "envelope.open" : "envelope.badge") {
+                if unread { model.markRead(conversation.id, explicit: true) } else { model.markUnread(conversation.id) }
+            }
+            .tint(.blue)
+        }
+    }
+}
+
 /// The first message stands for the title until titles land (#428); the latest message below it.
 private struct ConversationRow: View {
     let conversation: Conversation
@@ -84,6 +104,7 @@ private struct ConversationRow: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(conversation.preview.isEmpty ? String(localized: "New Conversation") : conversation.preview)
                     .font(.headline)
+                    .fontWeight(conversation.unreadCount > 0 ? .bold : nil)
                     .lineLimit(1)
                 Spacer(minLength: LayoutMetrics.inner)
                 Text(Self.time(conversation.updatedAt))
@@ -102,6 +123,9 @@ private struct ConversationRow: View {
             .lineLimit(2)
         }
         .accessibilityElement(children: .combine)
+        .accessibilityValue(conversation.unreadCount > 0 ? Text("\(conversation.unreadCount) unread") : Text(""))
+        // The unread replies, at the row's trailing edge (#429).
+        .badge(conversation.unreadCount)
     }
 
     /// The time today, the date on any other day.

@@ -9,6 +9,7 @@ struct V3ChatView: View {
 
     @State private var draft = ""
     @State private var position = ScrollPosition(edge: .bottom)
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         let items = model.conversations[convId]?.items ?? []
@@ -28,6 +29,11 @@ struct V3ChatView: View {
         .defaultScrollAnchor(.bottom)
         .onChange(of: items.count) { position.scrollTo(edge: .bottom) }
         .onChange(of: typing) { position.scrollTo(edge: .bottom) }
+        // Opening reads it on every device (#429), Mark as Unread included; a reply that arrives while it is on screen
+        // only moves the cursor, and so does coming back to the foreground with it open.
+        .onAppear { model.markRead(convId, explicit: true) }
+        .onChange(of: model.conversations[convId]?.latestReply?.id) { readIfActive() }
+        .onChange(of: scenePhase) { readIfActive() }
         .overlay {
             if items.isEmpty && !typing {
                 ContentUnavailableView("New conversation", systemImage: "bubble.left.and.bubble.right",
@@ -49,6 +55,12 @@ struct V3ChatView: View {
         .navigationTitle(model.conversations[convId]?.preview.firstLine ?? String(localized: "New Conversation"))
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.state == .ready ? "" : model.state.label)
+    }
+}
+
+extension V3ChatView {
+    private func readIfActive() {
+        if scenePhase == .active { model.markRead(convId, explicit: false) }
     }
 }
 

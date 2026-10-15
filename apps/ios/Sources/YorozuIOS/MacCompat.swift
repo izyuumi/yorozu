@@ -24,13 +24,6 @@ extension ToolbarItemPlacement {
 extension NSColor {
     static var systemBackground: NSColor { .windowBackgroundColor }
     static var secondarySystemBackground: NSColor { .controlBackgroundColor }
-    static var systemGroupedBackground: NSColor { .windowBackgroundColor }
-    static var secondarySystemGroupedBackground: NSColor { .controlBackgroundColor }
-}
-
-extension Image {
-    /// The thumbnails are `PlatformImage`, an `NSImage` here.
-    init(uiImage: NSImage) { self.init(nsImage: uiImage) }
 }
 
 /// The phone's Copy, as the Mac's general pasteboard.

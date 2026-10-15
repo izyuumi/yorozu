@@ -131,11 +131,10 @@ public actor V3Connection {
         return true
     }
 
-    /// Seals and sends a request (`cron_list`), fire and forget. False when no session is ready.
+    /// Seals and sends any other event (no `accepted` tracking). False when no session is ready.
     @discardableResult
-    public func request(_ event: V3Event) -> Bool {
-        guard state == .ready, var session, let socket else { return false }
-        guard let frame = try? session.seal(event) else { return false }
+    public func send(_ event: V3Event) -> Bool {
+        guard state == .ready, var session, let socket, let frame = try? session.seal(event) else { return false }
         self.session = session
         return transmit(frame, on: socket) != nil
     }
