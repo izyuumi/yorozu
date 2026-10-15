@@ -6,6 +6,8 @@ import {
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/channel-core";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
+import { loadHostKeys } from "./keys.js";
+import { runRelayHost } from "./relay.js";
 
 export const CHANNEL_ID = "yorozu";
 // Same default as the Mac app's `relay.url` (docs/setup.md).
@@ -40,18 +42,29 @@ function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
   };
 }
 
-/** Stays pending until the Gateway aborts the account, then settles at once. */
+/** Stays pending until the Gateway aborts the account, then settles within a second or so. */
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
-  ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent})`);
-  ctx.setStatus({ accountId: account.accountId, ...channelReadyPatch() });
-  if (!abortSignal.aborted) {
-    await new Promise<void>((resolve) =>
-      abortSignal.addEventListener("abort", () => resolve(), { once: true }),
-    );
+  const keys = await loadHostKeys();
+  ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent}, room ${keys.room})`);
+  ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
+  try {
+    await runRelayHost({
+      relayUrl: account.relayUrl,
+      keys,
+      signal: abortSignal,
+      log: ctx.log,
+      onStatus: ({ connected, error }) =>
+        ctx.setStatus(
+          connected
+            ? { accountId: account.accountId, ...channelReadyPatch() }
+            : { accountId: account.accountId, connected: false, lifecycle: "recovering", lastError: error ?? null },
+        ),
+    });
+  } finally {
+    ctx.setStatus({ accountId: account.accountId, ...channelStoppedPatch() });
+    ctx.log?.info?.(`[${account.accountId}] yorozu stopped`);
   }
-  ctx.setStatus({ accountId: account.accountId, ...channelStoppedPatch() });
-  ctx.log?.info?.(`[${account.accountId}] yorozu stopped`);
 }
 
 export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugin({
