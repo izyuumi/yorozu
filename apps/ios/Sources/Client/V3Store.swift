@@ -1,0 +1,130 @@
+import Foundation
+import YorozuWire
+
+// Wire v3's local state (#425): the pairing in the Keychain, and a cache of conversations on disk. The Gateway
+// transcript is the source of truth (#415); history backfill (#427) fills this cache from it.
+
+/// One pairing with the OpenClaw plugin, in one Keychain item (`Keychain`: this device only, never synced). Its own
+/// account, apart from v2's `pairings-v2`: every device pairs again for v3.
+struct V3Pairing: Codable, Equatable {
+    var pairing: QrPayload
+    var identity: PhoneIdentity
+    /// The relay accepted this device once: the one-time token is spent.
+    var relayKnows = false
+    /// The plugin answered a handshake: the device is on its allowlist and the QR's secret is dropped.
+    var paired = false
+    var pairedAt: Date?
+
+    private static let account = "pairing-v3"
+
+    static func load() throws -> V3Pairing? {
+        guard let data = try Keychain.loadRequired(account) else { return nil }
+        return try JSONDecoder().decode(V3Pairing.self, from: data)
+    }
+
+    func save() throws { try Keychain.save(JSONEncoder().encode(self), account: Self.account) }
+
+    static func remove() throws { try Keychain.clearRequired(account) }
+}
+
+/// One conversation: a thread session `agent:<agent>:yorozu:direct:owner:thread:<id>` on the Gateway.
+struct Conversation: Codable, Identifiable, Equatable {
+    let id: String
+    var createdAt: Int64
+    /// The latest item's arrival: the list's order.
+    var updatedAt: Int64
+    /// In arrival order on this device, so a reply never sorts above the message it answers across two clocks.
+    var items: [ChatItem] = []
+
+    /// The list's label until titles land (#428): the first message's text.
+    var preview: String {
+        (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.text ?? ""
+    }
+
+    var lastText: String { items.last { $0.kind == .user || $0.kind == .agent }?.text ?? "" }
+}
+
+struct ChatItem: Codable, Identifiable, Equatable {
+    enum Kind: String, Codable { case user, agent, error, tools }
+
+    /// The messageId; `tools:<messageId>` and `error:<messageId>` for the rows about a user message's run.
+    let id: String
+    var kind: Kind
+    var text: String
+    /// Epoch ms: the client's clock for a user message, the plugin's for a reply.
+    var ts: Int64
+    /// A user message's mark.
+    var status: SendStatus?
+    /// `tools`: the run's calls, in the order they started.
+    var tools: [ToolCall]?
+}
+
+/// ✓ sent = relay `accepted`, ✓✓ delivered = plugin `delivered`, read = `run_started` (#415).
+enum SendStatus: Int, Codable, Comparable {
+    /// Not on any socket yet: waits for a session.
+    case queued
+    /// Sealed and on the socket; no `accepted` yet.
+    case sending
+    case sent
+    case delivered
+    case read
+
+    static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+}
+
+struct ToolCall: Codable, Equatable, Identifiable {
+    let id: String
+    var name: String
+    var status: V3Tool.Status
+}
+
+/// One JSON file per conversation, under Data Protection `complete` on iOS: unreadable while the device is locked.
+/// Excluded from backup. On the Mac, files sit in the app's Application Support folder with the user account's
+/// protection (FileVault); macOS has no per-file Data Protection classes for an app outside the sandbox.
+final class ConversationCache: Sendable {
+    private let directory = clientSupportDirectory.appending(path: "Conversations-v3", directoryHint: .isDirectory)
+    private let queue = DispatchQueue(label: "yorozu.v3.cache")
+
+    func loadAll() -> [Conversation] {
+        queue.sync {
+            let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+            return files.filter { $0.pathExtension == "json" }.compactMap {
+                (try? Data(contentsOf: $0)).flatMap { try? JSONDecoder().decode(Conversation.self, from: $0) }
+            }
+        }
+    }
+
+    /// Written in order, off the main actor. A write that fails (the device locked meanwhile) is retried by the next
+    /// save of that conversation, which writes it whole.
+    func save(_ conversation: Conversation) {
+        guard V3Event.isId(conversation.id) else { return }
+        queue.async { [directory] in
+            do {
+                try Self.makeDirectory(directory)
+                var options: Data.WritingOptions = [.atomic]
+                #if os(iOS)
+                options.insert(.completeFileProtection)
+                #endif
+                try JSONEncoder().encode(conversation).write(to: directory.appending(path: "\(conversation.id).json"), options: options)
+            } catch {}
+        }
+    }
+
+    func wipe() {
+        queue.async { [directory] in try? FileManager.default.removeItem(at: directory) }
+    }
+
+    private static func makeDirectory(_ url: URL) throws {
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+        #if os(iOS)
+        let attributes: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.complete]
+        #else
+        let attributes: [FileAttributeKey: Any] = [:]
+        #endif
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: attributes)
+        var url = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try url.setResourceValues(values)
+    }
+}

@@ -55,6 +55,8 @@ env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme Y
 
 The same command with `generic/platform=iOS` covers iPad: one target, device families iPhone and iPad.
 
+To run it in the iOS Simulator, build for `platform=iOS Simulator,id=<udid>` with `CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=` instead of `CODE_SIGNING_ALLOWED=NO`: an unsigned simulator build carries no Keychain entitlement, so saving the pairing fails with `-34018`. Install and launch with `xcrun simctl install` and `xcrun simctl launch <udid> to.yumi.yorozu.ios`.
+
 ## Mac client: build and launch
 
 The client app also has a native macOS destination (SwiftUI, not Catalyst; #419). Nothing scripts it yet and nothing uploads it: `upload_ios.sh` archives `generic/platform=iOS` only. Build it unsigned into a derived-data folder of its own and open it from there, never into `/Applications`:
