@@ -1,0 +1,29 @@
+{
+  "id": "yorozu",
+  "name": "Yorozu",
+  "description": "Yorozu channel: the Yorozu apps talk to the Gateway through an end-to-end-encrypted relay.",
+  "categories": ["channels"],
+  "channels": ["yorozu"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "yorozu": {
+      "label": "Yorozu",
+      "description": "Yorozu relay connection and agent.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "agent": { "type": "string", "default": "main" },
+          "relayUrl": { "type": "string", "default": "wss://relay.yumi.to" },
+          "mediaMaxMb": { "type": "number", "default": 8 },
+          "textChunkLimit": { "type": "integer" }
+        }
+      }
+    }
+  }
+}
