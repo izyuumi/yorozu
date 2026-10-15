@@ -129,13 +129,13 @@ Names later issues add, so nothing else takes them: attachment kinds.
 
 | `kind` | Direction | `data` |
 |---|---|---|
-| `peer_info` | both, first box of a session | `protocolMin`, `protocolMax` (both 3), `app` (version string), `name`? (device model, or the Mac's name), `capabilities` (string array, empty in v3.0) |
-| `message` | client → plugin | `convId`, `messageId` (made by the client), `text` |
+| `peer_info` | both, first box of a session | `protocolMin`, `protocolMax` (both 3), `app` (version string), `name`? (device model, or the Mac's name), `capabilities` (string array: `attachments`, #430), `mediaMaxBytes`? (plugin: its [attachment](#attachments) limit) |
+| `message` | client → plugin | `convId`, `messageId` (made by the client), `text` (may be empty with attachments), `attachments`? ([attachments](#attachments), each uploaded first) |
 | `delivered` | plugin → clients | `convId`, `messageId`: received and decrypted |
 | `run_started` | plugin → clients | `convId`, `messageId`: the agent run for it began |
 | `typing` | plugin → clients | `convId`, `active` (bool) |
-| `reply` | plugin → clients | `convId`, `messageId` (made by the plugin), `text`, `ts` |
-| `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`? |
+| `reply` | plugin → clients | `convId`, `messageId` (made by the plugin), `text` (may be empty with attachments), `ts`, `attachments`? (announced; [downloaded on request](#attachments)) |
+| `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`?, `attachmentId`? |
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
 | `conv_list` | client → plugin, then plugin → that client | asked with `{}`; answered with `conversations`: [`convId`, `updatedAt`, `rev`, `title`?, `archived`?] |
 | `history` | client → plugin, then plugin → that client | asked with `convId`, `before`?, `after`?; answered with those, `items`, `more`, `rev` |
@@ -144,6 +144,10 @@ Names later issues add, so nothing else takes them: attachment kinds.
 | `cron_list` | client → plugin, then plugin → that client | request: `{}`; answer: `jobs` (array of [jobs](#cron_list)), or `jobs: []` and `error` |
 | `conv_patch` | client → plugin | `convId`, then one of `title` (string; `""` clears the rename), `archived` (bool), `deleted` (`true`). See [Titles](#titles-conv_patch-and-conv_update) |
 | `conv_update` | plugin → clients | `convId`, `title`?, `archived`? (only `true`), `deleted`? (only `true`) |
+| `upload` | client → plugin | `attachmentId`, `name`, `mime`, `size`, `index`, `count`, `data` (base64): one chunk of a file the client sends |
+| `upload_ack` | plugin → that client | `attachmentId`, `index`, `done` (bool): the chunk arrived; `done` once the whole file is stored |
+| `download` | client → plugin | `attachmentId`, `index`: send this chunk |
+| `chunk` | plugin → that client | `attachmentId`, `index`, `count`, `data` (base64) |
 
 #### `peer_info`
 
@@ -164,14 +168,15 @@ Items (`kind`, `id`, `seq`, `ts`, then by kind):
 
 | `kind` | Fields | From |
 |---|---|---|
-| `user` | `text` | a user message; `id` is the client's `messageId` (kept in the transcript's transport metadata) |
-| `agent` | `text` | assistant text, trimmed and chunked by `textChunkLimit` as live replies are; one item per chunk. Cron deliveries are mirrored into the transcript as assistant messages and come out as `agent` too |
+| `user` | `text`, `attachments`? | a user message; `id` is the client's `messageId` (kept in the transcript's transport metadata). Its files are the uploads the plugin stored (from the transcript's media list); the `<file …>` blocks OpenClaw appends for a document's text are left out of `text` |
+| `agent` | `text`, `attachments`? | assistant text without its `MEDIA:` lines, trimmed and chunked by `textChunkLimit` as live replies are; one item per chunk, the reply's files on the last (or an item of their own, `text` empty), as live. Cron deliveries are mirrored into the transcript as assistant messages and come out as `agent` too |
 | `tools` | `tools`: [`callId`, `name`, `status`] | one row per run, at the run's first tool call; `id` is the run's user `messageId`, as for live `tool` events. `running` only while the run is the transcript's last |
 | `reset` | | a `/new` or `/reset` boundary: the session started over (same session id, a reset event in the transcript) |
 
 - `seq` is the transcript event's; items of one event share it. `ts` is epoch ms, Gateway clock. An item text is cut at 60,000 characters.
 - An agent chunk's `id` is the transcript message's own id for the first chunk and derived from it (`sha256` as a UUID) for the others. A live `reply` in a turn gets the same ids (the plugin looks up the assistant message core wrote before delivering), so a device that saw it live holds one item after a page. Where that lookup fails (cron deliveries), the client matches a live reply to a page item by its trimmed text.
 - An item kind the client does not know is skipped.
+- `attachments` (#430) are only those the plugin can still serve: an upload it stored, or a file that went out with a live reply whose transcript id it knew. A page item without them leaves a live item's files in place.
 
 **Client order.** Items from pages carry their `seq`; live items have none until a page holds them. A page item replaces the item with its id (or a live agent item of the same text placed after the items known to be older) and goes after the last item with a lower seq and before the first with a higher seq or a live one with a later timestamp. Live items keep arrival order between those. A client syncs on every new session: `conv_list`, then `after: <newest cached seq>` (or the newest page) for each conversation whose `rev` changed; opening a conversation does the same for it first; reaching the top asks `before: <oldest cached seq>` until `more` is false. A freshly paired device so lists every conversation and loads any of its history.
 
@@ -211,6 +216,13 @@ The Crons tab (#432). A client sends `cron_list {}`; the plugin answers that dev
 
 The wording lives in the plugin so every client says the same thing without a cron parser of its own; `schedule` travels raw for a client that wants to word it itself later. When the plugin cannot read the cron store the answer is `{jobs: [], error}` and the client keeps its last list under the error. "Edit in chat" opens the job's delivery conversation, or a new one, with `Change cron job "<name>" (id <id>): ` in the composer, unsent.
 
+#### Attachments
+
+Images and files both ways (#430), each at most the plugin's `mediaMaxBytes` (`channels.yorozu.mediaMaxMb`, else `agents.defaults.mediaMaxMb`, else 8 MB), in chunks of 160 KiB of raw bytes (`CHUNK_BYTES`, `V3Attachment.chunkBytes`), so every box stays far under the relay's 1 MiB frame. Both sides speak it only when the other lists `attachments` in `capabilities`; to a client that does not, the plugin sends a reply's files as a line of text each. An attachment is `{id, name, mime, size}`; `id` is a lowercase UUID made by the side that has the bytes, and names the transfer. `count` is `max(1, ceil(size / 160 KiB))`; every chunk but the last is full.
+
+- **Client → agent.** The client checks the size against `mediaMaxBytes` before it copies anything and refuses a larger file in front of the user. It holds a message with files until a session is up (so nothing waits in the relay's 5 MiB offline buffer), uploads each file as `upload` chunks, four in flight, each answered `upload_ack` to that device alone, then sends the `message` naming the files whose last ack said `done`. The plugin refuses a file over its limit with `error {code: "too_large", attachmentId}` and a chunk that does not fit its upload with `bad_request`; the client then leaves that file out of the message and marks it. A finished upload goes into OpenClaw's media store (`media/inbound`) and its id into the keyed state store (namespace `attachments`), so a repeated upload of a stored id is answered `done` at once and a restarted plugin still knows it. Partial uploads live in memory: an upload cut by a lost session starts over from chunk 0 on the next one. The turn gets the files as media facts (`toInboundMediaFactsWithMetadata`): images reach a vision model as image input, a PDF as rendered pages plus its path.
+- **Agent → client.** A reply's media (a `MEDIA:` line in the agent's text, the message tool, or a cron delivery's `sendMedia`) is staged into the media store (`media/outbound`, `resolveOutboundAttachmentFromUrl` with the agent's media roots) and announced in the `reply`'s `attachments`, on the last text chunk or on a reply of its own, as one group. Nothing more is sent until a device asks: every host frame reaches every device in the room and counts against its 2 MiB window, so each chunk goes only on that device's `download`, sealed for it alone. A client downloads an image when it is shown and a file when it is tapped, one file at a time with two chunks in flight, and starts over on the next session if one is cut. An id the plugin never announced, or whose file is gone, is answered `error {code: "not_found", attachmentId}`. A file the agent names that cannot be staged (outside the allowed roots, over the limit) becomes a `(Couldn't attach …)` line in the reply's text.
+
 #### `error` codes
 
 | `code` | Meaning |
@@ -218,6 +230,8 @@ The wording lives in the plugin so every client says the same thing without a cr
 | `update_required` | No common protocol version |
 | `bad_request` | A kind the receiver knows but cannot act on (for example a `message` for a conversation it refuses) |
 | `run_failed` | The agent run for `messageId` failed; `message` says why |
+| `too_large` | An `upload` over the plugin's `mediaMaxBytes`; `attachmentId` names it |
+| `not_found` | A `download` of an attachment the plugin does not hold; `attachmentId` names it |
 | `internal` | Anything else, also a `conv_list` or `history` the plugin could not read, or a `conv_patch` it could not apply |
 
 A receiver treats an unknown code like `internal`.
@@ -344,5 +358,6 @@ The same run also checks that the second box opened again is refused as a replay
 | Frames | `V3Frame(payload:)`, `.payload`, `.sid` | `decodeFrame`, `encodeFrame`, `frameSid` |
 | Boxes | `V3Session.seal(_:)`, `.open(_:)`, `.openEvent(_:)` | `Session.seal(bytes) -> payload`, `.open(frame) -> Buffer \| null` |
 | Envelope | `V3Event` (`Codable`), `V3PeerInfo.negotiate`, `V3Event.newId`, `isId` | `Event`, `parseEvent`, `encodeEvent`, `negotiate`, `isId` |
+| Attachments | `V3Attachment` (`capability`, `chunkBytes`, `chunkCount`), `V3Upload`, `V3UploadAck`, `V3Download`, `V3Chunk` | `Attachment`, `ATTACHMENTS`, `CHUNK_BYTES`, `src/attachments.ts` |
 | Noise itself (vectors) | `NoiseIKHandshake` | `NoiseIK` |
 | Push preview (#431) | `PushPreview.key`, `.open(userInfo:key:)`, `V3Connection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`src/push.ts`), `notifyReply` (`src/relay.ts`) |

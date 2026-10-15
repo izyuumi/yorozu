@@ -8,7 +8,15 @@ import {
 } from "openclaw/plugin-sdk/channel-core";
 import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
-import { DEFAULT_CHUNK_LIMIT, handleMessage, PEER, resolveOwnerRoute, sendConversationText } from "./conversation.js";
+import { loadAttachmentIndex, mediaMaxBytes } from "./attachments.js";
+import {
+  DEFAULT_CHUNK_LIMIT,
+  handleMessage,
+  PEER,
+  resolveOwnerRoute,
+  sendConversationMedia,
+  sendConversationText,
+} from "./conversation.js";
 import { isId } from "./envelope.js";
 import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
@@ -53,6 +61,8 @@ function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
   const keys = await loadHostKeys();
+  await loadAttachmentIndex().catch((error: unknown) => ctx.log?.warn?.(`yorozu: attachment index failed: ${String(error)}`));
+  const maxBytes = mediaMaxBytes(ctx.cfg, account.accountId);
   ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
   watchSessions(account.agent, abortSignal, ctx.log);
@@ -62,8 +72,12 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       keys,
       signal: abortSignal,
       log: ctx.log,
+      mediaMaxBytes: maxBytes,
       onMessage: (message) =>
-        void handleMessage({ cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent }, message),
+        void handleMessage(
+          { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent, mediaMaxBytes: maxBytes },
+          message,
+        ),
       onRequest: async (event) => {
         if (event.kind === "conv_list" || event.kind === "history") return answerRequest(ctx.cfg, account.agent, event, ctx.log);
         if (event.kind === "conv_patch") return applyPatch(account.agent, event.data, ctx.log);
@@ -108,7 +122,7 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         return { enabled, configured };
       },
     },
-    capabilities: { chatTypes: ["direct"] },
+    capabilities: { chatTypes: ["direct"], media: true },
     gateway: { startAccount },
     messaging: {
       normalizeTarget: () => PEER,
@@ -137,6 +151,17 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     chunkerMode: "markdown",
     textChunkLimit: DEFAULT_CHUNK_LIMIT,
     sendText: async ({ threadId, text }) => ({ channel: CHANNEL_ID, messageId: sendConversationText({ threadId, text }) }),
+    // Core calls this once per file, the caption on the first; a turn's own grouped media goes out in `deliver`.
+    sendMedia: async ({ cfg, accountId, threadId, text, mediaUrl, mediaAccess, mediaLocalRoots, mediaReadFile }) => ({
+      channel: CHANNEL_ID,
+      messageId: await sendConversationMedia({
+        threadId,
+        text,
+        mediaUrl,
+        maxBytes: mediaMaxBytes(cfg, accountId),
+        access: { mediaAccess, localRoots: mediaLocalRoots, readFile: mediaReadFile },
+      }),
+    }),
     // A delivery (cron) pushes once per payload, after all its chunks went out, like a turn's reply (#431).
     afterDeliverPayload: async ({ target, payload, results }) => {
       const convId = String(target.threadId ?? "").toLowerCase();

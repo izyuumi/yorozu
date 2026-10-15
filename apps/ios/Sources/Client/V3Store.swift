@@ -66,12 +66,12 @@ struct Conversation: Codable, Identifiable, Equatable {
     /// first line, else "New Conversation".
     var displayTitle: String {
         if let title, !title.isEmpty { return title }
-        let first = (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.text ?? ""
+        let first = (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.summary ?? ""
         let line = first.split(separator: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
         return line ?? String(localized: "New Conversation")
     }
 
-    var lastText: String { items.last { $0.kind == .user || $0.kind == .agent }?.text ?? "" }
+    var lastText: String { items.last { $0.kind == .user || $0.kind == .agent }?.summary ?? "" }
 
     /// Places transcript items. An item already here (same id, or a live reply of the same text that has no seq yet)
     /// is replaced. Each goes after the last item known to be older (lower seq) and before the first one known or
@@ -90,6 +90,8 @@ struct Conversation: Codable, Identifiable, Equatable {
                 let old = items.remove(at: i)
                 if item.kind == .user { item.status = max(old.status ?? .read, .read) }
                 if item.kind == .tools { item.tools = ToolCall.union(old.tools ?? [], item.tools ?? []) }
+                // Transcript pages carry no files (#430): the live item's stay.
+                if item.attachments == nil { item.attachments = old.attachments }
             }
             let lower = lowerBound()
             let at = items[lower...].firstIndex { other in other.seq.map { $0 > seq } ?? (other.ts > item.ts) } ?? items.endIndex
@@ -112,8 +114,37 @@ struct ChatItem: Codable, Identifiable, Equatable {
     var status: SendStatus?
     /// `tools`: the run's calls, in the order they started.
     var tools: [ToolCall]?
+    /// A user message's files (uploaded before the message goes) or a reply's (downloaded on request), #430.
+    var attachments: [ChatAttachment]?
     /// The transcript seq, for items a `history` page brought; nil for live ones not confirmed by a page yet.
     var seq: Int?
+
+    /// The text, or the first file's name for a message that is only files.
+    var summary: String {
+        text.isEmpty ? attachments?.first.map { "📎 \($0.name)" } ?? "" : text
+    }
+}
+
+/// One file of a message or reply. Its bytes, once here, are in `AttachmentFiles` under `id`.
+struct ChatAttachment: Codable, Equatable, Identifiable {
+    let id: String
+    var name: String
+    var mime: String
+    var size: Int
+    /// A user message's file: the plugin stored it (`upload_ack {done}`), so the message may name it.
+    var uploaded: Bool?
+    /// Why it was not sent (the plugin refused it); such a file is left out of its message.
+    var failure: String?
+
+    var wire: V3Attachment { V3Attachment(id: id, name: name, mime: mime, size: size) }
+
+    /// From the wire; nil for none, so a history item without files keeps the live item's.
+    static func list(_ files: [V3Attachment]?, uploaded: Bool? = nil) -> [ChatAttachment]? {
+        guard let files, !files.isEmpty else { return nil }
+        return files.filter { V3Event.isId($0.id) }
+            .map { ChatAttachment(id: $0.id, name: $0.name, mime: $0.mime, size: $0.size, uploaded: uploaded) }
+    }
+    var isImage: Bool { mime.hasPrefix("image/") }
 }
 
 extension ChatItem {
@@ -121,9 +152,11 @@ extension ChatItem {
     init(_ item: V3HistoryItem) {
         switch item.kind {
         case .user:
-            self.init(id: item.id, kind: .user, text: item.text ?? "", ts: item.ts, status: .read, seq: item.seq)
+            self.init(id: item.id, kind: .user, text: item.text ?? "", ts: item.ts, status: .read,
+                attachments: ChatAttachment.list(item.attachments, uploaded: true), seq: item.seq)
         case .agent:
-            self.init(id: item.id, kind: .agent, text: item.text ?? "", ts: item.ts, seq: item.seq)
+            self.init(id: item.id, kind: .agent, text: item.text ?? "", ts: item.ts,
+                attachments: ChatAttachment.list(item.attachments), seq: item.seq)
         case .tools:
             self.init(id: "tools:\(item.id)", kind: .tools, text: "", ts: item.ts,
                 tools: (item.tools ?? []).map { ToolCall(id: $0.callId, name: $0.name, status: $0.status) }, seq: item.seq)

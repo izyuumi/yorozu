@@ -13,8 +13,10 @@ import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract
 import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
 import { computeBackoff, sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { WebSocket } from "openclaw/plugin-sdk/websocket-runtime";
+import { receiveUpload, serveDownload } from "./attachments.js";
 import { getDevice, listDevices, putDevice, removeDevice } from "./devices.js";
 import {
+  ATTACHMENTS,
   encodeEvent,
   negotiate,
   parseEvent,
@@ -56,8 +58,16 @@ const PEER_INFO: PeerInfo = {
   protocolMax: PROTOCOL_VERSION,
   app: "0.1.0", // package.json `version`
   name: os.hostname().replace(/\.local$/, ""),
-  capabilities: [],
+  capabilities: [ATTACHMENTS],
 };
+
+/** An attachment-bearing event as a peer without `attachments` reads it: the files as a line of text each. */
+function downgrade(event: Event, peer: PeerInfo): Event {
+  if (peer.capabilities.includes(ATTACHMENTS) || event.kind !== "reply" || !event.data.attachments) return event;
+  const { attachments, ...reply } = event.data;
+  const lines = attachments.map((a) => `(Attachment: ${a.name}; update Yorozu to open it.)`);
+  return { kind: "reply", data: { ...reply, text: [reply.text, ...lines].filter(Boolean).join("\n\n") } };
+}
 
 /** `foreground`: the conversation the device last reported on screen with the app in the foreground (#431). */
 type Served = { session: Session; peer?: PeerInfo; foreground?: string };
@@ -76,6 +86,8 @@ export type RelayHostOptions = {
    * only (a `conv_patch` answers every device itself, with `conv_update`, and returns only an error).
    */
   onRequest?: (event: Event) => Promise<Event | undefined>;
+  /** The attachment limit (`mediaMaxMb`), told to devices in `peer_info` and enforced on uploads. */
+  mediaMaxBytes: number;
 };
 
 /** What `openclaw yorozu pair` prints. */
@@ -167,6 +179,7 @@ function provenSecret(proof: string | undefined, staticPub: string, signingPub: 
 /** Stays pending until `signal` aborts, then settles once the socket is closed. */
 export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   const { keys, signal, log } = opts;
+  const peerInfo: PeerInfo = { ...PEER_INFO, mediaMaxBytes: opts.mediaMaxBytes };
   /** Device Ed25519 key (base64url) -> its live session; sid (base64url) -> device. */
   const served = new Map<string, Served>();
   const bySid = new Map<string, string>();
@@ -237,7 +250,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       };
       const broadcastHere = (events: Event[]): number => {
         const live = [...served.values()].filter((entry) => entry.peer);
-        sendFrames(events.flatMap((event) => live.map((entry) => seal(entry.session, event))));
+        sendFrames(events.flatMap((event) => live.map((entry) => seal(entry.session, downgrade(event, entry.peer!)))));
         return live.length;
       };
       const seal = (session: Session, event: Event): string => session.seal(encodeEvent(event));
@@ -299,7 +312,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         endSession(deviceKey);
         served.set(deviceKey, { session: accepted.session });
         bySid.set(accepted.sid, deviceKey);
-        sendFrames([accepted.response, seal(accepted.session, { kind: "peer_info", data: PEER_INFO })]);
+        sendFrames([accepted.response, seal(accepted.session, { kind: "peer_info", data: peerInfo })]);
         log?.info(`yorozu: session open (${served.size} device${served.size === 1 ? "" : "s"})`);
       }
 
@@ -312,7 +325,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         if (!entry.peer) {
           // Nothing else counts until the peer's `peer_info`.
           if (event?.kind !== "peer_info") return;
-          if (negotiate(PEER_INFO, event.data) === null) {
+          if (negotiate(peerInfo, event.data) === null) {
             sendFrames([
               seal(entry.session, {
                 kind: "error",
@@ -348,6 +361,15 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         if (event?.kind === "read_cursor") {
           // To every device, the sender too: one behind the stored cursor catches up.
           return void broadcastHere([{ kind: "read_cursor", data: await mergeCursor(event.data) }]);
+        }
+        // Attachment transfers answer the one device that asked, never every device (each frame reaches them all).
+        if (event?.kind === "upload" || event?.kind === "download") {
+          const replies =
+            event.kind === "upload" ? await receiveUpload(event.data, opts.mediaMaxBytes) : [await serveDownload(event.data)];
+          // The device's session as it is now: it may have handshaken again meanwhile.
+          const now = served.get(deviceKey);
+          if (now?.peer) sendFrames(replies.map((reply) => seal(now.session, reply)));
+          return;
         }
         if (event?.kind === "foreground") {
           entry.foreground = event.data.convId ?? undefined;

@@ -7,19 +7,119 @@ import UIKit
 // options, prompt history and Send now.
 
 #if os(macOS)
-/// The Mac's message field: the system's growing text field, up to five lines, then it scrolls inside. Return sends,
-/// Option-Return is a new line, as in the field's own convention.
-struct ComposerTextView: View {
+import AppKit
+
+/// The Mac's message field, an `NSTextView` that grows to five lines, then scrolls inside. Return is a new line and
+/// ⌘Return sends (owner, 2026-10-09); never while an input method is composing, whose Return confirms the
+/// conversion. Files dropped or pasted onto it attach (`onFiles`) instead of inserting their paths.
+struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
     let onSubmit: () -> Void
+    var onFiles: ([URL]) -> Bool = { _ in false }
 
-    var body: some View {
-        TextField(placeholder, text: $text, axis: .vertical)
-            .textFieldStyle(.plain)
-            .lineLimit(1...5)
-            .onSubmit(onSubmit)
-            .accessibilityLabel(Text("Message"))
+    private static let maxLines: CGFloat = 5
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        let view = ComposerNSTextView()
+        view.delegate = context.coordinator
+        view.font = .preferredFont(forTextStyle: .body)
+        view.textColor = .labelColor
+        view.drawsBackground = false
+        view.isRichText = false
+        view.allowsUndo = true
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = .width
+        view.textContainer?.widthTracksTextView = true
+        view.setAccessibilityLabel(String(localized: "Message"))
+        scroll.documentView = view
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let view = scroll.documentView as? ComposerNSTextView else { return }
+        context.coordinator.text = $text
+        view.submit = onSubmit
+        view.takeFiles = onFiles
+        if view.string != text, !view.hasMarkedText() {
+            view.string = text
+            view.needsDisplay = true
+        }
+        if view.placeholder != placeholder {
+            view.placeholder = placeholder
+            view.needsDisplay = true
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView scroll: NSScrollView, context: Context) -> CGSize? {
+        guard let width = proposal.width, let view = scroll.documentView as? NSTextView,
+              let layout = view.layoutManager, let container = view.textContainer, let font = view.font else { return nil }
+        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        layout.ensureLayout(for: container)
+        let line = layout.defaultLineHeight(for: font)
+        let height = max(layout.usedRect(for: container).height, line)
+        return CGSize(width: width, height: min(height, line * Self.maxLines).rounded(.up))
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var text: Binding<String>
+        init(text: Binding<String>) { self.text = text }
+
+        func textDidChange(_ notification: Notification) {
+            guard let view = notification.object as? NSTextView else { return }
+            text.wrappedValue = view.string
+        }
+    }
+}
+
+final class ComposerNSTextView: NSTextView {
+    var placeholder = ""
+    var submit: () -> Void = {}
+    var takeFiles: ([URL]) -> Bool = { _ in false }
+
+    override func keyDown(with event: NSEvent) {
+        // Return (36) or the keypad's Enter (76), outside an input method's composition.
+        guard event.keyCode == 36 || event.keyCode == 76, !hasMarkedText() else { return super.keyDown(with: event) }
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
+        if modifiers == .command { return submit() }
+        // Plain Return, and Shift- or Option-Return: a new line.
+        insertNewline(nil)
+    }
+
+    override func paste(_ sender: Any?) {
+        if !take(.general) { super.paste(sender) }
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        take(sender.draggingPasteboard) || super.performDragOperation(sender)
+    }
+
+    private func take(_ pasteboard: NSPasteboard) -> Bool {
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        return !urls.isEmpty && takeFiles(urls)
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, !hasMarkedText() else { return }
+        NSAttributedString(string: placeholder, attributes: [
+            .font: font ?? .preferredFont(forTextStyle: .body), .foregroundColor: NSColor.placeholderTextColor,
+        ]).draw(at: NSPoint(x: textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0), y: textContainerOrigin.y))
     }
 }
 #else
@@ -30,6 +130,8 @@ struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let placeholder: String
     let onSubmit: () -> Void
+    /// The Mac's file drop and paste; on iPhone and iPad a drop lands on the conversation instead.
+    var onFiles: ([URL]) -> Bool = { _ in false }
 
     private static let maxLines: CGFloat = 5
     /// UTF-16 units past which the text cannot fit in `maxLines`.

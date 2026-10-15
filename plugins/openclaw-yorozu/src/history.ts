@@ -18,9 +18,11 @@ import {
   loadTranscriptEventsSync,
   readTranscriptStatsSync,
 } from "openclaw/plugin-sdk/session-store-runtime";
+import { attachmentAt, attachmentsOf } from "./attachments.js";
 import { DEFAULT_CHUNK_LIMIT } from "./conversation.js";
 import {
   isId,
+  type Attachment,
   type ConvList,
   type ConvSummary,
   type Event,
@@ -199,6 +201,25 @@ const textOf = (content: unknown): string =>
       ? content.map((part) => (obj(part)?.type === "text" && typeof obj(part)?.text === "string" ? (obj(part)!.text as string) : "")).filter(Boolean).join("\n\n")
       : "";
 
+/** The files OpenClaw appended to a user message as `<file name=…>…</file>` (a document's extracted text). */
+const FILE_BLOCK = /\n*<file name="[^"]*"[^>]*>[\s\S]*?<\/file>/g;
+/** A `MEDIA:` directive takes its whole line (core's parser); the live `reply` carried the text without it. */
+const MEDIA_LINE = /^[ \t]*MEDIA:[ \t]*`?([^\n`]+)`?[ \t]*$/gm;
+
+/** A user message's files (`__openclaw.media`, by media URL) that this plugin stored, as the live `message` named them. */
+function userFiles(message: Fields): Attachment[] {
+  const media = obj(message.__openclaw)?.media;
+  if (!Array.isArray(media)) return [];
+  return media.flatMap((m) => {
+    const url = obj(m)?.url;
+    const found = typeof url === "string" ? attachmentAt(url) : undefined;
+    return found ? [found] : [];
+  });
+}
+
+/** An assistant text without its `MEDIA:` lines; the files went out with the reply `replyId` (`attachmentsOf`). */
+const withoutMedia = (text: string): string => text.replace(MEDIA_LINE, "").replace(/\n{3,}/g, "\n\n").trim();
+
 const cut = (text: string) => (text.length > ITEM_CHARS ? `${text.slice(0, ITEM_CHARS)}…` : text);
 
 function timeOf(event: Fields, message?: Fields): number {
@@ -235,11 +256,16 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
     const ts = timeOf(event, message);
     if (message.role === "user") {
       closeRun();
-      const text = textOf(message.content);
+      const files = userFiles(message);
+      const media = obj(message.__openclaw)?.media;
+      const withMedia = Array.isArray(media) && media.length > 0;
+      const text = withMedia ? textOf(message.content).replace(FILE_BLOCK, "").trim() : textOf(message.content);
       const sent = obj(obj(obj(message.__openclaw)?.transport))?.messageId;
       const id = isId(sent) ? sent : isId(eventId) ? eventId : derivedId(sessionId, eventId);
       lastUser = id;
-      if (text.trim()) items.push({ kind: "user", id, seq, ts, text: cut(text) });
+      if (text.trim() || files.length) {
+        items.push({ kind: "user", id, seq, ts, text: cut(text), ...(files.length ? { attachments: files } : {}) });
+      }
     } else if (message.role === "assistant") {
       const content = Array.isArray(message.content) ? message.content : [];
       for (const part of content.map(obj)) {
@@ -253,14 +279,17 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
         pending.set(part.id, call);
       }
       // Trimmed, as core trims a reply before delivery, so a chunk equals the live `reply` it was.
-      const text = textOf(message.content).trim();
-      if (!text) return;
-      chunkMarkdownText(text, limit)
-        .filter((chunk) => chunk.trim())
-        .forEach((chunk, k) => {
-          const id = chunkId(sessionId, eventId, k);
-          items.push({ kind: "agent", id, seq, ts, text: cut(chunk) });
-        });
+      const text = withoutMedia(textOf(message.content).trim());
+      const files = attachmentsOf(chunkId(sessionId, eventId, 0));
+      if (!text && !files.length) return;
+      const chunks = chunkMarkdownText(text, limit).filter((chunk) => chunk.trim());
+      // As `replyEvents` sends them: the files on the last chunk, or on an item of their own.
+      if (!chunks.length) chunks.push("");
+      chunks.forEach((chunk, k) => {
+        const id = chunkId(sessionId, eventId, k);
+        const last = k === chunks.length - 1 && files.length;
+        items.push({ kind: "agent", id, seq, ts, text: cut(chunk), ...(last ? { attachments: files } : {}) });
+      });
     } else if (message.role === "toolResult" && typeof message.toolCallId === "string") {
       const call = pending.get(message.toolCallId);
       if (call) call.status = message.isError === true ? "failed" : "done";

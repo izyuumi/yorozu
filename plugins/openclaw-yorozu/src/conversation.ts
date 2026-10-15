@@ -5,15 +5,23 @@
  * `tool` per tool call, then one `reply` per chunk. Slash commands are plain text; core handles `/new` in the thread.
  * A turn that replied ends with one push (`notifyReply`, #431), not one per chunk.
  * `sendText` is the outbound adapter's, for deliveries that start outside a turn (cron `delivery.channel: yorozu`).
+ * Attachments (#430): a message's uploaded files reach the turn as media facts; a reply's media is announced in
+ * its `reply`, grouped, and downloaded by each device on request (src/attachments.ts).
  */
 import { randomUUID } from "node:crypto";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
-import { buildChannelInboundEventContext, runChannelInboundEvent } from "openclaw/plugin-sdk/channel-inbound";
+import {
+  buildChannelInboundEventContext,
+  runChannelInboundEvent,
+  toInboundMediaFactsWithMetadata,
+} from "openclaw/plugin-sdk/channel-inbound";
+import { getAgentScopedMediaLocalRoots } from "openclaw/plugin-sdk/media-local-roots";
 import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
 import { chunkMarkdownText, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
-import { isId, type Event, type Message, type ToolStatus } from "./envelope.js";
+import { stageOutbound, uploadedFiles, type MediaAccess } from "./attachments.js";
+import { isId, type Attachment, type Event, type Message, type ToolStatus } from "./envelope.js";
 import { liveReplyIds } from "./history.js";
 import { noteFirstMessage } from "./push.js";
 import { broadcast, notifyReply } from "./relay.js";
@@ -41,21 +49,39 @@ export function resolveOwnerRoute(cfg: OpenClawConfig, agentId: string, accountI
   });
 }
 
-/** One reply per chunk of `text`, each with its own `messageId`: from `ids` (the transcript's) when given. */
+/**
+ * One reply per chunk of `text`, each with its own `messageId`: from `ids` (the transcript's) when given.
+ * Attachments ride on the last one, or on a reply of their own when there is no text: one group, as the agent sent them.
+ */
 export function replyEvents(
   cfg: OpenClawConfig,
   convId: string,
   text: string,
   accountId?: string | null,
   ids?: (chunk: number) => string,
+  attachments: Attachment[] = [],
 ): Event[] {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
-  return chunkMarkdownText(text, limit)
-    .filter((chunk) => chunk.trim())
-    .map((chunk, k) => ({ kind: "reply", data: { convId, messageId: ids?.(k) ?? randomUUID(), text: chunk, ts: Date.now() } }));
+  const chunks = chunkMarkdownText(text, limit).filter((chunk) => chunk.trim());
+  if (attachments.length && !chunks.length) chunks.push("");
+  return chunks.map((chunk, k) => ({
+    kind: "reply",
+    data: {
+      convId,
+      messageId: ids?.(k) ?? randomUUID(),
+      text: chunk,
+      ts: Date.now(),
+      ...(attachments.length && k === chunks.length - 1 ? { attachments } : {}),
+    },
+  }));
 }
 
-type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & { agent: string };
+/** A reply payload's media URLs, in order, once each. */
+export function mediaUrls(...urls: (string | null | undefined)[]): string[] {
+  return [...new Set(urls.map((url) => url?.trim()).filter((url): url is string => !!url))];
+}
+
+type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & { agent: string; mediaMaxBytes: number };
 
 /** Runs the turn for one message; never throws (a failure goes to the devices as `error run_failed`). */
 export async function handleMessage(ctx: TurnContext, message: Message): Promise<void> {
@@ -64,6 +90,12 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
   const send = (...events: Event[]) => void broadcast(events);
   const route = resolveOwnerRoute(cfg, ctx.agent, accountId);
   const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: convId });
+  const files = await uploadedFiles(message.attachments);
+  if (files.length < (message.attachments?.length ?? 0)) log?.warn("yorozu: a message names attachments this host does not hold");
+  const media = await toInboundMediaFactsWithMetadata(
+    files.map((file) => ({ path: file.path, contentType: file.mime, fileName: file.name, messageId })),
+  );
+  const access: MediaAccess = { localRoots: getAgentScopedMediaLocalRoots(cfg, route.agentId) };
   await noteFirstMessage(convId, text).catch((error: unknown) => log?.warn(`yorozu: push title failed: ${String(error)}`));
   /** The turn's first reply chunk: what its one push names and previews. */
   let firstReply: { messageId: string; text: string } | undefined;
@@ -120,6 +152,7 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
     },
     reply: { to: PEER, originatingTo: PEER, messageThreadId: convId },
     message: { body: text, bodyForAgent: text, rawBody: text, commandBody: text },
+    media,
     access: { commands: { authorized: true } },
   });
 
@@ -142,12 +175,15 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
           delivery: {
             deliver: async (payload, info) => {
               // Tool summaries are the `tool` events; replies arrive whole, never as streamed blocks.
-              if (info.kind === "tool" || !payload.text?.trim()) return;
+              const urls = mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? []));
+              if (info.kind === "tool" || (!payload.text?.trim() && !urls.length)) return;
               runStarted();
               const ids = liveReplyIds(route.agentId, sessionKey, messageId, usedReplies);
-              const replies = replyEvents(cfg, convId, payload.text, route.accountId, ids);
+              const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.(0));
+              const body = [payload.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
+              const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments);
               const first = replies[0];
-              if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: payload.text };
+              if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: body || "📎" };
               send(...replies);
             },
             onError: (error, info) => log?.warn(`yorozu: ${info.kind} reply failed: ${String(error)}`),
@@ -185,13 +221,37 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
   void maybeTitle(cfg, route.agentId, convId, log);
 }
 
+const deliveryConv = (threadId: string | number | null | undefined): string => {
+  const convId = String(threadId ?? "").toLowerCase();
+  if (!isId(convId)) throw new Error("yorozu: a delivery needs the conversation id as threadId");
+  return convId;
+};
+
 /** The outbound adapter's `sendText`: a delivery into conversation `threadId` from outside a turn. */
 export function sendConversationText(params: { threadId?: string | number | null; text: string }): string {
-  const convId = String(params.threadId ?? "").toLowerCase();
-  if (!isId(convId)) throw new Error("yorozu: a delivery needs the conversation id as threadId");
+  const convId = deliveryConv(params.threadId);
   const reply: Event = {
     kind: "reply",
     data: { convId, messageId: randomUUID(), text: params.text, ts: Date.now() },
+  };
+  broadcast([reply]);
+  return reply.data.messageId;
+}
+
+/** The outbound adapter's `sendMedia`: one file (and its caption) into conversation `threadId`. */
+export async function sendConversationMedia(params: {
+  threadId?: string | number | null;
+  text?: string;
+  mediaUrl?: string;
+  maxBytes: number;
+  access: MediaAccess;
+}): Promise<string> {
+  const convId = deliveryConv(params.threadId);
+  const { attachments, failures } = await stageOutbound(mediaUrls(params.mediaUrl), params.maxBytes, params.access);
+  const text = [params.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
+  const reply: Event = {
+    kind: "reply",
+    data: { convId, messageId: randomUUID(), text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) },
   };
   broadcast([reply]);
   return reply.data.messageId;

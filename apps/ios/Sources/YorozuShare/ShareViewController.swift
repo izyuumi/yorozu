@@ -2,8 +2,10 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Yorozu in the share sheet: the shared text or link in an editable note, and at most one picture or file. Send writes
-/// it into the App Group (`ShareInbox`); Yorozu sends it the next time it is open, through its outbox.
+/// Yorozu in the share sheet: the shared text or link in an editable note, at most one picture or file, and the
+/// conversation to send into (a new one, or one of the app's newest, from the list it keeps in the App Group). Send
+/// writes it into the App Group (`ShareInbox`); Yorozu sends it the next time it is open, through its outbox (#430).
+/// The extension holds no keys and no socket, so it cannot send by itself.
 final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -21,7 +23,7 @@ final class ShareViewController: UIViewController {
 
     private func send(_ model: ShareModel) {
         do {
-            try ShareInbox.write(text: model.text, file: model.file)
+            try ShareInbox.write(text: model.text, file: model.file, convId: model.convId)
             extensionContext?.completeRequest(returningItems: nil)
         } catch {
             model.problem = String(localized: "Couldn’t keep this for Yorozu. Try again.")
@@ -34,6 +36,9 @@ final class ShareViewController: UIViewController {
     var file: URL?
     var problem: String?
     var loading = true
+    /// nil: a new conversation.
+    var convId: String?
+    let directory = ShareInbox.published()
 
     /// Text and a link become the note; the first picture or file is attached.
     func load(_ items: [NSExtensionItem]) async {
@@ -51,6 +56,12 @@ final class ShareViewController: UIViewController {
             }
         }
         text = lines.filter { !$0.isEmpty }.joined(separator: "\n")
+        // Over the host's limit: refused here, before the app would refuse it.
+        if let file, let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > directory.maxBytes {
+            let format = { (n: Int) in ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .binary) }
+            problem = String(localized: "“\(file.lastPathComponent)” is \(format(size)). Yorozu sends files up to \(format(directory.maxBytes)).")
+            self.file = nil
+        }
     }
 
     /// The provider's file lives only during its callback: copy it out to the extension's temporary folder.
@@ -85,6 +96,17 @@ struct ShareView: View {
                     }
                 } footer: {
                     Text("Yorozu sends this the next time it’s open.")
+                }
+                Section {
+                    Picker(String(localized: "Conversation"), selection: $model.convId) {
+                        Text("New Conversation").tag(String?.none)
+                        ForEach(model.directory.conversations) { conversation in
+                            Text(conversation.title.isEmpty ? String(localized: "Untitled") : conversation.title)
+                                .lineLimit(1)
+                                .tag(String?.some(conversation.id))
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
                 }
                 if let problem = model.problem { Text(problem).foregroundStyle(.red) }
             }
