@@ -26,3 +26,8 @@ export async function mergeCursor(next: ReadCursor): Promise<ReadCursor> {
   }
   return merged;
 }
+
+/** A deleted conversation's cursor goes with it (#428). */
+export async function forgetCursor(convId: string): Promise<void> {
+  await store().delete(convId);
+}

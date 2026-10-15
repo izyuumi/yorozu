@@ -20,6 +20,10 @@ public enum V3Event: Equatable, Sendable {
     case history(V3History)
     case readCursor(V3ReadCursor)
     case foreground(V3Foreground)
+    /// Client -> plugin (#428): rename, archive or unarchive, or delete one conversation.
+    case convPatch(V3ConvPatch)
+    /// Plugin -> every client (#428): a conversation's title and archive state now, or that it was deleted.
+    case convUpdate(V3ConvUpdate)
     case cronList(V3CronList)
     case unknown(kind: String, data: JSONValue?)
 
@@ -37,6 +41,8 @@ public enum V3Event: Equatable, Sendable {
         case .historyRequest, .history: "history"
         case .readCursor: "read_cursor"
         case .foreground: "foreground"
+        case .convPatch: "conv_patch"
+        case .convUpdate: "conv_update"
         case .cronList: "cron_list"
         case .unknown(let kind, _): kind
         }
@@ -197,10 +203,17 @@ public struct V3ConvSummary: Codable, Equatable, Sendable {
     /// The transcript's newest event seq: a client whose last page carried this `rev` has nothing newer to fetch.
     public var rev: Int
 
-    public init(convId: String, updatedAt: Int64, rev: Int) {
+    /// The manual rename, else the generated title (#428); nil before either.
+    public var title: String?
+    /// Archived: listed under Archived, not in the main list. Sent only when true.
+    public var archived: Bool?
+
+    public init(convId: String, updatedAt: Int64, rev: Int, title: String? = nil, archived: Bool? = nil) {
         self.convId = convId
         self.updatedAt = updatedAt
         self.rev = rev
+        self.title = title
+        self.archived = archived
     }
 }
 
@@ -348,6 +361,39 @@ public struct V3CronJob: Codable, Equatable, Sendable, Identifiable {
     public var convId: String? { delivery.flatMap { $0.channel == "yorozu" && V3Event.isId($0.threadId) ? $0.threadId : nil } }
 }
 
+/// Client -> plugin (#428). `title`: rename (empty clears the rename, so the generated title shows again);
+/// `archived`: archive or unarchive; `deleted`: delete (the plugin archives, then deletes session and transcript).
+/// The plugin answers every device with `conv_update`, or the sender with `error`.
+public struct V3ConvPatch: Codable, Equatable, Sendable {
+    public var convId: String
+    public var title: String?
+    public var archived: Bool?
+    public var deleted: Bool?
+
+    public init(convId: String, title: String? = nil, archived: Bool? = nil, deleted: Bool? = nil) {
+        self.convId = convId
+        self.title = title
+        self.archived = archived
+        self.deleted = deleted
+    }
+}
+
+/// Plugin -> every client (#428): the conversation's state as it is now, whoever changed it. Absent `title` means none
+/// yet; absent `archived` means not archived; `deleted`: the conversation is gone.
+public struct V3ConvUpdate: Codable, Equatable, Sendable {
+    public var convId: String
+    public var title: String?
+    public var archived: Bool?
+    public var deleted: Bool?
+
+    public init(convId: String, title: String? = nil, archived: Bool? = nil, deleted: Bool? = nil) {
+        self.convId = convId
+        self.title = title
+        self.archived = archived
+        self.deleted = deleted
+    }
+}
+
 extension V3Event: Codable {
     private enum Keys: String, CodingKey { case kind, data }
 
@@ -380,6 +426,10 @@ extension V3Event: Codable {
             if let v = data(V3HistoryRequest.self), V3Event.isId(v.convId) { self = .historyRequest(v); return }
         case "read_cursor":
             if let v = data(V3ReadCursor.self), ids(v.convId, v.messageId) { self = .readCursor(v); return }
+        case "conv_patch":
+            if let v = data(V3ConvPatch.self), V3Event.isId(v.convId) { self = .convPatch(v); return }
+        case "conv_update":
+            if let v = data(V3ConvUpdate.self), V3Event.isId(v.convId) { self = .convUpdate(v); return }
         case "foreground":
             if let v = data(V3Foreground.self), v.convId.map(V3Event.isId) ?? true { self = .foreground(v); return }
         case "cron_list":
@@ -406,6 +456,8 @@ extension V3Event: Codable {
         case .history(let v): try c.encode(v, forKey: .data)
         case .readCursor(let v): try c.encode(v, forKey: .data)
         case .foreground(let v): try c.encode(v, forKey: .data)
+        case .convPatch(let v): try c.encode(v, forKey: .data)
+        case .convUpdate(let v): try c.encode(v, forKey: .data)
         case .cronList(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }

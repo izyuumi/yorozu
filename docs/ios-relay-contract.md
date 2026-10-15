@@ -123,7 +123,7 @@ Every box's plaintext is one UTF-8 JSON object:
 - **Ids**: `convId` and `messageId` are lowercase UUIDs (`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`; `V3Event.newId()`, `isId`). OpenClaw lowercases session keys, and a conversation's session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`. A known kind with a malformed id is treated as unknown.
 - Times are epoch milliseconds (integers).
 
-Names later issues add, so nothing else takes them: `conv_patch`, `read_cursor`, attachment kinds and `cron_list`.
+Names later issues add, so nothing else takes them: attachment kinds.
 
 ### Kinds
 
@@ -137,11 +137,13 @@ Names later issues add, so nothing else takes them: `conv_patch`, `read_cursor`,
 | `reply` | plugin → clients | `convId`, `messageId` (made by the plugin), `text`, `ts` |
 | `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`? |
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
-| `conv_list` | client → plugin, then plugin → that client | asked with `{}`; answered with `conversations`: [`convId`, `updatedAt`, `rev`] |
+| `conv_list` | client → plugin, then plugin → that client | asked with `{}`; answered with `conversations`: [`convId`, `updatedAt`, `rev`, `title`?, `archived`?] |
 | `history` | client → plugin, then plugin → that client | asked with `convId`, `before`?, `after`?; answered with those, `items`, `more`, `rev` |
 | `read_cursor` | both | `convId`, `messageId` (the last reply read), `ts` (that reply's `ts`), `unread` (bool) |
 | `foreground` | client → plugin | `convId`? (the conversation on screen with the app active; absent or null: none). See [Push](#push) |
 | `cron_list` | client → plugin, then plugin → that client | request: `{}`; answer: `jobs` (array of [jobs](#cron_list)), or `jobs: []` and `error` |
+| `conv_patch` | client → plugin | `convId`, then one of `title` (string; `""` clears the rename), `archived` (bool), `deleted` (`true`). See [Titles](#titles-conv_patch-and-conv_update) |
+| `conv_update` | plugin → clients | `convId`, `title`?, `archived`? (only `true`), `deleted`? (only `true`) |
 
 #### `peer_info`
 
@@ -155,7 +157,7 @@ One tool call of an agent run, for a collapsed row under the message it answers.
 
 The Gateway transcript is the source of truth (#415); a client caches what it fetched (one file per conversation) and asks again. Both kinds are requests the plugin answers to the asking device's session only: every host frame still reaches every device socket, but a page is sealed once, for the device that wants it. A client keeps one request in flight and sends the next when the answer (or an `error`, or 30 seconds) arrives, so pages reach the relay paced, far under its window.
 
-- `conv_list` lists the owner's Yorozu conversations of the configured agent: sessions keyed `agent:<agent>:yorozu:direct:owner:thread:<convId>`, newest first, at most 2000. Other channels' sessions are not listed. `updatedAt` is the session's, `rev` the transcript's newest event seq: a client whose last page that reached the newest item carried this `rev` has nothing to fetch.
+- `conv_list` lists the owner's Yorozu conversations of the configured agent: sessions keyed `agent:<agent>:yorozu:direct:owner:thread:<convId>`, newest first, at most 2000. Other channels' sessions are not listed. `updatedAt` is the session's, `rev` the transcript's newest event seq: a client whose last page that reached the newest item carried this `rev` has nothing to fetch. `title` and `archived` are as in [`conv_update`](#titles-conv_patch-and-conv_update); archived conversations are listed too, and a client shows them apart. A cached conversation the list no longer holds, which the client synced before (it has a `rev`) or holds no message of, was deleted while the client was away, and the client drops it (not when the list holds 2000 rows and may be cut).
 - `history` returns one page of one conversation, oldest first. `before: n`: the newest items with a seq below `n` (scrolling up). `after: n`: the oldest items with a seq above `n` (catching up). Neither: the newest page. `more` says another page lies further the same way. A page holds at most 60 items and about 192 KiB, and never splits the items of one transcript event. A conversation the transcript does not have yet answers `items: []`, `more: false`, `rev: 0`.
 
 Items (`kind`, `id`, `seq`, `ts`, then by kind):
@@ -180,6 +182,16 @@ One conversation's read state, the same on every device (#429). Replies whose `t
 - A client sends one when the user opens a conversation (cursor at the newest reply, `unread: false`), when a reply arrives while it is open and the app is in the foreground (cursor at the newest reply, `unread` kept: an automatic read does not undo Mark as Unread), on Mark as Read (as opening) and on Mark as Unread (cursor unchanged, `unread: true`). Mark as Unread is offered only once the conversation has a reply and is read.
 - The plugin keeps one per `convId` in its keyed state store (namespace `read`). It merges: the cursor only moves forward (the stored one stays if its `ts` is greater), `unread` is the sender's. It sends the merged cursor to every device, the sender included, and every stored cursor to a device right after that device's `peer_info`, so a new or returning device knows them.
 - A client applies the plugin's cursor as it comes, except while its own is unanswered: then it keeps the further `ts` and its own `unread` until a cursor at least as far with the same `unread` arrives, and it sends its own again on its next session.
+
+#### Titles: `conv_patch` and `conv_update`
+
+#428. A conversation's title is its session's: the manual rename (the entry's `label`) if there is one, else the generated title (`displayName`), else none. Until there is one, the client shows the first line of the conversation's first message.
+
+- **Generated**: after a turn, a conversation with neither gets a title of its first user message that is not a slash command, from OpenClaw's own generator (`generateConversationLabel`: the agent's `utilityModel`, then its primary model) with core's dashboard title prompt, at most 60 characters, written to `displayName`. It arrives a few seconds after the first reply (one utility-model call). A failed attempt is tried again after the next turn; a rename made meanwhile wins.
+- **`conv_patch`** (client → plugin) carries one change. `title`: rename, trimmed and cut to 60 characters by the plugin; `""` clears the rename, so the generated title shows again. `archived: true` / `false`: archive (`archivedAt`, `archiveReason: "manual"`) or unarchive. `deleted: true`: delete the Gateway way: the plugin archives the session first if it is not archived, then deletes the entry with its transcript (moved to the store's deleted-transcript archive, as `sessions.delete` does by default) and drops the conversation's read cursor. None of these touches the session's `updatedAt`, so the list keeps its order. A patch for a conversation the host does not have is answered `conv_update {deleted: true}`; one the plugin cannot apply, `error internal` with its `convId`, to the sender.
+- **`conv_update`** (plugin → every device) is a conversation's state now, not a diff: `title` absent means none yet, `archived` absent means not archived, `deleted: true` means it is gone (the client drops it and its cache, and closes it if it is open). The plugin sends one whenever that state differs from what it last sent for the conversation: after its own writes, and on any other session-entry change it sees (`subscribeSessionChanges`), so a rename or archive in the Control UI reaches every device too. A device that was away catches up through `conv_list`.
+- A client applies its own patch as soon as it is on the socket; the `conv_update` confirms it. Without a session the actions are disabled. A `conv_update` for a conversation the client does not have adds it, empty until `history` fills it.
+- The [push](#push) title is the conversation's title; before it has one (the first reply's push goes out before the title is made), its first message's first line.
 
 #### `cron_list`
 
@@ -206,7 +218,7 @@ The wording lives in the plugin so every client says the same thing without a cr
 | `update_required` | No common protocol version |
 | `bad_request` | A kind the receiver knows but cannot act on (for example a `message` for a conversation it refuses) |
 | `run_failed` | The agent run for `messageId` failed; `message` says why |
-| `internal` | Anything else, also a `conv_list` or `history` the plugin could not read |
+| `internal` | Anything else, also a `conv_list` or `history` the plugin could not read, or a `conv_patch` it could not apply |
 
 A receiver treats an unknown code like `internal`.
 
@@ -230,7 +242,7 @@ One push per finished agent reply (#431), through the relay's `notify` as in v2 
 - **When**: once per finished reply, after its last chunk has gone out, never once per chunk. That is the end of an agent turn that sent at least one `reply` (`handleMessage`), or the end of one delivered payload (the outbound adapter's `afterDeliverPayload`, which is how a cron delivery arrives). A turn that only failed (`error run_failed`) does not push.
 - **Foreground**: a client sends `foreground {convId}` when a conversation is on screen with the app active, and `foreground {}` (no `convId`) when none is, including just before iOS suspends it. It sends its current one again on every new session; a new session starts with none. The plugin skips every device whose live session last reported that conversation. When the relay reports that no device socket is left (`phones {count: 0}`), the plugin forgets every device's foreground, in case a device was killed in the foreground. When no device is left, it sends no `notify` at all.
 - **`notify`**: `{"type":"notify","class":"reply","threadRef":<threadRef(convId)>,"eventRef":<threadRef(messageId of the first chunk)>,"previews":{<device Ed25519 key>:{n,c}},"devices":[<device Ed25519 key>,…]}`. `threadRef` is `YorozuCrypto.threadRef`, the first 8 base64url characters of SHA-256, so the relay sees no conversation id. `devices` names the devices to alert. A relay that honours it alerts only those (relay PR #447, on `main`). A relay that ignores it, like the one deployed now, alerts every registered device. The device left out then gets the relay's fixed text without a preview, and the client does not show it while that conversation is on screen. The relay allows 60 notifies a minute per room.
-- **Preview**: `PushPreview` (`packages/YorozuWire`, and `src/push.ts` in the plugin), unchanged from v2 except for two optional fields. The key is HKDF-SHA256 over X25519(host static, device static) with salt `yorozu-v1` and info `yorozu-push-preview/mac->device`, 32 bytes, so it is never a session key. The box is ChaCha20-Poly1305 with a fresh 12-byte nonce. The plaintext is JSON `{"b":<first line of the reply>,"c":"reply","e":<eventRef>,"t":<title>?,"v":<convId>}`, at most 256 bytes. The title is cut to 32 characters first, then the body is cut with "…" until the whole fits. The title is the conversation's first message, first line (stored per conversation in the plugin's state, namespace `push-titles`), until generated titles land (#428). A conversation that began with a delivery has no title.
+- **Preview**: `PushPreview` (`packages/YorozuWire`, and `src/push.ts` in the plugin), unchanged from v2 except for two optional fields. The key is HKDF-SHA256 over X25519(host static, device static) with salt `yorozu-v1` and info `yorozu-push-preview/mac->device`, 32 bytes, so it is never a session key. The box is ChaCha20-Poly1305 with a fresh 12-byte nonce. The plaintext is JSON `{"b":<first line of the reply>,"c":"reply","e":<eventRef>,"t":<title>?,"v":<convId>}`, at most 256 bytes. The title is cut to 32 characters first, then the body is cut with "…" until the whole fits. The title is the conversation's [title](#titles-conv_patch-and-conv_update) (#428); before it has one, its first message, first line (stored per conversation in the plugin's state, namespace `push-titles`). A conversation that began with a delivery has none until it is titled.
 - **iPhone, iPad**: the app keeps the preview key in the Keychain group it shares with the notification service extension (`PreviewKeychain`, readable after the first unlock). It writes the key on every connect and deletes it on unpair. The extension opens `preview`, checks that its `e` equals the push's `event`, and sets the title to `t` (else "Yorozu replied."), the body to `b` and `userInfo.convId` to `v`. Anything that does not open is shown as the relay sent it. In the foreground, a notification for the conversation on screen is not shown. A tap opens its conversation, found by `convId`, else by the relay's `ref` matched against the cached conversations. Opening a conversation removes its delivered notifications. Alerts, sounds and badges are asked for after pairing (the first `peer_info`) and at every launch while paired; iOS shows the prompt only once.
 - **Mac**: no relay push. While the app runs, each new `reply` in a conversation that is not in front posts a local notification, one per conversation, replaced by the next. Only the first chunk within 10 seconds plays a sound.
 - Neither end logs a preview's plaintext. The plugin logs how many devices it alerted and skipped.
