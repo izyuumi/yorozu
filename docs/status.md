@@ -1,8 +1,12 @@
 # Status
 
-As of 2026-10-15. The #415 tracker (Yorozu as an OpenClaw channel) is built: every child issue #416–#432 is merged and closed, and this rewrite of the docs is #433. The secretary system and the Mac host are deleted (#426); their last status is in [history/secretary-status.md](history/secretary-status.md).
+As of 2026-10-16. The #415 tracker (Yorozu as an OpenClaw channel) is built: every child issue #416–#432 is merged and closed, and this rewrite of the docs is #433. The secretary system and the Mac host are deleted (#426); their last status is in [history/secretary-status.md](history/secretary-status.md).
 
-**Release**: 0.8.0 is being prepared.
+**Release 0.8.0** (2026-10-16, `projectx` after #454), internal only:
+- Mac: `/Applications/Yorozu.app` rebuilt in place with `scripts/build_native.sh --restart`: the client (`to.yumi.yorozu.ios`) 0.8.0 (1), Developer ID signed, replacing the old host app. Launched to the v3 pairing screen.
+- iPhone and iPad: TestFlight 0.8.0 (1), one upload with `scripts/upload_ios.sh --confirm`; App Store Connect reports it valid and in internal beta testing (Internal group only).
+- Wire v3 is incompatible with 0.7.x: every device pairs again with `openclaw yorozu pair`, which needs the plugin installed in the owner's Gateway first ([Open items](#open-items)).
+- Before the release, a Mac live check on an isolated profile found two client bugs (invisible composer text, a nested split view breaking the window after relaunch), fixed in #453 and checked on the Mac and both simulators.
 
 ## Evidence levels
 
@@ -46,6 +50,7 @@ Acceptance for this branch is compile plus manual checks (tests and CI are on ho
 | **`openclaw message send --channel yorozu -t owner` fails**: the plugin has no messaging target resolver (`messaging.targetResolver`) for `owner`. | Agent replies and cron deliveries work; CLI sends to Yorozu do not. |
 | **Crons tab reads a private SDK path**: `loadCronStore` from `openclaw/plugin-sdk/cron-store-runtime`, which works on a source install. A packaged OpenClaw may withhold it from linked plugins. | Keep it; if it breaks, `cron_list` answers `error` and the switch is a loopback Gateway client ([openclaw-channel.md](openclaw-channel.md)). |
 | **Mac client signing** has no entitlements (no provisioning profile for `to.yumi.yorozu.ios` on macOS): no APNs, no associated domains, no App Group, login-Keychain prompts after rebuilds. | Developer ID without entitlements via `build_native.sh`. |
+| `OWNER_DECISIONS.md` still gives the Mac app v1's identity (`to.yumi.yorozu`); since #426 the Mac app is the client, `to.yumi.yorozu.ios`. Needs the owner's wording. | Code and docs follow `to.yumi.yorozu.ios`. |
 | Leftovers of the old host on the owner's Mac (its data, Keychain items, ignored `apps/mac` build outputs in the main checkout). | Kept until the owner approves cleanup. |
 
 ## Roadmap
