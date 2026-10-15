@@ -1,9 +1,8 @@
 import Foundation
 import Observation
-import YorozuWire
-#if os(iOS)
 import UserNotifications
-#else
+import YorozuWire
+#if os(macOS)
 import AppKit
 #endif
 
@@ -22,6 +21,10 @@ final class V3Model {
     var pendingPairing: QrPayload?
     /// Why the last pairing attempt failed, for the pairing screen.
     var pairingError: String?
+    /// A tapped notification's conversation, for the list to open (#431).
+    var requestedConversation: String?
+    /// The conversation on screen while the app is active: told to the plugin, which sends no push for it here (#431).
+    private(set) var foreground: String?
 
     @ObservationIgnored private var connection: V3Connection?
     @ObservationIgnored private var listener: Task<Void, Never>?
@@ -31,6 +34,10 @@ final class V3Model {
     /// again on every session, so they need no disk.
     @ObservationIgnored private var unplacedReads: [String: V3ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
+    @ObservationIgnored private var visible: String?
+    @ObservationIgnored private var active = false
+    /// The APNs token, lowercase hex, for every connection (#431).
+    @ObservationIgnored private var pushToken: String?
 
     static let typingTimeout: Duration = .seconds(30)
 
@@ -92,6 +99,9 @@ final class V3Model {
     func unpair() {
         disconnect()
         try? V3Pairing.remove()
+        #if os(iOS)
+        PreviewKeychain.clear()
+        #endif
         cache.wipe()
         pairing = nil
         conversations = [:]
@@ -111,8 +121,17 @@ final class V3Model {
             return failPairing(String(localized: "This pairing code can’t be used."))
         }
         self.connection = connection
+        #if os(iOS)
+        // The notification service extension opens push previews with this key, readable after the first unlock.
+        if let hostKey = Data(base64URLEncoded: pairing.pairing.macPubkey),
+           let key = try? PushPreview.key(myPriv: pairing.identity.sessionPrivateKey, theirPub: hostKey) {
+            PreviewKeychain.save(key)
+        }
+        #endif
+        let pushToken = pushToken
         listener = Task { [weak self] in
             let updates = await connection.updates()
+            if let pushToken { await connection.registerPush(deviceToken: pushToken) }
             await connection.start()
             for await update in updates { self?.apply(update) }
         }
@@ -128,14 +147,70 @@ final class V3Model {
 
     /// Back in the foreground: dial now. iOS may have left the socket half open.
     func resume() {
+        setActive(true)
         guard let connection else { return connect() }
         Task { await connection.reconnect() }
     }
 
-    /// iOS suspends a background app: hang up, so the relay does not hold a frozen socket.
+    /// iOS suspends a background app: hang up, so the relay does not hold a frozen socket. The plugin hears first that
+    /// no conversation is on screen any more, or it would hold this device's pushes back (#431).
     func suspend() {
+        setActive(false)
         guard let connection else { return }
-        Task { await connection.stop() }
+        Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !active else { return }
+            await connection.stop()
+        }
+    }
+
+    // MARK: Push (#431)
+
+    /// The app is active or not; with the chat on screen it decides ``foreground``.
+    func setActive(_ active: Bool) {
+        self.active = active
+        updateForeground()
+    }
+
+    /// A chat view appeared (`convId`), or went (nil, `leaving` the one it showed).
+    func setVisible(_ convId: String?, leaving: String? = nil) {
+        if convId == nil, let leaving, visible != leaving { return }
+        visible = convId
+        updateForeground()
+        if let convId { V3Notices.removeDelivered(convId: convId) }
+    }
+
+    private func updateForeground() {
+        let next = active ? visible : nil
+        guard next != foreground else { return }
+        foreground = next
+        transmit(.foreground(V3Foreground(convId: next)))
+    }
+
+    /// The APNs token: kept for every connection, told to the relay now.
+    func registerPush(_ token: String) {
+        pushToken = token
+        guard let connection else { return }
+        Task { await connection.registerPush(deviceToken: token) }
+    }
+
+    /// The conversation a notification is about: the sealed preview's `convId` (copied by the notification service
+    /// extension, or set by the Mac's local notice), else the relay's `ref` matched against the cached conversations.
+    func conversation(convId: String?, ref: String?) -> String? {
+        if let convId, V3Event.isId(convId) { return convId }
+        guard let ref else { return nil }
+        return conversations.keys.first { YorozuCrypto.threadRef($0) == ref }
+    }
+
+    /// Alerts, sounds and the badge, asked once paired; the system asks the user only the first time.
+    func requestNotifications() {
+        guard paired else { return }
+        Task {
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            // A badge set before the user allowed it did not show.
+            badge = nil
+            updateBadge()
+        }
     }
 
     private func apply(_ update: V3Connection.Update) {
@@ -154,7 +229,10 @@ final class V3Model {
             updatePairing { $0.relayKnows = true; $0.pairing.token = "" }
         case .sessionOpen:
             if !paired { updatePairing { $0.paired = true; $0.pairedAt = Date(); $0.pairing.secret = nil } }
+            requestNotifications()
             resendOutbox()
+            // A new session starts with nothing on screen, as far as the plugin knows.
+            if let foreground { transmit(.foreground(V3Foreground(convId: foreground))) }
             for conversation in conversations.values where conversation.readPending == true {
                 if let cursor = conversation.read { transmit(.readCursor(cursor)) }
             }
@@ -214,6 +292,12 @@ final class V3Model {
         case .typing(let t):
             setTyping(t.convId, t.active)
         case .reply(let reply):
+            #if os(macOS)
+            // No relay push reaches the Mac: a local notice while it runs, for a conversation not in front.
+            if reply.convId != foreground, conversations[reply.convId]?.items.contains(where: { $0.id == reply.messageId }) != true {
+                V3Notices.reply(convId: reply.convId, title: conversations[reply.convId]?.preview ?? "", text: reply.text)
+            }
+            #endif
             append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts), to: reply.convId)
         case .tool(let tool):
             self.tool(tool)
@@ -227,7 +311,7 @@ final class V3Model {
                 : String(localized: "The host couldn’t handle this: \(error.message)")
             append(ChatItem(id: id, kind: .error, text: text, ts: Self.now), to: convId)
             setTyping(convId, false)
-        case .peerInfo, .message, .unknown:
+        case .peerInfo, .message, .foreground, .unknown:
             break
         }
     }

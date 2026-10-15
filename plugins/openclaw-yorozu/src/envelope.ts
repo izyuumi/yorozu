@@ -30,6 +30,8 @@ export type ToolStatus = "running" | "done" | "failed";
  * Mark as Unread: the conversation counts as unread whatever the cursor says, until a read clears it.
  */
 export type ReadCursor = { convId: string; messageId: string; ts: number; unread: boolean };
+/** The conversation on this device's screen while the app is in the foreground, or none (#431): no push for it there. */
+export type Foreground = { convId?: string | null };
 
 export type Event =
   | { kind: "peer_info"; data: PeerInfo }
@@ -40,7 +42,8 @@ export type Event =
   | { kind: "reply"; data: Reply }
   | { kind: "error"; data: ErrorInfo }
   | { kind: "tool"; data: Tool }
-  | { kind: "read_cursor"; data: ReadCursor };
+  | { kind: "read_cursor"; data: ReadCursor }
+  | { kind: "foreground"; data: Foreground };
 
 export type Received = Event | { kind: "unknown"; name: string };
 
@@ -79,6 +82,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   tool: (d) =>
     ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),
   read_cursor: (d) => ref(d) && int(d.ts) && typeof d.unread === "boolean",
+  foreground: (d) => d.convId === undefined || d.convId === null || isId(d.convId),
 };
 
 /** Null only for bytes that are not an envelope at all; extra fields are kept and ignored. */

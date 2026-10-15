@@ -13,6 +13,7 @@ public enum V3Event: Equatable, Sendable {
     case error(V3ErrorInfo)
     case tool(V3Tool)
     case readCursor(V3ReadCursor)
+    case foreground(V3Foreground)
     case unknown(kind: String, data: JSONValue?)
 
     public var kind: String {
@@ -26,6 +27,7 @@ public enum V3Event: Equatable, Sendable {
         case .error: "error"
         case .tool: "tool"
         case .readCursor: "read_cursor"
+        case .foreground: "foreground"
         case .unknown(let kind, _): kind
         }
     }
@@ -182,6 +184,14 @@ public struct V3ReadCursor: Codable, Equatable, Sendable {
     }
 }
 
+/// Client -> plugin: the conversation on this device's screen while the app is in the foreground, or nil (#431). The
+/// plugin sends no push for a reply in it to this device while its session lasts.
+public struct V3Foreground: Codable, Equatable, Sendable {
+    public var convId: String?
+
+    public init(convId: String?) { self.convId = convId }
+}
+
 extension V3Event: Codable {
     private enum Keys: String, CodingKey { case kind, data }
 
@@ -209,6 +219,8 @@ extension V3Event: Codable {
             if let v = data(V3Tool.self), ids(v.convId, v.messageId) { self = .tool(v); return }
         case "read_cursor":
             if let v = data(V3ReadCursor.self), ids(v.convId, v.messageId) { self = .readCursor(v); return }
+        case "foreground":
+            if let v = data(V3Foreground.self), v.convId.map(V3Event.isId) ?? true { self = .foreground(v); return }
         default:
             break
         }
@@ -227,6 +239,7 @@ extension V3Event: Codable {
         case .error(let v): try c.encode(v, forKey: .data)
         case .tool(let v): try c.encode(v, forKey: .data)
         case .readCursor(let v): try c.encode(v, forKey: .data)
+        case .foreground(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }
     }

@@ -3,6 +3,7 @@
  * `agent:<agent>:yorozu:direct:owner:thread:<convId>`: every paired device is the one peer `owner` (#415).
  * The run's progress and replies go to every served device (`broadcast`): `run_started`, `typing` while it runs,
  * `tool` per tool call, then one `reply` per chunk. Slash commands are plain text; core handles `/new` in the thread.
+ * A turn that replied ends with one push (`notifyReply`, #431), not one per chunk.
  * `sendText` is the outbound adapter's, for deliveries that start outside a turn (cron `delivery.channel: yorozu`).
  */
 import { randomUUID } from "node:crypto";
@@ -13,7 +14,8 @@ import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
 import { chunkMarkdownText, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { isId, type Event, type Message, type ToolStatus } from "./envelope.js";
-import { broadcast } from "./relay.js";
+import { noteFirstMessage } from "./push.js";
+import { broadcast, notifyReply } from "./relay.js";
 import { yorozuRuntime } from "./runtime.js";
 
 const CHANNEL_ID = "yorozu";
@@ -54,6 +56,9 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
   const send = (...events: Event[]) => void broadcast(events);
   const route = resolveOwnerRoute(cfg, ctx.agent, accountId);
   const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: convId });
+  await noteFirstMessage(convId, text).catch((error: unknown) => log?.warn(`yorozu: push title failed: ${String(error)}`));
+  /** The turn's first reply chunk: what its one push names and previews. */
+  let firstReply: { messageId: string; text: string } | undefined;
 
   let started = false;
   const runStarted = () => {
@@ -129,7 +134,10 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
               // Tool summaries are the `tool` events; replies arrive whole, never as streamed blocks.
               if (info.kind === "tool" || !payload.text?.trim()) return;
               runStarted();
-              send(...replyEvents(cfg, convId, payload.text, route.accountId));
+              const replies = replyEvents(cfg, convId, payload.text, route.accountId);
+              const first = replies[0];
+              if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: payload.text };
+              send(...replies);
             },
             onError: (error, info) => log?.warn(`yorozu: ${info.kind} reply failed: ${String(error)}`),
           },
@@ -156,6 +164,11 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
     send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
   } finally {
     setTyping(false);
+    if (firstReply) {
+      await notifyReply(convId, firstReply.messageId, firstReply.text).catch((error: unknown) =>
+        log?.warn(`yorozu: notify failed: ${String(error)}`),
+      );
+    }
   }
 }
 

@@ -23,7 +23,7 @@ Unchanged from v1 and v2. The relay reads only its outer envelope and gates noth
 - **Join**: a client's first join spends the one-time token from the QR and signs the token; every later join signs the relay's connect nonce. Both use the client's Ed25519 key. Tokens last 10 minutes; a room holds at most 16 devices.
 - **Frames**: `{"type":"frame","payload":<string>,"sig":<string>}`. `sig` is base64url Ed25519 over the UTF-8 bytes of the `payload` string itself, by the sender's relay key (`YorozuCrypto.signFrame` / `signFrame`). The relay checks it against the socket's key. A host may batch: `{"type":"frame","frames":[{payload,sig},…]}`.
 - **`accepted`**: the relay answers every client frame with `{"type":"accepted","sig":…,"buffered":bool}` once it has forwarded it to the host's live socket or stored it for the host. That is the client's ✓ sent.
-- **Push**: client `push {deviceToken}` and host `notify` with sealed `previews`, as in v2 ([history](history/ios-relay-contract-v2.md#push)); the v3 rules arrive with #431.
+- **Push**: client `push {deviceToken}` and host `notify` with sealed `previews`, as in v2; the v3 rules are in [Push](#push).
 
 Limits every sender must respect:
 
@@ -123,7 +123,7 @@ Every box's plaintext is one UTF-8 JSON object:
 - **Ids**: `convId` and `messageId` are lowercase UUIDs (`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`; `V3Event.newId()`, `isId`). OpenClaw lowercases session keys, and a conversation's session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`. A known kind with a malformed id is treated as unknown.
 - Times are epoch milliseconds (integers).
 
-Names later issues add, so nothing else takes them: `conv_list`, `history`, `conv_patch`, `read_cursor`, attachment kinds, `cron_list`, and foreground and notify registration.
+Names later issues add, so nothing else takes them: `conv_list`, `history`, `conv_patch`, `read_cursor`, attachment kinds and `cron_list`.
 
 ### Kinds
 
@@ -138,6 +138,7 @@ Names later issues add, so nothing else takes them: `conv_list`, `history`, `con
 | `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`? |
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
 | `read_cursor` | both | `convId`, `messageId` (the last reply read), `ts` (that reply's `ts`), `unread` (bool) |
+| `foreground` | client → plugin | `convId`? (the conversation on screen with the app active; absent or null: none). See [Push](#push) |
 
 #### `peer_info`
 
@@ -177,6 +178,19 @@ All paired devices share one channel peer (the owner), so the plugin sends `deli
 - Replies arrive whole, one `reply` per chunk of a long reply (chunked by `channels.yorozu.textChunkLimit`, default 4000 characters), never edited in place. A cron job delivering into a conversation (`delivery: {channel: "yorozu", to: "owner", threadId: <convId>}`) arrives as `reply` too, with no `run_started` or `typing`.
 - A `message`'s `text` is bounded only by the relay's 1 MiB frame (about 700 KiB of text). Slash commands are plain text: `/new` and `/reset` reset only that conversation's session, other commands go to OpenClaw as typed.
 - A client sends `message`s only inside an established session. Until it sees `delivered` it keeps the message and sends it again in its next session. The plugin drops a `messageId` it has already taken and answers `delivered` again.
+
+## Push
+
+One push per finished agent reply (#431), through the relay's `notify` as in v2 ([history](history/ios-relay-contract-v2.md#push)), with a preview sealed for each device. A cron job delivering into a conversation pushes the same way. There is no mute.
+
+- **Token**: an iPhone or iPad sends the relay `{"type":"push","deviceToken":<lowercase hex>}` after every `joined` on its socket, and again as soon as iOS hands it a new token (`V3Connection.registerPush`). It asks iOS for a token on every launch. The relay keeps one token per device and forgets it when the device is revoked. The Mac client registers no token.
+- **When**: once per finished reply, after its last chunk has gone out, never once per chunk. That is the end of an agent turn that sent at least one `reply` (`handleMessage`), or the end of one delivered payload (the outbound adapter's `afterDeliverPayload`, which is how a cron delivery arrives). A turn that only failed (`error run_failed`) does not push.
+- **Foreground**: a client sends `foreground {convId}` when a conversation is on screen with the app active, and `foreground {}` (no `convId`) when none is, including just before iOS suspends it. It sends its current one again on every new session; a new session starts with none. The plugin skips every device whose live session last reported that conversation. When no device is left, it sends no `notify` at all.
+- **`notify`**: `{"type":"notify","class":"reply","threadRef":<threadRef(convId)>,"eventRef":<threadRef(messageId of the first chunk)>,"previews":{<device Ed25519 key>:{n,c}},"devices":[<device Ed25519 key>,…]}`. `threadRef` is `YorozuCrypto.threadRef`, the first 8 base64url characters of SHA-256, so the relay sees no conversation id. `devices` names the devices to alert. A relay that honours it alerts only those (relay PR #447, on `main`). A relay that ignores it, like the one deployed now, alerts every registered device. The device left out then gets the relay's fixed text without a preview, and the client does not show it while that conversation is on screen. The relay allows 60 notifies a minute per room.
+- **Preview**: `PushPreview` (`packages/YorozuWire`, and `src/push.ts` in the plugin), unchanged from v2 except for two optional fields. The key is HKDF-SHA256 over X25519(host static, device static) with salt `yorozu-v1` and info `yorozu-push-preview/mac->device`, 32 bytes, so it is never a session key. The box is ChaCha20-Poly1305 with a fresh 12-byte nonce. The plaintext is JSON `{"b":<first line of the reply>,"c":"reply","e":<eventRef>,"t":<title>?,"v":<convId>}`, at most 256 bytes. The title is cut to 32 characters first, then the body is cut with "…" until the whole fits. The title is the conversation's first message, first line (stored per conversation in the plugin's state, namespace `push-titles`), until generated titles land (#428). A conversation that began with a delivery has no title.
+- **iPhone, iPad**: the app keeps the preview key in the Keychain group it shares with the notification service extension (`PreviewKeychain`, readable after the first unlock). It writes the key on every connect and deletes it on unpair. The extension opens `preview`, checks that its `e` equals the push's `event`, and sets the title to `t` (else "Yorozu replied."), the body to `b` and `userInfo.convId` to `v`. Anything that does not open is shown as the relay sent it. In the foreground, a notification for the conversation on screen is not shown. A tap opens its conversation, found by `convId`, else by the relay's `ref` matched against the cached conversations. Opening a conversation removes its delivered notifications. Alerts, sounds and badges are asked for after pairing (the first `peer_info`) and at every launch while paired; iOS shows the prompt only once.
+- **Mac**: no relay push. While the app runs, each new `reply` in a conversation that is not in front posts a local notification, one per conversation, replaced by the next. Only the first chunk within 10 seconds plays a sound.
+- Neither end logs a preview's plaintext. The plugin logs how many devices it alerted and skipped.
 
 ## Known-answer vectors
 
@@ -276,3 +290,4 @@ The same run also checks that the second box opened again is refused as a replay
 | Boxes | `V3Session.seal(_:)`, `.open(_:)`, `.openEvent(_:)` | `Session.seal(bytes) -> payload`, `.open(frame) -> Buffer \| null` |
 | Envelope | `V3Event` (`Codable`), `V3PeerInfo.negotiate`, `V3Event.newId`, `isId` | `Event`, `parseEvent`, `encodeEvent`, `negotiate`, `isId` |
 | Noise itself (vectors) | `NoiseIKHandshake` | `NoiseIK` |
+| Push preview (#431) | `PushPreview.key`, `.open(userInfo:key:)`, `V3Connection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`src/push.ts`), `notifyReply` (`src/relay.ts`) |

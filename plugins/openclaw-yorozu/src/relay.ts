@@ -24,6 +24,7 @@ import {
   type PeerInfo,
 } from "./envelope.js";
 import type { HostKeys } from "./keys.js";
+import { firstLine, previewKey, previewPlaintext, pushTitle, sealPreview, threadRef } from "./push.js";
 import { listCursors, mergeCursor } from "./reads.js";
 import {
   acceptHandshake,
@@ -58,7 +59,8 @@ const PEER_INFO: PeerInfo = {
   capabilities: [],
 };
 
-type Served = { session: Session; peer?: PeerInfo };
+/** `foreground`: the conversation the device last reported on screen with the app in the foreground (#431). */
+type Served = { session: Session; peer?: PeerInfo; foreground?: string };
 type Status = { connected: boolean; error?: string };
 
 export type RelayHostOptions = {
@@ -99,6 +101,8 @@ let host: {
   forget: (deviceKeys: string[]) => void;
   /** Seals each event for every served device and sends them, in order; null while not registered. */
   broadcast: ((events: Event[]) => number) | null;
+  /** Sends the relay one `notify` for a finished reply; null while not registered. */
+  notify: ((convId: string, messageId: string, text: string) => Promise<void>) | null;
 } | null = null;
 
 /**
@@ -107,6 +111,15 @@ let host: {
  */
 export function broadcast(events: Event[]): number {
   return host?.broadcast?.(events) ?? 0;
+}
+
+/**
+ * One push for a finished reply in `convId` (#431): `messageId` is its first chunk, `text` its text. Every paired
+ * device gets it except one with a live session that has this conversation in the foreground. Dropped while the
+ * relay is not reachable (the reply itself is in the transcript).
+ */
+export async function notifyReply(convId: string, messageId: string, text: string): Promise<void> {
+  await host?.notify?.(convId, messageId, text);
 }
 
 /** Mints a one-time relay token and a secret for one new device; throws while the relay is not reachable. */
@@ -174,6 +187,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     keys,
     mint: null,
     broadcast: null,
+    notify: null,
     forget: (deviceKeys) => {
       for (const key of deviceKeys) {
         endSession(key);
@@ -222,6 +236,38 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         return live.length;
       };
       const seal = (session: Session, event: Event): string => session.seal(encodeEvent(event));
+      /**
+       * The relay alerts every device with a push token in the room; `devices` names the ones to alert, for a relay
+       * that honours it, and only those get a sealed preview. A relay that ignores it alerts the others with its fixed
+       * text, which a client with the conversation on screen does not show.
+       */
+      const notifyHere = async (convId: string, messageId: string, text: string): Promise<void> => {
+        const body = firstLine(text);
+        if (!body) return;
+        const watching = new Set(
+          [...served].filter(([, entry]) => entry.peer && entry.foreground === convId).map(([key]) => key),
+        );
+        const devices = (await listDevices()).filter((device) => !watching.has(device.signingPub));
+        if (!devices.length) return log?.info("yorozu: notify skipped (the conversation is open on every device)");
+        const title = await pushTitle(convId);
+        const plaintext = previewPlaintext({ b: body, c: "reply", e: threadRef(messageId), t: title, v: convId });
+        const previews: Record<string, { n: string; c: string }> = {};
+        for (const device of devices) {
+          const key = plaintext && previewKey(keys.static.privateKey, device.staticPub);
+          if (key) previews[device.signingPub] = sealPreview(key, plaintext);
+        }
+        send(
+          JSON.stringify({
+            type: "notify",
+            class: "reply",
+            threadRef: threadRef(convId),
+            eventRef: threadRef(messageId),
+            ...(Object.keys(previews).length ? { previews } : {}),
+            devices: devices.map((device) => device.signingPub),
+          }),
+        );
+        log?.info(`yorozu: notify sent (${devices.length} device${devices.length === 1 ? "" : "s"}, ${watching.size} skipped)`);
+      };
 
       async function handshake(payload: string, sig: string): Promise<void> {
         const now = Date.now();
@@ -298,6 +344,10 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           // To every device, the sender too: one behind the stored cursor catches up.
           return void broadcastHere([{ kind: "read_cursor", data: await mergeCursor(event.data) }]);
         }
+        if (event?.kind === "foreground") {
+          entry.foreground = event.data.convId ?? undefined;
+          return;
+        }
         if (event?.kind === "error") log?.info(`yorozu: device error ${event.data.code}`);
       }
 
@@ -326,6 +376,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             registered = true;
             relaySend = send;
             me.broadcast = broadcastHere;
+            me.notify = notifyHere;
             me.mint = () =>
               new Promise((resolve, reject) => {
                 const waiter = { resolve, reject };
@@ -398,6 +449,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           relaySend = null;
           me.mint = null;
           me.broadcast = null;
+          me.notify = null;
           for (const waiter of minting.splice(0)) waiter.reject(new Error("the relay connection closed"));
         }
         if (!signal.aborted) {
