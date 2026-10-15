@@ -9,6 +9,7 @@ import {
 import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { DEFAULT_CHUNK_LIMIT, handleMessage, PEER, resolveOwnerRoute, sendConversationText } from "./conversation.js";
+import { answerRequest } from "./history.js";
 import { loadHostKeys } from "./keys.js";
 import { runRelayHost } from "./relay.js";
 
@@ -59,6 +60,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       log: ctx.log,
       onMessage: (message) =>
         void handleMessage({ cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent }, message),
+      onRequest: (request, answer) => answerRequest(ctx.cfg, account.agent, request, answer, ctx.log),
       onStatus: ({ connected, error }) =>
         ctx.setStatus(
           connected

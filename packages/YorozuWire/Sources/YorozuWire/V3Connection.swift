@@ -131,6 +131,14 @@ public actor V3Connection {
         return true
     }
 
+    /// Seals and sends a request (`conv_list`, `history`). False when no session is ready.
+    @discardableResult
+    public func request(_ event: V3Event) -> Bool {
+        guard state == .ready, var session, let socket, let frame = try? session.seal(event) else { return false }
+        self.session = session
+        return transmit(frame, on: socket) != nil
+    }
+
     // MARK: Socket
 
     private func connect() {

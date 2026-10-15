@@ -68,6 +68,8 @@ export type RelayHostOptions = {
   onStatus: (status: Status) => void;
   /** A device's message, once per `messageId`, after `delivered` went out. */
   onMessage: (message: Message) => void;
+  /** A device's `conv_list` or `history` request; `answer` seals for that device only. */
+  onRequest: (request: Event, answer: (event: Event) => void) => void;
 };
 
 /** What `openclaw yorozu pair` prints. */
@@ -289,6 +291,10 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           }
           taken.set(messageId, now);
           return opts.onMessage(event.data);
+        }
+        if (event?.kind === "conv_list" || event?.kind === "history") {
+          // Every host frame reaches every device anyway; sealing for the asker alone keeps it to one copy.
+          return opts.onRequest(event, (answer) => sendFrames([seal(entry.session, answer)]));
         }
         if (event?.kind === "error") log?.info(`yorozu: device error ${event.data.code}`);
       }
