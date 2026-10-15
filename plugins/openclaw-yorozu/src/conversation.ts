@@ -14,6 +14,7 @@ import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
 import { chunkMarkdownText, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { isId, type Event, type Message, type ToolStatus } from "./envelope.js";
+import { liveReplyIds } from "./history.js";
 import { noteFirstMessage } from "./push.js";
 import { broadcast, notifyReply } from "./relay.js";
 import { yorozuRuntime } from "./runtime.js";
@@ -39,12 +40,18 @@ export function resolveOwnerRoute(cfg: OpenClawConfig, agentId: string, accountI
   });
 }
 
-/** One reply per chunk of `text`, each with its own `messageId`. */
-export function replyEvents(cfg: OpenClawConfig, convId: string, text: string, accountId?: string | null): Event[] {
+/** One reply per chunk of `text`, each with its own `messageId`: from `ids` (the transcript's) when given. */
+export function replyEvents(
+  cfg: OpenClawConfig,
+  convId: string,
+  text: string,
+  accountId?: string | null,
+  ids?: (chunk: number) => string,
+): Event[] {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
   return chunkMarkdownText(text, limit)
     .filter((chunk) => chunk.trim())
-    .map((chunk) => ({ kind: "reply", data: { convId, messageId: randomUUID(), text: chunk, ts: Date.now() } }));
+    .map((chunk, k) => ({ kind: "reply", data: { convId, messageId: ids?.(k) ?? randomUUID(), text: chunk, ts: Date.now() } }));
 }
 
 type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & { agent: string };
@@ -60,6 +67,8 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
   /** The turn's first reply chunk: what its one push names and previews. */
   let firstReply: { messageId: string; text: string } | undefined;
 
+  /** Transcript messages this turn's replies already took their ids from. */
+  const usedReplies = new Set<string>();
   let started = false;
   const runStarted = () => {
     if (started) return;
@@ -134,7 +143,8 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
               // Tool summaries are the `tool` events; replies arrive whole, never as streamed blocks.
               if (info.kind === "tool" || !payload.text?.trim()) return;
               runStarted();
-              const replies = replyEvents(cfg, convId, payload.text, route.accountId);
+              const ids = liveReplyIds(route.agentId, sessionKey, messageId, usedReplies);
+              const replies = replyEvents(cfg, convId, payload.text, route.accountId, ids);
               const first = replies[0];
               if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: payload.text };
               send(...replies);

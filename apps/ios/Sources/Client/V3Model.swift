@@ -8,7 +8,9 @@ import AppKit
 
 /// The v3 client (#425): one pairing with the OpenClaw plugin, the conversations cached on this device, and the link.
 /// User messages without `delivered` are the outbox: each new session sends them again, and the plugin drops a
-/// `messageId` it already took.
+/// `messageId` it already took. History (#427): each new session asks for `conv_list` and fetches what is newer
+/// than the cache; opening a conversation fills its gap, scrolling up loads older pages. One request is in flight at a
+/// time, so pages reach the relay paced.
 @MainActor @Observable
 final class V3Model {
     private(set) var pairing: V3Pairing?
@@ -17,6 +19,8 @@ final class V3Model {
     /// Conversations whose agent is working: from `run_started` or `typing {active}` until `typing {active: false}`,
     /// or 30 s without a repeat.
     private(set) var typing: Set<String> = []
+    /// Conversations waiting for an older `history` page: the chat's top spinner.
+    private(set) var loadingOlder: Set<String> = []
     /// A scanned or pasted code waiting for the user to compare the host fingerprint.
     var pendingPairing: QrPayload?
     /// Why the last pairing attempt failed, for the pairing screen.
@@ -36,6 +40,10 @@ final class V3Model {
     @ObservationIgnored private var listener: Task<Void, Never>?
     @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private let cache = ConversationCache()
+    /// `conv_list` and `history` requests waiting for the one in flight.
+    @ObservationIgnored private var requests: [V3Event] = []
+    @ObservationIgnored private var inFlight: V3Event?
+    @ObservationIgnored private var inFlightTimer: Task<Void, Never>?
     /// Cursors the plugin sent for conversations not cached here yet; applied when one arrives. The plugin sends them
     /// again on every session, so they need no disk.
     @ObservationIgnored private var unplacedReads: [String: V3ReadCursor] = [:]
@@ -47,6 +55,8 @@ final class V3Model {
     @ObservationIgnored private var cronWaiters: [CheckedContinuation<Void, Never>] = []
 
     static let typingTimeout: Duration = .seconds(30)
+    /// No answer within this: the request is dropped and the next one goes (the session may have died meanwhile).
+    static let requestTimeout: Duration = .seconds(30)
 
     init() {
         do {
@@ -242,6 +252,7 @@ final class V3Model {
             resendOutbox()
             // A new session starts with nothing on screen, as far as the plugin knows.
             if let foreground { transmit(.foreground(V3Foreground(convId: foreground))) }
+            startSync()
             for conversation in conversations.values where conversation.readPending == true {
                 if let cursor = conversation.read { transmit(.readCursor(cursor)) }
             }
@@ -313,6 +324,7 @@ final class V3Model {
         case .readCursor(let cursor):
             receive(cursor)
         case .error(let error):
+            if error.code == "internal", inFlight != nil { settle() }
             guard let convId = error.convId, V3Event.isId(convId) else { return }
             let id = "error:\(error.messageId ?? V3Event.newId())"
             let text = error.code == "run_failed"
@@ -320,6 +332,21 @@ final class V3Model {
                 : String(localized: "The host couldn’t handle this: \(error.message)")
             append(ChatItem(id: id, kind: .error, text: text, ts: Self.now), to: convId)
             setTyping(convId, false)
+        case .convList(let list):
+            guard let summaries = list.conversations else { return }
+            settle()
+            for summary in summaries {
+                var conversation = conversations[summary.convId]
+                    ?? Conversation(id: summary.convId, createdAt: summary.updatedAt, updatedAt: summary.updatedAt)
+                if conversations[summary.convId] == nil || summary.updatedAt > conversation.updatedAt {
+                    conversation.updatedAt = max(conversation.updatedAt, summary.updatedAt)
+                    store(conversation)
+                }
+                if conversation.rev != summary.rev { enqueue(catchUp(conversation)) }
+            }
+        case .history(let page):
+            settle()
+            history(page)
         case .cronList(let list):
             // A request has neither; only the plugin's answer does.
             guard list.jobs != nil || list.error != nil else { return }
@@ -327,8 +354,71 @@ final class V3Model {
             if let jobs = list.jobs, list.error == nil { crons = jobs }
             cronsError = list.error
             finishCronWait()
-        case .peerInfo, .message, .foreground, .unknown:
+        case .peerInfo, .message, .foreground, .historyRequest, .unknown:
             break
+        }
+    }
+
+    // MARK: History
+
+    /// Opening a conversation: fetch what is newer than the cache, first.
+    func open(_ convId: String) {
+        guard V3Event.isId(convId), let conversation = conversations[convId] else { return }
+        enqueue(catchUp(conversation), first: true)
+    }
+
+    /// Scrolled to the top: the page before the oldest cached item.
+    func loadOlder(_ convId: String) {
+        guard let conversation = conversations[convId], conversation.complete != true, !loadingOlder.contains(convId) else { return }
+        guard let oldest = conversation.oldestSeq else { return enqueue(catchUp(conversation), first: true) }
+        loadingOlder.insert(convId)
+        enqueue(.historyRequest(V3HistoryRequest(convId: convId, before: oldest)), first: true)
+    }
+
+    private func catchUp(_ conversation: Conversation) -> V3Event {
+        .historyRequest(V3HistoryRequest(convId: conversation.id, after: conversation.newestSeq))
+    }
+
+    /// A new session: whatever was queued or in flight on the old one is asked again from the top.
+    private func startSync() {
+        requests = [.convList(V3ConvList())]
+        loadingOlder = []
+        settle()
+    }
+
+    private func enqueue(_ request: V3Event, first: Bool = false) {
+        guard request != inFlight else { return }
+        requests.removeAll { $0 == request }
+        if first { requests.insert(request, at: 0) } else { requests.append(request) }
+        pump()
+    }
+
+    /// The answer (or the timeout) for the request in flight: the next one may go.
+    private func settle() {
+        inFlight = nil
+        inFlightTimer?.cancel()
+        inFlightTimer = nil
+        pump()
+    }
+
+    private func pump() {
+        guard inFlight == nil, state == .ready, let connection, !requests.isEmpty else { return }
+        let request = requests.removeFirst()
+        inFlight = request
+        inFlightTimer = Task { [weak self] in
+            try? await Task.sleep(for: Self.requestTimeout)
+            guard !Task.isCancelled, let self, self.inFlight == request else { return }
+            if case .historyRequest(let r) = request { self.loadingOlder.remove(r.convId) }
+            self.settle()
+        }
+        Task {
+            // Not on the socket: the next session starts the sync again.
+            let sent = await connection.send(request)
+            if !sent, inFlight == request {
+                inFlight = nil
+                inFlightTimer?.cancel()
+                if case .historyRequest(let r) = request { loadingOlder.remove(r.convId) }
+            }
         }
     }
 
@@ -344,6 +434,31 @@ final class V3Model {
                 self?.finishCronWait()
             }
         }
+    }
+
+    private func history(_ page: V3History) {
+        guard V3Event.isId(page.convId) else { return }
+        let now = Self.now
+        var conversation = conversations[page.convId] ?? Conversation(id: page.convId, createdAt: now, updatedAt: 0)
+        conversation.merge(page.items.map(ChatItem.init))
+        let seqs = page.items.map(\.seq)
+        if let low = seqs.min(), page.after == nil { conversation.oldestSeq = min(conversation.oldestSeq ?? low, low) }
+        if let high = seqs.max(), page.before == nil { conversation.newestSeq = max(conversation.newestSeq ?? high, high) }
+        if page.before != nil || page.after == nil {
+            // A newest page says it afresh: one fetched before the session existed was empty and "complete".
+            conversation.complete = !page.more
+            loadingOlder.remove(page.convId)
+        }
+        if page.before == nil {
+            // A forward page with more behind it: keep going, ahead of the other conversations.
+            if page.after != nil && page.more {
+                enqueue(.historyRequest(V3HistoryRequest(convId: page.convId, after: conversation.newestSeq)), first: true)
+            } else {
+                conversation.rev = page.rev
+            }
+        }
+        if conversation.createdAt > (conversation.items.first?.ts ?? .max) { conversation.createdAt = conversation.items[0].ts }
+        store(conversation)
     }
 
     private func finishCronWait() {

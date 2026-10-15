@@ -123,7 +123,7 @@ Every box's plaintext is one UTF-8 JSON object:
 - **Ids**: `convId` and `messageId` are lowercase UUIDs (`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`; `V3Event.newId()`, `isId`). OpenClaw lowercases session keys, and a conversation's session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`. A known kind with a malformed id is treated as unknown.
 - Times are epoch milliseconds (integers).
 
-Names later issues add, so nothing else takes them: `conv_list`, `history`, `conv_patch`, `read_cursor`, attachment kinds and `cron_list`.
+Names later issues add, so nothing else takes them: `conv_patch`, `read_cursor`, attachment kinds and `cron_list`.
 
 ### Kinds
 
@@ -137,6 +137,8 @@ Names later issues add, so nothing else takes them: `conv_list`, `history`, `con
 | `reply` | plugin → clients | `convId`, `messageId` (made by the plugin), `text`, `ts` |
 | `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`? |
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
+| `conv_list` | client → plugin, then plugin → that client | asked with `{}`; answered with `conversations`: [`convId`, `updatedAt`, `rev`] |
+| `history` | client → plugin, then plugin → that client | asked with `convId`, `before`?, `after`?; answered with those, `items`, `more`, `rev` |
 | `read_cursor` | both | `convId`, `messageId` (the last reply read), `ts` (that reply's `ts`), `unread` (bool) |
 | `foreground` | client → plugin | `convId`? (the conversation on screen with the app active; absent or null: none). See [Push](#push) |
 | `cron_list` | client → plugin, then plugin → that client | request: `{}`; answer: `jobs` (array of [jobs](#cron_list)), or `jobs: []` and `error` |
@@ -148,6 +150,28 @@ Each side sends its own as its first box and sends nothing else until it has the
 #### `tool`
 
 One tool call of an agent run, for a collapsed row under the message it answers. `callId` is OpenClaw's tool call id (any string up to 128 characters, not a UUID); every update of one call carries the same one, and the last `status` wins: `running` when the call starts, then `done` or `failed`. `name` is the tool's name as the agent calls it (`exec`, `web_search`). Arguments and results stay in the transcript. A `tool` with another `status` value is treated as unknown.
+
+#### History: `conv_list` and `history`
+
+The Gateway transcript is the source of truth (#415); a client caches what it fetched (one file per conversation) and asks again. Both kinds are requests the plugin answers to the asking device's session only: every host frame still reaches every device socket, but a page is sealed once, for the device that wants it. A client keeps one request in flight and sends the next when the answer (or an `error`, or 30 seconds) arrives, so pages reach the relay paced, far under its window.
+
+- `conv_list` lists the owner's Yorozu conversations of the configured agent: sessions keyed `agent:<agent>:yorozu:direct:owner:thread:<convId>`, newest first, at most 2000. Other channels' sessions are not listed. `updatedAt` is the session's, `rev` the transcript's newest event seq: a client whose last page that reached the newest item carried this `rev` has nothing to fetch.
+- `history` returns one page of one conversation, oldest first. `before: n`: the newest items with a seq below `n` (scrolling up). `after: n`: the oldest items with a seq above `n` (catching up). Neither: the newest page. `more` says another page lies further the same way. A page holds at most 60 items and about 192 KiB, and never splits the items of one transcript event. A conversation the transcript does not have yet answers `items: []`, `more: false`, `rev: 0`.
+
+Items (`kind`, `id`, `seq`, `ts`, then by kind):
+
+| `kind` | Fields | From |
+|---|---|---|
+| `user` | `text` | a user message; `id` is the client's `messageId` (kept in the transcript's transport metadata) |
+| `agent` | `text` | assistant text, trimmed and chunked by `textChunkLimit` as live replies are; one item per chunk. Cron deliveries are mirrored into the transcript as assistant messages and come out as `agent` too |
+| `tools` | `tools`: [`callId`, `name`, `status`] | one row per run, at the run's first tool call; `id` is the run's user `messageId`, as for live `tool` events. `running` only while the run is the transcript's last |
+| `reset` | | a `/new` or `/reset` boundary: the session started over (same session id, a reset event in the transcript) |
+
+- `seq` is the transcript event's; items of one event share it. `ts` is epoch ms, Gateway clock. An item text is cut at 60,000 characters.
+- An agent chunk's `id` is the transcript message's own id for the first chunk and derived from it (`sha256` as a UUID) for the others. A live `reply` in a turn gets the same ids (the plugin looks up the assistant message core wrote before delivering), so a device that saw it live holds one item after a page. Where that lookup fails (cron deliveries), the client matches a live reply to a page item by its trimmed text.
+- An item kind the client does not know is skipped.
+
+**Client order.** Items from pages carry their `seq`; live items have none until a page holds them. A page item replaces the item with its id (or a live agent item of the same text placed after the items known to be older) and goes after the last item with a lower seq and before the first with a higher seq or a live one with a later timestamp. Live items keep arrival order between those. A client syncs on every new session: `conv_list`, then `after: <newest cached seq>` (or the newest page) for each conversation whose `rev` changed; opening a conversation does the same for it first; reaching the top asks `before: <oldest cached seq>` until `more` is false. A freshly paired device so lists every conversation and loads any of its history.
 
 #### `read_cursor`
 
@@ -182,7 +206,7 @@ The wording lives in the plugin so every client says the same thing without a cr
 | `update_required` | No common protocol version |
 | `bad_request` | A kind the receiver knows but cannot act on (for example a `message` for a conversation it refuses) |
 | `run_failed` | The agent run for `messageId` failed; `message` says why |
-| `internal` | Anything else |
+| `internal` | Anything else, also a `conv_list` or `history` the plugin could not read |
 
 A receiver treats an unknown code like `internal`.
 

@@ -2,7 +2,8 @@ import SwiftUI
 import YorozuWire
 
 /// One conversation: the user's bubbles with their marks, each reply chunk as its own card (replies arrive whole,
-/// chunked by length), tool calls collapsed under the message whose run made them, the typing indicator, the composer.
+/// chunked by length), tool calls collapsed under the message whose run made them, `/new` boundaries, the typing
+/// indicator, the composer. Opening it fetches what is newer than the cache; reaching the top loads the page before.
 struct V3ChatView: View {
     let model: V3Model
     let convId: String
@@ -12,10 +13,18 @@ struct V3ChatView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        let items = model.conversations[convId]?.items ?? []
+        let conversation = model.conversations[convId]
+        let items = conversation?.items ?? []
         let typing = model.typing.contains(convId)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
+                if let conversation, conversation.complete != true {
+                    // In view at the top: the older page. Again whenever one arrived and the top is still in view.
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .opacity(model.loadingOlder.contains(convId) ? 1 : 0)
+                        .task(id: conversation.oldestSeq) { model.loadOlder(convId) }
+                }
                 ForEach(items) { item in
                     V3ItemRow(item: item).readableRow()
                 }
@@ -27,7 +36,10 @@ struct V3ChatView: View {
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
-        .onChange(of: items.count) { position.scrollTo(edge: .bottom) }
+        // An older page grows the content upward: what is on screen stays put.
+        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        .onChange(of: items.last?.id) { position.scrollTo(edge: .bottom) }
+        .task(id: model.state == .ready) { model.open(convId) }
         .onChange(of: typing) { position.scrollTo(edge: .bottom) }
         // Opening reads it on every device (#429), Mark as Unread included; a reply that arrives while it is on screen
         // only moves the cursor, and so does coming back to the foreground with it open.
@@ -81,7 +93,18 @@ struct V3ItemRow: View {
         case .agent: agent
         case .error: error
         case .tools: ToolsRow(calls: item.tools ?? [])
+        case .reset: reset
         }
+    }
+
+    /// `/new`: the session started over here; what is above is no longer in the agent's context.
+    private var reset: some View {
+        HStack(spacing: LayoutMetrics.inner) {
+            VStack { Divider() }
+            Text("New session").font(.caption).foregroundStyle(.secondary).lineLimit(1).layoutPriority(1)
+            VStack { Divider() }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private var user: some View {

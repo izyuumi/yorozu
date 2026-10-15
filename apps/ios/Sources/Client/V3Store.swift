@@ -2,7 +2,7 @@ import Foundation
 import YorozuWire
 
 // Wire v3's local state (#425): the pairing in the Keychain, and a cache of conversations on disk. The Gateway
-// transcript is the source of truth (#415); history backfill (#427) fills this cache from it.
+// transcript is the source of truth (#415); `history` pages (#427) fill this cache from it.
 
 /// One pairing with the OpenClaw plugin, in one Keychain item (`Keychain`: this device only, never synced). Its own
 /// account, apart from v2's `pairings-v2`: every device pairs again for v3.
@@ -33,8 +33,17 @@ struct Conversation: Codable, Identifiable, Equatable {
     var createdAt: Int64
     /// The latest item's arrival: the list's order.
     var updatedAt: Int64
-    /// In arrival order on this device, so a reply never sorts above the message it answers across two clocks.
+    /// Transcript order (see `merge`): items from `history` carry their transcript `seq`; live ones are appended
+    /// in arrival order, so a reply never sorts above the message it answers across two clocks, until a page holding
+    /// them gives them their `seq`.
     var items: [ChatItem] = []
+    /// The seq range of the transcript this cache holds without gaps; nil before the first page.
+    var oldestSeq: Int?
+    var newestSeq: Int?
+    /// The oldest page came back without `more`: nothing older to load.
+    var complete: Bool?
+    /// The transcript `rev` of the last page that reached the newest item: equal to `conv_list`'s, nothing to fetch.
+    var rev: Int?
     /// The read state (#429): the plugin's, or what this device set and the plugin has not answered yet.
     var read: V3ReadCursor?
     /// `read` was set here and the plugin has not sent it back: sent again on the next session.
@@ -55,10 +64,35 @@ struct Conversation: Codable, Identifiable, Equatable {
     }
 
     var lastText: String { items.last { $0.kind == .user || $0.kind == .agent }?.text ?? "" }
+
+    /// Places transcript items. An item already here (same id, or a live reply of the same text that has no seq yet)
+    /// is replaced. Each goes after the last item known to be older (lower seq) and before the first one known or
+    /// likely to be newer: a higher seq, or a live item with a later timestamp.
+    mutating func merge(_ incoming: [ChatItem]) {
+        for var item in incoming {
+            guard let seq = item.seq else { continue }
+            let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            func lowerBound() -> Int { items.lastIndex { ($0.seq ?? .max) < seq }.map { $0 + 1 } ?? 0 }
+            // A live reply is looked for only after the items known to be older, so a chunk repeated across replies
+            // ("OK") is matched to its own reply, not to the first one of that text.
+            let from = lowerBound()
+            if let i = items.firstIndex(where: { $0.id == item.id }) ?? (item.kind == .agent ? items[from...].firstIndex(where: {
+                $0.seq == nil && $0.kind == .agent && $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == text
+            }) : nil) {
+                let old = items.remove(at: i)
+                if item.kind == .user { item.status = max(old.status ?? .read, .read) }
+                if item.kind == .tools { item.tools = ToolCall.union(old.tools ?? [], item.tools ?? []) }
+            }
+            let lower = lowerBound()
+            let at = items[lower...].firstIndex { other in other.seq.map { $0 > seq } ?? (other.ts > item.ts) } ?? items.endIndex
+            items.insert(item, at: at)
+        }
+        if let last = items.last?.ts { updatedAt = max(updatedAt, last) }
+    }
 }
 
 struct ChatItem: Codable, Identifiable, Equatable {
-    enum Kind: String, Codable { case user, agent, error, tools }
+    enum Kind: String, Codable { case user, agent, error, tools, reset }
 
     /// The messageId; `tools:<messageId>` and `error:<messageId>` for the rows about a user message's run.
     let id: String
@@ -70,6 +104,25 @@ struct ChatItem: Codable, Identifiable, Equatable {
     var status: SendStatus?
     /// `tools`: the run's calls, in the order they started.
     var tools: [ToolCall]?
+    /// The transcript seq, for items a `history` page brought; nil for live ones not confirmed by a page yet.
+    var seq: Int?
+}
+
+extension ChatItem {
+    /// A transcript item from a `history` page. A run's `tools` row has the live row's id, `tools:<messageId>`.
+    init(_ item: V3HistoryItem) {
+        switch item.kind {
+        case .user:
+            self.init(id: item.id, kind: .user, text: item.text ?? "", ts: item.ts, status: .read, seq: item.seq)
+        case .agent:
+            self.init(id: item.id, kind: .agent, text: item.text ?? "", ts: item.ts, seq: item.seq)
+        case .tools:
+            self.init(id: "tools:\(item.id)", kind: .tools, text: "", ts: item.ts,
+                tools: (item.tools ?? []).map { ToolCall(id: $0.callId, name: $0.name, status: $0.status) }, seq: item.seq)
+        case .reset:
+            self.init(id: "reset:\(item.id)", kind: .reset, text: "", ts: item.ts, seq: item.seq)
+        }
+    }
 }
 
 /// ✓ sent = relay `accepted`, ✓✓ delivered = plugin `delivered`, read = `run_started` (#415).
@@ -89,6 +142,19 @@ struct ToolCall: Codable, Equatable, Identifiable {
     let id: String
     var name: String
     var status: V3Tool.Status
+
+    /// A page may split a run's calls, and live updates may be newer than a page: a finished status beats `running`.
+    static func union(_ a: [ToolCall], _ b: [ToolCall]) -> [ToolCall] {
+        var calls = a
+        for call in b {
+            if let i = calls.firstIndex(where: { $0.id == call.id }) {
+                if call.status != .running { calls[i].status = call.status }
+            } else {
+                calls.append(call)
+            }
+        }
+        return calls
+    }
 }
 
 /// One JSON file per conversation, under Data Protection `complete` on iOS: unreadable while the device is locked.
