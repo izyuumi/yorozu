@@ -21,3 +21,8 @@ apps/ios/Derived/
 /TOOLS.md
 /MEMORY.md
 /memory/
+
+# apps/relay (TypeScript): installed packages, compiler output, local Cloudflare state.
+node_modules/
+apps/relay/dist/
+.wrangler/
