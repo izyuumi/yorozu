@@ -37,11 +37,22 @@ final class V3Model {
     /// again on every session, so they need no disk.
     @ObservationIgnored private var unplacedReads: [String: V3ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
+    /// The plugin's `peer_info` on the live session: its capabilities and attachment limit.
+    private(set) var hostInfo: V3PeerInfo?
+    /// Attachment transfers over the live session (#430).
+    let transfers = V3Transfers()
+    @ObservationIgnored private var outboxPumping = false
+    @ObservationIgnored private var outboxAgain = false
+    @ObservationIgnored private var outboxResend = false
     @ObservationIgnored private var cronWaiters: [CheckedContinuation<Void, Never>] = []
 
     static let typingTimeout: Duration = .seconds(30)
 
     init() {
+        transfers.send = { [weak self] event in
+            guard let connection = self?.connection else { return false }
+            return await connection.send(event)
+        }
         do {
             pairing = try V3Pairing.load()
         } catch {
@@ -51,6 +62,7 @@ final class V3Model {
         for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
         updateBadge()
         connect()
+        takeShares()
     }
 
     /// Paired, or pairing for the first time.
@@ -83,6 +95,7 @@ final class V3Model {
         pendingPairing = nil
         disconnect()
         cache.wipe()
+        AttachmentFiles.wipe()
         conversations = [:]
         let new = V3Pairing(pairing: payload, identity: .generate())
         do {
@@ -100,6 +113,8 @@ final class V3Model {
         disconnect()
         try? V3Pairing.remove()
         cache.wipe()
+        AttachmentFiles.wipe()
+        ShareInbox.clear()
         pairing = nil
         conversations = [:]
         typing = []
@@ -114,7 +129,7 @@ final class V3Model {
     private func connect() {
         guard let pairing else { return }
         let local = V3PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
-            name: DeviceModel.name)
+            name: DeviceModel.name, capabilities: [V3Attachment.capability])
         guard let connection = try? V3Connection(pairing: pairing.pairing, identity: pairing.identity,
             relayKnows: pairing.relayKnows, local: local) else {
             return failPairing(String(localized: "This pairing code can’t be used."))
@@ -137,6 +152,7 @@ final class V3Model {
 
     /// Back in the foreground: dial now. iOS may have left the socket half open.
     func resume() {
+        takeShares()
         guard let connection else { return connect() }
         Task { await connection.reconnect() }
     }
@@ -151,6 +167,7 @@ final class V3Model {
         switch update {
         case .state(let new):
             state = new
+            if new != .ready { transfers.sessionLost() }
             switch new {
             case .pairingFailed:
                 if !paired { failPairing(String(localized: "The host refused this pairing code. It may have expired or been used. Run `openclaw yorozu pair` again.")) }
@@ -161,9 +178,13 @@ final class V3Model {
             }
         case .relayJoined:
             updatePairing { $0.relayKnows = true; $0.pairing.token = "" }
-        case .sessionOpen:
+        case .sessionOpen(let host):
+            hostInfo = host
             if !paired { updatePairing { $0.paired = true; $0.pairedAt = Date(); $0.pairing.secret = nil } }
-            resendOutbox()
+            publishShareDirectory()
+            takeShares()
+            pumpOutbox(resend: true)
+            transfers.resumeDownloads()
             for conversation in conversations.values where conversation.readPending == true {
                 if let cursor = conversation.read { transmit(.readCursor(cursor)) }
             }
@@ -189,28 +210,78 @@ final class V3Model {
     // MARK: Messages
 
     /// A new message in `convId`; a conversation that does not exist yet starts with it ("+" makes the id).
-    func send(_ text: String, in convId: String) {
+    /// `attachments` are already in `AttachmentFiles` (`AttachmentStaging`); they upload before the message goes.
+    func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, V3Event.isId(convId) else { return }
-        let item = ChatItem(id: V3Event.newId(), kind: .user, text: text, ts: Self.now, status: .queued)
+        guard !text.isEmpty || !attachments.isEmpty, V3Event.isId(convId) else { return }
+        let item = ChatItem(id: V3Event.newId(), kind: .user, text: text, ts: Self.now, status: .queued,
+            attachments: attachments.isEmpty ? nil : attachments)
         append(item, to: convId)
-        transmit(item, in: convId)
+        pumpOutbox(resend: false)
     }
 
-    /// Every user message the plugin has not confirmed, oldest first, on the session that just opened.
-    private func resendOutbox() {
-        let pending = conversations.values.flatMap { conversation in
-            conversation.items.filter { $0.kind == .user && ($0.status ?? .read) < .delivered }.map { (conversation.id, $0) }
-        }
-        for (convId, item) in pending.sorted(by: { $0.1.ts < $1.1.ts }) { transmit(item, in: convId) }
-    }
+    /// The host takes attachments: it said so, or has not said yet (an old plugin's `peer_info` lacks the capability).
+    var attachmentsAvailable: Bool { hostInfo.map { $0.capabilities.contains(V3Attachment.capability) } ?? true }
+    /// The host's attachment limit (`mediaMaxMb`).
+    var mediaMaxBytes: Int { hostInfo?.mediaMaxBytes ?? V3Attachment.defaultMaxBytes }
 
-    private func transmit(_ item: ChatItem, in convId: String) {
-        guard let connection else { return }
-        let message = V3Message(convId: convId, messageId: item.id, text: item.text)
+    /// Sends the outbox in order on the live session: each message's files upload first, then the message. A new
+    /// session (`resend`) also sends again what went out without `delivered`; otherwise only what has not gone yet.
+    /// One pass at a time; a pass cut by a lost session ends, and the next session's pass starts its upload over.
+    private func pumpOutbox(resend: Bool) {
+        if resend { outboxResend = true }
+        outboxAgain = true
+        guard !outboxPumping else { return }
+        outboxPumping = true
         Task {
-            if await connection.send(message) { self.mark(item.id, .sending, in: convId) }
+            while outboxAgain {
+                outboxAgain = false
+                let all = outboxResend
+                outboxResend = false
+                guard await sendOutbox(all: all) else { break }
+            }
+            outboxPumping = false
         }
+    }
+
+    /// False when the session went mid-way.
+    private func sendOutbox(all: Bool) async -> Bool {
+        let pending = conversations.values.flatMap { conversation in
+            conversation.items.filter { item in
+                guard item.kind == .user, let status = item.status, all ? status < .delivered : status == .queued else { return false }
+                return !item.text.isEmpty || item.attachments?.contains { $0.failure == nil } == true
+            }.map { (conversation.id, $0) }
+        }
+        for (convId, queued) in pending.sorted(by: { $0.1.ts < $1.1.ts }) {
+            guard let connection, state == .ready else { return false }
+            for attachment in queued.attachments ?? [] where attachment.uploaded != true && attachment.failure == nil {
+                switch await transfers.upload(attachment) {
+                case .stored: updateAttachment(attachment.id, of: queued.id, in: convId) { $0.uploaded = true }
+                case .refused(let why): updateAttachment(attachment.id, of: queued.id, in: convId) { $0.failure = why }
+                case .interrupted: return false
+                }
+            }
+            // As stored now: uploads changed it.
+            guard let item = conversations[convId]?.items.first(where: { $0.id == queued.id }) else { continue }
+            let files = (item.attachments ?? []).filter { $0.uploaded == true && $0.failure == nil }.map(\.wire)
+            guard !item.text.isEmpty || !files.isEmpty else { continue }
+            let message = V3Message(convId: convId, messageId: item.id, text: item.text, attachments: files.isEmpty ? nil : files)
+            guard await connection.send(message) else { return false }
+            mark(item.id, .sending, in: convId)
+        }
+        return true
+    }
+
+    private func updateAttachment(_ id: String, of itemId: String, in convId: String, _ change: (inout ChatAttachment) -> Void) {
+        guard var conversation = conversations[convId], let index = conversation.items.firstIndex(where: { $0.id == itemId }),
+              let file = conversation.items[index].attachments?.firstIndex(where: { $0.id == id }) else { return }
+        change(&conversation.items[index].attachments![file])
+        store(conversation)
+    }
+
+    /// Asks the plugin for a reply's file (an image on screen, a file tapped); no-op once it is here.
+    func fetch(_ attachment: ChatAttachment) {
+        transfers.fetch(attachment)
     }
 
     private func receive(_ event: V3Event) {
@@ -223,11 +294,16 @@ final class V3Model {
         case .typing(let t):
             setTyping(t.convId, t.active)
         case .reply(let reply):
-            append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts), to: reply.convId)
+            let files = reply.attachments?.map { ChatAttachment(id: $0.id, name: $0.name, mime: $0.mime, size: $0.size) }
+            append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files), to: reply.convId)
+        case .uploadAck, .chunk:
+            transfers.receive(event)
         case .tool(let tool):
             self.tool(tool)
         case .readCursor(let cursor):
             receive(cursor)
+        case .error(let error) where error.attachmentId != nil:
+            transfers.receive(event)
         case .error(let error):
             guard let convId = error.convId, V3Event.isId(convId) else { return }
             let id = "error:\(error.messageId ?? V3Event.newId())"
@@ -243,7 +319,7 @@ final class V3Model {
             if let jobs = list.jobs, list.error == nil { crons = jobs }
             cronsError = list.error
             finishCronWait()
-        case .peerInfo, .message, .unknown:
+        case .peerInfo, .message, .upload, .download, .unknown:
             break
         }
     }
@@ -313,6 +389,38 @@ final class V3Model {
         conversations[conversation.id] = conversation
         cache.save(conversation)
         updateBadge()
+        publishShareDirectory()
+    }
+
+    // MARK: Share extension (#430)
+
+    /// What the share extension left in the App Group, oldest first: each share becomes a message in the conversation
+    /// it names (a new one when it names none or one this device no longer has), files uploading through the outbox.
+    func takeShares() {
+        guard paired else { return }
+        for (share, folder) in ShareInbox.pending() {
+            let convId = share.convId.flatMap { V3Event.isId($0) ? $0 : nil } ?? V3Event.newId()
+            var files: [ChatAttachment] = []
+            if let name = share.fileName {
+                do {
+                    files.append(try AttachmentStaging.stage(file: folder.appending(path: name), limit: mediaMaxBytes))
+                } catch {
+                    append(ChatItem(id: "error:\(V3Event.newId())", kind: .error, text: error.localizedDescription, ts: Self.now), to: convId)
+                }
+            }
+            send(share.text, attachments: files, in: convId)
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    /// The extension's picker: the newest conversations, and the host's limit.
+    private func publishShareDirectory() {
+        guard paired else { return }
+        let rows = list.prefix(30).map { conversation in
+            let title = conversation.preview.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+            return ShareInbox.Conversation(id: conversation.id, title: String(title.prefix(80)))
+        }
+        ShareInbox.publish(.init(conversations: Array(rows), maxBytes: mediaMaxBytes))
     }
 
     // MARK: Read marks (#429)

@@ -15,12 +15,36 @@ export type PeerInfo = {
   name?: string;
   /** Optional features this side speaks; a later kind is sent only to a peer that lists its capability. */
   capabilities: string[];
+  /** Plugin: the largest attachment it takes or sends, in bytes (`mediaMaxMb`). */
+  mediaMaxBytes?: number;
 };
-export type Message = { convId: string; messageId: string; text: string };
+/** Peers that list this in `capabilities` speak the attachment kinds and fields (#430). */
+export const ATTACHMENTS = "attachments";
+/** Raw bytes per `upload` or `chunk`: a sealed box of one stays far under the relay's 1 MiB frame. */
+export const CHUNK_BYTES = 160 * 1024;
+/** A file in a `message` or `reply`; `id` (a lowercase UUID, made by the side that has the bytes) names its transfer. */
+export type Attachment = { id: string; name: string; mime: string; size: number };
+export type Message = { convId: string; messageId: string; text: string; attachments?: Attachment[] };
 export type MessageRef = { convId: string; messageId: string };
 export type Typing = { convId: string; active: boolean };
-export type Reply = { convId: string; messageId: string; text: string; ts: number };
-export type ErrorInfo = { code: string; message: string; convId?: string; messageId?: string };
+export type Reply = { convId: string; messageId: string; text: string; ts: number; attachments?: Attachment[] };
+export type ErrorInfo = { code: string; message: string; convId?: string; messageId?: string; attachmentId?: string };
+/** Client -> plugin: chunk `index` of `count` of a file the client sends; `data` is base64. */
+export type Upload = {
+  attachmentId: string;
+  name: string;
+  mime: string;
+  size: number;
+  index: number;
+  count: number;
+  data: string;
+};
+/** Plugin -> the uploading client: chunk `index` arrived; `done` once the whole file is stored. */
+export type UploadAck = { attachmentId: string; index: number; done: boolean };
+/** Client -> plugin: send chunk `index` of an attachment. */
+export type Download = { attachmentId: string; index: number };
+/** Plugin -> the requesting client: chunk `index` of `count`; `data` is base64. */
+export type Chunk = { attachmentId: string; index: number; count: number; data: string };
 /** One tool call of the run answering `messageId`, for a collapsed row; `callId` groups its updates. */
 export type Tool = { convId: string; messageId: string; callId: string; name: string; status: ToolStatus };
 export type ToolStatus = "running" | "done" | "failed";
@@ -59,7 +83,11 @@ export type Event =
   | { kind: "error"; data: ErrorInfo }
   | { kind: "tool"; data: Tool }
   | { kind: "read_cursor"; data: ReadCursor }
-  | { kind: "cron_list"; data: CronList };
+  | { kind: "cron_list"; data: CronList }
+  | { kind: "upload"; data: Upload }
+  | { kind: "upload_ack"; data: UploadAck }
+  | { kind: "download"; data: Download }
+  | { kind: "chunk"; data: Chunk };
 
 export type Received = Event | { kind: "unknown"; name: string };
 
@@ -80,6 +108,15 @@ const str = (v: unknown): v is string => typeof v === "string";
 const optStr = (v: unknown): boolean => v === undefined || typeof v === "string";
 const int = (v: unknown): v is number => Number.isSafeInteger(v);
 const ref = (d: Fields): boolean => isId(d.convId) && isId(d.messageId);
+const nat = (v: unknown): v is number => int(v) && v >= 0;
+const label = (v: unknown, max: number): boolean => str(v) && v.length > 0 && v.length <= max;
+const attachment = (a: unknown): boolean => {
+  if (typeof a !== "object" || a === null) return false;
+  const d = a as Fields;
+  return isId(d.id) && label(d.name, 255) && label(d.mime, 255) && nat(d.size);
+};
+const attachments = (v: unknown): boolean => v === undefined || (Array.isArray(v) && v.length <= 32 && v.every(attachment));
+const part = (d: Fields): boolean => isId(d.attachmentId) && nat(d.index);
 
 const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   peer_info: (d) =>
@@ -88,17 +125,24 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     str(d.app) &&
     optStr(d.name) &&
     Array.isArray(d.capabilities) &&
-    d.capabilities.every(str),
-  message: (d) => ref(d) && str(d.text),
+    d.capabilities.every(str) &&
+    (d.mediaMaxBytes === undefined || nat(d.mediaMaxBytes)),
+  message: (d) => ref(d) && str(d.text) && attachments(d.attachments),
   delivered: ref,
   run_started: ref,
   typing: (d) => isId(d.convId) && typeof d.active === "boolean",
-  reply: (d) => ref(d) && str(d.text) && int(d.ts),
-  error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId),
+  reply: (d) => ref(d) && str(d.text) && int(d.ts) && attachments(d.attachments),
+  error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId) && optStr(d.attachmentId),
   tool: (d) =>
     ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),
   read_cursor: (d) => ref(d) && int(d.ts) && typeof d.unread === "boolean",
   cron_list: (d) => (d.jobs === undefined || Array.isArray(d.jobs)) && optStr(d.error),
+  upload: (d) =>
+    part(d) && label(d.name, 255) && label(d.mime, 255) && nat(d.size) && int(d.count) && d.count >= 1 &&
+    (d.index as number) < d.count && str(d.data),
+  upload_ack: (d) => part(d) && typeof d.done === "boolean",
+  download: part,
+  chunk: (d) => part(d) && int(d.count) && d.count >= 1 && (d.index as number) < d.count && str(d.data),
 };
 
 /** Null only for bytes that are not an envelope at all; extra fields are kept and ignored. */

@@ -51,10 +51,10 @@ struct Conversation: Codable, Identifiable, Equatable {
 
     /// The list's label until titles land (#428): the first message's text.
     var preview: String {
-        (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.text ?? ""
+        (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.summary ?? ""
     }
 
-    var lastText: String { items.last { $0.kind == .user || $0.kind == .agent }?.text ?? "" }
+    var lastText: String { items.last { $0.kind == .user || $0.kind == .agent }?.summary ?? "" }
 }
 
 struct ChatItem: Codable, Identifiable, Equatable {
@@ -70,6 +70,28 @@ struct ChatItem: Codable, Identifiable, Equatable {
     var status: SendStatus?
     /// `tools`: the run's calls, in the order they started.
     var tools: [ToolCall]?
+    /// A user message's files (uploaded before the message goes) or a reply's (downloaded on request), #430.
+    var attachments: [ChatAttachment]?
+
+    /// The text, or the first file's name for a message that is only files.
+    var summary: String {
+        text.isEmpty ? attachments?.first.map { "📎 \($0.name)" } ?? "" : text
+    }
+}
+
+/// One file of a message or reply. Its bytes, once here, are in `AttachmentFiles` under `id`.
+struct ChatAttachment: Codable, Equatable, Identifiable {
+    let id: String
+    var name: String
+    var mime: String
+    var size: Int
+    /// A user message's file: the plugin stored it (`upload_ack {done}`), so the message may name it.
+    var uploaded: Bool?
+    /// Why it was not sent (the plugin refused it); such a file is left out of its message.
+    var failure: String?
+
+    var wire: V3Attachment { V3Attachment(id: id, name: name, mime: mime, size: size) }
+    var isImage: Bool { mime.hasPrefix("image/") }
 }
 
 /// ✓ sent = relay `accepted`, ✓✓ delivered = plugin `delivered`, read = `run_started` (#415).

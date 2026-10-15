@@ -8,7 +8,15 @@ import {
 } from "openclaw/plugin-sdk/channel-core";
 import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
-import { DEFAULT_CHUNK_LIMIT, handleMessage, PEER, resolveOwnerRoute, sendConversationText } from "./conversation.js";
+import { mediaMaxBytes } from "./attachments.js";
+import {
+  DEFAULT_CHUNK_LIMIT,
+  handleMessage,
+  PEER,
+  resolveOwnerRoute,
+  sendConversationMedia,
+  sendConversationText,
+} from "./conversation.js";
 import { listCronJobs } from "./cron.js";
 import { loadHostKeys } from "./keys.js";
 import { runRelayHost } from "./relay.js";
@@ -50,6 +58,7 @@ function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
   const keys = await loadHostKeys();
+  const maxBytes = mediaMaxBytes(ctx.cfg, account.accountId);
   ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
   try {
@@ -58,8 +67,12 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       keys,
       signal: abortSignal,
       log: ctx.log,
+      mediaMaxBytes: maxBytes,
       onMessage: (message) =>
-        void handleMessage({ cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent }, message),
+        void handleMessage(
+          { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent, mediaMaxBytes: maxBytes },
+          message,
+        ),
       onRequest: async (event) => {
         if (event.kind !== "cron_list") return undefined;
         try {
@@ -102,7 +115,7 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         return { enabled, configured };
       },
     },
-    capabilities: { chatTypes: ["direct"] },
+    capabilities: { chatTypes: ["direct"], media: true },
     gateway: { startAccount },
     messaging: {
       normalizeTarget: () => PEER,
@@ -131,5 +144,16 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     chunkerMode: "markdown",
     textChunkLimit: DEFAULT_CHUNK_LIMIT,
     sendText: async ({ threadId, text }) => ({ channel: CHANNEL_ID, messageId: sendConversationText({ threadId, text }) }),
+    // Core calls this once per file, the caption on the first; a turn's own grouped media goes out in `deliver`.
+    sendMedia: async ({ cfg, accountId, threadId, text, mediaUrl, mediaAccess, mediaLocalRoots, mediaReadFile }) => ({
+      channel: CHANNEL_ID,
+      messageId: await sendConversationMedia({
+        threadId,
+        text,
+        mediaUrl,
+        maxBytes: mediaMaxBytes(cfg, accountId),
+        access: { mediaAccess, localRoots: mediaLocalRoots, readFile: mediaReadFile },
+      }),
+    }),
   },
 });
