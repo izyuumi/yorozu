@@ -1,28 +1,64 @@
 import SwiftUI
 import YorozuWire
 
-/// The paired app's sections: Chats and Crons (#432), a tab bar on iPhone and a sidebar on iPad and Mac.
+/// The paired app's sections, Chats and Crons (#432), in one navigation structure: on iPad and Mac a split view whose
+/// sidebar holds Crons, the conversations and the Archived ones, with the open conversation or the cron jobs beside
+/// it; on iPhone (any compact width) a tab bar with a stack in each tab.
 struct V3HomeView: View {
     enum Section: Hashable { case chats, crons }
 
     let model: V3Model
 
     @State private var section = Section.chats
+    /// The open conversation; the Crons section sets it too.
     @State private var selection: String?
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
 
     var body: some View {
+        Group {
+            #if os(iOS)
+            if sizeClass == .compact { tabs } else { split }
+            #else
+            split
+            #endif
+        }
+        .opensRequestedConversation(model, selection: $selection)
+        // Deleted on another device while open here.
+        .onChange(of: model.deleted) { _, convId in if convId != nil, selection == convId { selection = nil } }
+    }
+
+    private var split: some View {
+        NavigationSplitView {
+            ConversationsView(model: model, selection: $selection, section: $section, showsCrons: true)
+                #if os(macOS)
+                .navigationSplitViewColumnWidth(min: LayoutMetrics.sidebarMinWidth, ideal: LayoutMetrics.sidebarIdealWidth,
+                    max: LayoutMetrics.sidebarMaxWidth)
+                #endif
+        } detail: {
+            if section == .crons {
+                V3CronsView(model: model, open: open)
+            } else if let selection {
+                V3ChatView(model: model, convId: selection).id(selection)
+            } else {
+                ContentUnavailableView("No conversation selected", systemImage: "bubble.left.and.bubble.right")
+            }
+        }
+    }
+
+    private var tabs: some View {
         TabView(selection: $section) {
             Tab(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right", value: Section.chats) {
-                ConversationsView(model: model, selection: $selection)
+                NavigationStack {
+                    ConversationsView(model: model, selection: $selection, section: $section, showsCrons: false)
+                        .navigationDestination(item: $selection) { V3ChatView(model: model, convId: $0).id($0) }
+                }
             }
             Tab(String(localized: "Crons"), systemImage: "clock", value: Section.crons) {
                 NavigationStack { V3CronsView(model: model, open: open) }
             }
         }
-        .tabViewStyle(.sidebarAdaptable)
-        #if os(iOS)
-        .defaultAdaptableTabBarPlacement(.sidebar)
-        #endif
     }
 
     /// Shows a conversation in Chats, with `draft` waiting in its composer.

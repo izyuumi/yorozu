@@ -1,12 +1,18 @@
 import SwiftUI
 import YorozuWire
 
-/// The conversation list beside the open conversation: a sidebar on iPad and Mac, a stack on iPhone (the split view
-/// collapses by itself). "+" opens a new `convId`, which joins the list with its first message.
+/// The conversation list: the sidebar on iPad and Mac, with a Crons row above it, and the Chats tab's root on iPhone.
+/// "+" opens a new `convId`, which joins the list with its first message.
 struct ConversationsView: View {
+    /// What the list selects: a conversation, or the Crons row of the sidebar.
+    private enum Pane: Hashable { case chat(String), crons }
+
     let model: V3Model
-    /// The open conversation; the Crons tab sets it too (#432).
+    /// The open conversation; the Crons section sets it too (#432).
     @Binding var selection: String?
+    @Binding var section: V3HomeView.Section
+    /// The sidebar's Crons row; the iPhone has a Crons tab instead.
+    let showsCrons: Bool
     @State private var showingHost = false
     /// The Archived rows are shown below the list (#428).
     @State private var showingArchived = false
@@ -15,28 +21,29 @@ struct ConversationsView: View {
     @State private var deleting: Conversation?
 
     var body: some View {
-        NavigationSplitView {
-            list
-                #if os(macOS)
-                .navigationSplitViewColumnWidth(min: LayoutMetrics.sidebarMinWidth, ideal: LayoutMetrics.sidebarIdealWidth,
-                    max: LayoutMetrics.sidebarMaxWidth)
-                #endif
-        } detail: {
-            if let selection {
-                V3ChatView(model: model, convId: selection).id(selection)
-            } else {
-                ContentUnavailableView("No conversation selected", systemImage: "bubble.left.and.bubble.right")
+        list.sheet(isPresented: $showingHost) { HostSheet(model: model) }
+    }
+
+    private var pane: Binding<Pane?> {
+        Binding {
+            showsCrons && section == .crons ? .crons : selection.map(Pane.chat)
+        } set: { pane in
+            switch pane {
+            case .crons: section = .crons
+            case .chat(let convId):
+                section = .chats
+                selection = convId
+            case nil:
+                section = .chats
+                selection = nil
             }
         }
-        .sheet(isPresented: $showingHost) { HostSheet(model: model) }
-        .opensRequestedConversation(model, selection: $selection)
-        // Deleted on another device while open here.
-        .onChange(of: model.deleted) { _, convId in if convId != nil, selection == convId { selection = nil } }
     }
 
     private var list: some View {
         let conversations = model.list
-        return List(selection: $selection) {
+        // Only the sidebar selects: a stack's list selects in edit mode alone, so on iPhone each row is a button.
+        return List(selection: showsCrons ? pane : nil) {
             if let problem {
                 Section {
                     Label { Text(problem) } icon: {
@@ -45,8 +52,13 @@ struct ConversationsView: View {
                     Button(String(localized: "Pair Again")) { model.unpair() }
                 }
             }
+            if showsCrons {
+                Label(String(localized: "Crons"), systemImage: "clock").tag(Pane.crons)
+            }
             Section {
                 ForEach(conversations, content: row)
+            } header: {
+                if showsCrons { Text("Chats") }
             }
             let archived = model.archivedList
             if !archived.isEmpty {
@@ -102,7 +114,7 @@ struct ConversationsView: View {
                     .help(String(localized: "Host"))
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button(String(localized: "New Conversation"), systemImage: "plus") { selection = V3Event.newId() }
+                Button(String(localized: "New Conversation"), systemImage: "plus") { pane.wrappedValue = .chat(V3Event.newId()) }
                     .keyboardShortcut("n")
                     .help(String(localized: "New Conversation"))
                     .accessibilityIdentifier("conversations.new")
@@ -120,8 +132,16 @@ struct ConversationsView: View {
             model.setArchived(conversation.id, !archived)
         }
         let delete = { (title: String) in Button(title, systemImage: "trash", role: .destructive) { deleting = conversation } }
-        return ConversationRow(conversation: conversation, typing: model.typing.contains(conversation.id))
-            .tag(conversation.id)
+        let label = ConversationRow(conversation: conversation, typing: model.typing.contains(conversation.id))
+        return Group {
+            if showsCrons {
+                label
+            } else {
+                Button { selection = conversation.id } label: { label }
+                    .foregroundStyle(.primary)
+            }
+        }
+            .tag(Pane.chat(conversation.id))
             .swipeActions(edge: .leading, allowsFullSwipe: true) { V3ReadMarkButton(model: model, conversation: conversation) }
             .swipeActions(edge: .trailing) {
                 delete(String(localized: "Delete")).disabled(!model.canPatch)
@@ -178,8 +198,8 @@ private struct ConversationRow: View {
         VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
             HStack(alignment: .firstTextBaseline) {
                 Text(conversation.displayTitle)
-                    .font(.headline)
-                    .fontWeight(conversation.unreadCount > 0 ? .bold : nil)
+                    // Bold while unread, regular once read (#429).
+                    .bold(conversation.unreadCount > 0)
                     .lineLimit(1)
                 Spacer(minLength: LayoutMetrics.inner)
                 Text(Self.time(conversation.updatedAt))

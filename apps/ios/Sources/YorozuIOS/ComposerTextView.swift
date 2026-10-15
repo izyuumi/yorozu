@@ -66,6 +66,9 @@ struct ComposerTextView: NSViewRepresentable {
         layout.ensureLayout(for: container)
         let line = layout.defaultLineHeight(for: font)
         let height = max(layout.usedRect(for: container).height, line)
+        // Back to the width the view has: SwiftUI also proposes widths it never gives (0, for the least size), and
+        // `widthTracksTextView` follows only a change of frame, so a text laid out 0 wide would be left invisible.
+        container.containerSize = NSSize(width: view.frame.width, height: .greatestFiniteMagnitude)
         return CGSize(width: width, height: min(height, line * Self.maxLines).rounded(.up))
     }
 
