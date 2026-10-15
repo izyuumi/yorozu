@@ -283,6 +283,7 @@ Alternatives:
 
 **#432 Crons tab**
 - `cron.list` per Q5: prefer `cron-store-runtime`'s `loadCronStore` read-only and accept the fragility, or a loopback `GatewayClient` with `operator.read`.
+- Chosen (#432): `loadCronStore(resolveCronStorePath(cfg.cron?.store))` in `src/cron.ts`, filtered to the channel's agent. It works for the `--link` plugin on the owner's source install, as `fetch-runtime` (also on the private list) already does: the loader builds its alias list from OpenClaw's package `exports`, and the private list only *adds* subpaths for bundled plugins (`src/plugins/sdk-alias.ts`, `listPluginSdkExportedSubpaths`). Checked live on an isolated profile: the tab listed exactly what `openclaw cron list --all` printed, built-in declared jobs (heartbeat, memory dreaming) included. The loopback client was not taken: it needs the Gateway's URL and shared secret from config, a device identity or token auth, and then holds full operator scopes for a read; the store read is one call with no credentials. If a packaged build withholds the subpath, `cron_list` answers `error` and the switch is the loopback client.
 - Cron delivery into a conversation needs Q8's `resolveOutboundSessionRoute` + `sendText`.
 - "Edit in chat" needs the owner step (the `automations` tool is owner-only).
 

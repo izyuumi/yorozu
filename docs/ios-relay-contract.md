@@ -137,6 +137,7 @@ Names later issues add, so nothing else takes them: `conv_list`, `history`, `con
 | `reply` | plugin → clients | `convId`, `messageId` (made by the plugin), `text`, `ts` |
 | `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`? |
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
+| `cron_list` | client → plugin, then plugin → that client | request: `{}`; answer: `jobs` (array of [jobs](#cron_list)), or `jobs: []` and `error` |
 
 #### `peer_info`
 
@@ -145,6 +146,24 @@ Each side sends its own as its first box and sends nothing else until it has the
 #### `tool`
 
 One tool call of an agent run, for a collapsed row under the message it answers. `callId` is OpenClaw's tool call id (any string up to 128 characters, not a UUID); every update of one call carries the same one, and the last `status` wins: `running` when the call starts, then `done` or `failed`. `name` is the tool's name as the agent calls it (`exec`, `web_search`). Arguments and results stay in the transcript. A `tool` with another `status` value is treated as unknown.
+
+#### `cron_list`
+
+The Crons tab (#432). A client sends `cron_list {}`; the plugin answers that device only (not every served session) with every cron job of `channels.yorozu.agent`, disabled ones included, sorted by name. A job with no `agentId` counts as the Gateway's default agent's. Read-only: Yorozu has no admin kind; "Edit in chat" asks the agent instead. A data with neither `jobs` nor `error` is a request, so a client ignores one.
+
+| Field | Meaning |
+|---|---|
+| `id` | OpenClaw's job id |
+| `name` | The job's `displayName`, else its `name` |
+| `enabled` | false: the client shows the job greyed |
+| `schedule` | OpenClaw's schedule object as stored: `kind` (`at`, `every`, `cron`, `on-exit`, `stream`) and its fields |
+| `scheduleText` | The plugin's English wording of `schedule`: `Every 30 minutes`, `Daily at 09:00 (Asia/Tokyo)`, `Weekdays at 08:30`, `Once`; any other cron expression as `Cron <expr>`. Clients show it as it is |
+| `nextRunAt`?, `lastRunAt`? | Epoch ms, the scheduler's |
+| `lastStatus`? | `ok`, `error` or `skipped`; absent before the first run |
+| `lastError`? | The last run's error, at most 2,000 characters |
+| `delivery`? | Only when the job delivers into a Yorozu conversation: `{channel: "yorozu", threadId: <convId>}`. The client opens that conversation from the row |
+
+The wording lives in the plugin so every client says the same thing without a cron parser of its own; `schedule` travels raw for a client that wants to word it itself later. When the plugin cannot read the cron store the answer is `{jobs: [], error}` and the client keeps its last list under the error. "Edit in chat" opens the job's delivery conversation, or a new one, with `Change cron job "<name>" (id <id>): ` in the composer, unsent.
 
 #### `error` codes
 

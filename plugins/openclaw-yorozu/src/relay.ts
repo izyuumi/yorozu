@@ -68,6 +68,8 @@ export type RelayHostOptions = {
   onStatus: (status: Status) => void;
   /** A device's message, once per `messageId`, after `delivered` went out. */
   onMessage: (message: Message) => void;
+  /** A device's request (`cron_list`); what it returns goes to that device only. */
+  onRequest?: (event: Event) => Promise<Event | undefined>;
 };
 
 /** What `openclaw yorozu pair` prints. */
@@ -290,7 +292,13 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           taken.set(messageId, now);
           return opts.onMessage(event.data);
         }
-        if (event?.kind === "error") log?.info(`yorozu: device error ${event.data.code}`);
+        if (event?.kind === "error") return log?.info(`yorozu: device error ${event.data.code}`);
+        if (event?.kind === "cron_list") {
+          const answer = await opts.onRequest?.(event);
+          // The device's session as it is now: it may have handshaken again meanwhile.
+          const now = served.get(deviceKey);
+          if (answer && now?.peer) sendFrames([seal(now.session, answer)]);
+        }
       }
 
       async function receive(raw: string): Promise<void> {

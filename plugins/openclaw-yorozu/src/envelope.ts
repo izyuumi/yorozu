@@ -24,6 +24,24 @@ export type ErrorInfo = { code: string; message: string; convId?: string; messag
 /** One tool call of the run answering `messageId`, for a collapsed row; `callId` groups its updates. */
 export type Tool = { convId: string; messageId: string; callId: string; name: string; status: ToolStatus };
 export type ToolStatus = "running" | "done" | "failed";
+/** One cron job of the configured agent, for the Crons tab (#432). Times are epoch ms. */
+export type CronJob = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** OpenClaw's schedule object as stored (`kind` plus its fields), for a client that words it itself. */
+  schedule: Record<string, unknown>;
+  /** The plugin's English wording of `schedule` ("Daily at 09:00 (Asia/Tokyo)"). */
+  scheduleText: string;
+  nextRunAt?: number;
+  lastRunAt?: number;
+  lastStatus?: "ok" | "error" | "skipped";
+  lastError?: string;
+  /** Only when the job delivers into a Yorozu conversation: `threadId` is its `convId`. */
+  delivery?: { channel: "yorozu"; threadId: string };
+};
+/** Client -> plugin: `{}`, a request. Plugin -> that client: `jobs`, or `error` when the store cannot be read. */
+export type CronList = { jobs?: CronJob[]; error?: string };
 
 export type Event =
   | { kind: "peer_info"; data: PeerInfo }
@@ -33,7 +51,8 @@ export type Event =
   | { kind: "typing"; data: Typing }
   | { kind: "reply"; data: Reply }
   | { kind: "error"; data: ErrorInfo }
-  | { kind: "tool"; data: Tool };
+  | { kind: "tool"; data: Tool }
+  | { kind: "cron_list"; data: CronList };
 
 export type Received = Event | { kind: "unknown"; name: string };
 
@@ -71,6 +90,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId),
   tool: (d) =>
     ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),
+  cron_list: (d) => (d.jobs === undefined || Array.isArray(d.jobs)) && optStr(d.error),
 };
 
 /** Null only for bytes that are not an envelope at all; extra fields are kept and ignored. */
