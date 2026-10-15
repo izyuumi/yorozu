@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// A push's words, sealed by the Mac for one phone (docs/ios-relay-contract.md, "Sealed previews"). The relay carries the box
+/// A push's words, sealed by the host for one device (v3: the OpenClaw plugin, plugins/openclaw-yorozu/src/push.ts, #431) (docs/ios-relay-contract.md, "Sealed previews"). The relay carries the box
 /// in the `notify`'s `previews` map under the phone's Ed25519 key and puts it in that phone's APNs payload as `preview {n, c}`
 /// with `mutable-content: 1`; the phone's notification service extension opens it. The relay and APNs see only the box.
 ///
@@ -20,10 +20,16 @@ public struct PushPreview: Codable, Equatable, Sendable {
     public var event: String
     /// The excerpt, already plain text.
     public var body: String
+    /// v3: the alert title (the conversation's title), already cut to fit.
+    public var title: String?
+    /// v3: the conversation the push is about, which a tap opens.
+    public var convId: String?
 
-    enum CodingKeys: String, CodingKey { case cls = "c", event = "e", body = "b" }
+    enum CodingKeys: String, CodingKey { case cls = "c", event = "e", body = "b", title = "t", convId = "v" }
 
-    public init(cls: String, event: String, body: String) { self.cls = cls; self.event = event; self.body = body }
+    public init(cls: String, event: String, body: String, title: String? = nil, convId: String? = nil) {
+        self.cls = cls; self.event = event; self.body = body; self.title = title; self.convId = convId
+    }
 
     /// Both ends derive the same key from opposite halves of the pairing.
     public static func key(myPriv: Data, theirPub: Data) throws -> SymmetricKey {

@@ -48,12 +48,28 @@ export type Chunk = { attachmentId: string; index: number; count: number; data: 
 /** One tool call of the run answering `messageId`, for a collapsed row; `callId` groups its updates. */
 export type Tool = { convId: string; messageId: string; callId: string; name: string; status: ToolStatus };
 export type ToolStatus = "running" | "done" | "failed";
+/** `conv_list`, plugin -> the asking device: the owner's Yorozu conversations, newest first. Asked with `{}`. */
+export type ConvList = { conversations: ConvSummary[] };
+/** `rev`: the transcript's newest event seq; a client holding it has the conversation's whole history so far. */
+export type ConvSummary = { convId: string; updatedAt: number; rev: number };
+/** `history`, device -> plugin: one page of a conversation. `before`/`after` are item seqs; neither: the newest. */
+export type HistoryRequest = { convId: string; before?: number; after?: number };
+/** `history`, plugin -> the asking device: the request's fields again, then the page, oldest first. */
+export type History = HistoryRequest & { items: HistoryItem[]; more: boolean; rev: number };
+export type HistoryTool = { callId: string; name: string; status: ToolStatus };
+/** One transcript item; items of one transcript event share its `seq`. */
+export type HistoryItem =
+  | { kind: "user" | "agent"; id: string; seq: number; ts: number; text: string; attachments?: Attachment[] }
+  | { kind: "tools"; id: string; seq: number; ts: number; tools: HistoryTool[] }
+  | { kind: "reset"; id: string; seq: number; ts: number };
 /**
  * A conversation's read state, one per conversation, the same on every device: replies up to and including the one
  * at `ts` (plugin clock, the reply's own `ts`; `messageId` is that reply) are read, later ones unread. `unread` is
  * Mark as Unread: the conversation counts as unread whatever the cursor says, until a read clears it.
  */
 export type ReadCursor = { convId: string; messageId: string; ts: number; unread: boolean };
+/** The conversation on this device's screen while the app is in the foreground, or none (#431): no push for it there. */
+export type Foreground = { convId?: string | null };
 /** One cron job of the configured agent, for the Crons tab (#432). Times are epoch ms. */
 export type CronJob = {
   id: string;
@@ -82,7 +98,10 @@ export type Event =
   | { kind: "reply"; data: Reply }
   | { kind: "error"; data: ErrorInfo }
   | { kind: "tool"; data: Tool }
+  | { kind: "conv_list"; data: Partial<ConvList> }
+  | { kind: "history"; data: HistoryRequest | History }
   | { kind: "read_cursor"; data: ReadCursor }
+  | { kind: "foreground"; data: Foreground }
   | { kind: "cron_list"; data: CronList }
   | { kind: "upload"; data: Upload }
   | { kind: "upload_ack"; data: UploadAck }
@@ -107,6 +126,7 @@ type Fields = Record<string, unknown>;
 const str = (v: unknown): v is string => typeof v === "string";
 const optStr = (v: unknown): boolean => v === undefined || typeof v === "string";
 const int = (v: unknown): v is number => Number.isSafeInteger(v);
+const optInt = (v: unknown): boolean => v === undefined || int(v);
 const ref = (d: Fields): boolean => isId(d.convId) && isId(d.messageId);
 const nat = (v: unknown): v is number => int(v) && v >= 0;
 const label = (v: unknown, max: number): boolean => str(v) && v.length > 0 && v.length <= max;
@@ -135,7 +155,11 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId) && optStr(d.attachmentId),
   tool: (d) =>
     ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),
+  // The plugin reads only the requests; the pages it sends are checked by the client (V3Event.swift).
+  conv_list: (d) => d.conversations === undefined || Array.isArray(d.conversations),
+  history: (d) => isId(d.convId) && optInt(d.before) && optInt(d.after) && (d.items === undefined || Array.isArray(d.items)),
   read_cursor: (d) => ref(d) && int(d.ts) && typeof d.unread === "boolean",
+  foreground: (d) => d.convId === undefined || d.convId === null || isId(d.convId),
   cron_list: (d) => (d.jobs === undefined || Array.isArray(d.jobs)) && optStr(d.error),
   upload: (d) =>
     part(d) && label(d.name, 255) && label(d.mime, 255) && nat(d.size) && int(d.count) && d.count >= 1 &&

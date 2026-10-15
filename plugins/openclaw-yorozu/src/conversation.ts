@@ -3,6 +3,7 @@
  * `agent:<agent>:yorozu:direct:owner:thread:<convId>`: every paired device is the one peer `owner` (#415).
  * The run's progress and replies go to every served device (`broadcast`): `run_started`, `typing` while it runs,
  * `tool` per tool call, then one `reply` per chunk. Slash commands are plain text; core handles `/new` in the thread.
+ * A turn that replied ends with one push (`notifyReply`, #431), not one per chunk.
  * `sendText` is the outbound adapter's, for deliveries that start outside a turn (cron `delivery.channel: yorozu`).
  * Attachments (#430): a message's uploaded files reach the turn as media facts; a reply's media is announced in
  * its `reply`, grouped, and downloaded by each device on request (src/attachments.ts).
@@ -21,7 +22,9 @@ import { chunkMarkdownText, resolveTextChunkLimit } from "openclaw/plugin-sdk/re
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { stageOutbound, uploadedFiles, type MediaAccess } from "./attachments.js";
 import { isId, type Attachment, type Event, type Message, type ToolStatus } from "./envelope.js";
-import { broadcast } from "./relay.js";
+import { liveReplyIds } from "./history.js";
+import { noteFirstMessage } from "./push.js";
+import { broadcast, notifyReply } from "./relay.js";
 import { yorozuRuntime } from "./runtime.js";
 
 const CHANNEL_ID = "yorozu";
@@ -46,27 +49,28 @@ export function resolveOwnerRoute(cfg: OpenClawConfig, agentId: string, accountI
 }
 
 /**
- * One reply per chunk of `text`, each with its own `messageId`. Attachments ride on the last one, or on a reply of
- * their own when there is no text: one group, as the agent sent them.
+ * One reply per chunk of `text`, each with its own `messageId`: from `ids` (the transcript's) when given.
+ * Attachments ride on the last one, or on a reply of their own when there is no text: one group, as the agent sent them.
  */
 export function replyEvents(
   cfg: OpenClawConfig,
   convId: string,
   text: string,
   accountId?: string | null,
+  ids?: (chunk: number) => string,
   attachments: Attachment[] = [],
 ): Event[] {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
   const chunks = chunkMarkdownText(text, limit).filter((chunk) => chunk.trim());
   if (attachments.length && !chunks.length) chunks.push("");
-  return chunks.map((chunk, i) => ({
+  return chunks.map((chunk, k) => ({
     kind: "reply",
     data: {
       convId,
-      messageId: randomUUID(),
+      messageId: ids?.(k) ?? randomUUID(),
       text: chunk,
       ts: Date.now(),
-      ...(attachments.length && i === chunks.length - 1 ? { attachments } : {}),
+      ...(attachments.length && k === chunks.length - 1 ? { attachments } : {}),
     },
   }));
 }
@@ -91,7 +95,12 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
     files.map((file) => ({ path: file.path, contentType: file.mime, fileName: file.name, messageId })),
   );
   const access: MediaAccess = { localRoots: getAgentScopedMediaLocalRoots(cfg, route.agentId) };
+  await noteFirstMessage(convId, text).catch((error: unknown) => log?.warn(`yorozu: push title failed: ${String(error)}`));
+  /** The turn's first reply chunk: what its one push names and previews. */
+  let firstReply: { messageId: string; text: string } | undefined;
 
+  /** Transcript messages this turn's replies already took their ids from. */
+  const usedReplies = new Set<string>();
   let started = false;
   const runStarted = () => {
     if (started) return;
@@ -168,9 +177,13 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
               const urls = mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? []));
               if (info.kind === "tool" || (!payload.text?.trim() && !urls.length)) return;
               runStarted();
-              const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access);
+              const ids = liveReplyIds(route.agentId, sessionKey, messageId, usedReplies);
+              const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.(0));
               const body = [payload.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
-              send(...replyEvents(cfg, convId, body, route.accountId, attachments));
+              const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments);
+              const first = replies[0];
+              if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: body || "📎" };
+              send(...replies);
             },
             onError: (error, info) => log?.warn(`yorozu: ${info.kind} reply failed: ${String(error)}`),
           },
@@ -197,6 +210,11 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
     send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
   } finally {
     setTyping(false);
+    if (firstReply) {
+      await notifyReply(convId, firstReply.messageId, firstReply.text).catch((error: unknown) =>
+        log?.warn(`yorozu: notify failed: ${String(error)}`),
+      );
+    }
   }
 }
 

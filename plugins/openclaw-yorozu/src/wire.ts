@@ -52,7 +52,7 @@ export function ed25519Keypair(priv: Uint8Array = randomBytes(32)): Keypair {
   return { privateKey: Buffer.from(priv), publicKey: rawPublic(privateKey(ED25519_PKCS8, priv)) };
 }
 
-const dh = (priv: Uint8Array, pub: Uint8Array): Buffer =>
+export const dh = (priv: Uint8Array, pub: Uint8Array): Buffer =>
   diffieHellman({ privateKey: privateKey(X25519_PKCS8, priv), publicKey: publicKey(X25519_SPKI, pub) });
 
 // MARK: base64url

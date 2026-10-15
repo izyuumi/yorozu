@@ -51,7 +51,7 @@ let project = Project(
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message.",
                 // "Save Image" in the share sheet of a file opened from a message.
                 "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
-                // The relay's silent push: a few seconds to catch up over the sealed channel (#431).
+                // The relay's silent push launches a suspended app, which reconnects (#431).
                 "UIBackgroundModes": ["remote-notification"],
                 "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
                 // `yorozu://pair?…` is the pairing string itself: tapping one opens the app.

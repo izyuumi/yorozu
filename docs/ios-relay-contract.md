@@ -23,7 +23,7 @@ Unchanged from v1 and v2. The relay reads only its outer envelope and gates noth
 - **Join**: a client's first join spends the one-time token from the QR and signs the token; every later join signs the relay's connect nonce. Both use the client's Ed25519 key. Tokens last 10 minutes; a room holds at most 16 devices.
 - **Frames**: `{"type":"frame","payload":<string>,"sig":<string>}`. `sig` is base64url Ed25519 over the UTF-8 bytes of the `payload` string itself, by the sender's relay key (`YorozuCrypto.signFrame` / `signFrame`). The relay checks it against the socket's key. A host may batch: `{"type":"frame","frames":[{payload,sig},…]}`.
 - **`accepted`**: the relay answers every client frame with `{"type":"accepted","sig":…,"buffered":bool}` once it has forwarded it to the host's live socket or stored it for the host. That is the client's ✓ sent.
-- **Push**: client `push {deviceToken}` and host `notify` with sealed `previews`, as in v2 ([history](history/ios-relay-contract-v2.md#push)); the v3 rules arrive with #431.
+- **Push**: client `push {deviceToken}` and host `notify` with sealed `previews`, as in v2; the v3 rules are in [Push](#push).
 
 Limits every sender must respect:
 
@@ -123,7 +123,7 @@ Every box's plaintext is one UTF-8 JSON object:
 - **Ids**: `convId` and `messageId` are lowercase UUIDs (`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`; `V3Event.newId()`, `isId`). OpenClaw lowercases session keys, and a conversation's session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`. A known kind with a malformed id is treated as unknown.
 - Times are epoch milliseconds (integers).
 
-Names later issues add, so nothing else takes them: `conv_list`, `history`, `conv_patch`, `read_cursor`, attachment kinds, `cron_list`, and foreground and notify registration.
+Names later issues add, so nothing else takes them: `conv_patch`, `read_cursor`, attachment kinds and `cron_list`.
 
 ### Kinds
 
@@ -137,7 +137,10 @@ Names later issues add, so nothing else takes them: `conv_list`, `history`, `con
 | `reply` | plugin → clients | `convId`, `messageId` (made by the plugin), `text` (may be empty with attachments), `ts`, `attachments`? (announced; [downloaded on request](#attachments)) |
 | `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`?, `attachmentId`? |
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
+| `conv_list` | client → plugin, then plugin → that client | asked with `{}`; answered with `conversations`: [`convId`, `updatedAt`, `rev`] |
+| `history` | client → plugin, then plugin → that client | asked with `convId`, `before`?, `after`?; answered with those, `items`, `more`, `rev` |
 | `read_cursor` | both | `convId`, `messageId` (the last reply read), `ts` (that reply's `ts`), `unread` (bool) |
+| `foreground` | client → plugin | `convId`? (the conversation on screen with the app active; absent or null: none). See [Push](#push) |
 | `cron_list` | client → plugin, then plugin → that client | request: `{}`; answer: `jobs` (array of [jobs](#cron_list)), or `jobs: []` and `error` |
 | `upload` | client → plugin | `attachmentId`, `name`, `mime`, `size`, `index`, `count`, `data` (base64): one chunk of a file the client sends |
 | `upload_ack` | plugin → that client | `attachmentId`, `index`, `done` (bool): the chunk arrived; `done` once the whole file is stored |
@@ -151,6 +154,29 @@ Each side sends its own as its first box and sends nothing else until it has the
 #### `tool`
 
 One tool call of an agent run, for a collapsed row under the message it answers. `callId` is OpenClaw's tool call id (any string up to 128 characters, not a UUID); every update of one call carries the same one, and the last `status` wins: `running` when the call starts, then `done` or `failed`. `name` is the tool's name as the agent calls it (`exec`, `web_search`). Arguments and results stay in the transcript. A `tool` with another `status` value is treated as unknown.
+
+#### History: `conv_list` and `history`
+
+The Gateway transcript is the source of truth (#415); a client caches what it fetched (one file per conversation) and asks again. Both kinds are requests the plugin answers to the asking device's session only: every host frame still reaches every device socket, but a page is sealed once, for the device that wants it. A client keeps one request in flight and sends the next when the answer (or an `error`, or 30 seconds) arrives, so pages reach the relay paced, far under its window.
+
+- `conv_list` lists the owner's Yorozu conversations of the configured agent: sessions keyed `agent:<agent>:yorozu:direct:owner:thread:<convId>`, newest first, at most 2000. Other channels' sessions are not listed. `updatedAt` is the session's, `rev` the transcript's newest event seq: a client whose last page that reached the newest item carried this `rev` has nothing to fetch.
+- `history` returns one page of one conversation, oldest first. `before: n`: the newest items with a seq below `n` (scrolling up). `after: n`: the oldest items with a seq above `n` (catching up). Neither: the newest page. `more` says another page lies further the same way. A page holds at most 60 items and about 192 KiB, and never splits the items of one transcript event. A conversation the transcript does not have yet answers `items: []`, `more: false`, `rev: 0`.
+
+Items (`kind`, `id`, `seq`, `ts`, then by kind):
+
+| `kind` | Fields | From |
+|---|---|---|
+| `user` | `text`, `attachments`? | a user message; `id` is the client's `messageId` (kept in the transcript's transport metadata). Its files are the uploads the plugin stored (from the transcript's media list); the `<file …>` blocks OpenClaw appends for a document's text are left out of `text` |
+| `agent` | `text`, `attachments`? | assistant text without its `MEDIA:` lines, trimmed and chunked by `textChunkLimit` as live replies are; one item per chunk, the reply's files on the last (or an item of their own, `text` empty), as live. Cron deliveries are mirrored into the transcript as assistant messages and come out as `agent` too |
+| `tools` | `tools`: [`callId`, `name`, `status`] | one row per run, at the run's first tool call; `id` is the run's user `messageId`, as for live `tool` events. `running` only while the run is the transcript's last |
+| `reset` | | a `/new` or `/reset` boundary: the session started over (same session id, a reset event in the transcript) |
+
+- `seq` is the transcript event's; items of one event share it. `ts` is epoch ms, Gateway clock. An item text is cut at 60,000 characters.
+- An agent chunk's `id` is the transcript message's own id for the first chunk and derived from it (`sha256` as a UUID) for the others. A live `reply` in a turn gets the same ids (the plugin looks up the assistant message core wrote before delivering), so a device that saw it live holds one item after a page. Where that lookup fails (cron deliveries), the client matches a live reply to a page item by its trimmed text.
+- An item kind the client does not know is skipped.
+- `attachments` (#430) are only those the plugin can still serve: an upload it stored, or a file that went out with a live reply whose transcript id it knew. A page item without them leaves a live item's files in place.
+
+**Client order.** Items from pages carry their `seq`; live items have none until a page holds them. A page item replaces the item with its id (or a live agent item of the same text placed after the items known to be older) and goes after the last item with a lower seq and before the first with a higher seq or a live one with a later timestamp. Live items keep arrival order between those. A client syncs on every new session: `conv_list`, then `after: <newest cached seq>` (or the newest page) for each conversation whose `rev` changed; opening a conversation does the same for it first; reaching the top asks `before: <oldest cached seq>` until `more` is false. A freshly paired device so lists every conversation and loads any of its history.
 
 #### `read_cursor`
 
@@ -194,7 +220,7 @@ Images and files both ways (#430), each at most the plugin's `mediaMaxBytes` (`c
 | `run_failed` | The agent run for `messageId` failed; `message` says why |
 | `too_large` | An `upload` over the plugin's `mediaMaxBytes`; `attachmentId` names it |
 | `not_found` | A `download` of an attachment the plugin does not hold; `attachmentId` names it |
-| `internal` | Anything else |
+| `internal` | Anything else, also a `conv_list` or `history` the plugin could not read |
 
 A receiver treats an unknown code like `internal`.
 
@@ -209,6 +235,19 @@ All paired devices share one channel peer (the owner), so the plugin sends `deli
 - Replies arrive whole, one `reply` per chunk of a long reply (chunked by `channels.yorozu.textChunkLimit`, default 4000 characters), never edited in place. A cron job delivering into a conversation (`delivery: {channel: "yorozu", to: "owner", threadId: <convId>}`) arrives as `reply` too, with no `run_started` or `typing`.
 - A `message`'s `text` is bounded only by the relay's 1 MiB frame (about 700 KiB of text). Slash commands are plain text: `/new` and `/reset` reset only that conversation's session, other commands go to OpenClaw as typed.
 - A client sends `message`s only inside an established session. Until it sees `delivered` it keeps the message and sends it again in its next session. The plugin drops a `messageId` it has already taken and answers `delivered` again.
+
+## Push
+
+One push per finished agent reply (#431), through the relay's `notify` as in v2 ([history](history/ios-relay-contract-v2.md#push)), with a preview sealed for each device. A cron job delivering into a conversation pushes the same way. There is no mute.
+
+- **Token**: an iPhone or iPad sends the relay `{"type":"push","deviceToken":<lowercase hex>}` after every `joined` on its socket, and again as soon as iOS hands it a new token (`V3Connection.registerPush`). It asks iOS for a token on every launch. The relay keeps one token per device and forgets it when the device is revoked. The Mac client registers no token.
+- **When**: once per finished reply, after its last chunk has gone out, never once per chunk. That is the end of an agent turn that sent at least one `reply` (`handleMessage`), or the end of one delivered payload (the outbound adapter's `afterDeliverPayload`, which is how a cron delivery arrives). A turn that only failed (`error run_failed`) does not push.
+- **Foreground**: a client sends `foreground {convId}` when a conversation is on screen with the app active, and `foreground {}` (no `convId`) when none is, including just before iOS suspends it. It sends its current one again on every new session; a new session starts with none. The plugin skips every device whose live session last reported that conversation. When the relay reports that no device socket is left (`phones {count: 0}`), the plugin forgets every device's foreground, in case a device was killed in the foreground. When no device is left, it sends no `notify` at all.
+- **`notify`**: `{"type":"notify","class":"reply","threadRef":<threadRef(convId)>,"eventRef":<threadRef(messageId of the first chunk)>,"previews":{<device Ed25519 key>:{n,c}},"devices":[<device Ed25519 key>,…]}`. `threadRef` is `YorozuCrypto.threadRef`, the first 8 base64url characters of SHA-256, so the relay sees no conversation id. `devices` names the devices to alert. A relay that honours it alerts only those (relay PR #447, on `main`). A relay that ignores it, like the one deployed now, alerts every registered device. The device left out then gets the relay's fixed text without a preview, and the client does not show it while that conversation is on screen. The relay allows 60 notifies a minute per room.
+- **Preview**: `PushPreview` (`packages/YorozuWire`, and `src/push.ts` in the plugin), unchanged from v2 except for two optional fields. The key is HKDF-SHA256 over X25519(host static, device static) with salt `yorozu-v1` and info `yorozu-push-preview/mac->device`, 32 bytes, so it is never a session key. The box is ChaCha20-Poly1305 with a fresh 12-byte nonce. The plaintext is JSON `{"b":<first line of the reply>,"c":"reply","e":<eventRef>,"t":<title>?,"v":<convId>}`, at most 256 bytes. The title is cut to 32 characters first, then the body is cut with "…" until the whole fits. The title is the conversation's first message, first line (stored per conversation in the plugin's state, namespace `push-titles`), until generated titles land (#428). A conversation that began with a delivery has no title.
+- **iPhone, iPad**: the app keeps the preview key in the Keychain group it shares with the notification service extension (`PreviewKeychain`, readable after the first unlock). It writes the key on every connect and deletes it on unpair. The extension opens `preview`, checks that its `e` equals the push's `event`, and sets the title to `t` (else "Yorozu replied."), the body to `b` and `userInfo.convId` to `v`. Anything that does not open is shown as the relay sent it. In the foreground, a notification for the conversation on screen is not shown. A tap opens its conversation, found by `convId`, else by the relay's `ref` matched against the cached conversations. Opening a conversation removes its delivered notifications. Alerts, sounds and badges are asked for after pairing (the first `peer_info`) and at every launch while paired; iOS shows the prompt only once.
+- **Mac**: no relay push. While the app runs, each new `reply` in a conversation that is not in front posts a local notification, one per conversation, replaced by the next. Only the first chunk within 10 seconds plays a sound.
+- Neither end logs a preview's plaintext. The plugin logs how many devices it alerted and skipped.
 
 ## Known-answer vectors
 
@@ -309,3 +348,4 @@ The same run also checks that the second box opened again is refused as a replay
 | Envelope | `V3Event` (`Codable`), `V3PeerInfo.negotiate`, `V3Event.newId`, `isId` | `Event`, `parseEvent`, `encodeEvent`, `negotiate`, `isId` |
 | Attachments | `V3Attachment` (`capability`, `chunkBytes`, `chunkCount`), `V3Upload`, `V3UploadAck`, `V3Download`, `V3Chunk` | `Attachment`, `ATTACHMENTS`, `CHUNK_BYTES`, `src/attachments.ts` |
 | Noise itself (vectors) | `NoiseIKHandshake` | `NoiseIK` |
+| Push preview (#431) | `PushPreview.key`, `.open(userInfo:key:)`, `V3Connection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`src/push.ts`), `notifyReply` (`src/relay.ts`) |

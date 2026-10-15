@@ -8,7 +8,7 @@ import {
 } from "openclaw/plugin-sdk/channel-core";
 import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
-import { mediaMaxBytes } from "./attachments.js";
+import { loadAttachmentIndex, mediaMaxBytes } from "./attachments.js";
 import {
   DEFAULT_CHUNK_LIMIT,
   handleMessage,
@@ -17,9 +17,11 @@ import {
   sendConversationMedia,
   sendConversationText,
 } from "./conversation.js";
+import { isId } from "./envelope.js";
+import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
 import { loadHostKeys } from "./keys.js";
-import { runRelayHost } from "./relay.js";
+import { notifyReply, runRelayHost } from "./relay.js";
 
 export const CHANNEL_ID = "yorozu";
 // Same default as the Mac app's `relay.url` (docs/setup.md).
@@ -58,6 +60,7 @@ function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
   const keys = await loadHostKeys();
+  await loadAttachmentIndex().catch((error: unknown) => ctx.log?.warn?.(`yorozu: attachment index failed: ${String(error)}`));
   const maxBytes = mediaMaxBytes(ctx.cfg, account.accountId);
   ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
@@ -74,6 +77,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
           message,
         ),
       onRequest: async (event) => {
+        if (event.kind === "conv_list" || event.kind === "history") return answerRequest(ctx.cfg, account.agent, event, ctx.log);
         if (event.kind !== "cron_list") return undefined;
         try {
           return { kind: "cron_list", data: { jobs: await listCronJobs(ctx.cfg, account.agent) } };
@@ -155,5 +159,11 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         access: { mediaAccess, localRoots: mediaLocalRoots, readFile: mediaReadFile },
       }),
     }),
+    // A delivery (cron) pushes once per payload, after all its chunks went out, like a turn's reply (#431).
+    afterDeliverPayload: async ({ target, payload, results }) => {
+      const convId = String(target.threadId ?? "").toLowerCase();
+      const messageId = results[0]?.messageId;
+      if (isId(convId) && messageId && payload.text?.trim()) await notifyReply(convId, messageId, payload.text);
+    },
   },
 });

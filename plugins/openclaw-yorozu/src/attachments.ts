@@ -28,8 +28,36 @@ export const DEFAULT_MEDIA_MAX_BYTES = 8 * MB;
 const PARTIALS_MAX = 8;
 const PARTIAL_MS = 30 * 60 * 1000;
 
-/** What the keyed store holds per attachment: a file this plugin wrote into the media store. */
-type Stored = Attachment & { path: string };
+/**
+ * What the keyed store holds per attachment: a file this plugin wrote into the media store. `reply` is the id of the
+ * first live `reply` an outbound file went with (the transcript's, `liveReplyIds`), so history can put it back.
+ */
+type Stored = Attachment & { path: string; reply?: string };
+
+/** Stored attachments by path (uploads) and by reply (outbound), for history, which reads the transcript in sync. */
+const byPath = new Map<string, Attachment>();
+const byReply = new Map<string, Attachment[]>();
+const index = (stored: Stored) => {
+  const { path: file, reply, ...attachment } = stored;
+  byPath.set(file, attachment);
+  // The turn sees a staged copy; the transcript names the stored file by its media URL.
+  byPath.set(`media://inbound/${path.basename(file)}`, attachment);
+  if (reply) byReply.set(reply, [...(byReply.get(reply) ?? []).filter((a) => a.id !== attachment.id), attachment]);
+};
+const register = async (stored: Stored) => {
+  await store().register(stored.id, stored);
+  index(stored);
+};
+
+/** Fills the path index from the store, once per account start. */
+export async function loadAttachmentIndex(): Promise<void> {
+  for (const entry of await store().entries()) index(entry.value);
+}
+
+/** The upload stored at `path`, or with the media URL `path` (`media://inbound/<id>`). */
+export const attachmentAt = (path: string): Attachment | undefined => byPath.get(path.trim());
+/** The files that went with the live reply `replyId`, in order. */
+export const attachmentsOf = (replyId: string): Attachment[] => byReply.get(replyId) ?? [];
 
 const store = () =>
   yorozuRuntime.getRuntime().state.openKeyedStore<Stored>({
@@ -99,7 +127,7 @@ export async function receiveUpload(upload: Upload, maxBytes: number): Promise<E
   try {
     const { meta } = partial;
     const saved = await saveMediaBuffer(Buffer.concat(partial.chunks as Buffer[]), meta.mime, "inbound", maxBytes, meta.name);
-    await store().register(attachmentId, { ...meta, mime: saved.contentType ?? meta.mime, path: saved.path });
+    await register({ ...meta, mime: saved.contentType ?? meta.mime, path: saved.path });
   } catch (error) {
     return fail("internal", `could not store ${partial.meta.name}: ${String(error).slice(0, 200)}`);
   }
@@ -151,6 +179,7 @@ export async function stageOutbound(
   urls: readonly string[],
   maxBytes: number,
   access: MediaAccess,
+  reply?: string,
 ): Promise<{ attachments: Attachment[]; failures: string[] }> {
   const attachments: Attachment[] = [];
   const failures: string[] = [];
@@ -166,7 +195,7 @@ export async function stageOutbound(
         mime: (staged.contentType || "application/octet-stream").slice(0, 255),
         size,
       };
-      await store().register(attachment.id, { ...attachment, path: staged.path });
+      await register({ ...attachment, path: staged.path, ...(reply ? { reply } : {}) });
       attachments.push(attachment);
     } catch (error) {
       const why = /exceed|too large|max/i.test(String(error)) ? `it is over ${megabytes(maxBytes)}` : "it could not be read";

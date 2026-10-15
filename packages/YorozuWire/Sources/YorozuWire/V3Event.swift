@@ -12,7 +12,14 @@ public enum V3Event: Equatable, Sendable {
     case reply(V3Reply)
     case error(V3ErrorInfo)
     case tool(V3Tool)
+    /// `conv_list`: `conversations` nil is the client's request, otherwise the plugin's answer.
+    case convList(V3ConvList)
+    /// `history`, client -> plugin: one page of a conversation.
+    case historyRequest(V3HistoryRequest)
+    /// `history`, plugin -> the asking client: that page.
+    case history(V3History)
     case readCursor(V3ReadCursor)
+    case foreground(V3Foreground)
     case cronList(V3CronList)
     case upload(V3Upload)
     case uploadAck(V3UploadAck)
@@ -30,7 +37,10 @@ public enum V3Event: Equatable, Sendable {
         case .reply: "reply"
         case .error: "error"
         case .tool: "tool"
+        case .convList: "conv_list"
+        case .historyRequest, .history: "history"
         case .readCursor: "read_cursor"
+        case .foreground: "foreground"
         case .cronList: "cron_list"
         case .upload: "upload"
         case .uploadAck: "upload_ack"
@@ -273,6 +283,117 @@ public struct V3Tool: Codable, Equatable, Sendable {
     }
 }
 
+/// `conv_list`. Asked with `conversations` nil; answered with the owner's Yorozu conversations, newest first.
+public struct V3ConvList: Codable, Equatable, Sendable {
+    public var conversations: [V3ConvSummary]?
+
+    public init(conversations: [V3ConvSummary]? = nil) { self.conversations = conversations }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // One malformed row drops that row, not the list.
+        conversations = try c.decodeIfPresent([Lossy<V3ConvSummary>].self, forKey: .conversations)?
+            .compactMap(\.value).filter { V3Event.isId($0.convId) }
+    }
+}
+
+public struct V3ConvSummary: Codable, Equatable, Sendable {
+    public var convId: String
+    /// Epoch ms of the session's last change.
+    public var updatedAt: Int64
+    /// The transcript's newest event seq: a client whose last page carried this `rev` has nothing newer to fetch.
+    public var rev: Int
+
+    public init(convId: String, updatedAt: Int64, rev: Int) {
+        self.convId = convId
+        self.updatedAt = updatedAt
+        self.rev = rev
+    }
+}
+
+/// Client -> plugin: one page of a conversation's transcript. `before`/`after` are item seqs; neither: the newest page.
+public struct V3HistoryRequest: Codable, Equatable, Sendable {
+    public var convId: String
+    public var before: Int?
+    public var after: Int?
+
+    public init(convId: String, before: Int? = nil, after: Int? = nil) {
+        self.convId = convId
+        self.before = before
+        self.after = after
+    }
+}
+
+/// Plugin -> the asking client: the request's fields again, the page oldest first, and whether another page lies
+/// further the same way (`more`).
+public struct V3History: Codable, Equatable, Sendable {
+    public var convId: String
+    public var before: Int?
+    public var after: Int?
+    public var items: [V3HistoryItem]
+    public var more: Bool
+    public var rev: Int
+
+    public init(convId: String, before: Int? = nil, after: Int? = nil, items: [V3HistoryItem], more: Bool, rev: Int) {
+        self.convId = convId
+        self.before = before
+        self.after = after
+        self.items = items
+        self.more = more
+        self.rev = rev
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        convId = try c.decode(String.self, forKey: .convId)
+        before = try c.decodeIfPresent(Int.self, forKey: .before)
+        after = try c.decodeIfPresent(Int.self, forKey: .after)
+        // An item of a kind this client does not know, or a malformed one, is skipped.
+        items = try c.decode([Lossy<V3HistoryItem>].self, forKey: .items).compactMap(\.value)
+            .filter { V3Event.isId($0.id) }
+        more = try c.decode(Bool.self, forKey: .more)
+        rev = try c.decode(Int.self, forKey: .rev)
+    }
+}
+
+/// One transcript item. Items of one transcript event share its `seq`. `id`: the client's `messageId` for a user
+/// message, the user message's for its run's `tools` row, the transcript's (or one derived from it) otherwise.
+public struct V3HistoryItem: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable { case user, agent, tools, reset }
+    public struct Call: Codable, Equatable, Sendable {
+        public var callId: String
+        public var name: String
+        public var status: V3Tool.Status
+    }
+
+    public var kind: Kind
+    public var id: String
+    public var seq: Int
+    /// Epoch ms, Gateway clock.
+    public var ts: Int64
+    public var text: String?
+    public var tools: [Call]?
+    /// `user` and `agent`: the files the live `message` or `reply` carried, that the plugin still holds (#430).
+    public var attachments: [V3Attachment]?
+
+    public init(kind: Kind, id: String, seq: Int, ts: Int64, text: String? = nil, tools: [Call]? = nil,
+        attachments: [V3Attachment]? = nil) {
+        self.kind = kind
+        self.id = id
+        self.seq = seq
+        self.ts = ts
+        self.text = text
+        self.tools = tools
+        self.attachments = attachments
+    }
+}
+
+/// Decodes to nil instead of failing the whole array.
+private struct Lossy<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws { value = try? T(from: decoder) }
+}
+
 /// Both ways: a conversation's read state, the same on every device (#429). Replies up to and including the one at `ts`
 /// (the reply's own plugin-clock `ts`; `messageId` is that reply) are read, later ones unread. `unread` is Mark as
 /// Unread: the conversation counts as unread whatever the cursor says, until a read clears it. The plugin keeps the
@@ -289,6 +410,14 @@ public struct V3ReadCursor: Codable, Equatable, Sendable {
         self.ts = ts
         self.unread = unread
     }
+}
+
+/// Client -> plugin: the conversation on this device's screen while the app is in the foreground, or nil (#431). The
+/// plugin sends no push for a reply in it to this device while its session lasts.
+public struct V3Foreground: Codable, Equatable, Sendable {
+    public var convId: String?
+
+    public init(convId: String?) { self.convId = convId }
 }
 
 /// The Crons tab (#432). Client -> plugin: empty, a request. Plugin -> that client: `jobs`, or `error` when the
@@ -357,8 +486,15 @@ extension V3Event: Codable {
             if let v = data(V3ErrorInfo.self) { self = .error(v); return }
         case "tool":
             if let v = data(V3Tool.self), ids(v.convId, v.messageId) { self = .tool(v); return }
+        case "conv_list":
+            if let v = data(V3ConvList.self) { self = .convList(v); return }
+        case "history":
+            if let v = data(V3History.self), V3Event.isId(v.convId) { self = .history(v); return }
+            if let v = data(V3HistoryRequest.self), V3Event.isId(v.convId) { self = .historyRequest(v); return }
         case "read_cursor":
             if let v = data(V3ReadCursor.self), ids(v.convId, v.messageId) { self = .readCursor(v); return }
+        case "foreground":
+            if let v = data(V3Foreground.self), v.convId.map(V3Event.isId) ?? true { self = .foreground(v); return }
         case "cron_list":
             if let v = data(V3CronList.self) { self = .cronList(v); return }
         case "upload":
@@ -386,7 +522,11 @@ extension V3Event: Codable {
         case .reply(let v): try c.encode(v, forKey: .data)
         case .error(let v): try c.encode(v, forKey: .data)
         case .tool(let v): try c.encode(v, forKey: .data)
+        case .convList(let v): try c.encode(v, forKey: .data)
+        case .historyRequest(let v): try c.encode(v, forKey: .data)
+        case .history(let v): try c.encode(v, forKey: .data)
         case .readCursor(let v): try c.encode(v, forKey: .data)
+        case .foreground(let v): try c.encode(v, forKey: .data)
         case .cronList(let v): try c.encode(v, forKey: .data)
         case .upload(let v): try c.encode(v, forKey: .data)
         case .uploadAck(let v): try c.encode(v, forKey: .data)
