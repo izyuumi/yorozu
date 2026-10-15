@@ -13,7 +13,7 @@ This branch, `projectx`, is Yorozu v2. Yorozu v1 lives on `main`.
 
 ```sh
 mise install                 # Tuist
-scripts/build_native.sh      # builds /Applications/Yorozu.app
+scripts/build_native.sh      # builds the client's Mac app into /Applications/Yorozu.app
 ```
 
 Requirements: [docs/setup.md](docs/setup.md). Releases: [docs/release.md](docs/release.md).

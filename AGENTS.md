@@ -1,6 +1,6 @@
 # Yorozu v2
 
-Yorozu is becoming an OpenClaw chat channel (owner, 2026-10-15, tracking issue #415): a TypeScript channel plugin inside the owner's OpenClaw Gateway talks over the end-to-end-encrypted relay to one SwiftUI client app for iPhone, iPad and Mac, and OpenClaw runs the agent, sessions, memory and cron. The secretary system (routing, workers, memory, jobs, Hermes, cua, the Mac host) still in the code is being removed in #415's build order; do not extend it. This is branch `projectx` of a public repository, and v1 lives on `main`.
+Yorozu is becoming an OpenClaw chat channel (owner, 2026-10-15, tracking issue #415): a TypeScript channel plugin inside the owner's OpenClaw Gateway talks over the end-to-end-encrypted relay to one SwiftUI client app for iPhone, iPad and Mac, and OpenClaw runs the agent, sessions, memory and cron. The earlier assistant system and the Mac host are deleted (#426); some docs still describe them until #433 rewrites them. This is branch `projectx` of a public repository, and v1 lives on `main`.
 
 ## Rules
 
@@ -13,18 +13,18 @@ Yorozu is becoming an OpenClaw chat channel (owner, 2026-10-15, tracking issue #
 - One app: `/Applications/Yorozu.app`, the dev build, rebuilt in place by `scripts/build_native.sh` from the main checkout (owner, 2026-10-12); never make a second copy with its bundle id.
 - Upload to TestFlight (`scripts/upload_ios.sh --confirm`) only when the owner asks for that upload: each upload uses up its build number for good.
 - Approved cleanup of build outputs and stale app copies: confirm the list, then `rm -rf` it.
-- UI layout: size views from their container with the platform's native mechanisms; fixed numbers belong only inside a custom component that owns its geometry. Read [docs/ui-layout.md](docs/ui-layout.md) before changing SwiftUI layout in `Sources/ProjectXApp` or `apps/ios`.
+- UI layout: size views from their container with the platform's native mechanisms; fixed numbers belong only inside a custom component that owns its geometry. Read [docs/ui-layout.md](docs/ui-layout.md) before changing SwiftUI layout in `apps/ios`.
 
 ## Build and run
 
 ```sh
-mise install                        # Tuist, at the version pinned in mise.toml
-swift build                         # Sources/ProjectXCore only
-scripts/build_native.sh             # /Applications/Yorozu.app
-scripts/build_native.sh --restart   # /Applications/Yorozu.app, relaunched
+mise install                                    # Tuist, at the version pinned in mise.toml
+swift build --package-path packages/YorozuWire   # the wire package only
+scripts/build_native.sh                         # the client's Mac app, into /Applications/Yorozu.app
+scripts/build_native.sh --restart               # the same, relaunched
 ```
 
-App code (`Sources/ProjectXApp`) compiles only through `build_native.sh`; iOS code only through the iOS Xcode project ([docs/release.md](docs/release.md#ios-compile-check-without-uploading)).
+The client app (`apps/ios`: iPhone, iPad and Mac) compiles only through its Tuist-generated Xcode project: `build_native.sh` for the Mac app in `/Applications`, the compile checks in [docs/release.md](docs/release.md#ios-compile-check-without-uploading) otherwise. The plugin typechecks per `plugins/openclaw-yorozu/README.md`.
 
 ## Docs
 

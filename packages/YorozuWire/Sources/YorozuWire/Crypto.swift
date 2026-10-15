@@ -1,14 +1,11 @@
 import CryptoKit
 import Foundation
 
-/// X25519 -> HKDF-SHA256 -> ChaCha20-Poly1305, plus Ed25519 for relay frame signatures.
+/// X25519 and Ed25519 keys, ChaCha20-Poly1305 boxes and Ed25519 relay frame signatures; the v3 handshake is WireV3.
 /// Mirrored by packages/shared/src/crypto.ts (node:crypto); fixtures/ proves they interoperate.
 public enum YorozuCrypto {
-    /// Part of the wire contract: both languages must feed HKDF these exact bytes.
+    /// Part of the wire contract (sealed previews): both languages must feed HKDF these exact bytes.
     static let hkdfSalt = Data("yorozu-v1".utf8)
-    static let hkdfInfo = Data("yorozu-session".utf8)
-    static let channelInfoMacToDevice = Data("yorozu-channel/mac->device".utf8)
-    static let channelInfoDeviceToMac = Data("yorozu-channel/device->mac".utf8)
     static let tagBytes = 16
 
     public struct Keypair: Sendable {
@@ -35,11 +32,6 @@ public enum YorozuCrypto {
         }
     }
 
-    /// Which end of the live channel a peer is. The Mac seals with the mac->device key and
-    /// opens with device->mac; a device does the reverse. Mirrors `ChannelRole` in
-    /// packages/shared/src/crypto.ts.
-    public enum ChannelRole: Sendable { case mac, device }
-
     /// X25519 keypair for the session key agreement.
     public static func generateKeypair() -> Keypair {
         let key = Curve25519.KeyAgreement.PrivateKey()
@@ -50,47 +42,6 @@ public enum YorozuCrypto {
     public static func generateSigningKeypair() -> Keypair {
         let key = Curve25519.Signing.PrivateKey()
         return Keypair(privateKey: key.rawRepresentation, publicKey: key.publicKey.rawRepresentation)
-    }
-
-    /// 32-byte symmetric key. Both peers derive the same one from opposite halves.
-    public static func deriveSessionKey(myPriv: Data, theirPub: Data) throws -> SymmetricKey {
-        let priv = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: myPriv)
-        let pub = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: theirPub)
-        return try priv.sharedSecretFromKeyAgreement(with: pub)
-            .hkdfDerivedSymmetricKey(
-                using: SHA256.self,
-                salt: hkdfSalt,
-                sharedInfo: hkdfInfo,
-                outputByteCount: 32
-            )
-    }
-
-    /// One key per direction, both from the same X25519 agreement. With a single shared key a
-    /// blind relay could hand a box back to the peer that sealed it and it would open as if the
-    /// other end had sent it; a box sealed under the send key never opens under the recv key,
-    /// so a reflected frame is dropped like any stranger's.
-    public static func deriveChannelKeys(
-        myPriv: Data,
-        theirPub: Data,
-        role: ChannelRole
-    ) throws -> (send: SymmetricKey, recv: SymmetricKey) {
-        let priv = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: myPriv)
-        let pub = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: theirPub)
-        let secret = try priv.sharedSecretFromKeyAgreement(with: pub)
-        func key(_ info: Data) -> SymmetricKey {
-            secret.hkdfDerivedSymmetricKey(
-                using: SHA256.self,
-                salt: hkdfSalt,
-                sharedInfo: info,
-                outputByteCount: 32
-            )
-        }
-        let macToDevice = key(channelInfoMacToDevice)
-        let deviceToMac = key(channelInfoDeviceToMac)
-        switch role {
-        case .mac: return (send: macToDevice, recv: deviceToMac)
-        case .device: return (send: deviceToMac, recv: macToDevice)
-        }
     }
 
     public static func seal(key: SymmetricKey, plaintext: Data) throws -> SealedBox {
@@ -135,46 +86,6 @@ public enum YorozuCrypto {
     public static func verifyFrame(pub: Data, data: Data, signature: Data) -> Bool {
         guard let key = try? Curve25519.Signing.PublicKey(rawRepresentation: pub) else { return false }
         return key.isValidSignature(signature, for: data)
-    }
-}
-
-/// The direct path's mutual, domain-separated handshake (docs/ios-relay-contract.md, "Direct path"). The Mac
-/// signs the phone's probe nonce under `yorozu-direct-v2-host` first; only then does the phone sign the Mac's
-/// nonce under `yorozu-direct-v2`, both with the Ed25519 keys the relay already knows them by. The prefixes keep either signature from
-/// standing for the other, or for a relay join, which signs a bare nonce.
-public enum DirectProof {
-    public static func joinMessage(room: String, nonce: String) -> Data { Data("yorozu-direct-v2|\(room)|\(nonce)".utf8) }
-    public static func joinedMessage(room: String, nonce: String) -> Data { Data("yorozu-direct-v2-host|\(room)|\(nonce)".utf8) }
-
-    /// Phone: signs the Mac's `nonce` for `join`.
-    public static func signJoin(priv: Data, room: String, macNonce: String) throws -> Data {
-        try YorozuCrypto.signFrame(priv: priv, data: joinMessage(room: room, nonce: macNonce))
-    }
-
-    /// Mac: checks a `join` against the device's stored signing key.
-    public static func verifyJoin(pub: Data, room: String, macNonce: String, signature: Data) -> Bool {
-        YorozuCrypto.verifyFrame(pub: pub, data: joinMessage(room: room, nonce: macNonce), signature: signature)
-    }
-
-    /// Mac: signs the phone's nonce for `joined`.
-    public static func signJoined(priv: Data, room: String, phoneNonce: String) throws -> Data {
-        try YorozuCrypto.signFrame(priv: priv, data: joinedMessage(room: room, nonce: phoneNonce))
-    }
-
-    /// Phone: `joined` is the paired Mac only if its key hashes to the QR's room and the signature verifies.
-    public static func verifyJoined(pub: Data, room: String, phoneNonce: String, signature: Data) -> Bool {
-        roomId(signingPub: pub) == room
-            && YorozuCrypto.verifyFrame(pub: pub, data: joinedMessage(room: room, nonce: phoneNonce), signature: signature)
-    }
-
-    /// base64url sha256 of an Ed25519 public key: how a room is named.
-    public static func roomId(signingPub: Data) -> String {
-        Data(SHA256.hash(data: signingPub)).base64URLEncodedString()
-    }
-
-    /// 32 random bytes, base64url.
-    public static func newNonce() -> String {
-        Data(SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }).base64URLEncodedString()
     }
 }
 

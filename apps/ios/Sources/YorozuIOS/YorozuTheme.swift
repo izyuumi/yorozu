@@ -17,10 +17,6 @@ enum YorozuPalette {
         light: (0.737, 0.176, 0.110),
         dark: (0.722, 0.220, 0.165)
     )
-    static let sage = adaptive(
-        light: (0.243, 0.482, 0.227),
-        dark: (0.561, 0.749, 0.514)
-    )
     /// Amber for a state that needs attention without being an error: an offline Mac, a failed task,
     /// an over-long draft. Darker than the system orange so it holds 4.5:1 as text.
     static let warning = adaptive(
@@ -55,15 +51,6 @@ extension View {
         padding(.horizontal, gutter)
             .frame(maxWidth: LayoutMetrics.readingWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
-    }
-
-    /// A grouped card in the system's secondary fill.
-    func yorozuCard(
-        padding: CGFloat = LayoutMetrics.cardPadding,
-        radius: CGFloat = LayoutMetrics.cardRadius
-    ) -> some View {
-        self.padding(padding)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 
     /// Liquid Glass on iOS 26, the regular material before it.
