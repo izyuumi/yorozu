@@ -1,30 +1,33 @@
 # Yorozu v2
 
-A native macOS personal assistant backed by a local OpenClaw Gateway, with an iPhone client.
+Yorozu is a chat channel for OpenClaw: native apps for iPhone, iPad and Mac that talk to your own OpenClaw agent, like Signal or Telegram would, end to end encrypted.
 
-- **One conversation.** A secretary model answers quick turns itself and hands substantive work to background workers. Each topic gets a sub-chat you can inspect while you keep talking.
-- **Workers.** Thinking work runs in OpenClaw sessions; coding work runs Claude Code or Codex in managed git worktrees.
-- **Memory you own.** Useful facts and knowledge are saved automatically as Markdown files in `~/Yorozu/memory`, with a rebuildable search index.
-- **iPhone.** Pair from the Mac's Pair a Client Device sheet; messages travel through an end-to-end-encrypted relay.
+- **A channel plugin** (`plugins/openclaw-yorozu`, TypeScript) runs inside your OpenClaw Gateway. It holds the host keys and connects out to the relay; the Gateway opens no port.
+- **One SwiftUI app** (`apps/ios`) for iPhone, iPad and Mac: conversations, history from the Gateway's transcripts, tool calls shown collapsed, attachments, push, read marks synced across devices, and a Crons tab.
+- **The relay** passes sealed boxes between them. Every connection runs a Noise IK handshake, and push previews are sealed per device.
+- **OpenClaw does the rest**: the agent, its sessions, memory and cron. Each Yorozu conversation is one OpenClaw thread session.
 
 This branch, `projectx`, is Yorozu v2. Yorozu v1 lives on `main`.
 
-## Build
+## Start
 
 ```sh
-mise install                 # Tuist
-scripts/build_native.sh      # builds the client's Mac app into /Applications/Yorozu.app
+openclaw plugins install --link plugins/openclaw-yorozu --force --accept-capabilities
+openclaw gateway restart
+openclaw yorozu pair          # scan the QR, or paste the link, in the app
 ```
 
-Requirements: [docs/setup.md](docs/setup.md). Releases: [docs/release.md](docs/release.md).
+The full steps, config keys and troubleshooting: [docs/setup.md](docs/setup.md). Building the client: [docs/release.md](docs/release.md).
 
 ## Docs
 
-- [Status and roadmap](docs/status.md)
+- [Status](docs/status.md)
 - [Architecture](docs/architecture.md)
-- [OpenClaw integration](docs/openclaw-integration.md)
-- [Relay wire contract (v3)](docs/ios-relay-contract.md)
-- [cua integration (R3 design)](docs/cua-integration.md)
+- [Setup](docs/setup.md)
+- [Release](docs/release.md)
+- [Plugin reference](plugins/openclaw-yorozu/README.md)
+- [OpenClaw channel SDK facts](docs/openclaw-channel.md)
+- [Wire v3 contract](docs/ios-relay-contract.md)
 - [Owner decisions](OWNER_DECISIONS.md)
 - [Working rules](AGENTS.md)
 

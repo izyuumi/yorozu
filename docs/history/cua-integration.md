@@ -1,21 +1,23 @@
 # cua integration (R3)
 
-R3 is cua (https://cua.ai) integration so Yorozu can operate the user's computer ([OWNER_DECISIONS.md](../OWNER_DECISIONS.md#workers)). Progress is in [status.md](status.md).
+> **History.** This describes the secretary system (Mac host, routing, workers, memory, jobs, Hermes, cua), which was removed on 2026-10-15 (#415, #426). Kept for reference only; nothing here is current. The current docs are listed in [AGENTS.md](../../AGENTS.md#docs).
+
+R3 is cua (https://cua.ai) integration so Yorozu can operate the user's computer ([OWNER_DECISIONS.md](../../OWNER_DECISIONS.md#workers)). Progress is in [status.md](secretary-status.md).
 
 ## Route
 
 Workers operate the Mac through the **cua-driver MCP server**, under rules in their prompts (owner decisions, 2026-10-08):
 
 - **CuaDriver is a separate install** (`/Applications/CuaDriver.app`). Yorozu neither bundles it nor starts its daemon: `cua-driver mcp` is a proxy that launches the daemon through LaunchServices (`open -n -g -a CuaDriver --args serve`) when the socket is not answering, so the TCC grants stay with `com.trycua.driver`. The installer registers no MCP client; its `~/.local/bin/cua-driver` link is optional.
-- **It is optional.** Computer use is the built-in `cua` integration ([Integration](#integration)), on by default and switched with `[integrations.cua] enabled`. Its `cua-driver` server joins the MCP list workers get ([setup.md](setup.md#mcp-servers)), which the harness adapter mirrors into OpenClaw as `yorozu-cua-driver` ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). Yorozu adds no process and no Swift dependency.
-- **Routing**: "operate my Mac / use app X" goes to a thinking worker (no executor), and new coding work that needs an app or a browser goes to Codex unless the user names Claude Code (continuing work keeps its executor). Thinking and Codex workers get the tools; Claude Code does not (an OpenClaw gap the owner left as is, [openclaw-integration.md](openclaw-integration.md#mcp-servers)).
+- **It is optional.** Computer use is the built-in `cua` integration ([Integration](#integration)), on by default and switched with `[integrations.cua] enabled`. Its `cua-driver` server joins the MCP list workers get ([setup.md](secretary-setup.md#mcp-servers)), which the harness adapter mirrors into OpenClaw as `yorozu-cua-driver` ([openclaw-integration.md](secretary-openclaw-integration.md#mcp-servers)). Yorozu adds no process and no Swift dependency.
+- **Routing**: "operate my Mac / use app X" goes to a thinking worker (no executor), and new coding work that needs an app or a browser goes to Codex unless the user names Claude Code (continuing work keeps its executor). Thinking and Codex workers get the tools; Claude Code does not (an OpenClaw gap the owner left as is, [openclaw-integration.md](secretary-openclaw-integration.md#mcp-servers)).
 - **Rules** live in the built-in `cua` integration (`Integration.cua` in `Integration.swift`, `{session}` filled per run) and reach both worker contracts through `Prompts.integrationRules` while `[integrations.cua] enabled` is true (the default). They follow [Worker rules](#worker-rules) below, with the [YOLO](#yolo-mode) variant when `general.yolo` is on. There is no separate executor or lane, so tasks in different topics or with different executors can run at once, even on the same app; see [Concurrency](#concurrency).
 
 The `cua` CLI and the cua SDK manage sandboxes, Spaces and VMs; use them for isolated computers, not for driving the host desktop.
 
 ## Integration
 
-`Integration.cua` (`Integration.swift`) is data, like any integration ([architecture.md](architecture.md#mcp-servers-and-computer-use)):
+`Integration.cua` (`Integration.swift`) is data, like any integration ([architecture.md](secretary-architecture.md#mcp-servers-and-computer-use)):
 
 | Part | Value |
 |---|---|
@@ -27,7 +29,7 @@ The `cua` CLI and the cua SDK manage sandboxes, Spaces and VMs; use them for iso
 
 - Checks run only during setup (the `integrations` step), while Settings › Advanced shows its Integrations section, and on Check again; nothing runs them in the background, and they never prompt. The setup step asks to keep cua on or turn it off when a check fails, defaulting to off when CuaDriver is not installed.
 - Off: `yorozu-cua-driver` is removed at the next session setup (also when an older `[mcp_servers]` still lists `cua-driver`), and the rules leave both worker contracts from the next task. On restores both.
-- A `config.toml` from before integrations whose `[mcp_servers]` had no `cua-driver` entry loads with cua off ([setup.md](setup.md#mcp-servers)).
+- A `config.toml` from before integrations whose `[mcp_servers]` had no `cua-driver` entry loads with cua off ([setup.md](secretary-setup.md#mcp-servers)).
 ## Host check (2026-10-08, read-only)
 
 | Item | Finding |
@@ -38,7 +40,7 @@ The `cua` CLI and the cua SDK manage sandboxes, Spaces and VMs; use them for iso
 | TCC | Accessibility and Screen Recording granted to the daemon. Tahoe direct-capture consent not checked (the status command is read-only) |
 | Config | `agent_cursor.enabled: true`, `max_image_dimension: 1568`, `experimental_pip: false` |
 | Tools | 56 MCP tools (`cua-driver list-tools`); the ones workers need are under [Targeting one window](#targeting-one-window) |
-| OpenClaw | MCP servers `cua-driver` (`cua-driver mcp`, working), `cua` (points at a missing `~/Applications/Cua Spaces.app`, broken) and `computer-use` (another vendor's client, not used here). These are the owner's entries; Yorozu sessions switch all of them off and use their own `yorozu-cua-driver` ([openclaw-integration.md](openclaw-integration.md#mcp-servers)). |
+| OpenClaw | MCP servers `cua-driver` (`cua-driver mcp`, working), `cua` (points at a missing `~/Applications/Cua Spaces.app`, broken) and `computer-use` (another vendor's client, not used here). These are the owner's entries; Yorozu sessions switch all of them off and use their own `yorozu-cua-driver` ([openclaw-integration.md](secretary-openclaw-integration.md#mcp-servers)). |
 | Skill pack | The cua-driver skill pack is not linked into OpenClaw |
 | `cua` CLI | Not on `PATH` |
 
@@ -83,7 +85,7 @@ Limits, from upstream docs and `describe` output, not yet exercised on the host:
 
 - Consent: a topic request authorizes reading and operating only the apps it names. Sending, purchasing, posting, deleting, submitting forms, changing settings or credentials, and any other outward-facing action need the user's confirmation in the chat first.
 - Scope: bind each step to one (pid, window_id). Use desktop-wide capture (`get_desktop_state`) only when the task needs it. Work in the run's own `session` (`yorozu-<8 random hex characters>`, fresh per run), pass it on every call that takes one, and close it with `end_session`; revive an ended one with `start_session`, and switch to `<label>-2` (then -3) if CuaDriver says the label is not available to this transport (a recycled proxy).
-- Sensitive data: screenshots, AX trees and `clipboard_read` can expose passwords, messages and tokens. Skip password fields and type no secrets. Amended by #316 (owner decision, 2026-10-09): a worker may share a screenshot in a progress message, as a standalone `MEDIA:<absolute path>` line, when it helps the user follow the work; Yorozu copies it into `~/Yorozu/files/` and shows it in the task's sub-chat on the phone ([architecture.md](architecture.md#attachments)). Accessibility-tree dumps and clipboard contents stay out of progress messages and results beyond what the task needs, and screen content never goes into memory (extraction never sees sub-chat images).
+- Sensitive data: screenshots, AX trees and `clipboard_read` can expose passwords, messages and tokens. Skip password fields and type no secrets. Amended by #316 (owner decision, 2026-10-09): a worker may share a screenshot in a progress message, as a standalone `MEDIA:<absolute path>` line, when it helps the user follow the work; Yorozu copies it into `~/Yorozu/files/` and shows it in the task's sub-chat on the phone ([architecture.md](secretary-architecture.md#attachments)). Accessibility-tree dumps and clipboard contents stay out of progress messages and results beyond what the task needs, and screen content never goes into memory (extraction never sees sub-chat images).
 - Approval per use: `kill_app`, `clipboard_write`, `set_config`, `replay_trajectory`, `start_recording`, `install_ffmpeg`, browser downloads and file uploads (lifted, with requested outward-facing steps, in [YOLO mode](#yolo-mode)). The owner alone runs `update --apply`, `permissions grant`, `skills install` and `stop`.
 - Focus (issue #313): workers treat the Mac as unattended, whichever device the request came from. They never take focus or use foreground input: no `bring_to_front`, foreground delivery, focus-taking shortcuts or `open` without `-g`, with the user's approval or without. When an app accepts only foreground input, the worker says it cannot be done in the background and stops. It stops if the user takes over the target window.
 - Verification: a successful transport call is not success; confirm with `verify_state` or a fresh snapshot. After a timeout or a call that returned no result, check the effect with a fresh snapshot before retrying: the call may still run.

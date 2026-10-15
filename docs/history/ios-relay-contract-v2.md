@@ -662,7 +662,7 @@ Capability `readiness-v1` (`ReadinessData.capability`); the Mac sends it only to
   whose `severity` is `warning` or `blocking`; `ok` items may be listed too. `title` and `fix` are
   user-facing, in the Mac's language; `fix` is optional and the fix itself is done on the Mac.
   The Mac fills them from its readiness model (`ReadinessData(_:)` over `Readiness`,
-  [architecture.md](../architecture.md#setup-and-readiness)): `id` is the item's stable id, and `fix`
+  [architecture.md](secretary-architecture.md#setup-and-readiness)): `id` is the item's stable id, and `fix`
   is the command to copy, the URL, or "Setup › <step>" for a setup step.
 - The Mac sends the latest value after each compatible claim (every handshake) and to every served phone
   on each change, from `RelayHost.publishReadiness(_:)` (through `AppModel.publishReadiness(_:)`, which
@@ -999,7 +999,7 @@ Push (#320) uses the relay-level `push` (phone) and `notify` (Mac) messages the 
 already has (`apps/relay/src/protocol.ts`, `worker.ts`), including v1's per-device `previews`, so
 neither the content-free alerts nor the [sealed previews](#sealed-previews) (capability
 `push-preview-v1`, owner decision of 2026-10-10) needed a relay change. When the Mac sends a
-`notify` is in [architecture.md](../architecture.md#push-notifications).
+`notify` is in [architecture.md](secretary-architecture.md#push-notifications).
 
 ### Token registration (phone -> relay)
 
@@ -1045,7 +1045,7 @@ neither the content-free alerts nor the [sealed previews](#sealed-previews) (cap
 - es, ko and zh-Hans carry the same v2 meaning for all four keys.
 - Notifies the Mac holds while unregistered, and those sent since the last `pong` (a socket left
   half-open by sleep may have lost them), go out on the next `registered` collapsed to the newest
-  per class, so at most four (details in [architecture.md](../architecture.md#push-notifications)).
+  per class, so at most four (details in [architecture.md](secretary-architecture.md#push-notifications)).
 - The relay takes at most 60 notifies a minute per room and answers more with
   `{"type":"state","state":"notify rate limit"}`; the Mac logs it and carries on (that wake-up is
   lost, frames are not).
@@ -1062,7 +1062,7 @@ the Mac and the phone can read them.
 - Plaintext: compact JSON `{"b":<excerpt>,"c":<class>,"e":<event ref>}` (sorted keys), at most
   256 bytes (the relay's limit); `PushPreview.plaintext()` cuts the body, ending it with "…", until
   it fits. The excerpt is `Message.notificationExcerpt` (at most 180 characters, plain text,
-  [architecture.md](../architecture.md#push-notifications)), so a Japanese excerpt shows about 70
+  [architecture.md](secretary-architecture.md#push-notifications)), so a Japanese excerpt shows about 70
   characters on the phone.
 - Box: ChaCha20-Poly1305 with a fresh random 12-byte nonce per box (CryptoKit), `n` = base64url
   nonce (16 characters), `c` = base64url ciphertext and tag (22–363 characters).
@@ -1097,7 +1097,7 @@ the Mac and the phone can read them.
 
 - Every registered phone gets the alert. A phone with no live relay socket also gets a silent
   `content-available` push, at most one a minute (relay `BACKGROUND_INTERVAL_MS`). A relay without
-  the APNs secrets forwards frames and wakes nobody ([setup.md](../setup.md#push-notifications)).
+  the APNs secrets forwards frames and wakes nobody ([setup.md](secretary-setup.md#push-notifications)).
 - Phone (`application(_:didReceiveRemoteNotification:)`): only in the background; active or
   inactive (Notification Center pulled down) the foreground link is up and the push is ignored.
   `PhoneModel.wake()`, for a linked phone with no wake running: start the link unless one is up,
@@ -1155,7 +1155,7 @@ Codes in 0.7: `question`, `question_topic`, `question_task`, `routing_failed`, `
 `amendment_unconfirmed`, `closed_too_long`, `task_control_failed`, `config_invalid`,
 `settings_changed`, and for jobs (#319) `job_approval_requested`, `job_approved`,
 `job_approval_stale`, `job_failed`, `job_interrupted` and `job_skipped` (params in
-[architecture.md](../architecture.md#state-names)). A new code needs no capability: the fallback covers it.
+[architecture.md](secretary-architecture.md#state-names)). A new code needs no capability: the fallback covers it.
 
 ## Mac-side seams
 

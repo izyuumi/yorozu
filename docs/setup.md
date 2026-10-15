@@ -1,433 +1,142 @@
 # Setup
 
-What a Mac needs to build and run Yorozu v2, and where the app keeps its data and secrets.
+How to put Yorozu on an OpenClaw Gateway, pair a device and chat, plus what building the client needs. Every OpenClaw command below runs on the computer that runs the Gateway, from the repository root of the main checkout. The parts are described in [architecture.md](architecture.md).
 
 ## Tools
 
 | Need | Version | Notes |
 |---|---|---|
-| Xcode | 27 | Provides the Swift toolchain. |
-| Tuist | pinned in `mise.toml` | `mise install`. Generated `.xcodeproj`/`.xcworkspace` are gitignored. `apps/mac/Tuist.swift` and `apps/ios/Tuist.swift` exist so generation also works in a git worktree, where `.git` is a file. |
-| GRDB | locked in `Package.resolved` | SwiftPM dependency of `ProjectXCore`. Uses the system SQLite, whose FTS5 must have the `trigram` tokenizer (SQLite 3.34 or later) for memory search. |
-| swift-toml | 2.0.0, exact in `Package.swift` | SwiftPM dependency of `ProjectXCore` (product `TOML`). Decodes `config.toml` ([Settings](#settings-configtoml)); Yorozu writes the file itself. |
-| OpenClaw | the running Gateway's build | `openclaw` CLI on `PATH`; the app also searches `/opt/homebrew/bin` and `/usr/local/bin`. Source of the running build: `~/openclaw`. |
-| Node.js | what the OpenClaw build needs | `node` found by the same rule as `openclaw`; setup runs `openclaw --version` through it, since a Finder launch's `PATH` may lack the folder the script's `env node` needs. |
-| Upload tools | system | `upload_ios.sh` also uses `openssl`, `curl`, `jq`, `awk` and `xxd`. |
-| Hermes Agent | 0.21.6 (`HermesHarness.testedVersions`; written against its docs and source, not yet run live) | Only when Hermes is the main harness ([Hermes Agent](#hermes-agent)). Installed by the user with Hermes's own installer; Yorozu never installs or updates it and warns on an untested version. |
-| CuaDriver | 0.28.2 checked | Optional. `/Applications/CuaDriver.app`, installed separately ([cua-integration.md](cua-integration.md)). Not needed to build or run the app; workers need it to operate the Mac while the `cua` integration is on. |
+| OpenClaw | 2026.9.8 or later (`peerDependencies` in `plugins/openclaw-yorozu/package.json`) | The `openclaw` CLI on `PATH` and a running Gateway. The plugin is TypeScript loaded by the Gateway from source: no build step. |
+| Node.js | what the OpenClaw build needs | Runs the Gateway, and with it the plugin. Its TLS needs a CA bundle to reach the relay ([Troubleshooting](#troubleshooting)). |
+| Xcode | 27 | Builds the client (`apps/ios`) and `packages/YorozuWire`. |
+| Tuist | pinned in `mise.toml` | `mise install`. Generated `.xcodeproj` / `.xcworkspace` are gitignored; `apps/ios/Tuist.swift` lets generation work in a git worktree. |
+| Upload tools | system | `scripts/upload_ios.sh` also uses `openssl`, `curl`, `jq`, `awk` and `xxd`. |
 
-Deployment targets are in `Package.swift` and the Tuist manifests. `ProjectXCore` declares an older macOS than the Mac app, so macOS APIs newer than its own target need availability checks there.
-
-## First setup
-
-What a new person needs before Yorozu can answer, and how Yorozu walks them through it (#317). The owner and existing installs use the same flow; it skips whatever is already in place. Yorozu checks read-only and asks; it never installs software, signs in or grants permissions, and gives the command to run instead, with a copy button.
-
-The user does these, on the Mac that runs the Gateway:
-
-1. Install Node.js and OpenClaw, so `node` and `openclaw` resolve on `PATH`, `/opt/homebrew/bin` or `/usr/local/bin` ([Tools](#tools)).
-2. Start the Gateway: `openclaw gateway run` (local mode, loopback, [OpenClaw Gateway](#openclaw-gateway)).
-3. Let setup write Yorozu's agent entry with one click ([Yorozu's agent](#yorozus-agent)). When OpenClaw's agent list is not explicit, setup offers `openclaw agents add <agent> --non-interactive --workspace <folder>` to copy and run instead.
-4. Sign in to each provider the role models use: `openclaw models auth login --agent <agent> --provider <provider>`; setup lists the providers that are not signed in.
-5. In the app, connect the native transport once and approve this Mac's device on the host (`openclaw devices list`, [openclaw-integration.md](openclaw-integration.md#native-transport)).
-6. Optional, computer use: install CuaDriver and run `cua-driver permissions grant` ([cua-integration.md](cua-integration.md#permissions)), or turn the `cua` integration off.
-7. Optional, coding: install Claude Code (`claude`) or Codex (`codex`) on this Mac and sign in (`claude auth login`, `codex login`). Yorozu runs them for workers in each task's folder ([Workspace and coding agents](#workspace-and-coding-agents)); no repository needs to be chosen.
-
-Hermes Agent as the main harness has its own steps ([Hermes Agent](#hermes-agent)).
-
-Setup runs in the setup window, which opens at launch until setup is done and again from Settings › General › Run Setup Again…, or in a shell through [`Yorozu setup`](#yorozu-setup), which a user or their agent drives. Both run the same step engine (`SetupEngine`, [architecture.md](architecture.md#setup-and-readiness)), so a step answered in one shows as done in the other.
-
-| Step | Checks (read-only) | Question |
-|---|---|---|
-| `welcome` | none | `start` |
-| `harness` | The main harness's detection: `openclaw` and `node` found, the OpenClaw version, Gateway `health`, and that `[harness] agent` is not OpenClaw's default agent (`main`, or an entry with `default: true`), which blocks; then Yorozu's own agent entry and its shape ([openclaw-integration.md](openclaw-integration.md#assisted-setup)). For Hermes: the launcher, both Yorozu profiles answering with the required features (or a gateway restart they wait for) and a chosen AI provider, the default profile's API server, and whether the profiles match the plan ([hermes-integration.md](hermes-integration.md#setup-step)) | `harness` (which installed harness to use) when the main one is not installed but another is, and on the done step while several are installed; `openclaw_setup` (`apply:<plan_digest>`, `skip`) when the assisted write would add or change Yorozu's entry; `hermes_setup` (`apply:<plan_digest>`, `skip`) while Yorozu's Hermes profiles are missing or differ from the plan (on a skipped, done step the window offers it beside the harness choice); otherwise `check` or `skip` |
-| `gateway` | Native enrollment, for OpenClaw on the native transport | App-only (Settings › Harness) |
-| `models` | Each role model usable (`models.list`) and its provider signed in (`models.authStatus`) | `openclaw_setup` when the write would only add allow-list items; otherwise `check` or `skip` |
-| `integrations` | Each enabled integration's checks | `integrations.<name>` (`on`, `off`) for the first one with a failed check |
-| `yolo` | none | `off` (default) or `on` |
-| `start_at_login` | none | `on` (default) or `off`; app-only (Settings › General › Start at login) |
-| `pair_iphone` | A paired client device | `paired` or `skip`; app-only (Settings › Devices › Pair a Client Device) |
-| `path_link` | `~/.local/bin/yorozu` points to this binary | `no` (default) or `yes` ([The `yorozu` command](#the-yorozu-command)) |
-| `done` | Every step done | none |
-
-- A step is done when its checks pass or the user answered or skipped it (`setup.answered`). The CLI asks only steps still needed; the window may still offer a done step's question (the harness choice, YOLO) so the answer can change. `check` re-runs the checks, and `apply:<plan_digest>` makes the assisted write the user reviewed and checks again; `skip` and the other answers record the step. Choosing a harness is not a skip: its checks still have to pass.
-- App-only steps need the running app. Outside it they show as `app` with where to finish them, and answering one is refused.
-- When every step is done, setup writes `setup.done = true` and the window stops opening at launch. Completion lives only in `config.toml`, never in v1's `onboardingCompleted` key.
-- Each answer is one read-modify-write of `config.toml` (`Config.update`, atomic), or the assisted OpenClaw write, or the PATH link. A running app picks up the file through its watcher. An explicit answer is the user's word for a security-relevant key (the harness, YOLO).
-
-### `Yorozu setup`
-
-The app binary doubles as the setup CLI (`SetupCLI.swift`):
+## 1. Install the plugin
 
 ```sh
-<Yorozu.app>/Contents/MacOS/Yorozu setup [--json]                      # check, then print the next step
-<Yorozu.app>/Contents/MacOS/Yorozu setup answer <id> <value> [--json]  # apply one answer, then print the next step
+openclaw plugins install --link plugins/openclaw-yorozu --force --accept-capabilities
+openclaw gateway restart
+openclaw channels status
 ```
 
-- It opens no window, shows no Dock icon, takes no `app.lock` and never opens the Store, so it works while the app runs. It uses the app's data root (`PROJECTX_DATA`, `PROJECTX_MODE`) and the `PROJECTX_*` overrides, and writes `config.toml` with the defaults when it is missing.
-- It talks to the Gateway over the CLI transport. Started with the OpenClaw exec markers set (from an OpenClaw agent's shell, [openclaw-integration.md](openclaw-integration.md#launch-environment)), it makes no Gateway call: the `harness` and `models` steps show as `app` with "Open Yorozu from Finder and finish setup there".
-- `<id>` is the question's `id` (`openclaw_setup`, `hermes_setup` and `integrations.<name>` differ from their step ids); `<value>` is one of its `choices`. For `openclaw_setup` and `hermes_setup` the apply choice is `apply:<plan_digest>`: it names the exact changes printed with it, and a digest that no longer matches the current plan (OpenClaw's config, the Hermes profiles on disk or Yorozu's settings changed since) is refused (exit 2) with an error asking to run `setup --json` again. Plain `apply` is refused the same way. A plan that changes between that check and the write is refused with exit 1.
-- Exit codes: `0` a step was printed; `2` usage, an id with no question now, a value outside the choices, or an app-only step ("Finish this in the Yorozu app: <where>."); `1` anything else, such as an invalid `config.toml`, OpenClaw's config or the Hermes profiles changing during the answer, or a failed write.
-- Errors: with `--json`, `{"error": "<message>"}` on stdout; without, `error: <message>` on stderr.
-- Without `--json` the same content prints as plain text, ending with the question, its choices and the `setup answer` line to run.
+- `--link` loads the plugin from this directory, so link it from a checkout that stays (the main checkout, never a worktree that will be removed). Code changes there load on the next Gateway restart.
+- `--force` confirms a source that is not on ClawHub; `--accept-capabilities` gives the capability consent the install otherwise stops for.
+- The install records the plugin, enables it under `plugins.entries.yorozu` and adds it to `plugins.allow` when an allowlist is set. It needs no `channels.yorozu` entry: every key has a default ([Config](#2-config)).
+- v1's channel plugin (`packages/openclaw-channel` on `main`) uses the same id `yorozu`. If it is installed, `openclaw plugins uninstall yorozu` first; if the install is refused anyway, see [Troubleshooting](#troubleshooting).
+- Done when `openclaw channels status` lists `Yorozu default: enabled, configured, running, connected`. The Gateway log shows `yorozu started (agent <agent>, room <room id>)`. On first start the plugin makes its host keys; they never change afterwards.
 
-The JSON is one object, keys sorted:
+The Gateway must keep running for everything below: the `openclaw yorozu` commands reach the live plugin through Gateway methods (scope `operator.admin`) and take the usual Gateway options (`--url`, `--port`, `--token`, `--password`, `--timeout`).
 
-```json
-{
-  "steps": [
-    {"id": "welcome", "title": "Welcome", "state": "done"},
-    {"id": "gateway", "title": "Connect to the Gateway", "state": "app", "where": "Settings › Harness"}
-  ],
-  "checks": [
-    {"step": "harness", "id": "openclaw.gateway", "title": "…", "severity": "warning", "detail": "…",
-     "fix": {"title": "Copy start command", "copy": "openclaw gateway run"}}
-  ],
-  "step": "harness",
-  "question": {"id": "openclaw_setup", "text": "…", "choices": ["apply:3f9c2a71b0de", "skip"], "default": "apply:3f9c2a71b0de"},
-  "changes": [{"path": "agents.entries.yorozu.contextInjection", "old": null, "new": "\"never\""}],
-  "confirm": false,
-  "plan_digest": "3f9c2a71b0de"
-}
-```
+To try the plugin without touching a Gateway in use, run it in an isolated OpenClaw profile ([plugin README](../plugins/openclaw-yorozu/README.md#trying-it-without-the-main-gateway)).
 
-- `steps`: every step with `state` `done`, `needed` or `app` (plus `where`).
-- `checks`: every check with its step, `severity` (`ok`, `warning`, `blocking`), the raw `detail` when there is one, and a `fix`: `{"step": <id>}`, `{"title", "copy": <command>}` or `{"title", "open": <url>}`.
-- `step` and `question`: the first step with something to ask. For `openclaw_setup`, `changes` lists each config path with its old and new value as JSON text (`null` when absent), `confirm` is true when Yorozu's existing entry would change (its shape or its allow list). For `hermes_setup`, `changes` lists each pending profile write with what is on disk and what it sets, as JSON text or a placeholder in parentheses (`null` when absent; [hermes-integration.md](hermes-integration.md#setup-step)), and `confirm` is false, and `plan_digest` is 12 hex digits of SHA-256 over those changes, the digest the apply choice carries. Plain text prints the digest with the changes.
-- With nothing left to ask, `"done": true` replaces `step` and `question`, plus `finish_in_app`, `[{"id", "title", "where"}]`, for app-only steps still open.
+## 2. Config
 
-### The `yorozu` command
-
-Step `path_link` offers a `yorozu` command: answered `yes`, it links `~/.local/bin/yorozu` to the app binary, so `yorozu setup --json` works from any shell with `~/.local/bin` on `PATH` (user-writable, no sudo; CuaDriver's installer uses the same folder). The default is `no`. A file already at that path that is not this link is left alone, and the answer fails until it is removed.
-
-### Paste-in message
-
-The text a user pastes into an agent they already use (Claude Code, Codex, OpenClaw…) so it drives `Yorozu setup` with them. #321 publishes it verbatim in `Start.md` and on the website, both on `main` ([release.md](release.md#website)). Those copies must stay word for word the same as this one, so a change to the message here also needs a PR to `main`.
-
-```text
-Help me set up Yorozu on this Mac. Yorozu has a setup command: you run it, and I answer its questions.
-
-1. Run: "/Applications/Yorozu.app/Contents/MacOS/Yorozu" setup --json
-   If Yorozu.app is somewhere else, ask me where it is.
-2. Read the JSON. Show me the checks that are not "ok", with their fix commands. If there is a "question", ask me its text with its choices and default. If there are "changes", show them to me before I answer; to apply them, answer with the "apply:…" choice exactly as given, which names those changes. If that answer is refused because the changes differ, start again from step 1.
-3. Run: "/Applications/Yorozu.app/Contents/MacOS/Yorozu" setup answer <question id> <my answer> --json
-   Then go back to step 2 with its output.
-4. Stop when the output has "done": true. Tell me each "finish_in_app" item and where in the Yorozu app to finish it.
-
-Rules: never install software, sign in or grant permissions for me, and never run a fix command yourself. Show me the command; after I run it, answer "check". Never choose an answer for me, and never edit Yorozu's or OpenClaw's config files. If a command fails, show me the error and stop.
-```
-
-The message assumes `/Applications/Yorozu.app`, where the app lives (the dev build too); v1, which shares the bundle id, has no `setup` subcommand: the path must point at the v2 app.
-
-## OpenClaw Gateway
-
-Local mode, bound to loopback on port 18789 (`ws://127.0.0.1:18789`), token auth. The app reaches it through the `openclaw` CLI with the CLI's own configured credentials; it never reads or copies them. Call details and gotchas: [openclaw-integration.md](openclaw-integration.md).
-
-### Yorozu's agent
-
-The app talks to the agent named by `[harness] agent` in `config.toml`, whose code default is the generic `yorozu`. The owner's `config.toml` sets `agent = "projectx"`, which keeps the existing session keys ([openclaw-integration.md](openclaw-integration.md#sessions-and-runs)). Its entry in `~/.openclaw/openclaw.json` (`agents.entries.<agent>`) has this shape, shown for the owner's `projectx`:
-
-```json5
-{
-  name: "projectx",
-  workspace: "~/Library/Application Support/<bundle id>/openclaw-workspace",   // Yorozu's own empty folder
-  agentDir: "…",                      // OpenClaw's per-agent directory
-  identity: { … },
-  model: { primary: "openai-pool/gpt-6-astra", fallbacks: [] },
-  contextInjection: "never",          // the default is "always"
-  skills: [],
-  subagents: { allowAgents: [] },     // the default is ["*"]
-  // no `tools` key: workers inherit the global tool profile (full)
-}
-```
-
-Setup checks this shape and offers to write what is missing or different: `workspace`, `model.primary`, `contextInjection`, `skills`, `subagents.allowAgents`, and the removal of a `tools` key ([openclaw-integration.md](openclaw-integration.md#assisted-setup)). The workspace is an empty Yorozu-owned folder, `<data root>/openclaw-workspace` (mode 0700, created just before the write); workers run in their task folders instead (#351). An entry still pointing at the old `dev_repo` checkout shows as a change to confirm. `model.primary` is `models.worker` when set, else `agents.defaults.model`'s primary.
-
-The model policy in force, the entry's own `modelPolicy.allow` or else `agents.defaults.modelPolicy.allow`, is the list Yorozu's automatic model choices pick from, and `model.primary` is the worker default ([Models](#models)). An explicit per-agent list replaces the defaults' for that agent, so when setup adds a role model it writes the entry's own list seeded from the policy in force; it never touches `agents.defaults`.
-
-The entries for `openai-pool/gpt-6-sol` and `openai-pool/gpt-6-astra` under `models.providers.openai-pool.models` must set `contextWindow: 272000`, the window those models really take (owner decision). Yorozu reads the window per session (`contextTokens` from `sessions.describe`) to decide when to compact a topic session, and never counts more than 258,400 tokens as usable ([openclaw-integration.md](openclaw-integration.md#compaction)).
-
-## Hermes Agent
-
-Needed only with `[harness] kind = "hermes"`. Hermes runs its API server on loopback (`http://127.0.0.1:8642`) and serves Yorozu's two profiles under it; call details, profiles and hazards are in [hermes-integration.md](hermes-integration.md). The user does the install and provider steps; Yorozu writes only its own two profiles.
-
-1. Install Hermes with its installer and leave out its computer-use driver, so a second CuaDriver.app does not compete with the installed one for macOS permissions: `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-computer-use`. It installs to `~/.hermes` with the launcher `~/.local/bin/hermes`; pip and Homebrew installs are not supported by Hermes.
-2. When the setup wizard reports an OpenClaw installation and offers to migrate it, decline. Never run `hermes claw migrate` or `hermes claw cleanup`: cleanup renames `~/.openclaw`, which the OpenClaw harness needs ([hermes-integration.md](hermes-integration.md#openclaw-migration-hazards)).
-3. Turn on the API server in the default Hermes profile, which serves the named profiles (multiplexing). Yorozu checks this read-only and, while it is off, shows the readiness warning "Turn on the API server in your default Hermes profile" with the key and restart commands to copy; it never edits the default profile:
-
-   ```sh
-   hermes config set API_SERVER_ENABLED true
-   hermes config set API_SERVER_KEY "$(openssl rand -hex 32)"   # only if the default profile has no key of 16+ characters
-   hermes gateway restart
-   ```
-
-4. Apply the Hermes profile step, which creates and configures `yorozu-worker` and `yorozu-roles` and stores their API keys in the Keychain ([Keychain items](#keychain-items)). With Hermes as the main harness (step 6, or `PROJECTX_HARNESS=hermes`), the setup window's Harness step lists every change and writes them when you click Continue; Settings › Advanced › Set Up Hermes Profiles… opens that step, and `Yorozu setup answer hermes_setup apply:<plan_digest>` does the same from a shell ([`Yorozu setup`](#yorozu-setup)). When `[mcp_servers]`, an integration or the workspace path changes later, readiness warns "Hermes profiles need updating" and nothing is written until you apply the step again ([hermes-integration.md](hermes-integration.md#setup-step)). Hermes picks the profiles it serves when its gateway starts, so after the first apply readiness warns "Restart Hermes so it serves Yorozu's profiles" with `hermes -p default gateway restart` to copy. Without a Hermes service (`hermes gateway install`, a launchd agent), that command runs the gateway in the foreground of its Terminal window, which then has to stay open.
-5. Connect a provider for both Yorozu profiles: Codex or Claude Code, never GitHub Copilot (owner decision). The Codex route: sign in once with `hermes auth login openai-codex` (a device code in the browser; answer N when it offers to import the Codex CLI's tokens), which Yorozu's profiles borrow from the default profile; then `hermes -p yorozu-worker config set model.provider openai-codex`, the same for `yorozu-roles`, and a Codex model for each (`hermes -p <profile> model`). While a profile has no provider chosen (`provider: auto` in its `/api/model/options`), readiness warns "Hermes isn't connected to an AI provider" with those commands to copy; a profile on GitHub Copilot blocks with "Hermes uses GitHub Copilot, which Yorozu doesn't use", and Yorozu starts no run on it. Provider keys stay in Hermes; Yorozu never reads them. The profiles do not adopt the Claude Code and Codex CLI logins (`auth.adopt_external_logins: false`), so Claude Code, which Hermes reaches only by borrowing that login, stays blocked there ([hermes-integration.md](hermes-integration.md#providers)).
-6. Choose Hermes Agent in the setup window's Harness step or in Settings › Harness (`[harness] kind = "hermes"` in `config.toml`, or `PROJECTX_HARNESS=hermes` for one run) and relaunch. The status line shows "Hermes Agent" while Ready; otherwise the readiness banner names what is not ready, an untested version included.
-
-## Settings (`config.toml`)
-
-Yorozu's settings are one file, `config.toml`, in the data root in use ([Where data lives](#where-data-lives)), so fixture and `PROJECTX_DATA` runs each have their own and v1, which shares the bundle id, never sees it (`Config.swift`). A launch with no file writes one with the defaults below; no default is specific to one owner. Change it in the Settings window (⌘, or Settings… in the menu-bar menu; the Harness and Advanced tabs show while `general.show_advanced` is on, [architecture.md](architecture.md#mac-ui)), by hand, or by asking Yorozu in the chat, which has a worker edit it ([architecture.md](architecture.md#settings)). A row whose key is set by an environment variable is disabled in Settings and labelled "Set by `PROJECTX_…`" ([Precedence](#precedence)); `models.rules.*`, `routing.*`, `direct.*`, `mcp_servers` and user integrations' keys other than `enabled` have no Settings row (the harness popup is in Settings › Harness and the integration switches in Settings › Advanced; `direct.enabled` is also a switch in the menu-bar menu), and `setup.*` is written by setup.
+Everything under `channels.yorozu` is optional. A change to `channels.yorozu` restarts the channel without a Gateway restart.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `general.start_at_login` | `true` | Login item ([Start at login and keep awake](#start-at-login-and-keep-awake)) |
-| `general.keep_mac_awake` | `false` | No idle sleep while Yorozu runs |
-| `general.yolo` | `false` | YOLO mode ([architecture.md](architecture.md#mcp-servers-and-computer-use)) |
-| `general.send_key` | `"cmd-enter"` | `"cmd-enter"` (Return is always a new line) or `"smart"` (Return sends a one-line draft); ⌘Return always sends ([architecture.md](architecture.md#mac-ui)) |
-| `general.global_shortcut` | `""` (off) | Shortcut that toggles the popover: modifiers and one key joined by `+`, such as `"option+space"`, `"cmd+shift+y"` or `"ctrl+f5"`; a key other than F1–F12 needs a modifier ([architecture.md](architecture.md#mac-ui)) |
-| `general.appearance` | `"system"` | `"system"`, `"light"` or `"dark"` |
-| `general.show_advanced` | `false` | Shows the Harness and Advanced tabs, and About this install in Storage |
-| `general.role` | `"host"` | `"host"`: Yorozu runs on this Mac. `"client"`: this Mac uses another host Mac through the relay, as a phone does ([architecture.md](architecture.md#mac-client-role)). Read at launch; Settings › General › This Mac relaunches the app to apply a change |
-| `notifications.enabled` | `true` | Notifications for results, failures and questions; the menu-bar dot shows either way |
-| `notifications.destination` | `"mac"` | `"mac"` (macOS notifications) or `"phones"` (push to paired phones, [Push notifications](#push-notifications)); with `"phones"` the Mac posts none |
-| `routing.personal_knowledge` | `""` | The user's personal notes, named in the routing policy as a source only a worker can read; empty drops that clause; at most 200 bytes of UTF-8 |
-| `routing.self_topic` | `"Yorozu"` | The topic that holds work on Yorozu itself; at most 80 characters |
-| `relay.url` | `"wss://relay.yumi.to"` | Relay for the iPhone app, `ws://` or `wss://` with a host |
-| `direct.enabled` | `true` | The direct listener paired phones may dial over the LAN or a VPN; a phone dials it only after its own Direct connection setting is on ([Direct connection](#direct-connection)) |
-| `direct.port` | `8738` | TCP port of the direct listener, 1024–65535 |
-| `harness.kind` | `"openclaw"` | Main harness: `"openclaw"` or `"hermes"`; applies at the next launch, and only once no work is active or uncertain ([architecture.md](architecture.md#harness-seam)) |
-| `harness.agent` | `"yorozu"` | Harness agent id, 1–64 letters, digits, `-` or `_` ([Yorozu's agent](#yorozus-agent)) |
-| `harness.transport` | `"native"` | `"native"` or `"cli"`; a native launch still sends admin-scope calls through the CLI ([openclaw-integration.md](openclaw-integration.md#transport)) |
-| `harness.gateway_url` | `"ws://127.0.0.1:18789"` | Loopback `ws`/`wss` only, with no path, query or credentials |
-| `harness.hermes_url` | `"http://127.0.0.1:8642"` | Hermes API server root, loopback `http`/`https` only, with no path, query or credentials; profiles are reached under `/p/<profile>/`. Settings › Harness › Hermes URL while Hermes is the main harness (applied on Return; "Relaunch to apply." while it differs from the launched value) |
-| `workspace.path` | `""` | Folder where agents work, one subfolder per task ([Workspace and coding agents](#workspace-and-coding-agents)); an absolute or `~/` path. Empty is `~/Yorozu/workspace`, or `<data root>/workspace` under `PROJECTX_DATA` or in fixture mode |
-| `workspace.restrict` | `false` | Limit agents to the workspace: coding agents start only inside it and run their `restricted_command`, which sandboxes their writes; workers are told to stay inside it (not enforced). Off: file access is not limited |
-| `models.secretary`, `models.extraction`, `models.worker`, `models.review` | absent (automatic) | `"provider/model"` ([Models](#models)) |
-| `models.rules.min_context_tokens`, `models.rules.min_output_tokens` | `32000`, `16000` | Inputs of the automatic secretary and extraction choice |
-| `mcp_servers.<name>` | none ([MCP servers](#mcp-servers)) | `command` and `args` |
-| `coding_agents.<name>` | built-in `claude` and `codex` ([Workspace and coding agents](#workspace-and-coding-agents)) | `command` (program and arguments; sets the agent's access), optional `restricted_command` (used while `restrict` is on) and `timeout` (seconds, default 1500) |
-| `integrations.<name>.enabled` | `true` for the built-in `cua` | Turns an integration on or off ([Integrations](#integrations)); Settings › Advanced › Integrations |
-| `setup.done` | `false` | Setup is finished; until then the app opens the setup window at launch ([First setup](#first-setup)) |
-| `setup.answered` | `[]` | Ids of the setup steps the user answered or skipped |
+| `channels.yorozu.enabled` | `true` | `false` stops the channel |
+| `channels.yorozu.agent` | `main` | The one agent that answers every Yorozu conversation and whose crons the Crons tab lists |
+| `channels.yorozu.relayUrl` | `wss://relay.yumi.to` | Relay the plugin and the apps meet on; it goes into the pairing link, so devices follow it |
+| `channels.yorozu.mediaMaxMb` | `8` | Attachment limit, both ways |
+| `channels.yorozu.textChunkLimit` | OpenClaw's (4000) | Longest reply chunk, in characters |
 
-Retired keys (#351): `harness.dev_repo`, `harness.dev_base` and `[models.coding]` are no longer read; a file that has them keeps them as unknown data. `PROJECTX_DEV_REPO`, `PROJECTX_CLAUDE_MODEL` and `PROJECTX_CODEX_MODEL` are ignored.
-
-`send_key`, `global_shortcut` and `notifications.*` are used by the popover (#311); `appearance` sets the app's appearance and `show_advanced` shows the Harness and Advanced tabs (#312).
-
-- **Format.** Yorozu writes the whole file in one canonical layout: known keys in a fixed order, each with Yorozu's own comment, absent model keys as commented examples, and unknown keys kept as data after them. Hand-written comments are not kept. Every write goes to a temporary file in the same folder, mode 0600, flushed to disk, then is renamed over `config.toml`; a write that would be invalid is refused. Writes from Settings are read-modify-write (`Config.update`), so a recent hand or worker edit survives, and are applied at once; a refused write shows in the Settings tab. Otherwise the app writes the file only to create it.
-- **Reload.** `ConfigWatcher` watches the folder with FSEvents, so in-place edits and atomic saves are both seen, and debounces for 300 ms: a saved change is applied within about a second. An unchanged file is ignored; the comparison starts from the file as read at launch, so an edit made while the app was starting is applied too.
-- **Invalid edits.** A file that does not parse or validate, or is missing, leaves the last valid settings in force and posts one `failure` notice per distinct problem, code `config_invalid`, naming the file, the line when known, the key and the reason: "Settings not applied: config.toml line 12 (relay.url): expected a ws:// or wss:// address. The last valid settings stay in force." An invalid or unreadable file at launch is left untouched: that run uses the code defaults plus the environment, posts the same notice ending "Yorozu runs on its default settings until the file is fixed.", and applies the file once it is fixed. That run uses the default agent `yorozu` unless `PROJECTX_AGENT` says otherwise.
-- **Security-relevant keys.** `general.yolo`, `relay.url`, `direct.enabled`, `direct.port`, every `harness.*` key, every `models.*` role, `workspace.*`, `mcp_servers`, `coding_agents` and `integrations`. Their comments say "Security-relevant: ask the user before changing it", and a worker asks for the user's yes in the chat before changing them. A reload that changes any of them posts an `acknowledgment` notice, code `settings_changed`: "Settings changed: relay.url".
-- **When a change applies.** Models, YOLO, routing hints, the workspace and the coding agents from the next route, task or extraction (a running agent keeps its own); automatic models after the model metadata is read again. MCP servers, an integration switched on or off included, when the next worker session is prepared ([openclaw-integration.md](openclaw-integration.md#mcp-servers)); integration rules from the next task. `relay.url` restarts the relay host on the new relay with the same keys and devices; every phone must pair again, since its pairing names the old relay. `direct.*` at once: the listener restarts on the new port or stops, closing its direct links, and phones learn the new addresses at their next peer-info exchange. `keep_mac_awake`, `start_at_login`, `appearance`, `send_key` and `notifications.*` at once; `global_shortcut` within 2 s. `harness.kind`, `agent`, `transport`, `gateway_url` and `hermes_url` only at the next launch; the status line says "Relaunch Yorozu to apply: …", adding that a harness switch waits until running work finishes.
-
-### Precedence
-
-Each value comes from the first of: a `PROJECTX_*` environment variable, `config.toml`, the automatic choice (models only), the code default (`ResolvedSettings`). Environment values override for that run only and are never written to the file.
-
-| Variable | Key |
-|---|---|
-| `PROJECTX_HARNESS` | `harness.kind` |
-| `PROJECTX_TRANSPORT` | `harness.transport` |
-| `PROJECTX_GATEWAY_URL` | `harness.gateway_url` |
-| `PROJECTX_AGENT` | `harness.agent` |
-| `PROJECTX_RELAY_URL` | `relay.url` |
-| `PROJECTX_SECRETARY_MODEL` | `models.secretary` and `models.extraction` |
-| `PROJECTX_MODEL` | `models.worker` |
-| `PROJECTX_REVIEW_MODEL` | `models.review` |
-
-`PROJECTX_MODE` and `PROJECTX_DATA` stay environment-only: they choose the data root that holds `config.toml`. An environment value that fails the key's rule stops the launch, for example "PROJECTX_TRANSPORT: expected one of "native", "cli".".
-
-### MCP servers
-
-Yorozu keeps the user's own list of MCP servers its workers may use as `[mcp_servers.<name>]` tables in `config.toml`, empty by default:
-
-```toml
-[mcp_servers.example]
-command = "/absolute/path/to/server"
-args = ["--stdio"]
+```sh
+openclaw config set channels.yorozu.agent <agent id>
 ```
 
-Each server is stdio: `command` is an absolute path, `args` is optional, and a name is 1–23 letters, digits, `-` or `_`. `env` is refused for now: a removed value would linger in OpenClaw's merge-patched config, and values would travel in command-line arguments.
+Changing `relayUrl` moves the plugin to another relay: devices paired on the old one pair again.
 
-Workers get `[mcp_servers]` minus the servers of disabled integrations, plus the servers of enabled ones, with `[mcp_servers]` winning on a name clash (`Config.effectiveMCPServers`). The built-in `cua` integration brings `cua-driver` (`/Applications/CuaDriver.app/Contents/MacOS/cua-driver mcp`), so it is no longer listed here; it needs CuaDriver.app with Accessibility and Screen Recording granted to it (`cua-driver permissions grant`, run by the user), and its `mcp` proxy launches the CuaDriver daemon when it is not running. The app mirrors the list into OpenClaw itself, again whenever it changes ([openclaw-integration.md](openclaw-integration.md#mcp-servers)); nothing needs registering by hand.
+### Owner-only tools
 
-The list used to be `mcp-servers.json` in the data root. When `config.toml` is first created, a valid `mcp-servers.json` next to it is imported into `[mcp_servers]` once; after that the JSON file is never read and can be deleted. A file from before integrations whose `[mcp_servers]` has no `cua-driver` entry, and that sets no `[integrations.cua] enabled`, loads with cua off, since removing that entry used to mean computer use off; a file that still lists `cua-driver` keeps it.
+OpenClaw treats a Yorozu turn as a non-owner sender, so owner-only agent tools (`automations` for cron edits, `sessions`, `gateway`, `nodes`) are denied in it. The Crons tab's "Edit in Chat" needs `automations`. To give Yorozu turns owner authority, the owner adds `yorozu:owner` to `commands.ownerAllowFrom`, keeping the entries already there:
 
-### Workspace and coding agents
-
-Workers work in one folder per task, and run coding agents through Yorozu (#351; [architecture.md](architecture.md#workspace-and-coding-agents)).
-
-```toml
-[workspace]
-path = ""            # empty: ~/Yorozu/workspace (<data root>/workspace under PROJECTX_DATA or in fixture mode)
-restrict = false     # true: coding agents run sandboxed inside it; workers are told to stay inside it
-
-[coding_agents.claude]           # replaces the built-in of the same name
-command = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions", "--"]
-restricted_command = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--add-dir", "{workspace}", "--"]
-timeout = 1500
+```sh
+openclaw config get commands.ownerAllowFrom
+openclaw config set commands.ownerAllowFrom '[<existing entries>, "yorozu:owner"]' --strict-json
 ```
 
-- Each task's folder is `<workspace>/<topic label slug>-<first 8 of the topic id>/`, created 0700 at first use; workers download files and clone repositories there. A coding agent's full output is in `<data root>/agent-runs/<task folder name>/<time>-<agent>.log` (outside the task folder, so it never lands in a repository).
-- Built-in agents: `claude` (`claude -p --output-format stream-json --verbose --permission-mode bypassPermissions -- <prompt>`) and `codex` (`codex exec --skip-git-repo-check --sandbox danger-full-access --color never -- <prompt>`), offered only when the program is found: an absolute `command[0]`, else `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin` or `~/.local/share/mise/shims`. A Finder launch's `PATH` is short, so a tool installed elsewhere needs an absolute path in its own entry. Their `command` runs with full access, as file access is unlimited by default (a per-agent setting: give an entry of the same name your own `command`); while `restrict` is on they run their sandboxed `restricted_command` instead (Claude Code: `--permission-mode acceptEdits --add-dir <workspace>`, edits only in its folder and the workspace and no shell commands; Codex: `--sandbox workspace-write --add-dir <workspace>`, writes only there and no network; reads are not limited); sign in once with `claude auth login` and `codex login`. Settings shows each agent as found or not found; Yorozu can't tell whether it is signed in.
-- Your own agent: `[coding_agents.<name>]` (1–64 letters, digits, `-` or `_`) with `command`, the program and its arguments; the prompt is added as the last argument, so end the list with `"--"` when the program takes options. Optional `restricted_command`, used while `restrict` is on, which must sandbox the agent to its folder and `"{workspace}"` (replaced by the workspace path); an agent without one is refused while `restrict` is on. Optional `timeout` in seconds (default 1500). Other keys are kept as data. At most 2 agents run at once across the app, one per task; a third waits for a slot.
-- The command a worker runs, given in its contract: `Yorozu agent run <agent> --task <task id> [--dir <folder>] [--socket <path>] -- - <<'YOROZU_PROMPT'` with the prompt on stdin (a prompt after `--` works too), run with a shell timeout of at least the agent's timeout plus 120 s. It reaches the running app on `<data root>/agents.sock` (0600; same user only); without `--socket` it finds the data root as the app does. It prints the agent's final answer and exits with the agent's status.
-- `restrict`: enforced for coding agents (their folder must be inside the workspace, and they run their sandboxed `restricted_command`); for workers it is an instruction in their contract, which neither harness enforces.
+That is the owner's decision: it gives every paired device the owner's authority over the agent.
 
-### Integrations
+### Models
 
-An integration is data, never loaded code: MCP servers, worker rules, read-only checks and fixes, and settings, behind an on/off switch ([architecture.md](architecture.md#mcp-servers-and-computer-use)). The built-in one is `cua`, computer use through CuaDriver, on by default ([cua-integration.md](cua-integration.md)):
+Yorozu uses the configured agent's models; it has no model settings of its own. Titles come from OpenClaw's title generator on the agent's utility model: `agents.entries.<agent>.utilityModel`, else `agents.defaults.utilityModel`, else the primary provider's small model or the primary model. Attachments reach the model as media, so pictures need a model whose input takes images.
 
-```toml
-[integrations.cua]
-enabled = true
+## 3. Install a client
+
+- **iPhone, iPad**: the Yorozu app from internal TestFlight ([release.md](release.md#ios-and-ipados-testflight)).
+- **Mac**: `scripts/build_native.sh` builds the client into `/Applications/Yorozu.app` ([release.md](release.md#mac-client)).
+
+The app speaks wire v3 only. A device paired with the old Mac host (wire v2) or with v1 pairs again.
+
+## 4. Pair a device
+
+```sh
+openclaw yorozu pair
 ```
 
-For a built-in, only `enabled` and `[integrations.<name>.settings]` are read; its servers, rules, checks and fixes ship with the app, and other keys stay in the file as unknown data. A user integration may set:
+It prints a QR code, a `yorozu://pair?…` link, the host fingerprint (`XXXX XXXX XXXX XXXX`) and the time it expires: one device, within 10 minutes, and before the next Gateway restart (pending pairings live in memory).
 
-```toml
-[integrations.notes]
-enabled = true
-title = "Notes server"
-rules = "Use the notes MCP tools only for the user's notes."   # "{session}" is the per-run cua session label
-checks = [{ title = "Notes socket", socket = "~/Library/Caches/notes/notes.sock" },
-          { title = "Notes app", file = "/Applications/Notes Server.app" }]
-fixes = [{ title = "Copy start command", copy = "notes-server start" },
-         { title = "Install guide", url = "https://example.com/notes" }]
+1. In the app, on "Pair with your host": on iPhone or iPad, tap Scan QR Code and scan it. On any device, copy the link (or the https link the QR encodes) and tap Paste, or paste it into "Pairing link" and tap Pair.
+2. The app asks "Pair with this host?" with the host key. Compare it with the fingerprint the command printed; pair only if they match.
+3. Done when the conversation list appears and `openclaw yorozu devices` lists the device by its model name. On iPhone and iPad the app then asks to allow notifications.
 
-[integrations.notes.mcp_servers.notes]
-command = "/Applications/Notes Server.app/Contents/MacOS/notes-server"
-args = ["mcp"]
+Pair each device separately; all of them see the same conversations. At most 16 devices: a 17th replaces the oldest.
+
+## 5. Chat
+
+- "+" starts a new conversation (a new OpenClaw thread session). Type and send with the send button; on the Mac ⌘Return sends and Return adds a line.
+- Marks: ✓ sent (relay accepted), ✓✓ delivered (plugin received), read (agent run started); typing shows while the agent works; tool calls show as one collapsed row. Long replies arrive as several cards.
+- `/new` resets the open conversation's session; other slash commands go to OpenClaw as typed.
+- Files: the + menu in the composer, drag and drop, or Share › Yorozu on iOS; up to `mediaMaxMb`.
+- Crons: the Crons tab lists the agent's jobs; "Edit in Chat" drafts a change for the agent to make ([Owner-only tools](#owner-only-tools)).
+
+## Devices
+
+```sh
+openclaw yorozu devices               # id, name, paired at
+openclaw yorozu devices remove <id>   # the id, or a unique start of it
 ```
 
-- A name is 1–64 letters, digits, `-` or `_`; server entries follow the `[mcp_servers]` rule.
-- Checks are `file` (a file, folder or app exists) or `socket` (a unix socket accepts a connection); only built-ins may run a command check. Fix URLs are `http` or `https`.
-- Checks run only during setup, while Settings › Advanced shows, and on Check again ([architecture.md](architecture.md#mcp-servers-and-computer-use)). Fixes are shown, never run.
-
-### Start at login and keep awake
-
-- `start_at_login` registers the running app bundle as a login item with `SMAppService.mainApp` (`/Applications/Yorozu.app`) and records that in `login-item-registered` in the data root; `false` unregisters the item only when that file exists, so an item this app did not register is never removed. An item already enabled at this app's own path with no other copy installed is Yorozu 1's, replaced in place, and is recorded as this app's. It is on by default. When macOS wants approval, the status line says "Start at login needs approval in System Settings › General › Login Items", and Settings › General says it is waiting and offers Open Login Items…. Fixture and `PROJECTX_DATA` runs never touch the login item, and Settings shows the switch disabled with that reason.
-- Known limit: v1 shares the bundle id, and `SMAppService.mainApp` could act on its login item. While LaunchServices knows any other bundle with this id (`/Applications/Yorozu.app`, or another build copy), the app leaves login items alone and, with `start_at_login` on, the status line says "Start at login is off while another Yorozu with the same id is installed"; Settings › General shows the switch off and disabled, naming the other bundle's path.
-- `keep_mac_awake` holds a `ProcessInfo` activity with `.idleSystemSleepDisabled` while the app runs (`pmset -g assertions` lists it). A closed lid still sleeps.
-
-### Direct connection
-
-Paired client devices can reach the host without the relay when both are on the same LAN or the same private VPN (#315; wire in [ios-relay-contract.md](history/ios-relay-contract-v2.md#direct-path)). The relay stays the fallback.
-
-- Mac: with `[direct] enabled = true` (the default) the app listens for WebSockets on `[direct] port` (8738) and accepts connections only on Wi-Fi/Ethernet (`en*`) and `utun` interfaces; loopback, AWDL and bridges are refused, so `127.0.0.1` never gets in. Only a phone whose key is in `relay-devices.json` gets past the join: pairing still goes over the relay. The addresses phones are told are the Mac's private Wi-Fi/Ethernet addresses (`lan`) and its private `utun` addresses (`vpn`: RFC 1918, 100.64.0.0/10, ULA), never loopback or link-local. Settings › Connection › Direct connection shows the listener, the addresses, each phone's route and the last refused connection.
-- macOS firewall: when the application firewall is on, macOS asks whether Yorozu may accept incoming connections. An unsigned or ad hoc build asks again after each rebuild, since its signature changes; a Developer ID signed build may ask once. Deny keeps phones on the relay.
-- Local Network on the Mac: the Mac app declares `NSLocalNetworkUsageDescription`; if macOS asks, allow it. A denial shows up later in System Settings › Privacy & Security › Local Network.
-- iPhone: Settings › Connection › "Direct connection (LAN / Tailscale)" is off by default (`UserDefaults` key `directPathEnabledV2`; v1's `directConnectionEnabled` is a different key and never read). Turning it on is when iOS asks for Local Network access; denied, the phone stays on the relay and Settings points to Settings › Privacy & Security › Local Network. The Mac's addresses arrive in the sealed peer info over the relay and are stored in the phone's Keychain pairing record, never in `UserDefaults`, so Remove host and Repair drop them. They refresh only at the next peer-info exchange (a new session).
-- Tailscale: run Tailscale, signed in to the same tailnet, on both devices. The Mac's Tailscale address (100.64.0.0/10 or fd7a:115c:a1e0::/48 on a `utun` interface) is advertised as `vpn` and shown as "Tailscale"; other WireGuard VPNs with private addresses work the same way, shown as "VPN". Tailnet ACLs must let the phone reach the Mac on the direct port. v1's `tailscale serve` on port 8443 is not involved. The phone tries VPN addresses only while a VPN interface is up and LAN addresses only on Wi-Fi or Ethernet.
-
-## Models
-
-No model id is in the code. Each role uses its explicit choice (`[models]` in `config.toml`, or its [environment variable](#precedence)); without one, an automatic choice computed from the harness's model metadata (`ModelDefaults.resolve`), recomputed at launch and after every reload:
-
-| Role | Key | Automatic choice |
-|---|---|---|
-| Secretary | `models.secretary` | The cheapest priced allowed model with at least `min_context_tokens` of context and `min_output_tokens` of output; if none fits, the agent's primary model |
-| Memory extraction | `models.extraction` | Same rule as the secretary |
-| The one stronger routing review | `models.review` | The most expensive priced allowed model other than the secretary's (the secretary's when it is the only one) |
-| Worker | `models.worker` | The agent's primary model; without one, the most expensive priced allowed model |
-
-Coding agents use their own model settings (their own configuration, or a `--model` in their `command`).
-
-- Price is input plus output price per million tokens. A model without a price, or with a 0/0 cost (as a local proxy may declare), counts as unknown and is left out of the cheapest and most-expensive picks; a model with no output cap is left out of both too. When no allowed model has a price, the secretary, extraction, review and worker roles all use the agent's primary model.
-- An explicit choice the harness does not list is still used.
-- The metadata comes from the main harness: the Gateway ([openclaw-integration.md](openclaw-integration.md#model-metadata)) or Hermes's `/api/model/options`, which has prices but no context window or output cap ([hermes-integration.md](hermes-integration.md#models)). Without those, every automatic role on Hermes resolves to the primary model (the model configured in `yorozu-worker`); set `[models]` explicitly for a cheaper secretary. Hermes needs every model as `provider/model`. It is read at launch, where queued work waits up to 10 s for it before resuming, and after each reload; while no read has succeeded, it is read again before a message at most every 30 s. A failed read keeps the last good one. With no metadata and no explicit choice a role has no model, and its runs fail with "No model is set for this role; choose one in Settings › Advanced."
-- Vision (#316): a worker gets attached images as model input only when `models.list` lists `image` in its model's `input`, checked on every call ([openclaw-integration.md](openclaw-integration.md#attachments-and-media)); otherwise, and on Hermes, the path alone. On 2026-10-09 `models.list` for agent `projectx` (`view: "configured"`) listed `["text","image"]` for every row: `openai-pool/gpt-6-astra` (tagged `default`, so the automatic worker model), `openai-pool/gpt-6-sol`, `openai-pool/gpt-6-luna`, `openai/gpt-6-sol`, `anthropic/claude-fable-5-1`, `anthropic/claude-opus-5-5` and `anthropic/claude-sonnet-5`. Re-check with `models.list` after a model or OpenClaw change, never by reading the OpenClaw config.
-- A changed model reaches existing topic sessions at their next use ([openclaw-integration.md](openclaw-integration.md#model-changes)).
-- The owner's local `config.toml` sets the model ids in use before #312, so the owner's roles did not change; the computed values are an [open item](status.md#open-items).
+`remove` drops the device from the allowlist and tells the relay to forget it and close its sockets; the app then shows "Removed from the host". In the app, Host (the info button) › Unpair This Device deletes the keys and cache on that device only; remove it on the host too.
 
 ## Signing
 
 | App | Bundle id | Signing |
 |---|---|---|
-| Mac | `to.yumi.yorozu` (v1's) | Team `AN5KM8QGEF`, manual signing, hardened runtime. The identity comes from `apps/mac/Signing.xcconfig`, which includes the gitignored `apps/mac/Signing.local.xcconfig` (`*.local.xcconfig`) when it exists. That local file sets `CODE_SIGN_IDENTITY` to the Developer ID Application identity for the team in the login keychain and `OTHER_CODE_SIGN_FLAGS = --timestamp`; the comment in `Signing.xcconfig` shows the shape. Without it the app is signed ad hoc (`-`), which runs only on the Mac that built it. Entitlements match v1 (`apps/mac/Yorozu.entitlements`); no app sandbox. |
-| iOS, iPadOS and macOS client | `to.yumi.yorozu.ios` (one multiplatform target, #419) | The Mac destination is not signed or uploaded yet ([release.md](release.md#mac-client-build-and-launch)); on iOS: Team `AN5KM8QGEF`, automatic signing. Xcode issues the distribution certificate and profile itself during `upload_ios.sh`, using the App Store Connect key. Entitlements in `apps/ios/Project.swift`: `aps-environment: production` ([Push notifications](#push-notifications)), `applinks:yorozu.yumi.to` and `keychain-access-groups` (the app's own group, then `to.yumi.yorozu.notifications`, both team-prefixed). |
-| iOS notification service extension | `to.yumi.yorozu.ios.notification-service` | Embedded in the app; same team, automatic signing and version pair. Entitlement `keychain-access-groups: [<team>.to.yumi.yorozu.notifications]` ([Push notifications](#push-notifications)). |
+| Client, iPhone and iPad | `to.yumi.yorozu.ios` | Team `AN5KM8QGEF`, automatic signing; Xcode issues the distribution certificate and App Store profiles during `upload_ios.sh` with the App Store Connect key. Entitlements in `apps/ios/Project.swift`: `aps-environment: production`, `applinks:yorozu.yumi.to`, `keychain-access-groups` (the app's own group, then `<team>.to.yumi.yorozu.notifications`), App Group `group.to.yumi.yorozu`. |
+| Notification service extension | `to.yumi.yorozu.ios.notification-service` | Same team and version pair; Keychain group `<team>.to.yumi.yorozu.notifications`, which holds only the push-preview key. |
+| Share extension | `to.yumi.yorozu.ios.share` | Same team and version pair; App Group `group.to.yumi.yorozu`. |
+| Client, Mac | `to.yumi.yorozu.ios` (one multiplatform target) | `build_native.sh`: Developer ID Application with hardened runtime when that identity is in the login Keychain, else ad hoc; either way without entitlements, since they need a macOS provisioning profile for this bundle id that does not exist. The keys go to the login Keychain, which may ask for access again after a rebuild. |
 
 ## Push notifications
 
-Phones are woken through the relay's APNs path (#320; flow in [architecture.md](architecture.md#push-notifications), wire in [ios-relay-contract.md](history/ios-relay-contract-v2.md#push)). Alerts carry the message's excerpt, sealed for each phone and opened on the phone ([sealed previews](history/ios-relay-contract-v2.md#sealed-previews)).
-
-- iOS app (`apps/ios/Project.swift`): the entitlement `aps-environment: production`, since TestFlight builds use production APNs (as on v1), and `UIBackgroundModes: ["remote-notification"]` for the silent catch-up. v1 ships push on the same bundle id, so the App ID already has the capability; if automatic signing reports that it lacks push, enable it in the Apple Developer portal.
-- Notification service extension (`YorozuNotificationService`, bundle id `to.yumi.yorozu.ios.notification-service`, v1's): opens sealed previews. It shares one Keychain access group with the app, `<team>.to.yumi.yorozu.notifications` (v1's), which holds only the preview key; no app group. Automatic signing registers the extension's App ID and issues its App Store profile during `upload_ios.sh` if v1's are gone. Keychain sharing needs no capability in the portal.
-- Permission: the phone asks once (alerts, sounds and badges) at a foreground launch when paired (never at a background, silent-push launch), and at #314's moments ([On the phone](#on-the-phone)). Denied, alerts and the badge stay off; the Notifications row in iPhone Settings offers Open Settings.
-- Mac: Settings › General › Notifications on and "Notify on" Phones (`[notifications] enabled = true`, `destination = "phones"`).
-- Relay: APNs needs three Worker secrets on the relay, by name `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_KEY_P8` (`apps/relay/src/apns.ts` on `main`). A relay without them, a self-hosted one included, forwards frames but wakes nobody. Check the names only with `wrangler secret list` (and the deployed version with `wrangler deployments list`) in `apps/relay` on `main`; the values never go in the repo.
-- Check the Mac side (acceptance criterion 10 of #320): the Mac logs each `notify` whole, since it holds only the class, two 8-character refs and sealed boxes, and logs the relay's `notify rate limit` state.
-
-  ```sh
-  log stream --level debug --predicate 'subsystem == "to.yumi.yorozu" AND category == "relay"'
-  ```
-
-  Each line reads `notify {"class":"reply","eventRef":"…","threadRef":"…","type":"notify"}` with exactly those four keys, and the relay connection never drops with "bad notify".
+- The relay sends APNs pushes; it needs the Worker secrets `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_KEY_P8` (`apps/relay/src/apns.ts`). A relay without them forwards frames but wakes nobody. Check names only, from `apps/relay` on `main`: `wrangler secret list`.
+- iOS: TestFlight builds use production APNs (`aps-environment: production`), and `UIBackgroundModes: remote-notification` lets the silent push reconnect a suspended app. The app asks for alerts, sounds and badges after pairing and at launch while paired.
+- Mac: no APNs. While the app runs, a reply in a conversation that is not in front posts a local notification.
 
 ## App Store Connect credentials
 
-`upload_ios.sh` needs `ASC_KEY_ID` and `ASC_ISSUER_ID` in the environment and reads the private key from `~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8` (mode 600), or from `ASC_KEY_PATH` when set. The key file stays outside the repository.
+`upload_ios.sh` needs `ASC_KEY_ID` and `ASC_ISSUER_ID` in the environment and reads the private key from `~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8` (mode `600`), or from `ASC_KEY_PATH` when set. The key stays outside the repository. `BUILD=<n>` sets the build number for both scripts.
 
-## Keychain items
+## Data paths
 
-| Service | Account | Holds | Created by |
-|---|---|---|---|
-| `to.yumi.yorozu.relay` | `host` | The Mac's relay identity (Ed25519 and X25519 keys). Losing it means a new relay room, so every phone must pair again. | Mac app, first live launch |
-| `to.yumi.yorozu.gateway` | `<gateway URL>\|webchat\|operator` | The native transport's device key and Gateway-issued device token | Mac app, native enrollment only (Settings, Gateway tab); a launch without a token creates nothing |
-| `to.yumi.yorozu.hermes` | `yorozu-worker`, `yorozu-roles` | Each Yorozu Hermes profile's `API_SERVER_KEY` (43 random characters), mirrored from the profile's `.env`; `AfterFirstUnlockThisDeviceOnly`. Read per request, never logged, put in a URL or written to a receipt. | Mac app, the Hermes setup step only ([Hermes Agent](#hermes-agent)) |
-| `to.yumi.yorozu.ios` | `pairings-v2` | The phone's pairing and identity, and the direct addresses the Mac last advertised | iOS app, on the phone |
-| `to.yumi.yorozu.v2.push-preview` | `host` | The paired Mac's push-preview key, in the access group shared with the notification service extension ([Push notifications](#push-notifications)) | iOS app, on the phone, on each connect |
+Where each side keeps keys, state and cache, and how each is protected: [architecture.md](architecture.md#data-on-each-side).
 
-The relay and Gateway items are `WhenUnlockedThisDeviceOnly`; the phone item is `AfterFirstUnlockThisDeviceOnly`. A Keychain the relay host cannot read stops the relay (not the app) rather than minting new keys; the app tries to start the relay again every 30 s, so unlocking the login Keychain is enough.
+## Troubleshooting
 
-## Where data lives
-
-| Data | Live mode | `PROJECTX_DATA=<dir>` | Fixture mode |
-|---|---|---|---|
-| App state (`operations.sqlite`, `app.lock`) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `~/Library/Application Support/<bundle id>/Fixture/` |
-| Chat search indexes (`messageSearch` and `eventSearch` tables) | inside `operations.sqlite` | same | same |
-| Markdown memory | `~/Yorozu/memory/` (notes, `knowledge/`, `history/`, `.writer.lock`) | `<dir>/memory/` | `…/Fixture/memory/` |
-| Memory index (`discovery` and `search_trigram` tables) | `~/Library/Caches/<bundle id>/memory-index.sqlite` | `<dir>/memory-index.sqlite` | `…/Fixture/memory-index.sqlite` |
-| Paired phones (`relay-devices.json`, mode 600) | `~/Library/Application Support/<bundle id>/` | same as live | none (no relay) |
-| Last time online at the relay (`relay-online.json`: `seen` and the last back-online push, `notified`; [architecture.md](architecture.md#push-notifications)) | beside `relay-devices.json` | same as live | none (no relay) |
-| Settings (`config.toml`, mode 600) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
-| Yorozu's OpenClaw agent workspace (`openclaw-workspace/`, mode 700, created by the assisted setup write) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
-| Scheduled jobs (`jobs.toml`, mode 600) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
-| Job folders (`<id>/`, mode 700, the scripts' working directory; `<id>/runs/*.log`, mode 600, one full log per run) | `~/Yorozu/jobs/` | `<dir>/jobs/` | `…/Fixture/jobs/` |
-| Attachments (files users attach and workers return, `<YYYY-MM>/<YYYY-MM-DD_HHMMSS>_<name>`; directories 0700, files 0600; kept until deleted in Finder) | `~/Yorozu/files/` | `<dir>/files/` | `…/Fixture/files/` |
-| Phone upload staging (`<device key>/<message id>/<index>-<sha256>.part`, 0700/0600; at most 1 GB and 64 messages, pruned after 48 h untouched) | `~/Library/Application Support/<bundle id>/uploads/` | same as live | none (no relay) |
-| Attachment thumbnails (the popover's previews as `<id>-<px>.png`, phones' 512 px previews as `<id>.jpg`; rebuildable) | `~/Library/Caches/<bundle id>/thumbs/` | same as live | same as live |
-| Composer scratch files (pasted or dropped image data, downscaled images, Send as Text File; deleted once sent or removed, kept while a draft refers to them) | `~/Library/Application Support/<bundle id>/Yorozu-attachments/<uuid>/` | same | same |
-| Workspace (one folder per task, `<label slug>-<topic id prefix>/`, mode 700, created at first use; downloads, clones and files workers make) | `~/Yorozu/workspace/` (`[workspace] path`) | `<dir>/workspace/` | `…/Fixture/workspace/` |
-| Coding-agent logs (`agent-runs/<task folder name>/<time>-<agent>.log`, 0600 in 0700 folders) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
-| Coding-agent socket (`agents.sock`, mode 600, while the app runs) | `~/Library/Application Support/<bundle id>/` | `<dir>/` | `…/Fixture/` |
-| Worker scratch folder without a workspace | `$TMPDIR/yorozu-scratch/<topic id>/` | same | same |
-| Retired MCP server list (`mcp-servers.json`) | imported once into a new `config.toml`, then unused ([MCP servers](#mcp-servers)) | same | same |
-
-Settings › Storage shows the Markdown memory folder and the `files` folder next to it (in live mode `~/Yorozu/files/`, created at launch by the file store) with their sizes and Show in Finder; a files root that resolves inside a git checkout or worktree is refused, and that launch runs with attachments off ("Attachments are off: …" in the status line); Settings › Advanced shows the data folder that holds `config.toml`, and The chat window's Scheduled section, while there are no jobs, offers Show jobs.toml (its folder until the file exists). `<bundle id>` is the Mac bundle id from [Signing](#signing), also when `Bundle.main` has none. Directories are created 0700. `app.lock` is held with an exclusive lock, so only one process opens a data directory. Schema changes to `operations.sqlite` are GRDB migrations that run at launch (`native-r1`, `r2-executor`, `memory-job-reasons`, `message-notice`, `message-search`, `sync-r1`, `jobs-r1`, `jobs-topic-unique`, `sync-topic-touch`, `receipts-sent-at`, `attachments-r1`) and only add tables, columns, indexes and triggers; `jobs-r1` (#319) adds `jobs`, `jobApprovals` and `jobRuns`, `jobs-topic-unique` makes a topic bind at most one job, `sync-topic-touch` (#313) re-stamps a topic when a message or work row starts using it, `receipts-sent-at` (#314) adds the nullable `messages.sentAt`, the phone's send time, set only on messages that came from a phone ([architecture.md](architecture.md#change-sequence-and-history-window)), and `attachments-r1` (#316) adds `attachments` and `workAttachments` ([architecture.md](architecture.md#attachments)). Moving data between folders or machines stays manual. The memory index is a cache rebuilt at launch, which leaves the older `search` table in place for builds from before batch 2 of issue #310 that share the cache. The chat search indexes are different: they live in `operations.sqlite` next to the messages and events, triggers keep them in sync on every write, and each is built once by its migration, not at launch; `INSERT INTO messageSearch(messageSearch) VALUES ('rebuild')` (or `eventSearch`) rebuilds one from its table ([architecture.md](architecture.md#chat-search)). `sync-r1` (#313) also sets `readAt = created` on every existing user message, so history is never routed again, and adds the change sequence and read cursor ([architecture.md](architecture.md#change-sequence-and-history-window)). OpenClaw keeps session transcripts (and the worktrees of coding runs from before #351) on its side. Hermes keeps its sessions in its own store under `~/.hermes/profiles/yorozu-worker/` and `yorozu-roles/`; worktrees a Hermes coding worker made before #351 sit next to the old dev repo as `<dev repo>-yorozu-<label slug>-<topic id prefix>`.
-
-Read app state without disturbing the running app with a read-only SQLite connection, for example `sqlite3 "file:$HOME/Library/Application Support/to.yumi.yorozu/operations.sqlite?mode=ro" "SELECT id,state FROM work ORDER BY created DESC LIMIT 5"`. User messages a quit left unrouted are `SELECT id,created FROM messages WHERE role='user' AND readAt IS NULL`; phone messages that arrived late are `SELECT id,sentAt,created FROM messages WHERE created - sentAt > 60`.
-
-Jobs (#319): `jobs.toml` is created by the first write (a worker creating a job, or a control); a missing file is no jobs. Its keys are in [architecture.md](architecture.md#jobstoml) and in the header Yorozu writes into the file. Deleting a job leaves its folder, with its run logs, in place; remove it in Finder. A script runs as the user's account, so a macOS privacy prompt it triggers (Files and Folders, Automation, Full Disk Access) is for Yorozu and needs the owner's grant. Recent runs: `SELECT jobID,state,exitCode,notable,posted FROM jobRuns ORDER BY started DESC LIMIT 5`.
-
-### On the phone
-
-| Data | Where | Protection |
-|---|---|---|
-| Pairing and identity, with the Mac's direct addresses | Keychain item `pairings-v2` ([Keychain items](#keychain-items)) | `AfterFirstUnlockThisDeviceOnly` |
-| History-window cache (`mirror.json`) | `Application Support/Mirror/` in the app's container | File protection `completeUntilFirstUserAuthentication` (encrypted at rest, unreadable until the first unlock after a restart, like the Keychain item); the `Mirror` folder is excluded from backup |
-| Outbox (`outbox.json`: messages the Mac has not stored, and the marks and times of sent messages until Read) | `Application Support/Outbox/` in the app's container | Same as the cache: `completeUntilFirstUserAuthentication`, so a background flush can read it after the first unlock; the `Outbox` folder is excluded from backup |
-| Outbox file copies (`<message id>/<index>`, the files of a message the Mac has not stored, with the upload offsets it confirmed, fsynced) | `Application Support/Uploads/` in the app's container | `completeUntilFirstUserAuthentication`; excluded from backup |
-| Attachment cache (thumbnails and opened full files, `<key>/`, keyed by content hash) | `Application Support/Files/` in the app's container | `completeUntilFirstUserAuthentication`; excluded from backup |
-| Composer drafts (text and picked files, one folder each, #405) | `Application Support/Drafts/` (`drafts.json`, `files/`) on the phone and a client Mac; `~/Library/Application Support/<bundle id>/drafts.json` and `Yorozu-attachments/` on the host | iOS file protection on the phone; removed when sent or discarded, and with Remove host |
-| Last connection status (`lastConnectionStatus`) | `UserDefaults` | none; it holds only the status and when it was saved, no chat content |
-| Direct connection setting (`directPathEnabledV2`) | `UserDefaults` | none; a Boolean, off by default |
-| The APNs token the relay last heard, per pairing (`pushTokenOnRelayV2.<session key>`) | `UserDefaults` | none; the device token only, so a direct session skips the one-off relay join for a token the relay has |
-| The paired Mac's push-preview key (derived, 32 bytes; service `to.yumi.yorozu.v2.push-preview`, account `host`) | Keychain group `<team>.to.yumi.yorozu.notifications`, shared with the notification service extension | `AfterFirstUnlockThisDeviceOnly`; opens preview boxes only, never the channel; written on each connect, deleted by Remove host |
-
-The cache is a cache: a file that does not decode, has another format version or belongs to another pairing (its `owner` is the pairing's session key) loads as nothing and catch-up refills it. The outbox is not a cache: it holds messages that exist nowhere else until the Mac stores them. It is keyed to the pairing the same way, so a file from another pairing is never read. Remove host and every new pairing delete the `Mirror`, `Outbox`, `Uploads` and `Files` folders ([architecture.md](architecture.md#ios-app)).
-
-Notifications: the phone asks for notification permission (alerts, sounds and badges) at a foreground launch once paired, and the first time a message has to wait for a connection; iOS shows the prompt once. Its local notifications are "N messages waiting to send" and "A message to your Mac expired without being read."; pushes carry the message's excerpt, sealed end to end, or fixed text when it cannot be opened ([Push notifications](#push-notifications)); the local notifications carry no message content. Denying permission changes nothing else: messages still queue and send, and the chat still catches up when opened.
-
-## Environment variables
-
-| Variable | Read by | Meaning |
-|---|---|---|
-| `PROJECTX_MODE` | app, `Yorozu setup` | `live` (default), `fixture` or `offline`; anything else means `offline` |
-| `PROJECTX_DATA` | app, `Yorozu setup`, `Yorozu agent` (without `--socket`) | Puts app state, memory, index, `jobs.toml` and the job folders in one directory (see above) |
-| `PROJECTX_HARNESS`, `PROJECTX_TRANSPORT`, `PROJECTX_GATEWAY_URL`, `PROJECTX_AGENT`, `PROJECTX_RELAY_URL`, `PROJECTX_SECRETARY_MODEL`, `PROJECTX_MODEL`, `PROJECTX_REVIEW_MODEL` | app, `Yorozu setup` | Override a `config.toml` key for that run ([Precedence](#precedence)) |
-| `BUILD` | both scripts | Build number; skips the App Store Connect lookup in `upload_ios.sh` |
-| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_PATH` | `upload_ios.sh` | App Store Connect credentials (above) |
-
-`open` starts the app with the login session's environment, not the shell's, so settings that must survive a restart belong in `config.toml`. To set variables for one run, launch the binary directly, for example `PROJECTX_MODE=fixture build/Yorozu.app/Contents/MacOS/Yorozu`. A live-mode launch from an OpenClaw worker shell is refused ([openclaw-integration.md](openclaw-integration.md#launch-environment)).
+| Symptom | Cause and fix |
+|---|---|
+| `plugins install` is refused with `Plugin config repair could not be inspected: yorozu. Repair the plugin's Doctor artifact, then retry the update.` | OpenClaw's state still holds a pending upgrade migration for an older plugin that had the id `yorozu` (such as v1's channel), and that plugin has nothing for Doctor to inspect. `openclaw doctor --fix` runs the pending repair; it rewrites OpenClaw state and also acts on other plugins' pending migrations. `openclaw plugins uninstall yorozu` before the install removes the old install record but is not known to clear the row. On the owner's Gateway this is the owner's choice ([status.md](status.md#open-items)). |
+| `plugins install` fails with `EPIPE`, or every plugin install fails | The Gateway is still running on a Node binary that a package upgrade has since replaced. `openclaw gateway restart`, then install again. |
+| `channels status` shows Yorozu `recovering` with `unable to get local issuer certificate` | Node cannot verify the relay's TLS certificate: the OpenSSL that Node uses has no CA bundle (it can go missing after an OpenSSL package upgrade). Restore the CA bundle of that OpenSSL installation (for a Homebrew one, rerun its formula's post-install step), then `openclaw gateway restart`. |
+| `channels status` shows `recovering` with another error | The relay is unreachable; the plugin redials with backoff up to 30 s and registers again by itself. |
+| `Configured plugin load path is unavailable: …/plugins/openclaw-yorozu` | The directory the plugin was linked from is gone (a removed worktree). Install again with `--link` from the main checkout. |
+| `OpenClaw does not know the command "yorozu"` | The plugin is not installed in this profile, or the Gateway has not been restarted since the install. |
+| `openclaw yorozu pair` or `devices` fails to connect | The Gateway is not running or the channel is not connected; check `openclaw channels status`. For a non-default port or a remote Gateway pass `--port` or `--url` and `--token`. |
+| The app shows "Couldn’t pair", or "Removed from the host" right after pairing | The relay refused the token (used, or older than 10 minutes), or the plugin no longer holds the pairing secret (spent, expired, or the Gateway restarted since `pair`). Run `openclaw yorozu pair` again and pair with the new code. |
+| The app says "Update required" | Client and plugin share no wire protocol version. Update the older side. |
+| "Edit in Chat" or session tools are refused by the agent | `yorozu:owner` is not in `commands.ownerAllowFrom` ([Owner-only tools](#owner-only-tools)). |
+| `openclaw message send --channel yorozu -t owner` fails | The plugin has no messaging target resolver yet ([status.md](status.md#open-items)). Agent replies and cron deliveries are unaffected. |
+| `openclaw cron add --thread-id <convId>` is rejected | That flag takes only Telegram's numeric ids. Make the job with the agent's cron tool, or `cron.add` with `delivery: {channel: "yorozu", to: "owner", threadId: "<convId>"}`. |

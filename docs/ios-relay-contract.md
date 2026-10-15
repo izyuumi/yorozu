@@ -5,7 +5,7 @@ The wire between the Yorozu client app (iPhone, iPad, Mac) and the OpenClaw chan
 - Swift, client side: `packages/YorozuWire/Sources/YorozuWire/WireV3.swift` and `V3Event.swift` (CryptoKit only).
 - TypeScript, plugin side: `plugins/openclaw-yorozu/src/wire.ts` and `src/envelope.ts` (`node:crypto` only).
 
-Change it only with a matching change on both sides, and keep the [known-answer vectors](#known-answer-vectors) reproducing in both languages. v3 shares nothing with v2 above the relay: every device pairs again once. The v2 contract, which the v2 code on this branch still speaks until #426 deletes it, is in [history/ios-relay-contract-v2.md](history/ios-relay-contract-v2.md).
+Change it only with a matching change on both sides, and keep the [known-answer vectors](#known-answer-vectors) reproducing in both languages. v3 shares nothing with v2 above the relay: every device pairs again once. The v2 contract, deleted with the v2 code in #426, is kept in [history/ios-relay-contract-v2.md](history/ios-relay-contract-v2.md).
 
 Layers, outside in:
 
@@ -19,7 +19,7 @@ Layers, outside in:
 
 Unchanged from v1 and v2. The relay reads only its outer envelope and gates nothing on the protocol version.
 
-- **Room**: `base64url(sha256(host Ed25519 public key))` (`roomId` in TS, `DirectProof.roomId` in Swift). The plugin registers as the room's host with that key (#422).
+- **Room**: `base64url(sha256(host Ed25519 public key))` (`roomId` in TS; the client reads it from the QR, `QrPayload.roomId`). The plugin registers as the room's host with that key (#422).
 - **Join**: a client's first join spends the one-time token from the QR and signs the token; every later join signs the relay's connect nonce. Both use the client's Ed25519 key. Tokens last 10 minutes; a room holds at most 16 devices.
 - **Frames**: `{"type":"frame","payload":<string>,"sig":<string>}`. `sig` is base64url Ed25519 over the UTF-8 bytes of the `payload` string itself, by the sender's relay key (`YorozuCrypto.signFrame` / `signFrame`). The relay checks it against the socket's key. A host may batch: `{"type":"frame","frames":[{payload,sig},…]}`.
 - **`accepted`**: the relay answers every client frame with `{"type":"accepted","sig":…,"buffered":bool}` once it has forwarded it to the host's live socket or stored it for the host. That is the client's ✓ sent.
@@ -122,8 +122,6 @@ Every box's plaintext is one UTF-8 JSON object:
 - **Capabilities**: a later kind or field that a peer must understand is announced in `peer_info.capabilities` and sent only to peers that list it. A change that cannot be expressed that way raises the protocol version.
 - **Ids**: `convId` and `messageId` are lowercase UUIDs (`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`; `V3Event.newId()`, `isId`). OpenClaw lowercases session keys, and a conversation's session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`. A known kind with a malformed id is treated as unknown.
 - Times are epoch milliseconds (integers).
-
-Names later issues add, so nothing else takes them: attachment kinds.
 
 ### Kinds
 
@@ -351,7 +349,7 @@ The same run also checks that the second box opened again is refused as a replay
 |---|---|---|
 | Keys | `PhoneIdentity.generate()` | `x25519Keypair()`, `ed25519Keypair()` |
 | Relay signature | `YorozuCrypto.signFrame` / `verifyFrame` | `signFrame(priv, payload)`, `verifyFrame(pub, payload, sig)` |
-| Room, fingerprint, proof | `DirectProof.roomId`, `QrPayload.fingerprint`, `YorozuCrypto.helloProof` | `roomId`, `fingerprint`, `helloProof` |
+| Room, fingerprint, proof | `QrPayload.roomId` (from the QR), `QrPayload.fingerprint`, `YorozuCrypto.helloProof` | `roomId`, `fingerprint`, `helloProof` |
 | Pairing link | `QrPayload(v: 3, …).encoded()`, `QrPayload.decode` | `beginPairing()` (`src/relay.ts`) |
 | Handshake | `V3ClientHandshake(identity:pairing:)`, `.frame`, `.finish(_:) -> V3Session` | `acceptHandshake({host, room, payload, sig}) -> AcceptedHandshake \| null` |
 | Relay link (join, handshake per socket, reconnects, `accepted`, `flowAck`) | `V3Connection` (client only) | the host loop in `src/relay.ts` |

@@ -31,7 +31,7 @@ Spike #416 for #415. It answers whether a third-party TypeScript channel plugin 
 
 ## Q1. Long-lived outbound WebSocket from `startAccount(ctx)` — **yes**
 
-**Plugins run in-process with full Node access.** `docs/plugins/architecture.md` (~L908) says native plugins "run in-process with the Gateway. They are not sandboxed." There is no `vm`, isolate or worker sandbox in `src/plugins`.
+**Plugins run in-process with full Node access.** `docs/plugins/architecture.md` (~L908) says native plugins "run in-process with the Gateway. They are not sandboxed." `src/plugins` has no `vm` or isolate sandbox and no thread isolation.
 
 **Network is not a gated capability.** Capability consent covers only these surface groups: channels, providers, tools, contracts, hooks, mcpServers, cliCommands, cliBackends, skills and dangerousConfigFlags (`packages/gateway-protocol/src/schema/plugin-declared-surface-groups.ts`). Neither `globalThis.WebSocket` nor `fetch` is replaced. The only global network change is the proxy-env undici dispatcher (`src/infra/net/undici-global-dispatcher.ts`).
 
@@ -299,3 +299,15 @@ Alternatives:
 - Whether keyed-store rows are encrypted at rest; assume not.
 - Whether the CLI process can safely share the keyed store with a running Gateway.
 - Whether a thread re-forks after `/new` if `ParentSessionKey` were set. Not relevant if it is unset.
+
+## Gateway gotchas
+
+Still-true Gateway behaviour carried over from the removed secretary system ([history](history/secretary-openclaw-integration.md)) and from building the plugin. The Gateway's source is `~/openclaw`: method handlers in `src/gateway/server-methods/`, parameter schemas in `packages/gateway-protocol/src/schema/`. Read them rather than guessing a contract.
+
+- **Probing by hand**: `openclaw gateway call <method> --json --params '<json>'` (add `--expect-url ws://127.0.0.1:<port>` to pin the target). Use only throwaway session keys and delete them afterwards with `sessions.delete {key, agentId, deleteTranscript: true}`. Leave other agents' sessions and the OpenClaw config alone. For anything bigger, run an isolated profile ([plugin README](../plugins/openclaw-yorozu/README.md#trying-it-without-the-main-gateway)) with `gateway run`, never `gateway install`.
+- **Exec-shell markers**: a shell an OpenClaw agent runs has `OPENCLAW_SHELL=exec` or `OPENCLAW_SUBAGENT_EXEC` set; Gateway calls made from it lose inter-session attribution. Keep the markers; launch apps with `open -n`, which uses the login session's environment.
+- **`chat.history` truncates**: `maxChars` defaults to 8000 per text field (a longer one ends in `...(truncated)...` with `__openclaw.truncated`), and the response keeps only the newest messages within 512 KiB. The plugin reads transcripts from the store instead (`src/history.ts`).
+- **`/new` keeps the `sessionId`**: it appends a reset boundary to the same transcript (Q4), which history shows as a `reset` item.
+- **Session-store writes skip `sessions.patch` validation** (label uniqueness included), and `preserveActivity: true` keeps `updatedAt`, so title and archive writes do not reorder the list.
+- **`--link` installs**: the Gateway loads the linked directory on each start. Removing that directory leaves `Configured plugin load path is unavailable` in every `openclaw plugins` command until the plugin is installed again from a path that exists.
+- **OpenClaw's console capture redacts** key- and token-like text, so the CLI prints the pairing link with `process.stdout.write`.
