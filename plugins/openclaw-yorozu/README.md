@@ -1,6 +1,6 @@
 # openclaw-yorozu
 
-OpenClaw channel plugin for Yorozu (#415). The Yorozu apps reach the Gateway through this channel. The `yorozu` channel holds the host keys and the relay connection: it registers as the host of its relay room, redials with backoff, and answers wire v3 handshakes ([docs/ios-relay-contract.md](../../docs/ios-relay-contract.md); `src/wire.ts`, `src/envelope.ts`) from allowlisted devices. Pairing and message handling are not there yet. SDK facts behind it are in [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
+OpenClaw channel plugin for Yorozu (#415). The Yorozu apps reach the Gateway through this channel. The `yorozu` channel holds the host keys and the relay connection: it registers as the host of its relay room, redials with backoff, and answers wire v3 handshakes ([docs/ios-relay-contract.md](../../docs/ios-relay-contract.md); `src/wire.ts`, `src/envelope.ts`) from allowlisted devices. `openclaw yorozu pair` pairs a device; message handling is not there yet. SDK facts behind it are in [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
 
 ## Install
 
@@ -17,8 +17,22 @@ openclaw channels status
 ## Keys and devices
 
 - **Host keys** (`src/keys.ts`): an X25519 static key and an Ed25519 relay key, made on first start in `<stateDir>/credentials/yorozu/host-keys.json` (`0600`, directory `0700`) and never rewritten. The room id, `base64url(sha256(Ed25519 public key))`, is logged at start and on every registration; keys never are. Deleting the file means a new room, and every device pairs again.
-- **Device allowlist** (`src/devices.ts`): rows in the plugin's keyed state store (`<stateDir>/state/openclaw.sqlite`, namespace `devices`, keyed by the device's Ed25519 key), through `getDevice`, `listDevices`, `putDevice` and `removeDevice`. A handshake is answered only when the device's Ed25519 key and the X25519 key its handshake authenticates both match a row. The list is read on every handshake and announced to the relay (`devices`) on every registration, so the relay lets only listed devices rejoin.
+- **Device allowlist** (`src/devices.ts`): rows in the plugin's keyed state store (`<stateDir>/state/openclaw.sqlite`, namespace `devices`, keyed by the device's Ed25519 key), through `getDevice`, `listDevices`, `putDevice` and `removeDevice`; at most 16, the oldest making way. A handshake is answered only when the device's Ed25519 key and the X25519 key its handshake authenticates both match a row, or when it proves a pending pairing (below). The list is read on every handshake and announced to the relay (`devices`) on every registration, so the relay lets only listed devices rejoin. A device the relay let in that is neither gets a `revoke`, so the relay forgets it and closes its socket.
 - **Sessions** (`src/relay.ts`): in memory, one per device; they survive relay reconnects but not a Gateway restart. Answered handshake ids are remembered through the 5-minute freshness window, so a replayed handshake gets no second answer.
+
+## Pairing and devices
+
+The commands run in their own process and reach the running plugin through Gateway methods (`yorozu.pair.begin`, `yorozu.devices.list`, `yorozu.devices.remove`, scope `operator.admin`), so the Gateway must be running with the channel connected. Each takes the usual Gateway options (`--url`, `--port`, `--token`, `--timeout`).
+
+```sh
+openclaw yorozu pair                  # QR, yorozu://pair link and host fingerprint
+openclaw yorozu devices               # id, name, paired at
+openclaw yorozu devices remove <id>   # the id, or a unique start of it
+```
+
+- **pair**: the plugin asks the relay for a one-time join token (`mint`, 10 minutes) and makes a 32-byte secret, kept in memory with the token's expiry. The QR carries `https://yorozu.yumi.to/pair#<query>`; the link is `yorozu://pair?<query>` with the same query ([contract](../../docs/ios-relay-contract.md#pairing)). The fingerprint is the one the app shows. Output goes straight to stdout, since OpenClaw's console capture redacts key- and token-like text.
+- **Joining**: the relay spends the token; the plugin adds the device (its two keys, then its model from `peer_info`) when the handshake's `helloProof` matches a pending secret, and drops that secret. A reused token is refused by the relay (`unknown token`), an expired one too (`expired token` or `unknown token`); a spent or expired secret behind a fresh token is refused by the plugin, which revokes the device at the relay. A Gateway restart forgets pending secrets: run `pair` again.
+- **remove**: the row goes, the device's session is dropped and the relay gets `revoke`, which forgets the device and closes its sockets now. If the relay is unreachable at that moment, the next registration's `devices` list does the same.
 
 ## Trying it without the main Gateway
 
@@ -29,6 +43,7 @@ openclaw --profile yorozu-dev config set gateway.mode local
 openclaw --profile yorozu-dev plugins install --link plugins/openclaw-yorozu --force --accept-capabilities
 openclaw --profile yorozu-dev gateway run --port 19422     # foreground; Ctrl-C stops it
 openclaw --profile yorozu-dev channels status              # another terminal
+openclaw --profile yorozu-dev yorozu pair
 ```
 
 Use `gateway run`, never `gateway install`, which would add a login service for the profile.
