@@ -1,5 +1,6 @@
 {
   "id": "yorozu",
+  "doctorContract": {},
   "name": "Yorozu",
   "description": "Yorozu channel: the Yorozu apps talk to the Gateway through an end-to-end-encrypted relay.",
   "categories": ["channels"],
