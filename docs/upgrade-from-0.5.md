@@ -70,8 +70,8 @@ This runs once, guarded by a marker, and every step is idempotent. It never writ
 1. **Plugin swap.** 0.5 users installed the channel plugin with `openclaw plugins install --link --accept-capabilities /Applications/Yorozu.app/Contents/Resources/openclaw-channel`. Both plugins have the id `yorozu`.
    - The app bundles the full 0.9 plugin tree at that path: `index.ts`, `setup-entry.ts`, `src/**`, `openclaw.plugin.json` and `package.json`. OpenClaw runs TypeScript directly, so no `dist` or `node_modules` is needed.
    - The gateway does not watch plugin folders. Until a reload it keeps running 0.5 from memory.
-2. **Config.** The app removes `channels.yorozu.socketPath` if it is present, with `config.patch`. The 0.9 channel schema is closed, and this key would stop the gateway from starting.
-3. **Reload.** The app calls `plugins.reload` for `yorozu`, then again with `acknowledgeCapabilities.reviewToken`, because 0.9 adds `cliCommands: ["yorozu"]`. It follows with `gateway.restart.request` when `restartRequired` is set. Both calls need `operator.admin`. If the app lacks that scope, it shows `openclaw plugins reload yorozu --accept-capabilities` to copy.
+2. **Config.** The app runs `openclaw config unset channels.yorozu.socketPath`. The 0.9 channel schema is closed, and this key would stop the gateway from starting.
+3. **Reload.** The app runs `openclaw plugins reload yorozu --accept-capabilities` (0.9 adds `cliCommands: ["yorozu"]`), and `openclaw gateway restart --safe` if that fails or reports `restartRequired`. The CLI has the admin scope the app lacks.
 4. **Host keys and devices.** The plugin imports 0.5's `keys.json` (`session` and `signing` keys) into `credentials/yorozu/host-keys.json`, and `devices.json` (`pub`→`staticPub`, `signingPub`) into its allowlist. The room id stays the same (sha256 of the host Ed25519 key), and the relay already knows the devices. Devices without a `signingPub` re-pair.
 5. **Memory.** 0.5's memory notes are imported as unverified notes ending "Imported from Yorozu 0.5".
 6. **Chats.** All 0.5 threads are converted (273 on the owner's Mac): 169 `yorozu`, 82 `claude-code`, 24 `codex` and 1 `harness`.
@@ -80,6 +80,10 @@ This runs once, guarded by a marker, and every step is idempotent. It never writ
    - Attachments appear as text.
    - `claude-code` and `codex` threads become ordinary conversations that continue on the 0.9 agent.
 7. **Cleanup.** Remove 0.5's watchdog LaunchAgent `to.yumi.yorozu.watchdog`.
+8. **Pair this Mac.** 0.5's Mac was the host, never a client. The app runs `openclaw yorozu pair` against its own Gateway and pairs with the printed link, skipping the fingerprint step: the code comes from the same Mac.
+9. **Nudge.** A notification: update Yorozu on the iPhone and iPad.
+
+Steps 1–3 and 7–9 are `apps/ios/Sources/YorozuIOS/MacMigrateFrom0_5.swift`; 4–6 run in the plugin when it loads.
 
 ## iOS first launch
 
@@ -99,8 +103,8 @@ All of this lands in 0.9.0, so later versions migrate without friction:
 
 ## Unverified, check during implementation
 
+- **Feed reach.** 0.5.0-beta Macs read the beta feed only if beta updates were switched on (`YorozuBetaUpdates`; 0.5 defaults to the stable feed, which stays at 0.4.0). A family Mac without it never sees 0.9.0.
 - Whether the new iOS build can read 0.5's keychain item. 0.5's only access group was the notifications group, and the client has both.
 - Whether Noise IK accepts carried-over device keys without `helloProof` (`relay.ts:357`).
-- Whether the Mac client has `operator.admin` for `plugins.reload` and `gateway.restart.request`.
 - 0.5's host data path: `~/Library/Application Support/Yorozu` (runtime `memory.ts:65`) versus `~/Library/Application Support/to.yumi.yorozu/` ([release.md](release.md#mac-client)).
 - Whether `peerDependencies: openclaw` in the plugin affects OpenClaw's dependency status.

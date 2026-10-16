@@ -4,7 +4,7 @@ How the client app is versioned, built for the Mac, uploaded to TestFlight for i
 
 ## Version
 
-`version.txt` holds one numeric `major.minor.patch` for the client on every platform. `apps/ios/Project.swift` stops with a fatal error on any other format. Both scripts pass `MARKETING_VERSION` to `xcodebuild` explicitly, because Tuist caches the manifest and a `version.txt` change alone may not reach the build. Bump `version.txt` when a new version is needed, for example to bring iOS build numbers back to 1.
+`version.txt` holds one numeric `major.minor.patch` for the client on every platform. `apps/ios/Project.swift` stops with a fatal error on any other format. Both scripts pass `MARKETING_VERSION` to `xcodebuild` explicitly, because Tuist caches the manifest and a `version.txt` change alone may not reach the build. The visible build restarts at 1 per version. `CFBundleVersion` is that build encoded with the version, the same number on every platform: major·10⁷ + minor·10⁵ + patch·10³ + build (`scripts/build-number.sh`, and `bundleVersion` in `apps/ios/Project.swift`), so 0.9.0 build 1 is `900001`. Sparkle compares that integer and 0.5.0-beta Macs are build `10279`: it must only ever rise. The Info.plist key `YorozuBuild` carries the visible build, which the Mac's About panel shows. Builds stop at 999 and minor and patch at 99. Bump `version.txt` when a new version is needed.
 
 A minor version that breaks the wire also raises the protocol in `peer_info` (`protocolMin` / `protocolMax`, 3 for wire v3; [contract](ios-relay-contract.md#peer_info)), on both the client and the plugin. A client and plugin without a common version stop with "Update required", so such a change ships to the plugin and the clients together.
 
@@ -15,10 +15,19 @@ A minor version that breaks the wire also raises the protocol in `peer_info` (`p
 - Without `--restart` it exits 3 while `/Applications/Yorozu.app` is running.
 - It quits only the app at that path, by pid: any executable in the bundle, so the old host app it replaces is matched too.
 - `--restart` relaunches the app with `open -n` even if it was not running before.
-- Builds are build 1 unless `BUILD` is set. The binary's SHA-256 goes to `build/native-sha256.txt`.
-- Signing: Developer ID Application with hardened runtime and a timestamp when that identity is in the Keychain, else ad hoc; never with the app's entitlements ([setup.md](setup.md#signing)). Not notarized, no update feed.
+- Builds are build 1 unless `BUILD` is set (the visible build; `CFBundleVersion` is encoded). The binary's SHA-256 goes to `build/native-sha256.txt`.
+- The first launch on a Mac that ran 0.5 migrates it: see [Mac distribution](#mac-distribution). On the owner's Mac that runs too, once.
+- Signing: Developer ID Application with hardened runtime and a timestamp when that identity is in the Keychain, else ad hoc; never with the app's entitlements ([setup.md](setup.md#signing)). Not notarized: releases come from `release_mac.sh`.
 
-The bundle id changed with #426: `/Applications/Yorozu.app` used to be the Mac host (`to.yumi.yorozu`, v1's id) and is now the client (`to.yumi.yorozu.ios`, the same id as the iOS app). The client keeps nothing of the host's: the host's data (`~/Library/Application Support/to.yumi.yorozu/`, `~/Yorozu/`) and its Keychain items stay where they were, unused, until the owner removes them, and the Mac pairs again with `openclaw yorozu pair` like any device.
+The Mac app is `to.yumi.yorozu`, 0.5's Mac id (`PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]`), so Sparkle replaces 0.5 in place; iOS stays `to.yumi.yorozu.ios`. 0.5's data stays where it was and is only read by the migration.
+
+## Mac distribution
+
+`scripts/release_mac.sh` builds the beta into `dist/`: `Yorozu.dmg` (Developer ID, notarized with the `yorozu-notary` profile, stapled), `appcast.xml` (Sparkle's `generate_appcast`, channel `beta`, signed with 0.5's EdDSA key) and `candidate.json`. With `--publish` it replaces the `v<version>-beta` GitHub prerelease, the three assets yorozu.yumi.to/beta/appcast.xml serves (main's `apps/web/worker.mjs`); every Mac on the beta feed installs it within the hour. It is a prerelease, so `releases/latest` (the stable feed and `/mac`) stays 0.4.0. `.github/workflows/release.yml` runs `upload_ios.sh` and then it on every push to `main`, with no tests.
+
+- Sparkle is linked for macOS only (`MacUpdates.swift`): hourly automatic installs, the beta feed by default; an explicit `YorozuBetaUpdates = false` left by 0.5 picks the stable feed. App menu: About (visible build) and Check for Updates.
+- The OpenClaw plugin is copied into `Contents/Resources/openclaw-channel` by a build phase, the path 0.5's `openclaw plugins install --link` points to.
+- First launch after 0.5 (`MacMigrateFrom0_5.swift`), once, without a click: remove 0.5's watchdog LaunchAgent; `openclaw config unset channels.yorozu.socketPath`; `openclaw plugins reload yorozu --accept-capabilities`, or `openclaw gateway restart --safe` if that fails or asks for a restart; pair this Mac with its own Gateway (`openclaw yorozu pair`, no fingerprint step); a notification to update the iPhone. The plugin imports 0.5's keys, devices, memory and chats when it loads.
 
 ## iOS and iPadOS: TestFlight
 
@@ -27,7 +36,7 @@ The bundle id changed with #426: `/Applications/Yorozu.app` used to be the Mac h
 - Without `--confirm` it exits 64.
 - It numbers the build from App Store Connect (highest build of this version plus one, so builds start at 1 per version). If that would reach 10000 it stops with exit 65: bump `version.txt` instead. `BUILD=<n>` skips both the lookup and that check.
 - It archives `generic/platform=iOS` only (the iPhone and iPad app, with the notification service and share extensions); the Mac destination is never uploaded.
-- `apps/ios/ExportOptions.plist` makes the export step the upload, internal testing only. The build reaches the Internal TestFlight group once App Store Connect has processed it.
+- `apps/ios/ExportOptions.plist` makes the export step the upload. Assign the processed build to the TestFlight groups when the Mac release goes live ([upgrade plan](upgrade-from-0.5.md#release-order)); turn off automatic distribution for the internal group so it waits.
 
 ## Compile checks
 
@@ -60,7 +69,6 @@ https://yorozu.yumi.to is the Astro site in `apps/web` on `main`, not on `projec
 
 ## Not wired
 
-- Mac distribution: no notarization, update feed, Mac App Store or TestFlight for Mac. The old host's `release_mac.sh` and Sparkle feed went with it (#426). A distributed Mac client needs the entitlements in their macOS form and a macOS provisioning profile for `to.yumi.yorozu.ios`, then either TestFlight for Mac on the same App Store Connect app (universal purchase) or Developer ID with notarization and an update feed.
 - APNs on the Mac: the Mac client registers no push token; it notifies only while running.
-- v1's release process on `main` (Release Please, GitHub Actions release and promote workflows, Sparkle appcasts) does not apply to `projectx`, which has no CI.
-- Public App Store release: not requested; iOS goes to internal TestFlight only.
+- Merging `projectx` into `main` removes what `projectx` deleted, including `apps/web` and main's other workflows (`deploy-web.yml` deploys the site and the feed redirects). Keep those in the merge.
+- App Store submission: by hand in App Store Connect after TestFlight, with `apps/ios/APP-REVIEW-NOTES.md`.
