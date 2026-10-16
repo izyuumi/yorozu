@@ -1,6 +1,13 @@
 # Status
 
-As of 2026-10-16. The #415 tracker (Yorozu as an OpenClaw channel) is built: every child issue #416–#432 is merged and closed, and this rewrite of the docs is #433. The secretary system and the Mac host are deleted (#426); their last status is in [history/secretary-status.md](history/secretary-status.md).
+As of 2026-10-17. The #415 tracker (Yorozu as an OpenClaw channel) is built: every child issue #416–#432 is merged and closed, and this rewrite of the docs is #433. The secretary system and the Mac host are deleted (#426); their last status is in [history/secretary-status.md](history/secretary-status.md).
+
+**Release 0.9.0** (2026-10-17, `projectx` after #460), internal only: the owner's feedback on 0.8.0 (#456 Automations agent fix, #457 client polish, #458 Settings, in-app notices and read-synced notifications, #460 plugin manifest).
+- Relay: #447 merged on `main` and deployed with `wrangler deploy` (`notify.devices`, silent `sync`); `apps/relay` here refreshed from `main`.
+- Gateway: the plugin now loads from the main checkout (`plugins.load.paths`; the old load path from a Codex worktree removed), Gateway restarted; the channel is running and registered at the relay with the same room, so pairings carry over.
+- Mac: `/Applications/Yorozu.app` 0.9.0 (1) rebuilt in place with `build_native.sh --restart`.
+- iPhone and iPad: TestFlight 0.9.0 (1), one upload with `upload_ios.sh --confirm`.
+- Checked: plugin typecheck, YorozuWire build, iOS and Mac compile, relay typecheck and its 145 tests. Not checked live: Settings, the pill, push suppression and `sync` clearing on a real device.
 
 **Release 0.8.0** (2026-10-16, `projectx` after #454), internal only:
 - Mac: `/Applications/Yorozu.app` rebuilt in place with `scripts/build_native.sh --restart`: the client (`to.yumi.yorozu.ios`) 0.8.0 (1), Developer ID signed, replacing the old host app. Launched to the v3 pairing screen.
@@ -43,9 +50,7 @@ Acceptance for this branch is compile plus manual checks (tests and CI are on ho
 
 | Item | Default until the owner decides |
 |---|---|
-| **Plugin install into the owner's Gateway.** The install is refused with `Plugin config repair could not be inspected: yorozu`: OpenClaw state holds a pending upgrade migration row for the old v1 plugin with the same id. Choices: `openclaw doctor --fix` (also acts on other plugins' pending rows), or `openclaw plugins uninstall yorozu` then retry (untested). | Not installed; every live check stays on isolated profiles. |
 | **`commands.ownerAllowFrom` += `"yorozu:owner"`** ([setup.md](setup.md#owner-only-tools)). Without it Yorozu turns lose owner-only tools, so "Edit in Chat" cannot change a cron job. | Not set: Yorozu turns are non-owner. |
-| **Relay PR #447 on `main`** (`notify` names the devices to alert). Backward compatible; needs the owner's merge and deploy. | Deployed relay alerts every device; the client hides a banner for the conversation on screen, but that device still gets the relay's fixed-text alert. |
 | **On-device checks** (TestFlight build): QR scan with the camera; pairing acceptance on a phone; the cache unreadable while locked; push (one per reply, title and first line, tap opens the conversation, none for the conversation in front, cron pushes, preview while locked after first unlock); Mac local notifications; Mac Dock and iOS app badge; swipe and context-menu marks; pull to refresh on Crons; "Edit in Chat" with a real model; a real vision model on attachments; Mac drag and drop and ⌘Return live; VoiceOver. | Unchecked. |
 | **`openclaw message send --channel yorozu -t owner` fails**: the plugin has no messaging target resolver (`messaging.targetResolver`) for `owner`. | Agent replies and cron deliveries work; CLI sends to Yorozu do not. |
 | **Crons tab reads a private SDK path**: `loadCronStore` from `openclaw/plugin-sdk/cron-store-runtime`, which works on a source install. A packaged OpenClaw may withhold it from linked plugins. | Keep it; if it breaks, `cron_list` answers `error` and the switch is a loopback Gateway client ([openclaw-channel.md](openclaw-channel.md)). |

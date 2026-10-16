@@ -267,6 +267,15 @@ export const NOTIFY_TITLE = "Yorozu";
  * Fixed fallback text. A notification extension may replace the reply phrase after opening a
  * per-device ciphertext, but the relay can neither read nor assemble that body.
  */
+/**
+ * The silent class: nothing to tell the person, only the app. `sync` wakes the named devices with a background push and
+ * no alert, so one that has read state to catch up on (a conversation read on another device) clears its delivered
+ * notifications. Kept apart from `NOTIFY_CLASSES` so a host that knows only those never sends it, and a relay without
+ * it refuses it as an unknown class.
+ */
+export const SILENT_CLASS = "sync";
+export type SilentClass = typeof SILENT_CLASS;
+
 export const NOTIFY_BODY: Record<NotifyClass, string> = {
   reply: "Yorozu replied.",
   approval: "Yorozu needs your approval.",
@@ -283,7 +292,7 @@ export type Push = { deviceToken: string };
  */
 export type EncryptedPreview = { n: string; c: string };
 export type Notify = {
-  class: NotifyClass;
+  class: NotifyClass | SilentClass;
   threadRef: string;
   eventRef?: string;
   previews?: Record<string, EncryptedPreview>;
@@ -293,6 +302,11 @@ export type Notify = {
    * notification category; what the action is stays in the sealed frame.
    */
   actions?: boolean;
+  /**
+   * The devices (Ed25519 relay keys) to alert, when the host names them: a v3 host leaves out a device that has the
+   * conversation on screen. Absent, every registered device is alerted, as before.
+   */
+  devices?: string[];
 };
 
 /**
@@ -320,6 +334,12 @@ const parsePreviews = (value: unknown): Record<string, EncryptedPreview> | null 
   return previews;
 };
 
+const parseDeviceList = (value: unknown): string[] | null | undefined => {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_DEVICES) return null;
+  return value.every((key) => typeof key === "string" && key.length === 43 && base64url.test(key)) ? value : null;
+};
+
 // APNs tokens have variable byte lengths; 512 bytes is our resource limit, not an APNs size guarantee.
 // https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/HandlingRemoteNotifications.html
 export const parsePush = (msg: Record<string, unknown>): Push | null =>
@@ -330,16 +350,19 @@ export const parsePush = (msg: Record<string, unknown>): Push | null =>
 
 export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
   if (typeof msg.threadRef !== "string" || msg.threadRef === "") return null;
-  if (!NOTIFY_CLASSES.includes(msg.class as NotifyClass)) return null;
+  if (!NOTIFY_CLASSES.includes(msg.class as NotifyClass) && msg.class !== SILENT_CLASS) return null;
   if (msg.eventRef !== undefined && (typeof msg.eventRef !== "string" || msg.eventRef === "")) return null;
   const previews = parsePreviews(msg.previews);
   if (previews === null) return null;
   if (msg.actions !== undefined && typeof msg.actions !== "boolean") return null;
+  const devices = parseDeviceList(msg.devices);
+  if (devices === null) return null;
   return {
-    class: msg.class as NotifyClass,
+    class: msg.class as NotifyClass | SilentClass,
     threadRef: msg.threadRef,
     ...(typeof msg.eventRef === "string" ? { eventRef: msg.eventRef } : {}),
     ...(previews ? { previews } : {}),
+    ...(devices ? { devices } : {}),
     // Only an approval has buttons to offer; the bit is meaningless on any other class.
     ...(msg.actions === true && msg.class === "approval" ? { actions: true } : {}),
   };
