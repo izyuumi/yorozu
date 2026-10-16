@@ -21,6 +21,7 @@ import {
   BACKGROUND_CLASSES,
   BACKGROUND_INTERVAL_MS,
   backgroundPayload,
+  SILENT_CLASS,
   BUFFER_TTL_MS,
   CLOSE_BAD_SIGNATURE,
   CLOSE_POLICY,
@@ -560,6 +561,7 @@ export class Room implements DurableObject {
     watching: ReadonlySet<string>,
   ): Promise<void> {
     const deviceKey = key.slice(pushPrefix.length);
+    if (notify.class === SILENT_CLASS) return this.wakeSilently(key, record, now, watching);
     const alert = await this.push({
       token: record.deviceToken,
       payload: alertPayload(
@@ -594,6 +596,23 @@ export class Room implements DurableObject {
     } finally {
       if (background) this.backgroundPending.delete(key);
     }
+  }
+
+  /**
+   * `sync`: a background push alone, to a device whose socket is gone. Not held to `BACKGROUND_INTERVAL_MS`: it follows
+   * a read on another device, often within a minute of the reply that spent the last wake, and is the only way that
+   * device learns to clear the reply's alert. The room's notify budget still bounds it.
+   */
+  private async wakeSilently(key: string, record: PushRecord, now: number, watching: ReadonlySet<string>): Promise<void> {
+    if (watching.has(key.slice(pushPrefix.length))) return;
+    const silent = await this.push({
+      token: record.deviceToken,
+      payload: backgroundPayload(),
+      pushType: "background",
+      // Apple rejects an urgent background push.
+      priority: 5,
+    }, now, record.sandbox ?? false);
+    if (silent) await this.recordPush(key, record.deviceToken, silent, now);
   }
 
   private async handle(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
