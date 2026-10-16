@@ -10,7 +10,7 @@
  * `error`. Config-sourced jobs OpenClaw keeps beside the store (`LoadedCronStore.configJobs`) are not listed;
  * built-in declared jobs such as the heartbeat are persisted in the store and are.
  */
-import { resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-scope-runtime";
+import { tryResolveDefaultAgentId } from "openclaw/plugin-sdk/agent-scope-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import { loadCronStore, resolveCronStorePath } from "openclaw/plugin-sdk/cron-store-runtime";
 import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
@@ -22,7 +22,12 @@ type Schedule = StoredJob["schedule"];
 /** The configured agent's jobs, as the wire carries them, by name. */
 export async function listCronJobs(cfg: OpenClawConfig, agent: string): Promise<CronJob[]> {
   const store = await loadCronStore(resolveCronStorePath((cfg as { cron?: { store?: string } }).cron?.store));
-  const fallback = normalizeAgentId(resolveDefaultAgentId(cfg));
+  // A job without `agentId` runs as the system agent (agents.defaults.systemAgent), else the sole agent. With
+  // several agents and explicit ownership there is no default, and `resolveDefaultAgentId` throws: such jobs are
+  // then nobody's here rather than failing the whole list.
+  const system = (cfg as { agents?: { defaults?: { systemAgent?: { agentId?: string } } } }).agents?.defaults?.systemAgent?.agentId?.trim();
+  const owner = system || tryResolveDefaultAgentId(cfg);
+  const fallback = owner ? normalizeAgentId(owner) : undefined;
   const mine = normalizeAgentId(agent);
   return store.jobs
     .filter((job) => (job.agentId ? normalizeAgentId(job.agentId) : fallback) === mine)
