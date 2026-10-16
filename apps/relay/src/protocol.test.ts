@@ -163,6 +163,11 @@ test("push registrations are accepted only in the shape the relay stores", () =>
 test("a notify is a known class and an opaque reference, or it is nothing", () => {
   expect(parseNotify({ class: "reply", threadRef: "r" })).toEqual({ class: "reply", threadRef: "r" });
   expect(parseNotify({ class: "gossip", threadRef: "r" })).toBeNull();
+  expect(parseNotify({ class: "sync", threadRef: "r" })).toEqual({ class: "sync", threadRef: "r" });
+  const key = "A".repeat(43);
+  expect(parseNotify({ class: "reply", threadRef: "r", devices: [key] })).toEqual({ class: "reply", threadRef: "r", devices: [key] });
+  expect(parseNotify({ class: "reply", threadRef: "r", devices: ["short"] })).toBeNull();
+  expect(parseNotify({ class: "reply", threadRef: "r", devices: Array(17).fill(key) })).toBeNull();
   expect(parseNotify({ class: "reply" })).toBeNull();
   expect(parseNotify({ class: "reply", threadRef: "" })).toBeNull();
   expect(parseNotify({ class: "approval", threadRef: "r", eventRef: "e" })).toEqual({
