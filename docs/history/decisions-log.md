@@ -959,6 +959,20 @@ Source: owner, tracking issue #415 (Decisions, 2026-10-15).
 - Reading a conversation clears its notifications on the other devices, including closed apps through a silent relay push; the relay change goes to `main`, backward compatible.
 - Mockups in Claude Design only for large changes.
 
+## 2026-10-17 — Upgrade from 0.5.0-beta, versioning and App Store
+
+Grilling session with the owner. Plan: [upgrade-from-0.5.md](../upgrade-from-0.5.md).
+
+- Only 0.5.0-beta installs (the owner's family) upgrade, to 0.9.0-beta. 0.4.0 is not upgraded and the stable feed stays frozen. The owner checks each migration by hand; then all migration code is deleted. Fix forward only.
+- Mac stays on GitHub Releases + Sparkle as `to.yumi.yorozu` (Developer ID, notarized), beta feed by default. This reverses the Mac part of "takes v1's identity" as `to.yumi.yorozu.ios` (#426). `projectx` merges into `main`; the release job is the one CI exception.
+- Version 0.9.0. Visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build, because Sparkle compares that integer and the installed 0.5.0-beta is `10279` (TN2420: macOS builds rise across versions).
+- Supersedes "every device re-pairs once": 0.5's host keys and devices carry into the plugin, and iOS copies `pairings` into `pairing-v3`, with QR fallback.
+- First-launch migration on the Mac is fully automatic, including the plugin reload with capability acceptance (exception to click-to-write). 0.5 chats convert to conversations seeded with one plain `chat.inject` (header + last 40 turns); memory notes import; no bridge release.
+- iOS goes to the public App Store (nothing was there before), manual release, no phased rollout. Review: a live review host, plus a fixture demo behind `YOROZU-DEMO` documented in the notes, following OpenClaw's iOS app. iOS shows a dismissible "Update available" row from Apple's lookup API.
+- Release order: TestFlight assignment and the Mac appcast item go live together.
+- Groundwork: schema versions on stored records, a protocol range one version back, additive changes, stable contracts, Sparkle `minimumAutoupdateVersion` for breaking jumps.
+- Naming: app versions ("0.5", "0.9") in prose and migration code; no version in type names; the wire protocol stays an integer.
+
 ## 2026-10-15 — Superseded by the channel decisions: OWNER_DECISIONS.md lines as of 2026-10-14
 Source: OWNER_DECISIONS.md before #417, kept as written. These areas were reversed by the 2026-10-15 channel decisions above: the secretary, threads and secretary UX, the Mac host and its UI, phone-as-mirror, delivery-mark semantics, the direct path, routing, workers, jobs, memory, Hermes and harnesses, role models, assisted setup and the setup CLI, and the R1–R3 ordering.
 

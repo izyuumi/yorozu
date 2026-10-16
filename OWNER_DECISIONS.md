@@ -12,7 +12,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - Yorozu runs nothing of its own: no routing, classification, workers, coding agents, memory, jobs, Hermes or cua. All of `Sources/ProjectXCore` engine code and the Mac host role go. (2026-10-15)
 - No Mac host process. The OpenClaw channel plugin (`plugins/openclaw-yorozu`, TypeScript) holds the host keys and the relay connection itself. Fallback, only if the spike shows a plugin cannot: a Mac bridge app between Gateway and relay. (2026-10-15)
 - One multiplatform SwiftUI client app for iPhone, iPad and Mac. Clients only; no host role anywhere in Swift. (2026-10-15)
-- No backward compatibility: wire protocol v3, every device re-pairs once. Old wire types, store and engine are deleted, not flagged off. (2026-10-15)
+- Wire protocol 3. Old wire types, store and engine are deleted, not flagged off. 0.5.0-beta installs migrate once in 0.9.0, carrying pairings over ([Upgrade from 0.5.0-beta](#upgrade-from-050-beta)); 0.4.0 and older are not upgraded. (2026-10-15, migration 2026-10-17)
 
 ## Conversations
 
@@ -40,8 +40,8 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 ## Transport
 
 - Relay only. The direct path (port 8738) is dropped. The plugin only makes an outbound connection; the Gateway opens no new port. (2026-10-15)
-- The deployed relay also serves v1 users on `main`; any relay change must stay backward compatible. (2026-10-15)
-- The relay honours `notify.devices` and has a silent `sync` class (#447, merged on `main` and deployed for v3). (2026-10-17)
+- The deployed relay also serves 0.4 and 0.5 installs; any relay change must stay backward compatible. (2026-10-15)
+- The relay honours `notify.devices` and has a silent `sync` class (#447, merged on `main` and deployed for 0.9). (2026-10-17)
 - The relay answers each client frame with `accepted` once it has forwarded it or stored it durably. Merged on `main` in #332 and deployed by the owner. (2026-10-09)
 
 ## Push and attachments
@@ -69,11 +69,40 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 
 ## Platform and release
 
-- The Mac app is a Tuist-generated Xcode project and takes v1's identity (bundle id, signing team, entitlements). (2026-10-07)
+- The Mac app is a Tuist-generated Xcode project. Its macOS destination ships as 0.5's Mac id `to.yumi.yorozu`, Developer ID signed and notarized, team `AN5KM8QGEF`, so Sparkle updates 0.5.0-beta in place. (2026-10-07, id 2026-10-17)
+- The Mac updates through Sparkle (macOS only), with 0.5's EdDSA key, from GitHub Releases. The default feed is `yorozu.yumi.to/beta/appcast.xml`; `YorozuBetaUpdates` stays respected. The stable feed stays frozen at 0.4.0. 0.9.0 is beta. (2026-10-17)
+- Releases: `projectx` merges into `main`, and `main`'s `release.yml` is ported to publish `v<ver>-beta` from a green `main`. (2026-10-17)
 - The Mac signing identity is a local, gitignored build setting, not part of the repo; git history is left as it is. (2026-10-09)
-- Clients reach the plugin through v1's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service. The relay may be changed when that is the better design (Transport). (2026-10-08, channel 2026-10-15)
-- iOS ships to internal TestFlight only. Build numbers are per version, start at 1 and ascend. (2026-10-08)
-- The app icon is v1's Icon Composer mark (blob-identical to 1e2f1fba). (2026-10-08)
+- Clients reach the plugin through 0.5's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service. The relay may be changed when that is the better design (Transport). (2026-10-08, channel 2026-10-15)
+- iOS ships to the public App Store (first release 0.9.0), manual release after approval, no phased release; TestFlight testers first. Review uses a live review host, with a fixture demo behind the documented code `YOROZU-DEMO` as fallback (as OpenClaw does). iOS shows a subtle, dismissible "Update available" row from Apple's lookup API; nothing is forced. (2026-10-08, App Store 2026-10-17)
+- Version 0.9.0. The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`, above 0.5's `10279`). (2026-10-08, encoding 2026-10-17)
+- The app icon is 0.5's Icon Composer mark (blob-identical to 1e2f1fba). (2026-10-08)
+
+## Upgrade from 0.5.0-beta
+
+- Only 0.5.0-beta installs upgrade, to 0.9.0-beta: the owner's family, each migration confirmed by hand. 0.4.0 and older are not upgraded; the stable feed stays frozen at 0.4.0. Fix forward only, no rollback tooling. Plan: [docs/upgrade-from-0.5.md](docs/upgrade-from-0.5.md). (2026-10-17)
+- The Mac migrates on first launch, fully automatically (an exception to click-to-write for this one migration): the 0.9 plugin is bundled at `Yorozu.app/Contents/Resources/openclaw-channel` so 0.5's `--link` install picks it up; the app drops `channels.yorozu.socketPath`, reloads the plugin accepting its capabilities and restarts the Gateway; the plugin imports 0.5's host keys and devices so no device re-pairs; memory notes import as unverified notes; every 0.5 chat becomes a conversation seeded with one plain `chat.inject` of its last 40 turns; 0.5's watchdog LaunchAgent is removed. 0.5's data folder is never written. (2026-10-17)
+- iOS copies the keychain account `pairings` into `pairing-v3` on first launch, QR pairing as fallback, and never deletes `pairings`. (2026-10-17)
+- Release order: the iOS build is assigned to TestFlight testers at the moment the Mac appcast item goes live; iOS shows "Your Mac is updating" and reconnects by itself, the Mac nudges to update the iPhone app. (2026-10-17)
+- No bridge 0.5.x release. Once the owner confirms every family install migrated, all migration code is deleted. (2026-10-17)
+
+## Stable contracts
+
+These never change; future versions migrate around them (2026-10-17):
+
+- Mac bundle id `to.yumi.yorozu`, iOS bundle id `to.yumi.yorozu.ios`, team `AN5KM8QGEF`.
+- Sparkle EdDSA key and feed URLs (`yorozu.yumi.to/appcast.xml`, `yorozu.yumi.to/beta/appcast.xml`).
+- `CFBundleVersion` formula (Platform and release); never a smaller leading number.
+- Bundled plugin path `Contents/Resources/openclaw-channel`, plugin id `yorozu`.
+- Keychain service `to.yumi.yorozu.ios` and account `pairing-v3`.
+
+## Versioning rules
+
+- Every stored record carries a schema version; ordered migrations `n → n+1`, each idempotent, run at launch. (2026-10-17)
+- `peer_info` negotiates `protocolMin`/`protocolMax`; each side supports one protocol version back; `update_required` only outside that. (2026-10-17)
+- Changes are additive: new fields optional, unknown fields ignored, not rejected. (2026-10-17)
+- A breaking Mac update sets Sparkle `sparkle:minimumAutoupdateVersion`. (2026-10-17)
+- Naming: prose, docs, UI and migration code name app versions ("0.5", "0.9"), never v1/v2/v3. Type names carry no version (the `V3*` prefixes are renamed in a mechanical PR). The wire protocol stays a plain integer, "protocol 3", separate from app versions. (2026-10-17)
 
 ## Engineering
 
@@ -86,7 +115,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 ## Process and roadmap
 
 - Work lands on `projectx` through the usual worktree + PR flow, one #415 child issue per PR, in #415's build order. The secretary is deleted only after the new path works end to end. (2026-10-15)
-- Tests and CI stay on hold; acceptance is compile + manual checks. (2026-10-15)
+- Tests and CI stay on hold; acceptance is compile + manual checks. Exception: the release job on `main`, with no test jobs. (2026-10-15, release 2026-10-17)
 
 ## Superseded
 
