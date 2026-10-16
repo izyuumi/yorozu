@@ -17,9 +17,15 @@ export type PeerInfo = {
   capabilities: string[];
   /** Plugin: the largest attachment it takes or sends, in bytes (`mediaMaxMb`). */
   mediaMaxBytes?: number;
+  /** Plugin: the agent that answers (`channels.yorozu.agent`), for the client's Settings. */
+  agent?: string;
+  /** Plugin: the OpenClaw version it runs in, for the client's Settings. */
+  hostVersion?: string;
 };
 /** Peers that list this in `capabilities` speak the attachment kinds and fields (#430). */
 export const ATTACHMENTS = "attachments";
+/** Peers that list this speak `device_list` and `device_patch`, and the `active` flag of `foreground`. */
+export const DEVICES = "devices";
 /** Raw bytes per `upload` or `chunk`: a sealed box of one stays far under the relay's 1 MiB frame. */
 export const CHUNK_BYTES = 160 * 1024;
 /** A file in a `message` or `reply`; `id` (a lowercase UUID, made by the side that has the bytes) names its transfer. */
@@ -78,8 +84,18 @@ export type HistoryItem =
  * Mark as Unread: the conversation counts as unread whatever the cursor says, until a read clears it.
  */
 export type ReadCursor = { convId: string; messageId: string; ts: number; unread: boolean };
-/** The conversation on this device's screen while the app is in the foreground, or none (#431): no push for it there. */
-export type Foreground = { convId?: string | null };
+/**
+ * The conversation on this device's screen while the app is in the foreground, or none (#431): no push for it there.
+ * `active`: the app is in the foreground at all, so no push of any conversation goes to this device; it shows its own
+ * in-app notice instead. Absent from a client without `devices`.
+ */
+export type Foreground = { convId?: string | null; active?: boolean };
+/** One paired device, for Settings. `id` is its Ed25519 relay key; `current`: the device asking. */
+export type DeviceInfo = { id: string; name?: string; pairedAt: number; push: boolean; current: boolean };
+/** Client -> plugin: `{}`, a request. Plugin -> that client: `devices`, or `error`. */
+export type DeviceList = { devices?: DeviceInfo[]; error?: string };
+/** Client -> plugin: turn a device's push on or off, or remove it. Answered with `device_list` to the sender. */
+export type DevicePatch = { id: string; push?: boolean; removed?: true };
 /** One cron job of the configured agent, for the Crons tab (#432). Times are epoch ms. */
 export type CronJob = {
   id: string;
@@ -113,6 +129,8 @@ export type Event =
   | { kind: "read_cursor"; data: ReadCursor }
   | { kind: "foreground"; data: Foreground }
   | { kind: "cron_list"; data: CronList }
+  | { kind: "device_list"; data: DeviceList }
+  | { kind: "device_patch"; data: DevicePatch }
   | { kind: "conv_patch"; data: ConvPatch }
   | { kind: "conv_update"; data: ConvUpdate }
   | { kind: "upload"; data: Upload }
@@ -171,8 +189,12 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   conv_list: (d) => d.conversations === undefined || Array.isArray(d.conversations),
   history: (d) => isId(d.convId) && optInt(d.before) && optInt(d.after) && (d.items === undefined || Array.isArray(d.items)),
   read_cursor: (d) => ref(d) && int(d.ts) && typeof d.unread === "boolean",
-  foreground: (d) => d.convId === undefined || d.convId === null || isId(d.convId),
+  foreground: (d) =>
+    (d.convId === undefined || d.convId === null || isId(d.convId)) && (d.active === undefined || typeof d.active === "boolean"),
   cron_list: (d) => (d.jobs === undefined || Array.isArray(d.jobs)) && optStr(d.error),
+  device_list: (d) => (d.devices === undefined || Array.isArray(d.devices)) && optStr(d.error),
+  device_patch: (d) =>
+    label(d.id, 64) && (d.push === undefined || typeof d.push === "boolean") && (d.removed === undefined || d.removed === true),
   upload: (d) =>
     part(d) && label(d.name, 255) && label(d.mime, 255) && nat(d.size) && int(d.count) && d.count >= 1 &&
     (d.index as number) < d.count && str(d.data),

@@ -17,5 +17,11 @@ struct YorozuApp: App {
                 .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
                 #endif
         }
+        #if os(macOS)
+        Settings {
+            V3SettingsView(model: delegate.model)
+                .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
+        }
+        #endif
     }
 }

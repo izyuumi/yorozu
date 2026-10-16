@@ -17,6 +17,8 @@ export type Device = {
   name?: string;
   /** Epoch ms. The oldest device makes way past `MAX_DEVICES`, as on the relay. */
   pairedAt: number;
+  /** False: no push goes to this device (Settings, #415). Absent means on. */
+  push?: boolean;
 };
 
 /** The relay remembers at most this many devices a room. */

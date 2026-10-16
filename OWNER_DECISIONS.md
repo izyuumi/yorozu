@@ -20,7 +20,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - Peer = the owner, not the device: all paired devices share one channel peer, so every conversation shows everywhere. Session key `agent:<agent>:yorozu:direct:owner:thread:<convId>` (thread-scoped sessions, as Telegram DM topics). (2026-10-15)
 - One agent from plugin config (`channels.yorozu.agent`), default `main`. (2026-10-15)
 - Only Yorozu conversations are listed; other channels' sessions are not. (2026-10-15)
-- "+" makes a new `convId` (new thread session). `/new` inside a conversation resets that session in place. Other slash commands pass through as text. (2026-10-15)
+- Compose (`square.and.pencil`, in the chat list's bottom toolbar; the window toolbar on the Mac) makes a new `convId` (new thread session). `/new` inside a conversation resets that session in place. Other slash commands pass through as text. (2026-10-17)
 - Titles are generated automatically by OpenClaw's own title generator (`utilityModel`, as for Telegram DM topics). A manual rename (session `label`) overrides it. (2026-10-15)
 - History: the Gateway transcript is the source of truth. Clients keep a local cache and backfill from the plugin on open/reconnect; new devices see full history. (2026-10-15)
 
@@ -41,26 +41,31 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 
 - Relay only. The direct path (port 8738) is dropped. The plugin only makes an outbound connection; the Gateway opens no new port. (2026-10-15)
 - The deployed relay also serves v1 users on `main`; any relay change must stay backward compatible. (2026-10-15)
+- The relay honours `notify.devices` and has a silent `sync` class (#447, merged on `main` and deployed for v3). (2026-10-17)
 - The relay answers each client frame with `accepted` once it has forwarded it or stored it durably. Merged on `main` in #332 and deployed by the owner. (2026-10-09)
 
 ## Push and attachments
 
-- One push per finished agent reply via the relay's `notify`, preview (title + first line) sealed per device; none to a device with that conversation in the foreground. Cron output delivered into a conversation pushes the same way. No mute yet. (2026-10-15)
+- One push per finished agent reply via the relay's `notify`, preview (title + first line) sealed per device. Cron output delivered into a conversation pushes the same way. No mute yet. (2026-10-15)
+- No push to a device while the app is in front on it, per device; a minimal pill at the top shows a reply in another conversation instead (tap opens it, swipe up or 3 s dismisses, the newest replaces it), with an optional light haptic, on by default. (2026-10-17)
+- Reading a conversation on any device removes its delivered notifications on the others: live over the socket, and through a silent `sync` push for devices whose app is closed. (2026-10-17)
 - Attachments both ways (`sendMedia`), 8 MB limit (OpenClaw's `mediaMaxMb` default), sealed chunks under the relay's 1 MiB frame limit. Share extension stays. No voice notes yet. (2026-10-15)
 
-## Crons
+## Automations
 
-- A Crons tab next to Chats: all jobs on the configured agent (`cron.list`), disabled ones greyed; name, human schedule, next run, last status (error on tap). (2026-10-15)
-- No admin calls from Yorozu. Each row has "Edit in chat": a new conversation (or the job's delivery conversation) opens with a draft `Change cron job "<name>" (id <id>): ` and the agent edits it with its cron tool. (2026-10-15)
+- An Automations tab (ja 自動化, `clock` icon) next to Chats: all cron jobs on the configured agent, disabled ones greyed; name, human schedule, next run, last status (error on tap). Code and wire names stay `cron`. (2026-10-17)
+- No cron admin calls from Yorozu. Each row has "Edit in chat": a new conversation (or the job's delivery conversation) opens with a draft `Change cron job "<name>" (id <id>): ` and the agent edits it with its cron tool. (2026-10-15)
 - A job delivering into a Yorozu conversation (`delivery.channel: yorozu`, `threadId`) opens that conversation from its row. (2026-10-15)
 
 ## Client UX
 
+- Settings: a gear at the top left of the chat list opens it as a sheet; on the Mac it is the Settings window (⌘,). It shows this device's notification permission, the host (name, agent, OpenClaw and plugin versions, relay, key), the paired devices, and Unpair. From it the owner can turn push from the host on or off for this device and remove other devices; these are the only admin calls Yorozu makes. Unpair also removes this device on the host. (2026-10-17)
+- Inside a conversation the iPhone's tab bar hides. Chats and Automations use inline titles. A conversation row's preview is one line. (2026-10-17)
 - A control or label that a clear symbol can stand for is shown as the icon alone, with its words kept for VoiceOver (accessibility label, and a tooltip on the Mac): fewer visible strings to translate. Menu items, Settings tabs, status words and anything whose icon would be ambiguous keep their text. (2026-10-12)
 - ⌘Enter sends by default on the Mac: Enter adds a newline. Hardware keyboards on iPhone and iPad keep smart Enter; the on-screen keyboard keeps its Send button. (2026-10-09, clients 2026-10-15)
 - Interface text is in English and Japanese on every client. (2026-10-09)
 - The client app is native SwiftUI, with selective AppKit on the Mac, never a web UI or webview wrapper. Use native SwiftUI components wherever they fit. (2026-10-07, clients 2026-10-15)
-- The app takes the system look: native backgrounds, Liquid Glass bars, the vermilion accent and bubbles in system materials. The design is done in Claude Design, mockups first, before UI code. (2026-10-09)
+- The app takes the system look: native backgrounds, Liquid Glass bars, the vermilion accent and bubbles in system materials. Large UI changes are designed in Claude Design, mockups first; changes built from stock native controls go straight to code. (2026-10-09, mockups 2026-10-17)
 
 ## Platform and release
 

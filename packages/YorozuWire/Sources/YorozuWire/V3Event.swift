@@ -25,6 +25,10 @@ public enum V3Event: Equatable, Sendable {
     /// Plugin -> every client (#428): a conversation's title and archive state now, or that it was deleted.
     case convUpdate(V3ConvUpdate)
     case cronList(V3CronList)
+    /// `device_list` (Settings): `devices` and `error` nil is the client's request, otherwise the plugin's answer.
+    case deviceList(V3DeviceList)
+    /// Client -> plugin (Settings): a device's push on or off, or its removal.
+    case devicePatch(V3DevicePatch)
     case upload(V3Upload)
     case uploadAck(V3UploadAck)
     case download(V3Download)
@@ -48,6 +52,8 @@ public enum V3Event: Equatable, Sendable {
         case .convPatch: "conv_patch"
         case .convUpdate: "conv_update"
         case .cronList: "cron_list"
+        case .deviceList: "device_list"
+        case .devicePatch: "device_patch"
         case .upload: "upload"
         case .uploadAck: "upload_ack"
         case .download: "download"
@@ -85,6 +91,10 @@ public struct V3PeerInfo: Codable, Equatable, Sendable {
     public var capabilities: [String]
     /// Plugin: the largest attachment it takes or sends, in bytes (`mediaMaxMb`, #430).
     public var mediaMaxBytes: Int?
+    /// Plugin: the agent that answers (`channels.yorozu.agent`).
+    public var agent: String?
+    /// Plugin: the OpenClaw version it runs in.
+    public var hostVersion: String?
 
     public init(app: String, name: String? = nil, capabilities: [String] = [],
         protocolMin: Int = V3PeerInfo.protocolVersion, protocolMax: Int = V3PeerInfo.protocolVersion,
@@ -429,8 +439,52 @@ public struct V3ReadCursor: Codable, Equatable, Sendable {
 /// plugin sends no push for a reply in it to this device while its session lasts.
 public struct V3Foreground: Codable, Equatable, Sendable {
     public var convId: String?
+    /// The app is in the foreground at all: a plugin with `devices` sends this device no push, it shows its own notice.
+    public var active: Bool?
 
-    public init(convId: String?) { self.convId = convId }
+    public init(convId: String?, active: Bool? = nil) {
+        self.convId = convId
+        self.active = active
+    }
+}
+
+/// Settings: peers that list this capability speak `device_list` and `device_patch`, and `foreground.active`.
+public enum V3Devices {
+    public static let capability = "devices"
+}
+
+/// One paired device. `id` is its Ed25519 relay key; `current`: the device that asked.
+public struct V3DeviceInfo: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String?
+    /// Epoch ms.
+    public var pairedAt: Int64
+    public var push: Bool
+    public var current: Bool
+}
+
+/// Client -> plugin: empty, a request. Plugin -> that client: `devices`, or `error`.
+public struct V3DeviceList: Codable, Equatable, Sendable {
+    public var devices: [V3DeviceInfo]?
+    public var error: String?
+
+    public init(devices: [V3DeviceInfo]? = nil, error: String? = nil) {
+        self.devices = devices
+        self.error = error
+    }
+}
+
+/// Client -> plugin: turn a device's push on or off, or remove it. Answered with `device_list` to the sender.
+public struct V3DevicePatch: Codable, Equatable, Sendable {
+    public var id: String
+    public var push: Bool?
+    public var removed: Bool?
+
+    public init(id: String, push: Bool? = nil, removed: Bool? = nil) {
+        self.id = id
+        self.push = push
+        self.removed = removed
+    }
 }
 
 /// The Crons tab (#432). Client -> plugin: empty, a request. Plugin -> that client: `jobs`, or `error` when the
@@ -547,6 +601,10 @@ extension V3Event: Codable {
             if let v = data(V3Foreground.self), v.convId.map(V3Event.isId) ?? true { self = .foreground(v); return }
         case "cron_list":
             if let v = data(V3CronList.self) { self = .cronList(v); return }
+        case "device_list":
+            if let v = data(V3DeviceList.self) { self = .deviceList(v); return }
+        case "device_patch":
+            if let v = data(V3DevicePatch.self), !v.id.isEmpty { self = .devicePatch(v); return }
         case "upload":
             if let v = data(V3Upload.self), part(v.attachmentId, v.index, v.count) { self = .upload(v); return }
         case "upload_ack":
@@ -580,6 +638,8 @@ extension V3Event: Codable {
         case .convPatch(let v): try c.encode(v, forKey: .data)
         case .convUpdate(let v): try c.encode(v, forKey: .data)
         case .cronList(let v): try c.encode(v, forKey: .data)
+        case .deviceList(let v): try c.encode(v, forKey: .data)
+        case .devicePatch(let v): try c.encode(v, forKey: .data)
         case .upload(let v): try c.encode(v, forKey: .data)
         case .uploadAck(let v): try c.encode(v, forKey: .data)
         case .download(let v): try c.encode(v, forKey: .data)

@@ -949,6 +949,16 @@ Source: owner, tracking issue #415 (Decisions, 2026-10-15).
 - Process: worktree + PR flow on `projectx`, one child issue per PR; the secretary is deleted only after the new path works end to end; tests and CI stay on hold.
 - Supersedes #323 and #322; v1 → v2 migration stays a future topic.
 
+## 2026-10-17 — Feedback on 0.8.0 from the iPhone
+
+- The iPhone's tab bar hides inside a conversation; Chats and Automations use inline titles; previews are one line.
+- Compose is `square.and.pencil` in the chat list's bottom toolbar (native, not a custom floating button), on every platform; the Mac keeps it in the window toolbar.
+- Crons is renamed Automations (ja 自動化), `clock` icon kept. Supersedes the 2026-10-15 tab name.
+- Settings replaces the Host sheet: a gear on iPhone and iPad, the ⌘, window on the Mac. Host-side changes from the phone: list and remove paired devices, and push on or off per device. Agent switching and tuning limits stay out. Supersedes "No admin calls from Yorozu" for these two.
+- No push to a device while the app is in front on it (per device, not across devices); a minimal top pill instead, optional light haptic. Supersedes "none to a device with that conversation in the foreground".
+- Reading a conversation clears its notifications on the other devices, including closed apps through a silent relay push; the relay change goes to `main`, backward compatible.
+- Mockups in Claude Design only for large changes.
+
 ## 2026-10-15 — Superseded by the channel decisions: OWNER_DECISIONS.md lines as of 2026-10-14
 Source: OWNER_DECISIONS.md before #417, kept as written. These areas were reversed by the 2026-10-15 channel decisions above: the secretary, threads and secretary UX, the Mac host and its UI, phone-as-mirror, delivery-mark semantics, the direct path, routing, workers, jobs, memory, Hermes and harnesses, role models, assisted setup and the setup CLI, and the R1–R3 ordering.
 

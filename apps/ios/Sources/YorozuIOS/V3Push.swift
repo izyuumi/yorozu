@@ -18,9 +18,13 @@ final class V3AppDelegate: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         let (id, ref) = Self.names(notification)
+        let content = notification.request.content
+        let (title, body) = (content.title, content.body)
         return await MainActor.run {
-            let convId = model.conversation(convId: id, ref: ref)
-            return convId != nil && convId == model.foreground ? [] : [.banner, .list, .sound]
+            // The app is in front: no system banner, the in-app notice (a push sent before the plugin heard).
+            guard model.active else { return [.banner, .list, .sound] }
+            if let convId = model.conversation(convId: id, ref: ref) { model.showNotice(for: convId, title: title, body: body) }
+            return []
         }
     }
 
@@ -51,6 +55,14 @@ extension V3AppDelegate: UIApplicationDelegate {
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         model.registerPush(deviceToken.map { String(format: "%02x", $0) }.joined())
     }
+
+    /// The relay's silent push: after a reply, or a conversation read on another device (`sync`). A short connection
+    /// brings the read cursors, which clear what was read.
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
+        await model.backgroundWake()
+        return .newData
+    }
 }
 #else
 extension V3AppDelegate: NSApplicationDelegate {
@@ -80,13 +92,19 @@ enum V3Notices {
 
     private static var lastSound: [String: Date] = [:]
 
-    /// The conversation is open: its delivered notifications go.
-    static func removeDelivered(convId: String) {
+    /// Delivery lags the reply's own time (plugin clock) by this much at most; a later alert is a newer reply.
+    private static let deliverySlack: TimeInterval = 15
+
+    /// The conversation's delivered notifications go: all of them when it is open, or (`readUpTo`, a read cursor's
+    /// `ts` in epoch ms, read here or on another device) those delivered by the time of the reply it was read at.
+    static func removeDelivered(convId: String, readUpTo: Int64? = nil) {
         let ref = YorozuCrypto.threadRef(convId)
+        let cutoff = readUpTo.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000 + deliverySlack) }
         Task {
             let center = UNUserNotificationCenter.current()
             let ids = await center.deliveredNotifications()
                 .filter { $0.request.content.threadIdentifier == ref || $0.request.content.userInfo["convId"] as? String == convId }
+                .filter { note in cutoff.map { note.date <= $0 } ?? true }
                 .map(\.request.identifier)
             if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
         }
