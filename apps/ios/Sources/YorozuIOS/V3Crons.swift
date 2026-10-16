@@ -1,8 +1,8 @@
 import SwiftUI
 import YorozuWire
 
-/// The paired app's sections, Chats and Crons (#432), in one navigation structure: on iPad and Mac a split view whose
-/// sidebar holds Crons, the conversations and the Archived ones, with the open conversation or the cron jobs beside
+/// The paired app's sections, Chats and Automations (cron jobs, #432), in one navigation structure: on iPad and Mac a split view whose
+/// sidebar holds Automations, the conversations and the Archived ones, with the open conversation or the cron jobs beside
 /// it; on iPhone (any compact width) a tab bar with a stack in each tab.
 struct V3HomeView: View {
     enum Section: Hashable { case chats, crons }
@@ -52,10 +52,16 @@ struct V3HomeView: View {
             Tab(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right", value: Section.chats) {
                 NavigationStack {
                     ConversationsView(model: model, selection: $selection, section: $section, showsCrons: false)
-                        .navigationDestination(item: $selection) { V3ChatView(model: model, convId: $0).id($0) }
+                        .navigationDestination(item: $selection) {
+                            V3ChatView(model: model, convId: $0).id($0)
+                                #if os(iOS)
+                                // A conversation has the whole screen: the composer sits where the tab bar was.
+                                .toolbar(.hidden, for: .tabBar)
+                                #endif
+                        }
                 }
             }
-            Tab(String(localized: "Crons"), systemImage: "clock", value: Section.crons) {
+            Tab(String(localized: "Automations"), systemImage: "clock", value: Section.crons) {
                 NavigationStack { V3CronsView(model: model, open: open) }
             }
         }
@@ -69,7 +75,7 @@ struct V3HomeView: View {
     }
 }
 
-/// Every cron job of the plugin's agent (#415, "Crons"): name, schedule, next run and last status, disabled ones greyed.
+/// Every cron job of the plugin's agent (#415), shown as Automations: name, schedule, next run and last status, disabled ones greyed.
 /// Read-only: changes go through the agent, from "Edit in Chat".
 struct V3CronsView: View {
     let model: V3Model
@@ -82,7 +88,7 @@ struct V3CronsView: View {
         List {
             if let error = model.cronsError {
                 Section {
-                    Label { Text("Couldn’t read the cron jobs: \(error)") } icon: {
+                    Label { Text("Couldn’t read the automations: \(error)") } icon: {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
                     }
                 }
@@ -91,7 +97,7 @@ struct V3CronsView: View {
                 ForEach(jobs) { row($0) }
             } footer: {
                 if !jobs.isEmpty {
-                    Text("To add or change a job, use Edit in Chat: the agent makes the change.")
+                    Text("To add or change an automation, use Edit in Chat: the agent makes the change.")
                 }
             }
         }
@@ -102,7 +108,7 @@ struct V3CronsView: View {
             if model.crons == nil, model.state == .ready {
                 ProgressView()
             } else if jobs.isEmpty {
-                ContentUnavailableView("No cron jobs", systemImage: "clock",
+                ContentUnavailableView("No automations", systemImage: "clock",
                     description: Text(model.state == .ready ? "Ask the agent in a chat to schedule something." : model.state.label))
             }
         }
@@ -111,7 +117,8 @@ struct V3CronsView: View {
         .task(id: model.state == .ready) {
             if model.state == .ready { await model.refreshCrons() }
         }
-        .navigationTitle("Crons")
+        .navigationTitle("Automations")
+        .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.state == .ready ? "" : model.state.label)
         .alert(String(localized: "Last run failed"), isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } }),
             presenting: failure) { _ in
