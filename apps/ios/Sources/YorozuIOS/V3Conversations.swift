@@ -13,7 +13,7 @@ struct ConversationsView: View {
     @Binding var section: V3HomeView.Section
     /// The sidebar's Crons row; the iPhone has a Crons tab instead.
     let showsCrons: Bool
-    @State private var showingHost = false
+    @State private var showingSettings = false
     /// The Archived rows are shown below the list (#428).
     @State private var showingArchived = false
     @State private var renaming: Conversation?
@@ -21,7 +21,7 @@ struct ConversationsView: View {
     @State private var deleting: Conversation?
 
     var body: some View {
-        list.sheet(isPresented: $showingHost) { HostSheet(model: model) }
+        list.sheet(isPresented: $showingSettings) { V3SettingsSheet(model: model) }
     }
 
     private var pane: Binding<Pane?> {
@@ -110,10 +110,13 @@ struct ConversationsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.state.label)
         .toolbar {
+            // The Mac has its Settings window (⌘,) instead.
+            #if os(iOS)
             ToolbarItem(placement: .topBarLeading) {
-                Button(String(localized: "Host"), systemImage: "info.circle") { showingHost = true }
-                    .help(String(localized: "Host"))
+                Button(String(localized: "Settings"), systemImage: "gearshape") { showingSettings = true }
+                    .accessibilityIdentifier("conversations.settings")
             }
+            #endif
             // Compose at the bottom trailing corner, as Mail and Notes have it; the Mac has no bottom bar.
             #if os(iOS)
             ToolbarItemGroup(placement: .bottomBar) {
@@ -241,41 +244,3 @@ private struct ConversationRow: View {
     }
 }
 
-/// The paired host: its key, the relay, the link state, and Unpair.
-private struct HostSheet: View {
-    let model: V3Model
-    @Environment(\.dismiss) private var dismiss
-    @State private var confirming = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    LabeledContent(String(localized: "Host key"), value: model.fingerprint ?? "")
-                    LabeledContent(String(localized: "Relay"), value: model.pairing.flatMap { URL(string: $0.pairing.relayUrl)?.host() } ?? "")
-                    LabeledContent(String(localized: "Status"), value: model.state.label)
-                    if let at = model.pairing?.pairedAt {
-                        LabeledContent(String(localized: "Paired"), value: at.formatted(date: .abbreviated, time: .shortened))
-                    }
-                }
-                Section {
-                    Button(String(localized: "Unpair This Device"), role: .destructive) { confirming = true }
-                } footer: {
-                    Text("Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
-                }
-            }
-            .formStyle(.grouped)
-            .navigationTitle("Host")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button(String(localized: "Done")) { dismiss() } }
-            }
-            .confirmationDialog(String(localized: "Unpair this device?"), isPresented: $confirming, titleVisibility: .visible) {
-                Button(String(localized: "Unpair"), role: .destructive) {
-                    dismiss()
-                    model.unpair()
-                }
-            }
-        }
-    }
-}

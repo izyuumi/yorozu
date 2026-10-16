@@ -22,6 +22,7 @@ import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
 import { loadHostKeys } from "./keys.js";
 import { notifyReply, runRelayHost } from "./relay.js";
+import { yorozuRuntime } from "./runtime.js";
 import { applyPatch, watchSessions } from "./sessions.js";
 
 export const CHANNEL_ID = "yorozu";
@@ -73,6 +74,8 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       signal: abortSignal,
       log: ctx.log,
       mediaMaxBytes: maxBytes,
+      agent: account.agent,
+      hostVersion: yorozuRuntime.getRuntime().version,
       onMessage: (message) =>
         void handleMessage(
           { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent, mediaMaxBytes: maxBytes },

@@ -25,6 +25,7 @@ struct V3HomeView: View {
             #endif
         }
         .opensRequestedConversation(model, selection: $selection)
+        .inAppNotices(model) { open($0, draft: nil) }
         // Deleted on another device while open here.
         .onChange(of: model.deleted) { _, convId in if convId != nil, selection == convId { selection = nil } }
     }
