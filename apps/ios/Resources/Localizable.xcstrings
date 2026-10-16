@@ -1,6 +1,11 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Automations" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自動化" } } } },
+    "No automations" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自動化はありません" } } } },
+    "Couldn’t read the automations: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自動化を読み込めませんでした: %@" } } } },
+    "To add or change an automation, use Edit in Chat: the agent makes the change." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自動化の追加や変更は「チャットで編集」から。エージェントが変更します。" } } } },
+    "Start one with the compose button." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "作成ボタンで始めましょう。" } } } },
     "Check that this host key matches the one `openclaw yorozu pair` printed.\n\nHost key: %@\nRelay: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このホストキーが `openclaw yorozu pair` の表示と一致することを確認してください。\n\nホストキー: %@\nリレー: %@" } } } },
     "Couldn’t pair" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリングできませんでした" } } } },
     "Couldn’t read this device’s pairing: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスのペアリングを読み込めませんでした: %@" } } } },
@@ -19,7 +24,6 @@
     "Run `openclaw yorozu pair` on the computer that runs your OpenClaw Gateway. It prints a QR code and a pairing link, valid for 10 minutes." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "OpenClaw Gateway が動いているコンピュータで `openclaw yorozu pair` を実行してください。10 分間有効な QR コードとペアリングリンクが表示されます。" } } } },
     "Scan QR Code" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "QR コードをスキャン" } } } },
     "Scan the QR code `openclaw yorozu pair` printed on your host." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストで `openclaw yorozu pair` が表示した QR コードをスキャンしてください。" } } } },
-    "Start one with +." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "+ で始めましょう。" } } } },
     "The agent is typing" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エージェントが入力中" } } } },
     "The agent run failed: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エージェントの実行に失敗しました: %@" } } } },
     "The host couldn’t handle this: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストが処理できませんでした: %@" } } } },

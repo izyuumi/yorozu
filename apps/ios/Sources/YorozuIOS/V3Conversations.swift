@@ -1,8 +1,8 @@
 import SwiftUI
 import YorozuWire
 
-/// The conversation list: the sidebar on iPad and Mac, with a Crons row above it, and the Chats tab's root on iPhone.
-/// "+" opens a new `convId`, which joins the list with its first message.
+/// The conversation list: the sidebar on iPad and Mac, with an Automations row above it, and the Chats tab's root on iPhone.
+/// Compose opens a new `convId`, which joins the list with its first message.
 struct ConversationsView: View {
     /// What the list selects: a conversation, or the Crons row of the sidebar.
     private enum Pane: Hashable { case chat(String), crons }
@@ -53,7 +53,7 @@ struct ConversationsView: View {
                 }
             }
             if showsCrons {
-                Label(String(localized: "Crons"), systemImage: "clock").tag(Pane.crons)
+                Label(String(localized: "Automations"), systemImage: "clock").tag(Pane.crons)
             }
             Section {
                 ForEach(conversations, content: row)
@@ -103,23 +103,34 @@ struct ConversationsView: View {
         .overlay {
             if conversations.isEmpty && model.archivedList.isEmpty {
                 ContentUnavailableView("No conversations yet", systemImage: "bubble.left.and.bubble.right",
-                    description: Text("Start one with +."))
+                    description: Text("Start one with the compose button."))
             }
         }
         .navigationTitle("Chats")
+        .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.state.label)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button(String(localized: "Host"), systemImage: "info.circle") { showingHost = true }
                     .help(String(localized: "Host"))
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(String(localized: "New Conversation"), systemImage: "plus") { pane.wrappedValue = .chat(V3Event.newId()) }
-                    .keyboardShortcut("n")
-                    .help(String(localized: "New Conversation"))
-                    .accessibilityIdentifier("conversations.new")
+            // Compose at the bottom trailing corner, as Mail and Notes have it; the Mac has no bottom bar.
+            #if os(iOS)
+            ToolbarItemGroup(placement: .bottomBar) {
+                Spacer()
+                compose
             }
+            #else
+            ToolbarItem(placement: .primaryAction) { compose }
+            #endif
         }
+    }
+
+    private var compose: some View {
+        Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { pane.wrappedValue = .chat(V3Event.newId()) }
+            .keyboardShortcut("n")
+            .help(String(localized: "New Conversation"))
+            .accessibilityIdentifier("conversations.new")
     }
 
     /// One conversation's row with its actions: Mark as Read or Unread from the leading edge (as in #410), Archive and
@@ -215,7 +226,7 @@ private struct ConversationRow: View {
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)
-            .lineLimit(2)
+            .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
         .accessibilityValue(conversation.unreadCount > 0 ? Text("\(conversation.unreadCount) unread") : Text(""))
