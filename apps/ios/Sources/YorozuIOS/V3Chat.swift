@@ -353,8 +353,9 @@ private struct V3Composer: View {
                 V3AttachMenu(limit: attachLimit) { files.append(contentsOf: $0) }
             }
             ComposerTextView(text: $text, placeholder: String(localized: "Message"), onSubmit: send, onFiles: onFiles)
+                // Room above and below the text, inside the glass; right up to the + on the left (owner, 2026-10-17).
+                .padding(.vertical, LayoutMetrics.inner)
                 .frame(minHeight: controlTarget)
-                .padding(.leading, LayoutMetrics.inner)
                 .accessibilityIdentifier("composer.text")
             Button(action: send) {
                 Image(systemName: "arrow.up")
