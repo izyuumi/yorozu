@@ -16,6 +16,7 @@ struct V3SettingsView: View {
     var onUnpair: () -> Void = {}
 
     @AppStorage(NoticeHaptics.key) private var haptics = true
+    @AppStorage(SpotlightIndexer.enabledKey) private var spotlight = true
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: V3DeviceInfo?
     @State private var unpairing = false
@@ -25,6 +26,7 @@ struct V3SettingsView: View {
     var body: some View {
         Form {
             notifications
+            siri
             host
             if model.devicesAvailable { devices }
             Section {
@@ -74,6 +76,18 @@ struct V3SettingsView: View {
             Text("Notifications")
         } footer: {
             Text("While Yorozu is open, replies in other conversations show at the top of the screen instead of as notifications.")
+        }
+    }
+
+    /// What Siri and Spotlight may search (owner, 2026-10-17).
+    private var siri: some View {
+        Section {
+            Toggle(String(localized: "Show Conversations in Siri and Search"), isOn: $spotlight)
+                .onChange(of: spotlight) { Task { await SpotlightIndexer.shared?.sync() } }
+        } header: {
+            Text("Siri & Search")
+        } footer: {
+            Text("Siri and Spotlight can find conversations by their titles and recent messages. The index stays on this device and is removed when you unpair.")
         }
     }
 

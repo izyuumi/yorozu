@@ -20,6 +20,7 @@ final class V3AppDelegate: NSObject, UNUserNotificationCenterDelegate {
 
     fileprivate func launched() {
         UNUserNotificationCenter.current().delegate = self
+        SpotlightIndexer.start(model: model)
         model.requestNotifications()
     }
 

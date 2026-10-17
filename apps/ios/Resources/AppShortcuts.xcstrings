@@ -4,6 +4,8 @@
     "Ask ${applicationName}" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "${applicationName}に聞く" } } } },
     "Ask ${applicationName} something" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "${applicationName}に質問" } } } },
     "Open ${conversation} in ${applicationName}" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "${applicationName}で${conversation}を開く" } } } },
+    "Search ${applicationName}" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "${applicationName}を検索" } } } },
+    "Find in ${applicationName}" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "${applicationName}で探す" } } } },
     "New ${applicationName} conversation" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "${applicationName}で新しい会話" } } } },
     "Start a conversation in ${applicationName}" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "${applicationName}で会話を始める" } } } }
   },
