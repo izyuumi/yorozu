@@ -90,6 +90,8 @@ let project = Project(
             resources: [
                 "Resources/AppIcon.icon",
                 "Resources/Assets.xcassets",
+                // Siri phrases for the App Shortcuts (YorozuIntents.swift), in Japanese.
+                "Resources/AppShortcuts.xcstrings",
                 "Resources/InfoPlist.xcstrings",
                 "Resources/Localizable.xcstrings",
                 "Resources/PrivacyInfo.xcprivacy",
