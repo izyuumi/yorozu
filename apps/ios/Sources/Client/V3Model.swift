@@ -39,6 +39,8 @@ final class V3Model {
     private(set) var devices: [V3DeviceInfo]?
     /// Why the plugin could not list or change them, from its last answer.
     private(set) var devicesError: String?
+    /// The host's answer to ``requestInvite()``: a one-time code for another device, or its error. Nil while asking.
+    private(set) var invite: V3PairInvite?
     /// The in-app notice for a reply in another conversation while the app is active; the newest replaces it.
     var notice: V3InAppNotice?
 
@@ -500,6 +502,10 @@ final class V3Model {
             guard list.devices != nil || list.error != nil else { return }
             if let devices = list.devices { self.devices = devices }
             devicesError = list.error
+        case .pairInvite(let answer):
+            // A request has none of these; only the plugin's answer does.
+            guard answer.link != nil || answer.error != nil else { return }
+            invite = answer
         case .peerInfo, .message, .upload, .download, .foreground, .historyRequest, .convPatch, .devicePatch, .unknown:
             break
         }
@@ -576,6 +582,15 @@ final class V3Model {
     func refreshDevices() {
         guard devicesAvailable else { return }
         transmit(.deviceList(V3DeviceList()))
+    }
+
+    /// The host makes pairing codes for a device added from this one.
+    var inviteAvailable: Bool { hostInfo?.capabilities.contains(V3Invite.capability) == true }
+
+    /// Asks the host for a one-time code for another device (owner, 2026-10-17); it lands in ``invite``.
+    func requestInvite() {
+        invite = nil
+        transmit(.pairInvite(V3PairInvite()))
     }
 
     /// Push for one device on or off, on the host.

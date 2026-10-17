@@ -20,6 +20,7 @@ struct V3SettingsView: View {
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: V3DeviceInfo?
     @State private var unpairing = false
+    @State private var addingDevice = false
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
 
@@ -39,6 +40,7 @@ struct V3SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $addingDevice) { AddDeviceSheet(model: model) }
         .task(id: model.state == .ready) { model.refreshDevices() }
         // Coming back from the system's notification settings.
         .task(id: scenePhase) { permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
@@ -140,6 +142,11 @@ struct V3SettingsView: View {
             }
             if let error = model.devicesError {
                 Text(error).foregroundStyle(YorozuPalette.warning)
+            }
+            // Away from the host, a paired device adds another (owner, 2026-10-17).
+            if model.inviteAvailable {
+                Button(String(localized: "Add a Device…"), systemImage: "plus") { addingDevice = true }
+                    .disabled(model.state != .ready)
             }
         } header: {
             Text("Paired Devices")
