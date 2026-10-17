@@ -447,18 +447,22 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           if (now?.peer) sendFrames([seal(now.session, answer)]);
           return;
         }
-        // A paired device adds another, away from the host: the same one-time code `openclaw yorozu pair` prints.
+        // A paired device adds another, away from the host: the same one-time code `openclaw yorozu pair` prints. Not
+        // awaited: the relay's `token` answer arrives on this same queue, which would wait behind this frame until the
+        // mint timed out.
         if (event?.kind === "pair_invite") {
-          let answer: Event;
-          try {
-            const { link, webLink, fingerprint, expiresAt } = await beginPairing();
-            answer = { kind: "pair_invite", data: { link, webLink, fingerprint, expiresAt } };
-            log?.info("yorozu: pairing code made for a paired device");
-          } catch (error) {
-            answer = { kind: "pair_invite", data: { error: error instanceof Error ? error.message : String(error) } };
-          }
-          const now = served.get(deviceKey);
-          if (now?.peer) sendFrames([seal(now.session, answer)]);
+          void (async () => {
+            let answer: Event;
+            try {
+              const { link, webLink, fingerprint, expiresAt } = await beginPairing();
+              answer = { kind: "pair_invite", data: { link, webLink, fingerprint, expiresAt } };
+              log?.info("yorozu: pairing code made for a paired device");
+            } catch (error) {
+              answer = { kind: "pair_invite", data: { error: error instanceof Error ? error.message : String(error) } };
+            }
+            const now = served.get(deviceKey);
+            if (now?.peer) sendFrames([seal(now.session, answer)]);
+          })();
           return;
         }
         if (event?.kind === "cron_list" || event?.kind === "conv_list" || event?.kind === "history" || event?.kind === "conv_patch") {
