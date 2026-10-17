@@ -127,7 +127,7 @@ Every box's plaintext is one UTF-8 JSON object:
 
 | `kind` | Direction | `data` |
 |---|---|---|
-| `peer_info` | both, first box of a session | `protocolMin`, `protocolMax` (both 3), `app` (version string), `name`? (device model, or the Mac's name), `capabilities` (string array: `attachments`, #430; `devices`, [Settings](#settings-device_list-and-device_patch)), `mediaMaxBytes`? (plugin: its [attachment](#attachments) limit), `agent`?, `hostVersion`? (plugin: `channels.yorozu.agent` and the OpenClaw version, for Settings) |
+| `peer_info` | both, first box of a session | `protocolMin`, `protocolMax` (both 3), `app` (version string), `name`? (device model, or the Mac's name), `capabilities` (string array: `attachments`, #430; `devices`, [Settings](#settings-device_list-and-device_patch); `invite`, [adding a device](#adding-a-device-pair_invite)), `mediaMaxBytes`? (plugin: its [attachment](#attachments) limit), `agent`?, `hostVersion`? (plugin: `channels.yorozu.agent` and the OpenClaw version, for Settings) |
 | `message` | client → plugin | `convId`, `messageId` (made by the client), `text` (may be empty with attachments), `attachments`? ([attachments](#attachments), each uploaded first) |
 | `delivered` | plugin → clients | `convId`, `messageId`: received and decrypted |
 | `run_started` | plugin → clients | `convId`, `messageId`: the agent run for it began |
@@ -142,6 +142,7 @@ Every box's plaintext is one UTF-8 JSON object:
 | `cron_list` | client → plugin, then plugin → that client | request: `{}`; answer: `jobs` (array of [jobs](#cron_list)), or `jobs: []` and `error` |
 | `device_list` | client → plugin, then plugin → that client | request: `{}`; answer: `devices` ([devices](#settings-device_list-and-device_patch)), or `error` |
 | `device_patch` | client → plugin | `id` (a device's Ed25519 key), then `push` (bool) or `removed` (`true`); answered with `device_list` |
+| `pair_invite` | client → plugin, then plugin → that client | request: `{}`; answer: `link`, `webLink`, `fingerprint`, `expiresAt`, or `error` ([adding a device](#adding-a-device-pair_invite)) |
 | `conv_patch` | client → plugin | `convId`, then one of `title` (string; `""` clears the rename), `archived` (bool), `deleted` (`true`). See [Titles](#titles-conv_patch-and-conv_update) |
 | `conv_update` | plugin → clients | `convId`, `title`?, `archived`? (only `true`), `deleted`? (only `true`) |
 | `upload` | client → plugin | `attachmentId`, `name`, `mime`, `size`, `index`, `count`, `data` (base64): one chunk of a file the client sends |
@@ -219,6 +220,10 @@ The wording lives in the plugin so every client says the same thing without a cr
 #### Settings: `device_list` and `device_patch`
 
 The client's Settings (2026-10-17). Only between peers that both list `devices`. A client sends `device_list {}`; the plugin answers that device with every paired device, oldest first: `id` (its Ed25519 relay key), `name`? (its model from `peer_info`), `pairedAt` (epoch ms), `push` (bool, whether the host pushes to it) and `current` (it is the asking device). `device_patch {id, push}` turns that device's push on or off (kept in the allowlist row; absent means on); `device_patch {id, removed: true}` removes it as `openclaw yorozu devices remove` does: the row goes, its session is dropped and the relay forgets it. Either is answered with a fresh `device_list` to the sender, or `{error}` for an unknown id. A client removes itself this way when the user unpairs, before forgetting the host. These two are Yorozu's only admin kinds.
+
+#### Adding a device: `pair_invite`
+
+A paired device adds another, away from the host (owner, 2026-10-17). Only between peers that both list `invite`. A client sends `pair_invite {}`; the plugin mints the same one-time code `openclaw yorozu pair` prints ([Pairing](#pairing)) and answers that device with it: `link` (`yorozu://pair?…`), `webLink` (what the QR carries), `fingerprint` (the host key's) and `expiresAt` (epoch ms, the relay's), or `{error}` while the relay is not reachable. The client shows the QR and a link to send; the new device pairs with it as with one from the host: one device, ten minutes, the fingerprint compared on both. Any paired device may ask: it is already trusted with the conversations and can remove devices.
 
 #### Attachments
 
@@ -367,3 +372,4 @@ The same run also checks that the second box opened again is refused as a replay
 | Noise itself (vectors) | `NoiseIKHandshake` | `NoiseIK` |
 | Push preview (#431) | `PushPreview.key`, `.open(userInfo:key:)`, `V3Connection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`src/push.ts`), `notifyReply` (`src/relay.ts`) |
 | Settings | `V3Devices.capability`, `V3DeviceList`, `V3DeviceInfo`, `V3DevicePatch`, `V3Foreground.active` | `DEVICES`, `DeviceList`, `DeviceInfo`, `DevicePatch` (`src/envelope.ts`); `device_list`, `device_patch`, `sync` in `src/relay.ts` |
+| Adding a device | `V3Invite.capability`, `V3PairInvite` | `INVITE`, `PairInvite` (`src/envelope.ts`); `pair_invite` in `src/relay.ts` |

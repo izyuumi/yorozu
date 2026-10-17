@@ -19,6 +19,7 @@ import {
   ATTACHMENTS,
   DEVICES,
   encodeEvent,
+  INVITE,
   negotiate,
   parseEvent,
   PROTOCOL_VERSION,
@@ -61,7 +62,7 @@ const PEER_INFO: PeerInfo = {
   protocolMax: PROTOCOL_VERSION,
   app: "0.1.0", // package.json `version`
   name: os.hostname().replace(/\.local$/, ""),
-  capabilities: [ATTACHMENTS, DEVICES],
+  capabilities: [ATTACHMENTS, DEVICES, INVITE],
 };
 
 /** An attachment-bearing event as a peer without `attachments` reads it: the files as a line of text each. */
@@ -442,6 +443,20 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         if (event?.kind === "device_list" || event?.kind === "device_patch") {
           const answer = event.kind === "device_list" ? await deviceList(deviceKey) : await patchDevice(event.data, deviceKey);
           // The device's session as it is now: it may have handshaken again, or removed itself.
+          const now = served.get(deviceKey);
+          if (now?.peer) sendFrames([seal(now.session, answer)]);
+          return;
+        }
+        // A paired device adds another, away from the host: the same one-time code `openclaw yorozu pair` prints.
+        if (event?.kind === "pair_invite") {
+          let answer: Event;
+          try {
+            const { link, webLink, fingerprint, expiresAt } = await beginPairing();
+            answer = { kind: "pair_invite", data: { link, webLink, fingerprint, expiresAt } };
+            log?.info("yorozu: pairing code made for a paired device");
+          } catch (error) {
+            answer = { kind: "pair_invite", data: { error: error instanceof Error ? error.message : String(error) } };
+          }
           const now = served.get(deviceKey);
           if (now?.peer) sendFrames([seal(now.session, answer)]);
           return;
