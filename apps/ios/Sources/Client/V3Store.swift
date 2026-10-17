@@ -59,6 +59,12 @@ struct Conversation: Codable, Identifiable, Equatable {
         return max(items.count { $0.kind == .agent && $0.ts > after }, read?.unread == true ? 1 : 0)
     }
 
+    /// A run failed after the read cursor: an orange dot rather than a blue one, until it is read.
+    var needsAttention: Bool {
+        let after = read?.ts ?? .min
+        return items.contains { $0.kind == .error && $0.ts > after }
+    }
+
     /// The newest reply by the plugin's clock: what a read moves the cursor to.
     var latestReply: ChatItem? { items.filter { $0.kind == .agent }.max { $0.ts < $1.ts } }
 

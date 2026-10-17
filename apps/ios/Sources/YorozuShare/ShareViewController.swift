@@ -85,6 +85,8 @@ struct ShareView: View {
     @Bindable var model: ShareModel
     let send: () -> Void
     let cancel: () -> Void
+    /// The preview of the picked picture or file, scaled with the text.
+    @ScaledMetric private var previewSide: CGFloat = 160
 
     var body: some View {
         NavigationStack {
@@ -92,7 +94,13 @@ struct ShareView: View {
                 Section {
                     TextField("Add a note", text: $model.text, axis: .vertical).lineLimit(3...10)
                     if let file = model.file {
-                        Label(file.lastPathComponent, systemImage: "paperclip").lineLimit(1)
+                        // What is being sent: a picture, a PDF's first page, or the file type's icon.
+                        VStack {
+                            FileThumbnail(url: file, side: previewSide)
+                            Label(file.lastPathComponent, systemImage: "paperclip").lineLimit(1).truncationMode(.middle)
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                 } footer: {
                     Text("Yorozu sends this the next time it’s open.")

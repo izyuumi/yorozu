@@ -33,8 +33,8 @@ final class V3Model {
     private(set) var crons: [V3CronJob]?
     /// Why the plugin could not list them, from its last answer.
     private(set) var cronsError: String?
-    /// Text waiting for a conversation's composer ("Edit in chat"); the chat takes it once, unsent.
-    var drafts: [String: String] = [:]
+    /// An automation waiting in a conversation's composer as an attachment ("Edit in Chat"); the chat takes it once.
+    var automationDrafts: [String: V3CronJob] = [:]
     /// Settings: the paired devices as the plugin last listed them, nil before its first answer.
     private(set) var devices: [V3DeviceInfo]?
     /// Why the plugin could not list or change them, from its last answer.
@@ -774,7 +774,7 @@ final class V3Model {
         // Its files go with it (#430).
         for file in gone.items.flatMap({ $0.attachments ?? [] }) { AttachmentFiles.remove(file) }
         typing.remove(convId)
-        drafts[convId] = nil
+        automationDrafts[convId] = nil
         updateBadge()
         publishShareDirectory()
     }

@@ -87,11 +87,30 @@ struct V3AttachMenu: View {
 /// Files waiting in the composer, each with a remove button.
 struct V3StagedFiles: View {
     let files: [ChatAttachment]
+    /// An automation from "Edit in Chat", first in the row.
+    var automation: V3CronJob? = nil
+    var onRemoveAutomation: () -> Void = {}
     let onRemove: (ChatAttachment) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: LayoutMetrics.tight) {
+                if let automation {
+                    HStack(spacing: LayoutMetrics.tight) {
+                        Image(systemName: "clock")
+                        Text(automation.name).lineLimit(1).truncationMode(.middle)
+                        Text(automation.scheduleText).foregroundStyle(.secondary).lineLimit(1)
+                        Button(action: onRemoveAutomation) {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text("Remove \(automation.name)"))
+                    }
+                    .font(.footnote)
+                    .padding(.horizontal, LayoutMetrics.inner)
+                    .padding(.vertical, LayoutMetrics.tight)
+                    .background(.fill.tertiary, in: Capsule())
+                }
                 ForEach(files) { file in
                     HStack(spacing: LayoutMetrics.tight) {
                         Image(systemName: file.isImage ? "photo" : "doc")
@@ -174,6 +193,8 @@ private struct V3FileAttachment: View {
     let model: V3Model
     let attachment: ChatAttachment
     let open: (ChatAttachment) -> Void
+    /// A downloaded file's thumbnail (a PDF's first page), scaled with the text.
+    @ScaledMetric(relativeTo: .title2) private var thumbnailSide: CGFloat = 40
 
     var body: some View {
         let state = FileState(attachment, model: model)
@@ -199,7 +220,7 @@ private struct V3FileAttachment: View {
         case .moving(let progress): ProgressView(value: progress).progressViewStyle(.circular).controlSize(.small)
         case .failed, .refused: Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
         case .remote: Image(systemName: "arrow.down.circle")
-        case .local: Image(systemName: "doc")
+        case .local(let url): FileThumbnail(url: url, side: thumbnailSide)
         }
     }
 

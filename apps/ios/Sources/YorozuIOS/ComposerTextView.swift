@@ -126,7 +126,7 @@ final class ComposerNSTextView: NSTextView {
     }
 }
 #else
-/// The phone's message field: a `UITextView` that grows to five lines, then scrolls inside. The
+/// The phone's message field: a `UITextView` that grows to five lines, then scrolls inside, keeping the caret in view. The
 /// software keyboard's Return is a new line; a hardware keyboard has smart Enter (see
 /// `ComposerUITextView.pressesBegan`).
 struct ComposerTextView: UIViewRepresentable {
@@ -148,7 +148,9 @@ struct ComposerTextView: UIViewRepresentable {
         view.backgroundColor = .clear
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
-        view.isScrollEnabled = false
+        // Always on: SwiftUI asks `sizeThatFits` about many widths, so toggling it there left a long draft unscrollable.
+        view.isScrollEnabled = true
+        view.alwaysBounceVertical = false
         view.accessibilityLabel = String(localized: "Message")
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
@@ -180,13 +182,9 @@ struct ComposerTextView: UIViewRepresentable {
         let maxHeight = ceil(font.lineHeight * Self.maxLines)
         // Far more text than five lines hold, even on an iPad at the smallest size: at the cap without measuring. Laying
         // out a large paste in full, on each of SwiftUI's many proposals, took seconds.
-        if (uiView.text as NSString).length > Self.measuredLimit {
-            uiView.isScrollEnabled = true
-            return CGSize(width: width, height: maxHeight)
-        }
+        if (uiView.text as NSString).length > Self.measuredLimit { return CGSize(width: width, height: maxHeight) }
         let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         // Grows with the text up to five lines, then scrolls inside, as the TextField did.
-        uiView.isScrollEnabled = fit.height > maxHeight
         return CGSize(width: width, height: min(max(fit.height, ceil(font.lineHeight)), maxHeight))
     }
 
@@ -198,6 +196,8 @@ struct ComposerTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             text.wrappedValue = textView.text
+            // After SwiftUI has resized the field for the new text.
+            DispatchQueue.main.async { textView.scrollRangeToVisible(textView.selectedRange) }
         }
     }
 }

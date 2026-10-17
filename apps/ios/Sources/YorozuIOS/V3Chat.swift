@@ -11,8 +11,12 @@ struct V3ChatView: View {
     @State private var draft = ""
     /// Files in the composer, already copied into `AttachmentFiles` (#430).
     @State private var files: [ChatAttachment] = []
+    /// An automation attached from "Edit in Chat": a chip in the composer, part of the text once sent.
+    @State private var automation: V3CronJob?
     @State private var dropFailure: String?
     @State private var position = ScrollPosition(edge: .bottom)
+    /// The newest message is in view: hides the jump-to-latest button.
+    @State private var atBottom = true
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -38,6 +42,11 @@ struct V3ChatView: View {
             .padding(.vertical, LayoutMetrics.stack)
         }
         .scrollPosition($position)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.visibleRect.maxY >= geometry.contentSize.height - LayoutMetrics.section * 2
+        } action: { _, bottom in
+            atBottom = bottom
+        }
         .defaultScrollAnchor(.bottom)
         // An older page grows the content upward: what is on screen stays put.
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
@@ -53,6 +62,14 @@ struct V3ChatView: View {
         .onDisappear { model.setVisible(nil, leaving: convId) }
         .onChange(of: model.conversations[convId]?.latestReply?.id) { readIfActive() }
         .onChange(of: scenePhase) { readIfActive() }
+        .overlay(alignment: .bottom) {
+            if !atBottom {
+                JumpToLatestButton { withAnimation { position.scrollTo(edge: .bottom) } }
+                    .padding(.bottom, LayoutMetrics.inner)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: atBottom)
         .overlay {
             if items.isEmpty && !typing {
                 ContentUnavailableView("New conversation", systemImage: "bubble.left.and.bubble.right",
@@ -60,11 +77,12 @@ struct V3ChatView: View {
             }
         }
         .yorozuBottomBar {
-            V3Composer(text: $draft, files: $files, attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
+            V3Composer(text: $draft, files: $files, automation: $automation, attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
                 onFiles: attach) {
-                model.send(draft, attachments: files, in: convId)
+                model.send(Self.message(draft, automation: automation), attachments: files, in: convId)
                 draft = ""
                 files = []
+                automation = nil
             }
         }
         // Files dropped anywhere on the conversation (the Finder on a Mac, another app on an iPad) join the composer.
@@ -77,11 +95,11 @@ struct V3ChatView: View {
         } message: {
             Text(dropFailure ?? "")
         }
-        // "Edit in chat" (#432) leaves its text here, unsent.
-        .onChange(of: model.drafts[convId], initial: true) { _, seed in
+        // "Edit in Chat" leaves its automation here, unsent.
+        .onChange(of: model.automationDrafts[convId], initial: true) { _, seed in
             guard let seed else { return }
-            draft = seed
-            model.drafts[convId] = nil
+            automation = seed
+            model.automationDrafts[convId] = nil
         }
         .navigationTitle(model.conversations[convId]?.displayTitle ?? String(localized: "New Conversation"))
         .navigationBarTitleDisplayMode(.inline)
@@ -103,6 +121,14 @@ extension V3ChatView {
         return true
     }
 
+    /// The attached automation goes into the text the agent reads: its name and id, then what the user typed.
+    static func message(_ text: String, automation: V3CronJob?) -> String {
+        guard let automation else { return text }
+        let reference = "Cron job \"\(automation.name)\" (id \(automation.id))"
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return typed.isEmpty ? reference : "\(reference): \(typed)"
+    }
+
     private func readIfActive() {
         if scenePhase == .active { model.markRead(convId, explicit: false) }
     }
@@ -111,15 +137,19 @@ extension V3ChatView {
 struct V3ItemRow: View {
     let model: V3Model
     let item: ChatItem
+    @State private var selecting = false
 
     var body: some View {
-        switch item.kind {
-        case .user: user
-        case .agent: agent
-        case .error: error
-        case .tools: ToolsRow(calls: item.tools ?? [])
-        case .reset: reset
+        Group {
+            switch item.kind {
+            case .user: user
+            case .agent: agent
+            case .error: error
+            case .tools: ToolsRow(calls: item.tools ?? [])
+            case .reset: reset
+            }
         }
+        .sheet(isPresented: $selecting) { SelectTextSheet(text: item.text) }
     }
 
     /// `/new`: the session started over here; what is above is no longer in the agent's context.
@@ -147,7 +177,7 @@ struct V3ItemRow: View {
                         .padding(.horizontal, LayoutMetrics.stack)
                         .padding(.vertical, LayoutMetrics.inner)
                         .background(YorozuPalette.bubble, in: RoundedRectangle(cornerRadius: LayoutMetrics.bubbleRadius, style: .continuous))
-                        .contextMenu { copy }
+                        .contextMenu { copy; selectText }
                         .accessibilityLabel(Text("You: \(item.text)"))
                 }
                 DeliveryMark(delivery: delivery)
@@ -171,7 +201,7 @@ struct V3ItemRow: View {
                     .padding(LayoutMetrics.stack)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
-                    .contextMenu { copy }
+                    .contextMenu { copy; selectText }
             }
             if let files = item.attachments, !files.isEmpty {
                 V3AttachmentList(model: model, attachments: files, alignment: .leading)
@@ -192,6 +222,10 @@ struct V3ItemRow: View {
 
     private var copy: some View {
         Button(String(localized: "Copy"), systemImage: "doc.on.doc") { UIPasteboard.general.string = item.text }
+    }
+
+    private var selectText: some View {
+        Button(String(localized: "Select Text"), systemImage: "selection.pin.in.out") { selecting = true }
     }
 }
 
@@ -245,6 +279,23 @@ private struct ToolsRow: View {
     }
 }
 
+/// A small glass circle at the bottom centre while the newest message is out of view: back to it.
+private struct JumpToLatestButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.down")
+                .font(.body.weight(.semibold))
+                .frame(width: controlTarget, height: controlTarget)
+                .yorozuGlass(in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Jump to Latest"))
+    }
+}
+
 /// The agent is working: from `run_started` until the run ends (#415).
 private struct TypingIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -267,6 +318,7 @@ private struct TypingIndicator: View {
 private struct V3Composer: View {
     @Binding var text: String
     @Binding var files: [ChatAttachment]
+    @Binding var automation: V3CronJob?
     /// The host's limit; nil when it takes no attachments, which hides the +.
     let attachLimit: Int?
     /// Files pasted or dropped onto the field.
@@ -279,15 +331,15 @@ private struct V3Composer: View {
 
     var body: some View {
         VStack(spacing: LayoutMetrics.tight) {
-            if !files.isEmpty {
-                V3StagedFiles(files: files) { file in
+            if !files.isEmpty || automation != nil {
+                V3StagedFiles(files: files, automation: automation, onRemoveAutomation: { automation = nil }) { file in
                     files.removeAll { $0.id == file.id }
                     AttachmentFiles.remove(file)
                 }
             }
             row
         }
-        .padding(.top, files.isEmpty ? 0 : LayoutMetrics.inner)
+        .padding(.top, files.isEmpty && automation == nil ? 0 : LayoutMetrics.inner)
         .yorozuGlass(in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         .padding(.horizontal, LayoutMetrics.stack)
         .padding(.vertical, LayoutMetrics.inner)
@@ -322,7 +374,7 @@ private struct V3Composer: View {
         .padding(.leading, attachLimit == nil ? LayoutMetrics.tight : 0)
     }
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty }
+    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil }
 
     private func send() {
         guard canSend else { return }
