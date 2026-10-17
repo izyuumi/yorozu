@@ -26,6 +26,8 @@ export type PeerInfo = {
 export const ATTACHMENTS = "attachments";
 /** Peers that list this speak `device_list` and `device_patch`, and the `active` flag of `foreground`. */
 export const DEVICES = "devices";
+/** Peers that list this speak `pair_invite`: a paired device asks for a pairing code for another device. */
+export const INVITE = "invite";
 /** Raw bytes per `upload` or `chunk`: a sealed box of one stays far under the relay's 1 MiB frame. */
 export const CHUNK_BYTES = 160 * 1024;
 /** A file in a `message` or `reply`; `id` (a lowercase UUID, made by the side that has the bytes) names its transfer. */
@@ -96,6 +98,11 @@ export type DeviceInfo = { id: string; name?: string; pairedAt: number; push: bo
 export type DeviceList = { devices?: DeviceInfo[]; error?: string };
 /** Client -> plugin: turn a device's push on or off, or remove it. Answered with `device_list` to the sender. */
 export type DevicePatch = { id: string; push?: boolean; removed?: true };
+/**
+ * Client -> plugin: `{}`, a request for a one-time pairing code for another device, as `openclaw yorozu pair` prints
+ * (owner, 2026-10-17: add a device from a device, away from the host). Plugin -> that client: the code, or `error`.
+ */
+export type PairInvite = { link?: string; webLink?: string; fingerprint?: string; expiresAt?: number; error?: string };
 /** One cron job of the configured agent, for the Crons tab (#432). Times are epoch ms. */
 export type CronJob = {
   id: string;
@@ -131,6 +138,7 @@ export type Event =
   | { kind: "cron_list"; data: CronList }
   | { kind: "device_list"; data: DeviceList }
   | { kind: "device_patch"; data: DevicePatch }
+  | { kind: "pair_invite"; data: PairInvite }
   | { kind: "conv_patch"; data: ConvPatch }
   | { kind: "conv_update"; data: ConvUpdate }
   | { kind: "upload"; data: Upload }
@@ -193,6 +201,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     (d.convId === undefined || d.convId === null || isId(d.convId)) && (d.active === undefined || typeof d.active === "boolean"),
   cron_list: (d) => (d.jobs === undefined || Array.isArray(d.jobs)) && optStr(d.error),
   device_list: (d) => (d.devices === undefined || Array.isArray(d.devices)) && optStr(d.error),
+  pair_invite: (d) => optStr(d.link) && optStr(d.webLink) && optStr(d.fingerprint) && optInt(d.expiresAt) && optStr(d.error),
   device_patch: (d) =>
     label(d.id, 64) && (d.push === undefined || typeof d.push === "boolean") && (d.removed === undefined || d.removed === true),
   upload: (d) =>

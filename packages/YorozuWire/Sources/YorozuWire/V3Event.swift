@@ -29,6 +29,8 @@ public enum V3Event: Equatable, Sendable {
     case deviceList(V3DeviceList)
     /// Client -> plugin (Settings): a device's push on or off, or its removal.
     case devicePatch(V3DevicePatch)
+    /// Client -> plugin: a one-time pairing code for another device; the plugin answers with the code or an error.
+    case pairInvite(V3PairInvite)
     case upload(V3Upload)
     case uploadAck(V3UploadAck)
     case download(V3Download)
@@ -54,6 +56,7 @@ public enum V3Event: Equatable, Sendable {
         case .cronList: "cron_list"
         case .deviceList: "device_list"
         case .devicePatch: "device_patch"
+        case .pairInvite: "pair_invite"
         case .upload: "upload"
         case .uploadAck: "upload_ack"
         case .download: "download"
@@ -487,6 +490,23 @@ public struct V3DevicePatch: Codable, Equatable, Sendable {
     }
 }
 
+/// Adding a device from a device (owner, 2026-10-17): peers that list this capability speak `pair_invite`.
+public enum V3Invite {
+    public static let capability = "invite"
+}
+
+/// Client -> plugin: empty, a request for a one-time pairing code for another device. Plugin -> that client: the code as
+/// `openclaw yorozu pair` prints it (`link`, the QR's `webLink`, the host `fingerprint`, `expiresAt` epoch ms), or `error`.
+public struct V3PairInvite: Codable, Equatable, Sendable {
+    public var link: String?
+    public var webLink: String?
+    public var fingerprint: String?
+    public var expiresAt: Int64?
+    public var error: String?
+
+    public init() {}
+}
+
 /// The Crons tab (#432). Client -> plugin: empty, a request. Plugin -> that client: `jobs`, or `error` when the
 /// plugin cannot read the cron store.
 public struct V3CronList: Codable, Equatable, Sendable {
@@ -605,6 +625,8 @@ extension V3Event: Codable {
             if let v = data(V3DeviceList.self) { self = .deviceList(v); return }
         case "device_patch":
             if let v = data(V3DevicePatch.self), !v.id.isEmpty { self = .devicePatch(v); return }
+        case "pair_invite":
+            if let v = data(V3PairInvite.self) { self = .pairInvite(v); return }
         case "upload":
             if let v = data(V3Upload.self), part(v.attachmentId, v.index, v.count) { self = .upload(v); return }
         case "upload_ack":
@@ -640,6 +662,7 @@ extension V3Event: Codable {
         case .cronList(let v): try c.encode(v, forKey: .data)
         case .deviceList(let v): try c.encode(v, forKey: .data)
         case .devicePatch(let v): try c.encode(v, forKey: .data)
+        case .pairInvite(let v): try c.encode(v, forKey: .data)
         case .upload(let v): try c.encode(v, forKey: .data)
         case .uploadAck(let v): try c.encode(v, forKey: .data)
         case .download(let v): try c.encode(v, forKey: .data)
