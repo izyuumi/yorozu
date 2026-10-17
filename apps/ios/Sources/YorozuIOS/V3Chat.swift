@@ -42,6 +42,8 @@ struct V3ChatView: View {
             .padding(.vertical, LayoutMetrics.stack)
         }
         .scrollPosition($position)
+        // Scrolling the conversation puts the keyboard away, following the finger (owner, 2026-10-17).
+        .scrollDismissesKeyboard(.interactively)
         .onScrollGeometryChange(for: Bool.self) { geometry in
             geometry.visibleRect.maxY >= geometry.contentSize.height - LayoutMetrics.section * 2
         } action: { _, bottom in
