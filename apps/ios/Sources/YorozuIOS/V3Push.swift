@@ -30,6 +30,7 @@ final class V3AppDelegate: NSObject, UNUserNotificationCenterDelegate {
         let content = notification.request.content
         let (title, body) = (content.title, content.body)
         return await MainActor.run {
+            guard !model.isDemo else { return [] }
             // The app is in front: no system banner, the in-app notice (a push sent before the plugin heard).
             guard model.active else { return [.banner, .list, .sound] }
             if let convId = model.conversation(convId: id, ref: ref) { model.showNotice(for: convId, title: title, body: body) }
@@ -40,6 +41,7 @@ final class V3AppDelegate: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let (id, ref) = Self.names(response.notification)
         await MainActor.run {
+            guard !model.isDemo else { return }
             if let convId = model.conversation(convId: id, ref: ref) { model.requestedConversation = convId }
         }
     }
@@ -57,7 +59,7 @@ extension V3AppDelegate: UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         launched()
         // Every launch: a restore or an OS update can change the token.
-        application.registerForRemoteNotifications()
+        if !model.isDemo { application.registerForRemoteNotifications() }
         return true
     }
 

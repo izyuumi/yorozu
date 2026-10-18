@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import UserNotifications
 import YorozuWire
 #if os(macOS)
@@ -14,6 +15,7 @@ import AppKit
 @MainActor @Observable
 final class V3Model {
     private(set) var pairing: V3Pairing?
+    private(set) var isDemo = false
     private(set) var state = V3Connection.State.offline
     private(set) var conversations: [String: Conversation] = [:]
     /// Conversations whose agent is working: from `run_started` or `typing {active}` until `typing {active: false}`,
@@ -44,7 +46,7 @@ final class V3Model {
     /// The in-app notice for a reply in another conversation while the app is active; the newest replaces it.
     var notice: V3InAppNotice?
 
-    @ObservationIgnored private var connection: V3Connection?
+    @ObservationIgnored private var connection: (any V3ClientTransport)?
     @ObservationIgnored private var listener: Task<Void, Never>?
     @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private let cache = ConversationCache()
@@ -71,15 +73,31 @@ final class V3Model {
     @ObservationIgnored private var pushToken: String?
     @ObservationIgnored private var cronWaiters: [CheckedContinuation<Void, Never>] = []
 
+    @ObservationIgnored private var connectionGeneration = 0
+    @ObservationIgnored private var liveStateLoaded = false
+    @ObservationIgnored private var liveSnapshot: LiveSnapshot?
+    private struct LiveSnapshot {
+        var pairing: V3Pairing?
+        var conversations: [String: Conversation]
+        var crons: [V3CronJob]?
+        var hostInfo: V3PeerInfo?
+    }
+    private static let logger = Logger(subsystem: "to.yumi.yorozu", category: "Demo")
+
     static let typingTimeout: Duration = .seconds(30)
     /// No answer within this: the request is dropped and the next one goes (the session may have died meanwhile).
     static let requestTimeout: Duration = .seconds(30)
 
     init() {
         transfers.send = { [weak self] event in
-            guard let connection = self?.connection else { return false }
+            guard let self, !self.isDemo, let connection = self.connection else { return false }
             return await connection.send(event)
         }
+        if ProcessInfo.processInfo.arguments.contains("--demo") {
+            enterDemo()
+            return
+        }
+        liveStateLoaded = true
         do {
             pairing = try V3Pairing.load()
         } catch {
@@ -93,7 +111,7 @@ final class V3Model {
     }
 
     /// Paired, or pairing for the first time.
-    var paired: Bool { pairing?.paired == true }
+    var paired: Bool { isDemo || pairing?.paired == true }
     var connecting: Bool { pairing != nil && !paired }
 
     /// Newest first, archived ones left out.
@@ -113,6 +131,11 @@ final class V3Model {
     /// A QR, a pasted string or a tapped link. Returns why it is not a v3 pairing code; otherwise it waits in
     /// ``pendingPairing`` for the fingerprint check.
     func submit(_ text: String) -> String? {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines) == "YOROZU-DEMO" {
+            enterDemo()
+            return nil
+        }
+        guard !isDemo else { return String(localized: "Exit demo mode before pairing with a host.") }
         guard let payload = try? QrPayload.decode(text), payload.v == 3, payload.roomId != nil, payload.secret != nil,
               (Data(base64URLEncoded: payload.macPubkey)?.count ?? 0) == 32 else {
             return String(localized: "This isn’t a Yorozu pairing code. Run `openclaw yorozu pair` on the host and use the code it prints.")
@@ -124,6 +147,7 @@ final class V3Model {
 
     /// The user compared the fingerprint: a fresh identity, kept in the Keychain before the first join.
     func confirm(_ payload: QrPayload) {
+        guard !isDemo else { return }
         pendingPairing = nil
         disconnect()
         cache.wipe()
@@ -142,6 +166,7 @@ final class V3Model {
 
     /// Forgets the host on this device: keys and cache. The plugin keeps the device until `openclaw yorozu devices remove`.
     func unpair() {
+        if isDemo { return exitDemo() }
         disconnect()
         try? V3Pairing.remove()
         #if os(iOS)
@@ -162,10 +187,79 @@ final class V3Model {
         notice = nil
     }
 
+    /// Replace the visible session without touching the real host, pairing, cache or files.
+    func enterDemo() {
+        guard !isDemo else { return }
+        liveSnapshot = LiveSnapshot(pairing: pairing, conversations: conversations, crons: crons, hostInfo: hostInfo)
+        disconnect()
+        resetTransientState()
+        isDemo = true
+        pairing = nil
+        conversations = [:]
+        crons = V3DemoData.crons
+        hostInfo = nil
+        Self.logger.debug("Entering memory-only demo mode")
+        listen(to: V3DemoTransport())
+    }
+
+    func exitDemo() {
+        guard isDemo else { return }
+        disconnect()
+        resetTransientState()
+        isDemo = false
+        pairing = liveSnapshot?.pairing
+        conversations = liveSnapshot?.conversations ?? [:]
+        crons = liveSnapshot?.crons
+        hostInfo = liveSnapshot?.hostInfo
+        liveSnapshot = nil
+        // A --demo launch deliberately postponed all reads of the real app's data.
+        if !liveStateLoaded {
+            liveStateLoaded = true
+            do {
+                pairing = try V3Pairing.load()
+                if pairing != nil {
+                    for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
+                }
+            } catch {
+                pairingError = String(localized: "Couldn’t read this device’s pairing: \(error.localizedDescription)")
+            }
+        }
+        updateBadge()
+        Self.logger.debug("Leaving memory-only demo mode")
+        connect()
+    }
+
+    private func resetTransientState() {
+        for timer in typingTimers.values { timer.cancel() }
+        typingTimers = [:]
+        typing = []
+        inFlightTimer?.cancel()
+        inFlightTimer = nil
+        inFlight = nil
+        requests = []
+        loadingOlder = []
+        unplacedReads = [:]
+        transfers.sessionLost()
+        finishCronWait()
+        pendingPairing = nil
+        pairingError = nil
+        requestedConversation = nil
+        visible = nil
+        foreground = nil
+        activeSent = false
+        automationDrafts = [:]
+        devices = nil
+        devicesError = nil
+        invite = nil
+        notice = nil
+        deleted = nil
+        cronsError = nil
+    }
+
     // MARK: Link
 
     private func connect() {
-        guard let pairing else { return }
+        guard !isDemo, let pairing else { return }
         let local = V3PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             name: DeviceModel.name, capabilities: [V3Attachment.capability, V3Devices.capability])
         guard let connection = try? V3Connection(pairing: pairing.pairing, identity: pairing.identity,
@@ -180,16 +274,32 @@ final class V3Model {
             PreviewKeychain.save(key)
         }
         #endif
-        let pushToken = pushToken
+        listen(to: connection)
+    }
+
+    private func listen(to connection: any V3ClientTransport) {
+        self.connection = connection
+        let generation = connectionGeneration
+        let pushToken = isDemo ? nil : pushToken
         listener = Task { [weak self] in
             let updates = await connection.updates()
+            guard !Task.isCancelled else { return }
             if let pushToken { await connection.registerPush(deviceToken: pushToken) }
+            guard !Task.isCancelled else { return }
             await connection.start()
-            for await update in updates { self?.apply(update) }
+            guard !Task.isCancelled else {
+                await connection.stop()
+                return
+            }
+            for await update in updates {
+                guard !Task.isCancelled, let self, generation == self.connectionGeneration else { return }
+                self.apply(update)
+            }
         }
     }
 
     private func disconnect() {
+        connectionGeneration += 1
         listener?.cancel()
         listener = nil
         if let connection { Task { await connection.stop() } }
@@ -209,7 +319,7 @@ final class V3Model {
     /// no conversation is on screen any more, or it would hold this device's pushes back (#431).
     func suspend() {
         setActive(false)
-        guard let connection else { return }
+        guard !isDemo, let connection else { return }
         Task {
             try? await Task.sleep(for: .milliseconds(500))
             guard !active else { return }
@@ -230,7 +340,7 @@ final class V3Model {
         if convId == nil, let leaving, visible != leaving { return }
         visible = convId
         updateForeground()
-        if let convId { V3Notices.removeDelivered(convId: convId) }
+        if !isDemo, let convId { V3Notices.removeDelivered(convId: convId) }
     }
 
     /// The plugin hears the conversation on screen and whether the app is in front at all: no push while it is, the
@@ -246,11 +356,15 @@ final class V3Model {
     /// Woken by a silent push (a conversation read elsewhere, or a reply): connect long enough for the plugin's read
     /// cursors, which clear the notifications of what was read, then hang up again unless the app came to the front.
     func backgroundWake() async {
-        guard paired, !active else { return }
+        guard !isDemo, paired, !active else { return }
+        let generation = connectionGeneration
         if let connection { await connection.reconnect() } else { connect() }
-        for _ in 0..<40 where state != .ready { try? await Task.sleep(for: .milliseconds(250)) }
+        for _ in 0..<40 where state != .ready {
+            guard generation == connectionGeneration, !isDemo else { return }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
         try? await Task.sleep(for: .seconds(2))
-        guard !active, let connection else { return }
+        guard generation == connectionGeneration, !isDemo, !active, let connection else { return }
         await connection.stop()
     }
 
@@ -264,6 +378,7 @@ final class V3Model {
 
     /// A push that arrived while the app is in front (sent before the plugin heard it was): shown as the notice.
     func showNotice(for convId: String, title: String, body: String) {
+        guard !isDemo else { return }
         guard convId != foreground else { return }
         showNotice(convId: convId, title: title, text: body)
     }
@@ -271,8 +386,12 @@ final class V3Model {
     /// The APNs token: kept for every connection, told to the relay now.
     func registerPush(_ token: String) {
         pushToken = token
-        guard let connection else { return }
-        Task { await connection.registerPush(deviceToken: token) }
+        guard !isDemo, let connection else { return }
+        let generation = connectionGeneration
+        Task {
+            guard generation == connectionGeneration, !isDemo else { return }
+            await connection.registerPush(deviceToken: token)
+        }
     }
 
     /// The conversation a notification is about: the sealed preview's `convId` (copied by the notification service
@@ -285,10 +404,11 @@ final class V3Model {
 
     /// Alerts, sounds and the badge, asked once paired; the system asks the user only the first time.
     func requestNotifications() {
-        guard paired else { return }
+        guard !isDemo, paired else { return }
         Task {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             // A badge set before the user allowed it did not show.
+            guard !isDemo else { return }
             badge = nil
             updateBadge()
         }
@@ -316,7 +436,7 @@ final class V3Model {
             publishShareDirectory()
             takeShares()
             pumpOutbox(resend: true)
-            transfers.resumeDownloads()
+            if !isDemo { transfers.resumeDownloads() }
             // A new session starts with nothing on screen, as far as the plugin knows.
             if active { transmit(.foreground(V3Foreground(convId: foreground, active: true))) }
             startSync()
@@ -336,7 +456,7 @@ final class V3Model {
     }
 
     private func updatePairing(_ change: (inout V3Pairing) -> Void) {
-        guard var pairing else { return }
+        guard !isDemo, var pairing else { return }
         change(&pairing)
         self.pairing = pairing
         try? pairing.save()
@@ -347,6 +467,7 @@ final class V3Model {
     /// A new message in `convId`; a conversation that does not exist yet starts with it ("+" makes the id).
     /// `attachments` are already in `AttachmentFiles` (`AttachmentStaging`); they upload before the message goes.
     func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String) {
+        guard !isDemo || attachments.isEmpty else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, V3Event.isId(convId) else { return }
         let item = ChatItem(id: V3Event.newId(), kind: .user, text: text, ts: Self.now, status: .queued,
@@ -356,7 +477,7 @@ final class V3Model {
     }
 
     /// The host takes attachments: it said so, or has not said yet (an old plugin's `peer_info` lacks the capability).
-    var attachmentsAvailable: Bool { hostInfo.map { $0.capabilities.contains(V3Attachment.capability) } ?? true }
+    var attachmentsAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(V3Attachment.capability) } ?? true) }
     /// The host's attachment limit (`mediaMaxMb`).
     var mediaMaxBytes: Int { hostInfo?.mediaMaxBytes ?? V3Attachment.defaultMaxBytes }
 
@@ -376,11 +497,13 @@ final class V3Model {
                 guard await sendOutbox(all: all) else { break }
             }
             outboxPumping = false
+            if outboxAgain { pumpOutbox(resend: false) }
         }
     }
 
     /// False when the session went mid-way.
     private func sendOutbox(all: Bool) async -> Bool {
+        let generation = connectionGeneration
         let pending = conversations.values.flatMap { conversation in
             conversation.items.filter { item in
                 guard item.kind == .user, let status = item.status, all ? status < .delivered : status == .queued else { return false }
@@ -388,7 +511,7 @@ final class V3Model {
             }.map { (conversation.id, $0) }
         }
         for (convId, queued) in pending.sorted(by: { $0.1.ts < $1.1.ts }) {
-            guard let connection, state == .ready else { return false }
+            guard generation == connectionGeneration, let connection, state == .ready else { return false }
             for attachment in queued.attachments ?? [] where attachment.uploaded != true && attachment.failure == nil {
                 switch await transfers.upload(attachment) {
                 case .stored: updateAttachment(attachment.id, of: queued.id, in: convId) { $0.uploaded = true }
@@ -401,7 +524,7 @@ final class V3Model {
             let files = (item.attachments ?? []).filter { $0.uploaded == true && $0.failure == nil }.map(\.wire)
             guard !item.text.isEmpty || !files.isEmpty else { continue }
             let message = V3Message(convId: convId, messageId: item.id, text: item.text, attachments: files.isEmpty ? nil : files)
-            guard await connection.send(message) else { return false }
+            guard await connection.send(message), generation == connectionGeneration else { return false }
             mark(item.id, .sending, in: convId)
         }
         return true
@@ -416,6 +539,7 @@ final class V3Model {
 
     /// Asks the plugin for a reply's file (an image on screen, a file tapped); no-op once it is here.
     func fetch(_ attachment: ChatAttachment) {
+        guard !isDemo else { return }
         transfers.fetch(attachment)
     }
 
@@ -437,7 +561,7 @@ final class V3Model {
                     showNotice(convId: reply.convId, title: title, text: text)
                 } else {
                     #if os(macOS)
-                    V3Notices.reply(convId: reply.convId, title: title, text: text)
+                    if !isDemo { V3Notices.reply(convId: reply.convId, title: title, text: text) }
                     #endif
                 }
             }
@@ -576,8 +700,8 @@ final class V3Model {
 
     // MARK: Devices (Settings)
 
-    /// The host lists and changes its devices from here: it said so in `peer_info`.
-    var devicesAvailable: Bool { hostInfo?.capabilities.contains(V3Devices.capability) == true }
+    /// The host advertises its device list; the demo supplies a fictional read-only current device.
+    var devicesAvailable: Bool { isDemo || hostInfo?.capabilities.contains(V3Devices.capability) == true }
 
     func refreshDevices() {
         guard devicesAvailable else { return }
@@ -585,26 +709,30 @@ final class V3Model {
     }
 
     /// The host makes pairing codes for a device added from this one.
-    var inviteAvailable: Bool { hostInfo?.capabilities.contains(V3Invite.capability) == true }
+    var inviteAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(V3Invite.capability) == true }
 
     /// Asks the host for a one-time code for another device (owner, 2026-10-17); it lands in ``invite``.
     func requestInvite() {
+        guard !isDemo else { return }
         invite = nil
         transmit(.pairInvite(V3PairInvite()))
     }
 
     /// Push for one device on or off, on the host.
     func setPush(_ on: Bool, for id: String) {
+        guard !isDemo else { return }
         transmit(.devicePatch(V3DevicePatch(id: id, push: on)))
     }
 
     /// Takes another device off the host: its pairing ends there, and the relay forgets it.
     func removeDevice(_ id: String) {
+        guard !isDemo else { return }
         transmit(.devicePatch(V3DevicePatch(id: id, removed: true)))
     }
 
     /// Unpair from Settings: the host forgets this device too, when it can, then this device forgets the host.
     func unpairEverywhere() async {
+        if isDemo { return exitDemo() }
         if let me = devices?.first(where: \.current), let connection {
             _ = await connection.send(.devicePatch(V3DevicePatch(id: me.id, removed: true)))
             try? await Task.sleep(for: .milliseconds(500))
@@ -616,6 +744,10 @@ final class V3Model {
 
     /// Asks the plugin for the jobs and returns once it answers, or after 10 s; at once while there is no session.
     func refreshCrons() async {
+        if isDemo {
+            crons = V3DemoData.crons
+            return
+        }
         guard let connection, await connection.send(.cronList(V3CronList())) else { return }
         await withCheckedContinuation { continuation in
             cronWaiters.append(continuation)
@@ -700,7 +832,7 @@ final class V3Model {
 
     private func store(_ conversation: Conversation) {
         conversations[conversation.id] = conversation
-        cache.save(conversation)
+        if !isDemo { cache.save(conversation) }
         updateBadge()
         publishShareDirectory()
     }
@@ -710,7 +842,7 @@ final class V3Model {
     /// What the share extension left in the App Group, oldest first: each share becomes a message in the conversation
     /// it names (a new one when it names none or one this device no longer has), files uploading through the outbox.
     func takeShares() {
-        guard paired else { return }
+        guard !isDemo, paired else { return }
         for (share, folder) in ShareInbox.pending() {
             let convId = share.convId.flatMap { V3Event.isId($0) ? $0 : nil } ?? V3Event.newId()
             var files: [ChatAttachment] = []
@@ -728,7 +860,7 @@ final class V3Model {
 
     /// The extension's picker: the newest conversations, and the host's limit.
     private func publishShareDirectory() {
-        guard paired else { return }
+        guard !isDemo, paired else { return }
         let rows = list.prefix(30).map { conversation in
             let title = conversation.displayTitle
             return ShareInbox.Conversation(id: conversation.id, title: String(title.prefix(80)))
@@ -759,8 +891,9 @@ final class V3Model {
 
     private func patch(_ patch: V3ConvPatch, local: @escaping (inout Conversation) -> Void) {
         guard let connection, V3Event.isId(patch.convId) else { return }
+        let generation = connectionGeneration
         Task {
-            guard await connection.send(.convPatch(patch)) else { return }
+            guard await connection.send(.convPatch(patch)), generation == connectionGeneration else { return }
             if patch.deleted == true { return forget(patch.convId) }
             guard var conversation = conversations[patch.convId] else { return }
             local(&conversation)
@@ -785,9 +918,11 @@ final class V3Model {
     private func forget(_ convId: String) {
         guard let gone = conversations.removeValue(forKey: convId) else { return }
         deleted = convId
-        cache.remove(convId)
+        if !isDemo { cache.remove(convId) }
         // Its files go with it (#430).
-        for file in gone.items.flatMap({ $0.attachments ?? [] }) { AttachmentFiles.remove(file) }
+        if !isDemo {
+            for file in gone.items.flatMap({ $0.attachments ?? [] }) { AttachmentFiles.remove(file) }
+        }
         typing.remove(convId)
         automationDrafts[convId] = nil
         updateBadge()
@@ -821,14 +956,14 @@ final class V3Model {
         conversation.readPending = true
         store(conversation)
         transmit(.readCursor(cursor))
-        if !cursor.unread { V3Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
+        if !isDemo, !cursor.unread { V3Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
     }
 
     /// The plugin's merged cursor. While this device's own is unanswered, the cursor takes the further of the two and
     /// the flag stays this device's, until the plugin's answer to it (at least as far, same flag) arrives.
     private func receive(_ cursor: V3ReadCursor) {
         // Read on any device: its alerts here go, up to the reply it was read at.
-        if !cursor.unread { V3Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
+        if !isDemo, !cursor.unread { V3Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
         guard var conversation = conversations[cursor.convId] else {
             unplacedReads[cursor.convId] = cursor
             return
@@ -849,11 +984,16 @@ final class V3Model {
 
     private func transmit(_ event: V3Event) {
         guard let connection else { return }
-        Task { await connection.send(event) }
+        let generation = connectionGeneration
+        Task {
+            guard generation == connectionGeneration else { return }
+            await connection.send(event)
+        }
     }
 
     /// Every unread reply, on the app icon (iOS: shown once notifications are allowed, #431) or the Dock tile.
     private func updateBadge() {
+        guard !isDemo else { return }
         let total = conversations.values.reduce(0) { $0 + $1.unreadCount }
         guard total != badge else { return }
         badge = total

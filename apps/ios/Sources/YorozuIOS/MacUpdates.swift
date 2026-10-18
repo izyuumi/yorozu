@@ -11,6 +11,7 @@ enum MacUpdates {
     private static let configuredKey = "YorozuUpdatesConfigured"
     private static let betaKey = "YorozuBetaUpdates"
     static let stableFeedURL = "https://yorozu.yumi.to/appcast.xml"
+    private static weak var model: V3Model?
 
     /// Nil in a build without a feed (dev builds that strip it), so no "feed URL is not set" alert.
     static let controller: SPUStandardUpdaterController? = {
@@ -28,13 +29,32 @@ enum MacUpdates {
 
     static var beta: Bool { UserDefaults.standard.object(forKey: betaKey) as? Bool ?? true }
 
-    static func start() { _ = controller }
+    static func start(model: V3Model) {
+        self.model = model
+        guard !model.isDemo else { return }
+        _ = controller
+    }
 
     static func checkForUpdates() { controller?.checkForUpdates(nil) }
 
     private static let delegate = Delegate()
 
     private final class Delegate: NSObject, SPUUpdaterDelegate {
+        func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
+            try allowUpdates()
+        }
+
+        func updater(_ updater: SPUUpdater, shouldProceedWithUpdate item: SUAppcastItem, updateCheck: SPUUpdateCheck) throws {
+            try allowUpdates()
+        }
+
+        private func allowUpdates() throws {
+            if MacUpdates.model?.isDemo == true {
+                throw NSError(domain: "YorozuDemo", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: String(localized: "Exit demo mode before checking for updates.")])
+            }
+        }
+
         func feedURLString(for updater: SPUUpdater) -> String? {
             MainActor.assumeIsolated { MacUpdates.beta ? nil : MacUpdates.stableFeedURL }
         }
@@ -48,6 +68,8 @@ enum MacUpdates {
 
 /// About and Check for Updates in the app menu. About shows the visible build ("0.9.0 (1)"), not `CFBundleVersion`.
 struct MacAppCommands: Commands {
+    let model: V3Model
+
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button(String(localized: "About Yorozu")) {
@@ -55,7 +77,7 @@ struct MacAppCommands: Commands {
                 NSApp.orderFrontStandardAboutPanel(options: [.version: build])
             }
             Button(String(localized: "Check for Updates…")) { MacUpdates.checkForUpdates() }
-                .disabled(MacUpdates.controller == nil)
+                .disabled(model.isDemo || MacUpdates.controller == nil)
         }
     }
 }

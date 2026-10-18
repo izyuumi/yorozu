@@ -84,6 +84,20 @@ It prints a QR code, a `yorozu://pair?…` link, the host fingerprint (`XXXX XXX
 
 Pair each device separately; all of them see the same conversations. At most 16 devices: a 17th replaces the oldest.
 
+### Try demo data without a host
+
+On the pairing screen, enter `YOROZU-DEMO` in **Pairing link** and tap **Pair**, or scan a QR containing that exact text. Leading and trailing whitespace is ignored; the code is case-sensitive. There is no separate demo entry button.
+
+Demo mode shows sample conversations, collapsed tool rows and Automations. Send a message to get a delayed, scripted whole reply; no model or OpenClaw host runs. A small Demo indicator appears in the chat list. Settings includes a read-only **Demo Device** under **Paired Devices** so the device list can be inspected without a real pairing. Changes stay in memory and disappear when you choose **Exit Demo** in Settings. Existing pairing credentials are preserved. Files, uploads and real host or account actions are unavailable.
+
+For development, launch the executable with `--demo` to enter directly, bypassing pairing, Keychain access, network connections, Mac migration and the updater. On the Mac, first build with a separate developer bundle id as described in [release.md](release.md#compile-checks), then run:
+
+```sh
+open -n .build/xcode-mac/Build/Products/Debug/YorozuIOS.app --args --demo
+```
+
+Do not run another Mac build with the installed app's bundle id. On an iOS Simulator with the app installed, use `xcrun simctl launch <udid> to.yumi.yorozu.ios --demo`.
+
 ## 5. Chat
 
 - "+" starts a new conversation (a new OpenClaw thread session). Type and send with the send button; on the Mac ⌘Return sends and Return adds a line.

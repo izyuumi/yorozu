@@ -130,6 +130,7 @@ extension V3ChatView {
     /// Files from a drop or a paste: staged when under the host's limit, the rest named in one alert.
     @discardableResult
     private func attach(_ urls: [URL]) -> Bool {
+        guard model.attachmentsAvailable else { return false }
         let fileURLs = urls.filter(\.isFileURL)
         guard !fileURLs.isEmpty else { return false }
         var refused: [String] = []
