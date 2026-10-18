@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import UserNotifications
 import YorozuWire
@@ -10,8 +11,16 @@ import YorozuWire
 final class V3AppDelegate: NSObject, UNUserNotificationCenterDelegate {
     let model = V3Model()
 
+    override init() {
+        super.init()
+        // The same model for Siri and Shortcuts (YorozuIntents.swift), before any intent can run.
+        let model = model
+        AppDependencyManager.shared.add(dependency: model)
+    }
+
     fileprivate func launched() {
         UNUserNotificationCenter.current().delegate = self
+        SpotlightIndexer.start(model: model)
         model.requestNotifications()
     }
 

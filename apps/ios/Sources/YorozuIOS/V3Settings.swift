@@ -16,15 +16,18 @@ struct V3SettingsView: View {
     var onUnpair: () -> Void = {}
 
     @AppStorage(NoticeHaptics.key) private var haptics = true
+    @AppStorage(SpotlightIndexer.enabledKey) private var spotlight = true
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: V3DeviceInfo?
     @State private var unpairing = false
+    @State private var addingDevice = false
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Form {
             notifications
+            siri
             host
             if model.devicesAvailable { devices }
             Section {
@@ -37,6 +40,7 @@ struct V3SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $addingDevice) { AddDeviceSheet(model: model) }
         .task(id: model.state == .ready) { model.refreshDevices() }
         // Coming back from the system's notification settings.
         .task(id: scenePhase) { permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
@@ -74,6 +78,18 @@ struct V3SettingsView: View {
             Text("Notifications")
         } footer: {
             Text("While Yorozu is open, replies in other conversations show at the top of the screen instead of as notifications.")
+        }
+    }
+
+    /// What Siri and Spotlight may search (owner, 2026-10-17).
+    private var siri: some View {
+        Section {
+            Toggle(String(localized: "Show Conversations in Siri and Search"), isOn: $spotlight)
+                .onChange(of: spotlight) { Task { await SpotlightIndexer.shared?.sync() } }
+        } header: {
+            Text("Siri & Search")
+        } footer: {
+            Text("Siri and Spotlight can find conversations by their titles and recent messages. The index stays on this device and is removed when you unpair.")
         }
     }
 
@@ -126,6 +142,11 @@ struct V3SettingsView: View {
             }
             if let error = model.devicesError {
                 Text(error).foregroundStyle(YorozuPalette.warning)
+            }
+            // Away from the host, a paired device adds another (owner, 2026-10-17).
+            if model.inviteAvailable {
+                Button(String(localized: "Add a Device…"), systemImage: "plus") { addingDevice = true }
+                    .disabled(model.state != .ready)
             }
         } header: {
             Text("Paired Devices")

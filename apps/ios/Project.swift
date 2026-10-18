@@ -3,7 +3,8 @@ import ProjectDescription
 
 /// Generates Yorozu.xcworkspace (not checked in): `tuist generate --no-open --path apps/ios`. One client app for iPhone, iPad and
 /// Mac (native SwiftUI, not Catalyst); the extensions are iOS-only and uploads archive iOS only (docs/release.md).
-/// Identity matches Yorozu v1 (bundle id, team, ASC app 6811274963) so TestFlight takes it as the same app.
+/// Identity matches Yorozu 0.5 (bundle ids, team, ASC app 6811274963): TestFlight and the App Store take the iOS app as the
+/// same app, and Sparkle updates the Mac app (`to.yumi.yorozu`) in place.
 let versionFile = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("../../version.txt").standardizedFileURL
 let version: String = {
@@ -12,6 +13,15 @@ let version: String = {
     else { fatalError("Expected numeric major.minor.patch in \(versionFile.path)") }
     return raw
 }()
+
+/// `CFBundleVersion` for a visible build: major·10⁷ + minor·10⁵ + patch·10³ + build (0.9.0 build 1 = 900001). Sparkle
+/// compares this integer, and 0.5.0-beta installs are build 10279, so it must only ever rise (OWNER_DECISIONS.md).
+/// `scripts/build-number.sh` is the same formula for the scripts, which pass both numbers on the command line.
+func bundleVersion(build: Int) -> String {
+    let p = version.split(separator: ".").compactMap { Int($0) }
+    guard p[1] < 100, p[2] < 100, (1..<1000).contains(build) else { fatalError("Version \(version) build \(build) overflows CFBundleVersion") }
+    return String(p[0] * 10_000_000 + p[1] * 100_000 + p[2] * 1_000 + build)
+}
 
 /// The Keychain group the app shares with its notification service extension, holding only the sealed-preview key
 /// (`PreviewKeychain`). v1's group, same team and bundle ids, so the App IDs it was registered under still apply.
@@ -24,13 +34,19 @@ func signing(_ extra: SettingsDictionary = [:]) -> Settings {
         "DEVELOPMENT_TEAM": "AN5KM8QGEF",
         "CODE_SIGN_STYLE": "Automatic",
         "MARKETING_VERSION": .string(version),
-        "CURRENT_PROJECT_VERSION": "1",
+        "CURRENT_PROJECT_VERSION": .string(bundleVersion(build: 1)),
+        // The build people see, restarting at 1 per version.
+        "YOROZU_BUILD": "1",
     ].merging(extra) { _, new in new })
 }
 
 let project = Project(
     name: "Yorozu",
-    packages: [.local(path: "../../packages/YorozuWire")],
+    packages: [
+        .local(path: "../../packages/YorozuWire"),
+        // Mac updates (docs/upgrade-from-0.5.md); the iOS app does not link it.
+        .remote(url: "https://github.com/sparkle-project/Sparkle", requirement: .upToNextMajor(from: "2.9.0")),
+    ],
     targets: [
         .target(
             name: "YorozuIOS",
@@ -42,6 +58,14 @@ let project = Project(
                 // Build settings, so scripts/upload_ios.sh passes both on the xcodebuild command line.
                 "CFBundleShortVersionString": "$(MARKETING_VERSION)",
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "YorozuBuild": "$(YOROZU_BUILD)",
+                // Sparkle, read on the Mac only: the beta feed by default, 0.5's EdDSA key, hourly automatic installs.
+                "SUFeedURL": "https://yorozu.yumi.to/beta/appcast.xml",
+                "SUPublicEDKey": "pD6gPv1CP/XDvIJXbztjQRTIkgR/kfMMYT/Mpp8aQvI=",
+                "SUEnableAutomaticChecks": true,
+                "SUAutomaticallyUpdate": true,
+                "SUAllowsAutomaticUpdates": true,
+                "SUScheduledCheckInterval": 3600,
                 "UILaunchScreen": [:],
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
@@ -66,6 +90,8 @@ let project = Project(
             resources: [
                 "Resources/AppIcon.icon",
                 "Resources/Assets.xcassets",
+                // Siri phrases for the App Shortcuts (YorozuIntents.swift), in Japanese.
+                "Resources/AppShortcuts.xcstrings",
                 "Resources/InfoPlist.xcstrings",
                 "Resources/Localizable.xcstrings",
                 "Resources/PrivacyInfo.xcprivacy",
@@ -80,14 +106,36 @@ let project = Project(
                 "keychain-access-groups": ["$(AppIdentifierPrefix)to.yumi.yorozu.ios", .string(notificationKeychainGroup)],
                 "com.apple.security.application-groups": [.string(appGroup)],
             ]),
+            // The OpenClaw plugin rides in the Mac app at the path 0.5's `openclaw plugins install --link` points to, so
+            // the Gateway loads this version after a reload (stable contract, OWNER_DECISIONS.md). TypeScript, run as is.
+            scripts: [
+                .post(
+                    script: """
+                    [ "$PLATFORM_NAME" = macosx ] || exit 0
+                    dest="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/openclaw-channel"
+                    rm -rf "$dest" && mkdir -p "$dest"
+                    cd "$SRCROOT/../../plugins/openclaw-yorozu"
+                    cp -R index.ts setup-entry.ts openclaw.plugin.json package.json README.md src "$dest/"
+                    """,
+                    name: "Bundle the OpenClaw plugin",
+                    basedOnDependencyAnalysis: false
+                ),
+            ],
             dependencies: [
                 .package(product: "YorozuWire"),
+                .package(product: "Sparkle", condition: .when([.macos])),
                 .target(name: "YorozuNotificationService", condition: .when([.ios])),
                 .target(name: "YorozuShare", condition: .when([.ios])),
             ],
             // Automatic signing plus `xcodebuild -allowProvisioningUpdates` and an App Store Connect key:
             // Xcode issues the distribution certificate and the App Store profiles (app and extension) itself.
-            settings: signing(["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"])
+            settings: signing([
+                "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
+                // The Mac ships as 0.5's Mac app id, so Sparkle replaces it in place; iOS keeps the App Store id.
+                "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": "to.yumi.yorozu",
+                // The plugin copy above reads the repo outside the target.
+                "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
+            ])
         ),
         // Opens sealed push previews (docs/ios-relay-contract.md, "Sealed previews"). v1's extension bundle id.
         .target(

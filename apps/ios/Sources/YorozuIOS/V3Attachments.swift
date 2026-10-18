@@ -87,32 +87,81 @@ struct V3AttachMenu: View {
 /// Files waiting in the composer, each with a remove button.
 struct V3StagedFiles: View {
     let files: [ChatAttachment]
+    /// An automation from "Edit in Chat", first in the row.
+    var automation: V3CronJob? = nil
+    var onRemoveAutomation: () -> Void = {}
     let onRemove: (ChatAttachment) -> Void
+    /// A staged picture's preview, scaled with the text.
+    @ScaledMetric private var previewSide: CGFloat = 56
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: LayoutMetrics.tight) {
-                ForEach(files) { file in
+                if let automation {
                     HStack(spacing: LayoutMetrics.tight) {
-                        Image(systemName: file.isImage ? "photo" : "doc")
-                        Text(file.name).lineLimit(1).truncationMode(.middle)
-                        Text(AttachmentStaging.Failure.format(file.size)).foregroundStyle(.secondary)
-                        Button {
-                            onRemove(file)
-                        } label: {
+                        Image(systemName: "clock")
+                        Text(automation.name).lineLimit(1).truncationMode(.middle)
+                        Text(automation.scheduleText).foregroundStyle(.secondary).lineLimit(1)
+                        Button(action: onRemoveAutomation) {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(Text("Remove \(file.name)"))
+                        .accessibilityLabel(Text("Remove \(automation.name)"))
                     }
                     .font(.footnote)
                     .padding(.horizontal, LayoutMetrics.inner)
                     .padding(.vertical, LayoutMetrics.tight)
                     .background(.fill.tertiary, in: Capsule())
                 }
+                ForEach(files) { file in
+                    if file.isImage, let url = AttachmentFiles.local(file) {
+                        preview(file, url: url)
+                    } else {
+                        chip(file)
+                    }
+                }
             }
             .padding(.horizontal, LayoutMetrics.inner)
         }
+    }
+
+    /// A picture: its preview, the remove button on its corner (owner, 2026-10-17).
+    private func preview(_ file: ChatAttachment, url: URL) -> some View {
+        FileThumbnail(url: url, side: previewSide, fill: true)
+            .clipShape(RoundedRectangle(cornerRadius: LayoutMetrics.inner, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                Button { onRemove(file) } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .black.opacity(0.6))
+                        .padding(LayoutMetrics.tight)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Remove \(file.name)"))
+            }
+            .padding(.vertical, LayoutMetrics.tight)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text(file.name))
+    }
+
+    /// Any other file: its name and size.
+    private func chip(_ file: ChatAttachment) -> some View {
+        HStack(spacing: LayoutMetrics.tight) {
+            Image(systemName: file.isImage ? "photo" : "doc")
+            Text(file.name).lineLimit(1).truncationMode(.middle)
+            Text(AttachmentStaging.Failure.format(file.size)).foregroundStyle(.secondary)
+            Button {
+                onRemove(file)
+            } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Remove \(file.name)"))
+        }
+        .font(.footnote)
+        .padding(.horizontal, LayoutMetrics.inner)
+        .padding(.vertical, LayoutMetrics.tight)
+        .background(.fill.tertiary, in: Capsule())
     }
 }
 
@@ -174,6 +223,8 @@ private struct V3FileAttachment: View {
     let model: V3Model
     let attachment: ChatAttachment
     let open: (ChatAttachment) -> Void
+    /// A downloaded file's thumbnail (a PDF's first page), scaled with the text.
+    @ScaledMetric(relativeTo: .title2) private var thumbnailSide: CGFloat = 40
 
     var body: some View {
         let state = FileState(attachment, model: model)
@@ -199,7 +250,7 @@ private struct V3FileAttachment: View {
         case .moving(let progress): ProgressView(value: progress).progressViewStyle(.circular).controlSize(.small)
         case .failed, .refused: Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
         case .remote: Image(systemName: "arrow.down.circle")
-        case .local: Image(systemName: "doc")
+        case .local(let url): FileThumbnail(url: url, side: thumbnailSide)
         }
     }
 

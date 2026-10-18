@@ -25,7 +25,7 @@ struct V3HomeView: View {
             #endif
         }
         .opensRequestedConversation(model, selection: $selection)
-        .inAppNotices(model) { open($0, draft: nil) }
+        .inAppNotices(model) { open($0, automation: nil) }
         // Deleted on another device while open here.
         .onChange(of: model.deleted) { _, convId in if convId != nil, selection == convId { selection = nil } }
     }
@@ -53,13 +53,13 @@ struct V3HomeView: View {
             Tab(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right", value: Section.chats) {
                 NavigationStack {
                     ConversationsView(model: model, selection: $selection, section: $section, showsCrons: false)
-                        .navigationDestination(item: $selection) {
-                            V3ChatView(model: model, convId: $0).id($0)
-                                #if os(iOS)
-                                // A conversation has the whole screen: the composer sits where the tab bar was.
-                                .toolbar(.hidden, for: .tabBar)
-                                #endif
-                        }
+                        .navigationDestination(item: $selection) { V3ChatView(model: model, convId: $0).id($0) }
+                        #if os(iOS)
+                        // A conversation has the whole screen: the composer sits where the tab bar was. Decided here, by
+                        // the selection, so the bar returns as the back animation starts; hidden from the conversation
+                        // itself, iOS brought it back only after the animation had ended.
+                        .toolbar(selection == nil ? .visible : .hidden, for: .tabBar)
+                        #endif
                 }
             }
             Tab(String(localized: "Automations"), systemImage: "clock", value: Section.crons) {
@@ -68,19 +68,19 @@ struct V3HomeView: View {
         }
     }
 
-    /// Shows a conversation in Chats, with `draft` waiting in its composer.
-    private func open(_ convId: String, draft: String?) {
-        if let draft { model.drafts[convId] = draft }
+    /// Shows a conversation in Chats, with `automation` attached in its composer.
+    private func open(_ convId: String, automation: V3CronJob?) {
+        if let automation { model.automationDrafts[convId] = automation }
         selection = convId
         section = .chats
     }
 }
 
 /// Every cron job of the plugin's agent (#415), shown as Automations: name, schedule, next run and last status, disabled ones greyed.
-/// Read-only: changes go through the agent, from "Edit in Chat".
+/// Read-only: changes go through the agent, from "Edit in Chat", which attaches the job to a new conversation.
 struct V3CronsView: View {
     let model: V3Model
-    let open: (_ convId: String, _ draft: String?) -> Void
+    let open: (_ convId: String, _ automation: V3CronJob?) -> Void
 
     @State private var failure: V3CronJob?
 
@@ -162,9 +162,9 @@ struct V3CronsView: View {
         }
     }
 
-    /// The job's delivery conversation, or a new one, with the change request started and left unsent (#415).
+    /// A new conversation with the job attached in its composer (owner, 2026-10-17): sent, it becomes part of the message.
     private func editInChat(_ job: V3CronJob) {
-        open(job.convId ?? V3Event.newId(), "Change cron job \"\(job.name)\" (id \(job.id)): ")
+        open(V3Event.newId(), job)
     }
 }
 

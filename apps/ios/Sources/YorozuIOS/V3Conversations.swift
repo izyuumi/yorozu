@@ -117,15 +117,8 @@ struct ConversationsView: View {
                     .accessibilityIdentifier("conversations.settings")
             }
             #endif
-            // Compose at the bottom trailing corner, as Mail and Notes have it; the Mac has no bottom bar.
-            #if os(iOS)
-            ToolbarItemGroup(placement: .bottomBar) {
-                Spacer()
-                compose
-            }
-            #else
+            // Compose at the top trailing corner, as in Messages (owner, 2026-10-18); the Mac's window toolbar too.
             ToolbarItem(placement: .primaryAction) { compose }
-            #endif
         }
     }
 
@@ -219,6 +212,8 @@ private struct ConversationRow: View {
                 Text(Self.time(conversation.updatedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                // A dot, not a count (owner, 2026-10-17): orange when a run failed, blue for unread replies.
+                if let dot { Image(systemName: "circle.fill").font(.caption2).foregroundStyle(dot) }
             }
             Group {
                 if typing {
@@ -232,9 +227,12 @@ private struct ConversationRow: View {
             .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityValue(conversation.unreadCount > 0 ? Text("\(conversation.unreadCount) unread") : Text(""))
-        // The unread replies, at the row's trailing edge (#429).
-        .badge(conversation.unreadCount)
+        .accessibilityValue(conversation.needsAttention ? Text("Needs attention") : conversation.unreadCount > 0 ? Text("Unread") : Text(""))
+    }
+
+    private var dot: Color? {
+        if conversation.needsAttention { return .orange }
+        return conversation.unreadCount > 0 ? .blue : nil
     }
 
     /// The time today, the date on any other day.

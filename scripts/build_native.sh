@@ -4,7 +4,7 @@
 # --restart: if the app is running, quit it after a successful build, swap the bundle and relaunch it.
 # Signing: Developer ID with hardened runtime when that identity is in the Keychain, else ad hoc. Either way without the
 # app's entitlements (push, associated domains, Keychain and App Groups), which on macOS need a provisioning profile that
-# does not exist for to.yumi.yorozu.ios; the client keeps its keys in the login Keychain without them.
+# does not exist for the Mac id to.yumi.yorozu; the client keeps its keys in the login Keychain without them.
 set -eu
 cd "$(dirname "$0")/.."
 APP="/Applications/Yorozu.app"
@@ -21,12 +21,14 @@ else
     echo "No Developer ID Application identity: signing ad hoc." >&2
     set -- CODE_SIGN_IDENTITY=-
 fi
+VERSION=$(tr -d '[:space:]' < version.txt)
+BUILD=${BUILD:-1}
 mkdir -p build
 tuist generate --no-open --path apps/ios
 # Pass the version explicitly: Tuist caches the manifest, so a version.txt change alone may not reach the build.
 env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS -configuration Release \
     -destination 'platform=macOS' -derivedDataPath .build/xcode-native -clonedSourcePackagesDirPath .build/xcode-packages \
-    -skipPackagePluginValidation -quiet MARKETING_VERSION="$(tr -d '[:space:]' < version.txt)" CURRENT_PROJECT_VERSION="${BUILD:-1}" \
+    -skipPackagePluginValidation -quiet MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$(scripts/build-number.sh "$VERSION" "$BUILD")" YOROZU_BUILD="$BUILD" \
     CODE_SIGN_STYLE=Manual "$@" CODE_SIGN_ENTITLEMENTS= CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO ENABLE_HARDENED_RUNTIME=YES
 WAS_RUNNING=0
 for PID in $(running); do

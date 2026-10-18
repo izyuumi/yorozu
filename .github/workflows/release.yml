@@ -1,0 +1,91 @@
+name: Release
+# The one CI job (OWNER_DECISIONS.md, Process): a push to main uploads the iOS build to App Store Connect, then replaces
+# the v<version>-beta prerelease that the Mac beta feed serves. No tests run. docs/upgrade-from-0.5.md#release-order:
+# the owner assigns the iOS build to TestFlight testers when the Mac release goes live.
+# Secrets, as on main before: DEVELOPER_ID_P12 and DEVELOPER_ID_PASSWORD (Developer ID Application), MAC_CERT_P12 and
+# MAC_CERT_PASSWORD (Apple Distribution), ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (App Store Connect API key, base64
+# .p8), SPARKLE_ED_KEY (Sparkle's private EdDSA key, `generate_keys -x`).
+on:
+  push:
+    branches: [main]
+    paths: ['apps/**', 'packages/**', 'plugins/**', 'scripts/**', 'version.txt']
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+permissions: {}
+
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with: { xcode-version: latest-stable }
+      - name: Install Tuist 4.209.0
+        run: |
+          command -v mise >/dev/null || brew install mise
+          mise use -g tuist@4.209.0
+          mise bin-paths tuist@4.209.0 >> "$GITHUB_PATH"
+
+      # Secrets go only to $RUNNER_TEMP and a keychain of this job's own. Never `set -x` here.
+      - name: Signing identities, notary profile and Sparkle key
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          SPARKLE_ED_KEY: ${{ secrets.SPARKLE_ED_KEY }}
+        run: |
+          set -eu
+          KEYCHAIN="$RUNNER_TEMP/release.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$DEVELOPER_ID_P12" | base64 -d > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -P "$DEVELOPER_ID_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          printf '%s' "$MAC_CERT_P12" | base64 -d > "$RUNNER_TEMP/distribution.p12"
+          security import "$RUNNER_TEMP/distribution.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/distribution.p12"
+          # A fresh runner lacks Apple's intermediates, without which codesign won't use the identity. Both are public.
+          for ca in DeveloperIDG2CA AppleWWDRCAG3; do
+            curl -fsSL -o "$RUNNER_TEMP/$ca.cer" "https://www.apple.com/certificateauthority/$ca.cer"
+            security import "$RUNNER_TEMP/$ca.cer" -t cert -k "$KEYCHAIN" 2>&1 | grep -v 'already exists' || true
+          done
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security default-keychain -s "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Developer ID Application" \
+            || { echo "DEVELOPER_ID_P12 holds no Developer ID Application identity" >&2; exit 1; }
+          umask 077
+          printf '%s' "$ASC_KEY_P8" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          xcrun notarytool store-credentials yorozu-notary \
+            --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID"
+          printf '%s' "$SPARKLE_ED_KEY" > "$RUNNER_TEMP/sparkle.key"
+
+      - name: Upload the iOS build
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+        run: scripts/upload_ios.sh --confirm
+      - name: Build, notarize and publish the Mac beta
+        env:
+          SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle.key
+        run: scripts/release_mac.sh --publish
+      - name: Forget signing credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/sparkle.key" "$RUNNER_TEMP/AuthKey.p8"
+          security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true

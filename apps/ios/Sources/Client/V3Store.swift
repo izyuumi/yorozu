@@ -59,6 +59,12 @@ struct Conversation: Codable, Identifiable, Equatable {
         return max(items.count { $0.kind == .agent && $0.ts > after }, read?.unread == true ? 1 : 0)
     }
 
+    /// A run failed after the read cursor: an orange dot rather than a blue one, until it is read.
+    var needsAttention: Bool {
+        let after = read?.ts ?? .min
+        return items.contains { $0.kind == .error && $0.ts > after }
+    }
+
     /// The newest reply by the plugin's clock: what a read moves the cursor to.
     var latestReply: ChatItem? { items.filter { $0.kind == .agent }.max { $0.ts < $1.ts } }
 
@@ -75,8 +81,15 @@ struct Conversation: Codable, Identifiable, Equatable {
 
     /// Places transcript items. An item already here (same id, or a live reply of the same text that has no seq yet)
     /// is replaced. Each goes after the last item known to be older (lower seq) and before the first one known or
-    /// likely to be newer: a higher seq, or a live item with a later timestamp.
+    /// likely to be newer: a higher seq, or a live item with a later timestamp. A page speaks for its whole seq range:
+    /// a cached item in it that the page no longer has (one the plugin now leaves out, such as OpenClaw's own turns)
+    /// goes.
     mutating func merge(_ incoming: [ChatItem]) {
+        let seqs = incoming.compactMap(\.seq)
+        if let low = seqs.min(), let high = seqs.max() {
+            let ids = Set(incoming.map(\.id))
+            items.removeAll { item in item.seq.map { (low...high).contains($0) } == true && !ids.contains(item.id) }
+        }
         for var item in incoming {
             guard let seq = item.seq else { continue }
             let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
