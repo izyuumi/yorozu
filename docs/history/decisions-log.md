@@ -1128,3 +1128,10 @@ Source: OWNER_DECISIONS.md before #417, kept as written. These areas were revers
 - Order: R1 thinking workspace, then R2 coding workers that develop Yorozu itself, then the iOS client over the relay on internal TestFlight, then R3, cua (https://cua.ai) integration so Yorozu can operate the user's computer. Progress: [docs/status.md](secretary-status.md#roadmap). (2026-10-08)
 - Context budgets (issue #310) come before the UI work: batch 1, then batch 2. (2026-10-09)
 - Device management belongs to the Settings issue (#312), not #313. The YOLO choice and start at login are onboarding steps in #317. (2026-10-09)
+
+## 2026-10-19 — Chat composer attachments
+Source: direct owner message.
+
+- Paste images into the chat input as attachments.
+- On iPhone and iPad, the plus menu offers taking a photo in place.
+- Reduce space between the plus sign and the text area.

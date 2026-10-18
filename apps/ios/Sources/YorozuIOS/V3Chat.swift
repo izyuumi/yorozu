@@ -97,7 +97,7 @@ struct V3ChatView: View {
         }
         .yorozuBottomBar {
             V3Composer(text: $draft, files: $files, automation: $automation, attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
-                onFiles: attach) {
+                onFiles: attach, onImages: attachImages) {
                 model.send(Self.message(draft, automation: automation), attachments: files, in: convId)
                 draft = ""
                 files = []
@@ -136,6 +136,18 @@ extension V3ChatView {
         var refused: [String] = []
         for url in fileURLs {
             do { files.append(try AttachmentStaging.stage(file: url, limit: model.mediaMaxBytes)) } catch { refused.append(error.localizedDescription) }
+        }
+        if !refused.isEmpty { dropFailure = refused.joined(separator: "\n") }
+        return true
+    }
+
+    @discardableResult
+    private func attachImages(_ images: [Data]) -> Bool {
+        guard model.attachmentsAvailable, !images.isEmpty else { return false }
+        var refused: [String] = []
+        for (index, data) in images.enumerated() {
+            do { files.append(try AttachmentStaging.stage(image: data, name: "\(String(localized: "Pasted image")) \(index + 1)", limit: model.mediaMaxBytes)) }
+            catch { refused.append(error.localizedDescription) }
         }
         if !refused.isEmpty { dropFailure = refused.joined(separator: "\n") }
         return true
@@ -368,6 +380,7 @@ private struct V3Composer: View {
     let attachLimit: Int?
     /// Files pasted or dropped onto the field.
     let onFiles: ([URL]) -> Bool
+    let onImages: ([Data]) -> Bool
     let onSend: () -> Void
 
     /// The send circle inside the ``controlTarget``-tall row; smaller, so the fill reads as a button.
@@ -393,11 +406,11 @@ private struct V3Composer: View {
     }
 
     private var row: some View {
-        HStack(alignment: .bottom, spacing: LayoutMetrics.tight) {
+        HStack(alignment: .bottom, spacing: 0) {
             if let attachLimit {
                 V3AttachMenu(limit: attachLimit) { files.append(contentsOf: $0) }
             }
-            ComposerTextView(text: $text, placeholder: String(localized: "Message"), onSubmit: send, onFiles: onFiles)
+            ComposerTextView(text: $text, placeholder: String(localized: "Message"), onSubmit: send, onFiles: onFiles, onImages: onImages)
                 // Room above and below the text, inside the glass; right up to the + on the left (owner, 2026-10-17).
                 .padding(.vertical, LayoutMetrics.inner)
                 .frame(minHeight: controlTarget)
