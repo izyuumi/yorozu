@@ -36,6 +36,7 @@ struct V3SettingsView: View {
                     }
                     .accessibilityIdentifier("demo.exit")
                 }
+                devices
             } else {
                 notifications
                 siri
@@ -140,12 +141,12 @@ struct V3SettingsView: View {
                     }
                     .badge(device.push ? nil : Text("Push off"))
                     .swipeActions {
-                        if !device.current {
+                        if !model.isDemo, !device.current {
                             Button(String(localized: "Remove"), role: .destructive) { removing = device }
                         }
                     }
                     .contextMenu {
-                        if !device.current {
+                        if !model.isDemo, !device.current {
                             Button(String(localized: "Remove…"), systemImage: "trash", role: .destructive) { removing = device }
                         }
                     }
@@ -166,7 +167,11 @@ struct V3SettingsView: View {
         } header: {
             Text("Paired Devices")
         } footer: {
-            Text("A removed device stops reaching the host at once and has to pair again.")
+            if model.isDemo {
+                Text("This fictional device is for preview only. No host is paired.")
+            } else {
+                Text("A removed device stops reaching the host at once and has to pair again.")
+            }
         }
     }
 

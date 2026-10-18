@@ -35,7 +35,7 @@ actor V3DemoTransport: V3ClientTransport {
         guard !running else { return }
         running = true
         continuation?.yield(.state(.ready))
-        continuation?.yield(.sessionOpen(V3PeerInfo(app: "Demo", name: "Demo", capabilities: [])))
+        continuation?.yield(.sessionOpen(V3PeerInfo(app: "Demo", name: "Demo", capabilities: [V3Devices.capability])))
     }
 
     func reconnect() { start() }
@@ -66,6 +66,8 @@ actor V3DemoTransport: V3ClientTransport {
             }
             emit(.history(V3History(convId: request.convId, before: request.before, after: request.after,
                 items: items, more: false, rev: all.last?.seq ?? 0)))
+        case .deviceList:
+            emit(.deviceList(V3DeviceList(devices: V3DemoData.devices)))
         case .cronList:
             emit(.cronList(V3CronList(jobs: V3DemoData.crons)))
         case .readCursor(let cursor):

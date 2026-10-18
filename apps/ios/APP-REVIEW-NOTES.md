@@ -9,8 +9,9 @@ An on-device demo substitutes for a demo account and needs no credentials or hos
 1. On the pairing screen, enter `YOROZU-DEMO` in **Pairing link**, then tap **Pair**. The code is case-sensitive; surrounding whitespace is ignored. Scanning a QR containing that text also works.
 2. Browse the sample conversations. Open **Ship a small improvement** to inspect formatted messages and a collapsed tool row.
 3. Send a message. A typing indicator precedes a delayed, scripted whole reply; responses do not come from a live model.
-4. Open **Automations** to inspect sample schedules and try **Edit in Chat**. Any reply describes a simulation; no real job is changed.
-5. Open Settings and choose **Exit Demo** to discard the sample session and return to the normal app (the pairing screen if unpaired).
+4. Open **Automations** to inspect sample schedules and try **Edit in Chat**. Replies are scripted; no real job is changed.
+5. Open Settings and inspect **Paired Devices**: **Demo Device** is a fictional, read-only current device. It is not paired with a host and cannot be removed or used to invite another device.
+6. Choose **Exit Demo** to discard the sample session and return to the normal app (the pairing screen if unpaired).
 
 Demo mode is marked in the interface. Conversations and changes exist only in memory. It does not connect to a Gateway, create an account, upload files, send notifications or perform real host or device administration. Attachments are unavailable. Existing pairing credentials are preserved when entering through the code.
 

@@ -79,6 +79,16 @@ enum V3DemoData {
         ]
     }
 
+    /// A fictional current-device row; its id is deliberately not a relay public key.
+    static var devices: [V3DeviceInfo] {
+        let json = """
+        [{"id":"demo-device","pairedAt":1781827200000,"push":false,"current":true}]
+        """
+        var devices = (try? JSONDecoder().decode([V3DeviceInfo].self, from: Data(json.utf8))) ?? []
+        if !devices.isEmpty { devices[0].name = String(localized: "Demo Device") }
+        return devices
+    }
+
     static var crons: [V3CronJob] {
         // Decode the public wire shape, just like a cron_list answer from the plugin.
         let json = """

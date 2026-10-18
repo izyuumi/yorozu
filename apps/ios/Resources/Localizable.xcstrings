@@ -1,6 +1,14 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Demo Device" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "デモデバイス" } } }
+    },
+    "This fictional device is for preview only. No host is paired." : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "プレビュー用の架空のデバイスです。ホストとはペアリングしていません。" } } }
+    },
     "Exit demo mode before checking for updates." : {
       "extractionState" : "manual",
       "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデートを確認する前にデモを終了してください。" } } }

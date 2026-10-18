@@ -700,8 +700,8 @@ final class V3Model {
 
     // MARK: Devices (Settings)
 
-    /// The host lists and changes its devices from here: it said so in `peer_info`.
-    var devicesAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(V3Devices.capability) == true }
+    /// The host advertises its device list; the demo supplies a fictional read-only current device.
+    var devicesAvailable: Bool { isDemo || hostInfo?.capabilities.contains(V3Devices.capability) == true }
 
     func refreshDevices() {
         guard devicesAvailable else { return }
