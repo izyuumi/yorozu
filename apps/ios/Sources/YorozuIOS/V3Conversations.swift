@@ -117,15 +117,8 @@ struct ConversationsView: View {
                     .accessibilityIdentifier("conversations.settings")
             }
             #endif
-            // Compose at the bottom trailing corner, as Mail and Notes have it; the Mac has no bottom bar.
-            #if os(iOS)
-            ToolbarItemGroup(placement: .bottomBar) {
-                Spacer()
-                compose
-            }
-            #else
+            // Compose at the top trailing corner, as in Messages (owner, 2026-10-18); the Mac's window toolbar too.
             ToolbarItem(placement: .primaryAction) { compose }
-            #endif
         }
     }
 

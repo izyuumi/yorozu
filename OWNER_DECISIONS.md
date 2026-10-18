@@ -20,7 +20,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - Peer = the owner, not the device: all paired devices share one channel peer, so every conversation shows everywhere. Session key `agent:<agent>:yorozu:direct:owner:thread:<convId>` (thread-scoped sessions, as Telegram DM topics). (2026-10-15)
 - One agent from plugin config (`channels.yorozu.agent`), default `main`. (2026-10-15)
 - Only Yorozu conversations are listed; other channels' sessions are not. (2026-10-15)
-- Compose (`square.and.pencil`, in the chat list's bottom toolbar; the window toolbar on the Mac) makes a new `convId` (new thread session). `/new` inside a conversation resets that session in place. Other slash commands pass through as text. (2026-10-17)
+- Compose (`square.and.pencil`, at the top trailing corner of the chat list, 2026-10-18; the window toolbar on the Mac) makes a new `convId` (new thread session). `/new` inside a conversation resets that session in place. Other slash commands pass through as text. (2026-10-17)
 - Titles are generated automatically by OpenClaw's own title generator (`utilityModel`, as for Telegram DM topics). A manual rename (session `label`) overrides it. (2026-10-15)
 - History: the Gateway transcript is the source of truth. Clients keep a local cache and backfill from the plugin on open/reconnect; new devices see full history. (2026-10-15)
 
