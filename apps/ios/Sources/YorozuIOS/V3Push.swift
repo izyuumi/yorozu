@@ -22,6 +22,10 @@ final class V3AppDelegate: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().delegate = self
         SpotlightIndexer.start(model: model)
         model.requestNotifications()
+        #if DEBUG && os(iOS)
+        // Scripted simulator screenshots: `xcrun simctl launch <device> to.yumi.yorozu.ios -YorozuDemo`.
+        if ProcessInfo.processInfo.arguments.contains("-YorozuDemo") { model.enterDemo() }
+        #endif
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,

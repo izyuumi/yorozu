@@ -26,17 +26,20 @@ struct V3SettingsView: View {
 
     var body: some View {
         Form {
+            if model.isDemo { demo }
             notifications
             siri
             host
             if model.devicesAvailable { devices }
-            Section {
-                Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
-                    .disabled(!model.paired)
-            } footer: {
-                Text(model.devicesAvailable
-                    ? "Removes this device from the host, and its keys and cached conversations from this device."
-                    : "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
+            if !model.isDemo {
+                Section {
+                    Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
+                        .disabled(!model.paired)
+                } footer: {
+                    Text(model.devicesAvailable
+                        ? "Removes this device from the host, and its keys and cached conversations from this device."
+                        : "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
+                }
             }
         }
         .formStyle(.grouped)
@@ -56,6 +59,21 @@ struct V3SettingsView: View {
                 onUnpair()
                 Task { await model.unpairEverywhere() }
             }
+        }
+    }
+
+    /// The App Review demo (OWNER_DECISIONS.md, App Review): what it is, and the way out to this device's own state.
+    private var demo: some View {
+        Section {
+            Button(String(localized: "Leave Demo"), systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                onUnpair()
+                model.unpair()
+            }
+            .accessibilityIdentifier("settings.leaveDemo")
+        } header: {
+            Text("Demo")
+        } footer: {
+            Text("This demo runs entirely on this device, with made-up conversations and replies. Nothing in it is saved or sent anywhere.")
         }
     }
 

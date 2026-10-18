@@ -121,6 +121,7 @@ struct V3CronsView: View {
         .navigationTitle("Automations")
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.state == .ready ? "" : model.state.label)
+        .demoBadge(model)
         .alert(String(localized: "Last run failed"), isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } }),
             presenting: failure) { _ in
             Button(String(localized: "OK"), role: .cancel) {}

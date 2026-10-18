@@ -120,6 +120,7 @@ struct ConversationsView: View {
             // Compose at the top trailing corner, as in Messages (owner, 2026-10-18); the Mac's window toolbar too.
             ToolbarItem(placement: .primaryAction) { compose }
         }
+        .demoBadge(model)
     }
 
     private var compose: some View {

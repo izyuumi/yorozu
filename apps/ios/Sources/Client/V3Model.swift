@@ -44,7 +44,13 @@ final class V3Model {
     /// The in-app notice for a reply in another conversation while the app is active; the newest replaces it.
     var notice: V3InAppNotice?
 
-    @ObservationIgnored private var connection: V3Connection?
+    /// The App Review demo (OWNER_DECISIONS.md, App Review), shown instead of this model while it runs; this one, its
+    /// pairing and its cache stay as they were.
+    private(set) var demo: V3Model?
+    /// This model is the demo's: its host is `DemoTransport`, and it reads and writes nothing outside memory.
+    let isDemo: Bool
+
+    @ObservationIgnored private var connection: (any Transport)?
     @ObservationIgnored private var listener: Task<Void, Never>?
     @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private let cache = ConversationCache()
@@ -75,10 +81,17 @@ final class V3Model {
     /// No answer within this: the request is dropped and the next one goes (the session may have died meanwhile).
     static let requestTimeout: Duration = .seconds(30)
 
-    init() {
+    /// `demo`: the App Review demo's model, paired with a host on this device; no Keychain, cache or share inbox.
+    init(demo: Bool = false) {
+        isDemo = demo
         transfers.send = { [weak self] event in
             guard let connection = self?.connection else { return false }
             return await connection.send(event)
+        }
+        if demo {
+            pairing = DemoTransport.pairing
+            connect()
+            return
         }
         do {
             pairing = try V3Pairing.load()
@@ -113,6 +126,12 @@ final class V3Model {
     /// A QR, a pasted string or a tapped link. Returns why it is not a v3 pairing code; otherwise it waits in
     /// ``pendingPairing`` for the fingerprint check.
     func submit(_ text: String) -> String? {
+        #if os(iOS)
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == DemoTransport.code {
+            enterDemo()
+            return nil
+        }
+        #endif
         guard let payload = try? QrPayload.decode(text), payload.v == 3, payload.roomId != nil, payload.secret != nil,
               (Data(base64URLEncoded: payload.macPubkey)?.count ?? 0) == 32 else {
             return String(localized: "This isn’t a Yorozu pairing code. Run `openclaw yorozu pair` on the host and use the code it prints.")
@@ -124,7 +143,9 @@ final class V3Model {
 
     /// The user compared the fingerprint: a fresh identity, kept in the Keychain before the first join.
     func confirm(_ payload: QrPayload) {
+        guard !isDemo else { return }
         pendingPairing = nil
+        leaveDemo()
         disconnect()
         cache.wipe()
         AttachmentFiles.wipe()
@@ -142,6 +163,8 @@ final class V3Model {
 
     /// Forgets the host on this device: keys and cache. The plugin keeps the device until `openclaw yorozu devices remove`.
     func unpair() {
+        // The demo's model has nothing to forget: its owner drops it.
+        guard !isDemo else { return demoOwner?.leaveDemo() ?? disconnect() }
         disconnect()
         try? V3Pairing.remove()
         #if os(iOS)
@@ -162,24 +185,51 @@ final class V3Model {
         notice = nil
     }
 
+    // MARK: App Review demo
+
+    /// The model that showed this demo, which leaves it on Unpair.
+    @ObservationIgnored private weak var demoOwner: V3Model?
+
+    /// `YOROZU-DEMO` (OWNER_DECISIONS.md, App Review): the demo's own model takes the screen; this one is left as it is.
+    func enterDemo() {
+        guard !isDemo, demo == nil else { return }
+        let demo = V3Model(demo: true)
+        demo.demoOwner = self
+        demo.setActive(active)
+        pairingError = nil
+        self.demo = demo
+    }
+
+    /// Back to this model's own state, paired or not. The demo's conversations go with its model.
+    func leaveDemo() {
+        demo?.disconnect()
+        demo = nil
+    }
+
     // MARK: Link
 
     private func connect() {
         guard let pairing else { return }
-        let local = V3PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
-            name: DeviceModel.name, capabilities: [V3Attachment.capability, V3Devices.capability])
-        guard let connection = try? V3Connection(pairing: pairing.pairing, identity: pairing.identity,
-            relayKnows: pairing.relayKnows, local: local) else {
-            return failPairing(String(localized: "This pairing code can’t be used."))
+        let connection: any Transport
+        if isDemo {
+            connection = DemoTransport()
+        } else {
+            let local = V3PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
+                name: DeviceModel.name, capabilities: [V3Attachment.capability, V3Devices.capability])
+            guard let relay = try? V3Connection(pairing: pairing.pairing, identity: pairing.identity,
+                relayKnows: pairing.relayKnows, local: local) else {
+                return failPairing(String(localized: "This pairing code can’t be used."))
+            }
+            connection = relay
+            #if os(iOS)
+            // The notification service extension opens push previews with this key, readable after the first unlock.
+            if let hostKey = Data(base64URLEncoded: pairing.pairing.macPubkey),
+               let key = try? PushPreview.key(myPriv: pairing.identity.sessionPrivateKey, theirPub: hostKey) {
+                PreviewKeychain.save(key)
+            }
+            #endif
         }
         self.connection = connection
-        #if os(iOS)
-        // The notification service extension opens push previews with this key, readable after the first unlock.
-        if let hostKey = Data(base64URLEncoded: pairing.pairing.macPubkey),
-           let key = try? PushPreview.key(myPriv: pairing.identity.sessionPrivateKey, theirPub: hostKey) {
-            PreviewKeychain.save(key)
-        }
-        #endif
         let pushToken = pushToken
         listener = Task { [weak self] in
             let updates = await connection.updates()
@@ -285,7 +335,7 @@ final class V3Model {
 
     /// Alerts, sounds and the badge, asked once paired; the system asks the user only the first time.
     func requestNotifications() {
-        guard paired else { return }
+        guard paired, !isDemo else { return }
         Task {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             // A badge set before the user allowed it did not show.
@@ -339,7 +389,7 @@ final class V3Model {
         guard var pairing else { return }
         change(&pairing)
         self.pairing = pairing
-        try? pairing.save()
+        if !isDemo { try? pairing.save() }
     }
 
     // MARK: Messages
@@ -700,7 +750,7 @@ final class V3Model {
 
     private func store(_ conversation: Conversation) {
         conversations[conversation.id] = conversation
-        cache.save(conversation)
+        if !isDemo { cache.save(conversation) }
         updateBadge()
         publishShareDirectory()
     }
@@ -710,7 +760,7 @@ final class V3Model {
     /// What the share extension left in the App Group, oldest first: each share becomes a message in the conversation
     /// it names (a new one when it names none or one this device no longer has), files uploading through the outbox.
     func takeShares() {
-        guard paired else { return }
+        guard paired, !isDemo else { return }
         for (share, folder) in ShareInbox.pending() {
             let convId = share.convId.flatMap { V3Event.isId($0) ? $0 : nil } ?? V3Event.newId()
             var files: [ChatAttachment] = []
@@ -728,7 +778,7 @@ final class V3Model {
 
     /// The extension's picker: the newest conversations, and the host's limit.
     private func publishShareDirectory() {
-        guard paired else { return }
+        guard paired, !isDemo else { return }
         let rows = list.prefix(30).map { conversation in
             let title = conversation.displayTitle
             return ShareInbox.Conversation(id: conversation.id, title: String(title.prefix(80)))
@@ -785,7 +835,7 @@ final class V3Model {
     private func forget(_ convId: String) {
         guard let gone = conversations.removeValue(forKey: convId) else { return }
         deleted = convId
-        cache.remove(convId)
+        if !isDemo { cache.remove(convId) }
         // Its files go with it (#430).
         for file in gone.items.flatMap({ $0.attachments ?? [] }) { AttachmentFiles.remove(file) }
         typing.remove(convId)
@@ -854,6 +904,7 @@ final class V3Model {
 
     /// Every unread reply, on the app icon (iOS: shown once notifications are allowed, #431) or the Dock tile.
     private func updateBadge() {
+        guard !isDemo else { return }
         let total = conversations.values.reduce(0) { $0 + $1.unreadCount }
         guard total != badge else { return }
         badge = total

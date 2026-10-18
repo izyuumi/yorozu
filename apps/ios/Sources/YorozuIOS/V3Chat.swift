@@ -123,6 +123,7 @@ struct V3ChatView: View {
         .navigationTitle(model.conversations[convId]?.displayTitle ?? String(localized: "New Conversation"))
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.state == .ready ? "" : model.state.label)
+        .demoBadge(model)
     }
 }
 
