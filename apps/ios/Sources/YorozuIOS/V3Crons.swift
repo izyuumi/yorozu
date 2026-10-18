@@ -53,13 +53,13 @@ struct V3HomeView: View {
             Tab(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right", value: Section.chats) {
                 NavigationStack {
                     ConversationsView(model: model, selection: $selection, section: $section, showsCrons: false)
-                        .navigationDestination(item: $selection) {
-                            V3ChatView(model: model, convId: $0).id($0)
-                                #if os(iOS)
-                                // A conversation has the whole screen: the composer sits where the tab bar was.
-                                .toolbar(.hidden, for: .tabBar)
-                                #endif
-                        }
+                        .navigationDestination(item: $selection) { V3ChatView(model: model, convId: $0).id($0) }
+                        #if os(iOS)
+                        // A conversation has the whole screen: the composer sits where the tab bar was. Decided here, by
+                        // the selection, so the bar returns as the back animation starts; hidden from the conversation
+                        // itself, iOS brought it back only after the animation had ended.
+                        .toolbar(selection == nil ? .visible : .hidden, for: .tabBar)
+                        #endif
                 }
             }
             Tab(String(localized: "Automations"), systemImage: "clock", value: Section.crons) {
