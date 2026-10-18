@@ -45,19 +45,16 @@ struct V3ChatView: View {
                 }
             }
             .padding(.vertical, LayoutMetrics.stack)
-            #if os(iOS)
-            // A sideways drag, alongside the vertical scroll: the timeline follows the finger left, then springs back.
-            .simultaneousGesture(
-                DragGesture(minimumDistance: LayoutMetrics.gutter)
-                    .onChanged { drag in
-                        guard abs(drag.translation.width) > abs(drag.translation.height) else { return }
-                        timesShown = min(max(-drag.translation.width, 0), timesWidth)
-                    }
-                    .onEnded { _ in withAnimation(.snappy) { timesShown = 0 } }
-            )
-            #endif
         }
         .scrollPosition($position)
+        #if os(iOS)
+        // A leftward drag shows the times: the timeline follows the finger, then springs back. A UIKit pan that only
+        // begins on a mostly horizontal leftward drag, so the vertical scroll never waits on it (a SwiftUI DragGesture
+        // in a ScrollView took touches from the scroll and stalled it).
+        .gesture(LeftwardPan { dx in timesShown = min(max(-dx, 0), timesWidth) } ended: {
+            withAnimation(.snappy) { timesShown = 0 }
+        })
+        #endif
         // Scrolling the conversation puts the keyboard away, following the finger (owner, 2026-10-17).
         .scrollDismissesKeyboard(.interactively)
         .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -68,9 +65,10 @@ struct V3ChatView: View {
         .defaultScrollAnchor(.bottom)
         // An older page grows the content upward: what is on screen stays put.
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
-        .onChange(of: items.last?.id) { position.scrollTo(edge: .bottom) }
+        // Follows new messages only from the bottom, or the user's own: a reader scrolled up stays where they are.
+        .onChange(of: items.last?.id) { if atBottom || items.last?.kind == .user { position.scrollTo(edge: .bottom) } }
         .task(id: model.state == .ready) { model.open(convId) }
-        .onChange(of: typing) { position.scrollTo(edge: .bottom) }
+        .onChange(of: typing) { if atBottom { position.scrollTo(edge: .bottom) } }
         // Opening reads it on every device (#429), Mark as Unread included; a reply that arrives while it is on screen
         // only moves the cursor, and so does coming back to the foreground with it open.
         .onAppear {
@@ -81,13 +79,16 @@ struct V3ChatView: View {
         .onChange(of: model.conversations[convId]?.latestReply?.id) { readIfActive() }
         .onChange(of: scenePhase) { readIfActive() }
         .overlay(alignment: .bottom) {
-            if !atBottom {
-                JumpToLatestButton { withAnimation { position.scrollTo(edge: .bottom) } }
-                    .padding(.bottom, LayoutMetrics.inner)
-                    .transition(.scale.combined(with: .opacity))
+            // Animated here only: on the whole conversation it animated every change made in the same moment.
+            ZStack {
+                if !atBottom {
+                    JumpToLatestButton { withAnimation { position.scrollTo(edge: .bottom) } }
+                        .padding(.bottom, LayoutMetrics.inner)
+                        .transition(.scale.combined(with: .opacity))
+                }
             }
+            .animation(.snappy, value: atBottom)
         }
-        .animation(.snappy, value: atBottom)
         .overlay {
             if items.isEmpty && !typing {
                 ContentUnavailableView("New conversation", systemImage: "bubble.left.and.bubble.right",
@@ -425,3 +426,47 @@ private struct V3Composer: View {
         onSend()
     }
 }
+
+#if os(iOS)
+/// A pan that begins only on a leftward, mostly horizontal drag, beside the scroll view's own: a vertical drag never
+/// starts it, so scrolling is never held up. `changed` gets the horizontal translation (negative to the left).
+private struct LeftwardPan: UIGestureRecognizerRepresentable {
+    let changed: (CGFloat) -> Void
+    let ended: () -> Void
+
+    init(changed: @escaping (CGFloat) -> Void, ended: @escaping () -> Void) {
+        self.changed = changed
+        self.ended = ended
+    }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.delegate = context.coordinator
+        return pan
+    }
+
+    func handleUIGestureRecognizerAction(_ pan: UIPanGestureRecognizer, context: Context) {
+        switch pan.state {
+        case .changed: changed(pan.translation(in: pan.view).x)
+        case .ended, .cancelled, .failed: ended()
+        default: break
+        }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = recognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: pan.view)
+            return velocity.x < 0 && abs(velocity.x) > abs(velocity.y) * 2
+        }
+
+        /// Context menus and taps on bubbles keep working beside it.
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            !(other.view is UIScrollView)
+        }
+    }
+}
+#endif
