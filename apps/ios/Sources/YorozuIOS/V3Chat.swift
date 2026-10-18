@@ -17,6 +17,9 @@ struct V3ChatView: View {
     @State private var position = ScrollPosition(edge: .bottom)
     /// The newest message is in view: hides the jump-to-latest button.
     @State private var atBottom = true
+    /// How far the timeline is dragged left to show the times, as in Messages (owner, 2026-10-18); 0 at rest.
+    @State private var timesShown: CGFloat = 0
+    @ScaledMetric(relativeTo: .caption2) private var timesWidth: CGFloat = 64
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -33,13 +36,26 @@ struct V3ChatView: View {
                         .task(id: conversation.oldestSeq) { model.loadOlder(convId) }
                 }
                 ForEach(items) { item in
-                    V3ItemRow(model: model, item: item).readableRow()
+                    V3ItemRow(model: model, item: item)
+                        .readableRow()
+                        .modifier(MessageTime(item: item, shown: timesShown, width: timesWidth))
                 }
                 if typing {
                     TypingIndicator().readableRow().id("typing")
                 }
             }
             .padding(.vertical, LayoutMetrics.stack)
+            #if os(iOS)
+            // A sideways drag, alongside the vertical scroll: the timeline follows the finger left, then springs back.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: LayoutMetrics.gutter)
+                    .onChanged { drag in
+                        guard abs(drag.translation.width) > abs(drag.translation.height) else { return }
+                        timesShown = min(max(-drag.translation.width, 0), timesWidth)
+                    }
+                    .onEnded { _ in withAnimation(.snappy) { timesShown = 0 } }
+            )
+            #endif
         }
         .scrollPosition($position)
         // Scrolling the conversation puts the keyboard away, following the finger (owner, 2026-10-17).
@@ -278,6 +294,31 @@ private struct ToolsRow: View {
         case .done: String(localized: "Done")
         case .failed: String(localized: "Failed")
         }
+    }
+}
+
+/// Each message's time, hidden past the trailing edge until the timeline is dragged left (Messages' gesture): every row
+/// slides by the drag and the time slides in after it.
+private struct MessageTime: ViewModifier {
+    let item: ChatItem
+    let shown: CGFloat
+    let width: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: -shown)
+            .overlay(alignment: .trailing) {
+                if shown > 0, item.kind == .user || item.kind == .agent || item.kind == .error {
+                    Text(Date(timeIntervalSince1970: TimeInterval(item.ts) / 1000), format: .dateTime.hour().minute())
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(width: width, alignment: .leading)
+                        .offset(x: width - shown)
+                        .opacity(shown / width)
+                        .accessibilityHidden(true)
+                }
+            }
     }
 }
 
