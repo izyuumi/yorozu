@@ -1,307 +1,80 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Settings" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "設定" } } } },
-    "Notifications" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "通知" } } } },
-    "Open Notification Settings" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "通知設定を開く" } } } },
-    "Push from the Host" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストからのプッシュ" } } } },
-    "Haptic for In-App Notices" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アプリ内通知の触覚フィードバック" } } } },
-    "While Yorozu is open, replies in other conversations show at the top of the screen instead of as notifications." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu を開いている間、ほかの会話への返信は通知ではなく画面上部に表示されます。" } } } },
-    "Name" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "名前" } } } },
-    "About Yorozu" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu について" } } } },
-    "Check for Updates…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデートを確認…" } } } },
-    "Yorozu was updated to 0.9" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu を 0.9 にアップデートしました" } } } },
-    "Update Yorozu on your iPhone and iPad too. Your conversations came along." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "iPhone と iPad の Yorozu もアップデートしてください。会話はそのまま引き継がれています。" } } } },
-    "Select Text" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "テキストを選択" } } } },
-    "Jump to Latest" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "最新のメッセージへ" } } } },
-    "Needs attention" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "要確認" } } } },
-    "Unread" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "未読" } } } },
-    "Remove %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ を削除" } } } },
-    "Ask Yorozu" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu に聞く" } } } },
-    "Open Conversation" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "会話を開く" } } } },
-    "Conversation" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "会話" } } } },
-    "What should I ask?" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "何を聞きますか？" } } } },
-    "Sent. The reply will come as a notification." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "送信しました。返信は通知で届きます。" } } } },
-    "Sends a message to your agent and returns its reply." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エージェントにメッセージを送り、その返信を返します。" } } } },
-    "Opens a conversation in Yorozu." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu で会話を開きます。" } } } },
-    "Opens a new conversation in Yorozu." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu で新しい会話を開きます。" } } } },
-    "A new conversation when left empty." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "空のままなら新しい会話になります。" } } } },
-    "Ask Yorozu ${message}" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu に「${message}」と聞く" } } } },
-    "Yorozu isn’t paired with a host yet. Open Yorozu to pair it." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu はまだホストとペアリングされていません。Yorozu を開いてペアリングしてください。" } } } },
-    "The agent couldn’t answer: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エージェントが回答できませんでした: %@" } } } },
-    "Search Yorozu" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu を検索" } } } },
-    "Finds conversations that mention something, with the lines that match." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ある内容に触れた会話を、該当する行とともに探します。" } } } },
-    "Search For" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索語" } } } },
-    "What should I look for?" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "何を探しますか？" } } } },
-    "Search Yorozu for ${query}" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu で「${query}」を検索" } } } },
-    "Nothing in Yorozu mentions “%@”." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu に「%@」についての会話はありません。" } } } },
-    "Show Conversations in Siri and Search" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "会話を Siri と検索に表示" } } } },
-    "Siri & Search" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Siri と検索" } } } },
-    "Siri and Spotlight can find conversations by their titles and recent messages. The index stays on this device and is removed when you unpair." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Siri と Spotlight は会話をタイトルと最近のメッセージから見つけられます。インデックスはこのデバイスにのみ保存され、ペアリングを解除すると削除されます。" } } } },
-    "Add a Device…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "デバイスを追加…" } } } },
-    "Add a Device" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "デバイスを追加" } } } },
-    "On the new iPhone, iPad or Mac, scan this code with the camera or in Yorozu, or open the link there." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しい iPhone、iPad、Mac で、カメラか Yorozu でこのコードを読み取るか、そこでリンクを開いてください。" } } } },
-    "Valid for %@, for one device." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "残り %@、1 台のデバイスに有効です。" } } } },
-    "This code has expired." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このコードは期限切れです。" } } } },
-    "New Code" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しいコード" } } } },
-    "Send the Link" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "リンクを送る" } } } },
-    "Host fingerprint" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストのフィンガープリント" } } } },
-    "The new device shows it before pairing. Pair only if they match." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しいデバイスにもペアリング前に表示されます。一致する場合のみペアリングしてください。" } } } },
-    "Couldn’t make a code" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "コードを作成できませんでした" } } } },
-    "Try Again" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "再試行" } } } },
-    "Asking the host for a code…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストにコードを要求しています…" } } } },
-    "Pairing code" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリングコード" } } } },
-    "Agent" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エージェント" } } } },
-    "OpenClaw" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "OpenClaw" } } } },
-    "Yorozu Plugin" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu プラグイン" } } } },
-    "Unknown device" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "不明なデバイス" } } } },
-    "This Device" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイス" } } } },
-    "Push off" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "プッシュオフ" } } } },
-    "Remove" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除" } } } },
-    "Remove…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除…" } } } },
-    "Paired Devices" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリング済みのデバイス" } } } },
-    "A removed device stops reaching the host at once and has to pair again." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除したデバイスはすぐにホストに接続できなくなり、再度ペアリングが必要です。" } } } },
-    "Allowed" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "許可" } } } },
-    "Remove this device?" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスを削除しますか？" } } } },
-    "It stops reaching the host and has to pair again." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストに接続できなくなり、再度ペアリングが必要です。" } } } },
-    "Removes this device from the host, and its keys and cached conversations from this device." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスをホストから削除し、このデバイスの鍵とキャッシュした会話を消去します。" } } } },
-    "Opens the conversation" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "会話を開きます" } } } },
-    "Automations" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自動化" } } } },
-    "No automations" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自動化はありません" } } } },
-    "Couldn’t read the automations: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自動化を読み込めませんでした: %@" } } } },
-    "To add or change an automation, use Edit in Chat: the agent makes the change." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "自動化の追加や変更は「チャットで編集」から。エージェントが変更します。" } } } },
-    "Start one with the compose button." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "作成ボタンで始めましょう。" } } } },
-    "Check that this host key matches the one `openclaw yorozu pair` printed.\n\nHost key: %@\nRelay: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このホストキーが `openclaw yorozu pair` の表示と一致することを確認してください。\n\nホストキー: %@\nリレー: %@" } } } },
-    "Couldn’t pair" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリングできませんでした" } } } },
-    "Couldn’t read this device’s pairing: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスのペアリングを読み込めませんでした: %@" } } } },
-    "Couldn’t save the pairing: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリングを保存できませんでした: %@" } } } },
-    "New Conversation" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しい会話" } } } },
-    "New conversation" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しい会話" } } } },
-    "No conversation selected" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "会話が選択されていません" } } } },
-    "No conversations yet" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "まだ会話はありません" } } } },
-    "Pair Again" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "もう一度ペアリング" } } } },
-    "Pair with this host?" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このホストとペアリングしますか？" } } } },
-    "Pairing link" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリングリンク" } } } },
-    "Pairing…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリング中…" } } } },
-    "Paste the `yorozu://pair…` link, or the https link the QR code opens." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "`yorozu://pair…` のリンク、または QR コードが開く https リンクを貼り付けてください。" } } } },
-    "Removed from the host" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストから削除されました" } } } },
-    "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスから鍵とキャッシュした会話を削除します。ホスト側からは `openclaw yorozu devices remove` で削除できます。" } } } },
-    "Run `openclaw yorozu pair` on the computer that runs your OpenClaw Gateway. It prints a QR code and a pairing link, valid for 10 minutes." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "OpenClaw Gateway が動いているコンピュータで `openclaw yorozu pair` を実行してください。10 分間有効な QR コードとペアリングリンクが表示されます。" } } } },
-    "Scan QR Code" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "QR コードをスキャン" } } } },
-    "Scan the QR code `openclaw yorozu pair` printed on your host." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストで `openclaw yorozu pair` が表示した QR コードをスキャンしてください。" } } } },
-    "The agent is typing" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エージェントが入力中" } } } },
-    "The agent run failed: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "エージェントの実行に失敗しました: %@" } } } },
-    "The host couldn’t handle this: %@" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストが処理できませんでした: %@" } } } },
-    "The host doesn’t know this device. Run `openclaw yorozu pair` again." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストはこのデバイスを認識していません。もう一度 `openclaw yorozu pair` を実行してください。" } } } },
-    "The host refused this pairing code. It may have expired or been used. Run `openclaw yorozu pair` again." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストがこのペアリングコードを拒否しました。期限切れか使用済みの可能性があります。もう一度 `openclaw yorozu pair` を実行してください。" } } } },
-    "The host removed this device. Pair again to keep chatting." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストがこのデバイスを削除しました。続けるにはもう一度ペアリングしてください。" } } } },
-    "The host speaks a newer version. Update Yorozu." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストが新しいバージョンです。Yorozu をアップデートしてください。" } } } },
-    "This isn’t a Yorozu pairing code. Run `openclaw yorozu pair` on the host and use the code it prints." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu のペアリングコードではありません。ホストで `openclaw yorozu pair` を実行し、表示されたコードを使ってください。" } } } },
-    "This pairing code can’t be used." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このペアリングコードは使用できません。" } } } },
-    "Typing…" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "入力中…" } } } },
-    "Unpair This Device" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスのペアリングを解除" } } } },
-    "Unpair this device?" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスのペアリングを解除しますか？" } } } },
-    "Your first message starts a new session on the host." : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "最初のメッセージでホストに新しいセッションが始まります。" } } } },
-    "^[%lld tool call](inflect: true)" : { "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ツール呼び出し %lld 件" } } } },
-    "Chats" : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "チャット" } }
-      }
+    "" : {
+
     },
-    "Couldn’t keep this for Yorozu. Try again." : {
+    "%@, %@" : {
       "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu に渡せませんでした。もう一度お試しください。" } }
-      }
-    },
-    "Yorozu sends this the next time it’s open." : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "次に Yorozu を開いたときに送信します。" } }
-      }
-    },
-    "Send to Yorozu" : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu に送る" } }
-      }
-    },
-    "Sending" : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "送信中" } }
-      }
-    },
-    "Waiting for connection" : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "接続を待っています" } }
-      }
-    },
-    "Delivered" : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "配信済み" } }
-      }
-    },
-    "Read" : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "既読" } }
-      }
-    },
-    "Not delivered" : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "未配信" } }
-      }
-    },
-    "You: %@" : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "あなた：%@" } }
-      }
-    },
-    "On" : {
-      "comment" : "Settings › Notifications: the permission state.",
-      "extractionState" : "manual",
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オン" } }
-      }
-    },
-    "Off" : {
-      "comment" : "Settings › Notifications: the permission state.",
-      "extractionState" : "manual",
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オフ" } }
-      }
-    },
-    "Not asked yet" : {
-      "comment" : "Settings › Notifications: the permission state.",
-      "extractionState" : "manual",
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "未確認" } }
-      }
-    },
-    "Sent" : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "送信" } }
-      }
-    },
-    "On the host, open Settings › Devices › Pair a Client Device and scan its QR code." : {
-      "localizations" : {
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストで「設定」›「デバイス」›「クライアント端末をペアリング」を開き、QRコードをスキャンしてください。" } }
-      }
-    },
-    "Camera access is off" : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "El acceso a la cámara está desactivado" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラへのアクセスがオフです" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라 접근이 꺼져 있습니다" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "相机访问已关闭" } }
-      }
-    },
-    "Allow camera access in Settings to scan, or enter the pairing code manually." : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permite el acceso a la cámara en Ajustes para escanear o introduce el código de emparejamiento manualmente." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スキャンするには「設定」でカメラへのアクセスを許可するか、ペアリングコードを手動で入力してください。" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "스캔하려면 설정에서 카메라 접근을 허용하거나 페어링 코드를 직접 입력하세요." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请在“设置”中允许访问相机以进行扫描，或手动输入配对码。" } }
-      }
-    },
-    "Open Settings" : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir Ajustes" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "設定を開く" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "설정 열기" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开设置" } }
-      }
-    },
-    "Camera access is restricted" : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "El acceso a la cámara está restringido" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラへのアクセスが制限されています" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라 접근이 제한되어 있습니다" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "相机访问受限" } }
-      }
-    },
-    "This device does not allow camera access. Enter the pairing code manually." : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Este dispositivo no permite el acceso a la cámara. Introduce el código de emparejamiento manualmente." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスではカメラへのアクセスが許可されていません。ペアリングコードを手動で入力してください。" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 기기에서는 카메라 접근이 허용되지 않습니다. 페어링 코드를 직접 입력하세요." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此设备不允许访问相机。请手动输入配对码。" } }
-      }
-    },
-    "Scanning unavailable" : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Escaneo no disponible" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スキャンを利用できません" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "스캔할 수 없습니다" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法扫描" } }
-      }
-    },
-    "This device cannot scan pairing codes. You can enter the code manually instead." : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Este dispositivo no puede escanear códigos de emparejamiento. Puedes introducir el código manualmente." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このデバイスではペアリングコードをスキャンできません。代わりにコードを手動で入力できます。" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 기기에서는 페어링 코드를 스캔할 수 없습니다. 대신 코드를 직접 입력할 수 있습니다." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此设备无法扫描配对码。你可以改为手动输入代码。" } }
-      }
-    },
-    "Waiting for camera access…" : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Esperando acceso a la cámara…" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラへのアクセス許可を待っています…" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라 접근 권한 대기 중…" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在等待相机访问权限…" } }
-      }
-    },
-    "Camera unavailable" : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cámara no disponible" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラを利用できません" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라를 사용할 수 없습니다" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "相机不可用" } }
-      }
-    },
-    "Try the camera again, or enter the pairing code manually." : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Vuelve a intentar usar la cámara o introduce el código de emparejamiento manualmente." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラをもう一度試すか、ペアリングコードを手動で入力してください。" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라를 다시 시도하거나 페어링 코드를 직접 입력하세요." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请重试相机，或手动输入配对码。" } }
-      }
-    },
-    "Try camera again" : {
-      "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Volver a intentar con la cámara" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "カメラを再試行" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "카메라 다시 시도" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试相机" } }
-      }
-    },
-    "Code copied" : {
-      "localizations" : {
-        "es" : {
+        "en" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Código copiado"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "コードをコピーしました"
+            "state" : "new",
+            "value" : "%1$@, %2$@"
           }
         }
       }
     },
-    "Scan pairing code" : {
+    "^[%@ tool call](inflect: true)" : {
+
+    },
+    "^[%lld tool call](inflect: true)" : {
       "localizations" : {
-          "es" : { "stringUnit" : { "state" : "translated", "value" : "Escanear código de emparejamiento" } },
-          "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリングコードをスキャン" } },
-          "ko" : { "stringUnit" : { "state" : "translated", "value" : "페어링 코드 스캔" } },
-          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "扫描配对码" } }
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ツール呼び出し %lld 件"
+          }
+        }
       }
     },
-    "Enter code manually" : {
+    "A new conversation when left empty." : {
       "localizations" : {
-          "es" : { "stringUnit" : { "state" : "translated", "value" : "Introducir código manualmente" } },
-          "ja" : { "stringUnit" : { "state" : "translated", "value" : "コードを手動入力" } },
-          "ko" : { "stringUnit" : { "state" : "translated", "value" : "코드 직접 입력" } },
-          "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "手动输入代码" } }
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空のままなら新しい会話になります。"
+          }
+        }
+      }
+    },
+    "A removed device stops reaching the host at once and has to pair again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除したデバイスはすぐにホストに接続できなくなり、再度ペアリングが必要です。"
+          }
+        }
+      }
+    },
+    "About Yorozu" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu について"
+          }
+        }
+      }
+    },
+    "Add a Device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デバイスを追加"
+          }
+        }
+      }
+    },
+    "Add a Device…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デバイスを追加…"
+          }
+        }
       }
     },
     "Add a note" : {
@@ -329,6 +102,184 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加备注"
+          }
+        }
+      }
+    },
+    "Agent" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェント"
+          }
+        }
+      }
+    },
+    "Allow camera access in Settings to scan, or enter the pairing code manually." : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permite el acceso a la cámara en Ajustes para escanear o introduce el código de emparejamiento manualmente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキャンするには「設定」でカメラへのアクセスを許可するか、ペアリングコードを手動で入力してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스캔하려면 설정에서 카메라 접근을 허용하거나 페어링 코드를 직접 입력하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在“设置”中允许访问相机以进行扫描，或手动输入配对码。"
+          }
+        }
+      }
+    },
+    "Allowed" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "許可"
+          }
+        }
+      }
+    },
+    "Archived" : {
+
+    },
+    "Ask Yorozu" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu に聞く"
+          }
+        }
+      }
+    },
+    "Ask Yorozu ${message}" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu に「${message}」と聞く"
+          }
+        }
+      }
+    },
+    "Asking the host for a code…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストにコードを要求しています…"
+          }
+        }
+      }
+    },
+    "Attach" : {
+
+    },
+    "Automations" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動化"
+          }
+        }
+      }
+    },
+    "Camera access is off" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El acceso a la cámara está desactivado"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カメラへのアクセスがオフです"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카메라 접근이 꺼져 있습니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相机访问已关闭"
+          }
+        }
+      }
+    },
+    "Camera access is restricted" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El acceso a la cámara está restringido"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カメラへのアクセスが制限されています"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카메라 접근이 제한되어 있습니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相机访问受限"
+          }
+        }
+      }
+    },
+    "Camera unavailable" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cámara no disponible"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カメラを利用できません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카메라를 사용할 수 없습니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相机不可用"
           }
         }
       }
@@ -362,6 +313,63 @@
         }
       }
     },
+    "Chats" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャット"
+          }
+        }
+      }
+    },
+    "Check for Updates…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アップデートを確認…"
+          }
+        }
+      }
+    },
+    "Check that this host key matches the one `openclaw yorozu pair` printed.\n\nHost key: %@\nRelay: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このホストキーが `openclaw yorozu pair` の表示と一致することを確認してください。\n\nホストキー: %@\nリレー: %@"
+          }
+        }
+      }
+    },
+    "ciphertext too short" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暗号化データが短すぎます"
+          }
+        }
+      }
+    },
+    "Code copied" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Código copiado"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードをコピーしました"
+          }
+        }
+      }
+    },
     "Connected" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -387,6 +395,44 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已连接"
+          }
+        }
+      }
+    },
+    "Connecting…" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conectando…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "연결 중…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在连接…"
+          }
+        }
+      }
+    },
+    "Conversation" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会話"
           }
         }
       }
@@ -449,6 +495,80 @@
         }
       }
     },
+    "Couldn’t keep this for Yorozu. Try again." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu に渡せませんでした。もう一度お試しください。"
+          }
+        }
+      }
+    },
+    "Couldn’t make a code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードを作成できませんでした"
+          }
+        }
+      }
+    },
+    "Couldn’t pair" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングできませんでした"
+          }
+        }
+      }
+    },
+    "Couldn’t read the automations: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動化を読み込めませんでした: %@"
+          }
+        }
+      }
+    },
+    "Couldn’t read this device’s pairing: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのペアリングを読み込めませんでした: %@"
+          }
+        }
+      }
+    },
+    "Couldn’t save the pairing: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングを保存できませんでした: %@"
+          }
+        }
+      }
+    },
+    "Delivered" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配信済み"
+          }
+        }
+      }
+    },
+    "Disabled" : {
+
+    },
     "Done" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -478,6 +598,181 @@
         }
       }
     },
+    "Edit in Chat" : {
+
+    },
+    "Enter code manually" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Introducir código manualmente"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードを手動入力"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드 직접 입력"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手动输入代码"
+          }
+        }
+      }
+    },
+    "Failed" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Falló"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "失敗"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실패"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "失败"
+          }
+        }
+      }
+    },
+    "Finds conversations that mention something, with the lines that match." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ある内容に触れた会話を、該当する行とともに探します。"
+          }
+        }
+      }
+    },
+    "Haptic for In-App Notices" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリ内通知の触覚フィードバック"
+          }
+        }
+      }
+    },
+    "Hidden" : {
+
+    },
+    "Host" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホスト"
+          }
+        }
+      }
+    },
+    "Host fingerprint" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストのフィンガープリント"
+          }
+        }
+      }
+    },
+    "Host key" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストの鍵"
+          }
+        }
+      }
+    },
+    "Host offline" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anfitrión sin conexión"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストはオフラインです"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "호스트가 오프라인 상태임"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主机已离线"
+          }
+        }
+      }
+    },
+    "It is deleted on the host and on every device, with its history." : {
+
+    },
+    "It stops reaching the host and has to pair again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストに接続できなくなり、再度ペアリングが必要です。"
+          }
+        }
+      }
+    },
+    "Jump to Latest" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最新のメッセージへ"
+          }
+        }
+      }
+    },
+    "Last run failed. Show the error" : {
+
+    },
+    "Last run skipped" : {
+
+    },
+    "Last run succeeded" : {
+
+    },
+    "Leave it empty to use the automatic title." : {
+
+    },
     "Message" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -503,6 +798,305 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "消息"
+          }
+        }
+      }
+    },
+    "Name" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名前"
+          }
+        }
+      }
+    },
+    "Needs attention" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要確認"
+          }
+        }
+      }
+    },
+    "New Code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいコード"
+          }
+        }
+      }
+    },
+    "New conversation" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい会話"
+          }
+        }
+      }
+    },
+    "New Conversation" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい会話"
+          }
+        }
+      }
+    },
+    "New session" : {
+
+    },
+    "Next run %@" : {
+
+    },
+    "No automations" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動化はありません"
+          }
+        }
+      }
+    },
+    "No conversation selected" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会話が選択されていません"
+          }
+        }
+      }
+    },
+    "No conversations yet" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだ会話はありません"
+          }
+        }
+      }
+    },
+    "not a Yorozu v1 pairing string" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu v1のペアリングコードではありません"
+          }
+        }
+      }
+    },
+    "Not asked yet" : {
+      "comment" : "Settings › Notifications: the permission state.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未確認"
+          }
+        }
+      }
+    },
+    "Not delivered" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未配信"
+          }
+        }
+      }
+    },
+    "Nothing in Yorozu mentions “%@”." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu に「%@」についての会話はありません。"
+          }
+        }
+      }
+    },
+    "Notifications" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通知"
+          }
+        }
+      }
+    },
+    "Off" : {
+      "comment" : "Settings › Notifications: the permission state.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフ"
+          }
+        }
+      }
+    },
+    "Offline" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sin conexión"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オフライン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "오프라인"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离线"
+          }
+        }
+      }
+    },
+    "On" : {
+      "comment" : "Settings › Notifications: the permission state.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "オン"
+          }
+        }
+      }
+    },
+    "On the host, open Settings › Devices › Pair a Client Device and scan its QR code." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストで「設定」›「デバイス」›「クライアント端末をペアリング」を開き、QRコードをスキャンしてください。"
+          }
+        }
+      }
+    },
+    "On the new iPhone, iPad or Mac, scan this code with the camera or in Yorozu, or open the link there." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい iPhone、iPad、Mac で、カメラか Yorozu でこのコードを読み取るか、そこでリンクを開いてください。"
+          }
+        }
+      }
+    },
+    "Open Conversation" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会話を開く"
+          }
+        }
+      }
+    },
+    "Open Notification Settings" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通知設定を開く"
+          }
+        }
+      }
+    },
+    "Open Settings" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir Ajustes"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定を開く"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 열기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开设置"
+          }
+        }
+      }
+    },
+    "OpenClaw" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw"
+          }
+        }
+      }
+    },
+    "Opens a conversation in Yorozu." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu で会話を開きます。"
+          }
+        }
+      }
+    },
+    "Opens a new conversation in Yorozu." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu で新しい会話を開きます。"
+          }
+        }
+      }
+    },
+    "Opens the conversation" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会話を開きます"
           }
         }
       }
@@ -536,6 +1130,26 @@
         }
       }
     },
+    "Pair Again" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "もう一度ペアリング"
+          }
+        }
+      }
+    },
+    "Pair with this host?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このホストとペアリングしますか？"
+          }
+        }
+      }
+    },
     "Pair with your host" : {
       "localizations" : {
         "es" : {
@@ -560,6 +1174,114 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "与主机配对"
+          }
+        }
+      }
+    },
+    "Paired" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Emparejado"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング済み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "페어링됨"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已配对"
+          }
+        }
+      }
+    },
+    "Paired Devices" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング済みのデバイス"
+          }
+        }
+      }
+    },
+    "Pairing code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングコード"
+          }
+        }
+      }
+    },
+    "Pairing link" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングリンク"
+          }
+        }
+      }
+    },
+    "Pairing…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング中…"
+          }
+        }
+      }
+    },
+    "Paste the `yorozu://pair…` link, or the https link the QR code opens." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "`yorozu://pair…` のリンク、または QR コードが開く https リンクを貼り付けてください。"
+          }
+        }
+      }
+    },
+    "Push from the Host" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストからのプッシュ"
+          }
+        }
+      }
+    },
+    "Push off" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "プッシュオフ"
+          }
+        }
+      }
+    },
+    "Read" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "既読"
           }
         }
       }
@@ -593,8 +1315,223 @@
         }
       }
     },
+    "Remove" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除"
+          }
+        }
+      }
+    },
+    "Remove %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ を削除"
+          }
+        }
+      }
+    },
+    "Remove this device?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスを削除しますか？"
+          }
+        }
+      }
+    },
+    "Remove…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "削除…"
+          }
+        }
+      }
+    },
+    "Removed from the host" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストから削除されました"
+          }
+        }
+      }
+    },
+    "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスから鍵とキャッシュした会話を削除します。ホスト側からは `openclaw yorozu devices remove` で削除できます。"
+          }
+        }
+      }
+    },
+    "Removes this device from the host, and its keys and cached conversations from this device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスをホストから削除し、このデバイスの鍵とキャッシュした会話を消去します。"
+          }
+        }
+      }
+    },
+    "Run `openclaw yorozu pair` on the computer that runs your OpenClaw Gateway. It prints a QR code and a pairing link, valid for 10 minutes." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw Gateway が動いているコンピュータで `openclaw yorozu pair` を実行してください。10 分間有効な QR コードとペアリングリンクが表示されます。"
+          }
+        }
+      }
+    },
+    "Running" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行中"
+          }
+        }
+      }
+    },
+    "Scan a code from a host you trust. Pairing codes are secret." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "信頼するホストのコードをスキャンしてください。ペアリングコードは他人に教えないでください。"
+          }
+        }
+      }
+    },
+    "Scan pairing code" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escanear código de emparejamiento"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリングコードをスキャン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "페어링 코드 스캔"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "扫描配对码"
+          }
+        }
+      }
+    },
+    "Scan QR Code" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR コードをスキャン"
+          }
+        }
+      }
+    },
+    "Scan the QR code `openclaw yorozu pair` printed on your host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストで `openclaw yorozu pair` が表示した QR コードをスキャンしてください。"
+          }
+        }
+      }
+    },
+    "Scanning unavailable" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escaneo no disponible"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキャンを利用できません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스캔할 수 없습니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法扫描"
+          }
+        }
+      }
+    },
+    "Search For" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検索語"
+          }
+        }
+      }
+    },
+    "Search Yorozu" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu を検索"
+          }
+        }
+      }
+    },
+    "Search Yorozu for ${query}" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu で「${query}」を検索"
+          }
+        }
+      }
+    },
+    "Select Text" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "テキストを選択"
+          }
+        }
+      }
+    },
     "Send" : {
-      "extractionState" : "stale",
       "localizations" : {
         "es" : {
           "stringUnit" : {
@@ -618,6 +1555,120 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "发送"
+          }
+        }
+      }
+    },
+    "Send the Link" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リンクを送る"
+          }
+        }
+      }
+    },
+    "Send to Yorozu" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu に送る"
+          }
+        }
+      }
+    },
+    "Sending" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信中"
+          }
+        }
+      }
+    },
+    "Sends a message to your agent and returns its reply." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントにメッセージを送り、その返信を返します。"
+          }
+        }
+      }
+    },
+    "Sent" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信"
+          }
+        }
+      }
+    },
+    "Sent. The reply will come as a notification." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信しました。返信は通知で届きます。"
+          }
+        }
+      }
+    },
+    "Settings" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定"
+          }
+        }
+      }
+    },
+    "Show Conversations in Siri and Search" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会話を Siri と検索に表示"
+          }
+        }
+      }
+    },
+    "Shown" : {
+
+    },
+    "Siri & Search" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Siri と検索"
+          }
+        }
+      }
+    },
+    "Siri and Spotlight can find conversations by their titles and recent messages. The index stays on this device and is removed when you unpair." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Siri と Spotlight は会話をタイトルと最近のメッセージから見つけられます。インデックスはこのデバイスにのみ保存され、ペアリングを解除すると削除されます。"
+          }
+        }
+      }
+    },
+    "Start one with the compose button." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作成ボタンで始めましょう。"
           }
         }
       }
@@ -651,6 +1702,288 @@
         }
       }
     },
+    "The agent couldn’t answer: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントが回答できませんでした: %@"
+          }
+        }
+      }
+    },
+    "The agent is typing" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントが入力中"
+          }
+        }
+      }
+    },
+    "The agent run failed: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エージェントの実行に失敗しました: %@"
+          }
+        }
+      }
+    },
+    "The host couldn’t handle this: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストが処理できませんでした: %@"
+          }
+        }
+      }
+    },
+    "The host doesn’t know this device. Run `openclaw yorozu pair` again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストはこのデバイスを認識していません。もう一度 `openclaw yorozu pair` を実行してください。"
+          }
+        }
+      }
+    },
+    "The host refused this pairing code. It may have expired or been used. Run `openclaw yorozu pair` again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストがこのペアリングコードを拒否しました。期限切れか使用済みの可能性があります。もう一度 `openclaw yorozu pair` を実行してください。"
+          }
+        }
+      }
+    },
+    "The host removed this device. Pair again to keep chatting." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストがこのデバイスを削除しました。続けるにはもう一度ペアリングしてください。"
+          }
+        }
+      }
+    },
+    "The host speaks a newer version. Update Yorozu." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストが新しいバージョンです。Yorozu をアップデートしてください。"
+          }
+        }
+      }
+    },
+    "The new device shows it before pairing. Pair only if they match." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいデバイスにもペアリング前に表示されます。一致する場合のみペアリングしてください。"
+          }
+        }
+      }
+    },
+    "This code has expired." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このコードは期限切れです。"
+          }
+        }
+      }
+    },
+    "This Device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイス"
+          }
+        }
+      }
+    },
+    "This device cannot scan pairing codes. You can enter the code manually instead." : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este dispositivo no puede escanear códigos de emparejamiento. Puedes introducir el código manualmente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスではペアリングコードをスキャンできません。代わりにコードを手動で入力できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 기기에서는 페어링 코드를 스캔할 수 없습니다. 대신 코드를 직접 입력할 수 있습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此设备无法扫描配对码。你可以改为手动输入代码。"
+          }
+        }
+      }
+    },
+    "This device does not allow camera access. Enter the pairing code manually." : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este dispositivo no permite el acceso a la cámara. Introduce el código de emparejamiento manualmente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスではカメラへのアクセスが許可されていません。ペアリングコードを手動で入力してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 기기에서는 카메라 접근이 허용되지 않습니다. 페어링 코드를 직접 입력하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此设备不允许访问相机。请手动输入配对码。"
+          }
+        }
+      }
+    },
+    "This isn’t a Yorozu pairing code. Run `openclaw yorozu pair` on the host and use the code it prints." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu のペアリングコードではありません。ホストで `openclaw yorozu pair` を実行し、表示されたコードを使ってください。"
+          }
+        }
+      }
+    },
+    "This pairing code can’t be used." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このペアリングコードは使用できません。"
+          }
+        }
+      }
+    },
+    "To add or change an automation, use Edit in Chat: the agent makes the change." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自動化の追加や変更は「チャットで編集」から。エージェントが変更します。"
+          }
+        }
+      }
+    },
+    "Try Again" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再試行"
+          }
+        }
+      }
+    },
+    "Try camera again" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volver a intentar con la cámara"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カメラを再試行"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카메라 다시 시도"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重试相机"
+          }
+        }
+      }
+    },
+    "Try the camera again, or enter the pairing code manually." : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vuelve a intentar usar la cámara o introduce el código de emparejamiento manualmente."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カメラをもう一度試すか、ペアリングコードを手動で入力してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카메라를 다시 시도하거나 페어링 코드를 직접 입력하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请重试相机，或手动输入配对码。"
+          }
+        }
+      }
+    },
+    "Typing…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "入力中…"
+          }
+        }
+      }
+    },
+    "Unknown device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不明なデバイス"
+          }
+        }
+      }
+    },
     "Unpair" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -676,6 +2009,134 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "取消配对"
+          }
+        }
+      }
+    },
+    "Unpair This Device" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのペアリングを解除"
+          }
+        }
+      }
+    },
+    "Unpair this device?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このデバイスのペアリングを解除しますか？"
+          }
+        }
+      }
+    },
+    "Unread" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未読"
+          }
+        }
+      }
+    },
+    "Update required" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新が必要"
+          }
+        }
+      }
+    },
+    "Update Yorozu on your iPhone and iPad too. Your conversations came along." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone と iPad の Yorozu もアップデートしてください。会話はそのまま引き継がれています。"
+          }
+        }
+      }
+    },
+    "Valid for %@, for one device." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "残り %@、1 台のデバイスに有効です。"
+          }
+        }
+      }
+    },
+    "Waiting for camera access…" : {
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esperando acceso a la cámara…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "カメラへのアクセス許可を待っています…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "카메라 접근 권한 대기 중…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待相机访问权限…"
+          }
+        }
+      }
+    },
+    "Waiting for connection" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続を待っています"
+          }
+        }
+      }
+    },
+    "What should I ask?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "何を聞きますか？"
+          }
+        }
+      }
+    },
+    "What should I look for?" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "何を探しますか？"
+          }
+        }
+      }
+    },
+    "While Yorozu is open, replies in other conversations show at the top of the screen instead of as notifications." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu を開いている間、ほかの会話への返信は通知ではなく画面上部に表示されます。"
           }
         }
       }
@@ -712,11 +2173,46 @@
       "comment" : "Push body: the relay's fixed loc-key.",
       "extractionState" : "manual",
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your host is back online." } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Tu anfitrión vuelve a estar en línea." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストがオンラインに戻りました。" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "호스트가 다시 온라인 상태입니다." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你的主机已重新上线。" } }
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your host is back online."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu anfitrión vuelve a estar en línea."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストがオンラインに戻りました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "호스트가 다시 온라인 상태입니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的主机已重新上线。"
+          }
+        }
+      }
+    },
+    "Yorozu isn’t paired with a host yet. Open Yorozu to pair it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu はまだホストとペアリングされていません。Yorozu を開いてペアリングしてください。"
+          }
+        }
       }
     },
     "Yorozu needs attention." : {
@@ -759,11 +2255,46 @@
       "comment" : "Push body: the relay's fixed loc-key.",
       "extractionState" : "manual",
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu has a question for you." } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu tiene una pregunta para ti." } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozuから質問があります。" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu가 질문을 보냈습니다." } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu 有个问题想问你。" } }
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu has a question for you."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu tiene una pregunta para ti."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuから質問があります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu가 질문을 보냈습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu 有个问题想问你。"
+          }
+        }
+      }
+    },
+    "Yorozu Plugin" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu プラグイン"
+          }
+        }
       }
     },
     "Yorozu replied." : {
@@ -796,192 +2327,42 @@
         }
       }
     },
-    "Failed" : {
+    "Yorozu sends this the next time it’s open." : {
       "localizations" : {
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Falló" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "失敗" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "실패" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "失败" } }
-      }
-    },
-    "Running": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "実行中"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "次に Yorozu を開いたときに送信します。"
           }
         }
       }
     },
-    "Host offline": {
-      "localizations": {
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Anfitrión sin conexión"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ホストはオフラインです"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "호스트가 오프라인 상태임"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "主机已离线"
+    "Yorozu was updated to 0.9" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu を 0.9 にアップデートしました"
           }
         }
       }
     },
-    "Connecting…": {
-      "localizations": {
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Conectando…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "接続中…"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "연결 중…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在连接…"
+    "You: %@" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "あなた：%@"
           }
         }
       }
     },
-    "Host": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ホスト"
-          }
-        }
-      }
-    },
-    "Offline": {
-      "localizations": {
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sin conexión"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "オフライン"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "오프라인"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "离线"
-          }
-        }
-      }
-    },
-    "Host key": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ホストの鍵"
-          }
-        }
-      }
-    },
-    "Paired": {
-      "localizations": {
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Emparejado"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ペアリング済み"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "페어링됨"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已配对"
-          }
-        }
-      }
-    },
-    "Update required": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更新が必要"
-          }
-        }
-      }
-    },
-    "Scan a code from a host you trust. Pairing codes are secret.": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "信頼するホストのコードをスキャンしてください。ペアリングコードは他人に教えないでください。"
-          }
-        }
-      }
-    },
-    "ciphertext too short": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "暗号化データが短すぎます"
-          }
-        }
-      }
-    },
-    "not a Yorozu v1 pairing string": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Yorozu v1のペアリングコードではありません"
+    "Your first message starts a new session on the host." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最初のメッセージでホストに新しいセッションが始まります。"
           }
         }
       }
