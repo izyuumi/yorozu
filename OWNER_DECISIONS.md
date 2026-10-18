@@ -51,6 +51,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - No push to a device while the app is in front on it, per device; a minimal pill at the top shows a reply in another conversation instead (tap opens it, swipe up or 3 s dismisses, the newest replaces it), with an optional light haptic, on by default. (2026-10-17)
 - Reading a conversation on any device removes its delivered notifications on the others: live over the socket, and through a silent `sync` push for devices whose app is closed. (2026-10-17)
 - Attachments both ways (`sendMedia`), 8 MB limit (OpenClaw's `mediaMaxMb` default), sealed chunks under the relay's 1 MiB frame limit. Share extension stays, with a preview of the picture or file being sent; PDFs show their first page (2026-10-17). No voice notes yet. (2026-10-15)
+- Pasting images into the chat input stages them as attachments. On iPhone and iPad, the composer's plus menu offers taking a photo in place. Keep the plus and text field close. (2026-10-19)
 
 ## Automations
 

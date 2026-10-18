@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 import YorozuWire
 #if os(macOS)
 import AppKit
+#else
+import UIKit
 #endif
 
 // Attachments in the chat (#430): the composer's + and staged files, and the files on messages and replies.
@@ -19,6 +21,7 @@ struct V3AttachMenu: View {
     @State private var photos: [PhotosPickerItem] = []
     @State private var choosingPhotos = false
     @State private var browsingFiles = false
+    @State private var takingPhoto = false
     @State private var loading = false
     @State private var failure: String?
 
@@ -26,13 +29,18 @@ struct V3AttachMenu: View {
         Menu {
             // A flag rather than a PhotosPicker in the menu: a picker inside a Menu never presents.
             Button(String(localized: "Photo Library"), systemImage: "photo.on.rectangle") { choosingPhotos = true }
+            #if os(iOS)
+            Button(String(localized: "Take Photo"), systemImage: "camera") { takingPhoto = true }
+                .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+            #endif
             Button(String(localized: "Files"), systemImage: "folder") { browsingFiles = true }
         } label: {
             Group {
                 if loading { ProgressView().controlSize(.small) } else { Image(systemName: "plus").font(.body.weight(.semibold)) }
             }
             .foregroundStyle(.secondary)
-            .frame(width: controlTarget, height: controlTarget)
+            .padding(.trailing, LayoutMetrics.tight)
+            .frame(width: controlTarget, height: controlTarget, alignment: .trailing)
             .contentShape(.rect)
         }
         .menuStyle(.button)
@@ -46,6 +54,15 @@ struct V3AttachMenu: View {
             guard case .success(let urls) = result else { return }
             stage(urls.map { url in { try AttachmentStaging.stage(file: url, limit: limit) } })
         }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $takingPhoto) {
+            CameraPicker { image in
+                guard let image, let data = image.jpegData(compressionQuality: 0.85) else { return }
+                stage([{ try AttachmentStaging.stage(image: data, name: "Photo", limit: limit) }])
+            }
+            .ignoresSafeArea()
+        }
+        #endif
         .onChange(of: photos) {
             let items = photos
             photos = []
@@ -83,6 +100,41 @@ struct V3AttachMenu: View {
         if !refused.isEmpty { failure = refused.joined(separator: "\n") }
     }
 }
+
+#if os(iOS)
+private struct CameraPicker: UIViewControllerRepresentable {
+    let onFinish: (UIImage?) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ picker: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onFinish: onFinish, dismiss: dismiss) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onFinish: (UIImage?) -> Void
+        let dismiss: DismissAction
+
+        init(onFinish: @escaping (UIImage?) -> Void, dismiss: DismissAction) {
+            self.onFinish = onFinish
+            self.dismiss = dismiss
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            onFinish(info[.originalImage] as? UIImage)
+            dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { dismiss() }
+    }
+}
+#endif
 
 /// Files waiting in the composer, each with a remove button.
 struct V3StagedFiles: View {

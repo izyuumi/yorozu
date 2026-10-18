@@ -50,6 +50,8 @@ Acceptance for this branch is compile plus manual checks (tests and CI are on ho
 
 ## Open items
 
+The current composer accepts pasted images as staged attachments and offers Camera beside Photo Library and Files on iPhone/iPad. The plus-to-text spacing is tighter. These are local client changes; not yet uploaded or distributed.
+
 | Item | Default until the owner decides |
 |---|---|
 | **`commands.ownerAllowFrom` += `"yorozu:owner"`** ([setup.md](setup.md#owner-only-tools)). Without it Yorozu turns lose owner-only tools, so "Edit in Chat" cannot change a cron job. | Not set: Yorozu turns are non-owner. |

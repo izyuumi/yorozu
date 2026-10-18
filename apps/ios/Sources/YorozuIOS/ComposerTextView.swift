@@ -3,7 +3,7 @@ import SwiftUI
 import UIKit
 #endif
 
-// The iOS half of v1 packages/shared-swift ComposerTextView.swift, without image paste, question
+// The iOS half of v1 packages/shared-swift ComposerTextView.swift, without question
 // options, prompt history and Send now.
 
 #if os(macOS)
@@ -17,6 +17,7 @@ struct ComposerTextView: NSViewRepresentable {
     let placeholder: String
     let onSubmit: () -> Void
     var onFiles: ([URL]) -> Bool = { _ in false }
+    var onImages: ([Data]) -> Bool = { _ in false }
 
     private static let maxLines: CGFloat = 5
 
@@ -49,6 +50,7 @@ struct ComposerTextView: NSViewRepresentable {
         context.coordinator.text = $text
         view.submit = onSubmit
         view.takeFiles = onFiles
+        view.takeImages = onImages
         if view.string != text, !view.hasMarkedText() {
             view.string = text
             view.needsDisplay = true
@@ -89,6 +91,7 @@ final class ComposerNSTextView: NSTextView {
     var placeholder = ""
     var submit: () -> Void = {}
     var takeFiles: ([URL]) -> Bool = { _ in false }
+    var takeImages: ([Data]) -> Bool = { _ in false }
 
     override func keyDown(with event: NSEvent) {
         // Return (36) or the keypad's Enter (76), outside an input method's composition.
@@ -109,7 +112,9 @@ final class ComposerNSTextView: NSTextView {
 
     private func take(_ pasteboard: NSPasteboard) -> Bool {
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        return !urls.isEmpty && takeFiles(urls)
+        if !urls.isEmpty { return takeFiles(urls) }
+        let images = pasteboard.pasteboardItems?.compactMap { $0.data(forType: .png) ?? $0.data(forType: .tiff) } ?? []
+        return !images.isEmpty && takeImages(images)
     }
 
     override func didChangeText() {
@@ -135,6 +140,7 @@ struct ComposerTextView: UIViewRepresentable {
     let onSubmit: () -> Void
     /// The Mac's file drop and paste; on iPhone and iPad a drop lands on the conversation instead.
     var onFiles: ([URL]) -> Bool = { _ in false }
+    var onImages: ([Data]) -> Bool = { _ in false }
 
     private static let maxLines: CGFloat = 5
     /// UTF-16 units past which the text cannot fit in `maxLines`.
@@ -175,6 +181,7 @@ struct ComposerTextView: UIViewRepresentable {
         view.placeholderLabel.text = placeholder
         view.placeholderLabel.isHidden = !text.isEmpty
         view.onSubmit = onSubmit
+        view.takeImages = onImages
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: ComposerUITextView, context: Context) -> CGSize? {
@@ -205,6 +212,12 @@ struct ComposerTextView: UIViewRepresentable {
 final class ComposerUITextView: UITextView {
     let placeholderLabel = UILabel()
     var onSubmit: () -> Void = {}
+    var takeImages: ([Data]) -> Bool = { _ in false }
+
+    override func paste(_ sender: Any?) {
+        let images = UIPasteboard.general.images?.compactMap { $0.jpegData(compressionQuality: 0.9) } ?? []
+        if images.isEmpty || !takeImages(images) { super.paste(sender) }
+    }
 
     /// Smart Enter on a hardware keyboard: Return sends while the draft is one line; once it has a
     /// line break (Shift-Return or a paste), Return is a new line and ⌘Return sends. Shift-Return is
