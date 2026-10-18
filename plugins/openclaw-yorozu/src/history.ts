@@ -256,6 +256,13 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
     const ts = timeOf(event, message);
     if (message.role === "user") {
       closeRun();
+      // OpenClaw's own user-role turns (a subagent's results, another session's message, a restart recovery) carry a
+      // provenance other than `external_user`: the agent reads them, but they are not the owner's words to show.
+      const provenance = obj(message.provenance)?.kind;
+      if (typeof provenance === "string" && provenance !== "external_user") {
+        lastUser = undefined;
+        return;
+      }
       const files = userFiles(message);
       const media = obj(message.__openclaw)?.media;
       const withMedia = Array.isArray(media) && media.length > 0;
