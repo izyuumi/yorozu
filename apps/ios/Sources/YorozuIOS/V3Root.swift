@@ -8,7 +8,10 @@ struct V3RootView: View {
 
     var body: some View {
         Group {
-            if model.paired {
+            // The App Review demo, while it runs, in place of whatever this device has.
+            if let demo = model.demo {
+                V3HomeView(model: demo)
+            } else if model.paired {
                 V3HomeView(model: model)
             } else {
                 V3PairingView(model: model)
@@ -37,8 +40,31 @@ struct V3RootView: View {
             }
         }
         // Only an active app has a conversation in the foreground (#431).
-        .onChange(of: scenePhase, initial: true) { _, phase in model.setActive(phase == .active) }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            model.setActive(phase == .active)
+            model.demo?.setActive(phase == .active)
+        }
         .yorozuTint()
+    }
+}
+
+extension View {
+    /// The App Review demo's badge in the navigation bar (OWNER_DECISIONS.md, App Review): no demo screen passes for a
+    /// real host's.
+    func demoBadge(_ model: V3Model) -> some View {
+        toolbar {
+            if model.isDemo {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Text("Demo")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, LayoutMetrics.inner)
+                        .padding(.vertical, LayoutMetrics.tight)
+                        .background(.tint, in: Capsule())
+                        .accessibilityLabel(Text("Demo mode"))
+                }
+            }
+        }
     }
 }
 
