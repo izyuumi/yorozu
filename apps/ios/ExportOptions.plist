@@ -10,8 +10,6 @@
 	<string>AN5KM8QGEF</string>
 	<key>signingStyle</key>
 	<string>automatic</string>
-	<key>testFlightInternalTestingOnly</key>
-	<true/>
 	<key>uploadSymbols</key>
 	<true/>
 	<key>manageAppVersionAndBuildNumber</key>
