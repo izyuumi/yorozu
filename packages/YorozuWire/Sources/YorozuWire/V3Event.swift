@@ -390,6 +390,12 @@ public struct V3HistoryItem: Codable, Equatable, Sendable {
         public var callId: String
         public var name: String
         public var status: V3Tool.Status
+
+        public init(callId: String, name: String, status: V3Tool.Status) {
+            self.callId = callId
+            self.name = name
+            self.status = status
+        }
     }
 
     public var kind: Kind
@@ -464,6 +470,14 @@ public struct V3DeviceInfo: Codable, Equatable, Sendable, Identifiable {
     public var pairedAt: Int64
     public var push: Bool
     public var current: Bool
+
+    public init(id: String, name: String? = nil, pairedAt: Int64, push: Bool, current: Bool) {
+        self.id = id
+        self.name = name
+        self.pairedAt = pairedAt
+        self.push = push
+        self.current = current
+    }
 }
 
 /// Client -> plugin: empty, a request. Plugin -> that client: `devices`, or `error`.
@@ -526,6 +540,11 @@ public struct V3CronJob: Codable, Equatable, Sendable, Identifiable {
         public var channel: String
         /// The conversation's `convId`.
         public var threadId: String
+
+        public init(channel: String, threadId: String) {
+            self.channel = channel
+            self.threadId = threadId
+        }
     }
 
     public var id: String
@@ -541,6 +560,20 @@ public struct V3CronJob: Codable, Equatable, Sendable, Identifiable {
     public var lastStatus: String?
     public var lastError: String?
     public var delivery: Delivery?
+
+    public init(id: String, name: String, enabled: Bool, schedule: JSONValue, scheduleText: String, nextRunAt: Int64? = nil,
+        lastRunAt: Int64? = nil, lastStatus: String? = nil, lastError: String? = nil, delivery: Delivery? = nil) {
+        self.id = id
+        self.name = name
+        self.enabled = enabled
+        self.schedule = schedule
+        self.scheduleText = scheduleText
+        self.nextRunAt = nextRunAt
+        self.lastRunAt = lastRunAt
+        self.lastStatus = lastStatus
+        self.lastError = lastError
+        self.delivery = delivery
+    }
 
     /// The conversation the job delivers into, if it is a well-formed Yorozu one.
     public var convId: String? { delivery.flatMap { $0.channel == "yorozu" && V3Event.isId($0.threadId) ? $0.threadId : nil } }
