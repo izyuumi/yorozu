@@ -43,11 +43,11 @@ Modelled on OpenClaw's iOS app (`~/openclaw/apps/ios`).
   - The review notes carry its pairing code and a scripted checklist of prompts with expected results.
   - The notes stay under 4000 bytes and live in `apps/ios/APP-REVIEW-NOTES.md`.
 - **Fallback: a fixture demo behind a code.**
-  - Entering `YOROZU-DEMO` in the pairing field, or scanning it as a QR, opens it. There is no visible button.
-  - It needs a `Transport` protocol seam in `V3Model`, which today holds a concrete `V3Connection`.
-  - `DemoTransport` runs on the device: a demo host, seeded conversations and scripted streamed replies.
-  - It stays isolated from real data: a Demo badge, real pairings hidden, nothing persisted, and Mac-only features disabled.
-  - Unlike OpenClaw, the code is documented in the review notes (guideline 2.3.1). The notes also state that demo mode stands in for a demo account (guideline 2.1(a)).
+  - Enter `YOROZU-DEMO` in the pairing field, or scan a QR containing that exact text. Surrounding whitespace is ignored; the code is case-sensitive. There is no visible entry button.
+  - The on-device demo has seeded conversations, tool rows, Automations and delayed, scripted whole replies. It runs no model and connects to no host.
+  - A Demo label identifies it. Sample changes stay in memory and vanish on **Exit Demo** in Settings; existing pairings are preserved. Files, uploads and real host or account actions are unavailable.
+  - Developers can launch with `--demo` to skip pairing, Keychain, networking, Mac migration and the updater. Use an isolated Mac developer bundle id ([setup](setup.md#try-demo-data-without-a-host)).
+  - The code and limitations are explicitly disclosed in [review notes](../apps/ios/APP-REVIEW-NOTES.md): this mode substitutes for a demo account. It does not establish that the live review host has been configured or checked.
 
 ### Update notice
 

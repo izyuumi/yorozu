@@ -10,6 +10,7 @@ struct V3RootView: View {
         Group {
             if model.paired {
                 V3HomeView(model: model)
+                    .id(model.isDemo)
             } else {
                 V3PairingView(model: model)
             }

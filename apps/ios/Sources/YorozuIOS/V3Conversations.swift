@@ -44,6 +44,12 @@ struct ConversationsView: View {
         let conversations = model.list
         // Only the sidebar selects: a stack's list selects in edit mode alone, so on iPhone each row is a button.
         return List(selection: showsCrons ? pane : nil) {
+            if model.isDemo {
+                Label(String(localized: "Demo"), systemImage: "play.rectangle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("demo.indicator")
+            }
             if let problem {
                 Section {
                     Label { Text(problem) } icon: {

@@ -1,6 +1,54 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Exit demo mode before checking for updates." : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデートを確認する前にデモを終了してください。" } } }
+    },
+    "Exit demo mode before pairing with a host.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストとペアリングする前にデモを終了してください。"
+          }
+        }
+      }
+    },
+    "Sample conversations and scripted replies. No host connection; changes disappear when you exit.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サンプルの会話と定型の返信です。ホストには接続しません。変更内容はデモを終了すると消えます。"
+          }
+        }
+      }
+    },
+    "Exit Demo": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デモを終了"
+          }
+        }
+      }
+    },
+    "Demo": {
+      "extractionState": "manual",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デモ"
+          }
+        }
+      }
+    },
     "" : {
 
     },

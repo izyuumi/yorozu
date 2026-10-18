@@ -1,6 +1,8 @@
 # Status
 
-As of 2026-10-17. The #415 tracker (Yorozu as an OpenClaw channel) is built: every child issue #416–#432 is merged and closed, and this rewrite of the docs is #433. The secretary system and the Mac host are deleted (#426); their last status is in [history/secretary-status.md](history/secretary-status.md).
+As of 2026-10-19. The #415 tracker (Yorozu as an OpenClaw channel) is built: every child issue #416–#432 is merged and closed, and this rewrite of the docs is #433. The secretary system and the Mac host are deleted (#426); their last status is in [history/secretary-status.md](history/secretary-status.md).
+
+**Offline demo** (2026-10-19): enter `YOROZU-DEMO` in the pairing field or scan that text; developer launches also accept `--demo`. English/Japanese conversations, tool rows, scripted replies and two sample automations run in memory. A small indicator appears in Chats; Settings has Exit Demo. Real pairing and cache stay separate; no demo uploads, host administration, notifications or Spotlight writes. Checked: Mac and iOS Simulator compile; simulator launch showed the seeded chat list and indicator; isolated Mac dev build launched. Full tap-through checks (send, background, exit, QR) remain unverified because the UI automation tools could not connect to the installed Xcode/native app surface. Review notes document the simulation; a live review host is still needed for full review access.
 
 **Release 0.9.0** (2026-10-17, `projectx` after #460), internal only: the owner's feedback on 0.8.0 (#456 Automations agent fix, #457 client polish, #458 Settings, in-app notices and read-synced notifications, #460 plugin manifest).
 - Relay: #447 merged on `main` and deployed with `wrangler deploy` (`notify.devices`, silent `sync`); `apps/relay` here refreshed from `main`.

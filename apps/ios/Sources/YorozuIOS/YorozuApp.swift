@@ -14,8 +14,9 @@ struct YorozuApp: App {
             V3RootView(model: delegate.model)
                 #if os(macOS)
                 // Sparkle and, once, the move from 0.5 (docs/upgrade-from-0.5.md).
-                .task {
-                    MacUpdates.start()
+                .task(id: delegate.model.isDemo) {
+                    guard !delegate.model.isDemo else { return }
+                    MacUpdates.start(model: delegate.model)
                     await MacMigrateFrom0_5.run(model: delegate.model)
                 }
                 // A window proposes no size: the least that holds the sidebar beside a chat.
@@ -27,7 +28,7 @@ struct YorozuApp: App {
             V3SettingsView(model: delegate.model)
                 .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
         }
-        .commands { MacAppCommands() }
+        .commands { MacAppCommands(model: delegate.model) }
         #endif
     }
 }

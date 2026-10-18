@@ -26,24 +26,39 @@ struct V3SettingsView: View {
 
     var body: some View {
         Form {
-            notifications
-            siri
-            host
-            if model.devicesAvailable { devices }
-            Section {
-                Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
-                    .disabled(!model.paired)
-            } footer: {
-                Text(model.devicesAvailable
-                    ? "Removes this device from the host, and its keys and cached conversations from this device."
-                    : "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
+            if model.isDemo {
+                Section {
+                    Label(String(localized: "Demo"), systemImage: "play.rectangle")
+                    Text("Sample conversations and scripted replies. No host connection; changes disappear when you exit.")
+                    Button(String(localized: "Exit Demo")) {
+                        onUnpair()
+                        model.exitDemo()
+                    }
+                    .accessibilityIdentifier("demo.exit")
+                }
+            } else {
+                notifications
+                siri
+                host
+                if model.devicesAvailable { devices }
+                Section {
+                    Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
+                        .disabled(!model.paired)
+                } footer: {
+                    Text(model.devicesAvailable
+                        ? "Removes this device from the host, and its keys and cached conversations from this device."
+                        : "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
+                }
             }
         }
         .formStyle(.grouped)
         .sheet(isPresented: $addingDevice) { AddDeviceSheet(model: model) }
         .task(id: model.state == .ready) { model.refreshDevices() }
         // Coming back from the system's notification settings.
-        .task(id: scenePhase) { permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
+        .task(id: scenePhase) {
+            guard !model.isDemo else { return }
+            permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        }
         .confirmationDialog(String(localized: "Remove this device?"),
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
             titleVisibility: .visible, presenting: removing) { device in

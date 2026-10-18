@@ -48,11 +48,11 @@ struct ConversationQuery: EntityStringQuery {
     @Dependency private var model: V3Model
 
     func entities(for identifiers: [String]) async throws -> [ConversationEntity] {
-        await MainActor.run { identifiers.compactMap { model.conversations[$0].map(ConversationEntity.init) } }
+        await MainActor.run { model.isDemo ? [] : identifiers.compactMap { model.conversations[$0].map(ConversationEntity.init) } }
     }
 
     func entities(matching string: String) async throws -> [ConversationEntity] {
-        await MainActor.run { model.search(string).map(ConversationEntity.init) }
+        await MainActor.run { model.isDemo ? [] : model.search(string).map(ConversationEntity.init) }
     }
 
     func suggestedEntities() async throws -> [ConversationEntity] {
@@ -61,7 +61,8 @@ struct ConversationQuery: EntityStringQuery {
 
     /// The list's conversations, newest first, archived ones left out.
     @MainActor private func recent() -> [ConversationEntity] {
-        model.conversations.values.filter { $0.archived != true }.sorted { $0.updatedAt > $1.updatedAt }
+        guard !model.isDemo else { return [] }
+        return model.conversations.values.filter { $0.archived != true }.sorted { $0.updatedAt > $1.updatedAt }
             .prefix(50).map(ConversationEntity.init)
     }
 }
@@ -104,7 +105,7 @@ struct OpenConversationIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         let id = conversation.id
-        await MainActor.run { model.requestedConversation = id }
+        await MainActor.run { if !model.isDemo { model.requestedConversation = id } }
         return .result()
     }
 }
@@ -117,7 +118,7 @@ struct NewConversationIntent: AppIntent {
     @Dependency private var model: V3Model
 
     func perform() async throws -> some IntentResult {
-        await MainActor.run { model.requestedConversation = V3Event.newId() }
+        await MainActor.run { if !model.isDemo { model.requestedConversation = V3Event.newId() } }
         return .result()
     }
 }
@@ -154,7 +155,7 @@ extension V3Model {
     /// Sends `text` (into a new conversation when `convId` is nil) and waits for the run's reply: the reply items that
     /// were not there before, once the agent has stopped typing. `pending` past `timeout`.
     func ask(_ text: String, in convId: String?, timeout: Duration = .seconds(25)) async throws -> AskOutcome {
-        guard pairing != nil else { throw IntentFailure.notPaired }
+        guard !isDemo, pairing != nil else { throw IntentFailure.notPaired }
         let convId = convId ?? V3Event.newId()
         let answers: (Conversation?) -> [ChatItem] = { $0?.items.filter { $0.kind == .agent || $0.kind == .error } ?? [] }
         let before = Set(answers(conversations[convId]).map(\.id))
@@ -185,7 +186,7 @@ struct SearchYorozuIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ReturnsValue<[ConversationEntity]> & ProvidesDialog {
         let query = query
-        let found = await MainActor.run { model.search(query).prefix(5).map(ConversationEntity.init) }
+        let found = await MainActor.run { model.isDemo ? [] : model.search(query).prefix(5).map(ConversationEntity.init) }
         guard !found.isEmpty else { return .result(value: [], dialog: "Nothing in Yorozu mentions “\(query)”.") }
         let answer = found.map { conversation in
             ([conversation.title] + conversation.lines(matching: query).suffix(3)).joined(separator: "\n")
@@ -237,7 +238,7 @@ final class SpotlightIndexer {
         while true {
             await sync()
             await withCheckedContinuation { done in
-                withObservationTracking { _ = model.conversations; _ = model.pairing } onChange: { done.resume() }
+                withObservationTracking { _ = model.conversations; _ = model.pairing; _ = model.isDemo } onChange: { done.resume() }
             }
             // A burst of history pages or a streamed reply, indexed once.
             try? await Task.sleep(for: .seconds(2))
@@ -245,6 +246,8 @@ final class SpotlightIndexer {
     }
 
     func sync() async {
+        // Keep the real index untouched while the in-memory sample conversations are visible.
+        guard !model.isDemo else { return }
         guard Self.enabled, model.pairing != nil else {
             if indexed != [:] { try? await index.deleteAllSearchableItems() }
             indexed = [:]

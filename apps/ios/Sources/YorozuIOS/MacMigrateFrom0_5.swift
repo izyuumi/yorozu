@@ -19,14 +19,15 @@ enum MacMigrateFrom0_5 {
 
     static func run(model: V3Model) async {
         let defaults = UserDefaults.standard
-        guard !running, !defaults.bool(forKey: doneKey) else { return }
+        guard !model.isDemo, !running, !defaults.bool(forKey: doneKey) else { return }
         running = true
         defer { running = false }
         guard installedFrom0_5 else { defaults.set(true, forKey: doneKey); return }
         log.notice("0.5 install found: migrating")
         removeWatchdog()
-        guard await reloadPlugin() else { return }
+        guard await reloadPlugin(model: model), !model.isDemo, !Task.isCancelled else { return }
         if model.pairing == nil, !(await pairThisMac(model: model)) { return }
+        guard !model.isDemo, !Task.isCancelled else { return }
         defaults.set(true, forKey: doneKey)
         nudgeIPhone()
         log.notice("migration from 0.5 done")
@@ -48,14 +49,17 @@ enum MacMigrateFrom0_5 {
 
     /// The Gateway keeps running 0.5's plugin from memory until a reload. 0.9's channel schema rejects `socketPath`, which
     /// would stop the next Gateway start, so it goes first. The CLI has the admin scope the app lacks.
-    private static func reloadPlugin() async -> Bool {
+    private static func reloadPlugin(model: V3Model) async -> Bool {
+        guard !model.isDemo, !Task.isCancelled else { return false }
         guard let openclaw = Shell.find("openclaw") else {
             log.error("openclaw not found: the Gateway keeps 0.5's plugin until it restarts")
             return false
         }
         // Fails when the key is not set, which is the usual case.
         _ = await Shell.run(openclaw, ["config", "unset", "channels.yorozu.socketPath"])
+        guard !model.isDemo, !Task.isCancelled else { return false }
         let reload = await Shell.run(openclaw, ["plugins", "reload", "yorozu", "--accept-capabilities", "--json"])
+        guard !model.isDemo, !Task.isCancelled else { return false }
         if reload.status == 0, reload.output.range(of: #""restartRequired"\s*:\s*true"#, options: .regularExpression) == nil {
             return true
         }
@@ -70,7 +74,9 @@ enum MacMigrateFrom0_5 {
     private static func pairThisMac(model: V3Model) async -> Bool {
         guard let openclaw = Shell.find("openclaw") else { return false }
         for _ in 0..<10 {
+            guard !model.isDemo, !Task.isCancelled else { return false }
             let pair = await Shell.run(openclaw, ["yorozu", "pair"])
+            guard !model.isDemo, !Task.isCancelled else { return false }
             if pair.status == 0, let range = pair.output.range(of: #"yorozu://pair\S+"#, options: .regularExpression),
                model.submit(String(pair.output[range])) == nil, let payload = model.pendingPairing {
                 model.confirm(payload)
