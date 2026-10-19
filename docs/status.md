@@ -6,7 +6,7 @@ As of 2026-10-19. The #415 tracker (Yorozu as an OpenClaw channel) is built: eve
 
 **Release 0.9.0** (2026-10-17, `projectx` after #460), internal only: the owner's feedback on 0.8.0 (#456 Automations agent fix, #457 client polish, #458 Settings, in-app notices and read-synced notifications, #460 plugin manifest).
 
-**Minimal launch screen (2026-10-19, Internal TestFlight build 18):** iOS displays the existing Yorozu icon centered on the system background while the app launches, without a timed delay. PR #477 merged; iOS compile passed and the built app contains `LaunchScreen.storyboardc`. Apple reports build 18 `VALID` and `IN_BETA_TESTING`; external beta remains `READY_FOR_BETA_SUBMISSION`. Physical-device visual acceptance remains unverified.
+**Minimal launch screen (2026-10-19, Internal TestFlight build 19):** build 18 used the full app icon. After owner correction, PR #479 replaced it with the inner oval mark composed from the icon's original SVG layers, with separate light/dark assets and the adaptive system background. No timed delay. iOS compile passed; the compiled asset catalog contains both appearances. Apple reports build 19 `VALID` and `IN_BETA_TESTING`; external beta remains `READY_FOR_BETA_SUBMISSION`. Physical-device visual acceptance remains unverified.
 
 **Composer correction (2026-10-19, Internal TestFlight build 16):** the plus stays put while the textarea starts closer to it. iOS paste accepts image and file clipboard providers into the existing attachment staging path; Mac file/image paste remains supported. Build 16 is valid and in Internal TestFlight; no external or public distribution. Physical paste and visual acceptance remain unverified.
 
