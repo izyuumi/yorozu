@@ -2,7 +2,8 @@ import Foundation
 
 /// The share extension and the app, through the App Group (#430). The extension holds no pairing, keys or socket (v1's
 /// design): it only writes. Each share is a folder with `share.json` and at most one file; the app sends it into the
-/// chosen conversation (or a new one) through its outbox, the next time it is open, and removes it. The app keeps a
+/// chosen conversation (or a new one) through its outbox, the next time it is open. The share stays until the host
+/// acknowledges delivery, so a suspended app or lost socket can import it again with the same message ID. The app keeps a
 /// short list of its conversations here, newest first, for the extension's picker. Everything is written with Data
 /// Protection `complete`.
 enum ShareInbox {
@@ -40,7 +41,7 @@ enum ShareInbox {
     /// Writes one share; `file` is copied in (the extension's own copy goes when it ends).
     static func write(text: String, file: URL?, convId: String?) throws {
         guard let directory else { throw CocoaError(.fileNoSuchFile) }
-        let folder = directory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let folder = directory.appending(path: UUID().uuidString.lowercased(), directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         if let file { try FileManager.default.copyItem(at: file, to: folder.appending(path: file.lastPathComponent)) }
         try JSONEncoder().encode(Share(text: text, fileName: file?.lastPathComponent, convId: convId))
@@ -55,6 +56,15 @@ enum ShareInbox {
             return ((try? folder.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast, share, folder)
         }
         return dated.sorted { $0.0 < $1.0 }.map { ($0.1, $0.2) }
+    }
+
+    /// Only a host `delivered` or `run_started` acknowledgement retires a share. Old folders used uppercase UUIDs.
+    static func finish(messageId: String) {
+        guard let directory, UUID(uuidString: messageId) != nil else { return }
+        let folder = directory.appending(path: messageId, directoryHint: .isDirectory)
+        let legacy = directory.appending(path: messageId.uppercased(), directoryHint: .isDirectory)
+        try? FileManager.default.removeItem(at: folder)
+        if legacy != folder { try? FileManager.default.removeItem(at: legacy) }
     }
 
     struct Directory: Codable {

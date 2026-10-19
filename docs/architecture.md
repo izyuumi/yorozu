@@ -53,7 +53,7 @@ A cron job with `delivery: {channel: "yorozu", to: "owner", threadId: <convId>}`
 - **Titles, rename, archive, delete**: after a conversation's first turn the plugin asks OpenClaw's title generator (`generateConversationLabel`, on the agent's `utilityModel`) and writes the session's `displayName`; a rename sets `label`, which wins. Archive sets `archivedAt`; delete archives the transcript as `sessions.delete` does. Every change, from any device or the Gateway, reaches every device as `conv_update`.
 - **Read marks**: one forward-only cursor per conversation in the plugin's state, merged from any device and sent to all; unread badges count agent replies after it. Mark as Unread is a flag on the cursor.
 - **Crons tab**: `cron_list` returns every job of the configured agent, read from the cron store. Yorozu makes no admin calls: "Edit in Chat" opens a conversation with a draft for the agent, which edits the job with its own cron tool.
-- **Attachments**: files both ways up to `mediaMaxMb` (8 MB), in 160 KiB sealed chunks. Uploads land in OpenClaw's media store and reach the turn as media; a reply's `MEDIA:` files are announced and downloaded by each device on request. The share extension hands a share to the app, which sends it.
+- **Attachments**: files both ways up to `mediaMaxMb` (8 MB), in 160 KiB sealed chunks. Uploads land in OpenClaw's media store and reach the turn as media; a reply's `MEDIA:` files are announced and downloaded by each device on request. The share extension hands a share to the app, which keeps the App Group copy until host `delivered` or `run_started`. Its folder ID supplies retry-stable message and new-conversation IDs; host-list reconciliation preserves undelivered local messages.
 
 ## Data on each side
 
