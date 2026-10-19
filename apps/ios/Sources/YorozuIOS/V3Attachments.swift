@@ -39,7 +39,8 @@ struct V3AttachMenu: View {
                 if loading { ProgressView().controlSize(.small) } else { Image(systemName: "plus").font(.body.weight(.semibold)) }
             }
             .foregroundStyle(.secondary)
-            .padding(.trailing, LayoutMetrics.tight)
+            // The field uses an 8-point leading inset into this target. Keep the glyph left of that inset.
+            .padding(.trailing, LayoutMetrics.stack)
             .frame(width: controlTarget, height: controlTarget, alignment: .trailing)
             .contentShape(.rect)
         }

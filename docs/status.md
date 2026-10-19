@@ -8,6 +8,8 @@ As of 2026-10-19. The #415 tracker (Yorozu as an OpenClaw channel) is built: eve
 
 **Composer correction (2026-10-19, Internal TestFlight build 16):** the plus stays put while the textarea starts closer to it. iOS paste accepts image and file clipboard providers into the existing attachment staging path; Mac file/image paste remains supported. Build 16 is valid and in Internal TestFlight; no external or public distribution. Physical paste and visual acceptance remain unverified.
 
+**Composer clearance follow-up (2026-10-19, pending build):** build 16's negative textarea inset brought text into the plus glyph. Move the glyph left inside its existing tap target; preserve the tight inset without visual overlap. Build 16 does not contain this correction.
+
 **Share handoff correction (2026-10-19, Internal TestFlight build 15):** a share stays in the App Group until the host acknowledges delivery. Reopening or reconnecting cannot prune a conversation with an undelivered local message merely because the host's list has not caught up. The share folder supplies stable message and new-conversation identities across retries.
 - Relay: #447 merged on `main` and deployed with `wrangler deploy` (`notify.devices`, silent `sync`); `apps/relay` here refreshed from `main`.
 - Gateway: the plugin now loads from the main checkout (`plugins.load.paths`; the old load path from a Codex worktree removed), Gateway restarted; the channel is running and registered at the relay with the same room, so pairings carry over.
