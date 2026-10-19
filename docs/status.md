@@ -6,7 +6,9 @@ As of 2026-10-19. The #415 tracker (Yorozu as an OpenClaw channel) is built: eve
 
 **Release 0.9.0** (2026-10-17, `projectx` after #460), internal only: the owner's feedback on 0.8.0 (#456 Automations agent fix, #457 client polish, #458 Settings, in-app notices and read-synced notifications, #460 plugin manifest).
 
-**Share handoff correction (2026-10-19, pending internal TestFlight upload):** a share stays in the App Group until the host acknowledges delivery. Reopening or reconnecting cannot prune a conversation with an undelivered local message merely because the host's list has not caught up. The share folder supplies stable message and new-conversation identities across retries.
+**Composer correction (2026-10-19, source only):** the plus stays put while the textarea starts closer to it. iOS paste accepts image and file clipboard providers into the existing attachment staging path; Mac file/image paste remains supported. No new binary upload from this change yet.
+
+**Share handoff correction (2026-10-19, Internal TestFlight build 15):** a share stays in the App Group until the host acknowledges delivery. Reopening or reconnecting cannot prune a conversation with an undelivered local message merely because the host's list has not caught up. The share folder supplies stable message and new-conversation identities across retries.
 - Relay: #447 merged on `main` and deployed with `wrangler deploy` (`notify.devices`, silent `sync`); `apps/relay` here refreshed from `main`.
 - Gateway: the plugin now loads from the main checkout (`plugins.load.paths`; the old load path from a Codex worktree removed), Gateway restarted; the channel is running and registered at the relay with the same room, so pairings carry over.
 - Mac: `/Applications/Yorozu.app` 0.9.0 (1) rebuilt in place with `build_native.sh --restart`.

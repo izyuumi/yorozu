@@ -1135,3 +1135,5 @@ Source: direct owner message.
 - Paste images into the chat input as attachments.
 - On iPhone and iPad, the plus menu offers taking a photo in place.
 - Reduce space between the plus sign and the text area.
+
+Correction from owner, 2026-10-19 09:15 JST: Keep plus button in place; bring textarea toward it. Paste files as well as images directly into chat input.

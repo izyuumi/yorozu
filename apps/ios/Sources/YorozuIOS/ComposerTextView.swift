@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -18,6 +19,7 @@ struct ComposerTextView: NSViewRepresentable {
     let onSubmit: () -> Void
     var onFiles: ([URL]) -> Bool = { _ in false }
     var onImages: ([Data]) -> Bool = { _ in false }
+    var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
 
     private static let maxLines: CGFloat = 5
 
@@ -138,9 +140,10 @@ struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let placeholder: String
     let onSubmit: () -> Void
-    /// The Mac's file drop and paste; on iPhone and iPad a drop lands on the conversation instead.
+    /// Files pasted into the field; on iPhone and iPad a drop also lands on the conversation.
     var onFiles: ([URL]) -> Bool = { _ in false }
     var onImages: ([Data]) -> Bool = { _ in false }
+    var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
 
     private static let maxLines: CGFloat = 5
     /// UTF-16 units past which the text cannot fit in `maxLines`.
@@ -181,7 +184,9 @@ struct ComposerTextView: UIViewRepresentable {
         view.placeholderLabel.text = placeholder
         view.placeholderLabel.isHidden = !text.isEmpty
         view.onSubmit = onSubmit
+        view.takeFiles = onFiles
         view.takeImages = onImages
+        view.takeData = onPasteData
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: ComposerUITextView, context: Context) -> CGSize? {
@@ -212,11 +217,47 @@ struct ComposerTextView: UIViewRepresentable {
 final class ComposerUITextView: UITextView {
     let placeholderLabel = UILabel()
     var onSubmit: () -> Void = {}
+    var takeFiles: ([URL]) -> Bool = { _ in false }
     var takeImages: ([Data]) -> Bool = { _ in false }
+    var takeData: (Data, String, String) -> Bool = { _, _, _ in false }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)), UIPasteboard.general.hasImages || UIPasteboard.general.hasURLs
+            || UIPasteboard.general.itemProviders.contains(where: { Self.fileType(in: $0) != nil }) { return true }
+        return super.canPerformAction(action, withSender: sender)
+    }
 
     override func paste(_ sender: Any?) {
-        let images = UIPasteboard.general.images?.compactMap { $0.jpegData(compressionQuality: 0.9) } ?? []
-        if images.isEmpty || !takeImages(images) { super.paste(sender) }
+        let board = UIPasteboard.general
+        let urls = board.urls?.filter(\.isFileURL) ?? []
+        if !urls.isEmpty, takeFiles(urls) { return }
+        let images = board.images?.compactMap { $0.jpegData(compressionQuality: 0.9) } ?? []
+        if !images.isEmpty, takeImages(images) { return }
+        var loading = false
+        for provider in board.itemProviders {
+            guard let type = Self.fileType(in: provider) else { continue }
+            loading = true
+            let name = provider.suggestedName ?? "Pasted file"
+            provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { [weak self] data, _ in
+                guard let data else { return }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if type.conforms(to: .image) { _ = self.takeImages([data]) }
+                    else {
+                        let fileName = (name as NSString).pathExtension.isEmpty
+                            ? "\(name).\(type.preferredFilenameExtension ?? "bin")" : name
+                        _ = self.takeData(data, fileName, type.preferredMIMEType ?? "application/octet-stream")
+                    }
+                }
+            }
+        }
+        if !loading { super.paste(sender) }
+    }
+
+    private static func fileType(in provider: NSItemProvider) -> UTType? {
+        provider.registeredTypeIdentifiers.compactMap(UTType.init).first {
+            $0.conforms(to: .data) && !$0.conforms(to: .text) && !$0.conforms(to: .url)
+        }
     }
 
     /// Smart Enter on a hardware keyboard: Return sends while the draft is one line; once it has a

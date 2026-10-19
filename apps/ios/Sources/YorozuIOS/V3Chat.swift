@@ -97,7 +97,7 @@ struct V3ChatView: View {
         }
         .yorozuBottomBar {
             V3Composer(text: $draft, files: $files, automation: $automation, attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
-                onFiles: attach, onImages: attachImages) {
+                onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
                 model.send(Self.message(draft, automation: automation), attachments: files, in: convId)
                 draft = ""
                 files = []
@@ -150,6 +150,14 @@ extension V3ChatView {
             catch { refused.append(error.localizedDescription) }
         }
         if !refused.isEmpty { dropFailure = refused.joined(separator: "\n") }
+        return true
+    }
+
+    @discardableResult
+    private func attachPasteData(_ data: Data, name: String, mime: String) -> Bool {
+        guard model.attachmentsAvailable else { return false }
+        do { files.append(try AttachmentStaging.stage(data: data, name: name, mime: mime, limit: model.mediaMaxBytes)) }
+        catch { dropFailure = error.localizedDescription }
         return true
     }
 
@@ -381,6 +389,7 @@ private struct V3Composer: View {
     /// Files pasted or dropped onto the field.
     let onFiles: ([URL]) -> Bool
     let onImages: ([Data]) -> Bool
+    let onPasteData: (Data, String, String) -> Bool
     let onSend: () -> Void
 
     /// The send circle inside the ``controlTarget``-tall row; smaller, so the fill reads as a button.
@@ -410,9 +419,11 @@ private struct V3Composer: View {
             if let attachLimit {
                 V3AttachMenu(limit: attachLimit) { files.append(contentsOf: $0) }
             }
-            ComposerTextView(text: $text, placeholder: String(localized: "Message"), onSubmit: send, onFiles: onFiles, onImages: onImages)
+            ComposerTextView(text: $text, placeholder: String(localized: "Message"), onSubmit: send, onFiles: onFiles, onImages: onImages,
+                onPasteData: onPasteData)
                 // Room above and below the text, inside the glass; right up to the + on the left (owner, 2026-10-17).
                 .padding(.vertical, LayoutMetrics.inner)
+                .padding(.leading, attachLimit == nil ? 0 : -LayoutMetrics.inner)
                 .frame(minHeight: controlTarget)
                 .accessibilityIdentifier("composer.text")
             Button(action: send) {
