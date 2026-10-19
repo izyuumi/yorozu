@@ -66,7 +66,7 @@ let project = Project(
                 "SUAutomaticallyUpdate": true,
                 "SUAllowsAutomaticUpdates": true,
                 "SUScheduledCheckInterval": 3600,
-                "UILaunchScreen": [:],
+                "UILaunchStoryboardName": "LaunchScreen",
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
                 // The Mac's app menu and Dock name, rather than the target's.
@@ -89,6 +89,7 @@ let project = Project(
             sources: ["Sources/YorozuIOS/**", "Sources/Shared/**", "Sources/Client/**", "Sources/ShareInbox/**"],
             resources: [
                 "Resources/AppIcon.icon",
+                "Resources/LaunchScreen.storyboard",
                 "Resources/Assets.xcassets",
                 // Siri phrases for the App Shortcuts (YorozuIntents.swift), in Japanese.
                 "Resources/AppShortcuts.xcstrings",
