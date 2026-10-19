@@ -1137,3 +1137,5 @@ Source: direct owner message.
 - Reduce space between the plus sign and the text area.
 
 Correction from owner, 2026-10-19 09:15 JST: Keep plus button in place; bring textarea toward it. Paste files as well as images directly into chat input.
+
+Further correction, 2026-10-19 09:31 JST: plus glyph still too far right and now overlaps textarea. Move glyph left, leaving clear visual separation; keep full tap target.
