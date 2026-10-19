@@ -1139,3 +1139,8 @@ Source: direct owner message.
 Correction from owner, 2026-10-19 09:15 JST: Keep plus button in place; bring textarea toward it. Paste files as well as images directly into chat input.
 
 Further correction, 2026-10-19 09:31 JST: plus glyph still too far right and now overlaps textarea. Move glyph left, leaving clear visual separation; keep full tap target.
+
+## 2026-10-19 — iOS launch mark correction
+Source: direct owner message at 10:27 JST, after internal build 18.
+
+Use the oval mark inside the app icon for the splash, not the full icon; make it respond to light and dark appearance.

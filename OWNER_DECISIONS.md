@@ -61,6 +61,8 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 
 ## Client UX
 
+- The iOS launch screen shows the oval mark inside the app icon, not the full square icon; the mark and background respond to light and dark appearance. No timed splash delay. (2026-10-19)
+
 - Settings: a gear at the top left of the chat list opens it as a sheet; on the Mac it is the Settings window (⌘,). It shows this device's notification permission, the host (name, agent, OpenClaw and plugin versions, relay, key), the paired devices, and Unpair. From it the owner can turn push from the host on or off for this device and remove other devices; these are the only admin calls Yorozu makes. Unpair also removes this device on the host. (2026-10-17)
 - In a conversation: a message's context menu has Copy and Select Text (a sheet to select any part); a small glass circle with a down arrow at the bottom centre appears while the newest message is out of view and scrolls back to it; the composer grows to five lines, then scrolls with the caret in view. (2026-10-17) Dragging the timeline left slides every message over and shows its time at the trailing edge, as in Messages; it springs back on release (iPhone and iPad). (2026-10-18)
 - Inside a conversation the iPhone's tab bar hides. Chats and Automations use inline titles. A conversation row's preview is one line. (2026-10-17)
