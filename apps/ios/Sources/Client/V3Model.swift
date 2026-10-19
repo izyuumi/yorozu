@@ -466,11 +466,11 @@ final class V3Model {
 
     /// A new message in `convId`; a conversation that does not exist yet starts with it ("+" makes the id).
     /// `attachments` are already in `AttachmentFiles` (`AttachmentStaging`); they upload before the message goes.
-    func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String) {
+    func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String, messageId: String = V3Event.newId()) {
         guard !isDemo || attachments.isEmpty else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !attachments.isEmpty, V3Event.isId(convId) else { return }
-        let item = ChatItem(id: V3Event.newId(), kind: .user, text: text, ts: Self.now, status: .queued,
+        guard !text.isEmpty || !attachments.isEmpty, V3Event.isId(convId), V3Event.isId(messageId) else { return }
+        let item = ChatItem(id: messageId, kind: .user, text: text, ts: Self.now, status: .queued,
             attachments: attachments.isEmpty ? nil : attachments)
         append(item, to: convId)
         pumpOutbox(resend: false)
@@ -547,8 +547,10 @@ final class V3Model {
         switch event {
         case .delivered(let ref):
             mark(ref.messageId, .delivered, in: ref.convId)
+            ShareInbox.finish(messageId: ref.messageId)
         case .runStarted(let ref):
             mark(ref.messageId, .read, in: ref.convId)
+            ShareInbox.finish(messageId: ref.messageId)
             setTyping(ref.convId, true)
         case .typing(let t):
             setTyping(t.convId, t.active)
@@ -592,7 +594,8 @@ final class V3Model {
             // message the host may not have recorded yet has neither and stays. Not when the list may be cut at 2000.
             let listed = Set(summaries.map(\.convId))
             if summaries.count < 2000 {
-                for gone in conversations.values where !listed.contains(gone.id) && (gone.rev != nil || gone.items.isEmpty) {
+                for gone in conversations.values where !listed.contains(gone.id) && (gone.rev != nil || gone.items.isEmpty)
+                    && !gone.items.contains(where: { $0.kind == .user && ($0.status ?? .queued) < .delivered }) {
                     forget(gone.id)
                 }
             }
@@ -844,17 +847,29 @@ final class V3Model {
     func takeShares() {
         guard !isDemo, paired else { return }
         for (share, folder) in ShareInbox.pending() {
-            let convId = share.convId.flatMap { V3Event.isId($0) ? $0 : nil } ?? V3Event.newId()
+            let messageId = folder.lastPathComponent.lowercased()
+            guard V3Event.isId(messageId) else { continue }
+            if let existing = conversations.values.flatMap(\.items).first(where: { $0.id == messageId && $0.kind == .user }) {
+                if (existing.status ?? .queued) >= .delivered { ShareInbox.finish(messageId: messageId) }
+                else { pumpOutbox(resend: state == .ready) }
+                continue
+            }
+            // An unchosen conversation also needs a stable identity when the app retries this share.
+            let convId = share.convId.flatMap { V3Event.isId($0) && conversations[$0] != nil ? $0 : nil } ?? messageId
             var files: [ChatAttachment] = []
             if let name = share.fileName {
                 do {
                     files.append(try AttachmentStaging.stage(file: folder.appending(path: name), limit: mediaMaxBytes))
                 } catch {
-                    append(ChatItem(id: "error:\(V3Event.newId())", kind: .error, text: error.localizedDescription, ts: Self.now), to: convId)
+                    append(ChatItem(id: "error:\(messageId)", kind: .error, text: error.localizedDescription, ts: Self.now), to: convId)
+                    continue
                 }
             }
-            send(share.text, attachments: files, in: convId)
-            try? FileManager.default.removeItem(at: folder)
+            if var conversation = conversations[convId], conversation.items.contains(where: { $0.id == "error:\(messageId)" }) {
+                conversation.items.removeAll { $0.id == "error:\(messageId)" }
+                store(conversation)
+            }
+            send(share.text, attachments: files, in: convId, messageId: messageId)
         }
     }
 
@@ -919,9 +934,16 @@ final class V3Model {
         guard let gone = conversations.removeValue(forKey: convId) else { return }
         deleted = convId
         if !isDemo { cache.remove(convId) }
-        // Its files go with it (#430).
+        // A host deletion must not erase a share still waiting for acknowledgement. The App Group copy remains the
+        // recovery source; move its queued bubble and staged file into a new conversation before removing old files.
+        let waiting = Set(ShareInbox.pending().map { $0.folder.lastPathComponent.lowercased() })
+        let retained = gone.items.filter { $0.kind == .user && ($0.status ?? .queued) < .delivered && waiting.contains($0.id) }
+        for item in retained { append(item, to: V3Event.newId()) }
+        if !retained.isEmpty { pumpOutbox(resend: true) }
+        // Files belonging only to the deleted conversation go with it (#430).
         if !isDemo {
-            for file in gone.items.flatMap({ $0.attachments ?? [] }) { AttachmentFiles.remove(file) }
+            for file in gone.items.filter({ item in !retained.contains(where: { $0.id == item.id }) })
+                .flatMap({ $0.attachments ?? [] }) { AttachmentFiles.remove(file) }
         }
         typing.remove(convId)
         automationDrafts[convId] = nil
