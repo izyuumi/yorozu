@@ -14,11 +14,11 @@
                         <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                         <viewLayoutGuide key="safeArea" id="safe"/>
                         <subviews>
-                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="AppIconImage" translatesAutoresizingMaskIntoConstraints="NO" id="icon">
-                                <rect key="frame" x="148.5" y="378" width="96" height="96"/>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="SplashMark" translatesAutoresizingMaskIntoConstraints="NO" id="icon">
+                                <rect key="frame" x="132.5" y="362" width="128" height="128"/>
                                 <constraints>
-                                    <constraint firstAttribute="width" constant="96" id="width"/>
-                                    <constraint firstAttribute="height" constant="96" id="height"/>
+                                    <constraint firstAttribute="width" constant="128" id="width"/>
+                                    <constraint firstAttribute="height" constant="128" id="height"/>
                                 </constraints>
                             </imageView>
                         </subviews>
@@ -34,7 +34,7 @@
         </scene>
     </scenes>
     <resources>
-        <image name="AppIconImage" width="1024" height="1024"/>
+        <image name="SplashMark" width="704" height="704"/>
         <systemColor name="systemBackgroundColor">
             <color white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
         </systemColor>

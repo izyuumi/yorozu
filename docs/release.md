@@ -31,7 +31,7 @@ The Mac app is `to.yumi.yorozu`, 0.5's Mac id (`PRODUCT_BUNDLE_IDENTIFIER[sdk=ma
 
 ## iOS and iPadOS: TestFlight
 
-The iOS launch screen is a static, centered Yorozu icon on the system background. It appears only while iOS starts the app; there is no artificial splash delay.
+The iOS launch screen centers the inner oval mark from the app icon, without its square icon background. The mark has light and dark asset variants; the launch background uses the system color. It appears only while iOS starts the app; there is no artificial splash delay.
 
 `scripts/upload_ios.sh --confirm`, only when the owner asks for that upload: each upload uses up its build number for good. Build-number policy: [OWNER_DECISIONS.md](../OWNER_DECISIONS.md#platform-and-release).
 
