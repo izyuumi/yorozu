@@ -40,6 +40,7 @@ struct RootView: View {
         // Only an active app has a conversation in the foreground (#431).
         .onChange(of: scenePhase, initial: true) { _, phase in model.setActive(phase == .active) }
         .yorozuTint()
+        .yorozuAppearance()
     }
 }
 

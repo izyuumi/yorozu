@@ -17,6 +17,8 @@ struct SettingsView: View {
 
     @AppStorage(NoticeHaptics.key) private var haptics = true
     @AppStorage(SpotlightIndexer.enabledKey) private var spotlight = true
+    @AppStorage(Appearance.key) private var appearance = Appearance.system
+    @AppStorage(Accent.key) private var accent = Accent.vermilion
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: V3DeviceInfo?
     @State private var unpairing = false
@@ -26,6 +28,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            looks
             if model.isDemo {
                 Section {
                     Label(String(localized: "Demo"), systemImage: "play.rectangle")
@@ -94,6 +97,30 @@ struct SettingsView: View {
             Text("Notifications")
         } footer: {
             Text("While Yorozu is open, replies in other conversations show at the top of the screen instead of as notifications.")
+        }
+    }
+
+    /// Light, dark or the system's, and the accent (owner, 2026-10-22). Kept on this device.
+    private var looks: some View {
+        Section {
+            Picker(String(localized: "Appearance"), selection: $appearance) {
+                ForEach(Appearance.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("settings.appearance")
+            LabeledContent(String(localized: "Accent Color")) {
+                Text(accent.name).foregroundStyle(.secondary)
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: controlTarget), spacing: LayoutMetrics.inner)], spacing: LayoutMetrics.inner) {
+                ForEach(Accent.allCases) { choice in
+                    AccentSwatch(accent: choice, selected: choice == accent) {
+                        withAnimation(.snappy) { accent = choice }
+                    }
+                }
+            }
+            .padding(.vertical, LayoutMetrics.tight)
+        } header: {
+            Text("Appearance")
         }
     }
 
@@ -193,6 +220,34 @@ struct SettingsView: View {
     }
 
     private static func date(_ ms: Int64) -> Date { Date(timeIntervalSince1970: TimeInterval(ms) / 1000) }
+}
+
+/// One accent to pick: a filled circle, ringed with a check when it is the current one. Its sizes are its own geometry.
+private struct AccentSwatch: View {
+    let accent: Accent
+    let selected: Bool
+    let pick: () -> Void
+    private let circle: CGFloat = 30
+
+    var body: some View {
+        Button(action: pick) {
+            Circle()
+                .fill(accent.tint)
+                .frame(width: circle, height: circle)
+                .overlay {
+                    if selected {
+                        Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(.background)
+                    }
+                }
+                .padding(LayoutMetrics.tight / 2)
+                .overlay { Circle().strokeBorder(accent.tint, lineWidth: 2).opacity(selected ? 1 : 0) }
+                .frame(width: controlTarget, height: controlTarget)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(accent.name))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
 }
 
 /// Settings as a sheet, with Done (iPhone, iPad).

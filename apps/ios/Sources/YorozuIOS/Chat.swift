@@ -189,6 +189,7 @@ struct ItemRow: View {
     let model: AppModel
     let item: ChatItem
     @State private var selecting = false
+    @Environment(\.accent) private var accent
 
     var body: some View {
         Group {
@@ -227,7 +228,7 @@ struct ItemRow: View {
                         .tint(.white)
                         .padding(.horizontal, LayoutMetrics.stack)
                         .padding(.vertical, LayoutMetrics.inner)
-                        .background(YorozuPalette.bubble, in: RoundedRectangle(cornerRadius: LayoutMetrics.bubbleRadius, style: .continuous))
+                        .background(accent.bubble, in: RoundedRectangle(cornerRadius: LayoutMetrics.bubbleRadius, style: .continuous))
                         .contextMenu { copy; selectText }
                         .accessibilityLabel(Text("You: \(item.text)"))
                 }
@@ -404,6 +405,7 @@ private struct Composer: View {
     let onImages: ([Data]) -> Bool
     let onPasteData: (Data, String, String) -> Bool
     let onSend: () -> Void
+    @Environment(\.accent) private var accent
 
     /// The send circle inside the ``controlTarget``-tall row; smaller, so the fill reads as a button.
     private let sendCircle: CGFloat = 32
@@ -423,7 +425,7 @@ private struct Composer: View {
         .yorozuGlass(in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .strokeBorder(YorozuPalette.vermilion, lineWidth: 1.5)
+                .strokeBorder(.tint, lineWidth: 1.5)
                 .opacity(focus == .focused ? 1 : 0)
                 .animation(.snappy, value: focus)
                 .allowsHitTesting(false)
@@ -451,7 +453,7 @@ private struct Composer: View {
                     .font(.body.weight(.bold))
                     .foregroundStyle(canSend ? Color.white : Color.secondary)
                     .frame(width: sendCircle, height: sendCircle)
-                    .background(canSend ? AnyShapeStyle(YorozuPalette.vermilion) : AnyShapeStyle(.fill.tertiary), in: Circle())
+                    .background(canSend ? AnyShapeStyle(accent.bubble) : AnyShapeStyle(.fill.tertiary), in: Circle())
             }
             .buttonStyle(.plain)
             .frame(width: controlTarget, height: controlTarget)
