@@ -1,6 +1,58 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Appearance" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "外観" } } }
+    },
+    "System" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "システム" } } }
+    },
+    "Light" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ライト" } } }
+    },
+    "Dark" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ダーク" } } }
+    },
+    "Accent Color" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクセントカラー" } } }
+    },
+    "Vermilion" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "朱色" } } }
+    },
+    "Pink" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピンク" } } }
+    },
+    "Purple" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "紫" } } }
+    },
+    "Indigo" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "藍色" } } }
+    },
+    "Blue" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "青" } } }
+    },
+    "Teal" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "青緑" } } }
+    },
+    "Green" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "緑" } } }
+    },
+    "Graphite" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "グラファイト" } } }
+    },
     "Open Beside" : {
       "extractionState" : "manual",
       "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "横に開く" } } }

@@ -26,6 +26,7 @@ struct YorozuApp: App {
         #if os(macOS)
         Settings {
             SettingsView(model: delegate.model)
+                .yorozuTint()
                 .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
         }
         .commands { MacAppCommands(model: delegate.model) }
