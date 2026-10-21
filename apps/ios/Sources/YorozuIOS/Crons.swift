@@ -4,16 +4,20 @@ import YorozuWire
 /// The paired app's sections, Chats and Automations (cron jobs, #432), in one navigation structure: on iPad and Mac a split view whose
 /// sidebar holds Automations, the conversations and the Archived ones, with the open conversation or the cron jobs beside
 /// it; on iPhone (any compact width) a tab bar with a stack in each tab.
-struct V3HomeView: View {
+struct HomeView: View {
     enum Section: Hashable { case chats, crons }
 
-    let model: V3Model
+    let model: AppModel
 
     @State private var section = Section.chats
-    /// The open conversation; the Crons section sets it too.
+    /// The open conversation; the Crons section sets it too. Side by side, the focused one.
     @State private var selection: String?
+    /// The second conversation side by side (owner, 2026-10-21): kept on a phone and on iPhone Duo closed, shown again when there is room.
+    @State private var pair = ChatPair()
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @State private var columns = NavigationSplitViewVisibility.automatic
+    @State private var windowWidth: CGFloat = 0
     #endif
 
     var body: some View {
@@ -27,10 +31,34 @@ struct V3HomeView: View {
         .opensRequestedConversation(model, selection: $selection)
         .inAppNotices(model) { open($0, automation: nil) }
         // Deleted on another device while open here.
-        .onChange(of: model.deleted) { _, convId in if convId != nil, selection == convId { selection = nil } }
+        .onChange(of: model.deleted) { _, convId in
+            if convId != nil, pair.partner == convId { pair.close(pair.focusedSide == .left ? .right : .left, selection: &selection) }
+            if convId != nil, selection == convId { selection = nil }
+        }
+        #if os(iOS)
+        .onChange(of: selection) { old, new in pair.selectionChanged(from: old, to: new, compact: sizeClass == .compact, selection: &selection) }
+        .onChange(of: sizeClass) { _, size in pair.selectionChanged(from: nil, to: selection, compact: size == .compact, selection: &selection) }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
+        #endif
     }
 
+    private func side(_ convId: String) -> PaneSide? { pair.side(of: convId, selection: selection) }
+
     private var split: some View {
+        #if os(iOS)
+        NavigationSplitView(columnVisibility: $columns) {
+            ConversationsView(model: model, selection: $selection, section: $section, showsCrons: true,
+                openBeside: { convId in withAnimation(.snappy) { pair.openBeside(convId, selection: &selection) } }, side: side)
+        } detail: {
+            if section == .crons {
+                CronsView(model: model, open: open)
+            } else if selection != nil {
+                ChatPairView(model: model, selection: $selection, pair: $pair, columns: $columns, windowWidth: windowWidth)
+            } else {
+                ContentUnavailableView("No conversation selected", systemImage: "bubble.left.and.bubble.right")
+            }
+        }
+        #else
         NavigationSplitView {
             ConversationsView(model: model, selection: $selection, section: $section, showsCrons: true)
                 #if os(macOS)
@@ -39,21 +67,28 @@ struct V3HomeView: View {
                 #endif
         } detail: {
             if section == .crons {
-                V3CronsView(model: model, open: open)
+                CronsView(model: model, open: open)
             } else if let selection {
-                V3ChatView(model: model, convId: selection).id(selection)
+                ChatView(model: model, convId: selection).id(selection)
             } else {
                 ContentUnavailableView("No conversation selected", systemImage: "bubble.left.and.bubble.right")
             }
         }
+        #endif
     }
 
     private var tabs: some View {
         TabView(selection: $section) {
             Tab(String(localized: "Chats"), systemImage: "bubble.left.and.bubble.right", value: Section.chats) {
                 NavigationStack {
-                    ConversationsView(model: model, selection: $selection, section: $section, showsCrons: false)
-                        .navigationDestination(item: $selection) { V3ChatView(model: model, convId: $0).id($0) }
+                    ConversationsView(model: model, selection: $selection, section: $section, showsCrons: false, side: side)
+                        .navigationDestination(item: $selection) { convId in
+                            ChatView(model: model, convId: convId)
+                                .id(convId)
+                                #if os(iOS)
+                                .safeAreaInset(edge: .top, spacing: 0) { PairSwitcher(model: model, selection: $selection, pair: $pair) }
+                                #endif
+                        }
                         #if os(iOS)
                         // A conversation has the whole screen: the composer sits where the tab bar was. Decided here, by
                         // the selection, so the bar returns as the back animation starts; hidden from the conversation
@@ -63,7 +98,7 @@ struct V3HomeView: View {
                 }
             }
             Tab(String(localized: "Automations"), systemImage: "clock", value: Section.crons) {
-                NavigationStack { V3CronsView(model: model, open: open) }
+                NavigationStack { CronsView(model: model, open: open) }
             }
         }
     }
@@ -78,8 +113,8 @@ struct V3HomeView: View {
 
 /// Every cron job of the plugin's agent (#415), shown as Automations: name, schedule, next run and last status, disabled ones greyed.
 /// Read-only: changes go through the agent, from "Edit in Chat", which attaches the job to a new conversation.
-struct V3CronsView: View {
-    let model: V3Model
+struct CronsView: View {
+    let model: AppModel
     let open: (_ convId: String, _ automation: V3CronJob?) -> Void
 
     @State private var failure: V3CronJob?
@@ -133,10 +168,10 @@ struct V3CronsView: View {
         HStack(spacing: LayoutMetrics.stack) {
             // A job delivering into a Yorozu conversation opens it.
             if let convId = job.convId {
-                Button { open(convId, nil) } label: { V3CronRow(job: job).contentShape(Rectangle()) }
+                Button { open(convId, nil) } label: { CronRow(job: job).contentShape(Rectangle()) }
                     .buttonStyle(.plain)
             } else {
-                V3CronRow(job: job)
+                CronRow(job: job)
             }
             if job.lastStatus == "error" {
                 Button { failure = job } label: {
@@ -169,7 +204,7 @@ struct V3CronsView: View {
 }
 
 /// Name and state, the schedule, the next run; greyed while the job is disabled.
-private struct V3CronRow: View {
+private struct CronRow: View {
     let job: V3CronJob
 
     var body: some View {

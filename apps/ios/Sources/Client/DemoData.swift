@@ -2,7 +2,7 @@ import Foundation
 import YorozuWire
 
 /// Fictional examples, recreated for each demo session and never persisted.
-enum V3DemoData {
+enum DemoData {
     static let welcomeID = "d0000000-0000-4000-8000-000000000001"
     static let travelID = "d0000000-0000-4000-8000-000000000002"
     static let codeID = "d0000000-0000-4000-8000-000000000003"

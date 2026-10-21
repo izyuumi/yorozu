@@ -6,7 +6,7 @@ import YorozuWire
 /// `openclaw yorozu pair`, sent over the relay, shown here as a QR for the new device to scan, or a link to send it.
 /// One device, ten minutes; the new device shows the host fingerprint too, and they must match.
 struct AddDeviceSheet: View {
-    let model: V3Model
+    let model: AppModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {

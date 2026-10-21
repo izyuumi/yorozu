@@ -17,7 +17,7 @@ enum MacMigrateFrom0_5 {
     /// Each window's task calls it; one run at a time.
     private static var running = false
 
-    static func run(model: V3Model) async {
+    static func run(model: AppModel) async {
         let defaults = UserDefaults.standard
         guard !model.isDemo, !running, !defaults.bool(forKey: doneKey) else { return }
         running = true
@@ -49,7 +49,7 @@ enum MacMigrateFrom0_5 {
 
     /// The Gateway keeps running 0.5's plugin from memory until a reload. 0.9's channel schema rejects `socketPath`, which
     /// would stop the next Gateway start, so it goes first. The CLI has the admin scope the app lacks.
-    private static func reloadPlugin(model: V3Model) async -> Bool {
+    private static func reloadPlugin(model: AppModel) async -> Bool {
         guard !model.isDemo, !Task.isCancelled else { return false }
         guard let openclaw = Shell.find("openclaw") else {
             log.error("openclaw not found: the Gateway keeps 0.5's plugin until it restarts")
@@ -71,7 +71,7 @@ enum MacMigrateFrom0_5 {
 
     /// This Mac was 0.5's host and never a client: pair it with the plugin on the same machine. The plugin needs a moment
     /// after the reload. The fingerprint check is skipped: the code comes straight from this Mac's own Gateway.
-    private static func pairThisMac(model: V3Model) async -> Bool {
+    private static func pairThisMac(model: AppModel) async -> Bool {
         guard let openclaw = Shell.find("openclaw") else { return false }
         for _ in 0..<10 {
             guard !model.isDemo, !Task.isCancelled else { return false }

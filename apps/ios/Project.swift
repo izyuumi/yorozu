@@ -78,6 +78,14 @@ let project = Project(
                 // The relay's silent push launches a suspended app, which reconnects (#431).
                 "UIBackgroundModes": ["remote-notification"],
                 "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
+                // A conversation dragged from the list onto a side of the conversation area (Pair.swift); in-app only.
+                "UTExportedTypeDeclarations": [
+                    [
+                        "UTTypeIdentifier": "to.yumi.yorozu.conversation",
+                        "UTTypeDescription": "Yorozu Conversation",
+                        "UTTypeConformsTo": ["public.data"],
+                    ]
+                ],
                 // `yorozu://pair?…` is the pairing string itself: tapping one opens the app.
                 "CFBundleURLTypes": [
                     [

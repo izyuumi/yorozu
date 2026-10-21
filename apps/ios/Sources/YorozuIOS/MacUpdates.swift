@@ -11,7 +11,7 @@ enum MacUpdates {
     private static let configuredKey = "YorozuUpdatesConfigured"
     private static let betaKey = "YorozuBetaUpdates"
     static let stableFeedURL = "https://yorozu.yumi.to/appcast.xml"
-    private static weak var model: V3Model?
+    private static weak var model: AppModel?
 
     /// Nil in a build without a feed (dev builds that strip it), so no "feed URL is not set" alert.
     static let controller: SPUStandardUpdaterController? = {
@@ -29,7 +29,7 @@ enum MacUpdates {
 
     static var beta: Bool { UserDefaults.standard.object(forKey: betaKey) as? Bool ?? true }
 
-    static func start(model: V3Model) {
+    static func start(model: AppModel) {
         self.model = model
         guard !model.isDemo else { return }
         _ = controller
@@ -68,7 +68,7 @@ enum MacUpdates {
 
 /// About and Check for Updates in the app menu. About shows the visible build ("0.9.0 (1)"), not `CFBundleVersion`.
 struct MacAppCommands: Commands {
-    let model: V3Model
+    let model: AppModel
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {

@@ -2,8 +2,8 @@ import SwiftUI
 
 /// The in-app notice (#415): a capsule at the top for a reply in another conversation while the app is in front. It
 /// goes after a few seconds or when swiped up; a tap opens the conversation; the next reply replaces it.
-struct V3NoticePill: View {
-    let notice: V3InAppNotice
+struct NoticePill: View {
+    let notice: InAppNotice
     let open: () -> Void
     let dismiss: () -> Void
 
@@ -38,13 +38,13 @@ struct V3NoticePill: View {
 
 extension View {
     /// Shows the model's in-app notice over the top edge; `open` shows its conversation.
-    func inAppNotices(_ model: V3Model, open: @escaping (String) -> Void) -> some View {
+    func inAppNotices(_ model: AppModel, open: @escaping (String) -> Void) -> some View {
         modifier(InAppNotices(model: model, open: open))
     }
 }
 
 private struct InAppNotices: ViewModifier {
-    let model: V3Model
+    let model: AppModel
     let open: (String) -> Void
     @AppStorage(NoticeHaptics.key) private var haptics = true
 
@@ -52,7 +52,7 @@ private struct InAppNotices: ViewModifier {
         content
             .overlay(alignment: .top) {
                 if let notice = model.notice {
-                    V3NoticePill(notice: notice) {
+                    NoticePill(notice: notice) {
                         model.notice = nil
                         open(notice.convId)
                     } dismiss: {

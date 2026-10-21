@@ -14,7 +14,7 @@ import UIKit
 
 /// The composer's +: photos from the library and files from Files (or the Finder), each checked against the host's limit
 /// before anything is copied, so a file over it is refused here with its size and the limit.
-struct V3AttachMenu: View {
+struct AttachMenu: View {
     let limit: Int
     let onStage: ([ChatAttachment]) -> Void
 
@@ -138,7 +138,7 @@ private struct CameraPicker: UIViewControllerRepresentable {
 #endif
 
 /// Files waiting in the composer, each with a remove button.
-struct V3StagedFiles: View {
+struct StagedFiles: View {
     let files: [ChatAttachment]
     /// An automation from "Edit in Chat", first in the row.
     var automation: V3CronJob? = nil
@@ -220,8 +220,8 @@ struct V3StagedFiles: View {
 
 /// A message's or reply's files: pictures inline, other files as rows. A reply's files download only when shown
 /// (pictures) or tapped (files); Quick Look opens them on iPhone and iPad, the default app on the Mac.
-struct V3AttachmentList: View {
-    let model: V3Model
+struct AttachmentList: View {
+    let model: AppModel
     let attachments: [ChatAttachment]
     let alignment: HorizontalAlignment
 
@@ -232,9 +232,9 @@ struct V3AttachmentList: View {
             ForEach(attachments) { attachment in
                 Group {
                     if attachment.isImage {
-                        V3ImageAttachment(model: model, attachment: attachment, open: open)
+                        ImageAttachment(model: model, attachment: attachment, open: open)
                     } else {
-                        V3FileAttachment(model: model, attachment: attachment, open: open)
+                        FileAttachment(model: model, attachment: attachment, open: open)
                     }
                 }
                 .contextMenu {
@@ -263,7 +263,7 @@ struct V3AttachmentList: View {
 private enum FileState {
     case local(URL), moving(Double), failed(String), refused(String), remote
 
-    @MainActor init(_ attachment: ChatAttachment, model: V3Model) {
+    @MainActor init(_ attachment: ChatAttachment, model: AppModel) {
         if let failure = attachment.failure { self = .refused(failure) }
         else if let progress = model.transfers.progress[attachment.id] { self = .moving(progress) }
         else if let url = AttachmentFiles.local(attachment) { self = .local(url) }
@@ -272,8 +272,8 @@ private enum FileState {
     }
 }
 
-private struct V3FileAttachment: View {
-    let model: V3Model
+private struct FileAttachment: View {
+    let model: AppModel
     let attachment: ChatAttachment
     let open: (ChatAttachment) -> Void
     /// A downloaded file's thumbnail (a PDF's first page), scaled with the text.
@@ -320,8 +320,8 @@ private struct V3FileAttachment: View {
 }
 
 /// A picture, fitted to the row; downloaded as soon as it is on screen.
-private struct V3ImageAttachment: View {
-    let model: V3Model
+private struct ImageAttachment: View {
+    let model: AppModel
     let attachment: ChatAttachment
     let open: (ChatAttachment) -> Void
 
@@ -343,7 +343,7 @@ private struct V3ImageAttachment: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(attachment.name))
             } else {
-                V3FileAttachment(model: model, attachment: attachment, open: open)
+                FileAttachment(model: model, attachment: attachment, open: open)
             }
         }
         .task(id: AttachmentFiles.local(attachment)?.path) {

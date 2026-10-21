@@ -3,7 +3,7 @@ import CoreSpotlight
 import YorozuWire
 
 // Siri, Shortcuts and Spotlight (owner, 2026-10-17): ask the agent and hear its reply, open a conversation, start one.
-// The model is the app delegate's, registered with `AppDependencyManager` at launch (V3Push.swift).
+// The model is the app delegate's, registered with `AppDependencyManager` at launch (Push.swift).
 
 /// A conversation, by its title, for Siri to name and Shortcuts to pick, and, with its recent text, in the on-device
 /// Spotlight index Siri searches (``SpotlightIndexer``; owner, 2026-10-17).
@@ -45,7 +45,7 @@ struct ConversationEntity: IndexedEntity {
 }
 
 struct ConversationQuery: EntityStringQuery {
-    @Dependency private var model: V3Model
+    @Dependency private var model: AppModel
 
     func entities(for identifiers: [String]) async throws -> [ConversationEntity] {
         await MainActor.run { model.isDemo ? [] : identifiers.compactMap { model.conversations[$0].map(ConversationEntity.init) } }
@@ -78,7 +78,7 @@ struct AskYorozuIntent: AppIntent {
     @Parameter(title: "Conversation", description: "A new conversation when left empty.")
     var conversation: ConversationEntity?
 
-    @Dependency private var model: V3Model
+    @Dependency private var model: AppModel
 
     static var parameterSummary: some ParameterSummary {
         Summary("Ask Yorozu \(\.$message)") { \.$conversation }
@@ -101,7 +101,7 @@ struct OpenConversationIntent: AppIntent {
     @Parameter(title: "Conversation")
     var conversation: ConversationEntity
 
-    @Dependency private var model: V3Model
+    @Dependency private var model: AppModel
 
     func perform() async throws -> some IntentResult {
         let id = conversation.id
@@ -115,7 +115,7 @@ struct NewConversationIntent: AppIntent {
     static let description = IntentDescription("Opens a new conversation in Yorozu.")
     static let openAppWhenRun = true
 
-    @Dependency private var model: V3Model
+    @Dependency private var model: AppModel
 
     func perform() async throws -> some IntentResult {
         await MainActor.run { if !model.isDemo { model.requestedConversation = V3Event.newId() } }
@@ -149,7 +149,7 @@ enum IntentFailure: Error, CustomLocalizedStringResourceConvertible {
     }
 }
 
-extension V3Model {
+extension AppModel {
     enum AskOutcome { case reply(String), pending }
 
     /// Sends `text` (into a new conversation when `convId` is nil) and waits for the run's reply: the reply items that
@@ -180,7 +180,7 @@ struct SearchYorozuIntent: AppIntent {
     @Parameter(title: "Search For", requestValueDialog: "What should I look for?")
     var query: String
 
-    @Dependency private var model: V3Model
+    @Dependency private var model: AppModel
 
     static var parameterSummary: some ParameterSummary { Summary("Search Yorozu for \(\.$query)") }
 
@@ -195,7 +195,7 @@ struct SearchYorozuIntent: AppIntent {
     }
 }
 
-extension V3Model {
+extension AppModel {
     /// Conversations whose title or messages contain `query`, newest first, archived ones left out.
     func search(_ query: String) -> [Conversation] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -216,7 +216,7 @@ final class SpotlightIndexer {
     static var enabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
     private(set) static var shared: SpotlightIndexer?
 
-    private let model: V3Model
+    private let model: AppModel
     #if os(iOS)
     private let index = CSSearchableIndex(name: "conversations", protectionClass: .complete)
     #else
@@ -225,14 +225,14 @@ final class SpotlightIndexer {
     /// What was last indexed, by conversation: its title, newest item and count, to skip the unchanged.
     private var indexed: [String: String]?
 
-    static func start(model: V3Model) {
+    static func start(model: AppModel) {
         guard shared == nil else { return }
         let indexer = SpotlightIndexer(model: model)
         shared = indexer
         Task { await indexer.run() }
     }
 
-    private init(model: V3Model) { self.model = model }
+    private init(model: AppModel) { self.model = model }
 
     private func run() async {
         while true {

@@ -6,7 +6,7 @@ import YorozuWire
 
 /// One pairing with the OpenClaw plugin, in one Keychain item (`Keychain`: this device only, never synced). Its own
 /// account, apart from v2's `pairings-v2`: every device pairs again for v3.
-struct V3Pairing: Codable, Equatable {
+struct Pairing: Codable, Equatable {
     var pairing: QrPayload
     var identity: PhoneIdentity
     /// The relay accepted this device once: the one-time token is spent.
@@ -17,9 +17,9 @@ struct V3Pairing: Codable, Equatable {
 
     private static let account = "pairing-v3"
 
-    static func load() throws -> V3Pairing? {
+    static func load() throws -> Pairing? {
         guard let data = try Keychain.loadRequired(account) else { return nil }
-        return try JSONDecoder().decode(V3Pairing.self, from: data)
+        return try JSONDecoder().decode(Pairing.self, from: data)
     }
 
     func save() throws { try Keychain.save(JSONEncoder().encode(self), account: Self.account) }
