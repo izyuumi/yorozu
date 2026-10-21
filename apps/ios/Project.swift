@@ -97,7 +97,8 @@ let project = Project(
             sources: ["Sources/YorozuIOS/**", "Sources/Shared/**", "Sources/Client/**", "Sources/ShareInbox/**"],
             resources: [
                 "Resources/AppIcon.icon",
-                "Resources/LaunchScreen.storyboard",
+                // iOS only: the Mac build rejects an iOS storyboard.
+                .glob(pattern: "Resources/LaunchScreen.storyboard", inclusionCondition: .when([.ios])),
                 "Resources/Assets.xcassets",
                 // Siri phrases for the App Shortcuts (YorozuIntents.swift), in Japanese.
                 "Resources/AppShortcuts.xcstrings",
