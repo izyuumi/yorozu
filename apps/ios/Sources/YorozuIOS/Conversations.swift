@@ -16,6 +16,8 @@ struct ConversationsView: View {
     /// Side by side (iPad, iPhone Duo open): opens a conversation beside the focused one, and marks where each open one sits.
     var openBeside: ((String) -> Void)?
     var side: (String) -> PaneSide? = { _ in nil }
+    /// A row started being dragged toward the conversation area.
+    var dragStarted: () -> Void = {}
     @State private var showingSettings = false
     /// The Archived rows are shown below the list (#428).
     @State private var showingArchived = false
@@ -152,7 +154,7 @@ struct ConversationsView: View {
         return Group {
             if showsCrons {
                 #if os(iOS)
-                if openBeside != nil { label.conversationDrag(conversation.id) } else { label }
+                if openBeside != nil { label.conversationDrag(conversation.id, started: dragStarted) } else { label }
                 #else
                 label
                 #endif

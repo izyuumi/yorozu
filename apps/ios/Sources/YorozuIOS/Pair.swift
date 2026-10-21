@@ -93,8 +93,9 @@ extension UTType {
 #if os(iOS)
 extension View {
     /// A row the list lets go of as a conversation, for a side of the conversation area to take.
-    func conversationDrag(_ convId: String) -> some View {
+    func conversationDrag(_ convId: String, started: @escaping () -> Void) -> some View {
         onDrag {
+            started()
             let provider = NSItemProvider()
             provider.registerDataRepresentation(forTypeIdentifier: UTType.yorozuConversation.identifier, visibility: .ownProcess) { done in
                 done(Data(convId.utf8), nil)
@@ -112,6 +113,8 @@ struct ChatPairView: View {
     @Binding var selection: String?
     @Binding var pair: ChatPair
     @Binding var columns: NavigationSplitViewVisibility
+    /// A conversation is being dragged from the list.
+    @Binding var dragging: Bool
     /// The whole window's width: the sidebar is beside the conversations when they are narrower.
     let windowWidth: CGFloat
 
@@ -145,18 +148,38 @@ struct ChatPairView: View {
                 columns = .automatic
             }
         }
-        .overlay { if let dropSide { dropHint(dropSide) } }
-        .onDrop(of: [.yorozuConversation], delegate: PaneDrop(width: width, side: $dropSide) { convId, side in
-            withAnimation(.snappy) {
-                if pair.isOpen {
-                    pair.show(convId, on: side, selection: &selection)
-                } else if side == .right {
-                    pair.openBeside(convId, selection: &selection)
-                } else {
-                    selection = convId
-                }
+        // While a conversation is dragged, a layer over the panes takes it: under it, the chat's own drop (files) would
+        // refuse it. A sidebar that covers the conversation steps aside so there is somewhere to drop.
+        .overlay {
+            if dragging {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { finishDrag() }
+                    .onDrop(of: [.yorozuConversation], delegate: PaneDrop(width: width, side: $dropSide, drop: drop, done: finishDrag))
+                    .overlay { if let dropSide { dropHint(dropSide) } }
             }
-        })
+        }
+        .onChange(of: dragging) { _, dragging in
+            if dragging, width >= windowWidth - 1 { withAnimation { columns = .detailOnly } }
+        }
+    }
+
+    private func drop(_ convId: String, on side: PaneSide) {
+        withAnimation(.snappy) {
+            if pair.isOpen {
+                pair.show(convId, on: side, selection: &selection)
+            } else if side == .right {
+                pair.openBeside(convId, selection: &selection)
+            } else {
+                selection = convId
+            }
+        }
+    }
+
+    private func finishDrag() {
+        dragging = false
+        dropSide = nil
+        if !pair.isOpen, columns == .detailOnly { withAnimation { columns = .automatic } }
     }
 
     private var panes: some View {
@@ -256,6 +279,7 @@ private struct PaneDrop: DropDelegate {
     let width: CGFloat
     @Binding var side: PaneSide?
     let drop: (String, PaneSide) -> Void
+    let done: () -> Void
 
     private func side(_ info: DropInfo) -> PaneSide { info.location.x < width / 2 ? .left : .right }
 
@@ -269,7 +293,7 @@ private struct PaneDrop: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         let target = side(info)
-        side = nil
+        done()
         guard let provider = info.itemProviders(for: [.yorozuConversation]).first else { return false }
         _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.yorozuConversation.identifier) { data, _ in
             guard let data, let convId = String(data: data, encoding: .utf8) else { return }
