@@ -133,7 +133,7 @@ enum AttachmentStaging {
 /// (device → host frames reach only the plugin); downloads two, one file at a time, since every host frame reaches
 /// every device in the room. A transfer cut by a lost session starts over on the next one.
 @MainActor @Observable
-final class V3Transfers {
+final class Transfers {
     /// Attachment id -> 0…1 while it moves.
     private(set) var progress: [String: Double] = [:]
     /// Downloads that failed this run (`not_found`, a bad file), by attachment id.

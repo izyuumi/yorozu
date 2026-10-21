@@ -4,9 +4,13 @@ import YorozuWire
 /// One conversation: the user's bubbles with their marks, each reply chunk as its own card (replies arrive whole,
 /// chunked by length), tool calls collapsed under the message whose run made them, `/new` boundaries, the typing
 /// indicator, the composer. Opening it fetches what is newer than the cache; reaching the top loads the page before.
-struct V3ChatView: View {
-    let model: V3Model
+struct ChatView: View {
+    /// With two conversations side by side, one is focused: it types and is the one the plugin hears is in front.
+    enum Focus { case only, focused, unfocused }
+
+    let model: AppModel
     let convId: String
+    var focus = Focus.only
 
     @State private var draft = ""
     /// Files in the composer, already copied into `AttachmentFiles` (#430).
@@ -36,7 +40,7 @@ struct V3ChatView: View {
                         .task(id: conversation.oldestSeq) { model.loadOlder(convId) }
                 }
                 ForEach(items) { item in
-                    V3ItemRow(model: model, item: item)
+                    ItemRow(model: model, item: item)
                         .readableRow()
                         .modifier(MessageTime(item: item, shown: timesShown, width: timesWidth))
                 }
@@ -73,9 +77,16 @@ struct V3ChatView: View {
         // only moves the cursor, and so does coming back to the foreground with it open.
         .onAppear {
             model.markRead(convId, explicit: true)
-            model.setVisible(convId)
+            model.setOnScreen(convId, true)
+            if focus != .unfocused { model.setVisible(convId) }
+            if draft.isEmpty { draft = model.textDrafts.removeValue(forKey: convId) ?? "" }
         }
-        .onDisappear { model.setVisible(nil, leaving: convId) }
+        .onDisappear {
+            model.setOnScreen(convId, false)
+            model.setVisible(nil, leaving: convId)
+            if !draft.isEmpty { model.textDrafts[convId] = draft }
+        }
+        .onChange(of: focus) { if focus != .unfocused { model.setVisible(convId) } }
         .onChange(of: model.conversations[convId]?.latestReply?.id) { readIfActive() }
         .onChange(of: scenePhase) { readIfActive() }
         .overlay(alignment: .bottom) {
@@ -96,8 +107,8 @@ struct V3ChatView: View {
             }
         }
         .yorozuBottomBar {
-            V3Composer(text: $draft, files: $files, automation: $automation, attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
-                onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
+            Composer(text: $draft, files: $files, automation: $automation, attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
+                focus: focus, onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
                 model.send(Self.message(draft, automation: automation), attachments: files, in: convId)
                 draft = ""
                 files = []
@@ -126,7 +137,7 @@ struct V3ChatView: View {
     }
 }
 
-extension V3ChatView {
+extension ChatView {
     /// Files from a drop or a paste: staged when under the host's limit, the rest named in one alert.
     @discardableResult
     private func attach(_ urls: [URL]) -> Bool {
@@ -174,8 +185,8 @@ extension V3ChatView {
     }
 }
 
-struct V3ItemRow: View {
-    let model: V3Model
+struct ItemRow: View {
+    let model: AppModel
     let item: ChatItem
     @State private var selecting = false
 
@@ -208,7 +219,7 @@ struct V3ItemRow: View {
             Spacer(minLength: LayoutMetrics.section * 2)
             VStack(alignment: .trailing, spacing: LayoutMetrics.tight) {
                 if let files = item.attachments, !files.isEmpty {
-                    V3AttachmentList(model: model, attachments: files, alignment: .trailing)
+                    AttachmentList(model: model, attachments: files, alignment: .trailing)
                 }
                 if !item.text.isEmpty {
                     Text(item.text)
@@ -244,7 +255,7 @@ struct V3ItemRow: View {
                     .contextMenu { copy; selectText }
             }
             if let files = item.attachments, !files.isEmpty {
-                V3AttachmentList(model: model, attachments: files, alignment: .leading)
+                AttachmentList(model: model, attachments: files, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -380,12 +391,14 @@ private struct TypingIndicator: View {
 /// The field, the + for attachments (#430) and the send control in one glass container, as v2's composer, with the
 /// staged files above it. Messages typed while offline wait in the outbox, so sending is never disabled by the link.
 /// On the Mac Return is a new line and ⌘Return sends (owner, 2026-10-09); iPhone and iPad keep smart Enter.
-private struct V3Composer: View {
+private struct Composer: View {
     @Binding var text: String
     @Binding var files: [ChatAttachment]
     @Binding var automation: V3CronJob?
     /// The host's limit; nil when it takes no attachments, which hides the +.
     let attachLimit: Int?
+    /// Side by side, the focused composer wears an accent ring and the other invites a tap.
+    let focus: ChatView.Focus
     /// Files pasted or dropped onto the field.
     let onFiles: ([URL]) -> Bool
     let onImages: ([Data]) -> Bool
@@ -399,7 +412,7 @@ private struct V3Composer: View {
     var body: some View {
         VStack(spacing: LayoutMetrics.tight) {
             if !files.isEmpty || automation != nil {
-                V3StagedFiles(files: files, automation: automation, onRemoveAutomation: { automation = nil }) { file in
+                StagedFiles(files: files, automation: automation, onRemoveAutomation: { automation = nil }) { file in
                     files.removeAll { $0.id == file.id }
                     AttachmentFiles.remove(file)
                 }
@@ -408,6 +421,13 @@ private struct V3Composer: View {
         }
         .padding(.top, files.isEmpty && automation == nil ? 0 : LayoutMetrics.inner)
         .yorozuGlass(in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .strokeBorder(YorozuPalette.vermilion, lineWidth: 1.5)
+                .opacity(focus == .focused ? 1 : 0)
+                .animation(.snappy, value: focus)
+                .allowsHitTesting(false)
+        }
         .padding(.horizontal, LayoutMetrics.stack)
         .padding(.vertical, LayoutMetrics.inner)
         .frame(maxWidth: LayoutMetrics.composerWidth)
@@ -417,9 +437,9 @@ private struct V3Composer: View {
     private var row: some View {
         HStack(alignment: .bottom, spacing: 0) {
             if let attachLimit {
-                V3AttachMenu(limit: attachLimit) { files.append(contentsOf: $0) }
+                AttachMenu(limit: attachLimit) { files.append(contentsOf: $0) }
             }
-            ComposerTextView(text: $text, placeholder: String(localized: "Message"), onSubmit: send, onFiles: onFiles, onImages: onImages,
+            ComposerTextView(text: $text, placeholder: focus == .unfocused ? String(localized: "Tap to reply here") : String(localized: "Message"), onSubmit: send, onFiles: onFiles, onImages: onImages,
                 onPasteData: onPasteData)
                 // Room above and below the text, inside the glass; right up to the + on the left (owner, 2026-10-17).
                 .padding(.vertical, LayoutMetrics.inner)

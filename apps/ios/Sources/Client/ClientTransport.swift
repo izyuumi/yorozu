@@ -2,7 +2,7 @@ import Foundation
 import YorozuWire
 
 /// The client consumes the same events from a live relay and from the memory-only demo.
-protocol V3ClientTransport: Sendable {
+protocol ClientTransport: Sendable {
     func updates() async -> AsyncStream<V3Connection.Update>
     func start() async
     func reconnect() async
@@ -12,17 +12,17 @@ protocol V3ClientTransport: Sendable {
     @discardableResult func send(_ message: V3Message) async -> Bool
 }
 
-extension V3Connection: V3ClientTransport {}
+extension V3Connection: ClientTransport {}
 
 /// Scripted sample data only: no socket, credentials, files or model calls.
-actor V3DemoTransport: V3ClientTransport {
+actor DemoTransport: ClientTransport {
     private var continuation: AsyncStream<V3Connection.Update>.Continuation?
     private var running = false
     private var replies: [String: Task<Void, Never>] = [:]
     private var pending: [String: (convID: String, task: Task<Void, Never>)] = [:]
-    private var histories = V3DemoData.histories
-    private var titles = V3DemoData.titles
-    private var archived: Set<String> = [V3DemoData.archiveID]
+    private var histories = DemoData.histories
+    private var titles = DemoData.titles
+    private var archived: Set<String> = [DemoData.archiveID]
     private var seen: Set<String> = []
 
     func updates() -> AsyncStream<V3Connection.Update> {
@@ -67,9 +67,9 @@ actor V3DemoTransport: V3ClientTransport {
             emit(.history(V3History(convId: request.convId, before: request.before, after: request.after,
                 items: items, more: false, rev: all.last?.seq ?? 0)))
         case .deviceList:
-            emit(.deviceList(V3DeviceList(devices: V3DemoData.devices)))
+            emit(.deviceList(V3DeviceList(devices: DemoData.devices)))
         case .cronList:
-            emit(.cronList(V3CronList(jobs: V3DemoData.crons)))
+            emit(.cronList(V3CronList(jobs: DemoData.crons)))
         case .readCursor(let cursor):
             emit(.readCursor(cursor))
         case .convPatch(let patch):
@@ -81,7 +81,7 @@ actor V3DemoTransport: V3ClientTransport {
             } else {
                 if let title = patch.title {
                     titles[patch.convId] = title.isEmpty
-                        ? V3DemoData.titles[patch.convId] ?? histories[patch.convId]?.first(where: { $0.kind == .user })?.text.map { String($0.prefix(60)) }
+                        ? DemoData.titles[patch.convId] ?? histories[patch.convId]?.first(where: { $0.kind == .user })?.text.map { String($0.prefix(60)) }
                         : title
                 }
                 if let value = patch.archived {
@@ -135,8 +135,8 @@ actor V3DemoTransport: V3ClientTransport {
             emit(.tool(V3Tool(convId: message.convId, messageId: message.messageId, callId: callID,
                 name: "demo_sample", status: .done)))
         }
-        let text = reset ? V3DemoData.resetReply
-            : V3DemoData.reply(to: message.text)
+        let text = reset ? DemoData.resetReply
+            : DemoData.reply(to: message.text)
         let id = V3Event.newId()
         append(.agent, id: id, text: text, to: message.convId)
         emit(.reply(V3Reply(convId: message.convId, messageId: id, text: text, ts: Self.now)))

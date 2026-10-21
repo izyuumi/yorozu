@@ -4,12 +4,12 @@ import UserNotifications
 import YorozuWire
 
 /// Notifications for finished replies (#431; docs/ios-relay-contract.md, "Push"). The app delegate owns the one
-/// ``V3Model``, so a notification reaches it with no scene on screen. iPhone and iPad: the APNs token for the relay,
+/// ``AppModel``, so a notification reaches it with no scene on screen. iPhone and iPad: the APNs token for the relay,
 /// whose alert the notification service extension fills from the sealed preview. Mac: a local notice per reply while
-/// the app runs (`V3Notices.reply`). Either way, none for the conversation on screen, and a tap opens its conversation.
+/// the app runs (`Notices.reply`). Either way, none for the conversation on screen, and a tap opens its conversation.
 @MainActor
-final class V3AppDelegate: NSObject, UNUserNotificationCenterDelegate {
-    let model = V3Model()
+final class AppDelegate: NSObject, UNUserNotificationCenterDelegate {
+    let model = AppModel()
 
     override init() {
         super.init()
@@ -54,7 +54,7 @@ final class V3AppDelegate: NSObject, UNUserNotificationCenterDelegate {
 }
 
 #if os(iOS)
-extension V3AppDelegate: UIApplicationDelegate {
+extension AppDelegate: UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         launched()
@@ -76,13 +76,13 @@ extension V3AppDelegate: UIApplicationDelegate {
     }
 }
 #else
-extension V3AppDelegate: NSApplicationDelegate {
+extension AppDelegate: NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) { launched() }
 }
 #endif
 
 @MainActor
-enum V3Notices {
+enum Notices {
     /// Mac: a reply in a conversation not in front. One notice per conversation, replaced by its next reply, so a
     /// reply that came in several chunks alerts once; grouped like the relay's (`thread-id` is its `ref`).
     static func reply(convId: String, title: String, text: String) {
@@ -124,7 +124,7 @@ enum V3Notices {
 
 extension View {
     /// Opens the conversation a tapped notification names.
-    func opensRequestedConversation(_ model: V3Model, selection: Binding<String?>) -> some View {
+    func opensRequestedConversation(_ model: AppModel, selection: Binding<String?>) -> some View {
         onChange(of: model.requestedConversation, initial: true) { _, convId in
             guard let convId else { return }
             selection.wrappedValue = convId

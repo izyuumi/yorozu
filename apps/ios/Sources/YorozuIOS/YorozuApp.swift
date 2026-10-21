@@ -4,14 +4,14 @@ import SwiftUI
 struct YorozuApp: App {
     // The delegate owns the model, so a notification reaches it with no scene on screen (#431).
     #if os(iOS)
-    @UIApplicationDelegateAdaptor private var delegate: V3AppDelegate
+    @UIApplicationDelegateAdaptor private var delegate: AppDelegate
     #else
-    @NSApplicationDelegateAdaptor private var delegate: V3AppDelegate
+    @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     #endif
 
     var body: some Scene {
         WindowGroup {
-            V3RootView(model: delegate.model)
+            RootView(model: delegate.model)
                 #if os(macOS)
                 // Sparkle and, once, the move from 0.5 (docs/upgrade-from-0.5.md).
                 .task(id: delegate.model.isDemo) {
@@ -25,7 +25,7 @@ struct YorozuApp: App {
         }
         #if os(macOS)
         Settings {
-            V3SettingsView(model: delegate.model)
+            SettingsView(model: delegate.model)
                 .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
         }
         .commands { MacAppCommands(model: delegate.model) }

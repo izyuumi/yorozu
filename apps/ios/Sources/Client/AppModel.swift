@@ -13,8 +13,8 @@ import AppKit
 /// than the cache; opening a conversation fills its gap, scrolling up loads older pages. One request is in flight at a
 /// time, so pages reach the relay paced.
 @MainActor @Observable
-final class V3Model {
-    private(set) var pairing: V3Pairing?
+final class AppModel {
+    private(set) var pairing: Pairing?
     private(set) var isDemo = false
     private(set) var state = V3Connection.State.offline
     private(set) var conversations: [String: Conversation] = [:]
@@ -37,6 +37,11 @@ final class V3Model {
     private(set) var cronsError: String?
     /// An automation waiting in a conversation's composer as an attachment ("Edit in Chat"); the chat takes it once.
     var automationDrafts: [String: V3CronJob] = [:]
+    /// Text typed and not sent, kept while a conversation's view is rebuilt: opening, closing or swapping a pane.
+    @ObservationIgnored var textDrafts: [String: String] = [:]
+    /// Every conversation on screen, focused or not: two side by side on iPad (owner, 2026-10-21). No in-app notice
+    /// for a reply that is already in view.
+    @ObservationIgnored private var onScreen: Set<String> = []
     /// Settings: the paired devices as the plugin last listed them, nil before its first answer.
     private(set) var devices: [V3DeviceInfo]?
     /// Why the plugin could not list or change them, from its last answer.
@@ -44,9 +49,9 @@ final class V3Model {
     /// The host's answer to ``requestInvite()``: a one-time code for another device, or its error. Nil while asking.
     private(set) var invite: V3PairInvite?
     /// The in-app notice for a reply in another conversation while the app is active; the newest replaces it.
-    var notice: V3InAppNotice?
+    var notice: InAppNotice?
 
-    @ObservationIgnored private var connection: (any V3ClientTransport)?
+    @ObservationIgnored private var connection: (any ClientTransport)?
     @ObservationIgnored private var listener: Task<Void, Never>?
     @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private let cache = ConversationCache()
@@ -61,7 +66,7 @@ final class V3Model {
     /// The plugin's `peer_info` on the live session: its capabilities and attachment limit.
     private(set) var hostInfo: V3PeerInfo?
     /// Attachment transfers over the live session (#430).
-    let transfers = V3Transfers()
+    let transfers = Transfers()
     @ObservationIgnored private var outboxPumping = false
     @ObservationIgnored private var outboxAgain = false
     @ObservationIgnored private var outboxResend = false
@@ -77,7 +82,7 @@ final class V3Model {
     @ObservationIgnored private var liveStateLoaded = false
     @ObservationIgnored private var liveSnapshot: LiveSnapshot?
     private struct LiveSnapshot {
-        var pairing: V3Pairing?
+        var pairing: Pairing?
         var conversations: [String: Conversation]
         var crons: [V3CronJob]?
         var hostInfo: V3PeerInfo?
@@ -99,7 +104,7 @@ final class V3Model {
         }
         liveStateLoaded = true
         do {
-            pairing = try V3Pairing.load()
+            pairing = try Pairing.load()
         } catch {
             pairingError = String(localized: "Couldn’t read this device’s pairing: \(error.localizedDescription)")
         }
@@ -153,7 +158,7 @@ final class V3Model {
         cache.wipe()
         AttachmentFiles.wipe()
         conversations = [:]
-        let new = V3Pairing(pairing: payload, identity: .generate())
+        let new = Pairing(pairing: payload, identity: .generate())
         do {
             try new.save()
         } catch {
@@ -168,7 +173,7 @@ final class V3Model {
     func unpair() {
         if isDemo { return exitDemo() }
         disconnect()
-        try? V3Pairing.remove()
+        try? Pairing.remove()
         #if os(iOS)
         PreviewKeychain.clear()
         #endif
@@ -196,10 +201,10 @@ final class V3Model {
         isDemo = true
         pairing = nil
         conversations = [:]
-        crons = V3DemoData.crons
+        crons = DemoData.crons
         hostInfo = nil
         Self.logger.debug("Entering memory-only demo mode")
-        listen(to: V3DemoTransport())
+        listen(to: DemoTransport())
     }
 
     func exitDemo() {
@@ -216,7 +221,7 @@ final class V3Model {
         if !liveStateLoaded {
             liveStateLoaded = true
             do {
-                pairing = try V3Pairing.load()
+                pairing = try Pairing.load()
                 if pairing != nil {
                     for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
                 }
@@ -245,6 +250,8 @@ final class V3Model {
         pairingError = nil
         requestedConversation = nil
         visible = nil
+        onScreen = []
+        textDrafts = [:]
         foreground = nil
         activeSent = false
         automationDrafts = [:]
@@ -277,7 +284,7 @@ final class V3Model {
         listen(to: connection)
     }
 
-    private func listen(to connection: any V3ClientTransport) {
+    private func listen(to connection: any ClientTransport) {
         self.connection = connection
         let generation = connectionGeneration
         let pushToken = isDemo ? nil : pushToken
@@ -340,7 +347,17 @@ final class V3Model {
         if convId == nil, let leaving, visible != leaving { return }
         visible = convId
         updateForeground()
-        if !isDemo, let convId { V3Notices.removeDelivered(convId: convId) }
+        if !isDemo, let convId { Notices.removeDelivered(convId: convId) }
+    }
+
+    /// A chat view appeared or went, focused or not.
+    func setOnScreen(_ convId: String, _ shown: Bool) {
+        if shown { onScreen.insert(convId) } else { onScreen.remove(convId) }
+    }
+
+    /// The user already sees `convId`'s replies: no notice for them.
+    private func inView(_ convId: String) -> Bool {
+        convId == foreground || (active && onScreen.contains(convId))
     }
 
     /// The plugin hears the conversation on screen and whether the app is in front at all: no push while it is, the
@@ -373,13 +390,13 @@ final class V3Model {
     private func showNotice(convId: String, title: String, text: String) {
         let line = text.split(whereSeparator: \.isNewline).lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
         guard let line, notice?.convId != convId else { return }
-        notice = V3InAppNotice(convId: convId, title: title.isEmpty ? String(localized: "Yorozu replied.") : title, text: line)
+        notice = InAppNotice(convId: convId, title: title.isEmpty ? String(localized: "Yorozu replied.") : title, text: line)
     }
 
     /// A push that arrived while the app is in front (sent before the plugin heard it was): shown as the notice.
     func showNotice(for convId: String, title: String, body: String) {
         guard !isDemo else { return }
-        guard convId != foreground else { return }
+        guard !inView(convId) else { return }
         showNotice(convId: convId, title: title, text: body)
     }
 
@@ -455,7 +472,7 @@ final class V3Model {
         pairingError = message
     }
 
-    private func updatePairing(_ change: (inout V3Pairing) -> Void) {
+    private func updatePairing(_ change: (inout Pairing) -> Void) {
         guard !isDemo, var pairing else { return }
         change(&pairing)
         self.pairing = pairing
@@ -555,7 +572,7 @@ final class V3Model {
         case .typing(let t):
             setTyping(t.convId, t.active)
         case .reply(let reply):
-            if reply.convId != foreground, conversations[reply.convId]?.items.contains(where: { $0.id == reply.messageId }) != true {
+            if !inView(reply.convId), conversations[reply.convId]?.items.contains(where: { $0.id == reply.messageId }) != true {
                 let title = conversations[reply.convId]?.displayTitle ?? ""
                 let text = reply.text.isEmpty ? (reply.attachments?.first.map { "📎 \($0.name)" } ?? "") : reply.text
                 // In front: the in-app notice. Behind, on the Mac (no relay push reaches it): a local notice.
@@ -563,7 +580,7 @@ final class V3Model {
                     showNotice(convId: reply.convId, title: title, text: text)
                 } else {
                     #if os(macOS)
-                    if !isDemo { V3Notices.reply(convId: reply.convId, title: title, text: text) }
+                    if !isDemo { Notices.reply(convId: reply.convId, title: title, text: text) }
                     #endif
                 }
             }
@@ -748,7 +765,7 @@ final class V3Model {
     /// Asks the plugin for the jobs and returns once it answers, or after 10 s; at once while there is no session.
     func refreshCrons() async {
         if isDemo {
-            crons = V3DemoData.crons
+            crons = DemoData.crons
             return
         }
         guard let connection, await connection.send(.cronList(V3CronList())) else { return }
@@ -978,14 +995,14 @@ final class V3Model {
         conversation.readPending = true
         store(conversation)
         transmit(.readCursor(cursor))
-        if !isDemo, !cursor.unread { V3Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
+        if !isDemo, !cursor.unread { Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
     }
 
     /// The plugin's merged cursor. While this device's own is unanswered, the cursor takes the further of the two and
     /// the flag stays this device's, until the plugin's answer to it (at least as far, same flag) arrives.
     private func receive(_ cursor: V3ReadCursor) {
         // Read on any device: its alerts here go, up to the reply it was read at.
-        if !isDemo, !cursor.unread { V3Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
+        if !isDemo, !cursor.unread { Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
         guard var conversation = conversations[cursor.convId] else {
             unplacedReads[cursor.convId] = cursor
             return
@@ -1060,7 +1077,7 @@ extension V3Connection.State {
 }
 
 /// The in-app notice (Settings, #415): a reply in a conversation not on screen while the app is in front.
-struct V3InAppNotice: Equatable, Identifiable {
+struct InAppNotice: Equatable, Identifiable {
     let id = UUID()
     let convId: String
     let title: String

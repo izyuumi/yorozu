@@ -7,12 +7,15 @@ struct ConversationsView: View {
     /// What the list selects: a conversation, or the Crons row of the sidebar.
     private enum Pane: Hashable { case chat(String), crons }
 
-    let model: V3Model
+    let model: AppModel
     /// The open conversation; the Crons section sets it too (#432).
     @Binding var selection: String?
-    @Binding var section: V3HomeView.Section
+    @Binding var section: HomeView.Section
     /// The sidebar's Crons row; the iPhone has a Crons tab instead.
     let showsCrons: Bool
+    /// Side by side (iPad, iPhone Duo open): opens a conversation beside the focused one, and marks where each open one sits.
+    var openBeside: ((String) -> Void)?
+    var side: (String) -> PaneSide? = { _ in nil }
     @State private var showingSettings = false
     /// The Archived rows are shown below the list (#428).
     @State private var showingArchived = false
@@ -21,7 +24,7 @@ struct ConversationsView: View {
     @State private var deleting: Conversation?
 
     var body: some View {
-        list.sheet(isPresented: $showingSettings) { V3SettingsSheet(model: model) }
+        list.sheet(isPresented: $showingSettings) { SettingsSheet(model: model) }
     }
 
     private var pane: Binding<Pane?> {
@@ -145,23 +148,31 @@ struct ConversationsView: View {
             model.setArchived(conversation.id, !archived)
         }
         let delete = { (title: String) in Button(title, systemImage: "trash", role: .destructive) { deleting = conversation } }
-        let label = ConversationRow(conversation: conversation, typing: model.typing.contains(conversation.id))
+        let label = ConversationRow(conversation: conversation, typing: model.typing.contains(conversation.id), side: side(conversation.id))
         return Group {
             if showsCrons {
+                #if os(iOS)
+                if openBeside != nil { label.conversationDrag(conversation.id) } else { label }
+                #else
                 label
+                #endif
             } else {
                 Button { selection = conversation.id } label: { label }
                     .foregroundStyle(.primary)
             }
         }
             .tag(Pane.chat(conversation.id))
-            .swipeActions(edge: .leading, allowsFullSwipe: true) { V3ReadMarkButton(model: model, conversation: conversation) }
+            .swipeActions(edge: .leading, allowsFullSwipe: true) { ReadMarkButton(model: model, conversation: conversation) }
             .swipeActions(edge: .trailing) {
                 delete(String(localized: "Delete")).disabled(!model.canPatch)
                 archive.tint(.indigo).disabled(!model.canPatch)
             }
             .contextMenu {
-                V3ReadMarkButton(model: model, conversation: conversation)
+                if let openBeside, side(conversation.id) == nil {
+                    Button(String(localized: "Open Beside"), systemImage: "rectangle.split.2x1") { openBeside(conversation.id) }
+                    Divider()
+                }
+                ReadMarkButton(model: model, conversation: conversation)
                 Group {
                     Button(String(localized: "Rename…"), systemImage: "pencil") {
                         newTitle = conversation.title ?? ""
@@ -186,8 +197,8 @@ struct ConversationsView: View {
 }
 
 /// Mark as Read or Mark as Unread for one conversation; nothing before its first reply.
-private struct V3ReadMarkButton: View {
-    let model: V3Model
+private struct ReadMarkButton: View {
+    let model: AppModel
     let conversation: Conversation
 
     var body: some View {
@@ -206,6 +217,8 @@ private struct V3ReadMarkButton: View {
 private struct ConversationRow: View {
     let conversation: Conversation
     let typing: Bool
+    /// Where it is open, with two conversations side by side.
+    let side: PaneSide?
 
     var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
@@ -220,6 +233,12 @@ private struct ConversationRow: View {
                     .foregroundStyle(.secondary)
                 // A dot, not a count (owner, 2026-10-17): orange when a run failed, blue for unread replies.
                 if let dot { Image(systemName: "circle.fill").font(.caption2).foregroundStyle(dot) }
+                if let side {
+                    Image(systemName: side == .left ? "rectangle.lefthalf.filled" : "rectangle.righthalf.filled")
+                        .font(.caption)
+                        .foregroundStyle(.tint)
+                        .accessibilityLabel(side == .left ? Text("Open on the left") : Text("Open on the right"))
+                }
             }
             Group {
                 if typing {

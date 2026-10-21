@@ -10,8 +10,8 @@ enum NoticeHaptics {
 /// Settings (#415): this device's notifications, the host, the paired devices, and Unpair. The host-side rows (push
 /// for a device, removing one) need a plugin with `devices`; without it they are not shown. A sheet on iPhone and
 /// iPad, the Settings window (⌘,) on the Mac.
-struct V3SettingsView: View {
-    let model: V3Model
+struct SettingsView: View {
+    let model: AppModel
     /// Called once this device is unpaired, so a sheet can close.
     var onUnpair: () -> Void = {}
 
@@ -196,13 +196,13 @@ struct V3SettingsView: View {
 }
 
 /// Settings as a sheet, with Done (iPhone, iPad).
-struct V3SettingsSheet: View {
-    let model: V3Model
+struct SettingsSheet: View {
+    let model: AppModel
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            V3SettingsView(model: model) { dismiss() }
+            SettingsView(model: model) { dismiss() }
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {

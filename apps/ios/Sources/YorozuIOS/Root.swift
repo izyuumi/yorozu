@@ -2,17 +2,17 @@ import SwiftUI
 import YorozuWire
 
 /// The v3 app (#425): the pairing screen until the plugin has answered this device once, then the conversations.
-struct V3RootView: View {
-    let model: V3Model
+struct RootView: View {
+    let model: AppModel
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
             if model.paired {
-                V3HomeView(model: model)
+                HomeView(model: model)
                     .id(model.isDemo)
             } else {
-                V3PairingView(model: model)
+                PairingView(model: model)
             }
         }
         // A tapped `yorozu://pair?…`, or the QR's web link opened by the system Camera, takes the same road as a scan.
@@ -44,8 +44,8 @@ struct V3RootView: View {
 }
 
 /// Scan (iPhone, iPad) or paste (every platform) the code `openclaw yorozu pair` prints, then compare the host key.
-struct V3PairingView: View {
-    let model: V3Model
+struct PairingView: View {
+    let model: AppModel
 
     @State private var code = ""
     @State private var scanning = false
