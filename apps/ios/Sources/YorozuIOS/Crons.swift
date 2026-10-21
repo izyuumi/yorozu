@@ -18,6 +18,8 @@ struct HomeView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var columns = NavigationSplitViewVisibility.automatic
     @State private var windowWidth: CGFloat = 0
+    /// A conversation is being dragged from the list onto the conversation area.
+    @State private var dragging = false
     #endif
 
     var body: some View {
@@ -36,7 +38,10 @@ struct HomeView: View {
             if convId != nil, selection == convId { selection = nil }
         }
         #if os(iOS)
-        .onChange(of: selection) { old, new in pair.selectionChanged(from: old, to: new, compact: sizeClass == .compact, selection: &selection) }
+        .onChange(of: selection) { old, new in
+            dragging = false
+            pair.selectionChanged(from: old, to: new, compact: sizeClass == .compact, selection: &selection)
+        }
         .onChange(of: sizeClass) { _, size in pair.selectionChanged(from: nil, to: selection, compact: size == .compact, selection: &selection) }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         #endif
@@ -48,12 +53,14 @@ struct HomeView: View {
         #if os(iOS)
         NavigationSplitView(columnVisibility: $columns) {
             ConversationsView(model: model, selection: $selection, section: $section, showsCrons: true,
-                openBeside: { convId in withAnimation(.snappy) { pair.openBeside(convId, selection: &selection) } }, side: side)
+                openBeside: { convId in withAnimation(.snappy) { pair.openBeside(convId, selection: &selection) } }, side: side,
+                dragStarted: { dragging = true })
         } detail: {
             if section == .crons {
                 CronsView(model: model, open: open)
             } else if selection != nil {
-                ChatPairView(model: model, selection: $selection, pair: $pair, columns: $columns, windowWidth: windowWidth)
+                ChatPairView(model: model, selection: $selection, pair: $pair, columns: $columns, dragging: $dragging,
+                    windowWidth: windowWidth)
             } else {
                 ContentUnavailableView("No conversation selected", systemImage: "bubble.left.and.bubble.right")
             }
