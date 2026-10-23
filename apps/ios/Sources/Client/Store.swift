@@ -63,6 +63,15 @@ struct Conversation: Codable, Identifiable, Equatable {
         return max(read.ts, items.first { $0.id == read.messageId }?.ts ?? .min)
     }
 
+    /// Without the failure items that name none of its messages: older clients turned a list or history load the host
+    /// could not answer into one in every conversation it touched, each an orange dot that no read cleared.
+    var withoutStrayErrors: Conversation {
+        let ids = Set(items.map(\.id))
+        var conversation = self
+        conversation.items.removeAll { $0.kind == .error && !ids.contains(String($0.id.dropFirst("error:".count))) }
+        return conversation
+    }
+
     /// Agent replies after the read cursor; at least 1 while marked unread.
     var unreadCount: Int {
         let after = readUpTo
@@ -232,7 +241,7 @@ final class ConversationCache: Sendable {
         queue.sync {
             let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
             return files.filter { $0.pathExtension == "json" }.compactMap {
-                (try? Data(contentsOf: $0)).flatMap { try? JSONDecoder().decode(Conversation.self, from: $0) }
+                (try? Data(contentsOf: $0)).flatMap { try? JSONDecoder().decode(Conversation.self, from: $0) }?.withoutStrayErrors
             }
         }
     }
