@@ -1,169 +1,120 @@
 ---
 import Base from '../layouts/Base.astro';
 const guide = 'https://github.com/izyuumi/yorozu/blob/projectx/docs/setup.md';
-const build = 'https://github.com/izyuumi/yorozu/blob/projectx/README.md#build';
 ---
-<Base title="Yorozu — Your Mac's assistant, from the menu bar and your iPhone" description="Yorozu is one conversation with an assistant on your own Mac. It hands real work to OpenClaw (Hermes Agent support is experimental) and reaches your iPhone end-to-end encrypted through a relay that cannot read your messages.">
+<Base title="Yorozu — A native chat app for your OpenClaw agent" description="Yorozu is a native iPhone, iPad and Mac app for chatting with your own OpenClaw agent, end-to-end encrypted through a relay that cannot read your messages.">
   <Fragment slot="head">
-    <script is:inline src="/copy.js" defer></script>
     <meta property="og:title" content="Yorozu">
-    <meta property="og:description" content="One conversation with the assistant on your Mac, from the menu bar or your iPhone. End-to-end encrypted.">
+    <meta property="og:description" content="A native chat app for your own OpenClaw agent, on iPhone, iPad and Mac. End-to-end encrypted.">
     <meta property="og:url" content="https://yorozu.yumi.to/">
     <meta property="og:image" content="https://yorozu.yumi.to/assets/icon.png">
   </Fragment>
   <section class="hero" aria-labelledby="title">
     <div class="hero-inner">
       <div class="hero-copy">
-        <h1 id="title">Your Mac's agent.<br><em>In your pocket.</em></h1>
-        <p class="lede">Yorozu <span class="kana" lang="ja">(よろず)</span> is one conversation with an assistant that lives on your Mac. It answers quick questions itself and hands bigger work to background workers through OpenClaw. Ask from the menu bar or your iPhone, follow each topic in its own sub-chat, and read the result wherever you are.</p>
+        <h1 id="title">Your OpenClaw agent.<br><em>In your pocket.</em></h1>
+        <p class="lede">Yorozu <span class="kana" lang="ja">(よろず)</span> is a native chat app for the <a href="https://docs.openclaw.ai/install">OpenClaw</a> agent you already run. Its plugin makes Yorozu a channel of your Gateway, like Signal or Telegram, and the app on your iPhone, iPad or Mac talks to it end-to-end encrypted. OpenClaw runs the agent, its memory and its schedules; Yorozu carries the conversation.</p>
         <div class="actions">
-          <a class="button" href="/mac">Download v1 for Mac</a>
-          <a class="button ghost" href="/iphone">Join v1 on TestFlight</a>
+          <a class="button" href="/iphone">Get Yorozu on the App Store</a>
+          <a class="button ghost" href={guide}>Set up the plugin</a>
         </div>
-        <p class="fine">Both buttons install Yorozu v1, the current public release. Yorozu 0.7.0, described on this page, builds from source on the Mac for now (<a href={build}>build</a>, <a href={guide}>setup guide</a>); its iPhone app is in internal testing only.<br>Mac: macOS 15+ · iPhone: iOS 18+ · <a href="#setup-with-an-agent">Set up with an agent</a> · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
+        <p class="fine">Yorozu 0.9 · iPhone and iPad: iOS 18+ · Mac: macOS 15+ · Needs your own OpenClaw Gateway · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
       </div>
     </div>
   </section>
   <style>
-    /* The hero is copy only; the menu-bar section shows the 0.7.0 popover. Astro emits
-       this as an external stylesheet (inlineStylesheets: 'never'), which the CSP allows. */
+    /* The hero is copy only. Astro emits this as an external stylesheet
+       (inlineStylesheets: 'never'), which the CSP allows. */
     .hero-inner { grid-template-columns: minmax(0, 1fr); }
     .hero-copy { padding-bottom: clamp(48px, 8vw, 110px); }
-    .popover-shot { max-width: 420px; margin: clamp(32px, 5vw, 56px) auto 0; }
   </style>
 
-  <section class="agent-setup" id="setup-with-an-agent" aria-labelledby="agent-setup-title">
-    <div class="agent-setup-text">
-      <h2 id="agent-setup-title">Set it up with one prompt.</h2>
-      <p>Paste this into Claude Code, Codex, OpenClaw or any coding agent on your Mac. Your agent runs <code>Yorozu setup --json</code> and asks you each of its questions: the harness, models, integrations and YOLO mode. It shows you every change before you answer, never installs software, signs in or grants permissions for you, and stops when setup says it is done.</p>
-    </div>
-    <div class="prompt">
-      <pre><code id="agent-prompt">Read https://raw.githubusercontent.com/izyuumi/yorozu/main/Start.md and follow it to set up Yorozu on my devices. Ask me before configuring anything.</code></pre>
-      <button type="button" class="copy" data-copy="agent-prompt" hidden>Copy</button>
-    </div>
-    <p class="copy-status" id="agent-prompt-status" role="status" aria-atomic="true"></p>
-    <p class="fine">The guide is <a href="https://github.com/izyuumi/yorozu/blob/main/Start.md">Start.md</a> in the repository. It needs Yorozu 0.7.0 built from source first. Prefer to do it yourself? <a href="#iphone-availability">Install</a> and <a href="#pair">pair</a> by hand. Either way, read <a href="#before-you-install">Before you install</a> first.</p>
-  </section>
-
-  <section class="more" aria-labelledby="mac-title">
-    <h2 id="mac-title">It lives in your menu bar.</h2>
+  <section class="more" aria-labelledby="chat-title">
+    <h2 id="chat-title">Every conversation, on every device.</h2>
     <dl class="facts">
-      <div><dt>A quick chat</dt><dd>Click the Yorozu icon for the main timeline and a composer. Type, or drop in a file.</dd></div>
-      <div><dt>Search with ⌘F</dt><dd>Search the main timeline, with next, previous and a count.</dd></div>
-      <div><dt>Always running</dt><dd>The icon shows when work is running or something needs you. Yorozu keeps working after you close the popover.</dd></div>
-      <div><dt>A Settings window</dt><dd>General, Devices, Connection, Storage and Jobs, plus Advanced when you want it. Or change a setting by asking in the chat.</dd></div>
-    </dl>
-    <figure class="shot mac-shot popover-shot">
-      <img src="/assets/mac-07-dark.webp" alt="The Yorozu popover on a Mac with a demo chat: a name for a desk plant, and how long to steep sencha, answered by a background worker" width="426" height="750" loading="lazy">
-    </figure>
-  </section>
-
-  <section class="more" aria-labelledby="phone-title">
-    <h2 id="phone-title">Your iPhone is the full client.</h2>
-    <p class="steps-intro">The 0.7.0 iPhone app is in internal TestFlight testing only; the public TestFlight installs v1.</p>
-    <dl class="facts">
-      <div><dt>A sub-chat for every topic</dt><dd>See what is running, what needs your attention and what finished, and look inside each task as it works.</dd></div>
-      <div><dt>Stop and Retry</dt><dd>Stop a task that went the wrong way, or retry one that failed, right from its sub-chat.</dd></div>
-      <div><dt>Jobs</dt><dd>See every scheduled job with its next run and last result. Pause, resume, run now or delete it.</dd></div>
-      <div><dt>Search everything</dt><dd>Search the full history on your Mac, sub-chats included, not just what your phone has loaded.</dd></div>
+      <div><dt>Many conversations</dt><dd>Start a new conversation with +. Each one is its own OpenClaw session, listed on every paired device, with full history loaded from your Gateway.</dd></div>
+      <div><dt>See the work</dt><dd>Replies arrive whole, with a typing indicator while the agent runs and each tool call shown as a collapsed row.</dd></div>
+      <div><dt>Delivery and read marks</dt><dd>Every message goes from Sent to Delivered to Read. Read state and unread badges stay in step across your devices.</dd></div>
+      <div><dt>Rename, archive, delete</dt><dd>Titles are made for you after the first turn. Rename, archive or delete from any device and the others follow.</dd></div>
     </dl>
   </section>
 
-  <section class="more" aria-labelledby="harness-title">
-    <h2 id="harness-title">It works through the agent you already run.</h2>
+  <section class="more" aria-labelledby="more-title">
+    <h2 id="more-title">Built for the agent you already run.</h2>
     <dl class="facts">
-      <div><dt>OpenClaw first</dt><dd>Yorozu drives one harness on your Mac through its local API, with the providers and models you set up there. OpenClaw is the tested harness. Hermes Agent support is experimental: built, but not yet tested live. Setup detects which one you have.</dd></div>
-      <div><dt>Coding when you want it</dt><dd>Coding is opt-in: choose one repository in Settings › Advanced, and the harness runs its coding executors there, such as Claude Code or Codex through OpenClaw.</dd></div>
-      <div><dt>Computer use, optional</dt><dd>With <a href="https://cua.ai">CuaDriver</a> installed, workers can operate apps on your Mac in the background. You can turn it off in Settings › Advanced, shown after “Show Advanced settings”.</dd></div>
-      <div><dt>YOLO mode</dt><dd>Off by default. Turn it on and Yorozu tells workers to stop asking first before steps you requested, but still to ask before settings changes and actions you did not ask for. A new job script always needs your yes; Yorozu enforces that one.</dd></div>
-    </dl>
-  </section>
-
-  <section class="more" aria-labelledby="delivery-title">
-    <h2 id="delivery-title">Send now, even if the Mac is asleep.</h2>
-    <dl class="facts">
-      <div><dt>Files, both ways</dt><dd>Attach photos, camera shots, files or anything you paste, up to 10 files of 50 MB each. Workers can hand files back with their results. While the Mac is away, files wait on your phone until it is back.</dd></div>
-      <div><dt>Delivery marks</dt><dd>Every message moves from Sending to Delivered to Read. One that never arrives says so, with Resend and Delete.</dd></div>
-      <div><dt>A 24-hour buffer</dt><dd>While your Mac is offline, the relay holds your text messages for up to 24 hours. Your phone tells you if one expires before the Mac picks it up.</dd></div>
-      <div><dt>Direct at home, if you like</dt><dd>Turn on Direct connection on the phone and it talks to the Mac over your LAN or Tailscale, with the relay as the fallback. It is off by default.</dd></div>
-    </dl>
-  </section>
-
-  <section class="more" aria-labelledby="files-title">
-    <h2 id="files-title">Yours, as plain files.</h2>
-    <dl class="facts">
-      <div><dt>Memory in Markdown</dt><dd>Yorozu remembers useful facts on its own and keeps them as Markdown files in <code>~/Yorozu/memory</code>. Open them in any editor.</dd></div>
-      <div><dt>Jobs on a schedule</dt><dd>Ask for something to run on a schedule and Yorozu's own scheduler runs it. A new or changed script runs only after you say yes to it.</dd></div>
-      <div><dt>Settings you can read</dt><dd>Settings live in <code>config.toml</code> and jobs in <code>jobs.toml</code>. Edit them by hand, in Settings, or by asking in the chat.</dd></div>
-      <div><dt>Alerts without content</dt><dd>Your phone hears about a reply, a question, a failure or the Mac coming back online. The alert carries fixed text, never your messages.</dd></div>
+      <div><dt>Automations</dt><dd>See your agent's scheduled jobs with their next run, and change one with Edit in Chat: the agent edits it with its own tools. A job can deliver its result into a conversation.</dd></div>
+      <div><dt>Files, both ways</dt><dd>Send photos, camera shots and files, or share them from other apps. Files the agent returns open in the conversation.</dd></div>
+      <div><dt>Notifications</dt><dd>One push per finished reply, with a preview only your device can open. Nothing is pushed for the conversation you are looking at.</dd></div>
+      <div><dt>A native app</dt><dd>SwiftUI on iPhone, iPad and Mac, with light, dark or system appearance and an accent colour of your choice.</dd></div>
     </dl>
   </section>
 
   <section class="relay" aria-labelledby="relay-title">
     <h2 id="relay-title">The relay can't read a word of it.</h2>
-    <figure class="diagram" role="img" aria-label="Your iPhone and your Mac exchange messages encrypted with ChaCha20-Poly1305 through a relay that sees only size and timing.">
+    <figure class="diagram" role="img" aria-label="Your devices and your OpenClaw Gateway exchange messages encrypted with ChaCha20-Poly1305 through a relay that sees only size and timing.">
       <span class="diagram-art" aria-hidden="true"></span>
       <figcaption aria-hidden="true">
         <span class="diagram-encryption">ChaCha20-Poly1305 · End-to-end encrypted</span>
-        <span class="diagram-labels"><span>iPhone</span><span class="diagram-relay">sees size and timing</span><span>Mac</span></span>
+        <span class="diagram-labels"><span>iPhone</span><span class="diagram-relay">sees size and timing</span><span>Gateway</span></span>
       </figcaption>
     </figure>
     <dl class="facts">
-      <div><dt>Keys never leave your devices</dt><dd>An X25519 exchange at pairing time. The relay stores public keys and a room id, nothing it could open.</dd></div>
-      <div><dt>No Yorozu account</dt><dd>No email, no password, no analytics. Your provider logins stay in your harness on the Mac.</dd></div>
-      <div><dt>Run it yourself if you like</dt><dd>The relay is small. Put it on a Mac mini over Tailscale and set its URL in Settings › Connection. Every paired phone then pairs again.</dd></div>
+      <div><dt>Fresh keys for every connection</dt><dd>Each connection runs a Noise IK handshake. Private keys stay in the device Keychain and in your Gateway's credentials store.</dd></div>
+      <div><dt>No open port</dt><dd>The plugin connects out to the relay, so the computer running your Gateway needs no port forwarding.</dd></div>
+      <div><dt>Send while it sleeps</dt><dd>While your Gateway is offline, the relay holds what your devices send for up to 24 hours, sealed, and hands it over when the Gateway is back.</dd></div>
+      <div><dt>No Yorozu account</dt><dd>No email, no password, no analytics. Your model providers and their logins stay in OpenClaw.</dd></div>
     </dl>
   </section>
 
-  <section class="iphone-availability" id="iphone-availability" aria-labelledby="iphone-title">
+  <section class="iphone-availability" id="get" aria-labelledby="get-title">
     <div class="availability-intro">
-      <h2 id="iphone-title">Get the apps.</h2>
-      <p>The download and TestFlight links install <strong>Yorozu v1</strong>, the current public release, which works differently from this page. Yorozu 0.7.0 has no installer yet. Build it from source until there is a Mac download and a public TestFlight for it.</p>
+      <h2 id="get-title">Get Yorozu.</h2>
+      <p>Yorozu has two parts: the plugin in your OpenClaw Gateway, and the app on each device.</p>
     </div>
     <div class="installation-options">
       <article>
-        <h3>Yorozu 0.7.0, from source</h3>
-        <p>Developers can build the 0.7.0 Mac app from the repository's <code>projectx</code> branch with <code>mise install</code> and <code>scripts/build_native.sh</code>; the <a href={guide}>setup guide</a> lists what else you need. The 0.7.0 iPhone app is not available outside internal TestFlight yet: the iPhone project is tied to the owner's team, and a self-signed build loses Camera pairing and alerts.</p>
-        <a href={build}>Open the build instructions</a>
+        <h3>The plugin</h3>
+        <p>Install the Yorozu channel plugin in your OpenClaw Gateway (OpenClaw 2026.9.8 or later). The <a href={guide}>setup guide</a> has the commands and settings.</p>
+        <a href={guide}>Open the setup guide</a>
       </article>
       <article>
-        <h3>Mac, v1</h3>
-        <p>Installs Yorozu v1 for Apple silicon Macs. Move it to Applications and open it. Want early v1 builds? <a href="/beta">Download the v1 beta</a>.</p>
-        <a href="/mac">Download v1 for Mac</a>
+        <h3>iPhone and iPad</h3>
+        <p>Yorozu is on the App Store for iPhone and iPad with iOS 18 or later. No Gateway yet? Enter <code>YOROZU-DEMO</code> on the pairing screen to look around with sample conversations.</p>
+        <a href="/iphone">Get Yorozu on the App Store</a>
       </article>
       <article>
-        <h3>iPhone, v1, via TestFlight</h3>
-        <p>The public TestFlight installs the v1 iPhone app. Open the link on your iPhone, install <a href="https://apps.apple.com/app/testflight/id899247664">TestFlight</a> if prompted, then install Yorozu.</p>
-        <a href="/iphone">Join v1 on TestFlight</a>
+        <h3>Mac</h3>
+        <p>The same app runs natively on Macs with macOS 15 or later. A Mac download of 0.9 is coming to this page; until then, developers can build it from the repository with <code>scripts/build_native.sh</code>.</p>
+        <a href="https://github.com/izyuumi/yorozu/blob/projectx/docs/release.md#mac-client">Build it from source</a>
       </article>
     </div>
   </section>
 
   <section class="steps" id="pair" aria-labelledby="steps-title">
     <h2 id="steps-title">Then pair once.</h2>
-    <p class="steps-intro">These steps are for Yorozu 0.7.0. You’ll need a Mac with macOS 15 or later and <a href="https://docs.openclaw.ai/install">OpenClaw</a> set up (or, experimentally, <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a>), and an iPhone with iOS 18 or later and the 0.7.0 app, which is in internal testing for now. Keep the Mac awake and online to reach it from your phone.</p>
+    <p class="steps-intro">You'll need <a href="https://docs.openclaw.ai/install">OpenClaw</a> running with the Yorozu plugin. Keep the Gateway's computer awake and online to reach your agent.</p>
     <ol>
       <li>
         <span class="num" aria-hidden="true">1</span>
-        <h3>Set up the Mac</h3>
-        <p>Open Yorozu; the setup window opens at first launch. It walks you through the harness, models, integrations and YOLO mode, and skips whatever is already in place.</p>
+        <h3>Make a pairing code</h3>
+        <p>On the computer that runs your Gateway, run <code>openclaw yorozu pair</code>. It prints a QR code and a link that work once and expire after 10 minutes.</p>
       </li>
       <li>
         <span class="num" aria-hidden="true">2</span>
-        <h3>Pair your iPhone</h3>
-        <p>On the Mac, open Settings › Devices › Pair iPhone. Scan the code with the iPhone Camera, or open Yorozu on the iPhone, tap “Enter code manually” and paste the code. Check that the Mac key matches. No Yorozu account needed.</p>
+        <h3>Pair your device</h3>
+        <p>Scan the QR with the Camera or in Yorozu, or paste the link. Check that the fingerprint matches the one the command printed. No Yorozu account needed.</p>
       </li>
       <li>
         <span class="num" aria-hidden="true">3</span>
         <h3>Talk from anywhere</h3>
-        <p>The conversation lives on the Mac. Your phone reaches it through the relay, or directly at home if you turn that on.</p>
+        <p>Your conversations live in OpenClaw. Every paired device sees them all, through the relay.</p>
       </li>
     </ol>
   </section>
 
   <section class="warning" id="before-you-install" aria-labelledby="risk-title">
     <h2 id="risk-title">Before you install</h2>
-    <p><strong>Using Yorozu could get your Claude or ChatGPT/Codex account suspended or banned.</strong> Your harness runs coding executors such as Claude Code and Codex, and the models behind them, with the accounts you signed in with. Anthropic and OpenAI decide what use of their subscriptions is allowed, change those rules without notice, and have suspended accounts used with third-party agent tools. If you want the lowest risk, use an API key rather than a subscription login.</p>
-    <p>AI agents take real actions on your Mac: they run commands, edit and delete files, operate apps and can send messages. Review what you allow, especially with YOLO mode on. See the <a href="/terms/">Terms of Use</a>.</p>
+    <p><strong>Your agent acts with the accounts you give OpenClaw.</strong> If OpenClaw drives Claude Code, Codex or a model through a subscription login, Anthropic and OpenAI decide what use of that subscription is allowed, change those rules without notice, and have suspended accounts used with third-party agent tools. For the lowest risk, use an API key rather than a subscription login.</p>
+    <p>AI agents take real actions: they run commands, edit and delete files and can send messages. Review what your agent is allowed to do. See the <a href="/terms/">Terms of Use</a>.</p>
   </section>
 </Base>
