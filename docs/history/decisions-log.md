@@ -963,7 +963,7 @@ Source: owner, tracking issue #415 (Decisions, 2026-10-15).
 
 Grilling session with the owner. Plan: [upgrade-from-0.5.md](../upgrade-from-0.5.md).
 
-- Only 0.5.0-beta installs (the owner's family) upgrade, to 0.9.0-beta. 0.4.0 is not upgraded and the stable feed stays frozen. The owner checks each migration by hand; then all migration code is deleted. Fix forward only.
+- Only 0.5.0-beta installs upgrade, to 0.9.0-beta. 0.4.0 is not upgraded and the stable feed stays frozen. The owner checks each migration by hand; then all migration code is deleted. Fix forward only.
 - Mac stays on GitHub Releases + Sparkle as `to.yumi.yorozu` (Developer ID, notarized), beta feed by default. This reverses the Mac part of "takes v1's identity" as `to.yumi.yorozu.ios` (#426). `projectx` merges into `main`; the release job is the one CI exception.
 - Version 0.9.0. Visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build, because Sparkle compares that integer and the installed 0.5.0-beta is `10279` (TN2420: macOS builds rise across versions).
 - Supersedes "every device re-pairs once": 0.5's host keys and devices carry into the plugin, and iOS copies `pairings` into `pairing-v3`, with QR fallback.
