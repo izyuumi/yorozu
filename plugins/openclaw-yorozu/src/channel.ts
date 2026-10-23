@@ -22,6 +22,7 @@ import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
 import { loadHostKeys } from "./keys.js";
 import { notifyReply, runRelayHost } from "./relay.js";
+import { loadMessageTimes } from "./activity.js";
 import { runParked } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
 import { applyPatch, watchSessions } from "./sessions.js";
@@ -64,6 +65,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
   const { account, abortSignal } = ctx;
   const keys = await loadHostKeys();
   await loadAttachmentIndex().catch((error: unknown) => ctx.log?.warn?.(`yorozu: attachment index failed: ${String(error)}`));
+  await loadMessageTimes().catch((error: unknown) => ctx.log?.warn?.(`yorozu: message times failed: ${String(error)}`));
   const maxBytes = mediaMaxBytes(ctx.cfg, account.accountId);
   ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });

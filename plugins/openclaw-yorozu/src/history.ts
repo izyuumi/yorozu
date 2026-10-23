@@ -16,8 +16,8 @@ import {
   getSessionEntry,
   listSessionEntries,
   loadTranscriptEventsSync,
-  readTranscriptStatsSync,
 } from "openclaw/plugin-sdk/session-store-runtime";
+import { messageTime, revOf } from "./activity.js";
 import { attachmentAt, attachmentsOf } from "./attachments.js";
 import { DEFAULT_CHUNK_LIMIT } from "./conversation.js";
 import {
@@ -72,10 +72,13 @@ export function listConversations(agent: string): ConvList {
     const convId = sessionKey.startsWith(start) ? sessionKey.slice(start.length) : "";
     if (!isId(convId) || !entry.sessionId) continue;
     const title = titleOf(entry);
+    const rev = revOf(agent, sessionKey, entry.sessionId);
+    const sessionId = entry.sessionId;
     conversations.push({
       convId,
-      updatedAt: entry.updatedAt ?? 0,
-      rev: stats(agent, sessionKey, entry.sessionId),
+      // The last message's time, not the entry's: a rename or pin must not reorder the list (src/activity.ts).
+      updatedAt: messageTime(convId, rev, () => lastMessageTime(agent, sessionKey, sessionId), entry.updatedAt ?? 0),
+      rev,
       ...(title ? { title } : {}),
       ...(entry.archivedAt !== undefined ? { archived: true as const } : {}),
       ...(entry.pinnedAt !== undefined ? { pinnedAt: entry.pinnedAt } : {}),
@@ -95,7 +98,7 @@ export function historyPage(cfg: OpenClawConfig, agent: string, request: History
   const entry = getSessionEntry({ agentId: agent, sessionKey });
   const empty: History = { convId, items: [], more: false, rev: 0, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) };
   if (!entry?.sessionId) return empty;
-  const rev = stats(agent, sessionKey, entry.sessionId);
+  const rev = revOf(agent, sessionKey, entry.sessionId);
   let built = cache.get(sessionKey);
   if (!built || built.sessionId !== entry.sessionId || built.rev !== rev) {
     const events = loadTranscriptEventsSync({ agentId: agent, sessionId: entry.sessionId, sessionKey });
@@ -178,14 +181,6 @@ export function liveReplyIds(
   return undefined;
 }
 
-/** The transcript's newest event `seq`: a conversation whose `rev` a client already has needs no fetch. */
-function stats(agent: string, sessionKey: string, sessionId: string): number {
-  try {
-    return readTranscriptStatsSync({ agentId: agent, sessionId, sessionKey }).maxSeq;
-  } catch {
-    return 0;
-  }
-}
 
 type Fields = Record<string, unknown>;
 const obj = (v: unknown): Fields | undefined => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Fields) : undefined);
@@ -223,6 +218,24 @@ function userFiles(message: Fields): Attachment[] {
 const withoutMedia = (text: string): string => text.replace(MEDIA_LINE, "").replace(/\n{3,}/g, "\n\n").trim();
 
 const cut = (text: string) => (text.length > ITEM_CHARS ? `${text.slice(0, ITEM_CHARS)}…` : text);
+
+/** The newest user or agent message's own time in the transcript; undefined when it has none or cannot be read. */
+function lastMessageTime(agent: string, sessionKey: string, sessionId: string): number | undefined {
+  try {
+    const events = loadTranscriptEventsSync({ agentId: agent, sessionId, sessionKey });
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = obj(events[i]);
+      const message = obj(event?.message);
+      if (event?.type !== "message" || !message || (message.role !== "user" && message.role !== "assistant")) continue;
+      if (!textOf(message.content).trim()) continue;
+      const at = timeOf(event, message);
+      if (at > 0) return at;
+    }
+  } catch {
+    // The store is busy or gone: the entry's time for now, read again on the next list.
+  }
+  return undefined;
+}
 
 function timeOf(event: Fields, message?: Fields): number {
   if (Number.isSafeInteger(message?.timestamp)) return message!.timestamp as number;

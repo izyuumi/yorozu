@@ -628,8 +628,12 @@ final class AppModel {
                 conversation.title = summary.title
                 conversation.archived = summary.archived == true ? true : nil
                 conversation.pinnedAt = summary.pinnedAt
-                if isNew || changed || summary.updatedAt > conversation.updatedAt {
-                    conversation.updatedAt = max(conversation.updatedAt, summary.updatedAt)
+                // The host's last message time orders the list (owner, 2026-10-24); a message of this device's still on its
+                // way is newer than the host knows.
+                let sending = conversation.items.filter { $0.kind == .user && ($0.status ?? .queued) < .delivered }.map(\.ts).max()
+                let time = max(summary.updatedAt, sending ?? .min)
+                if isNew || changed || time != conversation.updatedAt {
+                    conversation.updatedAt = time
                     store(conversation)
                 }
                 if conversation.rev != summary.rev { enqueue(catchUp(conversation)) }
