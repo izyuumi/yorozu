@@ -85,10 +85,6 @@
       "extractionState" : "manual",
       "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ここに開く" } } }
     },
-    "Replace" : {
-      "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "置き換え" } } }
-    },
     "Recent" : {
       "extractionState" : "manual",
       "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "最近" } } }

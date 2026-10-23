@@ -254,8 +254,12 @@ final class ComposerUITextView: UITextView {
         if !loading { super.paste(sender) }
     }
 
+    /// A file in the pasteboard item; nil for text. Styled text from Safari or Notes also carries a web archive or RTFD,
+    /// which is not a file: an item that has any text is pasted as plain text.
     private static func fileType(in provider: NSItemProvider) -> UTType? {
-        provider.registeredTypeIdentifiers.compactMap(UTType.init).first {
+        let types = provider.registeredTypeIdentifiers.compactMap(UTType.init)
+        guard !types.contains(where: { $0.conforms(to: .text) }) else { return nil }
+        return types.first {
             $0.conforms(to: .data) && !$0.conforms(to: .text) && !$0.conforms(to: .url)
         }
     }

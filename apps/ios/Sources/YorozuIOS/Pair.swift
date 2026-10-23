@@ -59,6 +59,15 @@ struct ChatPair {
         }
     }
 
+    /// A conversation dropped on `side`: beside the one open, on that side; with two open, in that pane.
+    mutating func drop(_ convId: String, on side: PaneSide, selection: inout String?) {
+        guard partner == nil, let current = selection, current != convId else { return show(convId, on: side, selection: &selection) }
+        choosing = false
+        partner = current
+        selection = convId
+        partnerOnLeft = side == .right
+    }
+
     /// The list, a notice or a deletion moved the selection from `old` to `new`.
     mutating func selectionChanged(from old: String?, to new: String?, compact: Bool, selection: inout String?) {
         if choosing, let old, let new, old != new {
@@ -165,15 +174,7 @@ struct ChatPairView: View {
     }
 
     private func drop(_ convId: String, on side: PaneSide) {
-        withAnimation(.snappy) {
-            if pair.isOpen {
-                pair.show(convId, on: side, selection: &selection)
-            } else if side == .right {
-                pair.openBeside(convId, selection: &selection)
-            } else {
-                selection = convId
-            }
-        }
+        withAnimation(.snappy) { pair.drop(convId, on: side, selection: &selection) }
     }
 
     private func finishDrag() {
@@ -250,10 +251,9 @@ struct ChatPairView: View {
         }
     }
 
-    /// The side a dragged conversation would land on: Open Beside or Replace with one open, Open Here with two.
+    /// The side a dragged conversation would land on.
     private func dropHint(_ side: PaneSide) -> some View {
-        let label = pair.isOpen ? String(localized: "Open Here")
-            : side == .right ? String(localized: "Open Beside") : String(localized: "Replace")
+        let label = String(localized: "Open Here")
         return HStack(spacing: 0) {
             if side == .right { Color.clear }
             RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous)
