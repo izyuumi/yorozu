@@ -25,6 +25,7 @@ import { isId, type Attachment, type Event, type Message, type ToolStatus } from
 import { liveReplyIds } from "./history.js";
 import { noteFirstMessage } from "./push.js";
 import { broadcast, notifyReply } from "./relay.js";
+import { isTemporary, park } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
 import { maybeTitle } from "./sessions.js";
 
@@ -83,8 +84,11 @@ export function mediaUrls(...urls: (string | null | undefined)[]): string[] {
 
 type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & { agent: string; mediaMaxBytes: number };
 
-/** Runs the turn for one message; never throws (a failure goes to the devices as `error run_failed`). */
-export async function handleMessage(ctx: TurnContext, message: Message): Promise<void> {
+/**
+ * Runs the turn for one message; never throws (a failure goes to the devices as `error run_failed`, a temporary one
+ * before any reply or tool is retried instead: `src/retry.ts`). `attempt` counts the retries before this one.
+ */
+export async function handleMessage(ctx: TurnContext, message: Message, attempt = 0): Promise<void> {
   const { cfg, accountId, log } = ctx;
   const { convId, messageId, text } = message;
   const send = (...events: Event[]) => void broadcast(events);
@@ -102,6 +106,7 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
 
   /** Transcript messages this turn's replies already took their ids from. */
   const usedReplies = new Set<string>();
+  let toolRan = false;
   let started = false;
   const runStarted = () => {
     if (started) return;
@@ -131,6 +136,7 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
   const tool = (callId: string | undefined, name: string | undefined, status: ToolStatus) => {
     const n = name?.trim();
     if (!callId || !n) return;
+    toolRan = true;
     send({ kind: "tool", data: { convId, messageId, callId: callId.slice(0, 128), name: n.slice(0, 128), status } });
   };
 
@@ -207,8 +213,9 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
       },
     });
   } catch (error) {
-    log?.warn(`yorozu: run failed: ${String(error)}`);
-    send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
+    const retrying = !firstReply && !toolRan && isTemporary(error) && (await park(message, attempt).catch(() => false));
+    log?.warn(`yorozu: run failed${retrying ? ` (retry ${attempt + 1} queued)` : ""}: ${String(error)}`);
+    if (!retrying) send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
   } finally {
     setTyping(false);
     if (firstReply) {

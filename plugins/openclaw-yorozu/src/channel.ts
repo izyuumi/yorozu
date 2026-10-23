@@ -22,6 +22,7 @@ import { answerRequest } from "./history.js";
 import { listCronJobs } from "./cron.js";
 import { loadHostKeys } from "./keys.js";
 import { notifyReply, runRelayHost } from "./relay.js";
+import { runParked } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
 import { applyPatch, watchSessions } from "./sessions.js";
 
@@ -67,6 +68,8 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
   ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
   watchSessions(account.agent, abortSignal, ctx.log);
+  const turn = { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent, mediaMaxBytes: maxBytes };
+  runParked(abortSignal, (message, attempt) => void handleMessage(turn, message, attempt));
   try {
     await runRelayHost({
       relayUrl: account.relayUrl,
@@ -76,11 +79,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       mediaMaxBytes: maxBytes,
       agent: account.agent,
       hostVersion: yorozuRuntime.getRuntime().version,
-      onMessage: (message) =>
-        void handleMessage(
-          { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent, mediaMaxBytes: maxBytes },
-          message,
-        ),
+      onMessage: (message) => void handleMessage(turn, message),
       onRequest: async (event) => {
         if (event.kind === "conv_list" || event.kind === "history") return answerRequest(ctx.cfg, account.agent, event, ctx.log);
         if (event.kind === "conv_patch") return applyPatch(account.agent, event.data, ctx.log);
