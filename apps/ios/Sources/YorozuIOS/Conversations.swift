@@ -66,10 +66,19 @@ struct ConversationsView: View {
             if showsCrons {
                 Label(String(localized: "Automations"), systemImage: "clock").tag(Pane.crons)
             }
+            // Pinned above the rest, newest pin first (owner, 2026-10-23).
+            let pinned = conversations.filter { $0.pinnedAt != nil }.sorted { ($0.pinnedAt ?? 0) > ($1.pinnedAt ?? 0) }
+            if !pinned.isEmpty {
+                Section {
+                    ForEach(pinned, content: row)
+                } header: {
+                    Text("Pinned")
+                }
+            }
             Section {
-                ForEach(conversations, content: row)
+                ForEach(conversations.filter { $0.pinnedAt == nil }, content: row)
             } header: {
-                if showsCrons { Text("Chats") }
+                if showsCrons || !pinned.isEmpty { Text("Chats") }
             }
             let archived = model.archivedList
             if !archived.isEmpty {
@@ -149,6 +158,10 @@ struct ConversationsView: View {
             if !archived, selection == conversation.id { selection = nil }
             model.setArchived(conversation.id, !archived)
         }
+        let pinned = conversation.pinnedAt != nil
+        let pin = Button(pinned ? String(localized: "Unpin") : String(localized: "Pin"), systemImage: pinned ? "pin.slash" : "pin") {
+            withAnimation { model.setPinned(conversation.id, !pinned) }
+        }
         let delete = { (title: String) in Button(title, systemImage: "trash", role: .destructive) { deleting = conversation } }
         let label = ConversationRow(conversation: conversation, typing: model.typing.contains(conversation.id), side: side(conversation.id))
         return Group {
@@ -164,7 +177,11 @@ struct ConversationsView: View {
             }
         }
             .tag(Pane.chat(conversation.id))
-            .swipeActions(edge: .leading, allowsFullSwipe: true) { ReadMarkButton(model: model, conversation: conversation) }
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                ReadMarkButton(model: model, conversation: conversation)
+                // An archived conversation cannot be pinned (as in OpenClaw).
+                if !archived { pin.tint(.orange).disabled(!model.canPatch) }
+            }
             .swipeActions(edge: .trailing) {
                 delete(String(localized: "Delete")).disabled(!model.canPatch)
                 archive.tint(.indigo).disabled(!model.canPatch)
@@ -176,6 +193,7 @@ struct ConversationsView: View {
                 }
                 ReadMarkButton(model: model, conversation: conversation)
                 Group {
+                    if !archived { pin }
                     Button(String(localized: "Rename…"), systemImage: "pencil") {
                         newTitle = conversation.title ?? ""
                         renaming = conversation

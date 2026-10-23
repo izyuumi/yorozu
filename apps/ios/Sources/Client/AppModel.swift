@@ -622,8 +622,10 @@ final class AppModel {
                         read: unplacedReads.removeValue(forKey: summary.convId))
                 let isNew = conversations[summary.convId] == nil
                 let changed = conversation.title != summary.title || (conversation.archived == true) != (summary.archived == true)
+                    || conversation.pinnedAt != summary.pinnedAt
                 conversation.title = summary.title
                 conversation.archived = summary.archived == true ? true : nil
+                conversation.pinnedAt = summary.pinnedAt
                 if isNew || changed || summary.updatedAt > conversation.updatedAt {
                     conversation.updatedAt = max(conversation.updatedAt, summary.updatedAt)
                     store(conversation)
@@ -912,7 +914,15 @@ final class AppModel {
     }
 
     func setArchived(_ convId: String, _ archived: Bool) {
-        patch(V3ConvPatch(convId: convId, archived: archived)) { $0.archived = archived ? true : nil }
+        patch(V3ConvPatch(convId: convId, archived: archived)) {
+            $0.archived = archived ? true : nil
+            if archived { $0.pinnedAt = nil }
+        }
+    }
+
+    /// Pin on the host, so every device lists it under Pinned (owner, 2026-10-23); an archived one cannot be pinned.
+    func setPinned(_ convId: String, _ pinned: Bool) {
+        patch(V3ConvPatch(convId: convId, pinned: pinned)) { $0.pinnedAt = pinned ? $0.pinnedAt ?? Self.now : nil }
     }
 
     /// Delete on the host (archive, then delete with its transcript) and on every device.
@@ -920,7 +930,7 @@ final class AppModel {
         patch(V3ConvPatch(convId: convId, deleted: true)) { _ in }
     }
 
-    /// A rename, archive or delete needs a live session; the host answers every device.
+    /// A rename, archive, pin or delete needs a live session; the host answers every device.
     var canPatch: Bool { state == .ready }
 
     private func patch(_ patch: V3ConvPatch, local: @escaping (inout Conversation) -> Void) {
@@ -942,6 +952,7 @@ final class AppModel {
             ?? Conversation(id: update.convId, createdAt: Self.now, updatedAt: Self.now, read: unplacedReads.removeValue(forKey: update.convId))
         conversation.title = update.title
         conversation.archived = update.archived == true ? true : nil
+        conversation.pinnedAt = update.pinnedAt
         guard conversation != conversations[update.convId] else { return }
         store(conversation)
     }

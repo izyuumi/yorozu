@@ -61,15 +61,16 @@ export type ConvList = { conversations: ConvSummary[] };
 /**
  * `rev`: the transcript's newest event seq; a client holding it has the conversation's whole history so far.
  * `title`: the manual rename, else the generated title (#428); absent before either. `archived`: only when true.
+ * `pinnedAt`: epoch ms of the pin (the session entry's), only when pinned.
  */
-export type ConvSummary = { convId: string; updatedAt: number; rev: number; title?: string; archived?: true };
+export type ConvSummary = { convId: string; updatedAt: number; rev: number; title?: string; archived?: true; pinnedAt?: number };
 /**
- * `conv_patch`, device -> plugin (#428): rename (`title`, "" clears the rename), archive or unarchive, or delete.
- * Answered by the `conv_update` every device gets, or `error` to the sender.
+ * `conv_patch`, device -> plugin (#428): rename (`title`, "" clears the rename), archive or unarchive (archiving
+ * unpins), pin or unpin, or delete. Answered by the `conv_update` every device gets, or `error` to the sender.
  */
-export type ConvPatch = { convId: string; title?: string; archived?: boolean; deleted?: true };
-/** `conv_update`, plugin -> every device: a conversation's title and archive state now, or that it is gone. */
-export type ConvUpdate = { convId: string; title?: string; archived?: true; deleted?: true };
+export type ConvPatch = { convId: string; title?: string; archived?: boolean; pinned?: boolean; deleted?: true };
+/** `conv_update`, plugin -> every device: a conversation's title, archive and pin state now, or that it is gone. */
+export type ConvUpdate = { convId: string; title?: string; archived?: true; pinnedAt?: number; deleted?: true };
 /** `history`, device -> plugin: one page of a conversation. `before`/`after` are item seqs; neither: the newest. */
 export type HistoryRequest = { convId: string; before?: number; after?: number };
 /** `history`, plugin -> the asking device: the request's fields again, then the page, oldest first. */
@@ -214,6 +215,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     isId(d.convId) &&
     optStr(d.title) &&
     (d.archived === undefined || typeof d.archived === "boolean") &&
+    (d.pinned === undefined || typeof d.pinned === "boolean") &&
     (d.deleted === undefined || d.deleted === true),
   // Sent only by the plugin.
   conv_update: (d) => isId(d.convId),

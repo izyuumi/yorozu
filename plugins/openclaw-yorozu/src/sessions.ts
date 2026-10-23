@@ -7,7 +7,10 @@
  *   (docs/openclaw-channel.md, Q6).
  * - **Rename** writes the entry's `label`, which wins over `displayName` as in core's `deriveSessionTitle`; an empty
  *   rename clears it, so the generated title shows again.
- * - **Archive** sets `archivedAt` (and `archiveReason: "manual"`, as `sessions.patch` does); unarchive clears both.
+ * - **Archive** sets `archivedAt` (and `archiveReason: "manual"`, as `sessions.patch` does) and clears `pinnedAt`;
+ *   unarchive clears both.
+ * - **Pin** sets `pinnedAt` (kept if already pinned), unpin clears it, as `sessions.patch` does; an archived
+ *   conversation cannot be pinned.
  * - **Delete** archives first, then deletes the entry, its transcript moved to the store's archive as
  *   `sessions.delete` does by default, and drops the conversation's read cursor.
  *
@@ -46,7 +49,12 @@ export const titleOf = (entry: Pick<Entry, "label" | "displayName">): string | u
 const stateOf = (convId: string, entry: Entry | undefined): ConvUpdate => {
   if (!entry) return { convId, deleted: true };
   const title = titleOf(entry);
-  return { convId, ...(title ? { title } : {}), ...(entry.archivedAt !== undefined ? { archived: true } : {}) };
+  return {
+    convId,
+    ...(title ? { title } : {}),
+    ...(entry.archivedAt !== undefined ? { archived: true } : {}),
+    ...(entry.pinnedAt !== undefined ? { pinnedAt: entry.pinnedAt } : {}),
+  };
 };
 
 /** What each conversation's devices were last told, so a commit that changed nothing they show sends nothing. */
@@ -127,6 +135,12 @@ export async function applyPatch(agent: string, patch: ConvPatch, log?: ChannelG
         await patchSessionEntry({ agentId: agent, sessionKey, preserveActivity: true, update: () => ({ label: label || undefined }) });
       }
       if (patch.archived !== undefined) await archive(agent, sessionKey, patch.archived);
+      if (patch.pinned !== undefined) {
+        if (patch.pinned && getSessionEntry({ agentId: agent, sessionKey })?.archivedAt !== undefined) {
+          return { kind: "error", data: { code: "bad_request", message: "cannot pin an archived conversation", convId } };
+        }
+        await pin(agent, sessionKey, patch.pinned);
+      }
     }
     announce(agent, convId);
     return undefined;
@@ -143,8 +157,20 @@ async function archive(agent: string, sessionKey: string, archived: boolean): Pr
     preserveActivity: true,
     update: (entry) =>
       archived
-        ? entry.archivedAt === undefined ? { archivedAt: Date.now(), archiveReason: "manual" } : null
+        ? entry.archivedAt === undefined ? { archivedAt: Date.now(), archiveReason: "manual", pinnedAt: undefined } : null
         : entry.archivedAt === undefined ? null : { archivedAt: undefined, archiveReason: undefined, archivedBy: undefined },
+  });
+}
+
+async function pin(agent: string, sessionKey: string, pinned: boolean): Promise<void> {
+  await patchSessionEntry({
+    agentId: agent,
+    sessionKey,
+    preserveActivity: true,
+    update: (entry) =>
+      pinned
+        ? entry.pinnedAt === undefined ? { pinnedAt: Date.now() } : null
+        : entry.pinnedAt === undefined ? null : { pinnedAt: undefined },
   });
 }
 

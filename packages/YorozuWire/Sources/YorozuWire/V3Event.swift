@@ -327,13 +327,16 @@ public struct V3ConvSummary: Codable, Equatable, Sendable {
     public var title: String?
     /// Archived: listed under Archived, not in the main list. Sent only when true.
     public var archived: Bool?
+    /// Pinned at (epoch ms): listed under Pinned, newest pin first. Sent only when pinned.
+    public var pinnedAt: Int64?
 
-    public init(convId: String, updatedAt: Int64, rev: Int, title: String? = nil, archived: Bool? = nil) {
+    public init(convId: String, updatedAt: Int64, rev: Int, title: String? = nil, archived: Bool? = nil, pinnedAt: Int64? = nil) {
         self.convId = convId
         self.updatedAt = updatedAt
         self.rev = rev
         self.title = title
         self.archived = archived
+        self.pinnedAt = pinnedAt
     }
 }
 
@@ -547,34 +550,39 @@ public struct V3CronJob: Codable, Equatable, Sendable, Identifiable {
 }
 
 /// Client -> plugin (#428). `title`: rename (empty clears the rename, so the generated title shows again);
-/// `archived`: archive or unarchive; `deleted`: delete (the plugin archives, then deletes session and transcript).
-/// The plugin answers every device with `conv_update`, or the sender with `error`.
+/// `archived`: archive or unarchive (archiving also unpins); `pinned`: pin or unpin; `deleted`: delete (the plugin
+/// archives, then deletes session and transcript). The plugin answers every device with `conv_update`, or the sender
+/// with `error`.
 public struct V3ConvPatch: Codable, Equatable, Sendable {
     public var convId: String
     public var title: String?
     public var archived: Bool?
+    public var pinned: Bool?
     public var deleted: Bool?
 
-    public init(convId: String, title: String? = nil, archived: Bool? = nil, deleted: Bool? = nil) {
+    public init(convId: String, title: String? = nil, archived: Bool? = nil, pinned: Bool? = nil, deleted: Bool? = nil) {
         self.convId = convId
         self.title = title
         self.archived = archived
+        self.pinned = pinned
         self.deleted = deleted
     }
 }
 
 /// Plugin -> every client (#428): the conversation's state as it is now, whoever changed it. Absent `title` means none
-/// yet; absent `archived` means not archived; `deleted`: the conversation is gone.
+/// yet; absent `archived` means not archived; absent `pinnedAt` means not pinned; `deleted`: the conversation is gone.
 public struct V3ConvUpdate: Codable, Equatable, Sendable {
     public var convId: String
     public var title: String?
     public var archived: Bool?
+    public var pinnedAt: Int64?
     public var deleted: Bool?
 
-    public init(convId: String, title: String? = nil, archived: Bool? = nil, deleted: Bool? = nil) {
+    public init(convId: String, title: String? = nil, archived: Bool? = nil, pinnedAt: Int64? = nil, deleted: Bool? = nil) {
         self.convId = convId
         self.title = title
         self.archived = archived
+        self.pinnedAt = pinnedAt
         self.deleted = deleted
     }
 }
