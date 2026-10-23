@@ -13,6 +13,8 @@ enum MacMigrateFrom0_5 {
     private static let importedKey = "importedChatsFrom0_5"
     /// 0.5 thread ids already converted, so a run cut short carries on without injecting any twice.
     private static let importedThreadsKey = "importedThreadsFrom0_5"
+    /// Every imported chat's last 0.5 message time is with the plugin.
+    private static let heldTimesKey = "heldTimesFrom0_5"
     private static let log = Logger(subsystem: "to.yumi.yorozu", category: "migrate-from-0.5")
     private static let home = FileManager.default.homeDirectoryForCurrentUser
     private static let watchdogLabel = "to.yumi.yorozu.watchdog"
@@ -23,13 +25,21 @@ enum MacMigrateFrom0_5 {
 
     static func run(model: AppModel) async {
         let defaults = UserDefaults.standard
-        guard !model.isDemo, !running, !defaults.bool(forKey: doneKey) || !defaults.bool(forKey: importedKey) else { return }
+        guard !model.isDemo, !running,
+              !defaults.bool(forKey: doneKey) || !defaults.bool(forKey: importedKey) || !defaults.bool(forKey: heldTimesKey)
+        else { return }
         running = true
         defer { running = false }
         if !defaults.bool(forKey: doneKey) { await migrate(model: model) }
         // Apart from the rest, so a Mac that migrated before the import existed (the owner's) imports too.
-        guard defaults.bool(forKey: doneKey), !model.isDemo, !Task.isCancelled, await importFrom0_5() else { return }
-        defaults.set(true, forKey: importedKey)
+        guard defaults.bool(forKey: doneKey), !model.isDemo, !Task.isCancelled else { return }
+        if !defaults.bool(forKey: importedKey) {
+            guard await importFrom0_5() else { return }
+            defaults.set(true, forKey: importedKey)
+        }
+        // Chats imported before the plugin took their 0.5 times (the owner's Mac) get them now.
+        guard !model.isDemo, !Task.isCancelled, await holdTimes() else { return }
+        defaults.set(true, forKey: heldTimesKey)
     }
 
     private static func migrate(model: AppModel) async {
@@ -160,7 +170,38 @@ enum MacMigrateFrom0_5 {
         if record["archived"] as? Bool == true {
             _ = await call(openclaw, "sessions.patch", ["key": key, "archived": true, "expectedSessionId": sessionId])
         }
+        // Listed by its last 0.5 message's time, not the import's; an older plugin lacks the method, which `holdTimes` retries.
+        _ = await holdTime(openclaw, id: id)
         return true
+    }
+
+    /// The plugin keeps an imported conversation at its last 0.5 message's time until a new message comes (owner,
+    /// 2026-10-24). False when the plugin could not take it.
+    private static func holdTime(_ openclaw: String, id: String) async -> Bool {
+        let log = dataDir.appending(path: "threads/\(id.replacing(#/[^\w.-]/#, with: "_")).jsonl")
+        guard let at = lastMessageTime(in: log) else { return true }
+        return await call(openclaw, "yorozu.conversations.time", ["convId": convId(for: id), "at": at]) != nil
+    }
+
+    /// Chats imported before the plugin took their times: each gets it once. True when every one has it.
+    private static func holdTimes() async -> Bool {
+        guard let openclaw = Shell.find("openclaw") else { return false }
+        var allHeld = true
+        for id in UserDefaults.standard.stringArray(forKey: importedThreadsKey) ?? [] {
+            guard !Task.isCancelled else { return false }
+            if !(await holdTime(openclaw, id: id)) { allHeld = false }
+        }
+        return allHeld
+    }
+
+    /// The newest message's `ts` in a 0.5 thread log.
+    private static func lastMessageTime(in log: URL) -> Int64? {
+        guard let text = try? String(contentsOf: log, encoding: .utf8) else { return nil }
+        return text.split(separator: "\n").compactMap { line -> Int64? in
+            guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                  event["kind"] as? String == "message" else { return nil }
+            return (event["ts"] as? NSNumber)?.int64Value
+        }.max()
     }
 
     /// A thread's last 40 messages, oldest first. Attachments come along as their names.

@@ -1,9 +1,11 @@
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import { ErrorCodes, errorShape, type GatewayRequestHandlerOptions } from "openclaw/plugin-sdk/gateway-runtime";
+import { holdTime } from "./src/activity.js";
 import { yorozuPlugin } from "./src/channel.js";
 import { listDevices } from "./src/devices.js";
 import { beginPairing, unpairDevice } from "./src/relay.js";
 import { yorozuRuntime } from "./src/runtime.js";
+import { channelAgent } from "./src/sessions.js";
 
 export { yorozuRuntime };
 
@@ -38,6 +40,16 @@ export default defineChannelPluginEntry({
   },
   registerFull(api) {
     const admin = { scope: "operator.admin" } as const;
+    // The Mac app's import from Yorozu 0.5 gives each imported conversation its last 0.5 message's time (src/activity.ts).
+    api.registerGatewayMethod(
+      "yorozu.conversations.time",
+      method(async (params) => {
+        const agent = channelAgent();
+        if (!agent) throw new Error("the Yorozu channel is not running");
+        return holdTime(agent, params);
+      }),
+      admin,
+    );
     api.registerGatewayMethod("yorozu.pair.begin", method(beginPairing), admin);
     api.registerGatewayMethod(
       "yorozu.devices.list",

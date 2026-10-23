@@ -46,6 +46,9 @@ type Entry = NonNullable<ReturnType<typeof getSessionEntry>>;
 export const titleOf = (entry: Pick<Entry, "label" | "displayName">): string | undefined =>
   entry.label?.trim() || entry.displayName?.trim() || undefined;
 
+/** The channel's agent while the account runs, for Gateway methods that name a conversation. */
+export const channelAgent = (): string | undefined => watchedAgent;
+
 const stateOf = (convId: string, entry: Entry | undefined): ConvUpdate => {
   if (!entry) return { convId, deleted: true };
   const title = titleOf(entry);
