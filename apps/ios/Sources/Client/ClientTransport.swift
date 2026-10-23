@@ -23,6 +23,7 @@ actor DemoTransport: ClientTransport {
     private var histories = DemoData.histories
     private var titles = DemoData.titles
     private var archived: Set<String> = [DemoData.archiveID]
+    private var pins: [String: Int64] = [:]
     private var seen: Set<String> = []
 
     func updates() -> AsyncStream<V3Connection.Update> {
@@ -57,7 +58,7 @@ actor DemoTransport: ClientTransport {
         case .convList:
             emit(.convList(V3ConvList(conversations: histories.map { id, items in
                 V3ConvSummary(convId: id, updatedAt: items.last?.ts ?? Self.now, rev: items.last?.seq ?? 0,
-                    title: titles[id], archived: archived.contains(id) ? true : nil)
+                    title: titles[id], archived: archived.contains(id) ? true : nil, pinnedAt: pins[id])
             })))
         case .historyRequest(let request):
             let all = histories[request.convId] ?? []
@@ -85,17 +86,18 @@ actor DemoTransport: ClientTransport {
                         : title
                 }
                 if let value = patch.archived {
-                    if value { archived.insert(patch.convId) } else { archived.remove(patch.convId) }
+                    if value { archived.insert(patch.convId); pins[patch.convId] = nil } else { archived.remove(patch.convId) }
                 }
+                if let value = patch.pinned, !archived.contains(patch.convId) { pins[patch.convId] = value ? pins[patch.convId] ?? Self.now : nil }
             }
             emit(.convUpdate(V3ConvUpdate(convId: patch.convId, title: titles[patch.convId],
-                archived: archived.contains(patch.convId) ? true : nil, deleted: patch.deleted)))
+                archived: archived.contains(patch.convId) ? true : nil, pinnedAt: pins[patch.convId], deleted: patch.deleted)))
         case .message(let message):
             guard seen.insert(message.messageId).inserted else { return true }
             append(.user, id: message.messageId, text: message.text, to: message.convId)
             if titles[message.convId] == nil {
                 titles[message.convId] = String(message.text.prefix(60))
-                emit(.convUpdate(V3ConvUpdate(convId: message.convId, title: titles[message.convId])))
+                emit(.convUpdate(V3ConvUpdate(convId: message.convId, title: titles[message.convId], pinnedAt: pins[message.convId])))
             }
             // Each conversation answers in order, even if several messages are sent quickly.
             let previous = replies[message.convId]

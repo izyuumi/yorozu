@@ -145,17 +145,20 @@ struct ChatPairView: View {
                                 .keyboardShortcut("\\", modifiers: .command)
                                 .accessibilityIdentifier("pair.openBeside")
                         }
-                        // Tap: a new conversation here. Hold: one beside this, keeping it in view (owner, 2026-10-23).
-                        ToolbarItem(placement: .primaryAction) {
-                            Menu {
-                                Button(String(localized: "New Conversation Beside"), systemImage: "rectangle.split.2x1") { newBeside() }
-                                    .keyboardShortcut("n", modifiers: [.command, .option])
-                            } label: {
-                                Label(String(localized: "New Conversation"), systemImage: "square.and.pencil")
-                            } primaryAction: {
-                                self.selection = V3Event.newId()
+                        // Tap: a new conversation here. Hold: one beside this, keeping it in view (owner, 2026-10-23). Not from
+                        // one still empty.
+                        if model.conversations[selection]?.items.isEmpty == false {
+                            ToolbarItem(placement: .primaryAction) {
+                                Menu {
+                                    Button(String(localized: "New Conversation Beside"), systemImage: "rectangle.split.2x1") { newBeside() }
+                                        .keyboardShortcut("n", modifiers: [.command, .option])
+                                } label: {
+                                    Label(String(localized: "New Conversation"), systemImage: "square.and.pencil")
+                                } primaryAction: {
+                                    self.selection = V3Event.newId()
+                                }
+                                .accessibilityIdentifier("chat.new")
                             }
-                            .accessibilityIdentifier("chat.new")
                         }
                     }
             }
@@ -231,7 +234,7 @@ struct ChatPairView: View {
                     }
                 }
             }
-            .toolbar { paneToolbar(side: side, isChat: convId != nil) }
+            .toolbar { paneToolbar(side: side, convId: convId) }
         }
         .id(convId ?? "beside")
         // A tap anywhere in a pane, its composer included, moves the focus there.
@@ -243,7 +246,8 @@ struct ChatPairView: View {
         .accessibilityLabel(side == .left ? Text("Left pane") : Text("Right pane"))
     }
 
-    @ToolbarContentBuilder private func paneToolbar(side: PaneSide, isChat: Bool) -> some ToolbarContent {
+    @ToolbarContentBuilder private func paneToolbar(side: PaneSide, convId: String?) -> some ToolbarContent {
+        let isChat = convId != nil
         if side == .left {
             ToolbarItem(placement: .topBarLeading) {
                 Button(columns == .detailOnly ? String(localized: "Show Sidebar") : String(localized: "Hide Sidebar"), systemImage: "sidebar.left") {
@@ -251,14 +255,16 @@ struct ChatPairView: View {
                 }
             }
         }
-        if isChat {
-            // A new conversation in this pane, focused.
+        // A new conversation in this pane, focused; not from one still empty.
+        if let convId, model.conversations[convId]?.items.isEmpty == false {
             ToolbarItem(placement: .primaryAction) {
                 Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") {
                     withAnimation(.snappy) { pair.show(V3Event.newId(), on: side, selection: &selection) }
                 }
                 .accessibilityIdentifier("chat.new")
             }
+        }
+        if isChat {
             ToolbarItem(placement: .primaryAction) {
                 Menu(String(localized: "Pane Options"), systemImage: "ellipsis") {
                     if !pair.choosing {

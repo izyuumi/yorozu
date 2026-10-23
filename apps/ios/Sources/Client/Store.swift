@@ -52,6 +52,8 @@ struct Conversation: Codable, Identifiable, Equatable {
     var title: String?
     /// Archived on the host: shown under Archived, not in the main list.
     var archived: Bool?
+    /// Pinned on the host (epoch ms of the pin): listed under Pinned, newest pin first. Archiving unpins.
+    var pinnedAt: Int64?
 
     /// Where the read cursor falls among this device's items: its `ts`, or the `ts` this device holds for the reply it
     /// names when that is later. A reply seen live before the plugin sent transcript times carries its later send time,

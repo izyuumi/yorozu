@@ -78,6 +78,7 @@ export function listConversations(agent: string): ConvList {
       rev: stats(agent, sessionKey, entry.sessionId),
       ...(title ? { title } : {}),
       ...(entry.archivedAt !== undefined ? { archived: true as const } : {}),
+      ...(entry.pinnedAt !== undefined ? { pinnedAt: entry.pinnedAt } : {}),
     });
   }
   conversations.sort((a, b) => b.updatedAt - a.updatedAt);

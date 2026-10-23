@@ -1,6 +1,18 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Pin" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピン留め" } } }
+    },
+    "Unpin" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピン留めを解除" } } }
+    },
+    "Pinned" : {
+      "extractionState" : "manual",
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピン留め" } } }
+    },
     "New Conversation Beside" : {
       "extractionState" : "manual",
       "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "横に新しい会話" } } }
