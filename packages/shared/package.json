@@ -11,8 +11,8 @@
     "gen:fixtures": "node scripts/gen-fixtures.ts"
   },
   "devDependencies": {
-    "@types/node": "^26.6.3",
+    "@types/node": "^26.6.5",
     "typescript": "^5.9.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }
