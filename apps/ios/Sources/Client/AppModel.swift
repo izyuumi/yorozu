@@ -618,7 +618,8 @@ final class AppModel {
             }
             for summary in summaries {
                 var conversation = conversations[summary.convId]
-                    ?? Conversation(id: summary.convId, createdAt: summary.updatedAt, updatedAt: summary.updatedAt)
+                    ?? Conversation(id: summary.convId, createdAt: summary.updatedAt, updatedAt: summary.updatedAt,
+                        read: unplacedReads.removeValue(forKey: summary.convId))
                 let isNew = conversations[summary.convId] == nil
                 let changed = conversation.title != summary.title || (conversation.archived == true) != (summary.archived == true)
                 conversation.title = summary.title
@@ -781,7 +782,8 @@ final class AppModel {
     private func history(_ page: V3History) {
         guard V3Event.isId(page.convId) else { return }
         let now = Self.now
-        var conversation = conversations[page.convId] ?? Conversation(id: page.convId, createdAt: now, updatedAt: 0)
+        var conversation = conversations[page.convId] ?? Conversation(id: page.convId, createdAt: now, updatedAt: 0,
+            read: unplacedReads.removeValue(forKey: page.convId))
         conversation.merge(page.items.map(ChatItem.init))
         let seqs = page.items.map(\.seq)
         if let low = seqs.min(), page.after == nil { conversation.oldestSeq = min(conversation.oldestSeq ?? low, low) }
@@ -976,7 +978,7 @@ final class AppModel {
         guard let conversation = conversations[convId], let latest = conversation.latestReply else { return }
         let held = conversation.read
         let unread = explicit ? false : held?.unread == true
-        let ahead = latest.ts > (held?.ts ?? .min)
+        let ahead = latest.ts > conversation.readUpTo
         guard ahead || held?.unread != unread else { return }
         setRead(V3ReadCursor(convId: convId, messageId: ahead ? latest.id : held!.messageId,
             ts: ahead ? latest.ts : held!.ts, unread: unread), in: conversation)

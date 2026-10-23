@@ -143,17 +143,18 @@ const chunkId = (sessionId: string, eventId: string, k: number) =>
   k === 0 && isId(eventId) ? eventId : derivedId(sessionId, eventId, `${k}`);
 
 /**
- * The ids a live reply of the turn for `messageId` gets, so a device that saw it live and later fetches the page
- * holds one item, not two: the first assistant message with text after that user message which `used` does not
- * hold yet (core writes it before it delivers). Undefined when it is not found; the reply then keeps random ids
- * and the client matches it by text.
+ * The ids and time a live reply of the turn for `messageId` gets, so a device that saw it live and later fetches the
+ * page holds one item, not two, at one `ts` (read cursors compare `ts` across devices): the first assistant
+ * message with text after that user message which `used` does not hold yet (core writes it before it delivers).
+ * Undefined when it is not found; the reply then keeps random ids and the send time, and the client matches it by
+ * text.
  */
 export function liveReplyIds(
   agent: string,
   sessionKey: string,
   messageId: string,
   used: Set<string>,
-): ((chunk: number) => string) | undefined {
+): { id: (chunk: number) => string; ts: number } | undefined {
   try {
     const sessionId = getSessionEntry({ agentId: agent, sessionKey })?.sessionId;
     if (!sessionId) return undefined;
@@ -167,7 +168,7 @@ export function liveReplyIds(
       else if (inTurn && message.role === "assistant" && textOf(message.content).trim() && !used.has(event.id)) {
         used.add(event.id);
         const eventId = event.id;
-        return (k) => chunkId(sessionId, eventId, k);
+        return { id: (k) => chunkId(sessionId, eventId, k), ts: timeOf(event, message) || Date.now() };
       }
     }
   } catch {

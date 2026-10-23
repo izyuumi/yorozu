@@ -53,15 +53,23 @@ struct Conversation: Codable, Identifiable, Equatable {
     /// Archived on the host: shown under Archived, not in the main list.
     var archived: Bool?
 
+    /// Where the read cursor falls among this device's items: its `ts`, or the `ts` this device holds for the reply it
+    /// names when that is later. A reply seen live before the plugin sent transcript times carries its later send time,
+    /// so a cursor set on a device that fetched it from history would otherwise leave it unread here.
+    var readUpTo: Int64 {
+        guard let read else { return .min }
+        return max(read.ts, items.first { $0.id == read.messageId }?.ts ?? .min)
+    }
+
     /// Agent replies after the read cursor; at least 1 while marked unread.
     var unreadCount: Int {
-        let after = read?.ts ?? .min
+        let after = readUpTo
         return max(items.count { $0.kind == .agent && $0.ts > after }, read?.unread == true ? 1 : 0)
     }
 
     /// A run failed after the read cursor: an orange dot rather than a blue one, until it is read.
     var needsAttention: Bool {
-        let after = read?.ts ?? .min
+        let after = readUpTo
         return items.contains { $0.kind == .error && $0.ts > after }
     }
 
