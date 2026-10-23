@@ -79,12 +79,12 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 ## Platform and release
 
 - The Mac app is a Tuist-generated Xcode project. Its macOS destination ships as 0.5's Mac id `to.yumi.yorozu`, Developer ID signed and notarized, team `AN5KM8QGEF`, so Sparkle updates 0.5.0-beta in place. (2026-10-07, id 2026-10-17)
-- The Mac updates through Sparkle (macOS only), with 0.5's EdDSA key, from GitHub Releases. The default feed is `yorozu.yumi.to/beta/appcast.xml`; `YorozuBetaUpdates` stays respected. The stable feed stays frozen at 0.4.0. 0.9.0 is beta. (2026-10-17)
+- The Mac updates through Sparkle (macOS only), with 0.5's EdDSA key, from GitHub Releases. The default feed is `yorozu.yumi.to/beta/appcast.xml`; `YorozuBetaUpdates` stays respected. The stable feed stays frozen at 0.4.0. 0.9.0 is beta. (2026-10-17) 0.9 is stable, not beta. (2026-10-23)
 - Releases: `projectx` merges into `main`, and `main`'s `release.yml` is ported to publish `v<ver>-beta` from a green `main`. (2026-10-17)
 - The Mac signing identity is a local, gitignored build setting, not part of the repo; git history is left as it is. (2026-10-09)
 - Clients reach the plugin through 0.5's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service. The relay may be changed when that is the better design (Transport). (2026-10-08, channel 2026-10-15)
 - iOS ships to the public App Store (first release 0.9.0), manual release after approval, no phased release; TestFlight testers first. Review uses a live review host, with a fixture demo behind the documented code `YOROZU-DEMO` as fallback (as OpenClaw does). iOS shows a subtle, dismissible "Update available" row from Apple's lookup API; nothing is forced. (2026-10-08, App Store 2026-10-17)
-- Version 0.9.0. The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`, above 0.5's `10279`). (2026-10-08, encoding 2026-10-17)
+- Version 0.9.1: iOS 0.9.0 went live on the App Store on 2026-10-23, which closed that version to new builds. The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`, above 0.5's `10279`). (2026-10-08, encoding 2026-10-17, 0.9.1 2026-10-23)
 - The app icon is 0.5's Icon Composer mark (blob-identical to 1e2f1fba). (2026-10-08)
 
 ## Upgrade from 0.5.0-beta
