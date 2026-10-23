@@ -128,6 +128,9 @@ let project = Project(
                     cp -R index.ts setup-entry.ts openclaw.plugin.json package.json README.md src "$dest/"
                     """,
                     name: "Bundle the OpenClaw plugin",
+                    // Declared, so the app is signed again after every copy: undeclared, a build that changed only the plugin
+                    // left the copy outside the seal ("a sealed resource is missing or invalid").
+                    outputPaths: ["$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/openclaw-channel"],
                     basedOnDependencyAnalysis: false
                 ),
             ],
