@@ -596,8 +596,10 @@ final class AppModel {
             transfers.receive(event)
         case .error(let error):
             if error.code == "internal", inFlight != nil { settle() }
-            guard let convId = error.convId, V3Event.isId(convId) else { return }
-            let id = "error:\(error.messageId ?? V3Event.newId())"
+            // Only a message's failure shows in its conversation: a list, history or patch the host could not answer names
+            // none, and as an item it marked every conversation it touched as failed.
+            guard let convId = error.convId, V3Event.isId(convId), let messageId = error.messageId else { return }
+            let id = "error:\(messageId)"
             let text = error.code == "run_failed"
                 ? String(localized: "The agent run failed: \(error.message)")
                 : String(localized: "The host couldn’t handle this: \(error.message)")
