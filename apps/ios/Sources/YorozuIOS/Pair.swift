@@ -145,6 +145,18 @@ struct ChatPairView: View {
                                 .keyboardShortcut("\\", modifiers: .command)
                                 .accessibilityIdentifier("pair.openBeside")
                         }
+                        // Tap: a new conversation here. Hold: one beside this, keeping it in view (owner, 2026-10-23).
+                        ToolbarItem(placement: .primaryAction) {
+                            Menu {
+                                Button(String(localized: "New Conversation Beside"), systemImage: "rectangle.split.2x1") { newBeside() }
+                                    .keyboardShortcut("n", modifiers: [.command, .option])
+                            } label: {
+                                Label(String(localized: "New Conversation"), systemImage: "square.and.pencil")
+                            } primaryAction: {
+                                self.selection = V3Event.newId()
+                            }
+                            .accessibilityIdentifier("chat.new")
+                        }
                     }
             }
         }
@@ -175,6 +187,10 @@ struct ChatPairView: View {
 
     private func drop(_ convId: String, on side: PaneSide) {
         withAnimation(.snappy) { pair.drop(convId, on: side, selection: &selection) }
+    }
+
+    private func newBeside() {
+        withAnimation(.snappy) { pair.openBeside(V3Event.newId(), selection: &selection) }
     }
 
     private func finishDrag() {
@@ -236,6 +252,13 @@ struct ChatPairView: View {
             }
         }
         if isChat {
+            // A new conversation in this pane, focused.
+            ToolbarItem(placement: .primaryAction) {
+                Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") {
+                    withAnimation(.snappy) { pair.show(V3Event.newId(), on: side, selection: &selection) }
+                }
+                .accessibilityIdentifier("chat.new")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Menu(String(localized: "Pane Options"), systemImage: "ellipsis") {
                     if !pair.choosing {
