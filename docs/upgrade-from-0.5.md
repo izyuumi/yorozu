@@ -1,4 +1,4 @@
-# Upgrade from 0.5.0-beta to 0.9.0-beta
+# Upgrade from 0.5.0-beta to 0.9
 
 The plan for moving Yorozu 0.5.0-beta installs (`main`) to 0.9.0 (`projectx`), agreed with the owner on 2026-10-17. Decisions in force are in [OWNER_DECISIONS.md](../OWNER_DECISIONS.md#upgrade-from-050-beta); this file holds the how. Nothing here ships until the owner says so.
 
@@ -57,10 +57,9 @@ Modelled on OpenClaw's iOS app (`~/openclaw/apps/ios`).
 
 ## Release order
 
-- iOS 0.9.0 is uploaded and processed but not assigned to testers. The Mac appcast item and the TestFlight assignment go live together.
-- For the gap until both sides have updated:
-  - **iOS 0.9.0 before the Mac:** it finds the old 0.5 pairing, shows "Your Mac is updating to Yorozu 0.9" and keeps retrying. Because the keys and room carry over, it reconnects by itself once the Mac switches.
-  - **Mac 0.9.0 before the iPhone:** the Mac's first-launch screen says "Update Yorozu on your iPhone".
+- The iOS build is uploaded and through Beta App Review but not assigned to testers. The Mac appcast item and the TestFlight assignment go live together.
+- Every family device pairs again once (owner, 2026-10-23: re-pair instead of carrying 0.5's keys over). The Mac pairs itself on first launch; each iPhone and iPad then pairs from the Mac's Settings › Add a Device…, with the owner there.
+  - **iOS 0.9 before the Mac:** the phone shows the pairing screen until the Mac has updated.
   - **A 0.5 iPhone against a 0.9 Mac:** shows 0.5's own "update required". That can't be changed.
 
 ## Mac first launch: migration, automatic
@@ -72,24 +71,22 @@ This runs once, guarded by a marker, and every step is idempotent. It never writ
    - The gateway does not watch plugin folders. Until a reload it keeps running 0.5 from memory.
 2. **Config.** The app runs `openclaw config unset channels.yorozu.socketPath`. The 0.9 channel schema is closed, and this key would stop the gateway from starting.
 3. **Reload.** The app runs `openclaw plugins reload yorozu --accept-capabilities` (0.9 adds `cliCommands: ["yorozu"]`), and `openclaw gateway restart --safe` if that fails or reports `restartRequired`. The CLI has the admin scope the app lacks.
-4. **Host keys and devices.** The plugin imports 0.5's `keys.json` (`session` and `signing` keys) into `credentials/yorozu/host-keys.json`, and `devices.json` (`pub`→`staticPub`, `signingPub`) into its allowlist. The room id stays the same (sha256 of the host Ed25519 key), and the relay already knows the devices. Devices without a `signingPub` re-pair.
-5. **Memory.** 0.5's memory notes are imported as unverified notes ending "Imported from Yorozu 0.5".
-6. **Chats.** All 0.5 threads are converted (273 on the owner's Mac): 169 `yorozu`, 82 `claude-code`, 24 `codex` and 1 `harness`.
-   - For each thread in 0.5's `threads/threads.json`: `sessions.create` with key `agent:main:yorozu:direct:owner:thread:<lowercased id>`, then one `chat.inject` holding a plain assistant message. It reads `Earlier conversation from Yorozu 0.5 (N messages):` followed by the last 40 `message` events from `threads/<id>.jsonl` as `You: …` / `Yorozu: …` lines.
-   - It carries no extra fields, tool calls, thinking or cards. Title, archived and pinned state, and timestamps carry over through `sessions.patch` where they map.
-   - Attachments appear as text.
+4. **No keys or devices carry over.** The plugin makes new host keys, so the room is new and every device pairs again.
+5. **Memory.** 0.5's memory notes (`~/Library/Application Support/Yorozu/memory`, or the `PAIOS/Workspace/Yorozu Memory` folder in `~/Documents` or `~/My vault`) are copied into the agent's workspace, `memory/yorozu-0.5/`, each ending "Imported from Yorozu 0.5, unverified." A note already there is left alone.
+6. **Chats.** Every 0.5 thread with messages is converted, oldest activity first so the newest lands on top.
+   - For each thread in 0.5's `threads.json`: `sessions.create` with key `agent:<agent>:yorozu:direct:owner:thread:<lowercased id>` (`channels.yorozu.agent`, default `main`; a non-UUID id such as `home` gets a UUID derived from it) and its title as `displayName`, then one `chat.inject` holding a plain assistant message: `Earlier conversation from Yorozu 0.5 (N messages):` followed by the last 40 `message` events from `threads/<id>.jsonl` as `You: …` / `Yorozu: …` paragraphs, each cut at 4000 characters. An archived thread is archived with `sessions.patch`.
+   - It carries no tool calls, thinking, cards, pinned state or timestamps. Attachments appear as their names.
    - `claude-code` and `codex` threads become ordinary conversations that continue on the 0.9 agent.
+   - Done thread ids are kept in user defaults, so a run cut short carries on without injecting twice. It runs apart from steps 1–3 and 7–9, so a Mac that migrated before the import existed (the owner's) imports too.
 7. **Cleanup.** Remove 0.5's watchdog LaunchAgent `to.yumi.yorozu.watchdog`.
 8. **Pair this Mac.** 0.5's Mac was the host, never a client. The app runs `openclaw yorozu pair` against its own Gateway and pairs with the printed link, skipping the fingerprint step: the code comes from the same Mac.
 9. **Nudge.** A notification: update Yorozu on the iPhone and iPad.
 
-Steps 1–3 and 7–9 are `apps/ios/Sources/YorozuIOS/MacMigrateFrom0_5.swift`; 4–6 run in the plugin when it loads.
+All of it is `apps/ios/Sources/YorozuIOS/MacMigrateFrom0_5.swift`, through the `openclaw` CLI (`gateway call` for the session methods), which holds the admin scope the app and the plugin lack.
 
 ## iOS first launch
 
-- Copy the keychain account `pairings` (service `to.yumi.yorozu.ios`): the record whose `roomId` matches becomes `pairing-v3` with `v: 3`, `relayKnows: true` and `paired: true`. No QR scan is needed.
-- Fall back to the QR flow when there is no record, no match, or the handshake fails. A phone paired with several 0.5 hosts keeps one.
-- Never delete `pairings`.
+- Nothing is migrated: 0.9 keeps its pairing under its own Keychain account, `pairing-v3`, and shows the pairing screen. 0.5's `pairings` item is left as it is.
 
 ## Groundwork for future versions
 
@@ -104,7 +101,5 @@ All of this lands in 0.9.0, so later versions migrate without friction:
 ## Unverified, check during implementation
 
 - **Feed reach.** 0.5.0-beta Macs read the beta feed only if beta updates were switched on (`YorozuBetaUpdates`; 0.5 defaults to the stable feed, which stays at 0.4.0). A family Mac without it never sees 0.9.0.
-- Whether the new iOS build can read 0.5's keychain item. 0.5's only access group was the notifications group, and the client has both.
-- Whether Noise IK accepts carried-over device keys without `helloProof` (`relay.ts:357`).
-- 0.5's host data path: `~/Library/Application Support/Yorozu` (runtime `memory.ts:65`) versus `~/Library/Application Support/to.yumi.yorozu/` ([release.md](release.md#mac-client)).
+- 0.5's host data path is `~/Library/Application Support/Yorozu` (runtime `serve.ts`, `DEFAULT_STATE_DIR`).
 - Whether `peerDependencies: openclaw` in the plugin affects OpenClaw's dependency status.

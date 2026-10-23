@@ -1,4 +1,5 @@
 #if os(macOS)
+import CryptoKit
 import Foundation
 import os
 import UserNotifications
@@ -9,6 +10,9 @@ import UserNotifications
 @MainActor
 enum MacMigrateFrom0_5 {
     private static let doneKey = "migratedFrom0_5"
+    private static let importedKey = "importedChatsFrom0_5"
+    /// 0.5 thread ids already converted, so a run cut short carries on without injecting any twice.
+    private static let importedThreadsKey = "importedThreadsFrom0_5"
     private static let log = Logger(subsystem: "to.yumi.yorozu", category: "migrate-from-0.5")
     private static let home = FileManager.default.homeDirectoryForCurrentUser
     private static let watchdogLabel = "to.yumi.yorozu.watchdog"
@@ -19,9 +23,17 @@ enum MacMigrateFrom0_5 {
 
     static func run(model: AppModel) async {
         let defaults = UserDefaults.standard
-        guard !model.isDemo, !running, !defaults.bool(forKey: doneKey) else { return }
+        guard !model.isDemo, !running, !defaults.bool(forKey: doneKey) || !defaults.bool(forKey: importedKey) else { return }
         running = true
         defer { running = false }
+        if !defaults.bool(forKey: doneKey) { await migrate(model: model) }
+        // Apart from the rest, so a Mac that migrated before the import existed (the owner's) imports too.
+        guard defaults.bool(forKey: doneKey), !model.isDemo, !Task.isCancelled, await importFrom0_5() else { return }
+        defaults.set(true, forKey: importedKey)
+    }
+
+    private static func migrate(model: AppModel) async {
+        let defaults = UserDefaults.standard
         guard installedFrom0_5 else { defaults.set(true, forKey: doneKey); return }
         log.notice("0.5 install found: migrating")
         removeWatchdog()
@@ -88,10 +100,159 @@ enum MacMigrateFrom0_5 {
         return false
     }
 
+    // MARK: Chats and memory
+
+    private static var dataDir: URL { home.appending(path: "Library/Application Support/Yorozu") }
+    private static let lastMessages = 40
+    private static let messageMax = 4000
+
+    /// 0.5's chats become 0.9 conversations: per thread, `sessions.create` with its key, then one `chat.inject` holding
+    /// its last 40 messages as plain text, archived as it was. Then its memory notes go into the agent's workspace. True
+    /// once everything is in (or there was nothing); false to try again on the next launch.
+    private static func importFrom0_5() async -> Bool {
+        let index = dataDir.appending(path: "threads.json")
+        guard let openclaw = Shell.find("openclaw") else { return !FileManager.default.fileExists(atPath: index.path) }
+        let agent = await channelAgent(openclaw)
+        guard await importMemory(openclaw, agent: agent) else { return false }
+        guard let data = try? Data(contentsOf: index) else { return true }
+        guard let threads = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+            log.error("0.5 threads.json unreadable: nothing imported")
+            return true
+        }
+        let defaults = UserDefaults.standard
+        var done = Set(defaults.stringArray(forKey: importedThreadsKey) ?? [])
+        // Oldest activity first, so the most recent 0.5 chat ends up on top of the list.
+        let ordered = threads.compactMap { thread -> (id: String, record: [String: Any], log: URL, mtime: Date)? in
+            guard let id = thread["id"] as? String, !id.isEmpty, !done.contains(id) else { return nil }
+            let log = dataDir.appending(path: "threads/\(id.replacing(#/[^\w.-]/#, with: "_")).jsonl")
+            let mtime = (try? log.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return (id, thread, log, mtime)
+        }.sorted { $0.mtime < $1.mtime }
+        for thread in ordered {
+            guard !Task.isCancelled else { return false }
+            let messages = messages(in: thread.log)
+            if !messages.isEmpty {
+                guard await importThread(openclaw, agent: agent, id: thread.id, record: thread.record, messages: messages) else {
+                    return false
+                }
+            }
+            done.insert(thread.id)
+            defaults.set(Array(done), forKey: importedThreadsKey)
+        }
+        log.notice("imported \(ordered.count) 0.5 chats")
+        return true
+    }
+
+    private static func importThread(
+        _ openclaw: String, agent: String, id: String, record: [String: Any], messages: [(user: Bool, text: String)]
+    ) async -> Bool {
+        let key = "agent:\(agent):yorozu:direct:owner:thread:\(convId(for: id))"
+        let firstLine = messages.first { $0.user }?.text.split(separator: "\n").first.map(String.init)
+        let title = ((record["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? firstLine ?? "Yorozu 0.5")
+        let create: [String: Any] = ["key": key, "agentId": agent, "displayName": String(title.prefix(60))]
+        guard let created = await call(openclaw, "sessions.create", create), let sessionId = created["sessionId"] as? String else {
+            return false
+        }
+        let count = messages.count == 1 ? "1 message" : "\(messages.count) messages"
+        let body = messages.map { "\($0.user ? "You" : "Yorozu"): \($0.text)" }.joined(separator: "\n\n")
+        let message = "Earlier conversation from Yorozu 0.5 (\(count)):\n\n\(body)"
+        guard await call(openclaw, "chat.inject", ["sessionKey": key, "message": message]) != nil else { return false }
+        if record["archived"] as? Bool == true {
+            _ = await call(openclaw, "sessions.patch", ["key": key, "archived": true, "expectedSessionId": sessionId])
+        }
+        return true
+    }
+
+    /// A thread's last 40 messages, oldest first. Attachments come along as their names.
+    private static func messages(in log: URL) -> [(user: Bool, text: String)] {
+        guard let text = try? String(contentsOf: log, encoding: .utf8) else { return [] }
+        let all = text.split(separator: "\n").compactMap { line -> (user: Bool, text: String)? in
+            guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                  event["kind"] as? String == "message", let data = event["data"] as? [String: Any],
+                  let role = data["role"] as? String, role == "user" || role == "agent" else { return nil }
+            let files = (data["attachments"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }.map { "[\($0)]" }
+            let text = ([(data["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)] + files)
+                .filter { !$0.isEmpty }.joined(separator: " ")
+            return text.isEmpty ? nil : (role == "user", String(text.prefix(messageMax)))
+        }
+        return Array(all.suffix(lastMessages))
+    }
+
+    /// 0.9 conversation ids are lowercase UUIDs; 0.5's were the client's UUIDs, except a few such as `home`.
+    private static func convId(for id: String) -> String {
+        if let uuid = UUID(uuidString: id) { return uuid.uuidString.lowercased() }
+        var bytes = Array(SHA256.hash(data: Data("yorozu-0.5:\(id)".utf8)).prefix(16))
+        bytes[6] = bytes[6] & 0x0f | 0x50
+        bytes[8] = bytes[8] & 0x3f | 0x80
+        return NSUUID(uuidBytes: bytes).uuidString.lowercased()
+    }
+
+    /// 0.5's memory notes, as unverified notes in the agent's workspace (`memory/yorozu-0.5/`), where OpenClaw's memory
+    /// search finds them. A note already there is left alone.
+    private static func importMemory(_ openclaw: String, agent: String) async -> Bool {
+        let sources = [dataDir.appending(path: "memory"),
+                       home.appending(path: "Documents/PAIOS/Workspace/Yorozu Memory"),
+                       home.appending(path: "My vault/PAIOS/Workspace/Yorozu Memory")]
+        let notes = sources.flatMap { dir in
+            (FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
+                .filter { $0.pathExtension == "md" }
+        }
+        guard !notes.isEmpty else { return true }
+        let agents = await Shell.run(openclaw, ["agents", "list", "--json"])
+        guard agents.status == 0,
+              let list = json(agents.output, "[", "]") as? [[String: Any]],
+              let workspace = list.first(where: { $0["id"] as? String == agent })?["workspace"] as? String else {
+            log.error("no workspace for agent \(agent, privacy: .public): memory not imported")
+            return false
+        }
+        let target = URL(fileURLWithPath: workspace).appending(path: "memory/yorozu-0.5")
+        do {
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+            for note in notes {
+                let destination = target.appending(path: note.lastPathComponent)
+                guard !FileManager.default.fileExists(atPath: destination.path) else { continue }
+                let text = try String(contentsOf: note, encoding: .utf8)
+                try (text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\nImported from Yorozu 0.5, unverified.\n")
+                    .write(to: destination, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            log.error("memory import failed: \(error, privacy: .public)")
+            return false
+        }
+        return true
+    }
+
+    /// `channels.yorozu.agent`, or the plugin's default `main` when it is unset.
+    private static func channelAgent(_ openclaw: String) async -> String {
+        let result = await Shell.run(openclaw, ["config", "get", "channels.yorozu.agent", "--json"])
+        guard result.status == 0,
+              let agent = try? JSONSerialization.jsonObject(with: Data(result.output.utf8), options: .fragmentsAllowed) as? String,
+              !agent.isEmpty else { return "main" }
+        return agent
+    }
+
+    /// One Gateway method through the CLI, which holds the admin scope the app lacks; its JSON result, or nil on failure.
+    private static func call(_ openclaw: String, _ method: String, _ params: [String: Any]) async -> [String: Any]? {
+        guard let encoded = try? JSONSerialization.data(withJSONObject: params) else { return nil }
+        let result = await Shell.run(openclaw, ["gateway", "call", method, "--json", "--params", String(decoding: encoded, as: UTF8.self)])
+        let response = json(result.output, "{", "}") as? [String: Any]
+        guard result.status == 0, let response, response["ok"] as? Bool != false else {
+            log.error("\(method, privacy: .public) failed: \(result.output.prefix(300), privacy: .public)")
+            return nil
+        }
+        return response
+    }
+
+    /// The JSON in a tool's output, which has stderr mixed in: from the first `open` to the last `close`.
+    private static func json(_ output: String, _ open: Character, _ close: Character) -> Any? {
+        guard let start = output.firstIndex(of: open), let end = output.lastIndex(of: close), start <= end else { return nil }
+        return try? JSONSerialization.jsonObject(with: Data(output[start...end].utf8))
+    }
+
     private static func nudgeIPhone() {
         let content = UNMutableNotificationContent()
         content.title = String(localized: "Yorozu was updated to 0.9")
-        content.body = String(localized: "Update Yorozu on your iPhone and iPad too. Your conversations came along.")
+        content.body = String(localized: "Update Yorozu on your iPhone and iPad, then pair them again with Settings › Add a Device…")
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "migrated-from-0.5", content: content, trigger: nil))
     }
 }
