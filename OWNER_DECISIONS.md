@@ -89,11 +89,11 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 
 ## Upgrade from 0.5.0-beta
 
-- Only 0.5.0-beta installs upgrade, to 0.9.0-beta: the owner's family, each migration confirmed by hand. 0.4.0 and older are not upgraded; the stable feed stays frozen at 0.4.0. Fix forward only, no rollback tooling. Plan: [docs/upgrade-from-0.5.md](docs/upgrade-from-0.5.md). (2026-10-17)
+- Only 0.5.0-beta installs upgrade, to 0.9.0-beta, each migration confirmed by hand. 0.4.0 and older are not upgraded; the stable feed stays frozen at 0.4.0. Fix forward only, no rollback tooling. Plan: [docs/upgrade-from-0.5.md](docs/upgrade-from-0.5.md). (2026-10-17)
 - The Mac migrates on first launch, fully automatically (an exception to click-to-write for this one migration): the 0.9 plugin is bundled at `Yorozu.app/Contents/Resources/openclaw-channel` so 0.5's `--link` install picks it up; the app drops `channels.yorozu.socketPath`, reloads the plugin accepting its capabilities and restarts the Gateway; the plugin imports 0.5's host keys and devices so no device re-pairs; memory notes import as unverified notes; every 0.5 chat becomes a conversation seeded with one plain `chat.inject` of its last 40 turns; 0.5's watchdog LaunchAgent is removed. 0.5's data folder is never written. (2026-10-17)
 - iOS copies the keychain account `pairings` into `pairing-v3` on first launch, QR pairing as fallback, and never deletes `pairings`. (2026-10-17)
 - Release order: the iOS build is assigned to TestFlight testers at the moment the Mac appcast item goes live; iOS shows "Your Mac is updating" and reconnects by itself, the Mac nudges to update the iPhone app. (2026-10-17)
-- No bridge 0.5.x release. Once the owner confirms every family install migrated, all migration code is deleted. (2026-10-17)
+- No bridge 0.5.x release. Once the owner confirms every 0.5 install migrated, all migration code is deleted. (2026-10-17)
 
 ## Stable contracts
 

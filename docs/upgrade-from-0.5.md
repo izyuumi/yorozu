@@ -4,9 +4,9 @@ The plan for moving Yorozu 0.5.0-beta installs (`main`) to 0.9.0 (`projectx`), a
 
 ## Scope
 
-- Only 0.5.0-beta installs upgrade: the owner's family. The owner confirms each migration by hand.
+- Only 0.5.0-beta installs upgrade. The owner confirms each migration by hand.
 - The stable feed (`yorozu.yumi.to/appcast.xml`) stays frozen at 0.4.0. 0.4.0 installs are not upgraded.
-- Once every family install has migrated, all migration code is deleted and 0.9 data is assumed everywhere.
+- Once every 0.5 install has migrated, all migration code is deleted and 0.9 data is assumed everywhere.
 - Rollback: fix forward only.
 
 ## Version and build numbers
@@ -58,7 +58,7 @@ Modelled on OpenClaw's iOS app (`~/openclaw/apps/ios`).
 ## Release order
 
 - The iOS build is uploaded and through Beta App Review but not assigned to testers. The Mac appcast item and the TestFlight assignment go live together.
-- Every family device pairs again once (owner, 2026-10-23: re-pair instead of carrying 0.5's keys over). The Mac pairs itself on first launch; each iPhone and iPad then pairs from the Mac's Settings › Add a Device…, with the owner there.
+- Every 0.5 device pairs again once (owner, 2026-10-23: re-pair instead of carrying 0.5's keys over). The Mac pairs itself on first launch; each iPhone and iPad then pairs from the Mac's Settings › Add a Device…, with the owner there.
   - **iOS 0.9 before the Mac:** the phone shows the pairing screen until the Mac has updated.
   - **A 0.5 iPhone against a 0.9 Mac:** shows 0.5's own "update required". That can't be changed.
 
@@ -100,6 +100,6 @@ All of this lands in 0.9.0, so later versions migrate without friction:
 
 ## Unverified, check during implementation
 
-- **Feed reach.** 0.5.0-beta Macs read the beta feed only if beta updates were switched on (`YorozuBetaUpdates`; 0.5 defaults to the stable feed, which stays at 0.4.0). A family Mac without it never sees 0.9.0.
+- **Feed reach.** 0.5.0-beta Macs read the beta feed only if beta updates were switched on (`YorozuBetaUpdates`; 0.5 defaults to the stable feed, which stays at 0.4.0). A 0.5 Mac without it never sees 0.9.0.
 - 0.5's host data path is `~/Library/Application Support/Yorozu` (runtime `serve.ts`, `DEFAULT_STATE_DIR`).
 - Whether `peerDependencies: openclaw` in the plugin affects OpenClaw's dependency status.

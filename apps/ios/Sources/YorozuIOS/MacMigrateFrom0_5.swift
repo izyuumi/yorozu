@@ -6,7 +6,7 @@ import UserNotifications
 
 /// The one-time move of a Mac from Yorozu 0.5.0-beta, whose app Sparkle just replaced (docs/upgrade-from-0.5.md). Runs on
 /// launch, without a click, until it succeeds once. Every step can run again. 0.5's data folder is only ever read, by the
-/// plugin. Deleted with the rest of the 0.5 migration once the owner has checked every family Mac.
+/// plugin. Deleted with the rest of the 0.5 migration once the owner has checked every 0.5 Mac.
 @MainActor
 enum MacMigrateFrom0_5 {
     private static let doneKey = "migratedFrom0_5"
