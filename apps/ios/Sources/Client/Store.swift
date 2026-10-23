@@ -64,11 +64,16 @@ struct Conversation: Codable, Identifiable, Equatable {
     }
 
     /// Without the failure items that name none of its messages: older clients turned a list or history load the host
-    /// could not answer into one in every conversation it touched, each an orange dot that no read cleared.
+    /// could not answer into one in every conversation it touched, each an orange dot that no read cleared. Each also
+    /// moved the conversation's time to its own, so that goes back to the newest item left (`conv_list` raises it again
+    /// if the host's is later).
     var withoutStrayErrors: Conversation {
         let ids = Set(items.map(\.id))
         var conversation = self
         conversation.items.removeAll { $0.kind == .error && !ids.contains(String($0.id.dropFirst("error:".count))) }
+        if conversation.items.count < items.count, let newest = conversation.items.map(\.ts).max() {
+            conversation.updatedAt = newest
+        }
         return conversation
     }
 
