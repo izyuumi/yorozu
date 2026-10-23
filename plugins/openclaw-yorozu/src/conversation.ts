@@ -50,7 +50,7 @@ export function resolveOwnerRoute(cfg: OpenClawConfig, agentId: string, accountI
 }
 
 /**
- * One reply per chunk of `text`, each with its own `messageId`: from `ids` (the transcript's) when given.
+ * One reply per chunk of `text`, each with its own `messageId`: from `ids` (the transcript's, with its time) when given.
  * Attachments ride on the last one, or on a reply of their own when there is no text: one group, as the agent sent them.
  */
 export function replyEvents(
@@ -58,7 +58,7 @@ export function replyEvents(
   convId: string,
   text: string,
   accountId?: string | null,
-  ids?: (chunk: number) => string,
+  ids?: { id: (chunk: number) => string; ts: number },
   attachments: Attachment[] = [],
 ): Event[] {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
@@ -68,9 +68,9 @@ export function replyEvents(
     kind: "reply",
     data: {
       convId,
-      messageId: ids?.(k) ?? randomUUID(),
+      messageId: ids?.id(k) ?? randomUUID(),
       text: chunk,
-      ts: Date.now(),
+      ts: ids?.ts ?? Date.now(),
       ...(attachments.length && k === chunks.length - 1 ? { attachments } : {}),
     },
   }));
@@ -179,7 +179,7 @@ export async function handleMessage(ctx: TurnContext, message: Message): Promise
               if (info.kind === "tool" || (!payload.text?.trim() && !urls.length)) return;
               runStarted();
               const ids = liveReplyIds(route.agentId, sessionKey, messageId, usedReplies);
-              const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.(0));
+              const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.id(0));
               const body = [payload.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
               const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments);
               const first = replies[0];
