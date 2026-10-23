@@ -95,6 +95,13 @@ struct HomeView: View {
                                 #if os(iOS)
                                 .safeAreaInset(edge: .top, spacing: 0) { PairSwitcher(model: model, selection: $selection, pair: $pair) }
                                 #endif
+                                // A new conversation without going back to the list (owner, 2026-10-23).
+                                .toolbar {
+                                    ToolbarItem(placement: .primaryAction) {
+                                        Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { selection = V3Event.newId() }
+                                            .accessibilityIdentifier("chat.new")
+                                    }
+                                }
                         }
                         #if os(iOS)
                         // A conversation has the whole screen: the composer sits where the tab bar was. Decided here, by
