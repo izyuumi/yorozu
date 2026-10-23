@@ -170,15 +170,17 @@ private struct YorozuAppearance: ViewModifier {
             }
         }
         #else
-        content.preferredColorScheme(scheme)
-        #endif
-    }
-
-    private var scheme: ColorScheme? {
-        switch appearance {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
+        // On the windows, not `preferredColorScheme`: a sheet already open (Settings, where it is changed) did not follow.
+        content.onChange(of: appearance, initial: true) { _, appearance in
+            let style: UIUserInterfaceStyle = switch appearance {
+            case .system: .unspecified
+            case .light: .light
+            case .dark: .dark
+            }
+            for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+                for window in scene.windows { window.overrideUserInterfaceStyle = style }
+            }
         }
+        #endif
     }
 }
