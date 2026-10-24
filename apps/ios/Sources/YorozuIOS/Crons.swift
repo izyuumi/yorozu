@@ -14,6 +14,8 @@ struct HomeView: View {
     @State private var selection: String?
     /// The second conversation side by side (owner, 2026-10-21): kept on a phone and on iPhone Duo closed, shown again when there is room.
     @State private var pair = ChatPair()
+    /// The new conversation opened only because nothing was open beside the list.
+    @State private var blank: String?
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var columns = NavigationSplitViewVisibility.automatic
@@ -32,6 +34,14 @@ struct HomeView: View {
         }
         .opensRequestedConversation(model, selection: $selection)
         .inAppNotices(model) { open($0, automation: nil) }
+        // Nothing open beside the list (iPad, Mac; at launch, or after the open one went): a new conversation, ready to
+        // type in, rather than an empty pane (owner, 2026-10-25). Not when a pair's other side takes the area instead.
+        .onChange(of: selection == nil && besideList, initial: true) { _, empty in
+            guard empty, selection == nil, pair.partner == nil else { return }
+            let convId = V3Event.newId()
+            blank = convId
+            selection = convId
+        }
         // Deleted on another device while open here.
         .onChange(of: model.deleted) { _, convId in
             if convId != nil, pair.partner == convId { pair.close(pair.focusedSide == .left ? .right : .left, selection: &selection) }
@@ -42,12 +52,25 @@ struct HomeView: View {
             dragging = false
             pair.selectionChanged(from: old, to: new, compact: sizeClass == .compact, selection: &selection)
         }
-        .onChange(of: sizeClass) { _, size in pair.selectionChanged(from: nil, to: selection, compact: size == .compact, selection: &selection) }
+        .onChange(of: sizeClass) { _, size in
+            // Folding to a phone's layout shows the list, not the new conversation that only stood in for an empty pane.
+            if size == .compact, let blank, selection == blank, model.conversations[blank]?.items.isEmpty ?? true { selection = nil }
+            pair.selectionChanged(from: nil, to: selection, compact: size == .compact, selection: &selection)
+        }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         #endif
     }
 
     private func side(_ convId: String) -> PaneSide? { pair.side(of: convId, selection: selection) }
+
+    /// The conversation is shown beside the list: the split view, not a phone's stack.
+    private var besideList: Bool {
+        #if os(iOS)
+        sizeClass != .compact
+        #else
+        true
+        #endif
+    }
 
     private var split: some View {
         #if os(iOS)
@@ -62,7 +85,8 @@ struct HomeView: View {
                 ChatPairView(model: model, selection: $selection, pair: $pair, columns: $columns, dragging: $dragging,
                     windowWidth: windowWidth)
             } else {
-                ContentUnavailableView("No conversation selected", systemImage: "bubble.left.and.bubble.right")
+                // For a moment only: a new conversation opens in its place.
+                Color.clear
             }
         }
         #else
@@ -78,7 +102,8 @@ struct HomeView: View {
             } else if let selection {
                 ChatView(model: model, convId: selection).id(selection)
             } else {
-                ContentUnavailableView("No conversation selected", systemImage: "bubble.left.and.bubble.right")
+                // For a moment only: a new conversation opens in its place.
+                Color.clear
             }
         }
         #endif
