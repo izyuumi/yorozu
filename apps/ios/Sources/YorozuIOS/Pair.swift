@@ -148,7 +148,7 @@ struct ChatPairView: View {
                         // Tap: a new conversation here. Hold: one beside this, keeping it in view (owner, 2026-10-23). Not from
                         // one still empty.
                         if model.conversations[selection]?.items.isEmpty == false {
-                            ToolbarItem(placement: .primaryAction) {
+                            ToolbarItem(placement: .pinnedAction) {
                                 Menu {
                                     Button(String(localized: "New Conversation Beside"), systemImage: "rectangle.split.2x1") { newBeside() }
                                         .keyboardShortcut("n", modifiers: [.command, .option])
@@ -257,7 +257,7 @@ struct ChatPairView: View {
         }
         // A new conversation in this pane, focused; not from one still empty.
         if let convId, model.conversations[convId]?.items.isEmpty == false {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .pinnedAction) {
                 Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") {
                     withAnimation(.snappy) { pair.show(V3Event.newId(), on: side, selection: &selection) }
                 }
