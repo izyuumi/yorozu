@@ -71,6 +71,17 @@ enum Accent: String, CaseIterable, Identifiable {
     }
 }
 
+extension ToolbarItemPlacement {
+    /// A conversation's prominent action (owner, 2026-10-25): from iOS 27 pinned at the trailing edge, which iPhone Duo's
+    /// side bars place right after navigation and keep out of the overflow; the primary action before, and on the Mac.
+    static var pinnedAction: ToolbarItemPlacement {
+        #if os(iOS)
+        if #available(iOS 27, *) { return .topBarPinnedTrailing }
+        #endif
+        return .primaryAction
+    }
+}
+
 extension EnvironmentValues {
     /// The accent the user picked, for the colours `.tint` cannot stand in for (the bubble).
     @Entry var accent = Accent.vermilion

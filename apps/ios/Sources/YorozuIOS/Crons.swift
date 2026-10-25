@@ -123,7 +123,7 @@ struct HomeView: View {
                                 // A new conversation without going back to the list (owner, 2026-10-23); not from one still empty.
                                 .toolbar {
                                     if model.conversations[convId]?.items.isEmpty == false {
-                                        ToolbarItem(placement: .primaryAction) {
+                                        ToolbarItem(placement: .pinnedAction) {
                                             Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { selection = V3Event.newId() }
                                                 .accessibilityIdentifier("chat.new")
                                         }
