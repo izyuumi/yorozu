@@ -78,6 +78,16 @@ extension AppDelegate: UIApplicationDelegate {
 #else
 extension AppDelegate: NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) { launched() }
+
+    /// Quitting waits, briefly, for a message just sent to reach the relay (owner, 2026-10-26).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard model.hasUnsent else { return .terminateNow }
+        Task {
+            _ = await model.waitUntilSent(limit: .seconds(10))
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
 }
 #endif
 

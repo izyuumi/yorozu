@@ -31,7 +31,14 @@ struct RootView: View {
             switch phase {
             // iOS suspends a background app and its socket with it; a Mac app keeps running and keeps its link.
             #if os(iOS)
-            case .background: model.suspend()
+            case .background:
+                // A message just sent goes out before the socket closes: iOS lends a background app about 30 s.
+                let task = UIApplication.shared.beginBackgroundTask(withName: "Sending messages")
+                Task {
+                    _ = await model.waitUntilSent(limit: .seconds(25))
+                    model.suspend()
+                    UIApplication.shared.endBackgroundTask(task)
+                }
             #endif
             case .active: model.resume()
             default: break

@@ -322,6 +322,22 @@ final class AppModel {
         Task { await connection.reconnect() }
     }
 
+    /// A message of this device's that the relay has not taken yet (no ✓): leaving now would hold it until the next launch.
+    var hasUnsent: Bool {
+        !isDemo && conversations.values.contains { $0.items.contains { $0.kind == .user && ($0.status ?? .queued) < .sent } }
+    }
+
+    /// Before the app goes to the background or quits (owner, 2026-10-26): waits, at most `limit`, until every message
+    /// is on the relay. True when nothing is left; false when the time ran out (the outbox sends it on the next launch).
+    func waitUntilSent(limit: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while hasUnsent {
+            guard ContinuousClock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        return true
+    }
+
     /// iOS suspends a background app: hang up, so the relay does not hold a frozen socket. The plugin hears first that
     /// no conversation is on screen any more, or it would hold this device's pushes back (#431).
     func suspend() {
