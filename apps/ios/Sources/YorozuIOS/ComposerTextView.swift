@@ -63,17 +63,18 @@ struct ComposerTextView: NSViewRepresentable {
         }
     }
 
+    /// Measures a copy of the text, never the field's own layout: resizing the live text container here left its layout
+    /// to be finished during drawing, which grew the text view inside the window's display pass, and AppKit stopped the
+    /// app ("crashes when I type", 2026-10-26).
     func sizeThatFits(_ proposal: ProposedViewSize, nsView scroll: NSScrollView, context: Context) -> CGSize? {
-        guard let width = proposal.width, let view = scroll.documentView as? NSTextView,
-              let layout = view.layoutManager, let container = view.textContainer, let font = view.font else { return nil }
-        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
-        layout.ensureLayout(for: container)
+        guard let width = proposal.width, width > 0, let view = scroll.documentView as? NSTextView, let font = view.font,
+              let layout = view.layoutManager else { return nil }
         let line = layout.defaultLineHeight(for: font)
-        let height = max(layout.usedRect(for: container).height, line)
-        // Back to the width the view has: SwiftUI also proposes widths it never gives (0, for the least size), and
-        // `widthTracksTextView` follows only a change of frame, so a text laid out 0 wide would be left invisible.
-        container.containerSize = NSSize(width: view.frame.width, height: .greatestFiniteMagnitude)
-        return CGSize(width: width, height: min(height, line * Self.maxLines).rounded(.up))
+        // A trailing new line takes a line of its own, which `boundingRect` does not count.
+        let measured = view.string.hasSuffix("\n") ? view.string + " " : view.string
+        let used = NSAttributedString(string: measured, attributes: [.font: font])
+            .boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading])
+        return CGSize(width: width, height: min(max(used.height, line), line * Self.maxLines).rounded(.up))
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
