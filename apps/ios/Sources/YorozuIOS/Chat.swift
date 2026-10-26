@@ -463,7 +463,8 @@ private struct Composer: View {
             .accessibilityLabel(Text("Send"))
             .accessibilityIdentifier("composer.send")
         }
-        .padding(.leading, attachLimit == nil ? LayoutMetrics.tight : 0)
+        // Without the +, the text keeps the inset the + would have given it.
+        .padding(.leading, attachLimit == nil ? LayoutMetrics.stack : 0)
     }
 
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil }

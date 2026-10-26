@@ -37,10 +37,14 @@ struct HomeView: View {
         // Nothing open beside the list (iPad, Mac; at launch, or after the open one went): a new conversation, ready to
         // type in, rather than an empty pane (owner, 2026-10-25). Not when a pair's other side takes the area instead.
         .onChange(of: selection == nil && besideList, initial: true) { _, empty in
-            guard empty, selection == nil, pair.partner == nil else { return }
-            let convId = V3Event.newId()
-            blank = convId
-            selection = convId
+            guard empty else { return }
+            // After the list's own update: setting its selection from inside one is a reentrant table update on the Mac.
+            Task { @MainActor in
+                guard selection == nil, besideList, pair.partner == nil else { return }
+                let convId = V3Event.newId()
+                blank = convId
+                selection = convId
+            }
         }
         // Deleted on another device while open here.
         .onChange(of: model.deleted) { _, convId in

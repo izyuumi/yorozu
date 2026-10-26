@@ -95,6 +95,10 @@ struct ConversationsView: View {
                         .badge(archived.count)
                     }
                     .foregroundStyle(.primary)
+                    #if os(macOS)
+                    // A sidebar row, not a push button.
+                    .buttonStyle(.plain)
+                    #endif
                     .accessibilityValue(showingArchived ? Text("Shown") : Text("Hidden"))
                     .accessibilityIdentifier("conversations.archived")
                     if showingArchived { ForEach(archived, content: row) }
