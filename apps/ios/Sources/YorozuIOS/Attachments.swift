@@ -225,7 +225,16 @@ struct AttachmentList: View {
     let attachments: [ChatAttachment]
     let alignment: HorizontalAlignment
 
-    @State private var preview: URL?
+    #if os(iOS)
+    /// The file Quick Look shows, and the attachment it zooms out of.
+    private struct Previewed: Identifiable {
+        let id: String
+        let url: URL
+    }
+
+    @State private var previewed: Previewed?
+    @Namespace private var zoom
+    #endif
 
     var body: some View {
         VStack(alignment: alignment, spacing: LayoutMetrics.tight) {
@@ -237,6 +246,9 @@ struct AttachmentList: View {
                         FileAttachment(model: model, attachment: attachment, open: open)
                     }
                 }
+                #if os(iOS)
+                .matchedTransitionSource(id: attachment.id, in: zoom)
+                #endif
                 .contextMenu {
                     if let url = AttachmentFiles.local(attachment) {
                         ShareLink(item: url) { Label(String(localized: "Share"), systemImage: "square.and.arrow.up") }
@@ -245,7 +257,12 @@ struct AttachmentList: View {
             }
         }
         #if os(iOS)
-        .quickLookPreview($preview)
+        // Zooms out of the attachment and back into it; a swipe down closes it, as in Photos (owner, 2026-10-26).
+        .fullScreenCover(item: $previewed) { item in
+            QuickLookPreview(url: item.url) { previewed = nil }
+                .ignoresSafeArea()
+                .navigationTransition(.zoom(sourceID: item.id, in: zoom))
+        }
         #endif
     }
 
@@ -254,10 +271,49 @@ struct AttachmentList: View {
         #if os(macOS)
         NSWorkspace.shared.open(url)
         #else
-        preview = url
+        previewed = Previewed(id: attachment.id, url: url)
         #endif
     }
 }
+
+#if os(iOS)
+/// Quick Look in a navigation bar of its own: its share and markup controls, and Done.
+private struct QuickLookPreview: UIViewControllerRepresentable {
+    let url: URL
+    let done: () -> Void
+
+    func makeUIViewController(context: Context) -> UINavigationController {
+        let preview = QLPreviewController()
+        preview.dataSource = context.coordinator
+        let coordinator = context.coordinator
+        preview.navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { _ in coordinator.done() })
+        return UINavigationController(rootViewController: preview)
+    }
+
+    func updateUIViewController(_ navigation: UINavigationController, context: Context) {
+        context.coordinator.done = done
+        guard context.coordinator.url != url else { return }
+        context.coordinator.url = url
+        (navigation.viewControllers.first as? QLPreviewController)?.reloadData()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(url: url, done: done) }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        var url: URL
+        var done: () -> Void
+
+        init(url: URL, done: @escaping () -> Void) {
+            self.url = url
+            self.done = done
+        }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem { url as NSURL }
+    }
+}
+#endif
 
 /// Where a file stands: here, moving, failed, or waiting for a tap.
 private enum FileState {
