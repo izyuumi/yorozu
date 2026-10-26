@@ -238,10 +238,11 @@ struct ChatPairView: View {
         }
         .id(convId ?? "beside")
         // A tap anywhere in a pane, its composer included, moves the focus there.
+        // Not on the picker: a tap gesture over a List kept its rows from taking taps.
         .simultaneousGesture(TapGesture().onEnded {
             guard !pair.choosing, side != pair.focusedSide else { return }
             withAnimation(.snappy) { pair.focus(side, selection: &selection) }
-        })
+        }, including: convId == nil ? .subviews : .all)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(side == .left ? Text("Left pane") : Text("Right pane"))
     }
@@ -402,7 +403,7 @@ private struct BesidePicker: View {
             Section {
                 Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { pick(V3Event.newId()) }
             }
-            Section(String(localized: "Recent")) {
+            Section {
                 ForEach(matches) { conversation in
                     Button { pick(conversation.id) } label: {
                         VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
@@ -412,8 +413,14 @@ private struct BesidePicker: View {
                     }
                     .foregroundStyle(.primary)
                 }
+            } header: {
+                Text("Recent")
+            } footer: {
+                Text("Or drag a conversation from the list onto this side.")
             }
         }
+        // The system's grouped list, with its own margins, in a pane as narrow as half an iPad mini.
+        .listStyle(.insetGrouped)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: Text("Search"))
         .navigationTitle("Open Beside")
         .navigationBarTitleDisplayMode(.inline)
@@ -421,12 +428,6 @@ private struct BesidePicker: View {
             ToolbarItem(placement: .cancellationAction) {
                 Button(String(localized: "Cancel"), systemImage: "xmark", action: cancel)
             }
-        }
-        .safeAreaInset(edge: .bottom) {
-            Text("Or drag a conversation from the list onto this side.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .padding(LayoutMetrics.inner)
         }
     }
 }
