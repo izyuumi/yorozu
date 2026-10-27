@@ -101,7 +101,12 @@ struct Conversation: Codable, Identifiable, Equatable {
         return line ?? String(localized: "New Conversation")
     }
 
-    var lastText: String { items.last { $0.kind == .user || $0.kind == .agent }?.summary ?? "" }
+    /// The newest message as plain text: a row's preview would show Markdown markers as typed.
+    var lastText: String {
+        let text = items.last { $0.kind == .user || $0.kind == .agent }?.summary ?? ""
+        let plain = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
+        return plain.map { String($0.characters) } ?? text
+    }
 
     /// Places transcript items. An item already here (same id, or a live reply of the same text that has no seq yet)
     /// is replaced. Each goes after the last item known to be older (lower seq) and before the first one known or
