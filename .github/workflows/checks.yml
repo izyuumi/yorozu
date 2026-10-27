@@ -35,11 +35,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: '27.1' }
-      - name: Install Tuist 4.209.0
+      - name: Install Tuist (mise.toml)
         run: |
           command -v mise >/dev/null || brew install mise
-          mise use -g tuist@4.209.0
-          mise bin-paths tuist@4.209.0 >> "$GITHUB_PATH"
+          tuist=$(sed -n 's/^tuist = "\(.*\)"/\1/p' mise.toml)
+          mise use -g "tuist@$tuist"
+          mise bin-paths "tuist@$tuist" >> "$GITHUB_PATH"
       - run: tuist generate --no-open --path apps/ios
       - name: iPhone and iPad
         run: |
