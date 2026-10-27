@@ -1,8 +1,9 @@
 name: Release Mac
-# A push to main that touches the Mac app publishes a beta: the prerelease v<version>-beta.<build>, which Macs with beta
-# updates on install (yorozu.yumi.to/beta/appcast.xml). A push that changes version.txt first promotes the beta its
-# `Promotes:` line names, unchanged, to the stable v<old version>, which every Mac installs (OWNER_DECISIONS.md, Platform
-# and release). No tests run here; pull requests get a compile check (checks.yml).
+# A push to main that touches the Mac app publishes a beta: the prerelease v<version>-beta, replaced by each build,
+# which Macs with beta updates on install (yorozu.yumi.to/beta/appcast.xml). A push that changes version.txt first
+# promotes the beta, if it is still the build its `Promotes:` line names, unchanged, to the stable v<old version>, which
+# every Mac installs (OWNER_DECISIONS.md, Platform and release). Release notes come from the Conventional Commits. No
+# tests run here; pull requests get a compile check (checks.yml).
 # Secrets: DEVELOPER_ID_P12 and DEVELOPER_ID_PASSWORD (Developer ID Application), ASC_KEY_ID, ASC_ISSUER_ID and
 # ASC_KEY_P8 (App Store Connect API key, base64 .p8, for notarization), SPARKLE_ED_KEY (Sparkle's private EdDSA key,
 # `generate_keys -x`).
@@ -29,10 +30,11 @@ jobs:
       REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { fetch-depth: 0 } # the pushed commits, for their Promotes: line
+        with: { fetch-depth: 0 } # the pushed commits, for their Promotes: line, and the tags, for release notes
 
       # Before the new version's first beta, so stable and beta never point at the same version. The bump PR names the
-      # beta the owner checked in a `Promotes: v<old>-beta.<n>` line; without it the promotion, and this run, fail.
+      # build the owner checked in a `Promotes: <old> (<build>)` line; without it, or if a newer build replaced
+      # that one, the promotion and this run fail.
       - name: Promote the checked beta
         if: github.event_name == 'push'
         env:
@@ -42,8 +44,8 @@ jobs:
           git cat-file -e "$BEFORE^{commit}" 2>/dev/null || { echo "No previous commit to compare"; exit 0; }
           old=$(git show "$BEFORE:version.txt" | tr -d '[:space:]')
           [ "$old" != "$(tr -d '[:space:]' < version.txt)" ] || exit 0
-          beta=$(git log --format=%B "$BEFORE..HEAD" | sed -n 's/^Promotes: *//p' | tail -1 | tr -d '[:space:]')
-          scripts/release_mac.sh --promote "$old" "$beta"
+          build=$(git log --format=%B "$BEFORE..HEAD" | sed -n 's/^Promotes:.*(\([0-9]*\)).*/\1/p' | tail -1)
+          scripts/release_mac.sh --promote "$old" "$build"
 
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with: { xcode-version: '27.1' } # the owner's Xcode; the iOS 27 SDK is only on the xcode-27 image (public preview)

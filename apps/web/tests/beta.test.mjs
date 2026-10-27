@@ -25,14 +25,14 @@ afterEach(() => mock.restoreAll());
 
 test('the beta routes serve the newest release, prereleases included; /mac the latest stable one', async () => {
   const files = ['Yorozu.dmg', 'appcast.xml', 'candidate.json'];
-  const requests = upstream(latest('v0.9.2-beta.3', files), latest('v0.9.1', files));
+  const requests = upstream(latest('v0.9.2-beta', files), latest('v0.9.1', files));
   const feed = await request('/beta/appcast.xml');
   assert.equal(feed.status, 302);
-  assert.equal(feed.headers.get('location'), `${download}v0.9.2-beta.3/appcast.xml`);
+  assert.equal(feed.headers.get('location'), `${download}v0.9.2-beta/appcast.xml`);
   assert.equal(feed.headers.get('cache-control'), 'public, max-age=60');
   assert.equal(requests[0], 'https://api.github.com/repos/izyuumi/yorozu/releases?per_page=1');
   for (const path of ['/beta', '/beta/']) {
-    assert.equal((await request(path, { method: 'HEAD' })).headers.get('location'), `${download}v0.9.2-beta.3/Yorozu.dmg`);
+    assert.equal((await request(path, { method: 'HEAD' })).headers.get('location'), `${download}v0.9.2-beta/Yorozu.dmg`);
   }
   assert.equal((await request('/mac', { method: 'HEAD' })).headers.get('location'), `${download}v0.9.1/Yorozu.dmg`);
   assert.equal(requests.at(-1), 'https://api.github.com/repos/izyuumi/yorozu/releases/latest');

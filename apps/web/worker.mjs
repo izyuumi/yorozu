@@ -1,5 +1,5 @@
 // The Mac downloads and update feeds. /mac gives the latest stable release's installer (v<version>); _redirects sends
-// /appcast.xml to its appcast. /beta and /beta/appcast.xml give the newest release, prereleases (v<version>-beta.<build>)
+// /appcast.xml to its appcast. /beta and /beta/appcast.xml give the newest release, prereleases (v<version>-beta)
 // included: the feed Macs with beta updates on read, 0.5 ones too.
 const repository = 'izyuumi/yorozu';
 const downloads = `https://github.com/${repository}/releases/download/`;
