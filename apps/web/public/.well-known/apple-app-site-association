@@ -5,7 +5,9 @@
         "appIDs": ["AN5KM8QGEF.to.yumi.yorozu.ios"],
         "components": [
           { "/": "/pair", "comment": "The pairing QR; the pairing itself is in the fragment." },
-          { "/": "/pair/" }
+          { "/": "/pair/" },
+          { "/": "/add", "comment": "A new Mac's code, for a paired iPhone or iPad; the code is in the fragment." },
+          { "/": "/add/" }
         ]
       }
     ]
