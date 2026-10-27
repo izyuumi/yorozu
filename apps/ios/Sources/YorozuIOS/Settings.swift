@@ -74,14 +74,8 @@ struct SettingsView: View {
     }
 
     #if os(macOS)
-    private static let macWidth: CGFloat = 520
-
     private func tab(@ViewBuilder _ sections: () -> some View) -> some View {
-        Form { sections() }
-            .formStyle(.grouped)
-            .scrollDisabled(true)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(width: Self.macWidth)
+        SettingsTab { sections() }
     }
     #endif
 
@@ -268,6 +262,29 @@ struct SettingsView: View {
 
     private static func date(_ ms: Int64) -> Date { Date(timeIntervalSince1970: TimeInterval(ms) / 1000) }
 }
+
+#if os(macOS)
+private struct SettingsTab<Content: View>: View {
+    @ViewBuilder let content: Content
+    @State private var contentHeight: CGFloat?
+    private let width: CGFloat = 520
+    private let windowChrome: CGFloat = 120
+
+    var body: some View {
+        Form { content }
+            .formStyle(.grouped)
+            .scrollBounceBehavior(.basedOnSize)
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
+                contentHeight = height
+            }
+            .frame(width: width, height: contentHeight.map { min($0, maxHeight) })
+    }
+
+    private var maxHeight: CGFloat {
+        (NSScreen.main?.visibleFrame.height ?? 800) - windowChrome
+    }
+}
+#endif
 
 private struct AccentSwatch: View {
     let accent: Accent
