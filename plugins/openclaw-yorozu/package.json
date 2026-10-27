@@ -1,0 +1,19 @@
+{
+  "name": "openclaw-yorozu",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Yorozu channel for OpenClaw: the Yorozu apps talk to the Gateway through the relay",
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.9.8"
+  },
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "setupEntry": "./setup-entry.ts",
+    "channel": {
+      "id": "yorozu",
+      "label": "Yorozu",
+      "blurb": "Yorozu apps for iPhone, iPad and Mac, over an end-to-end-encrypted relay."
+    }
+  }
+}

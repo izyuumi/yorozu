@@ -1,232 +1,206 @@
 import Foundation
 import ProjectDescription
 
-/// Generates `Yorozu.xcworkspace`, which is *not* checked in: CI and the e2e harness run
-/// `tuist generate --path apps/ios --no-open` first. Re-run it after changing this file.
-
-let versionFile = URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent()
-    .appendingPathComponent("../../version.txt")
-    .standardizedFileURL
-let developmentVersion: String = {
-    do {
-        let value = try String(contentsOf: versionFile, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil else {
-            fatalError("Expected a numeric major.minor.patch version in \(versionFile.path)")
-        }
-        return value
-    } catch {
-        fatalError("Unable to read development version from \(versionFile.path): \(error)")
-    }
+/// Generates Yorozu.xcworkspace (not checked in): `tuist generate --no-open --path apps/ios`. One client app for iPhone, iPad and
+/// Mac (native SwiftUI, not Catalyst); the extensions are iOS-only and uploads archive iOS only (docs/release.md).
+/// Identity matches Yorozu 0.5 (bundle ids, team, ASC app 6811274963): TestFlight and the App Store take the iOS app as the
+/// same app, and Sparkle updates the Mac app (`to.yumi.yorozu`) in place.
+let versionFile = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appendingPathComponent("../../version.txt").standardizedFileURL
+let version: String = {
+    guard let raw = try? String(contentsOf: versionFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+          raw.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil
+    else { fatalError("Expected numeric major.minor.patch in \(versionFile.path)") }
+    return raw
 }()
 
-/// The App Group is the only thing the two targets share at runtime: the share extension
-/// writes into it and the app reads out of it. Nothing secret goes in there — see `ShareBox`.
-let appGroup = "group.to.yumi.yorozu"
-let notificationKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.notifications"
-
-/// Automatic signing plus `xcodebuild -allowProvisioningUpdates` and an App Store Connect key:
-/// Xcode issues the distribution certificate and the App Store profiles itself, so there is no
-/// .p12 or .mobileprovision to carry — for the extension as much as for the app, which is why
-/// this is shared rather than written out twice.
-func signing(_ extra: SettingsDictionary = [:]) -> Settings {
-    .settings(
-        base: [
-            "DEVELOPMENT_TEAM": "AN5KM8QGEF",
-            "CODE_SIGN_STYLE": "Automatic",
-            "MARKETING_VERSION": .string(developmentVersion),
-            "CURRENT_PROJECT_VERSION": "1",
-            "YOROZU_VERSION_LABEL": .string("\(developmentVersion)-beta"),
-        ].merging(extra) { _, new in new }
-    )
+/// `CFBundleVersion` for a visible build: major·10⁷ + minor·10⁵ + patch·10³ + build (0.9.0 build 1 = 900001). Sparkle
+/// compares this integer, and 0.5.0-beta installs are build 10279, so it must only ever rise (OWNER_DECISIONS.md).
+/// `scripts/build-number.sh` is the same formula for the scripts, which pass both numbers on the command line.
+func bundleVersion(build: Int) -> String {
+    let p = version.split(separator: ".").compactMap { Int($0) }
+    guard p[1] < 100, p[2] < 100, (1..<1000).contains(build) else { fatalError("Version \(version) build \(build) overflows CFBundleVersion") }
+    return String(p[0] * 10_000_000 + p[1] * 100_000 + p[2] * 1_000 + build)
 }
 
-/// Both are build settings so that scripts/build-ios.sh can pass the version and the build
-/// number on the xcodebuild command line rather than editing a generated file that tuist
-/// rewrites on the next run. Every target in the app has to carry the same pair, or the
-/// embedded extensions are rejected at upload for disagreeing with their host.
-let version: [String: Plist.Value] = [
-    "CFBundleShortVersionString": "$(MARKETING_VERSION)",
-    "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
-    "YorozuVersionLabel": "$(YOROZU_VERSION_LABEL)",
-]
+/// The Keychain group the app shares with its notification service extension, holding only the sealed-preview key
+/// (`PreviewKeychain`). v1's group, same team and bundle ids, so the App IDs it was registered under still apply.
+let notificationKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.notifications"
+/// The app and its share extension pass shares through this App Group's container (`ShareInbox`). v1's group.
+let appGroup = "group.to.yumi.yorozu"
+/// The app and its extension must carry the same version pair, or the upload is rejected.
+func signing(_ extra: SettingsDictionary = [:]) -> Settings {
+    .settings(base: [
+        "DEVELOPMENT_TEAM": "AN5KM8QGEF",
+        "CODE_SIGN_STYLE": "Automatic",
+        "MARKETING_VERSION": .string(version),
+        "CURRENT_PROJECT_VERSION": .string(bundleVersion(build: 1)),
+        // The build people see, restarting at 1 per version.
+        "YOROZU_BUILD": "1",
+    ].merging(extra) { _, new in new })
+}
 
 let project = Project(
     name: "Yorozu",
-    packages: [.local(path: "../../packages/shared-swift")],
+    packages: [
+        .local(path: "../../packages/YorozuWire"),
+        // Mac updates (docs/upgrade-from-0.5.md); the iOS app does not link it.
+        .remote(url: "https://github.com/sparkle-project/Sparkle", requirement: .upToNextMajor(from: "2.9.0")),
+    ],
     targets: [
         .target(
-            name: "YorozuRenderingTests",
-            destinations: .iOS,
-            product: .unitTests,
-            bundleId: "to.yumi.yorozu.rendering-tests",
-            deploymentTargets: .iOS("18.0"),
-            infoPlist: .default,
-            sources: ["Tests/RenderingTests/**"],
-            dependencies: [.target(name: "YorozuIOS"), .package(product: "YorozuShared")],
-            settings: signing()
-        ),
-        .target(
-            name: "YorozuUITests",
-            destinations: .iOS,
-            product: .uiTests,
-            bundleId: "to.yumi.yorozu.ui-tests",
-            deploymentTargets: .iOS("18.0"),
-            infoPlist: .default,
-            sources: ["Tests/UITests/**"],
-            dependencies: [.target(name: "YorozuIOS")],
-            settings: signing()
-        ),
-        .target(
             name: "YorozuIOS",
-            destinations: .iOS,
+            destinations: [.iPhone, .iPad, .mac],
             product: .app,
             bundleId: "to.yumi.yorozu.ios",
-            deploymentTargets: .iOS("18.0"),
-            infoPlist: .extendingDefault(with: version.merging([
-                "UILaunchScreen": [:],
+            deploymentTargets: .multiplatform(iOS: "18.0", macOS: "15.0"),
+            infoPlist: .extendingDefault(with: [
+                // Build settings, so scripts/upload_ios.sh passes both on the xcodebuild command line.
+                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "YorozuBuild": "$(YOROZU_BUILD)",
+                // Sparkle, read on the Mac only: the stable feed, 0.5's EdDSA key, hourly automatic installs.
+                "SUFeedURL": "https://yorozu.yumi.to/appcast.xml",
+                "SUPublicEDKey": "pD6gPv1CP/XDvIJXbztjQRTIkgR/kfMMYT/Mpp8aQvI=",
+                "SUEnableAutomaticChecks": true,
+                "SUAutomaticallyUpdate": true,
+                "SUAllowsAutomaticUpdates": true,
+                "SUScheduledCheckInterval": 3600,
+                "UILaunchStoryboardName": "LaunchScreen",
                 "ITSAppUsesNonExemptEncryption": false,
                 "CFBundleDisplayName": "Yorozu",
+                // The Mac's app menu and Dock name, rather than the target's.
+                "CFBundleName": "Yorozu",
                 "LSApplicationCategoryType": "public.app-category.productivity",
-                // Two uses, one key: scanning the pairing code, and taking a photo to send from
-                // the composer. The string has to cover both, because iOS only asks once.
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message.",
-                "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
-                // The relay's silent push, which wakes the app for a few seconds so it can
-                // drain its sync over its own socket while suspended. Nothing is read out of
-                // the push itself — see `PushDelegate` and ``ChatModel/drain(timeout:)``.
+                // "Save Image" in the share sheet of a file opened from a message.
+                "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
+                // The relay's silent push launches a suspended app, which reconnects (#431).
                 "UIBackgroundModes": ["remote-notification"],
+                "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
+                // A conversation dragged from the list onto a side of the conversation area (Pair.swift); in-app only.
+                "UTExportedTypeDeclarations": [
+                    [
+                        "UTTypeIdentifier": "to.yumi.yorozu.conversation",
+                        "UTTypeDescription": "Yorozu Conversation",
+                        "UTTypeConformsTo": ["public.data"],
+                    ]
+                ],
                 // `yorozu://pair?…` is the pairing string itself: tapping one opens the app.
-                // `yorozu://thread/<id>` opens a thread by id, `yorozu://ref/<threadRef>` opens
-                // one by the opaque reference a push carries, and `yorozu://share?token=…` is
-                // the share extension handing over.
                 "CFBundleURLTypes": [
                     [
                         "CFBundleURLName": "to.yumi.yorozu.pair",
                         "CFBundleURLSchemes": ["yorozu"],
                     ]
                 ],
-            ]) { a, _ in a }),
-            sources: ["Sources/YorozuIOS/**"],
+            ]),
+            sources: ["Sources/YorozuIOS/**", "Sources/Shared/**", "Sources/Client/**", "Sources/ShareInbox/**"],
             resources: [
                 "Resources/AppIcon.icon",
+                // iOS only: the Mac build rejects an iOS storyboard.
+                .glob(pattern: "Resources/LaunchScreen.storyboard", inclusionCondition: .when([.ios])),
                 "Resources/Assets.xcassets",
+                // Siri phrases for the App Shortcuts (YorozuIntents.swift), in Japanese.
+                "Resources/AppShortcuts.xcstrings",
                 "Resources/InfoPlist.xcstrings",
                 "Resources/Localizable.xcstrings",
-                "Resources/YorozuIOS/PrivacyInfo.xcprivacy",
+                "Resources/PrivacyInfo.xcprivacy",
             ],
             entitlements: .dictionary([
-                "com.apple.security.application-groups": [.string(appGroup)],
-                "keychain-access-groups": [.string(notificationKeychainGroup)],
-                // TestFlight and the App Store are both production APNs, and the relay only
-                // ever talks to api.push.apple.com — so there is one environment here rather
-                // than a debug build quietly registering for tokens the relay cannot use.
+                // TestFlight is production APNs, the only environment the relay talks to.
                 "aps-environment": "production",
-                // The pairing QR is a web link (`/pair#…`) so a camera without Yorozu lands on
-                // the download; with Yorozu installed, this hands the link to the app instead.
+                // The QR's web link opens the app (the site's AASA lists `/pair`).
                 "com.apple.developer.associated-domains": ["applinks:yorozu.yumi.to"],
+                // The app's own group first, so it stays the default for items saved without a group (the pairing's
+                // private keys); the shared group holds only the preview key.
+                "keychain-access-groups": ["$(AppIdentifierPrefix)to.yumi.yorozu.ios", .string(notificationKeychainGroup)],
+                "com.apple.security.application-groups": [.string(appGroup)],
             ]),
+            // The OpenClaw plugin rides in the Mac app at the path 0.5's `openclaw plugins install --link` points to, so
+            // the Gateway loads this version after a reload (stable contract, OWNER_DECISIONS.md). TypeScript, run as is.
+            scripts: [
+                .post(
+                    script: """
+                    [ "$PLATFORM_NAME" = macosx ] || exit 0
+                    dest="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/openclaw-channel"
+                    rm -rf "$dest" && mkdir -p "$dest"
+                    cd "$SRCROOT/../../plugins/openclaw-yorozu"
+                    cp -R index.ts setup-entry.ts openclaw.plugin.json package.json README.md src "$dest/"
+                    """,
+                    name: "Bundle the OpenClaw plugin",
+                    // Declared, so the app is signed again after every copy: undeclared, a build that changed only the plugin
+                    // left the copy outside the seal ("a sealed resource is missing or invalid").
+                    outputPaths: ["$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/openclaw-channel"],
+                    basedOnDependencyAnalysis: false
+                ),
+            ],
             dependencies: [
-                .package(product: "YorozuShared"),
-                .package(product: "YorozuWatchLink"),
-                // Embedded in the app's PlugIns, which is how an extension ships at all.
-                .target(name: "YorozuShare"),
-                .target(name: "YorozuNotificationService"),
-                .target(name: "YorozuWidget"),
-                // Embedded in the app's Watch folder, and installed from there by the phone.
-                .target(name: "YorozuWatch"),
+                .package(product: "YorozuWire"),
+                .package(product: "Sparkle", condition: .when([.macos])),
+                .target(name: "YorozuNotificationService", condition: .when([.ios])),
+                .target(name: "YorozuShare", condition: .when([.ios])),
             ],
-            settings: signing(["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"])
+            // Automatic signing plus `xcodebuild -allowProvisioningUpdates` and an App Store Connect key:
+            // Xcode issues the distribution certificate and the App Store profiles (app and extension) itself.
+            settings: signing([
+                "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
+                // The Mac ships as 0.5's Mac app id, so Sparkle replaces it in place; iOS keeps the App Store id.
+                "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": "to.yumi.yorozu",
+                // The plugin copy above reads the repo outside the target.
+                "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
+            ])
         ),
-        .target(
-            name: "YorozuWidget",
-            destinations: .iOS,
-            product: .appExtension,
-            bundleId: "to.yumi.yorozu.ios.widget",
-            deploymentTargets: .iOS("18.0"),
-            infoPlist: .extendingDefault(with: version.merging([
-                "CFBundleDisplayName": "Yorozu",
-                "NSExtension": ["NSExtensionPointIdentifier": "com.apple.widgetkit-extension"],
-            ]) { a, _ in a }),
-            sources: ["Sources/YorozuWidget/**"],
-            resources: ["Resources/Assets.xcassets", "Resources/Localizable.xcstrings"],
-            settings: signing()
-        ),
-        .target(
-            name: "YorozuWatch",
-            destinations: [.appleWatch],
-            product: .app,
-            // Has to extend the phone app's id, or the pair is rejected at install.
-            bundleId: "to.yumi.yorozu.ios.watchkitapp",
-            deploymentTargets: .watchOS("11.0"),
-            infoPlist: .extendingDefault(with: version.merging([
-                "CFBundleDisplayName": "Yorozu",
-                "WKApplication": true,
-                // Not standalone: every request is answered by the phone, which holds the keys.
-                "WKCompanionAppBundleIdentifier": "to.yumi.yorozu.ios",
-                "WKRunsIndependentlyOfCompanionApp": false,
-                "ITSAppUsesNonExemptEncryption": false,
-            ]) { a, _ in a }),
-            sources: ["Sources/YorozuWatch/**"],
-            resources: [
-                "Resources/AppIcon.icon",
-                "Resources/YorozuWatch/Localizable.xcstrings",
-            ],
-            // Links `YorozuWatchLink` and nothing else: `YorozuShared` does not build for watchOS.
-            dependencies: [.package(product: "YorozuWatchLink")],
-            settings: signing(["ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"])
-        ),
+        // Opens sealed push previews (docs/ios-relay-contract.md, "Sealed previews"). v1's extension bundle id.
         .target(
             name: "YorozuNotificationService",
             destinations: .iOS,
             product: .appExtension,
             bundleId: "to.yumi.yorozu.ios.notification-service",
             deploymentTargets: .iOS("18.0"),
-            infoPlist: .extendingDefault(with: version.merging([
+            infoPlist: .extendingDefault(with: [
+                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
                 "CFBundleDisplayName": "Yorozu Notification Service",
                 "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
                 "NSExtension": [
                     "NSExtensionPointIdentifier": "com.apple.usernotifications.service",
                     "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).NotificationService",
                 ],
-            ]) { a, _ in a }),
-            sources: ["Sources/YorozuNotificationService/**"],
+            ]),
+            sources: ["Sources/YorozuNotificationService/**", "Sources/Shared/**"],
+            // The alert titles are the relay keys' v2 wording, from the app's catalog.
             resources: ["Resources/Localizable.xcstrings"],
             entitlements: .dictionary(["keychain-access-groups": [.string(notificationKeychainGroup)]]),
-            dependencies: [.package(product: "YorozuShared")],
+            dependencies: [.package(product: "YorozuWire")],
             settings: signing()
         ),
+        // Yorozu in the share sheet: text, one link, one picture or one file, handed to the app (`ShareInbox`). v1's bundle id.
         .target(
             name: "YorozuShare",
             destinations: .iOS,
             product: .appExtension,
             bundleId: "to.yumi.yorozu.ios.share",
             deploymentTargets: .iOS("18.0"),
-            infoPlist: .extendingDefault(with: version.merging([
+            infoPlist: .extendingDefault(with: [
+                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
                 "CFBundleDisplayName": "Yorozu",
                 "NSExtension": [
                     "NSExtensionPointIdentifier": "com.apple.share-services",
                     "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).ShareViewController",
-                    // Exactly what the composer can draw and the runtime can be told about: a
-                    // selection of text, a web link, or one picture. A rule that claimed more
-                    // would put Yorozu in share sheets it has nothing to offer.
                     "NSExtensionAttributes": [
                         "NSExtensionActivationRule": [
                             "NSExtensionActivationSupportsText": true,
                             "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
                             "NSExtensionActivationSupportsImageWithMaxCount": 1,
-                        ]
+                            "NSExtensionActivationSupportsFileWithMaxCount": 1,
+                        ],
                     ],
                 ],
-            ]) { a, _ in a }),
-            sources: ["Sources/YorozuShare/**"],
-            resources: [
-                "Resources/Localizable.xcstrings",
-                "Resources/YorozuShare/PrivacyInfo.xcprivacy",
-            ],
+            ]),
+            sources: ["Sources/YorozuShare/**", "Sources/ShareInbox/**"],
+            resources: ["Resources/Localizable.xcstrings"],
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
-            dependencies: [.package(product: "YorozuShared")],
             settings: signing()
         ),
     ]
