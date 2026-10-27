@@ -1,0 +1,10 @@
+{
+  // Types come from the OpenClaw source checkout behind the global install (README, "Typecheck").
+  "extends": "./node_modules/openclaw/tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": ["./node_modules/openclaw/node_modules/@types"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": ["*.ts", "src/**/*.ts"]
+}

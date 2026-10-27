@@ -1,78 +1,132 @@
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
-import YorozuShared
 
-/// The share sheet's entry point. It reads what was shared, shows the composer, and writes the
-/// result into the App Group container — that is the whole of it.
-///
-/// It deliberately holds no relay client, no pairing and no Keychain access group. The app owns
-/// the socket and the outbox; an extension that opened a second socket would be a second device
-/// in the room for as long as the sheet was up, and would have to be given the pairing's private
-/// keys to do it. Writing a file and stepping aside costs one hop and none of that.
+/// Yorozu in the share sheet: the shared text or link in an editable note, at most one picture or file, and the
+/// conversation to send into (a new one, or one of the app's newest, from the list it keeps in the App Group). Send
+/// writes it into the App Group (`ShareInbox`); Yorozu sends it the next time it is open, through its outbox (#430).
+/// The extension holds no keys and no socket, so it cannot send by itself.
 final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
-        // The sheet is presented over the host app, which should show through around it.
-        view.backgroundColor = .clear
-
-        let destinations = ShareBox.directory().map { ShareBox.destinations(in: $0) }
-        let host = UIHostingController(
-            rootView: ShareComposeView(
-                hosts: destinations?.hosts ?? [],
-                threads: destinations?.threads ?? [],
-                load: { [weak self] in await self?.sharedItem() ?? .unsupported },
-                send: { [weak self] in self?.hand(over: $0) },
-                cancel: { [weak self] in self?.dismiss(cancelled: true) }
-            )
-        )
-        host.view.backgroundColor = .clear
+        let model = ShareModel()
+        let host = UIHostingController(rootView: ShareView(model: model, send: { [weak self] in self?.send(model) }, cancel: { [weak self] in
+            self?.extensionContext?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+        }))
         addChild(host)
         host.view.frame = view.bounds
         host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(host.view)
         host.didMove(toParent: self)
+        Task { await model.load(extensionContext?.inputItems as? [NSExtensionItem] ?? []) }
     }
 
-    /// Writes the share where the app will find it and asks iOS to open the app on it.
-    ///
-    /// The write is what matters and the URL is not: `open` is refused to some extensions and
-    /// silently dropped by others, so the app also drains this directory every time it comes to
-    /// the foreground. Worst case the share is sent when Yorozu is next opened rather than now.
-    private func hand(over payload: SharePayload) {
-        guard let directory = ShareBox.directory(),
-            let token = try? ShareBox.write(payload, in: directory),
-            let url = URL(string: "yorozu://share?token=\(token)")
-        else { return dismiss(cancelled: false) }
-        guard let extensionContext else { return dismiss(cancelled: false) }
-        // Keep the extension alive until iOS has accepted or refused the handoff. Completing
-        // immediately after `open` races the request and is why a share can wait until the app
-        // is opened later even when iOS would have launched it now.
-        extensionContext.open(url) { [weak self] _ in self?.dismiss(cancelled: false) }
-    }
-
-    private func dismiss(cancelled: Bool) {
-        guard cancelled else {
+    private func send(_ model: ShareModel) {
+        do {
+            try ShareInbox.write(text: model.text, file: model.file, convId: model.convId)
             extensionContext?.completeRequest(returningItems: nil)
-            return
+        } catch {
+            model.problem = String(localized: "Couldn’t keep this for Yorozu. Try again.")
         }
-        extensionContext?.cancelRequest(
-            withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)
-        )
     }
+}
 
-    /// The first thing in the share that this extension knows how to carry. A share is usually
-    /// one item with several representations of it — a web page arrives as a URL *and* as its
-    /// title as plain text — so the first match in preference order is the whole answer rather
-    /// than something to keep collecting after.
-    private func sharedItem() async -> SharedItem {
-        let providers = (extensionContext?.inputItems as? [NSExtensionItem] ?? [])
-            .flatMap { $0.attachments ?? [] }
-        for type in [UTType.url, .plainText, .image] {
-            for provider in providers where provider.hasItemConformingToTypeIdentifier(type.identifier) {
-                if let item = await SharedItem(provider: provider, type: type) { return item }
+@MainActor @Observable final class ShareModel {
+    var text = ""
+    var file: URL?
+    var problem: String?
+    var loading = true
+    /// nil: a new conversation.
+    var convId: String?
+    let directory = ShareInbox.published()
+
+    /// Text and a link become the note; the first picture or file is attached.
+    func load(_ items: [NSExtensionItem]) async {
+        defer { loading = false }
+        var lines: [String] = []
+        for provider in items.flatMap({ $0.attachments ?? [] }) {
+            if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier), !provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
+               let url = try? await provider.loadItem(forTypeIdentifier: UTType.url.identifier) as? URL {
+                lines.append(url.absoluteString)
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
+                      let string = try? await provider.loadItem(forTypeIdentifier: UTType.plainText.identifier) as? String {
+                lines.append(string)
+            } else if file == nil, let type = [UTType.image, .item].first(where: { provider.hasItemConformingToTypeIdentifier($0.identifier) }) {
+                file = await copy(provider, type: type)
             }
         }
-        return .unsupported
+        text = lines.filter { !$0.isEmpty }.joined(separator: "\n")
+        // Over the host's limit: refused here, before the app would refuse it.
+        if let file, let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > directory.maxBytes {
+            let format = { (n: Int) in ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .binary) }
+            problem = String(localized: "“\(file.lastPathComponent)” is \(format(size)). Yorozu sends files up to \(format(directory.maxBytes)).")
+            self.file = nil
+        }
+    }
+
+    /// The provider's file lives only during its callback: copy it out to the extension's temporary folder.
+    private func copy(_ provider: NSItemProvider, type: UTType) async -> URL? {
+        await withCheckedContinuation { done in
+            _ = provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+                guard let url else { return done.resume(returning: nil) }
+                let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+                let target = folder.appending(path: provider.suggestedName.map { $0 + (url.pathExtension.isEmpty ? "" : "." + url.pathExtension) } ?? url.lastPathComponent)
+                do {
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    try FileManager.default.copyItem(at: url, to: target)
+                    done.resume(returning: target)
+                } catch { done.resume(returning: nil) }
+            }
+        }
+    }
+}
+
+struct ShareView: View {
+    @Bindable var model: ShareModel
+    let send: () -> Void
+    let cancel: () -> Void
+    /// The preview of the picked picture or file, scaled with the text.
+    @ScaledMetric private var previewSide: CGFloat = 160
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Add a note", text: $model.text, axis: .vertical).lineLimit(3...10)
+                    if let file = model.file {
+                        // What is being sent: a picture, a PDF's first page, or the file type's icon.
+                        VStack {
+                            FileThumbnail(url: file, side: previewSide)
+                            Label(file.lastPathComponent, systemImage: "paperclip").lineLimit(1).truncationMode(.middle)
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                } footer: {
+                    Text("Yorozu sends this the next time it’s open.")
+                }
+                Section {
+                    Picker(String(localized: "Conversation"), selection: $model.convId) {
+                        Text("New Conversation").tag(String?.none)
+                        ForEach(model.directory.conversations) { conversation in
+                            Text(conversation.title.isEmpty ? String(localized: "Untitled") : conversation.title)
+                                .lineLimit(1)
+                                .tag(String?.some(conversation.id))
+                        }
+                    }
+                    .pickerStyle(.navigationLink)
+                }
+                if let problem = model.problem { Text(problem).foregroundStyle(.red) }
+            }
+            .navigationTitle("Send to Yorozu")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: cancel) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Send", action: send)
+                        .disabled(model.loading || (model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.file == nil))
+                }
+            }
+        }
     }
 }

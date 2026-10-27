@@ -1,77 +1,106 @@
 {
-  "sourceLanguage": "en",
-  "strings": {
-    "CFBundleDisplayName": {
-      "comment": "Bundle display name",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "Yorozu"
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Yorozu"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Yorozu"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu"
           }
         }
       }
     },
-    "CFBundleName": {
-      "comment": "Bundle name",
-      "extractionState": "extracted_with_value",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "new",
-            "value": "YorozuIOS"
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Yorozu"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "YorozuIOS"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "YorozuIOS"
           }
         }
       }
     },
-    "NSCameraUsageDescription": {
-      "comment": "Privacy - Camera Usage Description",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message."
+    "NSCameraUsageDescription" : {
+      "comment" : "Privacy - Camera Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu scans the pairing QR code shown by the host, and takes photos you choose to send in a message."
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Yorozu escanea el código QR de emparejamiento que muestra tu Mac."
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu escanea el código QR de emparejamiento que muestra el anfitrión."
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "YorozuはMacに表示されたペアリング用QRコードをスキャンし、メッセージで送る写真を撮影します。"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuはホストに表示されたペアリング用QRコードをスキャンし、メッセージで送る写真を撮影します。"
           }
         },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Yorozu는 Mac에 표시된 페어링 QR 코드를 스캔합니다."
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu는 호스트에 표시된 페어링 QR 코드를 스캔합니다."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Yorozu 会扫描 Mac 上显示的配对二维码。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu 会扫描主机上显示的配对二维码。"
+          }
+        }
+      }
+    },
+    "NSHumanReadableCopyright" : {
+      "comment" : "Copyright (human-readable)",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Copyright ©. All rights reserved."
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryAddUsageDescription" : {
+      "comment" : "Privacy - Photo Library Additions Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu saves pictures to your library when you ask it to."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozuが依頼に応じて写真をライブラリに保存します。"
           }
         }
       }
     }
   },
-  "version": "1.0"
+  "version" : "1.0"
 }

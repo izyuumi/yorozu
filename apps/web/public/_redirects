@@ -9,4 +9,3 @@
 # Preserve the shipped pre-candidate feed's latest-relative URL during migration.
 /download/Yorozu-0.4.0-293.dmg https://github.com/izyuumi/yorozu/releases/download/v0.4.0/Yorozu.dmg 302
 /download/* https://github.com/izyuumi/yorozu/releases/latest/download/:splat 302
-/models.json https://raw.githubusercontent.com/izyuumi/yorozu/main/catalog/models.json 302

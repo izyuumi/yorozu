@@ -1,62 +1,27 @@
 import UserNotifications
-import YorozuShared
+import YorozuWire
 
+/// Opens the sealed preview a relay alert carries (`mutable-content: 1`, `preview {n, c}`) and shows the reply's words:
+/// the conversation's title (else the class's alert text from this extension's own strings) and the reply's first line,
+/// and copies the conversation id for the tap to open (#431). A push without a box, one that does not open under the
+/// host's key, or one whose box names another message is delivered as it came, with the relay's fixed localized text
+/// (docs/ios-relay-contract.md, "Push").
 final class NotificationService: UNNotificationServiceExtension {
-    private var contentHandler: ((UNNotificationContent) -> Void)?
-    private var bestAttemptContent: UNMutableNotificationContent?
+    /// The relay `loc-key` per class: the same catalog keys the fallback body uses.
+    private static let titles = ["reply": "Yorozu replied.", "failed": "Yorozu needs attention.", "approval": "Yorozu needs your approval."]
 
-    override func didReceive(
-        _ request: UNNotificationRequest,
-        withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
-    ) {
-        self.contentHandler = contentHandler
-        guard let content = request.content.mutableCopy() as? UNMutableNotificationContent else {
-            return contentHandler(request.content)
-        }
-        // The relay's own words and its buttons come off first, so that whatever is delivered
-        // — here, or by the deadline in `serviceExtensionTimeWillExpire` — is either the
-        // decrypted preview or a fixed line with nothing to press. Title and subtitle are the
-        // relay's to write as much as the body is, and the preview never supplies them, so
-        // they are fixed on both paths; the interruption level goes back to the default so a
-        // push cannot make itself time-sensitive either. A push whose box is missing or will
-        // not open was not written by the Mac, and gets no say on the lock screen. The
-        // category `aps` named is never read back: which buttons a card gets is sealed inside
-        // the preview by the Mac, not chosen by the relay.
-        content.title = NotificationFallback.title
-        content.subtitle = ""
-        content.body = NotificationFallback.body
-        content.categoryIdentifier = ""
-        content.interruptionLevel = .active
-        content.userInfo.removeValue(forKey: NotificationFallback.localHostKey)
-        bestAttemptContent = content
-        if let match = NotificationFallback.authenticatedPreview(
-            userInfo: content.userInfo, keys: NotificationPreview.loadKeys()
-        ) {
-            let preview = match.preview
-            content.userInfo[NotificationFallback.localHostKey] = match.hostID
-            content.body = preview.body
-            // Sealed by the Mac alongside the body, so it is as trustworthy as the words under it.
-            if let title = preview.title { content.title = title }
-            // Allow and Deny appear only when the Mac sealed `quick` into the preview and the
-            // preview names the card this push is about. The app checks the same thing again
-            // before an Allow counts — see `PushDelegate` and
-            // `NotificationFallback.permitsLockScreenAnswer`.
-            content.categoryIdentifier = NotificationFallback.category(
-                for: preview, eventRef: content.userInfo["event"] as? String
-            )
-        }
-        deliver(content)
+    override func didReceive(_ request: UNNotificationRequest, withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
+        let userInfo = request.content.userInfo
+        guard let key = PreviewKeychain.load(), let preview = PushPreview.open(userInfo: userInfo, key: key),
+              preview.event == userInfo["event"] as? String, let fallback = Self.titles[preview.cls],
+              let content = request.content.mutableCopy() as? UNMutableNotificationContent
+        else { return contentHandler(request.content) }
+        content.title = preview.title.flatMap { $0.isEmpty ? nil : $0 }
+            ?? Bundle.main.localizedString(forKey: fallback, value: nil, table: nil)
+        content.body = preview.body
+        if let convId = preview.convId { content.userInfo["convId"] = convId }
+        contentHandler(content)
     }
 
-    override func serviceExtensionTimeWillExpire() {
-        // Out of time: what goes out is the neutralised copy, never the relay's original.
-        if let bestAttemptContent { deliver(bestAttemptContent) }
-    }
-
-    /// Once: the handler is dropped after use, so the deadline firing after a normal delivery
-    /// has nothing to call twice.
-    private func deliver(_ content: UNNotificationContent) {
-        contentHandler?(content)
-        contentHandler = nil
-    }
+    // `didReceive` answers synchronously, so the deadline never finds it waiting; the system then shows the push as sent.
 }

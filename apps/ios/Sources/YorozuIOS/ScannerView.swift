@@ -1,10 +1,13 @@
+#if os(iOS)
 import AVFoundation
 import SwiftUI
 import VisionKit
 
-/// Pairing screen: scans the QR in the Mac's Devices settings. `DataScannerViewController` does the
+/// Pairing screen: scans the QR the Mac shows. `DataScannerViewController` does the
 /// camera, framing and recognition, so there is no AVCaptureSession to own here.
 struct ScannerView: View {
+    /// What to scan, above the camera.
+    var prompt: LocalizedStringKey = "On the host, open Settings › Devices › Pair a Client Device and scan its QR code."
     /// Called with the raw QR string; returns an error message when it is not a Yorozu payload.
     let onScan: (String) -> String?
     let onManualEntry: () -> Void
@@ -22,7 +25,7 @@ struct ScannerView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    Text("On your host Mac, open Yorozu, then choose Settings › Devices › Pair Another Device.")
+                    Text(prompt)
                         .font(.headline)
                         .multilineTextAlignment(.center)
 
@@ -58,7 +61,7 @@ struct ScannerView: View {
 
                     // The host and the relay both handle parts of a code, so the true advice is
                     // about whose code it is, not who reads it.
-                    Text("Scan a code from a Mac you trust. Pairing codes are secret.")
+                    Text("Scan a code from a host you trust. Pairing codes are secret.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -173,3 +176,4 @@ private struct Scanner: UIViewControllerRepresentable {
         }
     }
 }
+#endif
