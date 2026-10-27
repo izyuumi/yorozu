@@ -1,17 +1,10 @@
 import Foundation
 import YorozuWire
 
-// Wire v3's local state (#425): the pairing in the Keychain, and a cache of conversations on disk. The Gateway
-// transcript is the source of truth (#415); `history` pages (#427) fill this cache from it.
-
-/// One pairing with the OpenClaw plugin, in one Keychain item (`Keychain`: this device only, never synced). Its own
-/// account, apart from v2's `pairings-v2`: every device pairs again for v3.
 struct Pairing: Codable, Equatable {
     var pairing: QrPayload
     var identity: PhoneIdentity
-    /// The relay accepted this device once: the one-time token is spent.
     var relayKnows = false
-    /// The plugin answered a handshake: the device is on its allowlist and the QR's secret is dropped.
     var paired = false
     var pairedAt: Date?
 
@@ -27,46 +20,26 @@ struct Pairing: Codable, Equatable {
     static func remove() throws { try Keychain.clearRequired(account) }
 }
 
-/// One conversation: a thread session `agent:<agent>:yorozu:direct:owner:thread:<id>` on the Gateway.
 struct Conversation: Codable, Identifiable, Equatable {
     let id: String
     var createdAt: Int64
-    /// The latest item's arrival: the list's order.
     var updatedAt: Int64
-    /// Transcript order (see `merge`): items from `history` carry their transcript `seq`; live ones are appended
-    /// in arrival order, so a reply never sorts above the message it answers across two clocks, until a page holding
-    /// them gives them their `seq`.
     var items: [ChatItem] = []
-    /// The seq range of the transcript this cache holds without gaps; nil before the first page.
     var oldestSeq: Int?
     var newestSeq: Int?
-    /// The oldest page came back without `more`: nothing older to load.
     var complete: Bool?
-    /// The transcript `rev` of the last page that reached the newest item: equal to `conv_list`'s, nothing to fetch.
     var rev: Int?
-    /// The read state (#429): the plugin's, or what this device set and the plugin has not answered yet.
     var read: V3ReadCursor?
-    /// `read` was set here and the plugin has not sent it back: sent again on the next session.
     var readPending: Bool?
-    /// The host's title (#428): the manual rename, else the generated one; nil before either.
     var title: String?
-    /// Archived on the host: shown under Archived, not in the main list.
     var archived: Bool?
-    /// Pinned on the host (epoch ms of the pin): listed under Pinned, newest pin first. Archiving unpins.
     var pinnedAt: Int64?
 
-    /// Where the read cursor falls among this device's items: its `ts`, or the `ts` this device holds for the reply it
-    /// names when that is later. A reply seen live before the plugin sent transcript times carries its later send time,
-    /// so a cursor set on a device that fetched it from history would otherwise leave it unread here.
     var readUpTo: Int64 {
         guard let read else { return .min }
         return max(read.ts, items.first { $0.id == read.messageId }?.ts ?? .min)
     }
 
-    /// Without the failure items that name none of its messages: older clients turned a list or history load the host
-    /// could not answer into one in every conversation it touched, each an orange dot that no read cleared. Each also
-    /// moved the conversation's time to its own, so that goes back to the newest item left (`conv_list` raises it again
-    /// if the host's is later).
     var withoutStrayErrors: Conversation {
         let ids = Set(items.map(\.id))
         var conversation = self
@@ -77,23 +50,18 @@ struct Conversation: Codable, Identifiable, Equatable {
         return conversation
     }
 
-    /// Agent replies after the read cursor; at least 1 while marked unread.
     var unreadCount: Int {
         let after = readUpTo
         return max(items.count { $0.kind == .agent && $0.ts > after }, read?.unread == true ? 1 : 0)
     }
 
-    /// A run failed after the read cursor: an orange dot rather than a blue one, until it is read.
     var needsAttention: Bool {
         let after = readUpTo
         return items.contains { $0.kind == .error && $0.ts > after }
     }
 
-    /// The newest reply by the plugin's clock: what a read moves the cursor to.
     var latestReply: ChatItem? { items.filter { $0.kind == .agent }.max { $0.ts < $1.ts } }
 
-    /// The list's and the chat's label: the host's title, else (until the first reply makes one) the first message's
-    /// first line, else "New Conversation".
     var displayTitle: String {
         if let title, !title.isEmpty { return title }
         let first = (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.summary ?? ""
@@ -101,18 +69,12 @@ struct Conversation: Codable, Identifiable, Equatable {
         return line ?? String(localized: "New Conversation")
     }
 
-    /// The newest message as plain text: a row's preview would show Markdown markers as typed.
     var lastText: String {
         let text = items.last { $0.kind == .user || $0.kind == .agent }?.summary ?? ""
         let plain = try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
         return plain.map { String($0.characters) } ?? text
     }
 
-    /// Places transcript items. An item already here (same id, or a live reply of the same text that has no seq yet)
-    /// is replaced. Each goes after the last item known to be older (lower seq) and before the first one known or
-    /// likely to be newer: a higher seq, or a live item with a later timestamp. A page speaks for its whole seq range:
-    /// a cached item in it that the page no longer has (one the plugin now leaves out, such as OpenClaw's own turns)
-    /// goes.
     mutating func merge(_ incoming: [ChatItem]) {
         let seqs = incoming.compactMap(\.seq)
         if let low = seqs.min(), let high = seqs.max() {
@@ -123,8 +85,6 @@ struct Conversation: Codable, Identifiable, Equatable {
             guard let seq = item.seq else { continue }
             let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
             func lowerBound() -> Int { items.lastIndex { ($0.seq ?? .max) < seq }.map { $0 + 1 } ?? 0 }
-            // A live reply is looked for only after the items known to be older, so a chunk repeated across replies
-            // ("OK") is matched to its own reply, not to the first one of that text.
             let from = lowerBound()
             if let i = items.firstIndex(where: { $0.id == item.id }) ?? (item.kind == .agent ? items[from...].firstIndex(where: {
                 $0.seq == nil && $0.kind == .agent && $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == text
@@ -132,7 +92,6 @@ struct Conversation: Codable, Identifiable, Equatable {
                 let old = items.remove(at: i)
                 if item.kind == .user { item.status = max(old.status ?? .read, .read) }
                 if item.kind == .tools { item.tools = ToolCall.union(old.tools ?? [], item.tools ?? []) }
-                // Transcript pages carry no files (#430): the live item's stay.
                 if item.attachments == nil { item.attachments = old.attachments }
             }
             let lower = lowerBound()
@@ -146,41 +105,30 @@ struct Conversation: Codable, Identifiable, Equatable {
 struct ChatItem: Codable, Identifiable, Equatable {
     enum Kind: String, Codable { case user, agent, error, tools, reset }
 
-    /// The messageId; `tools:<messageId>` and `error:<messageId>` for the rows about a user message's run.
     let id: String
     var kind: Kind
     var text: String
-    /// Epoch ms: the client's clock for a user message, the plugin's for a reply.
     var ts: Int64
-    /// A user message's mark.
     var status: SendStatus?
-    /// `tools`: the run's calls, in the order they started.
     var tools: [ToolCall]?
-    /// A user message's files (uploaded before the message goes) or a reply's (downloaded on request), #430.
     var attachments: [ChatAttachment]?
-    /// The transcript seq, for items a `history` page brought; nil for live ones not confirmed by a page yet.
     var seq: Int?
 
-    /// The text, or the first file's name for a message that is only files.
     var summary: String {
         text.isEmpty ? attachments?.first.map { "📎 \($0.name)" } ?? "" : text
     }
 }
 
-/// One file of a message or reply. Its bytes, once here, are in `AttachmentFiles` under `id`.
 struct ChatAttachment: Codable, Equatable, Identifiable {
     let id: String
     var name: String
     var mime: String
     var size: Int
-    /// A user message's file: the plugin stored it (`upload_ack {done}`), so the message may name it.
     var uploaded: Bool?
-    /// Why it was not sent (the plugin refused it); such a file is left out of its message.
     var failure: String?
 
     var wire: V3Attachment { V3Attachment(id: id, name: name, mime: mime, size: size) }
 
-    /// From the wire; nil for none, so a history item without files keeps the live item's.
     static func list(_ files: [V3Attachment]?, uploaded: Bool? = nil) -> [ChatAttachment]? {
         guard let files, !files.isEmpty else { return nil }
         return files.filter { V3Event.isId($0.id) }
@@ -190,7 +138,6 @@ struct ChatAttachment: Codable, Equatable, Identifiable {
 }
 
 extension ChatItem {
-    /// A transcript item from a `history` page. A run's `tools` row has the live row's id, `tools:<messageId>`.
     init(_ item: V3HistoryItem) {
         switch item.kind {
         case .user:
@@ -208,11 +155,8 @@ extension ChatItem {
     }
 }
 
-/// ✓ sent = relay `accepted`, ✓✓ delivered = plugin `delivered`, read = `run_started` (#415).
 enum SendStatus: Int, Codable, Comparable {
-    /// Not on any socket yet: waits for a session.
     case queued
-    /// Sealed and on the socket; no `accepted` yet.
     case sending
     case sent
     case delivered
@@ -226,7 +170,6 @@ struct ToolCall: Codable, Equatable, Identifiable {
     var name: String
     var status: V3Tool.Status
 
-    /// A page may split a run's calls, and live updates may be newer than a page: a finished status beats `running`.
     static func union(_ a: [ToolCall], _ b: [ToolCall]) -> [ToolCall] {
         var calls = a
         for call in b {
@@ -240,9 +183,6 @@ struct ToolCall: Codable, Equatable, Identifiable {
     }
 }
 
-/// One JSON file per conversation, under Data Protection `complete` on iOS: unreadable while the device is locked.
-/// Excluded from backup. On the Mac, files sit in the app's Application Support folder with the user account's
-/// protection (FileVault); macOS has no per-file Data Protection classes for an app outside the sandbox.
 final class ConversationCache: Sendable {
     private let directory = clientSupportDirectory.appending(path: "Conversations-v3", directoryHint: .isDirectory)
     private let queue = DispatchQueue(label: "yorozu.v3.cache")
@@ -256,8 +196,6 @@ final class ConversationCache: Sendable {
         }
     }
 
-    /// Written in order, off the main actor. A write that fails (the device locked meanwhile) is retried by the next
-    /// save of that conversation, which writes it whole.
     func save(_ conversation: Conversation) {
         guard V3Event.isId(conversation.id) else { return }
         queue.async { [directory] in
@@ -272,7 +210,6 @@ final class ConversationCache: Sendable {
         }
     }
 
-    /// A conversation deleted on the host.
     func remove(_ id: String) {
         guard V3Event.isId(id) else { return }
         queue.async { [directory] in try? FileManager.default.removeItem(at: directory.appending(path: "\(id).json")) }

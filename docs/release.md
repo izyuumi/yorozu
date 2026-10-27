@@ -1,55 +1,90 @@
 # Release
 
-How the client app is versioned, built for the Mac, uploaded to TestFlight for iPhone and iPad, and compile-checked. The plugin has no release step: the Gateway loads it from the linked checkout ([setup.md](setup.md#1-install-the-plugin)). Credentials and signing are in [setup.md](setup.md#signing); the steps each script runs are in its header comment.
+How the client app (`apps/ios`) is versioned, built, shipped and compile-checked, and how the website and relay deploy. The plugin has no release step of its own: the Gateway loads it from a linked checkout ([setup.md](setup.md#1-install-the-plugin)), and the Mac app carries a copy. Bundle ids, team and entitlements are set in `apps/ios/Project.swift`.
 
-## Version
+## Version and build numbers
 
-`version.txt` holds one numeric `major.minor.patch` for the client on every platform. `apps/ios/Project.swift` stops with a fatal error on any other format. Both scripts pass `MARKETING_VERSION` to `xcodebuild` explicitly, because Tuist caches the manifest and a `version.txt` change alone may not reach the build. The visible build restarts at 1 per version. `CFBundleVersion` is that build encoded with the version, the same number on every platform: major·10⁷ + minor·10⁵ + patch·10³ + build (`scripts/build-number.sh`, and `bundleVersion` in `apps/ios/Project.swift`), so 0.9.0 build 1 is `900001`. Sparkle compares that integer and 0.5.0-beta Macs are build `10279`: it must only ever rise. The Info.plist key `YorozuBuild` carries the visible build, which the Mac's About panel shows. Builds stop at 999 and minor and patch at 99. Bump `version.txt` when a new version is needed.
+- `version.txt` holds one numeric `major.minor.patch` for every platform. `apps/ios/Project.swift` stops with a fatal error on any other format.
+- The visible build restarts at 1 per version. It is stored in the Info.plist key `YorozuBuild` (build setting `YOROZU_BUILD`).
+- `CFBundleVersion` encodes version and build as one integer, computed by `scripts/build-number.sh <version> <build>` (same formula as `bundleVersion` in `Project.swift`):
 
-A minor version that breaks the wire also raises the protocol in `peer_info` (`protocolMin` / `protocolMax`, 3 for wire v3; [contract](ios-relay-contract.md#peer_info)), on both the client and the plugin. A client and plugin without a common version stop with "Update required", so such a change ships to the plugin and the clients together.
+  ```
+  major·10⁷ + minor·10⁵ + patch·10³ + build      e.g. 0.9.0 build 1 = 900001
+  ```
 
-## Mac client
+  The script exits 64 on a non-numeric input and 65 unless minor and patch are below 100 and build is 1 to 999. Sparkle compares this integer, so it must only ever rise.
+- Every script passes `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION` and `YOROZU_BUILD` to `xcodebuild` explicitly: Tuist caches the manifest, so a `version.txt` change alone may not reach the build.
+- A wire-breaking change raises the protocol in `peer_info` (`protocolMin` / `protocolMax`, currently 3; [contract](ios-relay-contract.md#peer_info)) on both client and plugin; a client and plugin without a common version show an update-required state, so such a change ships to both together.
 
-`scripts/build_native.sh` builds the client's macOS destination (`apps/ios`, scheme `YorozuIOS`, Release) into `.build/xcode-native` and replaces `/Applications/Yorozu.app` in place, the one Yorozu on the owner's Mac (owner, 2026-10-12). Run it from the main checkout.
+## CI
 
-- Without `--restart` it exits 3 while `/Applications/Yorozu.app` is running.
-- It quits only the app at that path, by pid: any executable in the bundle, so the old host app it replaces is matched too.
-- `--restart` relaunches the app with `open -n` even if it was not running before.
-- Builds are build 1 unless `BUILD` is set (the visible build; `CFBundleVersion` is encoded). The binary's SHA-256 goes to `build/native-sha256.txt`.
-- The first launch on a Mac that ran 0.5 migrates it: see [Mac distribution](#mac-distribution). On the owner's Mac that runs too, once.
-- Signing: Developer ID Application with hardened runtime and a timestamp when that identity is in the Keychain, else ad hoc; never with the app's entitlements ([setup.md](setup.md#signing)). Not notarized: releases come from `release_mac.sh`.
+| Workflow | Trigger | Does |
+|---|---|---|
+| `checks.yml` | every pull request | `app` job (when `apps/ios/`, `packages/`, `plugins/`, `version.txt` or the workflow changed): the iOS and Mac compile checks below. `relay` job (when `apps/relay/`, `pnpm-lock.yaml` or the workflow changed): `pnpm --filter @yorozu/relay test` (typecheck + vitest). A skipped job counts as passed. |
+| `release-mac.yml` | push to `main` touching `apps/**` (except `apps/web/**`, `apps/relay/**`), `packages/**`, `plugins/**`, `scripts/**` or `version.txt`; manual | Promotes a beta if `version.txt` changed, then `scripts/release_mac.sh --publish`. |
+| `release-ios.yml` | push to `main` touching `apps/ios/**`, `packages/**`, `version.txt`, `scripts/upload_ios.sh` or `scripts/build-number.sh`; manual | `scripts/upload_ios.sh --confirm`. |
+| `deploy-web.yml` | push to `main` touching `apps/web/**`; manual | `pnpm --filter @yorozu/web build`, `… test`, then `wrangler deploy`. |
+| `deploy-relay.yml` | push to `main` touching `apps/relay/**`; manual | `pnpm --filter @yorozu/relay test`, then `wrangler deploy`. |
 
-The Mac app is `to.yumi.yorozu`, 0.5's Mac id (`PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]`), so Sparkle replaces 0.5 in place; iOS stays `to.yumi.yorozu.ios`. 0.5's data stays where it was and is only read by the migration.
+The Apple jobs run on the `xcode-27` runner with Xcode 27.1 and install Tuist 4.209.0 through mise (local `mise install` uses the `mise.toml` pin). The release workflows run no tests. Secrets, by name: `release-mac.yml` uses `DEVELOPER_ID_P12`, `DEVELOPER_ID_PASSWORD`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `SPARKLE_ED_KEY`; `release-ios.yml` uses `MAC_CERT_P12`, `MAC_CERT_PASSWORD` (the Apple Distribution identity, despite the name), `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`; the deploy workflows use `CLOUDFLARE_API_TOKEN`.
 
-## Mac distribution
+Dependabot (`.github/dependabot.yml`) proposes weekly updates for the pinned GitHub Actions and the pnpm workspace (minor and patch grouped into one PR), each after a 3-day cooldown; major bumps of `vitest` and `typescript` are ignored.
 
-`scripts/release_mac.sh` builds the release into `dist/`: `Yorozu.dmg` (Developer ID, notarized with the `yorozu-notary` profile, three tries, stapled), `appcast.xml` (Sparkle's `generate_appcast`, no channel, signed with 0.5's EdDSA key) and `candidate.json`. `.github/workflows/release-mac.yml` runs it on every push to `main` that touches the Mac app, with no tests:
+## Mac: local build
 
-- **Beta**: `--publish` publishes the prerelease `v<version>-beta`, the build one past the one it replaces: each build deletes the last beta release and its tag (the tag ruleset leaves `*-beta` tags alone) and publishes its own, so a version has one beta. Its notes are the Conventional Commits since the last stable release (`scripts/release_notes.sh`: features, fixes and performance, without dependency bumps). yorozu.yumi.to/beta and /beta/appcast.xml serve the newest release, prereleases included (`apps/web/worker.mjs`); Macs with beta updates on, 0.5 ones too, install it within the hour.
-- **Stable**: when a push changes `version.txt`, the workflow first runs `--promote <old version> <build>`, with the build the bump PR names in a `Promotes: <old> (<build>)` commit line, the one the owner checked (a later merge may have replaced it with a newer one; then, or without the line, the run fails). That beta is republished unchanged (its DMG, appcast and `candidate.json`; the appcast now points at the stable release.s copy of the DMG, which the EdDSA signature still covers), with generated notes, as `v<old>`, the latest release, whose assets yorozu.yumi.to/appcast.xml and /mac serve (`releases/latest`). Every Mac installs it within the hour, 0.4 and 0.5 ones included. If `v<old>` already exists it does nothing: release tags can be neither moved nor deleted (repository ruleset), so a version has one stable release.
-- Sparkle is linked for macOS only (`MacUpdates.swift`): hourly automatic installs from the stable feed, or the beta feed with Settings › Updates › Beta Updates on (`feedURLString(for:)`). App menu: About (visible build) and Check for Updates.
-- The OpenClaw plugin is copied into `Contents/Resources/openclaw-channel` by a build phase, the path 0.5's `openclaw plugins install --link` points to.
-- First launch after 0.5 (`MacMigrateFrom0_5.swift`), once, without a click: remove 0.5's watchdog LaunchAgent; `openclaw config unset channels.yorozu.socketPath`; `openclaw plugins reload yorozu --accept-capabilities`, or `openclaw gateway restart --safe` if that fails or asks for a restart; pair this Mac with its own Gateway (`openclaw yorozu pair`, no fingerprint step); a notification to update the iPhone. The plugin imports 0.5's keys, devices, memory and chats when it loads.
+`scripts/build_native.sh [--restart]` builds the macOS destination (scheme `YorozuIOS`, Release) into `.build/xcode-native` and replaces `/Applications/Yorozu.app` in place. Run it from the main checkout.
+
+- Exits 3 if the app at that path is running, unless `--restart` is given. With `--restart` it quits that app's processes by pid after a successful build, swaps the bundle and relaunches with `open -n`.
+- Visible build is 1 unless `BUILD` is set.
+- Signs with "Developer ID Application" (hardened runtime, timestamp) when that identity is in the Keychain, else ad hoc; always without the app's entitlements (no macOS provisioning profile exists for the Mac bundle id).
+- Writes the binary's SHA-256 to `build/native-sha256.txt`. Not notarized.
+
+The macOS destination's bundle id differs from iOS (`PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]` in `Project.swift`) so Sparkle updates the 0.5 Mac app in place. A post-build phase copies the plugin (`index.ts`, `setup-entry.ts`, `openclaw.plugin.json`, `package.json`, `README.md`, `src`) into `Contents/Resources/openclaw-channel` on macOS.
+
+## Mac: beta and stable releases
+
+`scripts/release_mac.sh` builds into `dist/`:
+
+1. Release build with the Developer ID identity, no entitlements; re-signs Sparkle's nested helpers, the framework and the app; checks the bundle id and that the bundled plugin is present.
+2. `Yorozu.dmg`: signed, notarized with the notarytool keychain profile (`NOTARY_PROFILE`, default `yorozu-notary`; up to three tries), stapled.
+3. `appcast.xml` from Sparkle's `generate_appcast` (EdDSA-signed; `SPARKLE_ED_KEY_FILE` or the login Keychain), download URLs pointing at the release tag.
+4. `candidate.json` (tag, version, `CFBundleVersion`, source commit).
+
+Modes:
+
+- No flag: build only. Visible build is `BUILD`, else the build of the current `v<version>-beta` release (from its `candidate.json`) plus one (needs `gh`).
+- `--publish`: refuses a dirty tree, deletes the existing `v<version>-beta` release and tag, then creates the prerelease `v<version>-beta` with the three assets and notes from `scripts/release_notes.sh` (feat, fix and perf Conventional Commits since the last stable tag, dependency bumps left out). A version has one beta release.
+- `--promote <version> <build>`: if `v<version>` does not exist yet and `v<version>-beta` is still that build, downloads its assets, points the appcast at the stable release, and republishes them as `v<version>`, marked latest, with generated notes. Fails if the beta is a different build; does nothing if `v<version>` exists.
+
+`release-mac.yml` runs the promotion first when a push changes `version.txt`: `<version>` is the previous `version.txt`, and the build comes from the last `Promotes: <old> (<build>)` line in the pushed commit messages. Without that line the promotion and the run fail (unless `v<old>` is already released). It then publishes the new version's first beta.
+
+Feeds and downloads (`apps/web/worker.mjs`, `apps/web/public/_redirects`):
+
+- `yorozu.yumi.to/appcast.xml` and `/mac`: the latest stable release's appcast and DMG.
+- `yorozu.yumi.to/beta` and `/beta/appcast.xml`: the newest release, prereleases included.
+
+The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SUFeedURL`, automatic checks and installs every hour; Settings › Updates › Beta Updates switches to the beta feed (`feedURLString(for:)`).
+
+On first launch after a 0.5 install the Mac app migrates once ([upgrade-from-0.5.md](upgrade-from-0.5.md)).
 
 ## iOS and iPadOS: TestFlight
 
-The iOS launch screen centers the inner oval mark from the app icon, without its square icon background. The mark has light and dark asset variants; the launch background uses the system color. It appears only while iOS starts the app; there is no artificial splash delay.
+`scripts/upload_ios.sh --confirm` archives and uploads. Each upload uses up its build number.
 
-`scripts/upload_ios.sh --confirm` runs from `.github/workflows/release-ios.yml` on every push to `main` that touches `apps/ios/**`, `packages/**`, `version.txt` or its scripts; plugin-only changes upload nothing, as the plugin rides only in the Mac app. Each upload uses up its build number for good. Build-number policy: [OWNER_DECISIONS.md](../OWNER_DECISIONS.md#platform-and-release).
-
-- Without `--confirm` it exits 64.
-- It numbers the build from App Store Connect (highest build of this version plus one, so builds start at 1 per version). If that would reach 10000 it stops with exit 65: bump `version.txt` instead. `BUILD=<n>` skips both the lookup and that check.
-- It archives `generic/platform=iOS` only (the iPhone and iPad app, with the notification service and share extensions); the Mac destination is never uploaded.
-- `apps/ios/ExportOptions.plist` makes the export step the upload. TestFlight gives each processed build to the internal group automatically: that is the iOS beta. The App Store version is submitted by hand when `version.txt` moves on.
-- The app and its extensions target iPhone and iPad only, and App Store Connect does not offer the app on Apple Silicon Macs (Pricing and Availability): Macs get the Developer ID app.
+- Without `--confirm` it exits 64. Needs `ASC_KEY_ID`, `ASC_ISSUER_ID` and the `.p8` key (`ASC_KEY_PATH`, else `~/.appstoreconnect/private_keys/AuthKey_<id>.p8`).
+- Visible build: the highest build App Store Connect has for this version, plus one; `BUILD=<n>` skips the lookup. Either way `build-number.sh` rejects a build past 999 (exit 65): bump `version.txt` instead.
+- Archives `generic/platform=iOS` only (app plus notification service and share extensions) with automatic signing and `-allowProvisioningUpdates`. The Mac destination is never uploaded.
+- `apps/ios/ExportOptions.plist` (`destination` = `upload`) makes the export step the upload. TestFlight gives processed builds to the internal group.
+- App Store submission is by hand in App Store Connect (review notes: `apps/ios/APP-REVIEW-NOTES.md`).
 
 ## Compile checks
 
-`upload_ios.sh`, `release_mac.sh` and `build_native.sh` are the only scripted client builds. Pull requests run the first two commands below (`.github/workflows/checks.yml`, with the relay's `pnpm --filter @yorozu/relay test`); each job runs only when its files changed. To compile without signing, uploading or touching `/Applications`:
+The commands `checks.yml` runs, without signing, uploading or touching `/Applications` (CI adds `-quiet`):
 
 ```sh
+mise install                                   # Tuist
 tuist generate --no-open --path apps/ios
-# iPhone and iPad (one target, both device families), with both extensions
+# iPhone and iPad, with both extensions
 env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \
     -destination 'generic/platform=iOS' -derivedDataPath .build/xcode-ios \
     -clonedSourcePackagesDirPath .build/xcode-packages -skipPackagePluginValidation \
@@ -59,20 +94,22 @@ env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme Y
     -destination 'platform=macOS' -derivedDataPath .build/xcode-mac \
     -clonedSourcePackagesDirPath .build/xcode-packages -skipPackagePluginValidation \
     CODE_SIGNING_ALLOWED=NO
-# The wire package alone
-swift build --package-path packages/YorozuWire
+```
+
+Not in CI:
+
+```sh
+swift build --package-path packages/YorozuWire   # the wire package alone
+pnpm --filter @yorozu/web test                   # the website (deploy-web.yml runs it before deploying)
 ```
 
 The plugin typechecks per [its README](../plugins/openclaw-yorozu/README.md#typecheck).
 
-- **Simulator**: build for `platform=iOS Simulator,id=<udid>` with `CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=` instead of `CODE_SIGNING_ALLOWED=NO`: an unsigned simulator build carries no Keychain entitlement, so saving the pairing fails with `-34018`. Install and launch with `xcrun simctl install <udid> <app>` and `xcrun simctl launch <udid> to.yumi.yorozu.ios`.
-- **Running a Mac dev build** (`open -n .build/xcode-mac/Build/Products/Debug/YorozuIOS.app`): the linker signs it ad hoc, so it runs only on the Mac that built it, and Keychain access prompts come back after each rebuild. Give it a bundle id of its own (`PRODUCT_BUNDLE_IDENTIFIER=to.yumi.yorozu.ios.dev`, any distinct id) so it never passes for the installed app; its cache then lives apart, but its Keychain item still uses the service `to.yumi.yorozu.ios`, so pairing or unpairing in it can replace or delete the installed app's pairing.
+- **Simulator**: build for `platform=iOS Simulator,id=<udid>` with `CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=` instead of `CODE_SIGNING_ALLOWED=NO`; an unsigned simulator build has no Keychain entitlement, so saving a pairing fails. Install and launch with `xcrun simctl install <udid> <app>` and `xcrun simctl launch <udid> <iOS bundle id>`.
+- **Mac dev build**: the Mac compile check builds Debug at `.build/xcode-mac/Build/Products/Debug/YorozuIOS.app` under the installed app's bundle id. To run one, add `PRODUCT_BUNDLE_IDENTIFIER=<an id of its own>` so it never passes for `/Applications/Yorozu.app`. It is ad hoc signed (runs only on the Mac that built it; Keychain prompts after each rebuild), and its Keychain items still use the iOS bundle id as service, so pairing or unpairing in it can replace or delete the installed app's pairing.
 
-## Website
+## Website and relay
 
-https://yorozu.yumi.to is the Astro site in `apps/web`. `.github/workflows/deploy-web.yml` deploys it on every push to `main` that touches `apps/web/**`, so merging is deploying. The relay (`apps/relay`, relay.yumi.to) works the same way: `.github/workflows/deploy-relay.yml` runs its typecheck and tests, then `wrangler deploy`, on every push to `main` that touches `apps/relay/**`. The pairing QR carries `https://yorozu.yumi.to/pair#<query>`, and the site's `/pair` page and AASA file are what open the app from it, so those links stay.
+- `apps/web`: Astro site served by a Cloudflare Worker (`worker.mjs`, `wrangler.jsonc`) at yorozu.yumi.to. `pnpm --filter @yorozu/web dev|build|test`; `pnpm --filter @yorozu/web run deploy` deploys by hand. Its `/pair` page and `.well-known/apple-app-site-association` open the app from the pairing QR's web link (`applinks:yorozu.yumi.to`), so those paths must stay.
+- `apps/relay`: Cloudflare Worker with Durable Objects (`wrangler.toml`) at relay.yumi.to. `pnpm --filter @yorozu/relay test` runs its typecheck and tests.
 
-## Not wired
-
-- APNs on the Mac: the Mac client registers no push token; it notifies only while running.
-- App Store submission: by hand in App Store Connect after TestFlight, with `apps/ios/APP-REVIEW-NOTES.md`.

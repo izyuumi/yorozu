@@ -9,10 +9,8 @@ import { channelAgent } from "./src/sessions.js";
 
 export { yorozuRuntime };
 
-/** One row of `yorozu.devices.list`; `id` is the device's Ed25519 relay key, base64url. */
 export type DeviceRow = { id: string; name?: string; pairedAt: number };
 
-/** A Gateway method for the CLI (`src/cli.ts`): its result, or a thrown error as `UNAVAILABLE`. */
 const method =
   (run: (params: Record<string, unknown>) => Promise<unknown>) =>
   async ({ params, respond }: GatewayRequestHandlerOptions) => {
@@ -40,7 +38,6 @@ export default defineChannelPluginEntry({
   },
   registerFull(api) {
     const admin = { scope: "operator.admin" } as const;
-    // The Mac app's import from Yorozu 0.5 gives each imported conversation its last 0.5 message's time (src/activity.ts).
     api.registerGatewayMethod(
       "yorozu.conversations.time",
       method(async (params) => {

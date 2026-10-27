@@ -4,11 +4,6 @@ import Observation
 import UniformTypeIdentifiers
 import YorozuWire
 
-// Attachments (#430; docs/ios-relay-contract.md, "Attachments"): files on this device, and their transfers.
-
-/// Every attachment's bytes on this device, one folder per attachment id: files the user picked (copied in at once) and
-/// files the agent sent (written once downloaded). Data Protection `complete` on iOS, excluded from backup, wiped with
-/// the pairing, like the conversation cache.
 enum AttachmentFiles {
     static let directory = clientSupportDirectory.appending(path: "Attachments-v3", directoryHint: .isDirectory)
 
@@ -16,7 +11,6 @@ enum AttachmentFiles {
         directory.appending(path: attachment.id, directoryHint: .isDirectory).appending(path: safeName(attachment.name))
     }
 
-    /// The file, once its bytes are here.
     static func local(_ attachment: ChatAttachment) -> URL? {
         let url = url(attachment)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
@@ -38,7 +32,6 @@ enum AttachmentFiles {
 
     static func wipe() { try? FileManager.default.removeItem(at: directory) }
 
-    /// A name that stays inside its folder.
     static func safeName(_ name: String) -> String {
         let cleaned = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
         return cleaned.isEmpty || cleaned.hasPrefix(".") ? "file" + cleaned : cleaned
@@ -61,7 +54,6 @@ enum AttachmentFiles {
     }
 }
 
-/// A file the user chose, checked against the host's limit and copied into ``AttachmentFiles``.
 enum AttachmentStaging {
     enum Failure: LocalizedError {
         case tooLarge(name: String, size: Int, limit: Int)
@@ -81,7 +73,6 @@ enum AttachmentStaging {
         }
     }
 
-    /// A file on disk (Files, a drop, the share inbox). Refused before anything is copied when it is over `limit`.
     static func stage(file url: URL, limit: Int) throws -> ChatAttachment {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -93,7 +84,6 @@ enum AttachmentStaging {
         return try stage(data: data, name: name, mime: mime, limit: limit)
     }
 
-    /// Bytes from the photo library or a paste. A HEIC or other photo format becomes a JPEG, which every model reads.
     static func stage(image data: Data, name: String, limit: Int) throws -> ChatAttachment {
         let type = CGImageSourceCreateWithData(data as CFData, nil).flatMap { CGImageSourceGetType($0) as String? }
         if let type, type == UTType.jpeg.identifier || type == UTType.png.identifier || type == UTType.gif.identifier {
@@ -114,7 +104,6 @@ enum AttachmentStaging {
         return attachment
     }
 
-    /// Full size, orientation applied, quality 0.85.
     private static func jpeg(_ data: Data) -> Data? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
@@ -129,19 +118,13 @@ enum AttachmentStaging {
     }
 }
 
-/// Uploads and downloads in `V3Attachment.chunkBytes` pieces over the live session. Uploads keep four chunks in flight
-/// (device → host frames reach only the plugin); downloads two, one file at a time, since every host frame reaches
-/// every device in the room. A transfer cut by a lost session starts over on the next one.
 @MainActor @Observable
 final class Transfers {
-    /// Attachment id -> 0…1 while it moves.
     private(set) var progress: [String: Double] = [:]
-    /// Downloads that failed this run (`not_found`, a bad file), by attachment id.
     private(set) var failures: [String: String] = [:]
 
     enum Outcome { case ack(index: Int, done: Bool), chunk(V3Chunk), refused(String), lost }
 
-    /// Seals and sends one event on the live session; false when there is none.
     @ObservationIgnored var send: (V3Event) async -> Bool = { _ in false }
     @ObservationIgnored private var inbox: [String: [Outcome]] = [:]
     @ObservationIgnored private var waiters: [String: CheckedContinuation<Outcome, Never>] = [:]
@@ -151,8 +134,6 @@ final class Transfers {
     static let uploadWindow = 4
     static let downloadWindow = 2
     static let ackTimeout: Duration = .seconds(30)
-
-    // MARK: Events from the model
 
     func receive(_ event: V3Event) {
         switch event {
@@ -164,7 +145,6 @@ final class Transfers {
         }
     }
 
-    /// The session ended: every transfer waiting on it stops, to start over on the next one.
     func sessionLost() {
         inbox = [:]
         for (_, waiter) in waiters { waiter.resume(returning: .lost) }
@@ -190,11 +170,8 @@ final class Transfers {
         return await withCheckedContinuation { waiters[id] = $0 }
     }
 
-    // MARK: Upload
-
     enum UploadResult { case stored, refused(String), interrupted }
 
-    /// Sends the whole file and waits until the plugin has stored it.
     func upload(_ attachment: ChatAttachment) async -> UploadResult {
         guard let url = AttachmentFiles.local(attachment), let data = try? Data(contentsOf: url) else {
             return .refused(String(localized: "The file is no longer on this device."))
@@ -227,9 +204,6 @@ final class Transfers {
         }
     }
 
-    // MARK: Download
-
-    /// Fetches the file if it is not here yet: queued, one file at a time. No-op while one is under way or done.
     func fetch(_ attachment: ChatAttachment) {
         guard AttachmentFiles.local(attachment) == nil, progress[attachment.id] == nil,
               !wanted.contains(where: { $0.id == attachment.id }) else { return }
@@ -239,7 +213,6 @@ final class Transfers {
         pumpDownloads()
     }
 
-    /// Downloads cut by a lost session, again on the new one.
     func resumeDownloads() { pumpDownloads() }
 
     private func pumpDownloads() {
@@ -255,7 +228,6 @@ final class Transfers {
         }
     }
 
-    /// False when the session went: the file stays wanted for the next one.
     private func download(_ attachment: ChatAttachment) async -> Bool {
         let id = attachment.id
         inbox[id] = nil
@@ -287,7 +259,6 @@ final class Transfers {
                 return true
             case .refused(let why): return fail(why)
             case .lost:
-                // Kept wanted: the next session asks again from the start.
                 return false
             case .ack: break
             }

@@ -2,11 +2,9 @@ name: Deploy relay
 on:
   push:
     branches: [main]
-    # Only relay changes deploy; a dependency bump that touches the relay edits its package.json.
     paths: ['apps/relay/**']
   workflow_dispatch:
 
-# Deploys run in push order; a newer one never cancels a deploy midway.
 concurrency:
   group: deploy-relay
   cancel-in-progress: false
@@ -25,7 +23,6 @@ jobs:
           node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter @yorozu/relay
-      # Typecheck and tests first: every client, stable and beta, uses relay.yumi.to the moment it deploys.
       - run: pnpm --filter @yorozu/relay test
       - name: Deploy to Cloudflare
         env:

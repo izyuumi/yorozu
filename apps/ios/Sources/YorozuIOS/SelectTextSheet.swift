@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// "Select Text" from a message's context menu: the whole message in a sheet, where any part of it can be selected and
-/// copied. A bubble's own text selection on iOS takes the whole text only.
 struct SelectTextSheet: View {
     let text: String
     @Environment(\.dismiss) private var dismiss
@@ -20,7 +18,6 @@ struct SelectTextSheet: View {
 }
 
 #if os(macOS)
-/// SwiftUI's selection already picks a range on the Mac.
 private struct SelectableText: View {
     let text: String
 
@@ -33,7 +30,6 @@ private struct SelectableText: View {
     }
 }
 #else
-/// A read-only `UITextView`: handles, the loupe and the edit menu for any range.
 private struct SelectableText: UIViewRepresentable {
     let text: String
 

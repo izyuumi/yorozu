@@ -1,39 +1,25 @@
 import CryptoKit
 import Foundation
 
-/// Wire v3 (docs/ios-relay-contract.md): a Noise_IK_25519_ChaChaPoly_SHA256 handshake per connection between a
-/// client (initiator, which knows the host's static key from the QR) and the OpenClaw plugin (responder), then
-/// numbered transport boxes. Mirrors plugins/openclaw-yorozu/src/wire.ts byte for byte.
 public enum WireV3 {
-    /// First byte of every v3 frame. A v2 payload is JSON and starts with `{`.
     public static let version: UInt8 = 3
     public static let protocolName = "Noise_IK_25519_ChaChaPoly_SHA256"
-    /// A session is named on the wire by the first 8 bytes of the client's ephemeral key.
     public static let sidBytes = 8
-    /// The largest transport counter either end sends or accepts: JavaScript's `Number.MAX_SAFE_INTEGER`.
     public static let maxCounter: UInt64 = 9_007_199_254_740_991
 
     public enum Failure: Error, Equatable, Sendable {
         case malformed(String)
-        /// A box for another session: another device's, or one from an earlier connection.
         case otherSession
-        /// A counter at or below the last one accepted.
         case replay
-        /// The tag did not verify.
         case decrypt
     }
 
-    /// Binds the handshake to v3, the relay room and the Ed25519 key the client signs its frames with.
     public static func prologue(roomId: String, deviceSigningKey: Data) -> Data {
         Data("yorozu-v3|\(roomId)|\(deviceSigningKey.base64URLEncodedString())".utf8)
     }
 }
 
-// MARK: Noise (https://noiseprotocol.org/noise.html, revision 34), IK only
-
-/// The Noise primitives with 25519, ChaChaPoly and SHA256.
 enum Noise {
-    /// HKDF(ck, ikm) with two outputs, as in the Noise spec (section 4.3).
     static func hkdf(_ ck: Data, _ ikm: Data) -> (Data, Data) {
         let temp = SymmetricKey(data: Data(HMAC<SHA256>.authenticationCode(for: ikm, using: SymmetricKey(data: ck))))
         let one = Data(HMAC<SHA256>.authenticationCode(for: Data([1]), using: temp))
@@ -41,7 +27,6 @@ enum Noise {
         return (one, two)
     }
 
-    /// 32 bits of zeros, then the counter little-endian.
     static func nonce(_ n: UInt64) throws -> ChaChaPoly.Nonce {
         try ChaChaPoly.Nonce(data: Data(count: 4) + withUnsafeBytes(of: n.littleEndian) { Data($0) })
     }
@@ -105,8 +90,6 @@ struct NoiseSymmetricState {
     }
 }
 
-/// One Noise IK handshake (`<- s ... -> e, es, s, ss  <- e, ee, se`), either role. Clients only ever run the
-/// initiator; the responder is here so the contract's vectors can be reproduced end to end in Swift.
 public struct NoiseIKHandshake {
     public enum Role: Sendable { case initiator, responder }
 
@@ -114,14 +97,11 @@ public struct NoiseIKHandshake {
     private let s: Curve25519.KeyAgreement.PrivateKey
     private var e: Curve25519.KeyAgreement.PrivateKey?
     private let fixedEphemeral: Data?
-    /// The peer's static key: given to the initiator, learned by the responder from message 1.
     public private(set) var remoteStatic: Data?
     private var re: Data?
     private var state: NoiseSymmetricState
     private var step = 0
 
-    /// `remoteStatic`: the responder's static key, required for the initiator. `ephemeral`: a fixed ephemeral
-    /// private key, for known-answer vectors only; otherwise a fresh one is generated per handshake.
     public init(role: Role, staticKey: Data, remoteStatic: Data? = nil, prologue: Data, ephemeral: Data? = nil) throws {
         self.role = role
         s = try .init(rawRepresentation: staticKey)
@@ -134,10 +114,8 @@ public struct NoiseIKHandshake {
         state.mixHash(responderStatic)
     }
 
-    /// The handshake hash: after both messages, the channel binding both ends agree on.
     public var handshakeHash: Data { state.h }
 
-    /// Initiator: message 1. Responder: message 2, after reading message 1.
     public mutating func writeMessage(_ payload: Data) throws -> Data {
         guard step == (role == .initiator ? 0 : 1) else { throw WireV3.Failure.malformed("handshake out of order") }
         let e = try fixedEphemeral.map { try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: $0) }
@@ -148,20 +126,19 @@ public struct NoiseIKHandshake {
         var out = epub
         if role == .initiator {
             guard let rs = remoteStatic else { throw WireV3.Failure.malformed("responder static key") }
-            state.mixKey(try Noise.dh(e, rs))                                   // es
-            out += try state.encryptAndHash(s.publicKey.rawRepresentation)     // s
-            state.mixKey(try Noise.dh(s, rs))                                   // ss
+            state.mixKey(try Noise.dh(e, rs))
+            out += try state.encryptAndHash(s.publicKey.rawRepresentation)
+            state.mixKey(try Noise.dh(s, rs))
         } else {
             guard let re, let rs = remoteStatic else { throw WireV3.Failure.malformed("handshake out of order") }
-            state.mixKey(try Noise.dh(e, re))                                   // ee
-            state.mixKey(try Noise.dh(e, rs))                                   // se
+            state.mixKey(try Noise.dh(e, re))
+            state.mixKey(try Noise.dh(e, rs))
         }
         out += try state.encryptAndHash(payload)
         step += 1
         return out
     }
 
-    /// Responder: message 1. Initiator: message 2. Returns the decrypted payload.
     public mutating func readMessage(_ message: Data) throws -> Data {
         guard step == (role == .responder ? 0 : 1) else { throw WireV3.Failure.malformed("handshake out of order") }
         let m = Data(message)
@@ -172,22 +149,21 @@ public struct NoiseIKHandshake {
         state.mixHash(re)
         var rest = m.dropFirst(32)
         if role == .responder {
-            state.mixKey(try Noise.dh(s, re))                                   // es
-            let rs = try state.decryptAndHash(Data(rest.prefix(48)))            // s
+            state.mixKey(try Noise.dh(s, re))
+            let rs = try state.decryptAndHash(Data(rest.prefix(48)))
             rest = rest.dropFirst(48)
             remoteStatic = rs
-            state.mixKey(try Noise.dh(s, rs))                                   // ss
+            state.mixKey(try Noise.dh(s, rs))
         } else {
             guard let e else { throw WireV3.Failure.malformed("handshake out of order") }
-            state.mixKey(try Noise.dh(e, re))                                   // ee
-            state.mixKey(try Noise.dh(s, re))                                   // se
+            state.mixKey(try Noise.dh(e, re))
+            state.mixKey(try Noise.dh(s, re))
         }
         let payload = try state.decryptAndHash(Data(rest))
         step += 1
         return payload
     }
 
-    /// After both messages: the session, with this role's send and receive keys.
     public func split(sid: Data) throws -> V3Session {
         guard step == 2 else { throw WireV3.Failure.malformed("handshake not finished") }
         let (k1, k2) = Noise.hkdf(state.ck, Data())
@@ -196,16 +172,9 @@ public struct NoiseIKHandshake {
     }
 }
 
-// MARK: Frames
-
-/// What goes base64url inside the relay's `payload`, each signed by its sender's Ed25519 key as before.
-/// Byte 0 is ``WireV3/version``, byte 1 the type.
 public enum V3Frame: Equatable, Sendable {
-    /// Type 1, client -> host: the client's Ed25519 key, then Noise message 1.
     case handshakeInit(deviceSigningKey: Data, message: Data)
-    /// Type 2, host -> client: the session id, then Noise message 2.
     case handshakeResponse(sid: Data, message: Data)
-    /// Type 3, either way: session id, counter (8 bytes little-endian), ciphertext and tag.
     case transport(sid: Data, counter: UInt64, ciphertext: Data)
 
     public var sid: Data {
@@ -224,7 +193,6 @@ public enum V3Frame: Equatable, Sendable {
         }
     }
 
-    /// The relay `payload` string.
     public var payload: String { bytes.base64URLEncodedString() }
 
     public init(bytes raw: Data) throws {
@@ -252,17 +220,12 @@ public enum V3Frame: Equatable, Sendable {
     }
 }
 
-// MARK: Sessions
-
-/// One connection's transport keys. Never stored: a new socket means a new handshake.
 public struct V3Session: Sendable {
     public let sid: Data
     public let handshakeHash: Data
     private let sendKey: SymmetricKey
     private let recvKey: SymmetricKey
-    /// The counter the next sealed box takes; starts at 0.
     public private(set) var sendCounter: UInt64 = 0
-    /// The highest counter accepted so far, nil before the first box.
     public private(set) var lastReceived: UInt64?
 
     init(sid: Data, handshakeHash: Data, sendKey: Data, recvKey: Data) {
@@ -272,7 +235,6 @@ public struct V3Session: Sendable {
         self.recvKey = SymmetricKey(data: recvKey)
     }
 
-    /// Noise's ENCRYPT(k, n, ad = empty, plaintext) under this direction's key, with `n` carried on the wire.
     public mutating func seal(_ plaintext: Data) throws -> V3Frame {
         guard sendCounter <= WireV3.maxCounter else { throw WireV3.Failure.malformed("session exhausted") }
         let counter = sendCounter
@@ -281,8 +243,6 @@ public struct V3Session: Sendable {
         return .transport(sid: sid, counter: counter, ciphertext: ciphertext)
     }
 
-    /// Opens a box for this session whose counter is beyond the last accepted one. Gaps are allowed (a frame the
-    /// relay lost); a failed box never moves the counter.
     public mutating func open(_ frame: V3Frame) throws -> Data {
         guard case .transport(let sid, let counter, let ciphertext) = frame else { throw WireV3.Failure.malformed("not a transport frame") }
         guard sid == self.sid else { throw WireV3.Failure.otherSession }
@@ -299,13 +259,8 @@ public struct V3Session: Sendable {
     }
 }
 
-/// What message 1 carries, encrypted to the host's static key: when it was made, so the host can drop a
-/// handshake the relay replays late, and the pairing proof while the client holds the QR's secret.
 public struct V3HandshakePayload: Codable, Equatable, Sendable {
-    /// Epoch milliseconds, client clock.
     public var ts: Int64
-    /// ``YorozuCrypto/helloProof(secret:pub:spub:)`` over the QR secret, the client's X25519 static key and its
-    /// Ed25519 key.
     public var proof: String?
 
     public init(ts: Int64, proof: String? = nil) {
@@ -320,13 +275,10 @@ public struct V3HandshakePayload: Codable, Equatable, Sendable {
     }
 }
 
-/// The client's half of one connection's handshake.
 public struct V3ClientHandshake {
-    /// The frame to sign and send as the relay `payload`.
     public let frame: V3Frame
     private let noise: NoiseIKHandshake
 
-    /// `pairing` must carry `roomId`; its `secret`, when present, goes in as the pairing proof.
     public init(identity: PhoneIdentity, pairing: QrPayload, now: Date = Date(), ephemeral: Data? = nil) throws {
         guard let roomId = pairing.roomId, let hostKey = Data(base64URLEncoded: pairing.macPubkey), hostKey.count == 32 else {
             throw WireV3.Failure.malformed("pairing lacks room or host key")
@@ -344,9 +296,6 @@ public struct V3ClientHandshake {
 
     public var sid: Data { frame.sid }
 
-    /// Takes the host's `handshakeResponse` for this sid. Throws ``WireV3/Failure/otherSession`` for another
-    /// device's response, which the caller ignores.
-    /// A response that fails leaves this handshake as it was, so the real one can still finish it.
     public func finish(_ response: V3Frame) throws -> V3Session {
         guard case .handshakeResponse(let sid, let message) = response else { throw WireV3.Failure.malformed("not a handshake response") }
         guard sid == self.sid else { throw WireV3.Failure.otherSession }

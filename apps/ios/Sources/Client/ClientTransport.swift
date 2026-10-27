@@ -1,7 +1,6 @@
 import Foundation
 import YorozuWire
 
-/// The client consumes the same events from a live relay and from the memory-only demo.
 protocol ClientTransport: Sendable {
     func updates() async -> AsyncStream<V3Connection.Update>
     func start() async
@@ -14,7 +13,6 @@ protocol ClientTransport: Sendable {
 
 extension V3Connection: ClientTransport {}
 
-/// Scripted sample data only: no socket, credentials, files or model calls.
 actor DemoTransport: ClientTransport {
     private var continuation: AsyncStream<V3Connection.Update>.Continuation?
     private var running = false
@@ -99,7 +97,6 @@ actor DemoTransport: ClientTransport {
                 titles[message.convId] = String(message.text.prefix(60))
                 emit(.convUpdate(V3ConvUpdate(convId: message.convId, title: titles[message.convId], pinnedAt: pins[message.convId])))
             }
-            // Each conversation answers in order, even if several messages are sent quickly.
             let previous = replies[message.convId]
             let task = Task { [weak self] in
                 await previous?.value

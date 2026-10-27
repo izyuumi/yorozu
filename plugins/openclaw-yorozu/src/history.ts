@@ -1,13 +1,3 @@
-/**
- * History from the Gateway transcript (#427): `conv_list` lists the owner's Yorozu thread sessions of the
- * configured agent, `history` pages one conversation's transcript. The transcript is the source of truth (#415);
- * clients cache what they fetched and ask again on open and reconnect.
- *
- * A session's transcript becomes a list of items, each with the `seq` of the transcript event it starts at:
- * user messages (their id is the client's `messageId`, kept in the transport metadata), assistant text chunked as
- * live replies are (so chunks match the `reply`s a device already holds), one `tools` row per run, and `/new`
- * reset markers. Cron deliveries are mirrored into the transcript as assistant messages and come out as `agent`.
- */
 import { createHash } from "node:crypto";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
@@ -35,19 +25,15 @@ import {
 import { titleOf } from "./sessions.js";
 
 const CHANNEL_ID = "yorozu";
-/** Items per page, and the page's JSON budget: one box, far below the relay's 1 MiB, paced one page at a time. */
 const PAGE_ITEMS = 60;
 const PAGE_BYTES = 192 * 1024;
-/** One item's text beyond this is cut (a pasted user message can reach 700 KiB); the transcript keeps it whole. */
 const ITEM_CHARS = 60_000;
 const LIST_MAX = 2000;
-/** Built item lists, by session key, rebuilt when the transcript grows. */
 const CACHE_MAX = 8;
 const cache = new Map<string, { sessionId: string; rev: number; items: HistoryItem[] }>();
 
 const prefix = (agent: string) => `agent:${agent}:yorozu:direct:owner:thread:`;
 
-/** A device's `conv_list` or `history` request; a store failure goes back as `error internal`. */
 export function answerRequest(
   cfg: OpenClawConfig,
   agent: string,
@@ -76,7 +62,6 @@ export function listConversations(agent: string): ConvList {
     const sessionId = entry.sessionId;
     conversations.push({
       convId,
-      // The last message's time, not the entry's: a rename or pin must not reorder the list (src/activity.ts).
       updatedAt: messageTime(convId, rev, () => lastMessageTime(agent, sessionKey, sessionId), entry.updatedAt ?? 0),
       rev,
       ...(title ? { title } : {}),
@@ -88,10 +73,6 @@ export function listConversations(agent: string): ConvList {
   return { conversations: conversations.slice(0, LIST_MAX) };
 }
 
-/**
- * One page: with `before`, the newest items older than it; with `after`, the oldest items newer than it; with
- * neither, the newest. Items come oldest first; `more` says whether another page lies further that way.
- */
 export function historyPage(cfg: OpenClawConfig, agent: string, request: HistoryRequest): History {
   const { convId, before, after } = request;
   const sessionKey = prefix(agent) + convId;
@@ -107,7 +88,6 @@ export function historyPage(cfg: OpenClawConfig, agent: string, request: History
     cache.set(sessionKey, built);
     for (const key of cache.keys()) if (cache.size > CACHE_MAX) cache.delete(key);
   }
-  // Items of one transcript event share its seq, so a page never splits them: the cursor is a seq.
   const groups: HistoryItem[][] = [];
   for (const item of built.items) {
     const last = groups.at(-1);
@@ -142,17 +122,9 @@ export function historyPage(cfg: OpenClawConfig, agent: string, request: History
   return { ...empty, items: page, more, rev };
 }
 
-/** A reply chunk's id: the transcript message's own for the first chunk, derived from it for the others. */
 const chunkId = (sessionId: string, eventId: string, k: number) =>
   k === 0 && isId(eventId) ? eventId : derivedId(sessionId, eventId, `${k}`);
 
-/**
- * The ids and time a live reply of the turn for `messageId` gets, so a device that saw it live and later fetches the
- * page holds one item, not two, at one `ts` (read cursors compare `ts` across devices): the first assistant
- * message with text after that user message which `used` does not hold yet (core writes it before it delivers).
- * Undefined when it is not found; the reply then keeps random ids and the send time, and the client matches it by
- * text.
- */
 export function liveReplyIds(
   agent: string,
   sessionKey: string,
@@ -176,7 +148,6 @@ export function liveReplyIds(
       }
     }
   } catch {
-    // The store is busy or gone: random ids.
   }
   return undefined;
 }
@@ -185,7 +156,6 @@ export function liveReplyIds(
 type Fields = Record<string, unknown>;
 const obj = (v: unknown): Fields | undefined => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Fields) : undefined);
 
-/** A stable lowercase UUID for an item that has no id of its own. */
 function derivedId(...parts: string[]): string {
   const h = createHash("sha256").update(parts.join("\u0000")).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
@@ -198,12 +168,9 @@ const textOf = (content: unknown): string =>
       ? content.map((part) => (obj(part)?.type === "text" && typeof obj(part)?.text === "string" ? (obj(part)!.text as string) : "")).filter(Boolean).join("\n\n")
       : "";
 
-/** The files OpenClaw appended to a user message as `<file name=…>…</file>` (a document's extracted text). */
 const FILE_BLOCK = /\n*<file name="[^"]*"[^>]*>[\s\S]*?<\/file>/g;
-/** A `MEDIA:` directive takes its whole line (core's parser); the live `reply` carried the text without it. */
 const MEDIA_LINE = /^[ \t]*MEDIA:[ \t]*`?([^\n`]+)`?[ \t]*$/gm;
 
-/** A user message's files (`__openclaw.media`, by media URL) that this plugin stored, as the live `message` named them. */
 function userFiles(message: Fields): Attachment[] {
   const media = obj(message.__openclaw)?.media;
   if (!Array.isArray(media)) return [];
@@ -214,12 +181,10 @@ function userFiles(message: Fields): Attachment[] {
   });
 }
 
-/** An assistant text without its `MEDIA:` lines; the files went out with the reply `replyId` (`attachmentsOf`). */
 const withoutMedia = (text: string): string => text.replace(MEDIA_LINE, "").replace(/\n{3,}/g, "\n\n").trim();
 
 const cut = (text: string) => (text.length > ITEM_CHARS ? `${text.slice(0, ITEM_CHARS)}…` : text);
 
-/** The newest user or agent message's own time in the transcript; undefined when it has none or cannot be read. */
 function lastMessageTime(agent: string, sessionKey: string, sessionId: string): number | undefined {
   try {
     const events = loadTranscriptEventsSync({ agentId: agent, sessionId, sessionKey });
@@ -232,7 +197,6 @@ function lastMessageTime(agent: string, sessionKey: string, sessionId: string): 
       if (at > 0) return at;
     }
   } catch {
-    // The store is busy or gone: the entry's time for now, read again on the next list.
   }
   return undefined;
 }
@@ -246,7 +210,6 @@ function timeOf(event: Fields, message?: Fields): number {
 function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): HistoryItem[] {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, undefined, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
   const items: HistoryItem[] = [];
-  /** The run's tools row, keyed by the user message that started it; reset by every user message and reset. */
   let tools: Extract<HistoryItem, { kind: "tools" }> | undefined;
   let lastUser: string | undefined;
   const pending = new Map<string, { status: ToolStatus }>();
@@ -271,8 +234,6 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
     const ts = timeOf(event, message);
     if (message.role === "user") {
       closeRun();
-      // OpenClaw's own user-role turns (a subagent's results, another session's message, a restart recovery) carry a
-      // provenance other than `external_user`: the agent reads them, but they are not the owner's words to show.
       const provenance = obj(message.provenance)?.kind;
       if (typeof provenance === "string" && provenance !== "external_user") {
         lastUser = undefined;
@@ -300,12 +261,10 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
         tools.tools.push(call);
         pending.set(part.id, call);
       }
-      // Trimmed, as core trims a reply before delivery, so a chunk equals the live `reply` it was.
       const text = withoutMedia(textOf(message.content).trim());
       const files = attachmentsOf(chunkId(sessionId, eventId, 0));
       if (!text && !files.length) return;
       const chunks = chunkMarkdownText(text, limit).filter((chunk) => chunk.trim());
-      // As `replyEvents` sends them: the files on the last chunk, or on an item of their own.
       if (!chunks.length) chunks.push("");
       chunks.forEach((chunk, k) => {
         const id = chunkId(sessionId, eventId, k);
@@ -317,6 +276,5 @@ function buildItems(cfg: OpenClawConfig, sessionId: string, events: unknown[]): 
       if (call) call.status = message.isError === true ? "failed" : "done";
     }
   });
-  // A run still open at the end of the transcript keeps its running calls; live `tool` events finish them.
   return items;
 }

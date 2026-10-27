@@ -1,17 +1,4 @@
 /// <reference types="@cloudflare/workers-types" />
-/**
- * Cloudflare Worker relay: the same wire protocol as `index.ts`, one Durable Object per
- * room so every socket in a room lands on the same isolate worldwide.
- *
- * The protocol carries the room ID only *after* the socket is open (in `register`/`join`),
- * which is too late to route on, so clients pass it up front as `?room=<roomId>` — both
- * already know it before they dial. Nothing on the wire changes; the Node relay ignores
- * the query string, so a client that appends it works against either relay.
- *
- * Rooms hibernate: sockets are accepted with the Hibernation API and per-socket state
- * lives in the socket attachment, tokens and the offline buffer in DO storage. The socket
- * bucket survives too, so waking an object does not grant a second burst.
- */
 import {
   alertPayload,
   allowFrame,
@@ -78,7 +65,6 @@ function toBase64Url(bytes: Uint8Array): string {
     .replace(/=+$/, "");
 }
 
-/** Room ID is derived from the Mac public key; the relay never reads payloads. */
 async function roomId(macPublicKey: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", fromBase64Url(macPublicKey));
   return toBase64Url(new Uint8Array(digest));
@@ -86,20 +72,13 @@ async function roomId(macPublicKey: string): Promise<string> {
 
 const randomToken = (): string => toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
 
-/** A socket that lost its peer mid-broadcast must not abort the whole fan-out. */
 function send(ws: WebSocket, raw: string): void {
   try {
     ws.send(raw);
   } catch {
-    // Racing a close; the close handler will clean up.
   }
 }
 
-/**
- * One line per thing worth knowing about a room's sockets, as JSON so Workers Logs can filter
- * on it. Never a payload, never a key: the relay is blind and its logs stay that way. This is
- * the only evidence there is when a phone reports "it just stopped arriving".
- */
 function log(ev: string, fields: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ ev, ...fields }));
 }
@@ -107,72 +86,42 @@ function log(ev: string, fields: Record<string, unknown> = {}): void {
 const roleOf = (ws: WebSocket): Conn["role"] =>
   (ws.deserializeAttachment() as Conn | null)?.role ?? null;
 
-/** Per-socket state. Serialized into the attachment so it survives hibernation. */
 type Conn = {
   nonce: string;
-  /** The room this socket was routed to, straight off the URL the Worker dispatched on. */
   room: string;
   role: "mac" | "phone" | null;
-  /** base64url public key whose signature every frame from this socket must carry. */
   key: string | null;
-  /** Optional for sockets accepted before buckets lived in attachments. */
   bucket?: Bucket;
-  /** When the socket was accepted; the auth deadline counts from here. Optional as above. */
   since?: number;
-  /** Cumulative phone delivery bytes; persisted through Durable Object hibernation. */
   sentBytes?: number;
   ackedBytes?: number;
 };
 
 type Buffered = { raw: string; bytes: number; at: number; seq: number };
 
-/** Buffer keys sort lexicographically, so zero-pad the sequence to keep them in order. */
 const bufferKey = (seq: number): string => `b:${String(seq).padStart(16, "0")}`;
 
-/** Known device keys: `p:<base64url phone signing pubkey>` -> when it last paired or rejoined. */
 const devicePrefix = "p:";
 
-/**
- * What a phone registered so it can be woken: `push:<base64url phone signing pubkey>`.
- *
- * One record per device rather than a key per token, so revoking a device is one delete and
- * cannot leave a token behind pointing at a phone that is no longer paired.
- */
 const pushPrefix = "push:";
 
 type PushRecord = {
-  /** The app's own APNs device token, which alerts go to. */
   deviceToken: string;
-  /**
-   * When this device was last sent a silent background push, so the next one can be held back
-   * until the budget allows it. Per device, because the throttling Apple does is per app install.
-   */
   backgroundAt?: number;
-  /**
-   * Whether this token is reachable through sandbox APNs — an Xcode-signed build — rather than
-   * production. Learnt from Apple's answer to the first push and kept so the next goes straight
-   * there; forgotten with the token, since a new one may be from either.
-   */
   sandbox?: boolean;
 };
 
-/** One-time join tokens: `t:<token>` -> expiry epoch ms. */
 const tokenPrefix = "t:";
 
 export class Room implements DurableObject {
-  /** Verification is async, so messages are chained to keep frames strictly in order. */
   private tail: Promise<unknown> = Promise.resolve();
   private keys = new Map<string, Promise<CryptoKey>>();
-  /** An outstanding silent push reserves its device's budget until Apple answers. */
   private backgroundPending = new Set<string>();
 
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: Env,
   ) {
-    // Answered at the edge, so a heartbeat keeps the socket warm without ever waking this
-    // object. Set per isolate rather than per socket: it is room-wide state and applies to
-    // every hibernated socket the room holds. Every other message spends its socket's bucket.
     this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
   }
 
@@ -184,15 +133,11 @@ export class Room implements DurableObject {
     const now = Date.now();
     server.serializeAttachment({ nonce, room, role: null, key: null, bucket: newBucket(now), since: now } satisfies Conn);
     server.send(JSON.stringify({ type: "nonce", nonce }));
-    // The alarm rather than a timer: this object may hibernate before the deadline, and a
-    // timer would hibernate with it while the socket stayed open.
     await this.alarmBy(now + AUTH_TIMEOUT_MS);
     return new Response(null, { status: 101, webSocket: client });
   }
 
   webSocketMessage(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
-    // Logged rather than swallowed: a throw in here is a frame that went nowhere, and the
-    // socket is left open, so this line is the only sign of it anywhere.
     const done = this.tail
       .then(() => this.handle(ws, data))
       .catch((error: unknown) => log("error", { role: roleOf(ws), error: String(error) }));
@@ -203,7 +148,6 @@ export class Room implements DurableObject {
   webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): void {
     const conn = ws.deserializeAttachment() as Conn | null;
     log("close", { role: conn?.role ?? null, code, reason: safeReason(reason), wasClean });
-    // A re-registering Mac closes its own stale socket: only go offline if none is left.
     if (conn?.role === "mac" && !this.sockets("mac").some((other) => other !== ws)) {
       this.notifyOwner(false);
     }
@@ -214,16 +158,11 @@ export class Room implements DurableObject {
     log("error", { role: roleOf(ws), error: String(error) });
   }
 
-  /** The relay hanging up on a socket, with the reason on record. */
   private drop(ws: WebSocket, code: number, reason: string): void {
     log("drop", { role: roleOf(ws), code, reason });
     ws.close(code, reason);
   }
 
-  /**
-   * Closes every socket that has sat past its deadline without registering or joining, and
-   * says when the next one falls due, so the alarm can come back for it.
-   */
   private sweepUnauthenticated(now: number): number {
     let next = Infinity;
     for (const ws of this.state.getWebSockets()) {
@@ -236,7 +175,6 @@ export class Room implements DurableObject {
     return next;
   }
 
-  /** The buffer's TTL, the join tokens' expiry and the auth deadlines, swept in one pass. */
   async alarm(): Promise<void> {
     const now = Date.now();
     const storage = this.state.storage;
@@ -252,8 +190,6 @@ export class Room implements DurableObject {
       else await storage.delete("token-order");
       return tokens;
     });
-    // Whichever comes first: the buffer's next sweep, the earliest token still live, or the
-    // next unauthenticated socket's deadline.
     const remaining = await storage.list({ prefix: "b:", limit: 1 });
     const next = Math.min(
       authDue,
@@ -263,7 +199,6 @@ export class Room implements DurableObject {
     if (next !== Infinity) await storage.setAlarm(next);
   }
 
-  /** Brings the alarm forward if `at` is sooner than whatever is already scheduled. */
   private async alarmBy(at: number): Promise<void> {
     const scheduled = await this.state.storage.getAlarm();
     if (scheduled === null || scheduled > at) await this.state.storage.setAlarm(at);
@@ -276,8 +211,6 @@ export class Room implements DurableObject {
     await this.state.storage.transaction(async (storage) => {
       const tokens = await storage.list<number>({ prefix: tokenPrefix });
       const order = (await storage.get<string[]>("token-order")) ?? [];
-      // Older deployments only stored expiries. New mints retain their order even when the
-      // clock gives several of them the same timestamp, or the object hibernates between them.
       const legacy = [...tokens].filter(([key, at]) => at >= now && !order.includes(key))
         .sort(([, a], [, b]) => a - b).map(([key]) => key);
       const live = [...legacy, ...order.filter((key) => (tokens.get(key) ?? -Infinity) >= now)];
@@ -287,14 +220,12 @@ export class Room implements DurableObject {
       await storage.put(tokenPrefix + token, expiresAt);
       await storage.put("token-order", [...live, tokenPrefix + token]);
     });
-    // Expiry is strict: at the expiry millisecond the token is still valid.
     await this.alarmBy(expiresAt + 1);
     return { token, expiresAt };
   }
 
   private async reserveNotify(now: number): Promise<boolean> {
     const limit = positiveLimit(this.env.RELAY_NOTIFY_PER_MINUTE, NOTIFY_PER_MINUTE);
-    // Reserve before starting APNs, and retain the room budget through hibernation/reconnects.
     return this.state.storage.transaction(async (storage) => {
       const window = (await storage.get<NotifyWindow>("notify-window")) ?? { count: 0, startedAt: now };
       if (!allowNotify(window, now, limit)) return false;
@@ -309,16 +240,10 @@ export class Room implements DurableObject {
       .filter((ws) => (ws.deserializeAttachment() as Conn | null)?.role === role);
   }
 
-  /** The Mac socket that is open. One it replaced lingers, closing, until its peer answers. */
   private mac(): WebSocket | null {
     return this.sockets("mac").find((ws) => ws.readyState === WebSocket.OPEN) ?? null;
   }
 
-  /**
-   * Whether the room's Mac is reachable *now*, read off the live socket set rather than any
-   * stored flag: presence is exactly "a socket with the mac role is open on this object", so
-   * there is nothing to cache and nothing to go stale.
-   */
   private ownerOnline(): boolean {
     return this.mac() !== null;
   }
@@ -346,38 +271,26 @@ export class Room implements DurableObject {
     }
   }
 
-  /**
-   * Tells the room's phones whether its Mac holds a live socket, so they can show an offline
-   * banner instead of a silent send. This is routing state the relay already keeps — it says
-   * nothing about the ciphertext, so the relay stays blind.
-   */
   private notifyOwner(online: boolean): void {
     const raw = JSON.stringify({ type: "owner", online });
     for (const phone of this.sockets("phone")) send(phone, raw);
   }
 
-  /** How many phones hold a socket, not counting one that is on its way out. */
   private phoneCount(leaving?: WebSocket): number {
     return this.sockets("phone").filter((ws) => ws !== leaving).length;
   }
 
-  /**
-   * Tells the Mac how many phones are listening, so it can stop streaming into a room nobody
-   * is in. Routing state again: a count of sockets, nothing about what they carry.
-   */
   private notifyPhones(leaving?: WebSocket): void {
     const mac = this.mac();
     if (mac) send(mac, JSON.stringify({ type: "phones", count: this.phoneCount(leaving) }));
   }
 
-  /** Cloudflare has no bufferedAmount. Bound bytes sent since this phone last received them. */
   private sendPhone(ws: WebSocket, frame: { payload: string; sig: string }): void {
     if (ws.readyState !== WebSocket.OPEN) return;
     const conn = ws.deserializeAttachment() as Conn;
     const sent = conn.sentBytes ?? 0;
     const acked = conn.ackedBytes ?? 0;
     const raw = frameWire(frame);
-    // Reserve the maximum JSON overhead for `flowBytes`, so the actual wire stays under the cap.
     const next = sent + new TextEncoder().encode(raw).byteLength + 32;
     if (!Number.isSafeInteger(next) || next - acked > PHONE_BUFFER_CAP_BYTES) {
       log("slow-phone", { unackedBytes: sent - acked });
@@ -399,7 +312,6 @@ export class Room implements DurableObject {
       now,
     );
     if (drop > 0) {
-      // The one place the relay loses a frame on purpose. Logged because it is data gone.
       log("buffer-trim", { dropped: drop, kept: entries.length - drop });
       await this.state.storage.delete(entries.slice(0, drop).map(([key]) => key));
     }
@@ -416,17 +328,9 @@ export class Room implements DurableObject {
     } satisfies Buffered);
     await storage.put("seq", seq + 1);
     await this.trim(now);
-    // Scheduled from the oldest entry, not the newest, so the sweep cannot be deferred
-    // indefinitely by a phone that keeps sending.
     await this.alarmBy(now + BUFFER_TTL_MS);
   }
 
-  /**
-   * Replays what the phones sent while no Mac was here. Each frame goes out tagged with its
-   * buffer sequence and stays in storage until the Mac acks it: a send onto a socket that is
-   * about to die is not a delivery, and a Mac that reconnects without having acked simply
-   * gets the frames again. The runtime is idempotent on event id, so a replay costs nothing.
-   */
   private async drain(mac: WebSocket, now: number): Promise<void> {
     await this.trim(now);
     const entries = await this.entries();
@@ -437,17 +341,12 @@ export class Room implements DurableObject {
     }
   }
 
-  /** The Mac has handled everything up to `seq`; those entries are done with. */
   private async ack(seq: number): Promise<void> {
     const entries = await this.entries();
     const done = entries.filter(([, entry]) => entry.seq <= seq).map(([key]) => key);
     if (done.length > 0) await this.state.storage.delete(done);
   }
 
-  /**
-   * Records a phone as a device this room knows, so it can rejoin against the nonce after a
-   * background, a network change or an app relaunch. Capped, oldest evicted first.
-   */
   private async remember(pubkey: string, now: number): Promise<void> {
     const known = [...(await this.state.storage.list<number>({ prefix: devicePrefix }))].map(
       ([key, at]): [string, number] => [key.slice(devicePrefix.length), at],
@@ -457,15 +356,9 @@ export class Room implements DurableObject {
     await this.state.storage.put(devicePrefix + pubkey, now);
   }
 
-  /**
-   * Drops a device the Mac no longer considers paired: it is forgotten, so it cannot rejoin
-   * against the nonce, and its sockets go now rather than at their next reconnect.
-   */
   private async forget(pubkeys: readonly string[]): Promise<void> {
     if (pubkeys.length === 0) return;
     await this.state.storage.delete(pubkeys.map((key) => devicePrefix + key));
-    // The whole point of revoking: a device that is no longer paired stops being woken. Its
-    // tokens go with it rather than lingering as something the room could still push to.
     await this.state.storage.delete(pubkeys.map((key) => pushPrefix + key));
     const gone = new Set(pubkeys);
     for (const phone of this.sockets("phone")) {
@@ -474,11 +367,6 @@ export class Room implements DurableObject {
     }
   }
 
-  /**
-   * Sends where the device was last reached, and to the other environment if Apple says the
-   * token is not from this one. A failed APNs request costs this device's attempt, never the
-   * rest of the room's fan-out.
-   */
   private async push(
     request: apns.ApnsRequest,
     now: number,
@@ -499,7 +387,6 @@ export class Room implements DurableObject {
     }
   }
 
-  /** APNs may answer after a token rotates or its device is revoked. Only update that token. */
   private async recordPush(
     key: string,
     token: string,
@@ -525,21 +412,7 @@ export class Room implements DurableObject {
     });
   }
 
-  /**
-   * Alerts every paired device, or those the notify names; background catch-up only wakes devices not already watching.
-   *
-   * Every registered phone gets the alert. iOS can suspend an app while its WebSocket still
-   * looks open from the server, so socket presence cannot prove somebody is watching. The app
-   * suppresses presentation while foregrounded; only the silent catch-up push can be skipped
-   * for a phone whose socket is still live.
-   *
-   * Runs detached from the socket's message chain (see the `notify` case) and one device at a
-   * time in parallel, so a slow Apple costs neither the next frame nor the other phones. The
-   * fan-out is bounded by MAX_DEVICES, which is as many push records as a room can hold.
-   */
   private async wake(notify: Notify, now: number): Promise<void> {
-    // No Apple key configured — a self-hosted room, or one deployed before the secrets were
-    // set. The frame has still been forwarded; there is simply nobody to wake.
     if (!apns.configured(this.env)) return;
 
     const watching = new Set(
@@ -577,8 +450,6 @@ export class Room implements DurableObject {
     }, now, record.sandbox ?? false);
     if (alert === null) return;
 
-    // Reserve before refreshing the stored budget: overlapping alerts must not each spend
-    // the same minute while Apple is answering. Frames and alerts remain independent.
     const background = !watching.has(deviceKey)
       && BACKGROUND_CLASSES.includes(notify.class)
       && !this.backgroundPending.has(key);
@@ -590,28 +461,20 @@ export class Room implements DurableObject {
         token: current.deviceToken,
         payload: backgroundPayload(),
         pushType: "background",
-        // Apple rejects an urgent background push.
         priority: 5,
       }, now, current.sandbox ?? false);
-      // Only an accepted push spends the budget; failures leave the next wake eligible.
       if (silent) await this.recordPush(key, current.deviceToken, silent, now);
     } finally {
       if (background) this.backgroundPending.delete(key);
     }
   }
 
-  /**
-   * `sync`: a background push alone, to a device whose socket is gone. Not held to `BACKGROUND_INTERVAL_MS`: it follows
-   * a read on another device, often within a minute of the reply that spent the last wake, and is the only way that
-   * device learns to clear the reply's alert. The room's notify budget still bounds it.
-   */
   private async wakeSilently(key: string, record: PushRecord, now: number, watching: ReadonlySet<string>): Promise<void> {
     if (watching.has(key.slice(pushPrefix.length))) return;
     const silent = await this.push({
       token: record.deviceToken,
       payload: backgroundPayload(),
       pushType: "background",
-      // Apple rejects an urgent background push.
       priority: 5,
     }, now, record.sandbox ?? false);
     if (silent) await this.recordPush(key, record.deviceToken, silent, now);
@@ -626,13 +489,11 @@ export class Room implements DurableObject {
     const conn = ws.deserializeAttachment() as Conn;
     const storage = this.state.storage;
 
-    // Charge before parsing or verifying, including messages that do not forward ciphertext.
     const bucket = conn.bucket ?? newBucket(now);
     if (!allowFrame(bucket, now)) return this.drop(ws, CLOSE_RATE_LIMIT, "rate limit");
     conn.bucket = bucket;
     ws.serializeAttachment(conn);
 
-    // Only the envelope is parsed; `payload` is forwarded byte-for-byte.
     const msg = parseEnvelope(raw);
     if (!msg) return this.drop(ws, CLOSE_PROTOCOL, "bad json");
 
@@ -647,9 +508,6 @@ export class Room implements DurableObject {
         } catch {
           return this.drop(ws, CLOSE_PROTOCOL, "bad pubkey");
         }
-        // The Node relay derives the room from the key, so a key can only ever own its own
-        // room. Here the caller picked the room in the URL: pin it back to the key, or a
-        // stranger could squat someone else's room and drain its buffer.
         const owner = (await storage.get<string>("owner")) ?? null;
         if (id !== conn.room || (owner !== null && owner !== pubkey)) {
           return this.drop(ws, CLOSE_PROTOCOL, "wrong room");
@@ -658,7 +516,6 @@ export class Room implements DurableObject {
           return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad challenge");
         }
         if (owner === null) await storage.put("owner", pubkey);
-        // A fresh registration wins; the stale Mac socket is dropped.
         for (const stale of this.sockets("mac")) {
           if (stale !== ws) this.drop(stale, CLOSE_PROTOCOL, "replaced");
         }
@@ -669,7 +526,6 @@ export class Room implements DurableObject {
         return await this.drain(ws, now);
       }
 
-      // The Mac has handled the replayed frames up to this sequence number.
       case "ack": {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const ack = parseAck(msg);
@@ -690,13 +546,9 @@ export class Room implements DurableObject {
         return;
       }
 
-      // The heartbeat the edge normally answers for us. Handled here too so a socket that
-      // somehow reaches the object still gets a pong instead of an "unknown type" close.
       case "ping":
         return void ws.send(PONG);
 
-      // "Is my Mac there?", asked by a phone after every join. The `joined` reply already
-      // carries it, but a phone that has been asleep has no way to trust what it last heard.
       case "owner": {
         if (conn.role !== "phone") return this.drop(ws, CLOSE_PROTOCOL, "not joined");
         return void ws.send(JSON.stringify({ type: "owner", online: this.ownerOnline() }));
@@ -709,8 +561,6 @@ export class Room implements DurableObject {
         return;
       }
 
-      // The Mac unpairing a phone: forgotten, so it cannot rejoin against the nonce, and
-      // dropped now rather than at its next reconnect.
       case "revoke": {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const revoke = parseRevoke(msg);
@@ -718,13 +568,6 @@ export class Room implements DurableObject {
         return await this.forget([revoke.pubkey]);
       }
 
-      // The Mac's whole paired list, sent right after `register` and again whenever it
-      // changes. It replaces what this room knows rather than adding to it, so the Mac's
-      // `devices.json` is the source of truth and storage this object lost comes back.
-      //
-      // A device holding a live socket is kept whatever the list says: it has just proved
-      // itself, and the Mac's file may not have caught up with a token join it is still
-      // being told about. Unpairing a connected phone is what `revoke` is for.
       case "devices": {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const announced = parseDevices(msg);
@@ -751,8 +594,6 @@ export class Room implements DurableObject {
         const { roomId: id, token, phonePubkey, sig } = join;
         if (id !== conn.room) return this.drop(ws, CLOSE_PROTOCOL, "wrong room");
         if (token === undefined) {
-          // A rejoin: the room already knows this device, so it proves itself against the
-          // connect nonce rather than spending a token it no longer has.
           if ((await storage.get<number>(devicePrefix + phonePubkey)) === undefined) {
             return this.drop(ws, CLOSE_PROTOCOL, "unknown device");
           }
@@ -767,7 +608,6 @@ export class Room implements DurableObject {
             await storage.delete(tokenPrefix + token);
             return this.drop(ws, CLOSE_PROTOCOL, "expired token");
           }
-          // Verified before burning, so a bad signature cannot consume the token.
           if (!(await this.verify(token, sig, phonePubkey))) {
             return this.drop(ws, CLOSE_BAD_SIGNATURE, "bad join signature");
           }
@@ -781,36 +621,25 @@ export class Room implements DurableObject {
         return;
       }
 
-      // A phone saying where it can be woken. Filed against the key the relay already knows
-      // the device by, so revoking it takes the tokens with it and nothing has to remember to.
       case "push": {
         if (conn.role !== "phone" || !conn.key) return this.drop(ws, CLOSE_PROTOCOL, "not joined");
         const push = parsePush(msg);
         if (!push) return this.drop(ws, CLOSE_PROTOCOL, "bad push");
         const key = pushPrefix + conn.key;
         await storage.transaction(async (storage) => {
-          // One token, one device. A phone that paired again under a new signing key leaves
-          // its old record holding the same token, and every alert then reaches it twice —
-          // the second with a preview sealed under a key it no longer has. The newest claim wins.
           const records = await storage.list<PushRecord>({ prefix: pushPrefix });
           const stale = [...records]
             .filter(([other, record]) => other !== key && record.deviceToken === push.deviceToken)
             .map(([other]) => other);
           if (stale.length > 0) await storage.delete(stale);
-          // Merged rather than written over: a phone re-registers its token on every launch, and
-          // that must not hand it a fresh background budget it has already spent.
           const record = records.get(key);
           const next: PushRecord = { ...record, deviceToken: push.deviceToken };
-          // A new token may be from either environment — the phone moved from an Xcode build to
-          // TestFlight, or back — so what was learnt about the old one does not carry over.
           if (record?.deviceToken !== push.deviceToken) delete next.sandbox;
           await storage.put(key, next);
         });
         return;
       }
 
-      // The Mac, beside a sealed frame: something of this class happened over there. The frame
-      // itself has already gone out; this is only the wake-up for whoever did not catch it.
       case "notify": {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const notify = parseNotify(msg);
@@ -819,9 +648,6 @@ export class Room implements DurableObject {
           ws.send(JSON.stringify({ type: "state", state: "notify rate limit" }));
           return;
         }
-        // Detached from the message chain: Apple answering slowly must not hold up the next
-        // frame. `waitUntil` keeps the object alive for it; the catch is the only place a
-        // failure would otherwise be seen.
         const woken = this.wake(notify, now).catch((error: unknown) =>
           log("error", { role: "mac", error: String(error) }),
         );
@@ -833,7 +659,6 @@ export class Room implements DurableObject {
         if (!conn.role || !conn.key) return this.drop(ws, CLOSE_PROTOCOL, "not joined");
         const frames = parseFrames(msg);
         if (!frames) return this.drop(ws, CLOSE_BAD_SIGNATURE, "unsigned frame");
-        // Only the Mac fans out; a phone batching would be a 16x discount on its bucket.
         if (msg.frames !== undefined && conn.role === "phone") {
           return this.drop(ws, CLOSE_PROTOCOL, "batch from phone");
         }
@@ -846,13 +671,8 @@ export class Room implements DurableObject {
           const mac = this.mac();
           if (mac) send(mac, raw);
           else await this.buffer(raw, now);
-          // Sent after the buffer write: the object holds outgoing messages until earlier
-          // writes are durable, so `buffered: true` means stored. A phone sends one frame.
           ws.send(JSON.stringify({ type: "accepted", sig: frames[0]!.sig, buffered: !mac }));
         } else {
-          // Not buffered: a phone that is away catches up by asking the Mac on its next join,
-          // which holds the whole history. The relay is only ever the fast path down. A batch
-          // is unpacked here: each phone sees plain frames, never the batch.
           for (const phone of this.sockets("phone")) for (const frame of frames) this.sendPhone(phone, frame);
         }
         return;
@@ -864,11 +684,6 @@ export class Room implements DurableObject {
   }
 }
 
-/**
- * Counted per address before an object is named: every accepted request wakes and bills one, so a redial loop or a
- * flood is turned away here. Cloudflare sets the header on every request it proxies; only local runs lack it. A
- * limiter that is missing or failing lets the request through: it guards the bill, and must not become the outage.
- */
 async function overLimit(request: Request, env: Env): Promise<boolean> {
   const address = request.headers.get("CF-Connecting-IP");
   const verdict = address ? await env.CONNECT_LIMIT?.limit({ key: address }).catch(() => undefined) : undefined;
@@ -894,8 +709,6 @@ export default {
       return new Response("yorozu relay\n", { headers: { "content-type": "text/plain" } });
     }
     if (!room) return new Response("missing ?room", { status: 400 });
-    // Refused here, before a Durable Object is named: a name no key could hash to would
-    // otherwise create and bill an object for nothing.
     if (!isRoomId(room)) return new Response("bad ?room", { status: 400 });
     if (await overLimit(request, env)) return new Response("too many connections", { status: 429 });
     return env.ROOM.get(env.ROOM.idFromName(room)).fetch(request);

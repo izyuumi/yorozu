@@ -1,13 +1,9 @@
 #!/bin/sh
-# Prints Markdown release notes from the Conventional Commits since the last stable release tag v<x.y.z> before <commit>:
-# features, fixes and performance, scope in bold; chores, CI, docs, refactors, tests and dependency bumps are left out.
-#   scripts/release_notes.sh [commit]          default HEAD; needs the release tags (checkout with fetch-depth: 0)
 set -eu
 cd "$(dirname "$0")/.."
 TO=${1:-HEAD}
 FROM=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-beta*' "$TO^" 2>/dev/null || true)
 git log --no-merges --format=%s "${FROM:+$FROM..}$TO" | awk '
-    # type(scope)!: description
     match($0, /^[a-z]+(\([^)]*\))?!?: /) {
         head = substr($0, 1, RLENGTH - 2); text = substr($0, RLENGTH + 1)
         sub(/ *\[skip ci\]$/, "", text)

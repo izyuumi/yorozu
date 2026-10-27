@@ -2,11 +2,9 @@ name: Deploy website
 on:
   push:
     branches: [main]
-    # Only website changes deploy; a dependency bump that touches the site edits its package.json.
     paths: ['apps/web/**']
   workflow_dispatch:
 
-# Deploys run in push order; a newer one never cancels a deploy midway.
 concurrency:
   group: deploy-web
   cancel-in-progress: false
@@ -26,7 +24,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter @yorozu/web
       - run: pnpm --filter @yorozu/web build
-      # The same checks as CI, so a broken build never reaches yorozu.yumi.to.
       - run: pnpm --filter @yorozu/web test
       - name: Deploy to Cloudflare
         env:

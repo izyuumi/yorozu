@@ -5,11 +5,6 @@ import { clientIp, roomId, signChallenge, startRelay, trustedHops, type Relay } 
 import { client, connectMac, connectPhone, keypair, mintToken, type Client } from "./testing.js";
 import { conformance, type Adapter } from "./conformance.test.js";
 
-/**
- * The Node relay against the shared conformance suite. Everything on the wire is covered
- * there; only what is Node's alone lives here.
- */
-
 let relay: Relay;
 const peers: Client[] = [];
 const servers: Relay[] = [];
@@ -50,8 +45,6 @@ const adapter: Adapter = {
       closed: () => peer.closed,
     };
   },
-  // The relay reads `Date.now()` in-process, so moving the clock is enough. Only `Date` is
-  // faked: `ws` keeps its real timers.
   advance: async (_room, ms) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.now() + ms);
@@ -74,7 +67,6 @@ test("a key may only register in its own room", async () => {
   await squatter.open;
   const { nonce } = await squatter.next();
   squatter.send({ type: "register", pubkey: keys.pub, nonceSig: signChallenge(nonce, keys.priv) });
-  // Derived from the key, so the `?room=` it dialed is ignored and it lands in its own room.
   expect(await squatter.next()).toMatchObject({ type: "registered", roomId: roomId(keys.pub) });
 });
 
@@ -108,10 +100,10 @@ test("a stalled phone is disconnected without slowing another phone or the host"
   const room = roomId(keys.pub);
   const slow = await connectPhone(relay.port, room, await mintToken(mac));
   peers.push(slow.phone);
-  await slow.phone.next(); // joined
+  await slow.phone.next();
   const fast = await connectPhone(relay.port, room, await mintToken(mac));
   peers.push(fast.phone);
-  await fast.phone.next(); // joined
+  await fast.phone.next();
   const socket = (slow.phone.ws as WebSocket & { _socket: { pause(): void; resume(): void } })._socket;
   socket.pause();
   try {
@@ -169,12 +161,10 @@ test.each([false, true])("forwarded IPs are trusted only with RELAY_TRUST_PROXY 
   vi.stubEnv("RELAY_MAX_CONNS_PER_IP", "1");
   vi.stubEnv("RELAY_TRUST_PROXY", trusted ? "1" : "");
   const server = await limitedRelay();
-  // One trusted hop: the last entry is what the proxy saw, the rest is the client's story.
   expect(await dial(server.port, "192.0.2.1, 192.0.2.10").first).toMatchObject({ type: "nonce" });
   const other = await dial(server.port, "192.0.2.2, 192.0.2.11").first;
   if (trusted) expect(other).toMatchObject({ type: "nonce" });
   else expect(other).toBe(CLOSE_POLICY);
-  // A different first entry behind the same last hop is the same client, so no second slot.
   expect(await dial(server.port, "192.0.2.99, 192.0.2.10").first).toBe(CLOSE_POLICY);
 });
 
@@ -184,10 +174,8 @@ test("a client cannot prepend to X-Forwarded-For to dodge the cap or fill a vict
   const server = await limitedRelay();
   const victim = "203.0.113.7";
   const attacker = "198.51.100.9";
-  // Whatever the attacker writes in front, the trusted hop appended its real address last.
   expect(await dial(server.port, `${victim}, ${attacker}`).first).toMatchObject({ type: "nonce" });
   expect(await dial(server.port, `10.0.0.1, ${victim}, ${attacker}`).first).toBe(CLOSE_POLICY);
-  // The victim's own slot is untouched by any of that.
   expect(await dial(server.port, `${attacker}, ${victim}`).first).toMatchObject({ type: "nonce" });
 });
 
@@ -195,11 +183,9 @@ test("RELAY_TRUST_PROXY=N reads the Nth entry from the end, and a short chain is
   vi.stubEnv("RELAY_MAX_CONNS_PER_IP", "1");
   vi.stubEnv("RELAY_TRUST_PROXY", "2");
   const server = await limitedRelay();
-  // Two trusted hops: the second-from-last entry is the client, the last is the inner proxy.
   expect(await dial(server.port, "192.0.2.1, 192.0.2.50, 192.0.2.60").first).toMatchObject({ type: "nonce" });
   expect(await dial(server.port, "192.0.2.2, 192.0.2.50, 192.0.2.60").first).toBe(CLOSE_POLICY);
   expect(await dial(server.port, "192.0.2.3, 192.0.2.51, 192.0.2.60").first).toMatchObject({ type: "nonce" });
-  // Fewer entries than hops: something upstream is misconfigured, so the peer address counts.
   expect(await dial(server.port, "192.0.2.4").first).toMatchObject({ type: "nonce" });
   expect(await dial(server.port, "192.0.2.5").first).toBe(CLOSE_POLICY);
 });
@@ -243,7 +229,6 @@ test("a socket that never registers or joins is closed at the auth deadline", as
   const mac = await connectMac(server.port, keys);
   await vi.advanceTimersByTimeAsync(AUTH_TIMEOUT_MS);
   expect(await stranger.closed).toBe(CLOSE_POLICY);
-  // The one that answered in time is still there.
   mac.send({ type: "ping" });
   expect(await mac.next()).toEqual({ type: "pong" });
 });

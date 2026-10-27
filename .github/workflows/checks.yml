@@ -1,7 +1,4 @@
 name: Checks
-# Pull request checks (OWNER_DECISIONS.md, Process): the client compiles for iPhone and iPad and for the Mac, unsigned,
-# and the relay passes its typecheck and tests. Each job runs only when its files changed; a skipped job counts as passed,
-# so both can be required checks. No Swift tests or lint yet.
 on:
   pull_request:
 
@@ -37,14 +34,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
-        with: { xcode-version: '27.1' } # the owner's Xcode; the iOS 27 SDK is only on the xcode-27 image (public preview)
+        with: { xcode-version: '27.1' }
       - name: Install Tuist 4.209.0
         run: |
           command -v mise >/dev/null || brew install mise
           mise use -g tuist@4.209.0
           mise bin-paths tuist@4.209.0 >> "$GITHUB_PATH"
       - run: tuist generate --no-open --path apps/ios
-      # The compile checks in docs/release.md.
       - name: iPhone and iPad
         run: |
           env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS \

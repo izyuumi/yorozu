@@ -1,94 +1,37 @@
 # Status
 
-As of 2026-10-19. The #415 tracker (Yorozu as an OpenClaw channel) is built: every child issue #416–#432 is merged and closed, and this rewrite of the docs is #433. The secretary system and the Mac host are deleted (#426); their last status is in [history/secretary-status.md](history/secretary-status.md).
+Current state of `main`. Version: `version.txt`. Product decisions: [OWNER_DECISIONS.md](../OWNER_DECISIONS.md). Release flow: [release.md](release.md).
 
-**Offline demo** (2026-10-19): enter `YOROZU-DEMO` in the pairing field or scan that text; developer launches also accept `--demo`. English/Japanese conversations, tool rows, scripted replies and two sample automations run in memory. A small indicator appears in Chats; Settings has Exit Demo and a read-only fictional Demo Device under Paired Devices. Real pairing and cache stay separate; no demo uploads, host administration, notifications or Spotlight writes. Checked: Mac and iOS Simulator compile (including the demo device addition); simulator launch showed the seeded chat list and indicator; isolated Mac dev build launched. Full tap-through checks (send, background, exit, QR) remain unverified because the UI automation tools could not connect to the installed Xcode/native app surface. Review notes document the simulation; a live review host is still needed for full review access.
+## Implemented
 
-**Pairing a Mac from an iPhone or iPad** (2026-10-27): an unpaired Mac shows a code; a paired iPhone or iPad scans it and sends a `pair_invite` link through a one-time relay mailbox ([contract](ios-relay-contract.md#pairing-from-another-device)). Checked: iOS and Mac compile, the relay tests (149, with the mailbox's), the website tests, a round trip of the code and its sealing. Not checked live: a real scan, the mailbox on the deployed relay, the universal link.
-
-**Beta and stable releases** (2026-10-27): every merge ships a beta (Mac prerelease `v<version>-beta`, replaced by each build, on the beta feed, TestFlight internal group); a `version.txt` bump promotes the last Mac beta to stable ([release.md](release.md#mac-distribution)). Mac Settings › Updates › Beta Updates picks the feed. Pull requests get compile checks and the relay's tests; the relay deploys on merge after its tests; Dependabot is back with a 3-day cooldown. Checked: iOS and Mac compile, the website's tests, the beta-tag parsing. Not run yet: the workflows themselves, a promotion, the toggle on a real Mac.
-
-**App Store 0.9.0** (2026-10-23): build 14 released to the public App Store (manual release); 0.9 is stable. Builds from here are 0.9.1 (`version.txt`): Apple refuses new 0.9.0 builds (ITMS-90186, ITMS-90062).
-
-**Release 0.9.0** (2026-10-17, `projectx` after #460), internal only: the owner's feedback on 0.8.0 (#456 Automations agent fix, #457 client polish, #458 Settings, in-app notices and read-synced notifications, #460 plugin manifest).
-
-**Minimal launch screen (2026-10-19, Internal TestFlight build 19):** build 18 used the full app icon. After owner correction, PR #479 replaced it with the inner oval mark composed from the icon's original SVG layers, with separate light/dark assets and the adaptive system background. No timed delay. iOS compile passed; the compiled asset catalog contains both appearances. Apple reports build 19 `VALID` and `IN_BETA_TESTING`; external beta remains `READY_FOR_BETA_SUBMISSION`. Physical-device visual acceptance remains unverified.
-
-**Composer correction (2026-10-19, Internal TestFlight build 16):** the plus stays put while the textarea starts closer to it. iOS paste accepts image and file clipboard providers into the existing attachment staging path; Mac file/image paste remains supported. Build 16 is valid and in Internal TestFlight; no external or public distribution. Physical paste and visual acceptance remain unverified.
-
-**Composer clearance follow-up (2026-10-19, Internal TestFlight build 17):** build 16's negative textarea inset brought text into the plus glyph. Build 17 moves the glyph left inside its existing tap target and keeps the tight inset. Apple reports it valid and in Internal TestFlight, absent from the Public group; physical visual acceptance remains unverified.
-
-**Share handoff correction (2026-10-19, Internal TestFlight build 15):** a share stays in the App Group until the host acknowledges delivery. Reopening or reconnecting cannot prune a conversation with an undelivered local message merely because the host's list has not caught up. The share folder supplies stable message and new-conversation identities across retries.
-- Relay: #447 merged on `main` and deployed with `wrangler deploy` (`notify.devices`, silent `sync`); `apps/relay` here refreshed from `main`.
-- Gateway: the plugin now loads from the main checkout (`plugins.load.paths`; the old load path from a Codex worktree removed), Gateway restarted; the channel is running and registered at the relay with the same room, so pairings carry over.
-- Mac: `/Applications/Yorozu.app` 0.9.0 (1) rebuilt in place with `build_native.sh --restart`.
-- iPhone and iPad: TestFlight 0.9.0 (1), one upload with `upload_ios.sh --confirm`.
-- Checked: plugin typecheck, YorozuWire build, iOS and Mac compile, relay typecheck and its 145 tests. Not checked live: Settings, the pill, push suppression and `sync` clearing on a real device.
-
-**Release 0.8.0** (2026-10-16, `projectx` after #454), internal only:
-- Mac: `/Applications/Yorozu.app` rebuilt in place with `scripts/build_native.sh --restart`: the client (`to.yumi.yorozu.ios`) 0.8.0 (1), Developer ID signed, replacing the old host app. Launched to the v3 pairing screen.
-- iPhone and iPad: TestFlight 0.8.0 (1), one upload with `scripts/upload_ios.sh --confirm`; App Store Connect reports it valid and in internal beta testing (Internal group only).
-- Wire v3 is incompatible with 0.7.x: every device pairs again with `openclaw yorozu pair`, which needs the plugin installed in the owner's Gateway first ([Open items](#open-items)).
-- Before the release, a Mac live check on an isolated profile found two client bugs (invisible composer text, a nested split view breaking the window after relaunch), fixed in #453 and checked on the Mac and both simulators.
-
-## Evidence levels
-
-Acceptance for this branch is compile plus manual checks (tests and CI are on hold). Each check below has one of these levels:
-
-- **Source**: read against the OpenClaw source of the running build (2026.9.8), no live run.
-- **Compile**: the plugin typechecks; `swift build --package-path packages/YorozuWire`; the client builds for `generic/platform=iOS`, `platform=macOS` and the iOS Simulator.
-- **Isolated**: live on an isolated OpenClaw profile (its own state, config and port, the owner's Gateway untouched), against the deployed relay unless noted, with a local mock model and scratch wire devices, iPhone and iPad simulators, or the Mac client from derived data.
-- **Owner**: on the owner's own Gateway with a real model, or on a physical device. None of these is done yet ([Open items](#open-items)).
-
-## Done
-
-| Issue (PR) | Shipped | Checked |
-|---|---|---|
-| #416 (#437) | [openclaw-channel.md](openclaw-channel.md): a `--link` channel plugin can hold the relay WebSocket itself, so no Mac bridge | Source |
-| #417 (#434) | The channel decisions in OWNER_DECISIONS.md and the log | Docs |
-| #418 (#435) | `apps/relay` copied from `main` for reference; no relay gap for v3 | Relay typecheck, `wrangler deploy --dry-run` |
-| #419 (#436) | One multiplatform client target for iPhone, iPad and native SwiftUI Mac | Compile; Mac launch to the pairing screen |
-| #420 (#438) | The plugin skeleton, installable with `--link` | Compile; Isolated: `channels status` running and connected, clean stop on Gateway stop and config reload |
-| #421 (#439) | Wire v3: Noise IK handshake, frames, envelope, in Swift and TypeScript | Known-answer vectors reproduced byte for byte in both languages and against an independent Noise IK vector; negative checks (replay, reflection, stale time, wrong keys) |
-| #422 (#440) | Host keys in the credentials store, the relay host loop, handshakes from allowlisted devices | Isolated: registration, reconnect with backoff through a killed and a frozen proxy, no keys in logs, key file `0600` and stable |
-| #423 (#441) | `openclaw yorozu pair`, `devices`, `devices remove`; the allowlist | Isolated, scratch Swift device: join by link, reused and expired tokens refused, remove revokes at once |
-| #424 (#442) | Text in and out through thread sessions; `delivered`, `run_started`, typing, `tool` rows, chunked replies; cron delivery into a conversation | Isolated, mock model, two scratch devices: separate sessions, `/new`, 12-chunk replies, dedupe, 700 KiB messages, cron delivery |
-| #425 (#443) | Client on wire v3: pairing by scan or paste with fingerprint check, conversation list, chat, marks, outbox, cache | Isolated: Mac client and iPhone simulator paired and chatted; offline resend; iPad launch |
-| #426 (#445) | The secretary system, the Mac host, wire v2 and the v2 client deleted; `build_native.sh` builds the client | Compile; the script's build line signed and verified (the script itself not run); Isolated: iOS simulator chat |
-| #427 (#448) | History from the Gateway transcript, `conv_list` and `history` pages, client cache and backfill | Isolated, two simulators: a freshly paired device showed full history, resets, tool rows and cron replies, no duplicates |
-| #428 (#450) | Generated titles, rename, archive and delete, synced to every device | Isolated, mock `utilityModel`, two simulators |
-| #429 (#444) | Read cursor per conversation, unread badges, Mark as Read and Unread, synced | Isolated, two simulators and a scratch device |
-| #430 (#451) | Attachments both ways up to 8 MB, share extension into a chosen conversation, ⌘Return on the Mac | Isolated, mock vision model, two simulators: photo and PDF up, image down, 9 MB refused, share sheet |
-| #431 (#449) | One sealed push per finished reply, none to a device with that conversation in front; local notifications on the Mac | Isolated with a local relay recording each `notify` and fake device tokens; no real APNs |
-| #432 (#446) | Read-only Crons tab with "Edit in Chat" | Isolated, two simulators: the list matched `openclaw cron list --all`; edits simulated with the CLI |
+- **Plugin** (`plugins/openclaw-yorozu`): host keys in the OpenClaw credentials store; relay connection with reconnect; Noise IK handshakes from allowlisted devices; `openclaw yorozu pair`, `devices`, `devices remove`. Text in and out through one OpenClaw thread session per conversation, with `run_started`, typing, `tool` rows and chunked whole replies; cron delivery into a conversation; history from the Gateway transcripts (`conv_list`, `history`); titles, rename, archive, delete; read cursors; attachments both ways (default limit 8 MB, `channels.yorozu.mediaMaxMb`); one sealed push per finished reply; read-only cron list; device list and settings; `pair_invite` for adding a Mac.
+- **Wire v3** (`packages/YorozuWire`, plugin `src/wire.ts`/`src/envelope.ts`): [contract](ios-relay-contract.md), protocol version 3.
+- **Relay** (`apps/relay`): Cloudflare Worker, one Durable Object per room, one-time pairing mailboxes, APNs sender, connect rate limit; deploys on merge after its tests.
+- **Client** (`apps/ios`, one target for iPhone, iPad and native SwiftUI Mac): pairing by QR scan or pasted link with fingerprint check; a new Mac shows a code that a paired iPhone or iPad scans; conversation list, chat, outbox and cache; unread badges and read marks synced; attachments, paste and camera; share extension and notification service extension (iOS); two conversations side by side (`Pair.swift`); read-only Crons tab with "Edit in Chat"; Settings with paired devices; App Shortcuts; offline demo (`YOROZU-DEMO` in the pairing field, or `--demo`).
+- **Mac app**: Developer ID signed, notarized DMG with Sparkle updates (stable and beta feeds), bundled plugin copy, one-time migration from 0.5.
+- **Website** (`apps/web`): Astro site with pairing link page, AASA, and Mac download and update-feed redirects.
+- **CI**: PR compile checks and relay tests; Mac beta per merge, promotion to stable on a `version.txt` bump; TestFlight upload per merge; web and relay deploy per merge ([release.md](release.md#ci)).
 
 ## Open items
 
-The current composer accepts pasted images as staged attachments and offers Camera beside Photo Library and Files on iPhone/iPad. The plus-to-text spacing is tighter. These are local client changes; not yet uploaded or distributed.
-
-Side by side (two conversations on iPad and iPhone Duo's inner display, `Pair.swift`) compiles for iOS and macOS; not yet checked running on a simulator or device. The app's view types and files lost their `V3` prefix; wire types in `YorozuWire` keep it, since they name the wire v3 contract.
+Pending owner decisions or owner-only checks. Each row keeps its current default.
 
 | Item | Default until the owner decides |
 |---|---|
-| **`commands.ownerAllowFrom` += `"yorozu:owner"`** ([setup.md](setup.md#owner-only-tools)). Without it Yorozu turns lose owner-only tools, so "Edit in Chat" cannot change a cron job. | Not set: Yorozu turns are non-owner. |
-| **On-device checks** (TestFlight build): QR scan with the camera; pairing acceptance on a phone; the cache unreadable while locked; push (one per reply, title and first line, tap opens the conversation, none for the conversation in front, cron pushes, preview while locked after first unlock); Mac local notifications; Mac Dock and iOS app badge; swipe and context-menu marks; pull to refresh on Crons; "Edit in Chat" with a real model; a real vision model on attachments; Mac drag and drop and ⌘Return live; VoiceOver. | Unchecked. |
-| **`openclaw message send --channel yorozu -t owner` fails**: the plugin has no messaging target resolver (`messaging.targetResolver`) for `owner`. | Agent replies and cron deliveries work; CLI sends to Yorozu do not. |
-| **Crons tab reads a private SDK path**: `loadCronStore` from `openclaw/plugin-sdk/cron-store-runtime`, which works on a source install. A packaged OpenClaw may withhold it from linked plugins. | Keep it; if it breaks, `cron_list` answers `error` and the switch is a loopback Gateway client ([openclaw-channel.md](openclaw-channel.md)). |
-| **Mac client signing** has no entitlements (no provisioning profile for `to.yumi.yorozu.ios` on macOS): no APNs, no associated domains, no App Group, login-Keychain prompts after rebuilds. | Developer ID without entitlements via `build_native.sh`. |
-| `OWNER_DECISIONS.md` still gives the Mac app v1's identity (`to.yumi.yorozu`); since #426 the Mac app is the client, `to.yumi.yorozu.ios`. Needs the owner's wording. | Code and docs follow `to.yumi.yorozu.ios`. |
-| Leftovers of the old host on the owner's Mac (its data, Keychain items, ignored `apps/mac` build outputs in the main checkout). | Kept until the owner approves cleanup. |
-
-## Roadmap
-
-The owner has set nothing after #415. Named as later or out in the decisions: mute for pushes, voice notes, an agent picker (out), Mac distribution and Mac push, v1 → v2 migration (from #322).
+| **Pending: `commands.ownerAllowFrom` += `"yorozu:owner"`** ([setup.md](setup.md#owner-only-tools)). Without it Yorozu turns lose owner-only tools, so "Edit in Chat" cannot change a cron job. | Not set: Yorozu turns are non-owner. |
+| **Pending: on-device checks**: QR scan with the camera; pairing on a phone; cache unreadable while locked; push (one per reply, title and first line, tap opens the conversation, none for the conversation in front, cron pushes, preview while locked after first unlock); Mac local notifications; Mac Dock and iOS badge; swipe and context-menu marks; pull to refresh on Crons; "Edit in Chat" with a real model; a real vision model on attachments; Mac drag and drop and ⌘Return; VoiceOver; adding a Mac by scanning its code. | Unchecked. |
+| **`openclaw message send --channel yorozu -t owner`**: the plugin defines no `messaging.targetResolver` (`src/channel.ts`). | Agent replies and cron deliveries work; CLI sends to Yorozu are not supported. |
+| **Crons tab reads a private SDK path**: `loadCronStore` from `openclaw/plugin-sdk/cron-store-runtime` (`src/cron.ts`), which resolves on a source install; a packaged OpenClaw may withhold it from linked plugins. | Keep it; if it breaks, `cron_list` answers `error` and the switch is a loopback Gateway client ([openclaw-channel.md](openclaw-channel.md)). |
+| **Mac signing has no entitlements**: no macOS provisioning profile exists for the Mac bundle id, so `build_native.sh` and `release_mac.sh` sign without them: no APNs, associated domains, shared Keychain group or App Group on the Mac; keys live in the login Keychain. | Developer ID without entitlements. |
+| **Pending: leftovers of the old host on the owner's Mac** (its data, Keychain items). | Kept until the owner approves cleanup. |
 
 ## Known limits
 
-- Replies are whole messages, chunked by length; no streaming.
-- Devices that are offline get nothing queued; they backfill from history on reconnect. A reply whose delivered text differs from its transcript text (core strips some parts before delivery) shows the transcript text in history.
-- A Gateway restart drops live device sessions (devices re-handshake by themselves) and forgets pairings not yet used.
-- At most 16 paired devices; the 17th replaces the oldest.
-- An interrupted attachment transfer starts over on the next session.
-- `openclaw cron add --thread-id` takes only Telegram's numeric ids, so a job delivering into a Yorozu conversation is made with the agent's cron tool or `cron.add`.
-- The plugin's keyed state (allowlist, read cursors) and OpenClaw's transcripts are not encrypted at rest beyond the disk's own encryption.
-- No mute, no voice notes.
+- Replies are whole messages, chunked by length; no streaming (`disableBlockStreaming`).
+- The plugin sends only to devices with a live session; offline devices backfill from history on reconnect. A reply whose delivered text differs from its transcript text shows the transcript text in history.
+- A Gateway restart drops live device sessions (devices re-handshake) and forgets pairing secrets not yet used.
+- At most 16 paired devices (`MAX_DEVICES`, plugin and relay); adding one past that removes the oldest.
+- An interrupted attachment upload starts over (partials are dropped after 30 minutes).
+- `openclaw cron add --thread-id` accepts only numeric (Telegram) ids, so a job delivering into a Yorozu conversation is made with the agent's cron tool or `cron.add`.
+- The plugin's keyed state (allowlist, read cursors) and OpenClaw's transcripts are not encrypted at rest beyond the disk's encryption.
+- No push on the Mac; no mute; no voice notes.

@@ -1,9 +1,3 @@
-/* Yorozu — yorozu.yumi.to
-   One saturated colour, the icon's amber, carries the hero. Everything else is a neutral
-   page with vermillion for the few things that need a second voice: links, the copy
-   button's "done", the warning. Display type is the platform serif (New York on Apple
-   devices, the same voice the app answers in); body is the platform sans. No webfonts. */
-
 :root {
   color-scheme: light dark;
   --canvas: oklch(0.985 0.004 80);
@@ -67,7 +61,6 @@ em { font-style: italic; }
 .skip-link { position: absolute; left: 12px; top: -60px; padding: 10px 14px; background: var(--ink); color: var(--canvas); border-radius: 8px; z-index: 2; }
 .skip-link:focus { top: 12px; }
 
-/* Header */
 
 header.site {
   width: var(--page);
@@ -87,7 +80,6 @@ header nav a { padding: 8px 12px; border-radius: 9px; text-decoration: none; col
 header nav a:hover, header nav a[aria-current="page"] { background: var(--raised); color: var(--ink); }
 header nav .button { margin-left: 8px; }
 
-/* Buttons */
 
 .button {
   display: inline-flex;
@@ -110,7 +102,6 @@ header nav a.button:hover { background: var(--red); color: var(--on-red); }
 .button.ghost { background: transparent; color: inherit; box-shadow: inset 0 0 0 2px currentColor; }
 .button.ghost:hover { background: oklch(1 0 0 / 0.25); }
 
-/* Hero — amber drench, phone rising out of the bottom edge */
 
 .hero {
   background: var(--amber);
@@ -138,7 +129,6 @@ header nav a.button:hover { background: var(--red); color: var(--on-red); }
 .hero .fine { color: var(--amber-ink); }
 
 .phone { margin: 0; justify-self: center; width: min(100%, 340px); margin-bottom: -22%; }
-/* Apple's iPhone 18 Pro screen is 1206 × 2622 at (72, 69). */
 .iphone-device { position: relative; aspect-ratio: 1350 / 2760; }
 .iphone-screen { position: absolute; top: 2.5%; left: 5.333333%; width: 89.333333%; height: 95%; border-radius: 12% / 5.52%; }
 .iphone-bezel { position: relative; width: 100%; height: auto; pointer-events: none; }
@@ -152,12 +142,10 @@ header nav a.button:hover { background: var(--red); color: var(--on-red); }
 }
 @keyframes rise { from { opacity: 0; transform: translateY(18px); } }
 
-/* Sections */
 
 main > section:not(.hero) { width: var(--page); margin-inline: auto; padding-block: clamp(56px, 8vw, 112px); }
 main > section + section:not(.hero) { border-top: 1px solid var(--line); }
 
-/* Steps: an actual sequence, so the numbers are earned */
 
 .availability-intro { max-width: 40em; }
 .availability-intro p, .steps-intro { margin-top: 20px; color: var(--muted); max-width: 44em; }
@@ -172,7 +160,6 @@ section[id] { scroll-margin-top: 24px; }
 .steps .num { font-family: var(--display); font-size: 64px; line-height: 1; color: var(--amber-deep); margin-bottom: 8px; }
 .steps p { color: var(--muted); max-width: 30em; }
 
-/* Proof rows: text beside a real screenshot, alternating */
 
 .proof { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(32px, 6vw, 96px); align-items: center; }
 .proof.flip .proof-text { order: 2; }
@@ -186,13 +173,11 @@ section[id] { scroll-margin-top: 24px; }
 .duo-support { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
 .duo-support h2 { font-size: 30px; }
 .duo-device { position: relative; aspect-ratio: 3093 / 2247; }
-/* Apple's inner-open landscape bezel has a 2853 × 2007 screen at (120, 120). */
 .duo-device picture { position: absolute; inset: 5.34045% 3.87973%; overflow: hidden; border-radius: 5.9% / 8.4%; }
 .duo-device picture img { width: 100%; height: 100%; }
 .duo-bezel { position: relative; width: 100%; height: auto; pointer-events: none; }
 .duo-shot figcaption { margin-top: 12px; }
 
-/* Relay and fact grids */
 
 .relay { color: var(--ink); }
 .diagram { position: relative; max-width: 720px; margin: 40px auto 0; color: var(--ink); font: clamp(10px, 1.5vw, 12px) ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -204,7 +189,6 @@ section[id] { scroll-margin-top: 24px; }
 .facts dt { font-weight: 650; font-size: 18px; }
 .facts dd { margin: 6px 0 0; color: var(--muted); }
 
-/* Agent setup + copy button */
 
 .agent-setup-text { max-width: 40em; }
 .agent-setup-text p { margin-top: 16px; color: var(--muted); }
@@ -248,14 +232,12 @@ section[id] { scroll-margin-top: 24px; }
   .button:hover, .button:active, .copy:hover { transform: none; }
 }
 
-/* Warning */
 
 .warning { max-width: 46em; }
 .warning h2 { font-family: var(--text); font-size: 18px; font-weight: 700; letter-spacing: 0; color: var(--red); }
 .warning p { margin-top: 12px; }
 main > section.warning { padding: clamp(24px, 3vw, 32px); margin-block: 0 clamp(56px, 8vw, 112px); border: 0; border-radius: 20px; background: var(--red-bg); }
 
-/* Legal pages */
 
 .legal { width: min(720px, var(--page)); margin-inline: auto; padding-block: clamp(40px, 6vw, 72px) 80px; }
 .legal h1 { font-size: clamp(36px, 5vw, 52px); line-height: 1.05; margin: 0 0 10px; }
@@ -266,7 +248,6 @@ main > section.warning { padding: clamp(24px, 3vw, 32px); margin-block: 0 clamp(
 .legal .warning { margin-block: 28px; padding: 24px; border-radius: 20px; background: var(--red-bg); }
 .legal .warning h2 { margin-top: 0; font-size: 20px; }
 
-/* Footer */
 
 footer.site {
   width: var(--page);
@@ -284,7 +265,6 @@ footer nav { display: flex; gap: 4px; }
 footer nav a { padding: 4px 8px; text-decoration: none; }
 footer nav a:hover { color: var(--ink); }
 
-/* Responsive */
 
 @media (max-width: 820px) {
   .hero-inner { grid-template-columns: 1fr; align-items: start; }

@@ -7,80 +7,48 @@ import YorozuWire
 import AppKit
 #endif
 
-/// The v3 client (#425): one pairing with the OpenClaw plugin, the conversations cached on this device, and the link.
-/// User messages without `delivered` are the outbox: each new session sends them again, and the plugin drops a
-/// `messageId` it already took. History (#427): each new session asks for `conv_list` and fetches what is newer
-/// than the cache; opening a conversation fills its gap, scrolling up loads older pages. One request is in flight at a
-/// time, so pages reach the relay paced.
 @MainActor @Observable
 final class AppModel {
     private(set) var pairing: Pairing?
     private(set) var isDemo = false
     private(set) var state = V3Connection.State.offline
     private(set) var conversations: [String: Conversation] = [:]
-    /// Conversations whose agent is working: from `run_started` or `typing {active}` until `typing {active: false}`,
-    /// or 30 s without a repeat.
     private(set) var typing: Set<String> = []
-    /// Conversations waiting for an older `history` page: the chat's top spinner.
     private(set) var loadingOlder: Set<String> = []
-    /// A scanned or pasted code waiting for the user to compare the host fingerprint.
     var pendingPairing: QrPayload?
-    /// Why the last pairing attempt failed, for the pairing screen.
     var pairingError: String?
-    /// A tapped notification's conversation, for the list to open (#431).
     var requestedConversation: String?
-    /// The conversation on screen while the app is active: told to the plugin, which sends no push for it here (#431).
     private(set) var foreground: String?
-    /// The Crons tab (#432): the configured agent's jobs as the plugin last sent them, nil before the first answer.
     private(set) var crons: [V3CronJob]?
-    /// Why the plugin could not list them, from its last answer.
     private(set) var cronsError: String?
-    /// An automation waiting in a conversation's composer as an attachment ("Edit in Chat"); the chat takes it once.
     var automationDrafts: [String: V3CronJob] = [:]
-    /// Text typed and not sent, kept while a conversation's view is rebuilt: opening, closing or swapping a pane.
     @ObservationIgnored var textDrafts: [String: String] = [:]
-    /// Every conversation on screen, focused or not: two side by side on iPad (owner, 2026-10-21). No in-app notice
-    /// for a reply that is already in view.
     @ObservationIgnored private var onScreen: Set<String> = []
-    /// Settings: the paired devices as the plugin last listed them, nil before its first answer.
     private(set) var devices: [V3DeviceInfo]?
-    /// Why the plugin could not list or change them, from its last answer.
     private(set) var devicesError: String?
-    /// The host's answer to ``requestInvite()``: a one-time code for another device, or its error. Nil while asking.
     private(set) var invite: V3PairInvite?
-    /// The in-app notice for a reply in another conversation while the app is active; the newest replaces it.
     var notice: InAppNotice?
-    /// A scanned or opened Mac's code waiting for "Add … ?" (DeviceCodePairing.swift).
     var pendingDevice: DeviceCode?
-    /// Adding that Mac: asking the host, sent, or why not.
     var deviceAdding: DeviceAdding?
-    /// The code this unpaired Mac shows, renewed every 10 minutes while the pairing screen is up.
     var deviceCode: DeviceCode?
 
     @ObservationIgnored private var connection: (any ClientTransport)?
     @ObservationIgnored private var listener: Task<Void, Never>?
     @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private let cache = ConversationCache()
-    /// `conv_list` and `history` requests waiting for the one in flight.
     @ObservationIgnored private var requests: [V3Event] = []
     @ObservationIgnored private var inFlight: V3Event?
     @ObservationIgnored private var inFlightTimer: Task<Void, Never>?
-    /// Cursors the plugin sent for conversations not cached here yet; applied when one arrives. The plugin sends them
-    /// again on every session, so they need no disk.
     @ObservationIgnored private var unplacedReads: [String: V3ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
-    /// The plugin's `peer_info` on the live session: its capabilities and attachment limit.
     private(set) var hostInfo: V3PeerInfo?
-    /// Attachment transfers over the live session (#430).
     let transfers = Transfers()
     @ObservationIgnored private var outboxPumping = false
     @ObservationIgnored private var outboxAgain = false
     @ObservationIgnored private var outboxResend = false
     @ObservationIgnored private var visible: String?
     @ObservationIgnored private(set) var active = false
-    /// The `active` flag the plugin last heard, with ``foreground``.
     @ObservationIgnored private var activeSent = false
-    /// The APNs token, lowercase hex, for every connection (#431).
     @ObservationIgnored private var pushToken: String?
     @ObservationIgnored private var cronWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -96,7 +64,6 @@ final class AppModel {
     private static let logger = Logger(subsystem: "to.yumi.yorozu", category: "Demo")
 
     static let typingTimeout: Duration = .seconds(30)
-    /// No answer within this: the request is dropped and the next one goes (the session may have died meanwhile).
     static let requestTimeout: Duration = .seconds(30)
 
     init() {
@@ -121,14 +88,11 @@ final class AppModel {
         takeShares()
     }
 
-    /// Paired, or pairing for the first time.
     var paired: Bool { isDemo || pairing?.paired == true }
     var connecting: Bool { pairing != nil && !paired }
 
-    /// Newest first, archived ones left out.
     var list: [Conversation] { sorted.filter { $0.archived != true } }
 
-    /// The Archived view (#428), newest first.
     var archivedList: [Conversation] { sorted.filter { $0.archived == true } }
 
     private var sorted: [Conversation] {
@@ -137,10 +101,6 @@ final class AppModel {
 
     var fingerprint: String? { pairing?.pairing.fingerprint }
 
-    // MARK: Pairing
-
-    /// A QR, a pasted string or a tapped link. Returns why it is not a v3 pairing code; otherwise it waits in
-    /// ``pendingPairing`` for the fingerprint check.
     func submit(_ text: String) -> String? {
         if text.trimmingCharacters(in: .whitespacesAndNewlines) == "YOROZU-DEMO" {
             enterDemo()
@@ -163,7 +123,6 @@ final class AppModel {
         return nil
     }
 
-    /// The user compared the fingerprint: a fresh identity, kept in the Keychain before the first join.
     func confirm(_ payload: QrPayload) {
         guard !isDemo else { return }
         pendingPairing = nil
@@ -182,7 +141,6 @@ final class AppModel {
         connect()
     }
 
-    /// Forgets the host on this device: keys and cache. The plugin keeps the device until `openclaw yorozu devices remove`.
     func unpair() {
         if isDemo { return exitDemo() }
         disconnect()
@@ -205,7 +163,6 @@ final class AppModel {
         notice = nil
     }
 
-    /// Replace the visible session without touching the real host, pairing, cache or files.
     func enterDemo() {
         guard !isDemo else { return }
         liveSnapshot = LiveSnapshot(pairing: pairing, conversations: conversations, crons: crons, hostInfo: hostInfo)
@@ -230,7 +187,6 @@ final class AppModel {
         crons = liveSnapshot?.crons
         hostInfo = liveSnapshot?.hostInfo
         liveSnapshot = nil
-        // A --demo launch deliberately postponed all reads of the real app's data.
         if !liveStateLoaded {
             liveStateLoaded = true
             do {
@@ -278,8 +234,6 @@ final class AppModel {
         cronsError = nil
     }
 
-    // MARK: Link
-
     private func connect() {
         guard !isDemo, let pairing else { return }
         let local = V3PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
@@ -290,7 +244,6 @@ final class AppModel {
         }
         self.connection = connection
         #if os(iOS)
-        // The notification service extension opens push previews with this key, readable after the first unlock.
         if let hostKey = Data(base64URLEncoded: pairing.pairing.macPubkey),
            let key = try? PushPreview.key(myPriv: pairing.identity.sessionPrivateKey, theirPub: hostKey) {
             PreviewKeychain.save(key)
@@ -329,7 +282,6 @@ final class AppModel {
         state = .offline
     }
 
-    /// Back in the foreground: dial now. iOS may have left the socket half open.
     func resume() {
         setActive(true)
         takeShares()
@@ -337,13 +289,10 @@ final class AppModel {
         Task { await connection.reconnect() }
     }
 
-    /// A message of this device's that the relay has not taken yet (no ✓): leaving now would hold it until the next launch.
     var hasUnsent: Bool {
         !isDemo && conversations.values.contains { $0.items.contains { $0.kind == .user && ($0.status ?? .queued) < .sent } }
     }
 
-    /// Before the app goes to the background or quits (owner, 2026-10-26): waits, at most `limit`, until every message
-    /// is on the relay. True when nothing is left; false when the time ran out (the outbox sends it on the next launch).
     func waitUntilSent(limit: Duration) async -> Bool {
         let deadline = ContinuousClock.now + limit
         while hasUnsent {
@@ -353,8 +302,6 @@ final class AppModel {
         return true
     }
 
-    /// iOS suspends a background app: hang up, so the relay does not hold a frozen socket. The plugin hears first that
-    /// no conversation is on screen any more, or it would hold this device's pushes back (#431).
     func suspend() {
         setActive(false)
         guard !isDemo, let connection else { return }
@@ -365,15 +312,11 @@ final class AppModel {
         }
     }
 
-    // MARK: Push (#431)
-
-    /// The app is active or not; with the chat on screen it decides ``foreground``.
     func setActive(_ active: Bool) {
         self.active = active
         updateForeground()
     }
 
-    /// A chat view appeared (`convId`), or went (nil, `leaving` the one it showed).
     func setVisible(_ convId: String?, leaving: String? = nil) {
         if convId == nil, let leaving, visible != leaving { return }
         visible = convId
@@ -381,18 +324,14 @@ final class AppModel {
         if !isDemo, let convId { Notices.removeDelivered(convId: convId) }
     }
 
-    /// A chat view appeared or went, focused or not.
     func setOnScreen(_ convId: String, _ shown: Bool) {
         if shown { onScreen.insert(convId) } else { onScreen.remove(convId) }
     }
 
-    /// The user already sees `convId`'s replies: no notice for them.
     private func inView(_ convId: String) -> Bool {
         convId == foreground || (active && onScreen.contains(convId))
     }
 
-    /// The plugin hears the conversation on screen and whether the app is in front at all: no push while it is, the
-    /// in-app notice instead.
     private func updateForeground() {
         let next = active ? visible : nil
         guard next != foreground || active != activeSent else { return }
@@ -401,8 +340,6 @@ final class AppModel {
         transmit(.foreground(V3Foreground(convId: next, active: active)))
     }
 
-    /// Woken by a silent push (a conversation read elsewhere, or a reply): connect long enough for the plugin's read
-    /// cursors, which clear the notifications of what was read, then hang up again unless the app came to the front.
     func backgroundWake() async {
         guard !isDemo, paired, !active else { return }
         let generation = connectionGeneration
@@ -416,22 +353,18 @@ final class AppModel {
         await connection.stop()
     }
 
-    /// A reply in a conversation not on screen while the app is in front: one notice at the top, replacing another
-    /// conversation's. One already showing for this conversation stays, so a reply in several chunks taps once.
     private func showNotice(convId: String, title: String, text: String) {
         let line = text.split(whereSeparator: \.isNewline).lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
         guard let line, notice?.convId != convId else { return }
         notice = InAppNotice(convId: convId, title: title.isEmpty ? String(localized: "Yorozu replied.") : title, text: line)
     }
 
-    /// A push that arrived while the app is in front (sent before the plugin heard it was): shown as the notice.
     func showNotice(for convId: String, title: String, body: String) {
         guard !isDemo else { return }
         guard !inView(convId) else { return }
         showNotice(convId: convId, title: title, text: body)
     }
 
-    /// The APNs token: kept for every connection, told to the relay now.
     func registerPush(_ token: String) {
         pushToken = token
         guard !isDemo, let connection else { return }
@@ -442,20 +375,16 @@ final class AppModel {
         }
     }
 
-    /// The conversation a notification is about: the sealed preview's `convId` (copied by the notification service
-    /// extension, or set by the Mac's local notice), else the relay's `ref` matched against the cached conversations.
     func conversation(convId: String?, ref: String?) -> String? {
         if let convId, V3Event.isId(convId) { return convId }
         guard let ref else { return nil }
         return conversations.keys.first { YorozuCrypto.threadRef($0) == ref }
     }
 
-    /// Alerts, sounds and the badge, asked once paired; the system asks the user only the first time.
     func requestNotifications() {
         guard !isDemo, paired else { return }
         Task {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
-            // A badge set before the user allowed it did not show.
             guard !isDemo else { return }
             badge = nil
             updateBadge()
@@ -485,7 +414,6 @@ final class AppModel {
             takeShares()
             pumpOutbox(resend: true)
             if !isDemo { transfers.resumeDownloads() }
-            // A new session starts with nothing on screen, as far as the plugin knows.
             if active { transmit(.foreground(V3Foreground(convId: foreground, active: true))) }
             startSync()
             for conversation in conversations.values where conversation.readPending == true {
@@ -510,10 +438,6 @@ final class AppModel {
         try? pairing.save()
     }
 
-    // MARK: Messages
-
-    /// A new message in `convId`; a conversation that does not exist yet starts with it ("+" makes the id).
-    /// `attachments` are already in `AttachmentFiles` (`AttachmentStaging`); they upload before the message goes.
     func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String, messageId: String = V3Event.newId()) {
         guard !isDemo || attachments.isEmpty else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -524,14 +448,9 @@ final class AppModel {
         pumpOutbox(resend: false)
     }
 
-    /// The host takes attachments: it said so, or has not said yet (an old plugin's `peer_info` lacks the capability).
     var attachmentsAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(V3Attachment.capability) } ?? true) }
-    /// The host's attachment limit (`mediaMaxMb`).
     var mediaMaxBytes: Int { hostInfo?.mediaMaxBytes ?? V3Attachment.defaultMaxBytes }
 
-    /// Sends the outbox in order on the live session: each message's files upload first, then the message. A new
-    /// session (`resend`) also sends again what went out without `delivered`; otherwise only what has not gone yet.
-    /// One pass at a time; a pass cut by a lost session ends, and the next session's pass starts its upload over.
     private func pumpOutbox(resend: Bool) {
         if resend { outboxResend = true }
         outboxAgain = true
@@ -549,7 +468,6 @@ final class AppModel {
         }
     }
 
-    /// False when the session went mid-way.
     private func sendOutbox(all: Bool) async -> Bool {
         let generation = connectionGeneration
         let pending = conversations.values.flatMap { conversation in
@@ -567,7 +485,6 @@ final class AppModel {
                 case .interrupted: return false
                 }
             }
-            // As stored now: uploads changed it.
             guard let item = conversations[convId]?.items.first(where: { $0.id == queued.id }) else { continue }
             let files = (item.attachments ?? []).filter { $0.uploaded == true && $0.failure == nil }.map(\.wire)
             guard !item.text.isEmpty || !files.isEmpty else { continue }
@@ -585,7 +502,6 @@ final class AppModel {
         store(conversation)
     }
 
-    /// Asks the plugin for a reply's file (an image on screen, a file tapped); no-op once it is here.
     func fetch(_ attachment: ChatAttachment) {
         guard !isDemo else { return }
         transfers.fetch(attachment)
@@ -597,7 +513,6 @@ final class AppModel {
             mark(ref.messageId, .delivered, in: ref.convId)
             ShareInbox.finish(messageId: ref.messageId)
         case .runStarted(let ref):
-            // Another device's message: only the host's history has its text.
             if conversations[ref.convId]?.items.contains(where: { $0.id == ref.messageId }) != true {
                 enqueue(.historyRequest(V3HistoryRequest(convId: ref.convId, after: conversations[ref.convId]?.newestSeq)))
             }
@@ -610,7 +525,6 @@ final class AppModel {
             if !inView(reply.convId), conversations[reply.convId]?.items.contains(where: { $0.id == reply.messageId }) != true {
                 let title = conversations[reply.convId]?.displayTitle ?? ""
                 let text = reply.text.isEmpty ? (reply.attachments?.first.map { "📎 \($0.name)" } ?? "") : reply.text
-                // In front: the in-app notice. Behind, on the Mac (no relay push reaches it): a local notice.
                 if active {
                     showNotice(convId: reply.convId, title: title, text: text)
                 } else {
@@ -631,8 +545,6 @@ final class AppModel {
             transfers.receive(event)
         case .error(let error):
             if error.code == "internal", inFlight != nil { settle() }
-            // Only a message's failure shows in its conversation: a list, history or patch the host could not answer names
-            // none, and as an item it marked every conversation it touched as failed.
             guard let convId = error.convId, V3Event.isId(convId), let messageId = error.messageId else { return }
             let id = "error:\(messageId)"
             let text = error.code == "run_failed"
@@ -643,9 +555,6 @@ final class AppModel {
         case .convList(let list):
             guard let summaries = list.conversations else { return }
             settle()
-            // Deleted on the host while this device was away: a conversation the host does not list although this
-            // device synced it before (it has a `rev`), or one it holds no message of. A new conversation whose first
-            // message the host may not have recorded yet has neither and stays. Not when the list may be cut at 2000.
             let listed = Set(summaries.map(\.convId))
             if summaries.count < 2000 {
                 for gone in conversations.values where !listed.contains(gone.id) && (gone.rev != nil || gone.items.isEmpty)
@@ -663,8 +572,6 @@ final class AppModel {
                 conversation.title = summary.title
                 conversation.archived = summary.archived == true ? true : nil
                 conversation.pinnedAt = summary.pinnedAt
-                // The host's last message time orders the list (owner, 2026-10-24); a message of this device's still on its
-                // way is newer than the host knows.
                 let sending = conversation.items.filter { $0.kind == .user && ($0.status ?? .queued) < .delivered }.map(\.ts).max()
                 let time = max(summary.updatedAt, sending ?? .min)
                 if isNew || changed || time != conversation.updatedAt {
@@ -677,21 +584,17 @@ final class AppModel {
             settle()
             history(page)
         case .cronList(let list):
-            // A request has neither; only the plugin's answer does.
             guard list.jobs != nil || list.error != nil else { return }
-            // A failed read keeps the last list on screen, under the error.
             if let jobs = list.jobs, list.error == nil { crons = jobs }
             cronsError = list.error
             finishCronWait()
         case .convUpdate(let update):
             apply(update)
         case .deviceList(let list):
-            // A request has neither; only the plugin's answer does.
             guard list.devices != nil || list.error != nil else { return }
             if let devices = list.devices { self.devices = devices }
             devicesError = list.error
         case .pairInvite(let answer):
-            // A request has none of these; only the plugin's answer does.
             guard answer.link != nil || answer.error != nil else { return }
             invite = answer
             if case .asking(let code) = deviceAdding { deliver(answer, to: code) }
@@ -700,15 +603,11 @@ final class AppModel {
         }
     }
 
-    // MARK: History
-
-    /// Opening a conversation: fetch what is newer than the cache, first.
     func open(_ convId: String) {
         guard V3Event.isId(convId), let conversation = conversations[convId] else { return }
         enqueue(catchUp(conversation), first: true)
     }
 
-    /// Scrolled to the top: the page before the oldest cached item.
     func loadOlder(_ convId: String) {
         guard let conversation = conversations[convId], conversation.complete != true, !loadingOlder.contains(convId) else { return }
         guard let oldest = conversation.oldestSeq else { return enqueue(catchUp(conversation), first: true) }
@@ -720,7 +619,6 @@ final class AppModel {
         .historyRequest(V3HistoryRequest(convId: conversation.id, after: conversation.newestSeq))
     }
 
-    /// A new session: whatever was queued or in flight on the old one is asked again from the top.
     private func startSync() {
         requests = [.convList(V3ConvList())]
         loadingOlder = []
@@ -734,7 +632,6 @@ final class AppModel {
         pump()
     }
 
-    /// The answer (or the timeout) for the request in flight: the next one may go.
     private func settle() {
         inFlight = nil
         inFlightTimer?.cancel()
@@ -753,7 +650,6 @@ final class AppModel {
             self.settle()
         }
         Task {
-            // Not on the socket: the next session starts the sync again.
             let sent = await connection.send(request)
             if !sent, inFlight == request {
                 inFlight = nil
@@ -763,9 +659,6 @@ final class AppModel {
         }
     }
 
-    // MARK: Devices (Settings)
-
-    /// The host advertises its device list; the demo supplies a fictional read-only current device.
     var devicesAvailable: Bool { isDemo || hostInfo?.capabilities.contains(V3Devices.capability) == true }
 
     func refreshDevices() {
@@ -773,29 +666,24 @@ final class AppModel {
         transmit(.deviceList(V3DeviceList()))
     }
 
-    /// The host makes pairing codes for a device added from this one.
     var inviteAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(V3Invite.capability) == true }
 
-    /// Asks the host for a one-time code for another device (owner, 2026-10-17); it lands in ``invite``.
     func requestInvite() {
         guard !isDemo else { return }
         invite = nil
         transmit(.pairInvite(V3PairInvite()))
     }
 
-    /// Push for one device on or off, on the host.
     func setPush(_ on: Bool, for id: String) {
         guard !isDemo else { return }
         transmit(.devicePatch(V3DevicePatch(id: id, push: on)))
     }
 
-    /// Takes another device off the host: its pairing ends there, and the relay forgets it.
     func removeDevice(_ id: String) {
         guard !isDemo else { return }
         transmit(.devicePatch(V3DevicePatch(id: id, removed: true)))
     }
 
-    /// Unpair from Settings: the host forgets this device too, when it can, then this device forgets the host.
     func unpairEverywhere() async {
         if isDemo { return exitDemo() }
         if let me = devices?.first(where: \.current), let connection {
@@ -805,9 +693,6 @@ final class AppModel {
         unpair()
     }
 
-    // MARK: Crons
-
-    /// Asks the plugin for the jobs and returns once it answers, or after 10 s; at once while there is no session.
     func refreshCrons() async {
         if isDemo {
             crons = DemoData.crons
@@ -833,12 +718,10 @@ final class AppModel {
         if let low = seqs.min(), page.after == nil { conversation.oldestSeq = min(conversation.oldestSeq ?? low, low) }
         if let high = seqs.max(), page.before == nil { conversation.newestSeq = max(conversation.newestSeq ?? high, high) }
         if page.before != nil || page.after == nil {
-            // A newest page says it afresh: one fetched before the session existed was empty and "complete".
             conversation.complete = !page.more
             loadingOlder.remove(page.convId)
         }
         if page.before == nil {
-            // A forward page with more behind it: keep going, ahead of the other conversations.
             if page.after != nil && page.more {
                 enqueue(.historyRequest(V3HistoryRequest(convId: page.convId, after: conversation.newestSeq)), first: true)
             } else {
@@ -854,7 +737,6 @@ final class AppModel {
         cronWaiters = []
     }
 
-    /// A message's mark only moves forward. `convId` nil: look it up (the relay's `accepted` names no conversation).
     private func mark(_ messageId: String, _ status: SendStatus, in convId: String? = nil) {
         guard let convId = convId ?? conversations.first(where: { $0.value.items.contains { $0.id == messageId } })?.key,
               var conversation = conversations[convId],
@@ -864,7 +746,6 @@ final class AppModel {
         store(conversation)
     }
 
-    /// Dedupes by id: a reply seen twice (a resend, two sessions) is one bubble.
     private func append(_ item: ChatItem, to convId: String) {
         guard V3Event.isId(convId) else { return }
         let now = Self.now
@@ -876,7 +757,6 @@ final class AppModel {
         store(conversation)
     }
 
-    /// One collapsed row per user message's run, placed when its first call arrives; the last status of a call wins.
     private func tool(_ tool: V3Tool) {
         let id = "tools:\(tool.messageId)"
         var conversation = conversations[tool.convId]
@@ -903,10 +783,6 @@ final class AppModel {
         publishShareDirectory()
     }
 
-    // MARK: Share extension (#430)
-
-    /// What the share extension left in the App Group, oldest first: each share becomes a message in the conversation
-    /// it names (a new one when it names none or one this device no longer has), files uploading through the outbox.
     func takeShares() {
         guard !isDemo, paired else { return }
         for (share, folder) in ShareInbox.pending() {
@@ -917,7 +793,6 @@ final class AppModel {
                 else { pumpOutbox(resend: state == .ready) }
                 continue
             }
-            // An unchosen conversation also needs a stable identity when the app retries this share.
             let convId = share.convId.flatMap { V3Event.isId($0) && conversations[$0] != nil ? $0 : nil } ?? messageId
             var files: [ChatAttachment] = []
             if let name = share.fileName {
@@ -936,7 +811,6 @@ final class AppModel {
         }
     }
 
-    /// The extension's picker: the newest conversations, and the host's limit.
     private func publishShareDirectory() {
         guard !isDemo, paired else { return }
         let rows = list.prefix(30).map { conversation in
@@ -946,10 +820,6 @@ final class AppModel {
         ShareInbox.publish(.init(conversations: Array(rows), maxBytes: mediaMaxBytes))
     }
 
-    // MARK: Titles, archive, delete (#428)
-
-    /// Rename: `title` empty (or only spaces) goes back to the generated title. Shown here at once; every device gets
-    /// the host's `conv_update`. Nothing happens without a session: the menu items are off then.
     func rename(_ convId: String, to title: String) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         patch(V3ConvPatch(convId: convId, title: title)) { $0.title = title.isEmpty ? $0.title : title }
@@ -962,17 +832,14 @@ final class AppModel {
         }
     }
 
-    /// Pin on the host, so every device lists it under Pinned (owner, 2026-10-23); an archived one cannot be pinned.
     func setPinned(_ convId: String, _ pinned: Bool) {
         patch(V3ConvPatch(convId: convId, pinned: pinned)) { $0.pinnedAt = pinned ? $0.pinnedAt ?? Self.now : nil }
     }
 
-    /// Delete on the host (archive, then delete with its transcript) and on every device.
     func delete(_ convId: String) {
         patch(V3ConvPatch(convId: convId, deleted: true)) { _ in }
     }
 
-    /// A rename, archive, pin or delete needs a live session; the host answers every device.
     var canPatch: Bool { state == .ready }
 
     private func patch(_ patch: V3ConvPatch, local: @escaping (inout Conversation) -> Void) {
@@ -987,7 +854,6 @@ final class AppModel {
         }
     }
 
-    /// The host's word on a conversation: its title and archive state now, or that it is gone.
     private func apply(_ update: V3ConvUpdate) {
         if update.deleted == true { return forget(update.convId) }
         var conversation = conversations[update.convId]
@@ -999,20 +865,16 @@ final class AppModel {
         store(conversation)
     }
 
-    /// The conversation deleted last (on any device): a view showing it closes it.
     private(set) var deleted: String?
 
     private func forget(_ convId: String) {
         guard let gone = conversations.removeValue(forKey: convId) else { return }
         deleted = convId
         if !isDemo { cache.remove(convId) }
-        // A host deletion must not erase a share still waiting for acknowledgement. The App Group copy remains the
-        // recovery source; move its queued bubble and staged file into a new conversation before removing old files.
         let waiting = Set(ShareInbox.pending().map { $0.folder.lastPathComponent.lowercased() })
         let retained = gone.items.filter { $0.kind == .user && ($0.status ?? .queued) < .delivered && waiting.contains($0.id) }
         for item in retained { append(item, to: V3Event.newId()) }
         if !retained.isEmpty { pumpOutbox(resend: true) }
-        // Files belonging only to the deleted conversation go with it (#430).
         if !isDemo {
             for file in gone.items.filter({ item in !retained.contains(where: { $0.id == item.id }) })
                 .flatMap({ $0.attachments ?? [] }) { AttachmentFiles.remove(file) }
@@ -1023,10 +885,6 @@ final class AppModel {
         publishShareDirectory()
     }
 
-    // MARK: Read marks (#429)
-
-    /// The conversation is on screen. `explicit` (it was opened, or Mark as Read) also clears Mark as Unread; an
-    /// automatic read (a reply arrived while it is open) only moves the cursor up to the newest reply.
     func markRead(_ convId: String, explicit: Bool) {
         guard let conversation = conversations[convId], let latest = conversation.latestReply else { return }
         let held = conversation.read
@@ -1037,7 +895,6 @@ final class AppModel {
             ts: ahead ? latest.ts : held!.ts, unread: unread), in: conversation)
     }
 
-    /// Mark as Unread: the cursor stays where it is (it never moves back), the flag holds until the next read.
     func markUnread(_ convId: String) {
         guard let conversation = conversations[convId], var cursor = conversation.read, !cursor.unread else { return }
         cursor.unread = true
@@ -1053,10 +910,7 @@ final class AppModel {
         if !isDemo, !cursor.unread { Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
     }
 
-    /// The plugin's merged cursor. While this device's own is unanswered, the cursor takes the further of the two and
-    /// the flag stays this device's, until the plugin's answer to it (at least as far, same flag) arrives.
     private func receive(_ cursor: V3ReadCursor) {
-        // Read on any device: its alerts here go, up to the reply it was read at.
         if !isDemo, !cursor.unread { Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
         guard var conversation = conversations[cursor.convId] else {
             unplacedReads[cursor.convId] = cursor
@@ -1085,7 +939,6 @@ final class AppModel {
         }
     }
 
-    /// Every unread reply, on the app icon (iOS: shown once notifications are allowed, #431) or the Dock tile.
     private func updateBadge() {
         guard !isDemo else { return }
         let total = conversations.values.reduce(0) { $0 + $1.unreadCount }
@@ -1117,7 +970,6 @@ final class AppModel {
 }
 
 extension V3Connection.State {
-    /// The list's subtitle.
     var label: String {
         switch self {
         case .ready: String(localized: "Connected")
@@ -1131,7 +983,6 @@ extension V3Connection.State {
     }
 }
 
-/// The in-app notice (Settings, #415): a reply in a conversation not on screen while the app is in front.
 struct InAppNotice: Equatable, Identifiable {
     let id = UUID()
     let convId: String

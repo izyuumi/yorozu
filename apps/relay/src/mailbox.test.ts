@@ -5,10 +5,7 @@ import { expect, test } from "vitest";
 import { Mailbox, MAILBOX_TTL_MS, MAX_LETTER_BYTES } from "./mailbox.js";
 import type { Env } from "./worker.js";
 
-/** The mailbox a Mac's code names, exercised as the Mac (a WebSocket) and the paired device (a POST) use it. */
-
 let counter = 0;
-/** A fresh 22-character id per test, so no test sees another's letter. */
 const mailboxId = () => `mailbox${String(++counter).padStart(15, "0")}`;
 const url = (id: string) => `https://relay.test/mailbox/${id}`;
 const post = (id: string, body: string) => SELF.fetch(url(id), { method: "POST", body });

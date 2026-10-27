@@ -1,7 +1,9 @@
 # UI layout
 
 Let the platform decide sizes. Take widths, heights and spacing from the container or the
-system; a number chosen on one device is wrong on the next.
+system; a number chosen on one device is wrong on the next. The client in `apps/ios` is one
+SwiftUI app for iPhone, iPad and Mac (native macOS, not Catalyst), so every layout runs on
+all three.
 
 ## Rule
 
@@ -21,51 +23,51 @@ draws. They break on a narrower device, a larger type size, a split view, or the
 ## Exception
 
 A custom component owns its own geometry. Fixed sizes belong there when they are the
-design: a 20-point agent mark, a 5-point presence dot, spacing inside a card. Keep each as
-one named constant inside the component, and still let the component's outer size come
-from its container.
+design: spacing inside a card, a corner radius, a send button's circle. Keep each as one
+named constant, and still let the component's outer size come from its container.
 
 ## Check the proposal exists
 
-Native sizing only works when the container actually proposes a size. Some do not: from
-iOS 26 the navigation bar lays a custom `.principal` view out at its ideal width and never
-tells it how much room there is. Before building on a proposal, confirm it on the target
-device: `onGeometryChange` and a `print` of the frame take a minute and settle it. Where
-the platform withholds the width, use the platform view that has it (the system title).
+Native sizing only works when the container actually proposes a size. Some do not: a
+Mac window proposes no size, and a custom `.principal` toolbar view is laid
+out at its ideal width rather than the room left in the bar. Before building on a proposal,
+confirm it on each target device: `onGeometryChange` and a `print` of the frame settle it.
+Where the platform withholds the width, use the platform view that has it (the system title).
+
+## Where the constants live
+
+All paths are under `apps/ios/Sources/YorozuIOS/`.
+
+- `LayoutMetrics` in `Metrics.swift` is the shared scale: spacing (`hair` 2 … `section` 24),
+  the caps `readingWidth` (700) and `composerWidth` (640), which only an iPad or a Mac window
+  reaches, and the corner radii (10 on the Mac, 14 and 16 on iPhone and iPad).
+  Mac only: the sidebar column widths and the window's least size (`windowMinWidth`,
+  `windowMinHeight`), set in `YorozuApp.swift` because a window proposes no size.
+- `controlTarget` in `Metrics.swift` is the one size that differs by input: 44 points on
+  iPhone and iPad, 28 on the Mac. Chat controls take their size from it, not from literals.
+- `MarkdownMetrics` in `ChatMarkdown.swift` holds the message renderer's spacing, insets and
+  radius; its width always comes from the row. A code block scrolls sideways, a table's cells
+  wrap to the width given, and an image scales down to it (`ViewThatFits`).
 
 ## Examples
 
-- The iOS chat title is the system title, `.navigationTitle("Yorozu")` in
-  `apps/ios/Sources/YorozuIOS/ChatScreen.swift`, which the bar truncates on every device.
-  v1's chat on `main` used a custom `.principal` title instead; on iOS 26 the bar gave it
-  565 points on a 402-point screen and it ran under the toolbar buttons, and a
-  `frame(maxWidth: 160)` cap hid that on one phone only.
-- The Mac's Pair a Client Device sheet draws its QR code, the gap beside it and its text column from
-  three constants, `qrSide`, `gap` and `textWidth` in
-  `Sources/ProjectXApp/Relay/PairPhoneView.swift`, which also size the placeholder: a custom
-  component owning its geometry. A sheet proposes no width, so without `textWidth` the long
-  pairing code would lay out on one line.
-- The Mac's chat popover is 420×744 points from one constant, `MenuBarHost.popoverSize` in
-  `Sources/ProjectXApp/MenuBarHost.swift`: nothing proposes a size to an `NSPopover`, so the
-  host that owns it sets it. Everything inside sizes from it; the composer grows with its text
-  up to a third of the popover's height, measured with `onGeometryChange` in
-  `Sources/ProjectXApp/Timeline.swift`, then scrolls, rather than taking a fixed `minHeight`.
-  The user bubble takes four fifths of the row through `containerRelativeFrame(.horizontal)`.
-  The Settings window's width is likewise one constant in `SettingsView`; its height comes from the
-  selected tab: `settingsForm()` in `Sources/ProjectXApp/SettingsView.swift` gives each tab's form its ideal height
-  (`fixedSize(horizontal: false, vertical: true)`, since a window proposes no height), so the window fits the tab and
-  no tab scrolls (owner decision). A tab too tall for a 1080-point screen is split, as Harness was from Advanced,
-  not given a scroll view. The setup
-  window's width and least height are `SetupWindow.Metrics` in
-  `Sources/ProjectXApp/SetupWindow.swift`: nothing proposes a size to a window, and the least
-  height keeps the step list from collapsing while the report loads. The chat window's least size and column widths are
-  `ChatWindow.Metrics` in `Sources/ProjectXApp/Activities.swift`, the sizes a window and its split view own.
-- The menu-bar icon is a custom component: `Logo.side` (18 points) and the notch position in
-  `Sources/ProjectXApp/MenuBarHost.swift` draw the template image, and `AttentionDot.radius`
-  sizes the dot that sits in the notch. The button centers the image; nothing else is fixed.
-- A chat row's dot is a custom component's own geometry: `ChatRowLabel.Metrics.dot` in
-  `apps/ios/Sources/YorozuIOS/Threads.swift` and `MacChatRow.Metrics.dot` in `Sources/ProjectXApp/Activities.swift`; the
-  row itself is a plain list row sized by the list.
-- The shared block renderer keeps its spacing, insets and radii in one `MarkdownMetrics`
-  enum in `Sources/ProjectXApp/ChatMarkdown.swift`; its width always comes from the row. A
-  wide code block or table scrolls sideways instead of setting a width.
+- Titles are system titles (`.navigationTitle`), never a custom `.principal` view: the bar
+  truncates them on every device.
+- iPhone vs. iPad: `HomeView` in `Crons.swift` picks tabs for a compact horizontal size
+  class (an iPhone in portrait, an iPad in a narrow multitasking width) and a split view for
+  a regular one; the Mac always uses the split view. Nothing branches on the device model.
+- iPhone and iPad split view only (`#if os(iOS)`): when two conversations open side by side,
+  `ChatPairView` in `Pair.swift` measures its width with `onGeometryChange` and hides the
+  sidebar when each pane would get less than `comfortablePane` (360 points).
+- The pairing QR code (`QRCode` in `AddDeviceSheet.swift`) sizes itself with
+  `containerRelativeFrame`: 70% of the width it is given, up to half of `readingWidth`.
+- The composer grows with its text up to five lines (`ComposerTextView.maxLines`), then
+  scrolls, rather than taking a fixed height.
+- A user bubble leaves `2 × section` of space at the far edge (`Spacer(minLength:)` in
+  `Chat.swift`) instead of a fixed width.
+
+## Owner decision pending review
+
+Kept verbatim from the earlier version of this file (it describes the removed secretary Mac host's Settings window) until the owner reviews it:
+
+> The Settings window's width is likewise one constant in `SettingsView`; its height comes from the selected tab: `settingsForm()` in `Sources/ProjectXApp/SettingsView.swift` gives each tab's form its ideal height (`fixedSize(horizontal: false, vertical: true)`, since a window proposes no height), so the window fits the tab and no tab scrolls (owner decision). A tab too tall for a 1080-point screen is split, as Harness was from Advanced, not given a scroll view.

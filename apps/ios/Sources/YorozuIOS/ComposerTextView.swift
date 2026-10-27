@@ -4,15 +4,9 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 
-// The iOS half of v1 packages/shared-swift ComposerTextView.swift, without question
-// options, prompt history and Send now.
-
 #if os(macOS)
 import AppKit
 
-/// The Mac's message field, an `NSTextView` that grows to five lines, then scrolls inside. Return is a new line and
-/// ⌘Return sends (owner, 2026-10-09); never while an input method is composing, whose Return confirms the
-/// conversion. Files dropped or pasted onto it attach (`onFiles`) instead of inserting their paths.
 struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
@@ -63,14 +57,10 @@ struct ComposerTextView: NSViewRepresentable {
         }
     }
 
-    /// Measures a copy of the text, never the field's own layout: resizing the live text container here left its layout
-    /// to be finished during drawing, which grew the text view inside the window's display pass, and AppKit stopped the
-    /// app ("crashes when I type", 2026-10-26).
     func sizeThatFits(_ proposal: ProposedViewSize, nsView scroll: NSScrollView, context: Context) -> CGSize? {
         guard let width = proposal.width, width > 0, let view = scroll.documentView as? NSTextView, let font = view.font,
               let layout = view.layoutManager else { return nil }
         let line = layout.defaultLineHeight(for: font)
-        // A trailing new line takes a line of its own, which `boundingRect` does not count.
         let measured = view.string.hasSuffix("\n") ? view.string + " " : view.string
         let used = NSAttributedString(string: measured, attributes: [.font: font])
             .boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading])
@@ -97,11 +87,9 @@ final class ComposerNSTextView: NSTextView {
     var takeImages: ([Data]) -> Bool = { _ in false }
 
     override func keyDown(with event: NSEvent) {
-        // Return (36) or the keypad's Enter (76), outside an input method's composition.
         guard event.keyCode == 36 || event.keyCode == 76, !hasMarkedText() else { return super.keyDown(with: event) }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
         if modifiers == .command { return submit() }
-        // Plain Return, and Shift- or Option-Return: a new line.
         insertNewline(nil)
     }
 
@@ -134,20 +122,15 @@ final class ComposerNSTextView: NSTextView {
     }
 }
 #else
-/// The phone's message field: a `UITextView` that grows to five lines, then scrolls inside, keeping the caret in view. The
-/// software keyboard's Return is a new line; a hardware keyboard has smart Enter (see
-/// `ComposerUITextView.pressesBegan`).
 struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     let placeholder: String
     let onSubmit: () -> Void
-    /// Files pasted into the field; on iPhone and iPad a drop also lands on the conversation.
     var onFiles: ([URL]) -> Bool = { _ in false }
     var onImages: ([Data]) -> Bool = { _ in false }
     var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
 
     private static let maxLines: CGFloat = 5
-    /// UTF-16 units past which the text cannot fit in `maxLines`.
     private static let measuredLimit = 1_000
 
     func makeUIView(context: Context) -> ComposerUITextView {
@@ -158,7 +141,6 @@ struct ComposerTextView: UIViewRepresentable {
         view.backgroundColor = .clear
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
-        // Always on: SwiftUI asks `sizeThatFits` about many widths, so toggling it there left a long draft unscrollable.
         view.isScrollEnabled = true
         view.alwaysBounceVertical = false
         view.accessibilityLabel = String(localized: "Message")
@@ -193,11 +175,8 @@ struct ComposerTextView: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: ComposerUITextView, context: Context) -> CGSize? {
         guard let width = proposal.width, let font = uiView.font else { return nil }
         let maxHeight = ceil(font.lineHeight * Self.maxLines)
-        // Far more text than five lines hold, even on an iPad at the smallest size: at the cap without measuring. Laying
-        // out a large paste in full, on each of SwiftUI's many proposals, took seconds.
         if (uiView.text as NSString).length > Self.measuredLimit { return CGSize(width: width, height: maxHeight) }
         let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        // Grows with the text up to five lines, then scrolls inside, as the TextField did.
         return CGSize(width: width, height: min(max(fit.height, ceil(font.lineHeight)), maxHeight))
     }
 
@@ -209,7 +188,6 @@ struct ComposerTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             text.wrappedValue = textView.text
-            // After SwiftUI has resized the field for the new text.
             DispatchQueue.main.async { textView.scrollRangeToVisible(textView.selectedRange) }
         }
     }
@@ -255,8 +233,6 @@ final class ComposerUITextView: UITextView {
         if !loading { super.paste(sender) }
     }
 
-    /// A file in the pasteboard item; nil for text. Styled text from Safari or Notes also carries a web archive or RTFD,
-    /// which is not a file: an item that has any text is pasted as plain text.
     private static func fileType(in provider: NSItemProvider) -> UTType? {
         let types = provider.registeredTypeIdentifiers.compactMap(UTType.init)
         guard !types.contains(where: { $0.conforms(to: .text) }) else { return nil }
@@ -265,10 +241,6 @@ final class ComposerUITextView: UITextView {
         }
     }
 
-    /// Smart Enter on a hardware keyboard: Return sends while the draft is one line; once it has a
-    /// line break (Shift-Return or a paste), Return is a new line and ⌘Return sends. Shift-Return is
-    /// always a new line. Not while an input method is composing (`markedTextRange`): that Return
-    /// confirms the conversion and must reach the field.
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if let key = presses.first?.key, key.keyCode == .keyboardReturnOrEnter, markedTextRange == nil {
             let flags = key.modifierFlags

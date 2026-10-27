@@ -1,14 +1,3 @@
-/**
- * Attachments (#430; docs/ios-relay-contract.md, "Attachments"). Both ways, at most `mediaMaxBytes` each
- * (`channels.yorozu.mediaMaxMb`, default 8), in `CHUNK_BYTES` pieces that each fit one sealed box.
- *
- * - In: a device sends `upload` chunks, two in flight, each answered `upload_ack` to that device alone. The whole
- *   file goes into OpenClaw's media store (`media/inbound`) and its `attachmentId` into the keyed state store
- *   (namespace `attachments`); the device then sends its `message` naming it, and the turn gets it as media facts.
- * - Out: a reply's media (`MEDIA:` lines, the message tool, cron `sendMedia`) is staged into `media/outbound` and
- *   announced in the `reply`'s `attachments`. Nothing more goes out until a device asks: every host frame reaches
- *   every device, so each chunk is sent only on that device's `download`, sealed for it alone.
- */
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
@@ -24,23 +13,16 @@ import { yorozuRuntime } from "./runtime.js";
 
 const MB = 1024 * 1024;
 export const DEFAULT_MEDIA_MAX_BYTES = 8 * MB;
-/** Partial uploads held at once, and how long one may stall before it is dropped (the device starts it over). */
 const PARTIALS_MAX = 8;
 const PARTIAL_MS = 30 * 60 * 1000;
 
-/**
- * What the keyed store holds per attachment: a file this plugin wrote into the media store. `reply` is the id of the
- * first live `reply` an outbound file went with (the transcript's, `liveReplyIds`), so history can put it back.
- */
 type Stored = Attachment & { path: string; reply?: string };
 
-/** Stored attachments by path (uploads) and by reply (outbound), for history, which reads the transcript in sync. */
 const byPath = new Map<string, Attachment>();
 const byReply = new Map<string, Attachment[]>();
 const index = (stored: Stored) => {
   const { path: file, reply, ...attachment } = stored;
   byPath.set(file, attachment);
-  // The turn sees a staged copy; the transcript names the stored file by its media URL.
   byPath.set(`media://inbound/${path.basename(file)}`, attachment);
   if (reply) byReply.set(reply, [...(byReply.get(reply) ?? []).filter((a) => a.id !== attachment.id), attachment]);
 };
@@ -49,14 +31,11 @@ const register = async (stored: Stored) => {
   index(stored);
 };
 
-/** Fills the path index from the store, once per account start. */
 export async function loadAttachmentIndex(): Promise<void> {
   for (const entry of await store().entries()) index(entry.value);
 }
 
-/** The upload stored at `path`, or with the media URL `path` (`media://inbound/<id>`). */
 export const attachmentAt = (path: string): Attachment | undefined => byPath.get(path.trim());
-/** The files that went with the live reply `replyId`, in order. */
 export const attachmentsOf = (replyId: string): Attachment[] => byReply.get(replyId) ?? [];
 
 const store = () =>
@@ -66,7 +45,6 @@ const store = () =>
     overflowPolicy: "evict-oldest",
   });
 
-/** `channels.yorozu.mediaMaxMb`, then `agents.defaults.mediaMaxMb`, then 8 MB. */
 export function mediaMaxBytes(cfg: OpenClawConfig, accountId?: string | null): number {
   return (
     resolveChannelMediaMaxBytes({
@@ -86,7 +64,6 @@ const megabytes = (bytes: number) => `${Math.round((bytes / MB) * 10) / 10} MB`;
 type Partial = { meta: Attachment; chunks: (Buffer | undefined)[]; have: number; at: number };
 const partials = new Map<string, Partial>();
 
-/** One `upload` chunk; returns what goes back to that device. Never throws. */
 export async function receiveUpload(upload: Upload, maxBytes: number): Promise<Event[]> {
   const { attachmentId, index } = upload;
   const fail = (code: string, message: string): Event[] => {
@@ -134,13 +111,11 @@ export async function receiveUpload(upload: Upload, maxBytes: number): Promise<E
   return [{ kind: "upload_ack", data: { attachmentId, index, done: true } }];
 }
 
-/** A `message`'s attachments that this plugin holds, for the turn's media facts; unknown ids are skipped. */
 export async function uploadedFiles(attachments: Attachment[] | undefined): Promise<Stored[]> {
   const found = await Promise.all((attachments ?? []).map((a) => store().lookup(a.id)));
   return found.filter((s): s is Stored => !!s);
 }
 
-/** One `download`: the chunk, or `not_found` for an id this plugin never announced or no longer has. */
 export async function serveDownload(request: Download): Promise<Event> {
   const { attachmentId, index } = request;
   const notFound: Event = {
@@ -171,10 +146,6 @@ export type MediaAccess = {
   readFile?: (filePath: string) => Promise<Buffer>;
 };
 
-/**
- * Stages each of a reply's media URLs (a local path in an allowed root, or http) into the media store and
- * registers it for downloads. Returns the attachments, and a line per one that could not be attached.
- */
 export async function stageOutbound(
   urls: readonly string[],
   maxBytes: number,
@@ -184,7 +155,6 @@ export async function stageOutbound(
   const attachments: Attachment[] = [];
   const failures: string[] = [];
   for (const url of urls) {
-    // The media store names a copy `<name>---<uuid>.<ext>`; the device shows `<name>.<ext>`.
     const name = extractOriginalFilename(url.split(/[?#]/)[0] ?? "");
     try {
       const staged = await resolveOutboundAttachmentFromUrl(url, maxBytes, access);

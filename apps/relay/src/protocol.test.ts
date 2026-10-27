@@ -43,7 +43,6 @@ test("a frame batch is one to MAX_DEVICES signed frames, or nothing", () => {
   expect(parseFrames({ frames: [frame, null] })).toBeNull();
   expect(parseFrames({ frames: Array(MAX_DEVICES).fill(frame) })).toHaveLength(MAX_DEVICES);
   expect(parseFrames({ frames: Array(MAX_DEVICES + 1).fill(frame) })).toBeNull();
-  // Extra keys on a batched entry do not survive onto the wire.
   expect(parseFrames({ frames: [{ ...frame, seq: 9 }] })).toEqual([frame]);
 });
 
@@ -51,7 +50,6 @@ test("a peer's close reason is cut and stripped before it is logged", () => {
   expect(safeReason("replaced")).toBe("replaced");
   expect(safeReason("a\nb\r\u0000c\u001fd\u007fe")).toBe("abcde");
   expect(safeReason("x".repeat(100))).toHaveLength(64);
-  // Stripped first, then cut: control characters do not count toward the budget.
   expect(safeReason("\n".repeat(64) + "kept")).toBe("kept");
 });
 
@@ -64,11 +62,10 @@ test("the bucket allows a one-second burst and then refuses", () => {
 test("the bucket refills at the sustained rate and never above the burst", () => {
   const bucket = newBucket(0);
   for (let i = 0; i < FRAMES_PER_SEC; i++) allowFrame(bucket, 0);
-  expect(allowFrame(bucket, 500)).toBe(true); // half a second buys 30
+  expect(allowFrame(bucket, 500)).toBe(true);
   for (let i = 0; i < 29; i++) expect(allowFrame(bucket, 500)).toBe(true);
   expect(allowFrame(bucket, 500)).toBe(false);
 
-  // An hour idle still only buys one second of burst.
   for (let i = 0; i < FRAMES_PER_SEC; i++) expect(allowFrame(bucket, 3_600_000)).toBe(true);
   expect(allowFrame(bucket, 3_600_000)).toBe(false);
 });
@@ -92,7 +89,6 @@ test("nothing is dropped from a buffer inside both limits", () => {
 test("entries past the TTL are dropped from the front", () => {
   const now = BUFFER_TTL_MS * 2;
   const entries = [entry(1, now - BUFFER_TTL_MS - 1), entry(1, now - BUFFER_TTL_MS), entry(1, now)];
-  // Strictly older than the TTL goes; exactly at it stays.
   expect(dropCount(entries, now)).toBe(1);
 });
 
@@ -101,14 +97,12 @@ test("the oldest entries are dropped until the byte cap is met", () => {
   expect(dropCount(entries, 0, 12)).toBe(0);
   expect(dropCount(entries, 0, 11)).toBe(1);
   expect(dropCount(entries, 0, 4)).toBe(2);
-  // A single entry over the cap leaves an empty buffer rather than an over-cap one.
   expect(dropCount(entries, 0, 1)).toBe(3);
 });
 
 test("the TTL and the cap are applied together", () => {
   const now = BUFFER_TTL_MS + 10;
   const entries = [entry(8, 0), entry(8, now), entry(8, now)];
-  // The first goes on age, then one more to fit 16 bytes into a 9 byte cap.
   expect(dropCount(entries, now, 9)).toBe(2);
 });
 
@@ -128,7 +122,6 @@ test("envelopes are accepted only when every field is a string", () => {
     token: "t",
   });
   expect(parseJoin({ roomId: "r", token: "t", phonePubkey: "p" })).toBeNull();
-  // A rejoin carries no token; a non-string one is still a malformed join.
   expect(parseJoin({ roomId: "r", phonePubkey: "p", sig: "s" })).toMatchObject({ roomId: "r" });
   expect(parseJoin({ roomId: "r", phonePubkey: "p", sig: "s" })?.token).toBeUndefined();
   expect(parseJoin({ roomId: "r", token: 1, phonePubkey: "p", sig: "s" })).toBeNull();
@@ -142,9 +135,7 @@ test("known devices are capped, and a device already known evicts nobody", () =>
   const known = Array.from({ length: MAX_DEVICES }, (_, i): [string, number] => [`k${i}`, i]);
   expect(evictions(known, "k3")).toEqual([]);
   expect(evictions(known.slice(0, 3), "new")).toEqual([]);
-  // Full, so the least recently paired one makes way for the newcomer.
   expect(evictions(known, "new")).toEqual(["k0"]);
-  // Shrinking the cap sheds every device over it in one go, oldest first.
   expect(evictions(known, "new", 3)).toEqual(["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8",
     "k9", "k10", "k11", "k12", "k13"]);
 });
@@ -176,7 +167,6 @@ test("a notify is a known class and an opaque reference, or it is nothing", () =
     eventRef: "e",
   });
   expect(parseNotify({ class: "approval", threadRef: "r", eventRef: "" })).toBeNull();
-  // The one bit an approval may carry: answerable from the lock screen. Meaningless elsewhere.
   expect(parseNotify({ class: "approval", threadRef: "r", actions: true })).toEqual({
     class: "approval",
     threadRef: "r",
@@ -184,7 +174,6 @@ test("a notify is a known class and an opaque reference, or it is nothing", () =
   });
   expect(parseNotify({ class: "reply", threadRef: "r", actions: true })).toEqual({ class: "reply", threadRef: "r" });
   expect(parseNotify({ class: "approval", threadRef: "r", actions: "yes" })).toBeNull();
-  // Nothing else on the message survives into what the relay acts on.
   expect(parseNotify({ class: "reply", threadRef: "r", text: "the secret" })).toEqual({
     class: "reply",
     threadRef: "r",
@@ -202,8 +191,6 @@ test("a notify is a known class and an opaque reference, or it is nothing", () =
 test("an alert carries a fixed phrase and an opaque reference, and nothing else", () => {
   const payload = alertPayload("approval", "Ab3-_x9Z", "Ev3-_x9Z") as any;
   expect(payload.aps.alert).toEqual({ title: "Yorozu", "loc-key": NOTIFY_BODY.approval });
-  // An approval names which buttons the phone draws: review by default, quick when the Mac
-  // has judged the action safe to answer from the lock screen.
   expect(payload.aps.category).toBe("approval-review");
   expect((alertPayload("approval", "Ab3-_x9Z", "Ev3-_x9Z", undefined, true) as any).aps.category)
     .toBe("approval-quick");
@@ -211,7 +198,6 @@ test("an alert carries a fixed phrase and an opaque reference, and nothing else"
   expect(payload.ref).toBe("Ab3-_x9Z");
   expect(payload.cls).toBe("approval");
   expect(payload.event).toBe("Ev3-_x9Z");
-  // Every string anywhere in it is either the fixed vocabulary or the opaque reference.
   const strings = JSON.stringify(payload).match(/"[^"]*"/g) ?? [];
   const allowed = new Set([
     ...Object.values(NOTIFY_BODY),

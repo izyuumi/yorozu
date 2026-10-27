@@ -2,17 +2,12 @@ import SwiftUI
 import UserNotifications
 import YorozuWire
 
-/// Whether a reply in another conversation taps the phone when its in-app notice shows. On by default.
 enum NoticeHaptics {
     static let key = "noticeHaptics"
 }
 
-/// Settings (#415): this device's notifications, the host, the paired devices, and Unpair. The host-side rows (push
-/// for a device, removing one) need a plugin with `devices`; without it they are not shown. A sheet on iPhone and
-/// iPad, the Settings window (⌘,) on the Mac.
 struct SettingsView: View {
     let model: AppModel
-    /// Called once this device is unpaired, so a sheet can close.
     var onUnpair: () -> Void = {}
 
     @AppStorage(NoticeHaptics.key) private var haptics = true
@@ -64,7 +59,6 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .sheet(isPresented: $addingDevice) { AddDeviceSheet(model: model) }
         .task(id: model.state == .ready) { model.refreshDevices() }
-        // Coming back from the system's notification settings.
         .task(id: scenePhase) {
             guard !model.isDemo else { return }
             permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
@@ -106,7 +100,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Light, dark or the system's, and the accent (owner, 2026-10-22). Kept on this device.
     private var looks: some View {
         Section {
             Picker(String(localized: "Appearance"), selection: $appearance) {
@@ -130,7 +123,6 @@ struct SettingsView: View {
         }
     }
 
-    /// What Siri and Spotlight may search (owner, 2026-10-17).
     private var siri: some View {
         Section {
             Toggle(String(localized: "Show Conversations in Siri and Search"), isOn: $spotlight)
@@ -160,7 +152,6 @@ struct SettingsView: View {
     }
 
     #if os(macOS)
-    /// Stable or beta Sparkle feed (owner, 2026-10-27). iPhone and iPad get betas through TestFlight.
     private var updates: some View {
         Section {
             Toggle(String(localized: "Beta Updates"), isOn: $betaUpdates)
@@ -206,7 +197,6 @@ struct SettingsView: View {
             if let error = model.devicesError {
                 Text(error).foregroundStyle(YorozuPalette.warning)
             }
-            // Away from the host, a paired device adds another (owner, 2026-10-17).
             if model.inviteAvailable {
                 Button(String(localized: "Add a Device…"), systemImage: "plus") { addingDevice = true }
                     .disabled(model.state != .ready)
@@ -242,7 +232,6 @@ struct SettingsView: View {
     private static func date(_ ms: Int64) -> Date { Date(timeIntervalSince1970: TimeInterval(ms) / 1000) }
 }
 
-/// One accent to pick: a filled circle, ringed with a check when it is the current one. Its sizes are its own geometry.
 private struct AccentSwatch: View {
     let accent: Accent
     let selected: Bool
@@ -270,7 +259,6 @@ private struct AccentSwatch: View {
     }
 }
 
-/// Settings as a sheet, with Done (iPhone, iPad).
 struct SettingsSheet: View {
     let model: AppModel
     @Environment(\.dismiss) private var dismiss

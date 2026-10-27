@@ -4,10 +4,6 @@ import YorozuWire
 import AppKit
 #endif
 
-/// Adding a Mac from a paired iPhone or iPad (owner, 2026-10-27): the Mac shows a ``DeviceCode``; the paired device
-/// scans it, asks its host for a `pair_invite` and drops the link, sealed to the Mac, in the code's mailbox on the
-/// relay. The Mac opens it and pairs as with any link: "Pair with this host?" with the fingerprint, which the paired
-/// device shows too.
 enum DeviceAdding: Equatable {
     case asking(DeviceCode)
     case sent(DeviceCode, fingerprint: String)
@@ -15,16 +11,12 @@ enum DeviceAdding: Equatable {
 }
 
 extension AppModel {
-    // MARK: The paired device
-
-    /// The user said Add: a fresh one-time code from the host, then ``deliver(_:to:)``.
     func addDevice(_ code: DeviceCode) {
         pendingDevice = nil
         deviceAdding = .asking(code)
         requestInvite()
     }
 
-    /// The host's answer to ``addDevice(_:)``: its link sealed into the Mac's mailbox.
     func deliver(_ answer: V3PairInvite, to code: DeviceCode) {
         guard let webLink = answer.webLink, let fingerprint = answer.fingerprint, let url = code.mailbox(websocket: false),
               let letter = try? code.seal(webLink) else {
@@ -45,10 +37,6 @@ extension AppModel {
         }
     }
 
-    // MARK: The new Mac
-
-    /// While the pairing screen is up: a code in ``deviceCode``, a new one every 10 minutes, and the link a paired
-    /// device drops for it handed to ``submit(_:)``, which asks for the fingerprint check. Ends when the task does.
     func showDeviceCodes() async {
         #if os(macOS)
         let name = Host.current().localizedName ?? "Mac"
@@ -65,7 +53,6 @@ extension AppModel {
         deviceCode = nil
     }
 
-    /// Waits on the code's mailbox for its one letter, dialing again after a dropped socket, until `duration` is over.
     private func mailboxLetter(_ code: DeviceCode, for duration: Duration) async -> String? {
         guard let url = code.mailbox(websocket: true) else { return nil }
         let end = ContinuousClock.now + duration
@@ -82,7 +69,6 @@ extension AppModel {
                     return nil
                 }
                 let first = await group.next() ?? nil
-                // receive() ignores task cancellation; closing the socket ends it.
                 socket.cancel(with: .normalClosure, reason: nil)
                 group.cancelAll()
                 return first

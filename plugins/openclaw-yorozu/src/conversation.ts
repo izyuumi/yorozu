@@ -1,13 +1,3 @@
-/**
- * Text in and out (#424). A device's `message` runs one agent turn in its conversation's thread session,
- * `agent:<agent>:yorozu:direct:owner:thread:<convId>`: every paired device is the one peer `owner` (#415).
- * The run's progress and replies go to every served device (`broadcast`): `run_started`, `typing` while it runs,
- * `tool` per tool call, then one `reply` per chunk. Slash commands are plain text; core handles `/new` in the thread.
- * A turn that replied ends with one push (`notifyReply`, #431), not one per chunk.
- * `sendText` is the outbound adapter's, for deliveries that start outside a turn (cron `delivery.channel: yorozu`).
- * Attachments (#430): a message's uploaded files reach the turn as media facts; a reply's media is announced in
- * its `reply`, grouped, and downloaded by each device on request (src/attachments.ts).
- */
 import { randomUUID } from "node:crypto";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
@@ -30,15 +20,11 @@ import { yorozuRuntime } from "./runtime.js";
 import { maybeTitle } from "./sessions.js";
 
 const CHANNEL_ID = "yorozu";
-/** The one channel peer: all devices are the owner's. */
 export const PEER = "owner";
-/** OpenClaw's own default when `channels.yorozu.textChunkLimit` is unset. */
 export const DEFAULT_CHUNK_LIMIT = 4000;
-/** The contract asks for a typing repeat at least every 10 s; clients drop it after 30 s without one. */
 const TYPING_KEEPALIVE_MS = 8_000;
 const TYPING_MAX_MS = 30 * 60 * 1000;
 
-/** `agent:<agent>:yorozu:direct:owner`, the base every conversation's thread key hangs off. */
 export function resolveOwnerRoute(cfg: OpenClawConfig, agentId: string, accountId?: string | null) {
   return resolveAgentRoute({
     cfg,
@@ -50,10 +36,6 @@ export function resolveOwnerRoute(cfg: OpenClawConfig, agentId: string, accountI
   });
 }
 
-/**
- * One reply per chunk of `text`, each with its own `messageId`: from `ids` (the transcript's, with its time) when given.
- * Attachments ride on the last one, or on a reply of their own when there is no text: one group, as the agent sent them.
- */
 export function replyEvents(
   cfg: OpenClawConfig,
   convId: string,
@@ -77,17 +59,12 @@ export function replyEvents(
   }));
 }
 
-/** A reply payload's media URLs, in order, once each. */
 export function mediaUrls(...urls: (string | null | undefined)[]): string[] {
   return [...new Set(urls.map((url) => url?.trim()).filter((url): url is string => !!url))];
 }
 
 type TurnContext = Pick<ChannelGatewayContext, "cfg" | "accountId" | "log"> & { agent: string; mediaMaxBytes: number };
 
-/**
- * Runs the turn for one message; never throws (a failure goes to the devices as `error run_failed`, a temporary one
- * before any reply or tool is retried instead: `src/retry.ts`). `attempt` counts the retries before this one.
- */
 export async function handleMessage(ctx: TurnContext, message: Message, attempt = 0): Promise<void> {
   const { cfg, accountId, log } = ctx;
   const { convId, messageId, text } = message;
@@ -101,10 +78,8 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
   );
   const access: MediaAccess = { localRoots: getAgentScopedMediaLocalRoots(cfg, route.agentId) };
   await noteFirstMessage(convId, text).catch((error: unknown) => log?.warn(`yorozu: push title failed: ${String(error)}`));
-  /** The turn's first reply chunk: what its one push names and previews. */
   let firstReply: { messageId: string; text: string } | undefined;
 
-  /** Transcript messages this turn's replies already took their ids from. */
   const usedReplies = new Set<string>();
   let toolRan = false;
   let started = false;
@@ -117,7 +92,6 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
   let typingAt = 0;
   const setTyping = (active: boolean) => {
     if (!active && !typing) return;
-    // Core refreshes typing on tool starts too; one repeat per keepalive is enough for every device.
     if (active && typing && Date.now() - typingAt < TYPING_KEEPALIVE_MS / 2) return;
     typing = active;
     typingAt = Date.now();
@@ -180,7 +154,6 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
           dispatcherOptions: { typingCallbacks },
           delivery: {
             deliver: async (payload, info) => {
-              // Tool summaries are the `tool` events; replies arrive whole, never as streamed blocks.
               const urls = mediaUrls(payload.mediaUrl, ...(payload.mediaUrls ?? []));
               if (info.kind === "tool" || (!payload.text?.trim() && !urls.length)) return;
               runStarted();
@@ -224,7 +197,6 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
       );
     }
   }
-  // A conversation's first turn gets its generated title (#428); a later one only if that failed.
   void maybeTitle(cfg, route.agentId, convId, log);
 }
 
@@ -234,7 +206,6 @@ const deliveryConv = (threadId: string | number | null | undefined): string => {
   return convId;
 };
 
-/** The outbound adapter's `sendText`: a delivery into conversation `threadId` from outside a turn. */
 export function sendConversationText(params: { threadId?: string | number | null; text: string }): string {
   const convId = deliveryConv(params.threadId);
   const reply: Event = {
@@ -245,7 +216,6 @@ export function sendConversationText(params: { threadId?: string | number | null
   return reply.data.messageId;
 }
 
-/** The outbound adapter's `sendMedia`: one file (and its caption) into conversation `threadId`. */
 export async function sendConversationMedia(params: {
   threadId?: string | number | null;
   text?: string;

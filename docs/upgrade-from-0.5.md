@@ -1,105 +1,91 @@
-# Upgrade from 0.5.0-beta to 0.9
+# Upgrade from 0.5.0-beta
 
-The plan for moving Yorozu 0.5.0-beta installs (`main`) to 0.9.0 (`projectx`), agreed with the owner on 2026-10-17. Decisions in force are in [OWNER_DECISIONS.md](../OWNER_DECISIONS.md#upgrade-from-050-beta); this file holds the how. Nothing here ships until the owner says so.
+What the client does on a device that ran Yorozu 0.5.0-beta. Decisions are in
+[OWNER_DECISIONS.md](../OWNER_DECISIONS.md#upgrade-from-050-beta).
 
-## Scope
+## How 0.5 Macs get 0.9
 
-- Only 0.5.0-beta installs upgrade. The owner confirms each migration by hand.
-- The stable feed (`yorozu.yumi.to/appcast.xml`) stays frozen at 0.4.0. 0.4.0 installs are not upgraded.
-- Once every 0.5 install has migrated, all migration code is deleted and 0.9 data is assumed everywhere.
-- Rollback: fix forward only.
+- The Mac build uses 0.5's bundle id, `to.yumi.yorozu` (`PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]`
+  in `apps/ios/Project.swift`), 0.5's Sparkle EdDSA key and the feed
+  `https://yorozu.yumi.to/appcast.xml`, so Sparkle replaces 0.5 in place. Sparkle is linked
+  for macOS only.
+- `CFBundleVersion` must stay above 0.5's `10279`; see [release.md](release.md) for the
+  encoding and for which feed serves what.
+- A build phase copies the plugin (`index.ts`, `setup-entry.ts`, `openclaw.plugin.json`,
+  `package.json`, `README.md`, `src`) into `Yorozu.app/Contents/Resources/openclaw-channel`,
+  the path 0.5's `openclaw plugins install --link` points to. The Gateway keeps running the
+  old plugin from memory until it reloads.
 
-## Version and build numbers
+## Mac first launch
 
-- Version `0.9.1`, released as `v0.9.1` on the stable feed (0.9.0 went to the App Store only).
-- The visible build number restarts at 1 for each version and is shown as "0.9.0 (1)".
-- `CFBundleVersion` on every platform is `major·10⁷ + minor·10⁵ + patch·10³ + build`, for example `900001` for 0.9.0 build 1. The live 0.5.0-beta is build `10279`.
-- Why the encoding: Sparkle's default comparator compares the integer `CFBundleVersion`, and TN2420 requires macOS builds to rise across versions. Dotted forms such as `0.9.0.1` sort below `10279`, and four parts are invalid.
-- In the appcast, `sparkle:version` is the same integer and `sparkle:shortVersionString` is `0.9.0`.
-- Never ship a `CFBundleVersion` with a smaller leading number: every installed Mac would stop seeing updates.
+`apps/ios/Sources/YorozuIOS/MacMigrateFrom0_5.swift`, macOS only. It starts from the main
+window's task on every launch, not in demo mode, until it has succeeded; every step can run
+again. Progress is kept in user defaults: `migratedFrom0_5`, `importedChatsFrom0_5`, and
+`importedThreadsFrom0_5` (the 0.5 thread ids already imported). It only reads 0.5's data
+folder, `~/Library/Application Support/Yorozu`.
 
-## Mac distribution
+It calls the `openclaw` CLI, which has the admin scope the app lacks, looked up in
+`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, `/bin` and then `PATH`.
+Without it, nothing happens and the next launch tries again.
 
-- The Mac destination of the shared client target builds as `to.yumi.yorozu`, the 0.5.0-beta bundle id, so Sparkle replaces it in place. It is signed with Developer ID, team `AN5KM8QGEF`, and notarized.
-- Sparkle is linked for macOS only.
-  - It uses the same EdDSA public key as 0.5 (`SUPublicEDKey` `pD6gPv1C…`) and the CI secret `SPARKLE_ED_KEY`.
-  - The feed is the stable one, `yorozu.yumi.to/appcast.xml`. `/beta/appcast.xml`, which 0.5 Macs with beta updates on read, serves the same release, so every 0.5 Mac updates.
-- Releases: `projectx` merges into `main`. `main`'s `release.yml` and appcast step are ported to the Tuist layout. A green `main` publishes `v<version>`, as in 0.5's `docs/RELEASE_WORKFLOW.md`. Only the release job is lifted from the no-CI rule, with no test jobs.
-- The website download link points at 0.9.0.
+### Migration
 
-## iOS distribution
+A Mac counts as a 0.5 install when 0.5's watchdog LaunchAgent plist exists, the
+`onboardingCompleted` user default is set, or `~/Library/Application Support/Yorozu/threads`
+exists. Otherwise it is marked done with no changes.
 
-- The first public App Store release, under `to.yumi.yorozu.ios`.
-- Released manually after approval, with no phased release.
-- The build lists for internal and external TestFlight testers first (see [Release order](#release-order)).
-- The `testFlightInternalTestingOnly` flag is removed from `apps/ios/ExportOptions.plist`.
+1. Remove 0.5's watchdog LaunchAgent, `to.yumi.yorozu.watchdog` (`launchctl bootout`, then
+   delete its plist).
+2. `openclaw config unset channels.yorozu.socketPath`: the 0.9 channel schema rejects it.
+   A failure (the key is usually unset) is ignored.
+3. `openclaw plugins reload yorozu --accept-capabilities --json`. If that fails or reports
+   `"restartRequired": true`: `openclaw gateway restart --safe`. If the restart fails, stop
+   here.
+4. If this Mac is not paired: `openclaw yorozu pair`, up to 10 tries 6 seconds apart; the
+   printed `yorozu://pair…` link is submitted and confirmed without the fingerprint step,
+   since it comes from this Mac's own Gateway.
+5. Mark done and post a notification: update Yorozu on the iPhone and iPad, then pair them
+   again with Settings › Add a Device….
 
-### App Review
+### Import
 
-Modelled on OpenClaw's iOS app (`~/openclaw/apps/ios`).
+Runs after the migration is done and is marked separately, so a Mac migrated before the
+import existed imports too. The agent is `openclaw config get channels.yorozu.agent`, or
+`main` when unset.
 
-- **Main path: a live review host.**
-  - The owner keeps a Mac online during review, with OpenClaw, the plugin and a dedicated review agent.
-  - The review notes carry its pairing code and a scripted checklist of prompts with expected results.
-  - The notes stay under 4000 bytes and live in `apps/ios/APP-REVIEW-NOTES.md`.
-- **Fallback: a fixture demo behind a code.**
-  - Enter `YOROZU-DEMO` in the pairing field, or scan a QR containing that exact text. Surrounding whitespace is ignored; the code is case-sensitive. There is no visible entry button.
-  - The on-device demo has seeded conversations, tool rows, Automations and delayed, scripted whole replies. It runs no model and connects to no host.
-  - A Demo label identifies it. Sample changes stay in memory and vanish on **Exit Demo** in Settings; existing pairings are preserved. Files, uploads and real host or account actions are unavailable.
-  - Developers can launch with `--demo` to skip pairing, Keychain, networking, Mac migration and the updater. Use an isolated Mac developer bundle id ([setup](setup.md#try-demo-data-without-a-host)).
-  - The code and limitations are explicitly disclosed in [review notes](../apps/ios/APP-REVIEW-NOTES.md): this mode substitutes for a demo account. It does not establish that the live review host has been configured or checked.
+1. Memory. Every `.md` file under `~/Library/Application Support/Yorozu/memory`,
+   `~/Documents/PAIOS/Workspace/Yorozu Memory` and `~/My vault/PAIOS/Workspace/Yorozu Memory`
+   is copied to `memory/yorozu-0.5/` in the agent's workspace (from
+   `openclaw agents list --json`), ending "Imported from Yorozu 0.5, unverified." A file
+   already there is left alone.
+2. Chats. Each thread in `threads.json`, oldest log modification first so the newest ends up
+   on top, through `openclaw gateway call`:
+   - `sessions.create` with key `agent:<agent>:yorozu:direct:owner:thread:<id>` (a 0.5 UUID
+     lowercased; any other id, such as `home`, maps to a UUID derived from it by SHA-256) and
+     `displayName` the thread's title, else the first line of its first user message, else
+     "Yorozu 0.5", cut to 60 characters.
+   - One `chat.inject`: "Earlier conversation from Yorozu 0.5 (N messages):" followed by
+     the last 40 user and agent `message` events of `threads/<id>.jsonl` as `You: …` /
+     `Yorozu: …` paragraphs, each cut at 4000 characters. Attachments appear as `[name]`;
+     tool calls, cards, pins and timestamps are not carried.
+   - `sessions.patch` with `archived: true` for an archived thread.
+   - `yorozu.conversations.time` with the thread's newest message `ts`. The plugin
+     (`plugins/openclaw-yorozu/src/activity.ts`) lists the conversation by that time until a
+     new message arrives.
+   - A thread without user or agent messages is skipped. Each finished id is saved at once,
+     so an interrupted run carries on without injecting twice.
 
-### Update notice
+No keys or devices carry over: the plugin has no 0.5 import, so its host keys are new and
+every device pairs again.
 
-- Once a day, iOS checks `itunes.apple.com/lookup?bundleId=to.yumi.yorozu.ios`. When a newer version exists, it shows a small dismissible "Update available" row above the conversation list, linking to the App Store.
-- The row is dismissed per version. Nothing is ever forced: protocol `update_required` covers the hard case.
-- TestFlight builds skip the check.
+## iPhone and iPad first launch
 
-## Release order
+Nothing is migrated. 0.9 keeps its pairing in the Keychain account `pairing-v3`
+(`apps/ios/Sources/Client/Store.swift`) and never reads or deletes 0.5's Keychain items. The
+app opens on the pairing screen; pair it from the Mac's Settings › Add a Device….
 
-- The iOS build is uploaded and through Beta App Review but not assigned to testers. The Mac appcast item and the TestFlight assignment go live together.
-- Every 0.5 device pairs again once (owner, 2026-10-23: re-pair instead of carrying 0.5's keys over). The Mac pairs itself on first launch; each iPhone and iPad then pairs from the Mac's Settings › Add a Device…, with the owner there.
-  - **iOS 0.9 before the Mac:** the phone shows the pairing screen until the Mac has updated.
-  - **A 0.5 iPhone against a 0.9 Mac:** shows 0.5's own "update required". That can't be changed.
+## Owner decision pending review
 
-## Mac first launch: migration, automatic
+Kept verbatim from the earlier version of this file until the owner reviews it against OWNER_DECISIONS.md:
 
-This runs once, guarded by a marker, and every step is idempotent. It never writes to 0.5's data folder. It is an exception, for this one migration, to the rule that assisted writes happen only after a click.
-
-1. **Plugin swap.** 0.5 users installed the channel plugin with `openclaw plugins install --link --accept-capabilities /Applications/Yorozu.app/Contents/Resources/openclaw-channel`. Both plugins have the id `yorozu`.
-   - The app bundles the full 0.9 plugin tree at that path: `index.ts`, `setup-entry.ts`, `src/**`, `openclaw.plugin.json` and `package.json`. OpenClaw runs TypeScript directly, so no `dist` or `node_modules` is needed.
-   - The gateway does not watch plugin folders. Until a reload it keeps running 0.5 from memory.
-2. **Config.** The app runs `openclaw config unset channels.yorozu.socketPath`. The 0.9 channel schema is closed, and this key would stop the gateway from starting.
-3. **Reload.** The app runs `openclaw plugins reload yorozu --accept-capabilities` (0.9 adds `cliCommands: ["yorozu"]`), and `openclaw gateway restart --safe` if that fails or reports `restartRequired`. The CLI has the admin scope the app lacks.
-4. **No keys or devices carry over.** The plugin makes new host keys, so the room is new and every device pairs again.
-5. **Memory.** 0.5's memory notes (`~/Library/Application Support/Yorozu/memory`, or the `PAIOS/Workspace/Yorozu Memory` folder in `~/Documents` or `~/My vault`) are copied into the agent's workspace, `memory/yorozu-0.5/`, each ending "Imported from Yorozu 0.5, unverified." A note already there is left alone.
-6. **Chats.** Every 0.5 thread with messages is converted, oldest activity first so the newest lands on top.
-   - For each thread in 0.5's `threads.json`: `sessions.create` with key `agent:<agent>:yorozu:direct:owner:thread:<lowercased id>` (`channels.yorozu.agent`, default `main`; a non-UUID id such as `home` gets a UUID derived from it) and its title as `displayName`, then one `chat.inject` holding a plain assistant message: `Earlier conversation from Yorozu 0.5 (N messages):` followed by the last 40 `message` events from `threads/<id>.jsonl` as `You: …` / `Yorozu: …` paragraphs, each cut at 4000 characters. An archived thread is archived with `sessions.patch`. Then `yorozu.conversations.time` gives the plugin the thread's last 0.5 message time (`ts`), so the list orders it by that rather than the import.
-   - It carries no tool calls, thinking, cards, pinned state or timestamps. Attachments appear as their names.
-   - `claude-code` and `codex` threads become ordinary conversations that continue on the 0.9 agent.
-   - Done thread ids are kept in user defaults, so a run cut short carries on without injecting twice. It runs apart from steps 1–3 and 7–9, so a Mac that migrated before the import existed (the owner's) imports too.
-7. **Cleanup.** Remove 0.5's watchdog LaunchAgent `to.yumi.yorozu.watchdog`.
-8. **Pair this Mac.** 0.5's Mac was the host, never a client. The app runs `openclaw yorozu pair` against its own Gateway and pairs with the printed link, skipping the fingerprint step: the code comes from the same Mac.
-9. **Nudge.** A notification: update Yorozu on the iPhone and iPad.
-
-All of it is `apps/ios/Sources/YorozuIOS/MacMigrateFrom0_5.swift`, through the `openclaw` CLI (`gateway call` for the session methods), which holds the admin scope the app and the plugin lack.
-
-## iOS first launch
-
-- Nothing is migrated: 0.9 keeps its pairing under its own Keychain account, `pairing-v3`, and shows the pairing screen. 0.5's `pairings` item is left as it is.
-
-## Groundwork for future versions
-
-All of this lands in 0.9.0, so later versions migrate without friction:
-
-1. **Schema versions.** Every stored record carries one: the plugin's keyed stores, `pairing-v3`, the client cache and config. Ordered migrations `n → n+1` run at launch, each one idempotent.
-2. **Protocol range.** `peer_info` carries `protocolMin`/`protocolMax` and both sides pick the highest version they share. Each side supports one version back. Outside that range: `update_required`.
-3. **Additive by default.** New fields are optional, and unknown fields are ignored, not rejected. Schemas are not closed against future keys.
-4. **Stable contracts.** They are listed in [OWNER_DECISIONS.md](../OWNER_DECISIONS.md#stable-contracts) and never change.
-5. **Breaking jumps.** A future breaking Mac update sets Sparkle `sparkle:minimumAutoupdateVersion`, so it is never installed silently.
-
-## Unverified, check during implementation
-
-- **Feed reach.** Settled: the release is on the stable feed and `/beta` serves it too, so every 0.5 Mac sees it, and so do 0.4 ones.
-- 0.5's host data path is `~/Library/Application Support/Yorozu` (runtime `serve.ts`, `DEFAULT_STATE_DIR`).
-- Whether `peerDependencies: openclaw` in the plugin affects OpenClaw's dependency status.
+> Every 0.5 device pairs again once (owner, 2026-10-23: re-pair instead of carrying 0.5's keys over). The Mac pairs itself on first launch; each iPhone and iPad then pairs from the Mac's Settings › Add a Device…, with the owner there.

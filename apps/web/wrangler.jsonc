@@ -1,6 +1,3 @@
-// yorozu.yumi.to: Astro static site plus retained beta candidate redirects. Pushes to main that
-// touch apps/web deploy through .github/workflows/deploy-web.yml; to deploy by hand, run
-//   pnpm --filter @yorozu/web run deploy
 {
   "name": "yorozu-web",
   "account_id": "f4fc69dd41998fb00537d2f2fd08895d",

@@ -7,7 +7,6 @@ const latest = (tag, names) => ({
   tag_name: tag,
   assets: names.map(name => ({ name, state: 'uploaded', browser_download_url: `${download}${tag}/${name}` })),
 });
-// `release` is the newest in the release list (the beta routes), `stable` what /releases/latest returns (/mac).
 function upstream(release, stable = release) {
   const requests = [];
   mock.method(globalThis, 'fetch', async (url, options) => {

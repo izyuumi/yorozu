@@ -1,8 +1,4 @@
 #!/bin/sh
-# Prints CFBundleVersion for a visible build: major·10⁷ + minor·10⁵ + patch·10³ + build (0.9.0 build 1 = 900001).
-#   scripts/build-number.sh <major.minor.patch> <build>
-# Sparkle compares this integer and 0.5.0-beta installs are build 10279, so it only ever rises (OWNER_DECISIONS.md).
-# Same formula as bundleVersion in apps/ios/Project.swift.
 set -eu
 IFS=. read -r major minor patch <<V
 $1

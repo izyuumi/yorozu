@@ -4,21 +4,16 @@ import Foundation
 import os
 import UserNotifications
 
-/// The one-time move of a Mac from Yorozu 0.5.0-beta, whose app Sparkle just replaced (docs/upgrade-from-0.5.md). Runs on
-/// launch, without a click, until it succeeds once. Every step can run again. 0.5's data folder is only ever read, by the
-/// plugin. Deleted with the rest of the 0.5 migration once the owner has checked every 0.5 Mac.
 @MainActor
 enum MacMigrateFrom0_5 {
     private static let doneKey = "migratedFrom0_5"
     private static let importedKey = "importedChatsFrom0_5"
-    /// 0.5 thread ids already converted, so a run cut short carries on without injecting any twice.
     private static let importedThreadsKey = "importedThreadsFrom0_5"
     private static let log = Logger(subsystem: "to.yumi.yorozu", category: "migrate-from-0.5")
     private static let home = FileManager.default.homeDirectoryForCurrentUser
     private static let watchdogLabel = "to.yumi.yorozu.watchdog"
     private static var watchdogPlist: URL { home.appending(path: "Library/LaunchAgents/\(watchdogLabel).plist") }
 
-    /// Each window's task calls it; one run at a time.
     private static var running = false
 
     static func run(model: AppModel) async {
@@ -27,7 +22,6 @@ enum MacMigrateFrom0_5 {
         running = true
         defer { running = false }
         if !defaults.bool(forKey: doneKey) { await migrate(model: model) }
-        // Apart from the rest, so a Mac that migrated before the import existed (the owner's) imports too.
         guard defaults.bool(forKey: doneKey), !model.isDemo, !Task.isCancelled, await importFrom0_5() else { return }
         defaults.set(true, forKey: importedKey)
     }
@@ -45,7 +39,6 @@ enum MacMigrateFrom0_5 {
         log.notice("migration from 0.5 done")
     }
 
-    /// 0.5 left its watchdog LaunchAgent, its user defaults (this app shares its bundle id) or its data folder.
     private static var installedFrom0_5: Bool {
         let support = home.appending(path: "Library/Application Support")
         return FileManager.default.fileExists(atPath: watchdogPlist.path)
@@ -53,21 +46,17 @@ enum MacMigrateFrom0_5 {
             || FileManager.default.fileExists(atPath: support.appending(path: "Yorozu/threads").path)
     }
 
-    /// 0.5's watchdog relaunched 0.5 every minute and stays loaded through a Sparkle install.
     private static func removeWatchdog() {
         _ = try? Shell.runSync("/bin/launchctl", ["bootout", "gui/\(getuid())/\(watchdogLabel)"])
         try? FileManager.default.removeItem(at: watchdogPlist)
     }
 
-    /// The Gateway keeps running 0.5's plugin from memory until a reload. 0.9's channel schema rejects `socketPath`, which
-    /// would stop the next Gateway start, so it goes first. The CLI has the admin scope the app lacks.
     private static func reloadPlugin(model: AppModel) async -> Bool {
         guard !model.isDemo, !Task.isCancelled else { return false }
         guard let openclaw = Shell.find("openclaw") else {
             log.error("openclaw not found: the Gateway keeps 0.5's plugin until it restarts")
             return false
         }
-        // Fails when the key is not set, which is the usual case.
         _ = await Shell.run(openclaw, ["config", "unset", "channels.yorozu.socketPath"])
         guard !model.isDemo, !Task.isCancelled else { return false }
         let reload = await Shell.run(openclaw, ["plugins", "reload", "yorozu", "--accept-capabilities", "--json"])
@@ -81,8 +70,6 @@ enum MacMigrateFrom0_5 {
         return restart.status == 0
     }
 
-    /// This Mac was 0.5's host and never a client: pair it with the plugin on the same machine. The plugin needs a moment
-    /// after the reload. The fingerprint check is skipped: the code comes straight from this Mac's own Gateway.
     private static func pairThisMac(model: AppModel) async -> Bool {
         guard let openclaw = Shell.find("openclaw") else { return false }
         for _ in 0..<10 {
@@ -100,15 +87,10 @@ enum MacMigrateFrom0_5 {
         return false
     }
 
-    // MARK: Chats and memory
-
     private static var dataDir: URL { home.appending(path: "Library/Application Support/Yorozu") }
     private static let lastMessages = 40
     private static let messageMax = 4000
 
-    /// 0.5's chats become 0.9 conversations: per thread, `sessions.create` with its key, then one `chat.inject` holding
-    /// its last 40 messages as plain text, archived as it was. Then its memory notes go into the agent's workspace. True
-    /// once everything is in (or there was nothing); false to try again on the next launch.
     private static func importFrom0_5() async -> Bool {
         let index = dataDir.appending(path: "threads.json")
         guard let openclaw = Shell.find("openclaw") else { return !FileManager.default.fileExists(atPath: index.path) }
@@ -121,7 +103,6 @@ enum MacMigrateFrom0_5 {
         }
         let defaults = UserDefaults.standard
         var done = Set(defaults.stringArray(forKey: importedThreadsKey) ?? [])
-        // Oldest activity first, so the most recent 0.5 chat ends up on top of the list.
         let ordered = threads.compactMap { thread -> (id: String, record: [String: Any], log: URL, mtime: Date)? in
             guard let id = thread["id"] as? String, !id.isEmpty, !done.contains(id) else { return nil }
             let log = dataDir.appending(path: "threads/\(id.replacing(#/[^\w.-]/#, with: "_")).jsonl")
@@ -160,8 +141,6 @@ enum MacMigrateFrom0_5 {
         if record["archived"] as? Bool == true {
             _ = await call(openclaw, "sessions.patch", ["key": key, "archived": true, "expectedSessionId": sessionId])
         }
-        // Listed by its last 0.5 message's time, not the import's (owner, 2026-10-24): the plugin holds it until a new
-        // message comes. A plugin without the method leaves the import's time.
         let log = dataDir.appending(path: "threads/\(id.replacing(#/[^\w.-]/#, with: "_")).jsonl")
         if let at = lastMessageTime(in: log) {
             _ = await call(openclaw, "yorozu.conversations.time", ["convId": convId(for: id), "at": at])
@@ -169,7 +148,6 @@ enum MacMigrateFrom0_5 {
         return true
     }
 
-    /// The newest message's `ts` in a 0.5 thread log.
     private static func lastMessageTime(in log: URL) -> Int64? {
         guard let text = try? String(contentsOf: log, encoding: .utf8) else { return nil }
         return text.split(separator: "\n").compactMap { line -> Int64? in
@@ -179,7 +157,6 @@ enum MacMigrateFrom0_5 {
         }.max()
     }
 
-    /// A thread's last 40 messages, oldest first. Attachments come along as their names.
     private static func messages(in log: URL) -> [(user: Bool, text: String)] {
         guard let text = try? String(contentsOf: log, encoding: .utf8) else { return [] }
         let all = text.split(separator: "\n").compactMap { line -> (user: Bool, text: String)? in
@@ -194,7 +171,6 @@ enum MacMigrateFrom0_5 {
         return Array(all.suffix(lastMessages))
     }
 
-    /// 0.9 conversation ids are lowercase UUIDs; 0.5's were the client's UUIDs, except a few such as `home`.
     private static func convId(for id: String) -> String {
         if let uuid = UUID(uuidString: id) { return uuid.uuidString.lowercased() }
         var bytes = Array(SHA256.hash(data: Data("yorozu-0.5:\(id)".utf8)).prefix(16))
@@ -203,8 +179,6 @@ enum MacMigrateFrom0_5 {
         return NSUUID(uuidBytes: bytes).uuidString.lowercased()
     }
 
-    /// 0.5's memory notes, as unverified notes in the agent's workspace (`memory/yorozu-0.5/`), where OpenClaw's memory
-    /// search finds them. A note already there is left alone.
     private static func importMemory(_ openclaw: String, agent: String) async -> Bool {
         let sources = [dataDir.appending(path: "memory"),
                        home.appending(path: "Documents/PAIOS/Workspace/Yorozu Memory"),
@@ -238,7 +212,6 @@ enum MacMigrateFrom0_5 {
         return true
     }
 
-    /// `channels.yorozu.agent`, or the plugin's default `main` when it is unset.
     private static func channelAgent(_ openclaw: String) async -> String {
         let result = await Shell.run(openclaw, ["config", "get", "channels.yorozu.agent", "--json"])
         guard result.status == 0,
@@ -247,7 +220,6 @@ enum MacMigrateFrom0_5 {
         return agent
     }
 
-    /// One Gateway method through the CLI, which holds the admin scope the app lacks; its JSON result, or nil on failure.
     private static func call(_ openclaw: String, _ method: String, _ params: [String: Any]) async -> [String: Any]? {
         guard let encoded = try? JSONSerialization.data(withJSONObject: params) else { return nil }
         let result = await Shell.run(openclaw, ["gateway", "call", method, "--json", "--params", String(decoding: encoded, as: UTF8.self)])
@@ -259,7 +231,6 @@ enum MacMigrateFrom0_5 {
         return response
     }
 
-    /// The JSON in a tool's output, which has stderr mixed in: from the first `open` to the last `close`.
     private static func json(_ output: String, _ open: Character, _ close: Character) -> Any? {
         guard let start = output.firstIndex(of: open), let end = output.lastIndex(of: close), start <= end else { return nil }
         return try? JSONSerialization.jsonObject(with: Data(output[start...end].utf8))
@@ -273,8 +244,6 @@ enum MacMigrateFrom0_5 {
     }
 }
 
-/// Runs command-line tools for the migration. A Mac app starts with a bare PATH, so `openclaw` (a Node script) and `node`
-/// are looked up where installers put them.
 enum Shell {
     struct Result { let status: Int32; let output: String }
 

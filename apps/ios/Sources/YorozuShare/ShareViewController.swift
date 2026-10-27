@@ -2,10 +2,6 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Yorozu in the share sheet: the shared text or link in an editable note, at most one picture or file, and the
-/// conversation to send into (a new one, or one of the app's newest, from the list it keeps in the App Group). Send
-/// writes it into the App Group (`ShareInbox`); Yorozu sends it the next time it is open, through its outbox (#430).
-/// The extension holds no keys and no socket, so it cannot send by itself.
 final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -36,11 +32,9 @@ final class ShareViewController: UIViewController {
     var file: URL?
     var problem: String?
     var loading = true
-    /// nil: a new conversation.
     var convId: String?
     let directory = ShareInbox.published()
 
-    /// Text and a link become the note; the first picture or file is attached.
     func load(_ items: [NSExtensionItem]) async {
         defer { loading = false }
         var lines: [String] = []
@@ -56,7 +50,6 @@ final class ShareViewController: UIViewController {
             }
         }
         text = lines.filter { !$0.isEmpty }.joined(separator: "\n")
-        // Over the host's limit: refused here, before the app would refuse it.
         if let file, let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > directory.maxBytes {
             let format = { (n: Int) in ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .binary) }
             problem = String(localized: "“\(file.lastPathComponent)” is \(format(size)). Yorozu sends files up to \(format(directory.maxBytes)).")
@@ -64,7 +57,6 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    /// The provider's file lives only during its callback: copy it out to the extension's temporary folder.
     private func copy(_ provider: NSItemProvider, type: UTType) async -> URL? {
         await withCheckedContinuation { done in
             _ = provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
@@ -85,7 +77,6 @@ struct ShareView: View {
     @Bindable var model: ShareModel
     let send: () -> Void
     let cancel: () -> Void
-    /// The preview of the picked picture or file, scaled with the text.
     @ScaledMetric private var previewSide: CGFloat = 160
 
     var body: some View {
@@ -94,7 +85,6 @@ struct ShareView: View {
                 Section {
                     TextField("Add a note", text: $model.text, axis: .vertical).lineLimit(3...10)
                     if let file = model.file {
-                        // What is being sent: a picture, a PDF's first page, or the file type's icon.
                         VStack {
                             FileThumbnail(url: file, side: previewSide)
                             Label(file.lastPathComponent, systemImage: "paperclip").lineLimit(1).truncationMode(.middle)

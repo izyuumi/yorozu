@@ -1,26 +1,19 @@
 import SwiftUI
 import YorozuWire
 
-/// The paired app's sections, Chats and Automations (cron jobs, #432), in one navigation structure: on iPad and Mac a split view whose
-/// sidebar holds Automations, the conversations and the Archived ones, with the open conversation or the cron jobs beside
-/// it; on iPhone (any compact width) a tab bar with a stack in each tab.
 struct HomeView: View {
     enum Section: Hashable { case chats, crons }
 
     let model: AppModel
 
     @State private var section = Section.chats
-    /// The open conversation; the Crons section sets it too. Side by side, the focused one.
     @State private var selection: String?
-    /// The second conversation side by side (owner, 2026-10-21): kept on a phone and on iPhone Duo closed, shown again when there is room.
     @State private var pair = ChatPair()
-    /// The new conversation opened only because nothing was open beside the list.
     @State private var blank: String?
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var columns = NavigationSplitViewVisibility.automatic
     @State private var windowWidth: CGFloat = 0
-    /// A conversation is being dragged from the list onto the conversation area.
     @State private var dragging = false
     #endif
 
@@ -34,11 +27,8 @@ struct HomeView: View {
         }
         .opensRequestedConversation(model, selection: $selection)
         .inAppNotices(model) { open($0, automation: nil) }
-        // Nothing open beside the list (iPad, Mac; at launch, or after the open one went): a new conversation, ready to
-        // type in, rather than an empty pane (owner, 2026-10-25). Not when a pair's other side takes the area instead.
         .onChange(of: selection == nil && besideList, initial: true) { _, empty in
             guard empty else { return }
-            // After the list's own update: setting its selection from inside one is a reentrant table update on the Mac.
             Task { @MainActor in
                 guard selection == nil, besideList, pair.partner == nil else { return }
                 let convId = V3Event.newId()
@@ -46,7 +36,6 @@ struct HomeView: View {
                 selection = convId
             }
         }
-        // Deleted on another device while open here.
         .onChange(of: model.deleted) { _, convId in
             if convId != nil, pair.partner == convId { pair.close(pair.focusedSide == .left ? .right : .left, selection: &selection) }
             if convId != nil, selection == convId { selection = nil }
@@ -57,7 +46,6 @@ struct HomeView: View {
             pair.selectionChanged(from: old, to: new, compact: sizeClass == .compact, selection: &selection)
         }
         .onChange(of: sizeClass) { _, size in
-            // Folding to a phone's layout shows the list, not the new conversation that only stood in for an empty pane.
             if size == .compact, let blank, selection == blank, model.conversations[blank]?.items.isEmpty ?? true { selection = nil }
             pair.selectionChanged(from: nil, to: selection, compact: size == .compact, selection: &selection)
         }
@@ -67,7 +55,6 @@ struct HomeView: View {
 
     private func side(_ convId: String) -> PaneSide? { pair.side(of: convId, selection: selection) }
 
-    /// The conversation is shown beside the list: the split view, not a phone's stack.
     private var besideList: Bool {
         #if os(iOS)
         sizeClass != .compact
@@ -89,7 +76,6 @@ struct HomeView: View {
                 ChatPairView(model: model, selection: $selection, pair: $pair, columns: $columns, dragging: $dragging,
                     windowWidth: windowWidth)
             } else {
-                // For a moment only: a new conversation opens in its place.
                 Color.clear
             }
         }
@@ -106,7 +92,6 @@ struct HomeView: View {
             } else if let selection {
                 ChatView(model: model, convId: selection).id(selection)
             } else {
-                // For a moment only: a new conversation opens in its place.
                 Color.clear
             }
         }
@@ -124,7 +109,6 @@ struct HomeView: View {
                                 #if os(iOS)
                                 .safeAreaInset(edge: .top, spacing: 0) { PairSwitcher(model: model, selection: $selection, pair: $pair) }
                                 #endif
-                                // A new conversation without going back to the list (owner, 2026-10-23); not from one still empty.
                                 .toolbar {
                                     if model.conversations[convId]?.items.isEmpty == false {
                                         ToolbarItem(placement: .pinnedAction) {
@@ -135,9 +119,6 @@ struct HomeView: View {
                                 }
                         }
                         #if os(iOS)
-                        // A conversation has the whole screen: the composer sits where the tab bar was. Decided here, by
-                        // the selection, so the bar returns as the back animation starts; hidden from the conversation
-                        // itself, iOS brought it back only after the animation had ended.
                         .toolbar(selection == nil ? .visible : .hidden, for: .tabBar)
                         #endif
                 }
@@ -148,7 +129,6 @@ struct HomeView: View {
         }
     }
 
-    /// Shows a conversation in Chats, with `automation` attached in its composer.
     private func open(_ convId: String, automation: V3CronJob?) {
         if let automation { model.automationDrafts[convId] = automation }
         selection = convId
@@ -156,8 +136,6 @@ struct HomeView: View {
     }
 }
 
-/// Every cron job of the plugin's agent (#415), shown as Automations: name, schedule, next run and last status, disabled ones greyed.
-/// Read-only: changes go through the agent, from "Edit in Chat", which attaches the job to a new conversation.
 struct CronsView: View {
     let model: AppModel
     let open: (_ convId: String, _ automation: V3CronJob?) -> Void
@@ -194,7 +172,6 @@ struct CronsView: View {
             }
         }
         .refreshable { await model.refreshCrons() }
-        // On appear, and again whenever the link comes back.
         .task(id: model.state == .ready) {
             if model.state == .ready { await model.refreshCrons() }
         }
@@ -211,7 +188,6 @@ struct CronsView: View {
 
     private func row(_ job: V3CronJob) -> some View {
         HStack(spacing: LayoutMetrics.stack) {
-            // A job delivering into a Yorozu conversation opens it.
             if let convId = job.convId {
                 Button { open(convId, nil) } label: { CronRow(job: job).contentShape(Rectangle()) }
                     .buttonStyle(.plain)
@@ -242,13 +218,11 @@ struct CronsView: View {
         }
     }
 
-    /// A new conversation with the job attached in its composer (owner, 2026-10-17): sent, it becomes part of the message.
     private func editInChat(_ job: V3CronJob) {
         open(V3Event.newId(), job)
     }
 }
 
-/// Name and state, the schedule, the next run; greyed while the job is disabled.
 private struct CronRow: View {
     let job: V3CronJob
 
@@ -279,7 +253,6 @@ private struct CronRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// ✓ or ✗ for the last run, nothing before the first. The error itself is the row's ✗ button.
     @ViewBuilder private var status: some View {
         switch job.lastStatus {
         case "ok":
