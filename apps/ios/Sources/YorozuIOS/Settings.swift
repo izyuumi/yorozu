@@ -25,38 +25,7 @@ struct SettingsView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        Form {
-            looks
-            if model.isDemo {
-                Section {
-                    Label(String(localized: "Demo"), systemImage: "play.rectangle")
-                    Text("Sample conversations and scripted replies. No host connection; changes disappear when you exit.")
-                    Button(String(localized: "Exit Demo")) {
-                        onUnpair()
-                        model.exitDemo()
-                    }
-                    .accessibilityIdentifier("demo.exit")
-                }
-                devices
-            } else {
-                notifications
-                siri
-                host
-                #if os(macOS)
-                updates
-                #endif
-                if model.devicesAvailable { devices }
-                Section {
-                    Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
-                        .disabled(!model.paired)
-                } footer: {
-                    Text(model.devicesAvailable
-                        ? "Removes this device from the host, and its keys and cached conversations from this device."
-                        : "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
-                }
-            }
-        }
-        .formStyle(.grouped)
+        content
         .sheet(isPresented: $addingDevice) { AddDeviceSheet(model: model) }
         .task(id: model.state == .ready) { model.refreshDevices() }
         .task(id: scenePhase) {
@@ -79,6 +48,68 @@ struct SettingsView: View {
     }
 
     private var current: V3DeviceInfo? { model.devices?.first(where: \.current) }
+
+    @ViewBuilder private var content: some View {
+        #if os(macOS)
+        TabView {
+            tab { general }
+                .tabItem { Label(String(localized: "General"), systemImage: "gearshape") }
+            tab { deviceSections }
+                .tabItem { Label(String(localized: "Devices"), systemImage: "laptopcomputer.and.iphone") }
+            if !model.isDemo {
+                tab { host }
+                    .tabItem { Label(String(localized: "Host"), systemImage: "server.rack") }
+                tab { updates }
+                    .tabItem { Label(String(localized: "Updates"), systemImage: "arrow.down.circle") }
+            }
+        }
+        #else
+        Form {
+            general
+            deviceSections
+            if !model.isDemo { host }
+        }
+        .formStyle(.grouped)
+        #endif
+    }
+
+    #if os(macOS)
+    private func tab(@ViewBuilder _ sections: () -> some View) -> some View {
+        SettingsTab { sections() }
+    }
+    #endif
+
+    @ViewBuilder private var general: some View {
+        looks
+        if model.isDemo {
+            Section {
+                Label(String(localized: "Demo"), systemImage: "play.rectangle")
+                Text("Sample conversations and scripted replies. No host connection; changes disappear when you exit.")
+                Button(String(localized: "Exit Demo")) {
+                    onUnpair()
+                    model.exitDemo()
+                }
+                .accessibilityIdentifier("demo.exit")
+            }
+        } else {
+            notifications
+            siri
+        }
+    }
+
+    @ViewBuilder private var deviceSections: some View {
+        if model.isDemo || model.devicesAvailable { devices }
+        if !model.isDemo {
+            Section {
+                Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
+                    .disabled(!model.paired)
+            } footer: {
+                Text(model.devicesAvailable
+                    ? "Removes this device from the host, and its keys and cached conversations from this device."
+                    : "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
+            }
+        }
+    }
 
     private var notifications: some View {
         Section {
@@ -231,6 +262,29 @@ struct SettingsView: View {
 
     private static func date(_ ms: Int64) -> Date { Date(timeIntervalSince1970: TimeInterval(ms) / 1000) }
 }
+
+#if os(macOS)
+private struct SettingsTab<Content: View>: View {
+    @ViewBuilder let content: Content
+    @State private var contentHeight: CGFloat?
+    private let width: CGFloat = 520
+    private let windowChrome: CGFloat = 120
+
+    var body: some View {
+        Form { content }
+            .formStyle(.grouped)
+            .scrollBounceBehavior(.basedOnSize)
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
+                contentHeight = height
+            }
+            .frame(width: width, height: contentHeight.map { min($0, maxHeight) })
+    }
+
+    private var maxHeight: CGFloat {
+        (NSScreen.main?.visibleFrame.height ?? 800) - windowChrome
+    }
+}
+#endif
 
 private struct AccentSwatch: View {
     let accent: Accent

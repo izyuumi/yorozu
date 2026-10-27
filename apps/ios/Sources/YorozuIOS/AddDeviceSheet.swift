@@ -7,6 +7,9 @@ struct AddDeviceSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scanning = false
     @State private var scanned: String?
+    @State private var known: Set<String>?
+    @State private var paired: V3DeviceInfo?
+    private static let pollInterval: Duration = .seconds(2)
 
     var body: some View {
         NavigationStack {
@@ -27,6 +30,22 @@ struct AddDeviceSheet: View {
             }
         }
         .task { model.requestInvite() }
+        .task(id: paired == nil) {
+            guard paired == nil else { return }
+            while !Task.isCancelled {
+                model.refreshDevices()
+                try? await Task.sleep(for: Self.pollInterval)
+                guard let devices = model.devices else { continue }
+                guard let known else {
+                    self.known = Set(devices.map(\.id))
+                    continue
+                }
+                if let added = devices.first(where: { !known.contains($0.id) }) {
+                    withAnimation(.snappy) { paired = added }
+                    return
+                }
+            }
+        }
         #if os(iOS)
         .sheet(isPresented: $scanning, onDismiss: {
             if let text = scanned { model.pairingError = model.submit(text) }
@@ -63,7 +82,9 @@ struct AddDeviceSheet: View {
 
 
     @ViewBuilder private var content: some View {
-        if let invite = model.invite, let webLink = invite.webLink, let url = URL(string: webLink),
+        if let paired {
+            success(paired)
+        } else if let invite = model.invite, let webLink = invite.webLink, let url = URL(string: webLink),
            let expiresAt = invite.expiresAt {
             let expiry = Date(timeIntervalSince1970: TimeInterval(expiresAt) / 1000)
             Text("On the new iPhone, iPad or Mac, scan this code with the camera or in Yorozu, or open the link there.")
@@ -101,6 +122,29 @@ struct AddDeviceSheet: View {
             }
         } else {
             ProgressView(String(localized: "Asking the host for a code…"))
+        }
+    }
+}
+
+extension AddDeviceSheet {
+    private func success(_ device: V3DeviceInfo) -> some View {
+        VStack(spacing: LayoutMetrics.stack) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.largeTitle)
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+            Text("\(device.name ?? String(localized: "The new device")) is paired")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+            Text("It sees every conversation. You can manage it in Paired Devices.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(String(localized: "Add Another")) {
+                known = Set(model.devices?.map(\.id) ?? [])
+                withAnimation(.snappy) { paired = nil }
+                model.requestInvite()
+            }
         }
     }
 }

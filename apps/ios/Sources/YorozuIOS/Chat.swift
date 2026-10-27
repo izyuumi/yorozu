@@ -373,6 +373,7 @@ private struct JumpToLatestButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .help(String(localized: "Jump to Latest"))
         .accessibilityLabel(Text("Jump to Latest"))
     }
 }
@@ -460,6 +461,7 @@ private struct Composer: View {
             .frame(width: controlTarget, height: controlTarget)
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(!canSend)
+            .help(String(localized: "Send"))
             .accessibilityLabel(Text("Send"))
             .accessibilityIdentifier("composer.send")
         }
