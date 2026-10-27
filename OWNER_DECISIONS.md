@@ -76,10 +76,8 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - A control or label that a clear symbol can stand for is shown as the icon alone, with its words kept for VoiceOver (accessibility label, and a tooltip on the Mac): fewer visible strings to translate. Menu items, Settings tabs, status words and anything whose icon would be ambiguous keep their text. (2026-10-12)
 - ⌘Enter sends by default on the Mac: Enter adds a newline. Hardware keyboards on iPhone and iPad keep smart Enter; the on-screen keyboard keeps its Send button. (2026-10-09, clients 2026-10-15)
 - Siri, Shortcuts and Spotlight through App Intents: Ask Yorozu (sends, waits up to 25 s and returns the reply for Siri to read; past that, "the reply will come as a notification"), Open Conversation and New Conversation, with conversations as entities Siri can name; App Shortcuts phrases in English and Japanese. Search Yorozu finds conversations by what was said, with the matching lines; conversations (title and recent messages, up to 4,000 characters) are in an on-device Spotlight index Siri searches, Data Protection `complete`, removed on unpair, with a Settings switch (Siri & Search), on by default. (2026-10-17)
-- Interface text is in English and Japanese on every client. (2026-10-09)
 - A run that fails for a moment (a plugin reload, an overloaded or rate-limited model) before any reply or tool runs again by itself, for about four minutes, instead of showing its error; only a failure that outlasts that is shown. (2026-10-23)
 - The client app is native SwiftUI, with selective AppKit on the Mac, never a web UI or webview wrapper. Use native SwiftUI components wherever they fit. (2026-10-07, clients 2026-10-15)
-- The app takes the system look: native backgrounds, Liquid Glass bars, the vermilion accent and bubbles in system materials. Large UI changes are designed in Claude Design, mockups first; changes built from stock native controls go straight to code. (2026-10-09, mockups 2026-10-17)
 
 ## Platform and release
 
@@ -91,10 +89,9 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
   - Stable: a PR that bumps `version.txt` promotes the Mac beta the owner checked, named in a `Promotes: <old> (<build>)` commit line, unchanged, to `v<old>` (2026-10-27: promoting the last beta instead shipped an unchecked one as 0.9.2); the iOS build of that version is submitted to the App Store by hand. Release tags can be neither moved nor deleted, so each version has one stable release.
   - Builds count per platform: the Mac from its beta release's build, iOS from App Store Connect.
 - The iPhone and iPad app is not offered on Apple Silicon Macs (App Store Connect availability off); Macs get the Developer ID app. (2026-10-27)
-- The Mac signing identity is a local, gitignored build setting, not part of the repo; git history is left as it is. (2026-10-09)
 - Clients reach the plugin through 0.5's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service. The relay may be changed when that is the better design (Transport). (2026-10-08, channel 2026-10-15)
 - iOS ships to the public App Store (first release 0.9.0), manual release after approval, no phased release; TestFlight testers first. Review uses a live review host, with a fixture demo behind the documented code `YOROZU-DEMO` as fallback (as OpenClaw does). iOS shows a subtle, dismissible "Update available" row from Apple's lookup API; nothing is forced. (2026-10-08, App Store 2026-10-17)
-- Version 0.9.1: iOS 0.9.0 went live on the App Store on 2026-10-23, which closed that version to new builds. The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`, above 0.5's `10279`). (2026-10-08, encoding 2026-10-17, 0.9.1 2026-10-23) Version 0.9.2 opens the beta channel: the stable `v0.9.1` tag cannot be replaced, so the first betas, which bring the Beta Updates toggle, are 0.9.2. (2026-10-27)
+- The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`). (2026-10-08, encoding 2026-10-17)
 - The app icon is 0.5's Icon Composer mark (blob-identical to 1e2f1fba). (2026-10-08)
 
 ## Stable contracts
@@ -109,17 +106,13 @@ These never change; future versions migrate around them (2026-10-17):
 
 ## Versioning rules
 
-- Every stored record carries a schema version; ordered migrations `n → n+1`, each idempotent, run at launch. (2026-10-17)
-- `peer_info` negotiates `protocolMin`/`protocolMax`; each side supports one protocol version back; `update_required` only outside that. (2026-10-17)
 - Changes are additive: new fields optional, unknown fields ignored, not rejected. (2026-10-17)
-- A breaking Mac update sets Sparkle `sparkle:minimumAutoupdateVersion`. (2026-10-17)
-- Naming: prose, docs, UI and migration code name app versions ("0.5", "0.9"), never v1/v2/v3. Type names carry no version (the `V3*` prefixes are renamed in a mechanical PR). The wire protocol stays a plain integer, "protocol 3", separate from app versions. (2026-10-17)
 
 ## Engineering
 
 - Language: Swift wherever possible, for a native feel; never Python. Code that has to live in another ecosystem uses that ecosystem's language, for example the TypeScript channel plugin that runs inside the OpenClaw Gateway. A separate long-running background process of Yorozu's own is Rust. (2026-10-13)
 - Not used: Electron, Tauri, web frontends, SwiftData, Core Data, agent orchestration frameworks, vector services, or Python in the repo. (2026-10-09)
-- Owner-specific values (such as the relay URL) are settings with generic defaults in code. (2026-10-09)
+- The relay is the public `wss://relay.yumi.to` by default; a user can optionally self-host the relay (`apps/relay`) and point the plugin at it with `channels.yorozu.relayUrl`, and the apps then use that relay. (2026-10-09, self-hosting 2026-10-28)
 - The OpenClaw config sets `contextWindow: 272000` for `openai-pool/gpt-6-sol` and `openai-pool/gpt-6-astra` (the owner's global file, approved). OpenClaw's global `contextPruning` stays off. (2026-10-08)
 - Working rules the owner set live in [AGENTS.md](AGENTS.md#rules); their dates are in the log.
 
