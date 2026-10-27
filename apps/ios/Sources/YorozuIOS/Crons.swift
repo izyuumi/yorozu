@@ -31,7 +31,7 @@ struct HomeView: View {
             guard empty else { return }
             Task { @MainActor in
                 guard selection == nil, besideList, pair.partner == nil else { return }
-                let convId = V3Event.newId()
+                let convId = WireEvent.newId()
                 blank = convId
                 selection = convId
             }
@@ -112,7 +112,7 @@ struct HomeView: View {
                                 .toolbar {
                                     if model.conversations[convId]?.items.isEmpty == false {
                                         ToolbarItem(placement: .pinnedAction) {
-                                            Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { selection = V3Event.newId() }
+                                            Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { selection = WireEvent.newId() }
                                                 .accessibilityIdentifier("chat.new")
                                         }
                                     }
@@ -129,7 +129,7 @@ struct HomeView: View {
         }
     }
 
-    private func open(_ convId: String, automation: V3CronJob?) {
+    private func open(_ convId: String, automation: CronJob?) {
         if let automation { model.automationDrafts[convId] = automation }
         selection = convId
         section = .chats
@@ -138,9 +138,9 @@ struct HomeView: View {
 
 struct CronsView: View {
     let model: AppModel
-    let open: (_ convId: String, _ automation: V3CronJob?) -> Void
+    let open: (_ convId: String, _ automation: CronJob?) -> Void
 
-    @State private var failure: V3CronJob?
+    @State private var failure: CronJob?
 
     var body: some View {
         let jobs = model.crons ?? []
@@ -186,7 +186,7 @@ struct CronsView: View {
         }
     }
 
-    private func row(_ job: V3CronJob) -> some View {
+    private func row(_ job: CronJob) -> some View {
         HStack(spacing: LayoutMetrics.stack) {
             if let convId = job.convId {
                 Button { open(convId, nil) } label: { CronRow(job: job).contentShape(Rectangle()) }
@@ -219,13 +219,13 @@ struct CronsView: View {
         }
     }
 
-    private func editInChat(_ job: V3CronJob) {
-        open(V3Event.newId(), job)
+    private func editInChat(_ job: CronJob) {
+        open(WireEvent.newId(), job)
     }
 }
 
 private struct CronRow: View {
-    let job: V3CronJob
+    let job: CronJob
 
     var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.hair) {

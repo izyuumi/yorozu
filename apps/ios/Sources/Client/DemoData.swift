@@ -13,19 +13,19 @@ enum DemoData {
         : [welcomeID: "A calmer start to the day", travelID: "A weekend in Kyoto",
         codeID: "Ship a small improvement", archiveID: "The reading list"] }
 
-    static var histories: [String: [V3HistoryItem]] {
+    static var histories: [String: [HistoryItem]] {
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
-        func thread(_ pairs: [(V3HistoryItem.Kind, String)], age: Int64, toolRow: Bool = false) -> [V3HistoryItem] {
+        func thread(_ pairs: [(HistoryItem.Kind, String)], age: Int64, toolRow: Bool = false) -> [HistoryItem] {
             var items = pairs.enumerated().map { index, pair in
-                V3HistoryItem(kind: pair.0, id: V3Event.newId(), seq: index + 1,
+                HistoryItem(kind: pair.0, id: WireEvent.newId(), seq: index + 1,
                     ts: now - age + Int64(index * 30_000), text: pair.1)
             }
             if toolRow, let user = items.first {
                 let json = """
                 [{"callId":"demo-review","name":"demo_sample","status":"done"}]
                 """
-                let calls = try? JSONDecoder().decode([V3HistoryItem.Call].self, from: Data(json.utf8))
-                items.insert(V3HistoryItem(kind: .tools, id: user.id, seq: 2, ts: user.ts + 15_000, tools: calls), at: 1)
+                let calls = try? JSONDecoder().decode([HistoryItem.Call].self, from: Data(json.utf8))
+                items.insert(HistoryItem(kind: .tools, id: user.id, seq: 2, ts: user.ts + 15_000, tools: calls), at: 1)
                 for index in items.indices { items[index].seq = index + 1 }
             }
             return items
@@ -78,16 +78,16 @@ enum DemoData {
         ]
     }
 
-    static var devices: [V3DeviceInfo] {
+    static var devices: [DeviceInfo] {
         let json = """
         [{"id":"demo-device","pairedAt":1781827200000,"push":false,"current":true}]
         """
-        var devices = (try? JSONDecoder().decode([V3DeviceInfo].self, from: Data(json.utf8))) ?? []
+        var devices = (try? JSONDecoder().decode([DeviceInfo].self, from: Data(json.utf8))) ?? []
         if !devices.isEmpty { devices[0].name = String(localized: "Demo Device") }
         return devices
     }
 
-    static var crons: [V3CronJob] {
+    static var crons: [CronJob] {
         let json = """
         [{"id":"demo-morning","name":"Morning check-in","enabled":true,
           "schedule":{"kind":"cron","expr":"0 9 * * 1-5","tz":"Asia/Tokyo"},
@@ -98,7 +98,7 @@ enum DemoData {
           "scheduleText":"Saturdays at 10:00 (Asia/Tokyo)",
           "delivery":{"channel":"yorozu","threadId":"\(archiveID)"}}]
         """
-        var jobs = (try? JSONDecoder().decode([V3CronJob].self, from: Data(json.utf8))) ?? []
+        var jobs = (try? JSONDecoder().decode([CronJob].self, from: Data(json.utf8))) ?? []
         if japanese, jobs.count == 2 {
             jobs[0].name = "朝のチェックイン"
             jobs[0].scheduleText = "平日 09:00（Asia/Tokyo）"

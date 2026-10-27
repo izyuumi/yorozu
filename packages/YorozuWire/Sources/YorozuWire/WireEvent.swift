@@ -1,29 +1,29 @@
 import Foundation
 
-public enum V3Event: Equatable, Sendable {
-    case peerInfo(V3PeerInfo)
-    case message(V3Message)
-    case delivered(V3MessageRef)
-    case runStarted(V3MessageRef)
-    case typing(V3Typing)
-    case reply(V3Reply)
-    case error(V3ErrorInfo)
-    case tool(V3Tool)
-    case convList(V3ConvList)
-    case historyRequest(V3HistoryRequest)
-    case history(V3History)
-    case readCursor(V3ReadCursor)
-    case foreground(V3Foreground)
-    case convPatch(V3ConvPatch)
-    case convUpdate(V3ConvUpdate)
-    case cronList(V3CronList)
-    case deviceList(V3DeviceList)
-    case devicePatch(V3DevicePatch)
-    case pairInvite(V3PairInvite)
-    case upload(V3Upload)
-    case uploadAck(V3UploadAck)
-    case download(V3Download)
-    case chunk(V3Chunk)
+public enum WireEvent: Equatable, Sendable {
+    case peerInfo(PeerInfo)
+    case message(Message)
+    case delivered(MessageRef)
+    case runStarted(MessageRef)
+    case typing(Typing)
+    case reply(Reply)
+    case error(ErrorInfo)
+    case tool(Tool)
+    case convList(ConvList)
+    case historyRequest(HistoryRequest)
+    case history(History)
+    case readCursor(ReadCursor)
+    case foreground(Foreground)
+    case convPatch(ConvPatch)
+    case convUpdate(ConvUpdate)
+    case cronList(CronList)
+    case deviceList(DeviceList)
+    case devicePatch(DevicePatch)
+    case pairInvite(PairInvite)
+    case upload(Upload)
+    case uploadAck(UploadAck)
+    case download(Download)
+    case chunk(Chunk)
     case unknown(kind: String, data: JSONValue?)
 
     public var kind: String {
@@ -68,7 +68,7 @@ public enum V3Event: Equatable, Sendable {
     }
 }
 
-public struct V3PeerInfo: Codable, Equatable, Sendable {
+public struct PeerInfo: Codable, Equatable, Sendable {
     public static let protocolVersion = 3
 
     public var protocolMin: Int
@@ -81,7 +81,7 @@ public struct V3PeerInfo: Codable, Equatable, Sendable {
     public var hostVersion: String?
 
     public init(app: String, name: String? = nil, capabilities: [String] = [],
-        protocolMin: Int = V3PeerInfo.protocolVersion, protocolMax: Int = V3PeerInfo.protocolVersion,
+        protocolMin: Int = PeerInfo.protocolVersion, protocolMax: Int = PeerInfo.protocolVersion,
         mediaMaxBytes: Int? = nil) {
         self.protocolMin = protocolMin
         self.protocolMax = protocolMax
@@ -91,19 +91,19 @@ public struct V3PeerInfo: Codable, Equatable, Sendable {
         self.mediaMaxBytes = mediaMaxBytes
     }
 
-    public func negotiate(with peer: V3PeerInfo) -> Int? {
+    public func negotiate(with peer: PeerInfo) -> Int? {
         let version = min(protocolMax, peer.protocolMax)
         return version >= max(protocolMin, peer.protocolMin) ? version : nil
     }
 }
 
-public struct V3Message: Codable, Equatable, Sendable {
+public struct Message: Codable, Equatable, Sendable {
     public var convId: String
     public var messageId: String
     public var text: String
-    public var attachments: [V3Attachment]?
+    public var attachments: [Attachment]?
 
-    public init(convId: String, messageId: String, text: String, attachments: [V3Attachment]? = nil) {
+    public init(convId: String, messageId: String, text: String, attachments: [Attachment]? = nil) {
         self.convId = convId
         self.messageId = messageId
         self.text = text
@@ -111,7 +111,7 @@ public struct V3Message: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3MessageRef: Codable, Equatable, Sendable {
+public struct MessageRef: Codable, Equatable, Sendable {
     public var convId: String
     public var messageId: String
 
@@ -121,7 +121,7 @@ public struct V3MessageRef: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3Typing: Codable, Equatable, Sendable {
+public struct Typing: Codable, Equatable, Sendable {
     public var convId: String
     public var active: Bool
 
@@ -131,14 +131,14 @@ public struct V3Typing: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3Reply: Codable, Equatable, Sendable {
+public struct Reply: Codable, Equatable, Sendable {
     public var convId: String
     public var messageId: String
     public var text: String
     public var ts: Int64
-    public var attachments: [V3Attachment]?
+    public var attachments: [Attachment]?
 
-    public init(convId: String, messageId: String, text: String, ts: Int64, attachments: [V3Attachment]? = nil) {
+    public init(convId: String, messageId: String, text: String, ts: Int64, attachments: [Attachment]? = nil) {
         self.convId = convId
         self.messageId = messageId
         self.text = text
@@ -147,7 +147,7 @@ public struct V3Reply: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3ErrorInfo: Codable, Equatable, Sendable {
+public struct ErrorInfo: Codable, Equatable, Sendable {
     public var code: String
     public var message: String
     public var convId: String?
@@ -163,7 +163,7 @@ public struct V3ErrorInfo: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3Attachment: Codable, Equatable, Sendable, Identifiable {
+public struct Attachment: Codable, Equatable, Sendable, Identifiable {
     public static let capability = "attachments"
     public static let chunkBytes = 160 * 1024
     public static let defaultMaxBytes = 8 * 1024 * 1024
@@ -199,7 +199,7 @@ public struct V3Attachment: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
-public struct V3Upload: Codable, Equatable, Sendable {
+public struct Upload: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var name: String
     public var mime: String
@@ -219,7 +219,7 @@ public struct V3Upload: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3UploadAck: Codable, Equatable, Sendable {
+public struct UploadAck: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var index: Int
     public var done: Bool
@@ -231,7 +231,7 @@ public struct V3UploadAck: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3Download: Codable, Equatable, Sendable {
+public struct Download: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var index: Int
 
@@ -241,7 +241,7 @@ public struct V3Download: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3Chunk: Codable, Equatable, Sendable {
+public struct Chunk: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var index: Int
     public var count: Int
@@ -255,7 +255,7 @@ public struct V3Chunk: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3Tool: Codable, Equatable, Sendable {
+public struct Tool: Codable, Equatable, Sendable {
     public enum Status: String, Codable, Sendable { case running, done, failed }
 
     public var convId: String
@@ -273,19 +273,19 @@ public struct V3Tool: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3ConvList: Codable, Equatable, Sendable {
-    public var conversations: [V3ConvSummary]?
+public struct ConvList: Codable, Equatable, Sendable {
+    public var conversations: [ConvSummary]?
 
-    public init(conversations: [V3ConvSummary]? = nil) { self.conversations = conversations }
+    public init(conversations: [ConvSummary]? = nil) { self.conversations = conversations }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        conversations = try c.decodeIfPresent([Lossy<V3ConvSummary>].self, forKey: .conversations)?
-            .compactMap(\.value).filter { V3Event.isId($0.convId) }
+        conversations = try c.decodeIfPresent([Lossy<ConvSummary>].self, forKey: .conversations)?
+            .compactMap(\.value).filter { WireEvent.isId($0.convId) }
     }
 }
 
-public struct V3ConvSummary: Codable, Equatable, Sendable {
+public struct ConvSummary: Codable, Equatable, Sendable {
     public var convId: String
     public var updatedAt: Int64
     public var rev: Int
@@ -304,7 +304,7 @@ public struct V3ConvSummary: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3HistoryRequest: Codable, Equatable, Sendable {
+public struct HistoryRequest: Codable, Equatable, Sendable {
     public var convId: String
     public var before: Int?
     public var after: Int?
@@ -316,15 +316,15 @@ public struct V3HistoryRequest: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3History: Codable, Equatable, Sendable {
+public struct History: Codable, Equatable, Sendable {
     public var convId: String
     public var before: Int?
     public var after: Int?
-    public var items: [V3HistoryItem]
+    public var items: [HistoryItem]
     public var more: Bool
     public var rev: Int
 
-    public init(convId: String, before: Int? = nil, after: Int? = nil, items: [V3HistoryItem], more: Bool, rev: Int) {
+    public init(convId: String, before: Int? = nil, after: Int? = nil, items: [HistoryItem], more: Bool, rev: Int) {
         self.convId = convId
         self.before = before
         self.after = after
@@ -338,19 +338,19 @@ public struct V3History: Codable, Equatable, Sendable {
         convId = try c.decode(String.self, forKey: .convId)
         before = try c.decodeIfPresent(Int.self, forKey: .before)
         after = try c.decodeIfPresent(Int.self, forKey: .after)
-        items = try c.decode([Lossy<V3HistoryItem>].self, forKey: .items).compactMap(\.value)
-            .filter { V3Event.isId($0.id) }
+        items = try c.decode([Lossy<HistoryItem>].self, forKey: .items).compactMap(\.value)
+            .filter { WireEvent.isId($0.id) }
         more = try c.decode(Bool.self, forKey: .more)
         rev = try c.decode(Int.self, forKey: .rev)
     }
 }
 
-public struct V3HistoryItem: Codable, Equatable, Sendable {
+public struct HistoryItem: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable { case user, agent, tools, reset }
     public struct Call: Codable, Equatable, Sendable {
         public var callId: String
         public var name: String
-        public var status: V3Tool.Status
+        public var status: Tool.Status
     }
 
     public var kind: Kind
@@ -359,10 +359,10 @@ public struct V3HistoryItem: Codable, Equatable, Sendable {
     public var ts: Int64
     public var text: String?
     public var tools: [Call]?
-    public var attachments: [V3Attachment]?
+    public var attachments: [Attachment]?
 
     public init(kind: Kind, id: String, seq: Int, ts: Int64, text: String? = nil, tools: [Call]? = nil,
-        attachments: [V3Attachment]? = nil) {
+        attachments: [Attachment]? = nil) {
         self.kind = kind
         self.id = id
         self.seq = seq
@@ -378,7 +378,7 @@ private struct Lossy<T: Decodable>: Decodable {
     init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }
 
-public struct V3ReadCursor: Codable, Equatable, Sendable {
+public struct ReadCursor: Codable, Equatable, Sendable {
     public var convId: String
     public var messageId: String
     public var ts: Int64
@@ -392,7 +392,7 @@ public struct V3ReadCursor: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3Foreground: Codable, Equatable, Sendable {
+public struct Foreground: Codable, Equatable, Sendable {
     public var convId: String?
     public var active: Bool?
 
@@ -402,11 +402,11 @@ public struct V3Foreground: Codable, Equatable, Sendable {
     }
 }
 
-public enum V3Devices {
+public enum Devices {
     public static let capability = "devices"
 }
 
-public struct V3DeviceInfo: Codable, Equatable, Sendable, Identifiable {
+public struct DeviceInfo: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String?
     public var pairedAt: Int64
@@ -414,17 +414,17 @@ public struct V3DeviceInfo: Codable, Equatable, Sendable, Identifiable {
     public var current: Bool
 }
 
-public struct V3DeviceList: Codable, Equatable, Sendable {
-    public var devices: [V3DeviceInfo]?
+public struct DeviceList: Codable, Equatable, Sendable {
+    public var devices: [DeviceInfo]?
     public var error: String?
 
-    public init(devices: [V3DeviceInfo]? = nil, error: String? = nil) {
+    public init(devices: [DeviceInfo]? = nil, error: String? = nil) {
         self.devices = devices
         self.error = error
     }
 }
 
-public struct V3DevicePatch: Codable, Equatable, Sendable {
+public struct DevicePatch: Codable, Equatable, Sendable {
     public var id: String
     public var push: Bool?
     public var removed: Bool?
@@ -436,11 +436,11 @@ public struct V3DevicePatch: Codable, Equatable, Sendable {
     }
 }
 
-public enum V3Invite {
+public enum Invite {
     public static let capability = "invite"
 }
 
-public struct V3PairInvite: Codable, Equatable, Sendable {
+public struct PairInvite: Codable, Equatable, Sendable {
     public var link: String?
     public var webLink: String?
     public var fingerprint: String?
@@ -450,17 +450,17 @@ public struct V3PairInvite: Codable, Equatable, Sendable {
     public init() {}
 }
 
-public struct V3CronList: Codable, Equatable, Sendable {
-    public var jobs: [V3CronJob]?
+public struct CronList: Codable, Equatable, Sendable {
+    public var jobs: [CronJob]?
     public var error: String?
 
-    public init(jobs: [V3CronJob]? = nil, error: String? = nil) {
+    public init(jobs: [CronJob]? = nil, error: String? = nil) {
         self.jobs = jobs
         self.error = error
     }
 }
 
-public struct V3CronJob: Codable, Equatable, Sendable, Identifiable {
+public struct CronJob: Codable, Equatable, Sendable, Identifiable {
     public struct Delivery: Codable, Equatable, Sendable {
         public var channel: String
         public var threadId: String
@@ -477,10 +477,10 @@ public struct V3CronJob: Codable, Equatable, Sendable, Identifiable {
     public var lastError: String?
     public var delivery: Delivery?
 
-    public var convId: String? { delivery.flatMap { $0.channel == "yorozu" && V3Event.isId($0.threadId) ? $0.threadId : nil } }
+    public var convId: String? { delivery.flatMap { $0.channel == "yorozu" && WireEvent.isId($0.threadId) ? $0.threadId : nil } }
 }
 
-public struct V3ConvPatch: Codable, Equatable, Sendable {
+public struct ConvPatch: Codable, Equatable, Sendable {
     public var convId: String
     public var title: String?
     public var archived: Bool?
@@ -496,7 +496,7 @@ public struct V3ConvPatch: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3ConvUpdate: Codable, Equatable, Sendable {
+public struct ConvUpdate: Codable, Equatable, Sendable {
     public var convId: String
     public var title: String?
     public var archived: Bool?
@@ -512,62 +512,62 @@ public struct V3ConvUpdate: Codable, Equatable, Sendable {
     }
 }
 
-extension V3Event: Codable {
+extension WireEvent: Codable {
     private enum Keys: String, CodingKey { case kind, data }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         let kind = try c.decode(String.self, forKey: .kind)
         func data<T: Decodable>(_: T.Type) -> T? { try? c.decode(T.self, forKey: .data) }
-        let ids = { (conv: String, message: String) in V3Event.isId(conv) && V3Event.isId(message) }
-        let files = { (list: [V3Attachment]?) in (list ?? []).allSatisfy { V3Event.isId($0.id) && $0.size >= 0 } }
-        let part = { (id: String, index: Int, count: Int) in V3Event.isId(id) && index >= 0 && index < count }
+        let ids = { (conv: String, message: String) in WireEvent.isId(conv) && WireEvent.isId(message) }
+        let files = { (list: [Attachment]?) in (list ?? []).allSatisfy { WireEvent.isId($0.id) && $0.size >= 0 } }
+        let part = { (id: String, index: Int, count: Int) in WireEvent.isId(id) && index >= 0 && index < count }
         switch kind {
         case "peer_info":
-            if let v = data(V3PeerInfo.self) { self = .peerInfo(v); return }
+            if let v = data(PeerInfo.self) { self = .peerInfo(v); return }
         case "message":
-            if let v = data(V3Message.self), ids(v.convId, v.messageId), files(v.attachments) { self = .message(v); return }
+            if let v = data(Message.self), ids(v.convId, v.messageId), files(v.attachments) { self = .message(v); return }
         case "delivered":
-            if let v = data(V3MessageRef.self), ids(v.convId, v.messageId) { self = .delivered(v); return }
+            if let v = data(MessageRef.self), ids(v.convId, v.messageId) { self = .delivered(v); return }
         case "run_started":
-            if let v = data(V3MessageRef.self), ids(v.convId, v.messageId) { self = .runStarted(v); return }
+            if let v = data(MessageRef.self), ids(v.convId, v.messageId) { self = .runStarted(v); return }
         case "typing":
-            if let v = data(V3Typing.self), V3Event.isId(v.convId) { self = .typing(v); return }
+            if let v = data(Typing.self), WireEvent.isId(v.convId) { self = .typing(v); return }
         case "reply":
-            if let v = data(V3Reply.self), ids(v.convId, v.messageId), files(v.attachments) { self = .reply(v); return }
+            if let v = data(Reply.self), ids(v.convId, v.messageId), files(v.attachments) { self = .reply(v); return }
         case "error":
-            if let v = data(V3ErrorInfo.self) { self = .error(v); return }
+            if let v = data(ErrorInfo.self) { self = .error(v); return }
         case "tool":
-            if let v = data(V3Tool.self), ids(v.convId, v.messageId) { self = .tool(v); return }
+            if let v = data(Tool.self), ids(v.convId, v.messageId) { self = .tool(v); return }
         case "conv_list":
-            if let v = data(V3ConvList.self) { self = .convList(v); return }
+            if let v = data(ConvList.self) { self = .convList(v); return }
         case "history":
-            if let v = data(V3History.self), V3Event.isId(v.convId) { self = .history(v); return }
-            if let v = data(V3HistoryRequest.self), V3Event.isId(v.convId) { self = .historyRequest(v); return }
+            if let v = data(History.self), WireEvent.isId(v.convId) { self = .history(v); return }
+            if let v = data(HistoryRequest.self), WireEvent.isId(v.convId) { self = .historyRequest(v); return }
         case "read_cursor":
-            if let v = data(V3ReadCursor.self), ids(v.convId, v.messageId) { self = .readCursor(v); return }
+            if let v = data(ReadCursor.self), ids(v.convId, v.messageId) { self = .readCursor(v); return }
         case "conv_patch":
-            if let v = data(V3ConvPatch.self), V3Event.isId(v.convId) { self = .convPatch(v); return }
+            if let v = data(ConvPatch.self), WireEvent.isId(v.convId) { self = .convPatch(v); return }
         case "conv_update":
-            if let v = data(V3ConvUpdate.self), V3Event.isId(v.convId) { self = .convUpdate(v); return }
+            if let v = data(ConvUpdate.self), WireEvent.isId(v.convId) { self = .convUpdate(v); return }
         case "foreground":
-            if let v = data(V3Foreground.self), v.convId.map(V3Event.isId) ?? true { self = .foreground(v); return }
+            if let v = data(Foreground.self), v.convId.map(WireEvent.isId) ?? true { self = .foreground(v); return }
         case "cron_list":
-            if let v = data(V3CronList.self) { self = .cronList(v); return }
+            if let v = data(CronList.self) { self = .cronList(v); return }
         case "device_list":
-            if let v = data(V3DeviceList.self) { self = .deviceList(v); return }
+            if let v = data(DeviceList.self) { self = .deviceList(v); return }
         case "device_patch":
-            if let v = data(V3DevicePatch.self), !v.id.isEmpty { self = .devicePatch(v); return }
+            if let v = data(DevicePatch.self), !v.id.isEmpty { self = .devicePatch(v); return }
         case "pair_invite":
-            if let v = data(V3PairInvite.self) { self = .pairInvite(v); return }
+            if let v = data(PairInvite.self) { self = .pairInvite(v); return }
         case "upload":
-            if let v = data(V3Upload.self), part(v.attachmentId, v.index, v.count) { self = .upload(v); return }
+            if let v = data(Upload.self), part(v.attachmentId, v.index, v.count) { self = .upload(v); return }
         case "upload_ack":
-            if let v = data(V3UploadAck.self), part(v.attachmentId, v.index, v.index + 1) { self = .uploadAck(v); return }
+            if let v = data(UploadAck.self), part(v.attachmentId, v.index, v.index + 1) { self = .uploadAck(v); return }
         case "download":
-            if let v = data(V3Download.self), part(v.attachmentId, v.index, v.index + 1) { self = .download(v); return }
+            if let v = data(Download.self), part(v.attachmentId, v.index, v.index + 1) { self = .download(v); return }
         case "chunk":
-            if let v = data(V3Chunk.self), part(v.attachmentId, v.index, v.count) { self = .chunk(v); return }
+            if let v = data(Chunk.self), part(v.attachmentId, v.index, v.count) { self = .chunk(v); return }
         default:
             break
         }

@@ -107,7 +107,7 @@ struct NewConversationIntent: AppIntent {
     @Dependency private var model: AppModel
 
     func perform() async throws -> some IntentResult {
-        await MainActor.run { if !model.isDemo { model.requestedConversation = V3Event.newId() } }
+        await MainActor.run { if !model.isDemo { model.requestedConversation = WireEvent.newId() } }
         return .result()
     }
 }
@@ -142,7 +142,7 @@ extension AppModel {
 
     func ask(_ text: String, in convId: String?, timeout: Duration = .seconds(25)) async throws -> AskOutcome {
         guard !isDemo, pairing != nil else { throw IntentFailure.notPaired }
-        let convId = convId ?? V3Event.newId()
+        let convId = convId ?? WireEvent.newId()
         let answers: (Conversation?) -> [ChatItem] = { $0?.items.filter { $0.kind == .agent || $0.kind == .error } ?? [] }
         let before = Set(answers(conversations[convId]).map(\.id))
         send(text, in: convId)

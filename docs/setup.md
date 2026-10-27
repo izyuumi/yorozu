@@ -67,7 +67,7 @@ Yorozu has no model settings of its own; it uses the configured agent's models. 
 - **iPhone, iPad**: the Yorozu app from TestFlight or the App Store ([release.md](release.md#ios-and-ipados-testflight)).
 - **Mac**: `scripts/build_native.sh` builds the client into `/Applications/Yorozu.app` ([release.md](release.md#mac-local-build)).
 
-The app speaks wire protocol 3 only.
+The app and the plugin speak the same wire; old clients keep working ([contract](ios-relay-contract.md#frames)).
 
 ## 4. Pair a device
 

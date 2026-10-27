@@ -8,16 +8,23 @@ struct Pairing: Codable, Equatable {
     var paired = false
     var pairedAt: Date?
 
-    private static let account = "pairing-v3"
+    private static let account = "pairing"
+    private static let oldAccount = "pairing-v3"  // moved to `account` on first load; the fallback goes in 0.11
 
     static func load() throws -> Pairing? {
-        guard let data = try Keychain.loadRequired(account) else { return nil }
-        return try JSONDecoder().decode(Pairing.self, from: data)
+        if let data = try Keychain.loadRequired(account) { return try JSONDecoder().decode(Pairing.self, from: data) }
+        guard let data = try Keychain.loadRequired(oldAccount) else { return nil }
+        let pairing = try JSONDecoder().decode(Pairing.self, from: data)
+        if (try? pairing.save()) != nil { try? Keychain.clearRequired(oldAccount) }
+        return pairing
     }
 
     func save() throws { try Keychain.save(JSONEncoder().encode(self), account: Self.account) }
 
-    static func remove() throws { try Keychain.clearRequired(account) }
+    static func remove() throws {
+        try Keychain.clearRequired(account)
+        try Keychain.clearRequired(oldAccount)
+    }
 }
 
 struct Conversation: Codable, Identifiable, Equatable {
@@ -29,7 +36,7 @@ struct Conversation: Codable, Identifiable, Equatable {
     var newestSeq: Int?
     var complete: Bool?
     var rev: Int?
-    var read: V3ReadCursor?
+    var read: ReadCursor?
     var readPending: Bool?
     var title: String?
     var archived: Bool?
@@ -128,18 +135,18 @@ struct ChatAttachment: Codable, Equatable, Identifiable {
     var uploaded: Bool?
     var failure: String?
 
-    var wire: V3Attachment { V3Attachment(id: id, name: V3Attachment.wireName(name), mime: V3Attachment.wireMime(mime), size: size) }
+    var wire: Attachment { Attachment(id: id, name: Attachment.wireName(name), mime: Attachment.wireMime(mime), size: size) }
 
-    static func list(_ files: [V3Attachment]?, uploaded: Bool? = nil) -> [ChatAttachment]? {
+    static func list(_ files: [Attachment]?, uploaded: Bool? = nil) -> [ChatAttachment]? {
         guard let files, !files.isEmpty else { return nil }
-        return files.filter { V3Event.isId($0.id) }
+        return files.filter { WireEvent.isId($0.id) }
             .map { ChatAttachment(id: $0.id, name: $0.name, mime: $0.mime, size: $0.size, uploaded: uploaded) }
     }
     var isImage: Bool { mime.hasPrefix("image/") }
 }
 
 extension ChatItem {
-    init(_ item: V3HistoryItem) {
+    init(_ item: HistoryItem) {
         switch item.kind {
         case .user:
             self.init(id: item.id, kind: .user, text: item.text ?? "", ts: item.ts, status: .read,
@@ -169,7 +176,7 @@ enum SendStatus: Int, Codable, Comparable {
 struct ToolCall: Codable, Equatable, Identifiable {
     let id: String
     var name: String
-    var status: V3Tool.Status
+    var status: Tool.Status
 
     static func union(_ a: [ToolCall], _ b: [ToolCall]) -> [ToolCall] {
         var calls = a
@@ -185,8 +192,8 @@ struct ToolCall: Codable, Equatable, Identifiable {
 }
 
 final class ConversationCache: Sendable {
-    private let directory = clientSupportDirectory.appending(path: "Conversations-v3", directoryHint: .isDirectory)
-    private let queue = DispatchQueue(label: "yorozu.v3.cache")
+    private let directory = clientDirectory("Conversations")
+    private let queue = DispatchQueue(label: "yorozu.cache")
 
     func loadAll() -> [Conversation] {
         queue.sync {
@@ -198,7 +205,7 @@ final class ConversationCache: Sendable {
     }
 
     func save(_ conversation: Conversation) {
-        guard V3Event.isId(conversation.id) else { return }
+        guard WireEvent.isId(conversation.id) else { return }
         queue.async { [directory] in
             do {
                 try Self.makeDirectory(directory)
@@ -212,7 +219,7 @@ final class ConversationCache: Sendable {
     }
 
     func remove(_ id: String) {
-        guard V3Event.isId(id) else { return }
+        guard WireEvent.isId(id) else { return }
         queue.async { [directory] in try? FileManager.default.removeItem(at: directory.appending(path: "\(id).json")) }
     }
 

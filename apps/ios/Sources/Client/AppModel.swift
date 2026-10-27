@@ -11,7 +11,7 @@ import AppKit
 final class AppModel {
     private(set) var pairing: Pairing?
     private(set) var isDemo = false
-    private(set) var state = V3Connection.State.offline
+    private(set) var state = RelayConnection.State.offline
     private(set) var conversations: [String: Conversation] = [:]
     private(set) var typing: Set<String> = []
     private(set) var loadingOlder: Set<String> = []
@@ -19,14 +19,14 @@ final class AppModel {
     var pairingError: String?
     var requestedConversation: String?
     private(set) var foreground: String?
-    private(set) var crons: [V3CronJob]?
+    private(set) var crons: [CronJob]?
     private(set) var cronsError: String?
-    var automationDrafts: [String: V3CronJob] = [:]
+    var automationDrafts: [String: CronJob] = [:]
     @ObservationIgnored var textDrafts: [String: String] = [:]
     @ObservationIgnored private var onScreen: Set<String> = []
-    private(set) var devices: [V3DeviceInfo]?
+    private(set) var devices: [DeviceInfo]?
     private(set) var devicesError: String?
-    private(set) var invite: V3PairInvite?
+    private(set) var invite: PairInvite?
     var notice: InAppNotice?
     var pendingDevice: DeviceCode?
     var deviceAdding: DeviceAdding?
@@ -36,12 +36,12 @@ final class AppModel {
     @ObservationIgnored private var listener: Task<Void, Never>?
     @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private let cache = ConversationCache()
-    @ObservationIgnored private var requests: [V3Event] = []
-    @ObservationIgnored private var inFlight: V3Event?
+    @ObservationIgnored private var requests: [WireEvent] = []
+    @ObservationIgnored private var inFlight: WireEvent?
     @ObservationIgnored private var inFlightTimer: Task<Void, Never>?
-    @ObservationIgnored private var unplacedReads: [String: V3ReadCursor] = [:]
+    @ObservationIgnored private var unplacedReads: [String: ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
-    private(set) var hostInfo: V3PeerInfo?
+    private(set) var hostInfo: PeerInfo?
     let transfers = Transfers()
     @ObservationIgnored private var outboxPumping = false
     @ObservationIgnored private var outboxAgain = false
@@ -58,8 +58,8 @@ final class AppModel {
     private struct LiveSnapshot {
         var pairing: Pairing?
         var conversations: [String: Conversation]
-        var crons: [V3CronJob]?
-        var hostInfo: V3PeerInfo?
+        var crons: [CronJob]?
+        var hostInfo: PeerInfo?
     }
     private static let logger = Logger(subsystem: "to.yumi.yorozu", category: "Demo")
 
@@ -236,9 +236,9 @@ final class AppModel {
 
     private func connect() {
         guard !isDemo, let pairing else { return }
-        let local = V3PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
-            name: DeviceModel.name, capabilities: [V3Attachment.capability, V3Devices.capability])
-        guard let connection = try? V3Connection(pairing: pairing.pairing, identity: pairing.identity,
+        let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
+            name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability])
+        guard let connection = try? RelayConnection(pairing: pairing.pairing, identity: pairing.identity,
             relayKnows: pairing.relayKnows, local: local) else {
             return failPairing(String(localized: "This pairing code can’t be used."))
         }
@@ -337,7 +337,7 @@ final class AppModel {
         guard next != foreground || active != activeSent else { return }
         foreground = next
         activeSent = active
-        transmit(.foreground(V3Foreground(convId: next, active: active)))
+        transmit(.foreground(Foreground(convId: next, active: active)))
     }
 
     func backgroundWake() async {
@@ -376,7 +376,7 @@ final class AppModel {
     }
 
     func conversation(convId: String?, ref: String?) -> String? {
-        if let convId, V3Event.isId(convId) { return convId }
+        if let convId, WireEvent.isId(convId) { return convId }
         guard let ref else { return nil }
         return conversations.keys.first { YorozuCrypto.threadRef($0) == ref }
     }
@@ -391,7 +391,7 @@ final class AppModel {
         }
     }
 
-    private func apply(_ update: V3Connection.Update) {
+    private func apply(_ update: RelayConnection.Update) {
         switch update {
         case .state(let new):
             state = new
@@ -414,7 +414,7 @@ final class AppModel {
             takeShares()
             pumpOutbox(resend: true)
             if !isDemo { transfers.resumeDownloads() }
-            if active { transmit(.foreground(V3Foreground(convId: foreground, active: true))) }
+            if active { transmit(.foreground(Foreground(convId: foreground, active: true))) }
             startSync()
             for conversation in conversations.values where conversation.readPending == true {
                 if let cursor = conversation.read { transmit(.readCursor(cursor)) }
@@ -438,21 +438,21 @@ final class AppModel {
         try? pairing.save()
     }
 
-    func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String, messageId: String = V3Event.newId()) {
+    func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String, messageId: String = WireEvent.newId()) {
         guard !isDemo || attachments.isEmpty else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !attachments.isEmpty, V3Event.isId(convId), V3Event.isId(messageId) else { return }
+        guard !text.isEmpty || !attachments.isEmpty, WireEvent.isId(convId), WireEvent.isId(messageId) else { return }
         var item = ChatItem(id: messageId, kind: .user, text: text, ts: Self.now, status: .queued,
             attachments: attachments.isEmpty ? nil : attachments)
-        if attachments.count > V3Attachment.maxPerMessage {
-            item.rejected = String(localized: "A message can carry up to \(V3Attachment.maxPerMessage) attachments.")
+        if attachments.count > Attachment.maxPerMessage {
+            item.rejected = String(localized: "A message can carry up to \(Attachment.maxPerMessage) attachments.")
         }
         append(item, to: convId)
         pumpOutbox(resend: false)
     }
 
-    var attachmentsAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(V3Attachment.capability) } ?? true) }
-    var mediaMaxBytes: Int { hostInfo?.mediaMaxBytes ?? V3Attachment.defaultMaxBytes }
+    var attachmentsAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(Attachment.capability) } ?? true) }
+    var mediaMaxBytes: Int { hostInfo?.mediaMaxBytes ?? Attachment.defaultMaxBytes }
 
     private func pumpOutbox(resend: Bool) {
         if resend { outboxResend = true }
@@ -492,7 +492,7 @@ final class AppModel {
             guard let item = conversations[convId]?.items.first(where: { $0.id == queued.id }) else { continue }
             let files = (item.attachments ?? []).filter { $0.uploaded == true && $0.failure == nil }.map(\.wire)
             guard !item.text.isEmpty || !files.isEmpty else { continue }
-            let message = V3Message(convId: convId, messageId: item.id, text: item.text, attachments: files.isEmpty ? nil : files)
+            let message = Message(convId: convId, messageId: item.id, text: item.text, attachments: files.isEmpty ? nil : files)
             guard await connection.send(message), generation == connectionGeneration else { return false }
             mark(item.id, .sending, in: convId)
         }
@@ -511,14 +511,14 @@ final class AppModel {
         transfers.fetch(attachment)
     }
 
-    private func receive(_ event: V3Event) {
+    private func receive(_ event: WireEvent) {
         switch event {
         case .delivered(let ref):
             mark(ref.messageId, .delivered, in: ref.convId)
             ShareInbox.finish(messageId: ref.messageId)
         case .runStarted(let ref):
             if conversations[ref.convId]?.items.contains(where: { $0.id == ref.messageId }) != true {
-                enqueue(.historyRequest(V3HistoryRequest(convId: ref.convId, after: conversations[ref.convId]?.newestSeq)))
+                enqueue(.historyRequest(HistoryRequest(convId: ref.convId, after: conversations[ref.convId]?.newestSeq)))
             }
             mark(ref.messageId, .read, in: ref.convId)
             ShareInbox.finish(messageId: ref.messageId)
@@ -549,7 +549,7 @@ final class AppModel {
             transfers.receive(event)
         case .error(let error):
             if ["internal", "bad_request", "unsupported"].contains(error.code), inFlight != nil { settle() }
-            guard let convId = error.convId, V3Event.isId(convId), let messageId = error.messageId else { return }
+            guard let convId = error.convId, WireEvent.isId(convId), let messageId = error.messageId else { return }
             reject(messageId, in: convId, error.message)
             let id = "error:\(messageId)"
             let text = error.code == "run_failed"
@@ -609,7 +609,7 @@ final class AppModel {
     }
 
     func open(_ convId: String) {
-        guard V3Event.isId(convId), let conversation = conversations[convId] else { return }
+        guard WireEvent.isId(convId), let conversation = conversations[convId] else { return }
         enqueue(catchUp(conversation), first: true)
     }
 
@@ -617,20 +617,20 @@ final class AppModel {
         guard let conversation = conversations[convId], conversation.complete != true, !loadingOlder.contains(convId) else { return }
         guard let oldest = conversation.oldestSeq else { return enqueue(catchUp(conversation), first: true) }
         loadingOlder.insert(convId)
-        enqueue(.historyRequest(V3HistoryRequest(convId: convId, before: oldest)), first: true)
+        enqueue(.historyRequest(HistoryRequest(convId: convId, before: oldest)), first: true)
     }
 
-    private func catchUp(_ conversation: Conversation) -> V3Event {
-        .historyRequest(V3HistoryRequest(convId: conversation.id, after: conversation.newestSeq))
+    private func catchUp(_ conversation: Conversation) -> WireEvent {
+        .historyRequest(HistoryRequest(convId: conversation.id, after: conversation.newestSeq))
     }
 
     private func startSync() {
-        requests = [.convList(V3ConvList())]
+        requests = [.convList(ConvList())]
         loadingOlder = []
         settle()
     }
 
-    private func enqueue(_ request: V3Event, first: Bool = false) {
+    private func enqueue(_ request: WireEvent, first: Bool = false) {
         guard request != inFlight else { return }
         requests.removeAll { $0 == request }
         if first { requests.insert(request, at: 0) } else { requests.append(request) }
@@ -664,35 +664,35 @@ final class AppModel {
         }
     }
 
-    var devicesAvailable: Bool { isDemo || hostInfo?.capabilities.contains(V3Devices.capability) == true }
+    var devicesAvailable: Bool { isDemo || hostInfo?.capabilities.contains(Devices.capability) == true }
 
     func refreshDevices() {
         guard devicesAvailable else { return }
-        transmit(.deviceList(V3DeviceList()))
+        transmit(.deviceList(DeviceList()))
     }
 
-    var inviteAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(V3Invite.capability) == true }
+    var inviteAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(Invite.capability) == true }
 
     func requestInvite() {
         guard !isDemo else { return }
         invite = nil
-        transmit(.pairInvite(V3PairInvite()))
+        transmit(.pairInvite(PairInvite()))
     }
 
     func setPush(_ on: Bool, for id: String) {
         guard !isDemo else { return }
-        transmit(.devicePatch(V3DevicePatch(id: id, push: on)))
+        transmit(.devicePatch(DevicePatch(id: id, push: on)))
     }
 
     func removeDevice(_ id: String) {
         guard !isDemo else { return }
-        transmit(.devicePatch(V3DevicePatch(id: id, removed: true)))
+        transmit(.devicePatch(DevicePatch(id: id, removed: true)))
     }
 
     func unpairEverywhere() async {
         if isDemo { return exitDemo() }
         if let me = devices?.first(where: \.current), let connection {
-            _ = await connection.send(.devicePatch(V3DevicePatch(id: me.id, removed: true)))
+            _ = await connection.send(.devicePatch(DevicePatch(id: me.id, removed: true)))
             try? await Task.sleep(for: .milliseconds(500))
         }
         unpair()
@@ -703,7 +703,7 @@ final class AppModel {
             crons = DemoData.crons
             return
         }
-        guard let connection, await connection.send(.cronList(V3CronList())) else { return }
+        guard let connection, await connection.send(.cronList(CronList())) else { return }
         await withCheckedContinuation { continuation in
             cronWaiters.append(continuation)
             Task { [weak self] in
@@ -713,8 +713,8 @@ final class AppModel {
         }
     }
 
-    private func history(_ page: V3History) {
-        guard V3Event.isId(page.convId) else { return }
+    private func history(_ page: History) {
+        guard WireEvent.isId(page.convId) else { return }
         let now = Self.now
         var conversation = conversations[page.convId] ?? Conversation(id: page.convId, createdAt: now, updatedAt: 0,
             read: unplacedReads.removeValue(forKey: page.convId))
@@ -728,7 +728,7 @@ final class AppModel {
         }
         if page.before == nil {
             if page.after != nil && page.more {
-                enqueue(.historyRequest(V3HistoryRequest(convId: page.convId, after: conversation.newestSeq)), first: true)
+                enqueue(.historyRequest(HistoryRequest(convId: page.convId, after: conversation.newestSeq)), first: true)
             } else {
                 conversation.rev = page.rev
             }
@@ -761,7 +761,7 @@ final class AppModel {
     }
 
     private func append(_ item: ChatItem, to convId: String) {
-        guard V3Event.isId(convId) else { return }
+        guard WireEvent.isId(convId) else { return }
         let now = Self.now
         var conversation = conversations[convId]
             ?? Conversation(id: convId, createdAt: now, updatedAt: now, read: unplacedReads.removeValue(forKey: convId))
@@ -771,7 +771,7 @@ final class AppModel {
         store(conversation)
     }
 
-    private func tool(_ tool: V3Tool) {
+    private func tool(_ tool: Tool) {
         let id = "tools:\(tool.messageId)"
         var conversation = conversations[tool.convId]
         if conversation?.items.contains(where: { $0.id == id }) != true {
@@ -801,13 +801,13 @@ final class AppModel {
         guard !isDemo, paired else { return }
         for (share, folder) in ShareInbox.pending() {
             let messageId = folder.lastPathComponent.lowercased()
-            guard V3Event.isId(messageId) else { continue }
+            guard WireEvent.isId(messageId) else { continue }
             if let existing = conversations.values.flatMap(\.items).first(where: { $0.id == messageId && $0.kind == .user }) {
                 if (existing.status ?? .queued) >= .delivered { ShareInbox.finish(messageId: messageId) }
                 else { pumpOutbox(resend: state == .ready) }
                 continue
             }
-            let convId = share.convId.flatMap { V3Event.isId($0) && conversations[$0] != nil ? $0 : nil } ?? messageId
+            let convId = share.convId.flatMap { WireEvent.isId($0) && conversations[$0] != nil ? $0 : nil } ?? messageId
             var files: [ChatAttachment] = []
             if let name = share.fileName {
                 do {
@@ -836,28 +836,28 @@ final class AppModel {
 
     func rename(_ convId: String, to title: String) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        patch(V3ConvPatch(convId: convId, title: title)) { $0.title = title.isEmpty ? $0.title : title }
+        patch(ConvPatch(convId: convId, title: title)) { $0.title = title.isEmpty ? $0.title : title }
     }
 
     func setArchived(_ convId: String, _ archived: Bool) {
-        patch(V3ConvPatch(convId: convId, archived: archived)) {
+        patch(ConvPatch(convId: convId, archived: archived)) {
             $0.archived = archived ? true : nil
             if archived { $0.pinnedAt = nil }
         }
     }
 
     func setPinned(_ convId: String, _ pinned: Bool) {
-        patch(V3ConvPatch(convId: convId, pinned: pinned)) { $0.pinnedAt = pinned ? $0.pinnedAt ?? Self.now : nil }
+        patch(ConvPatch(convId: convId, pinned: pinned)) { $0.pinnedAt = pinned ? $0.pinnedAt ?? Self.now : nil }
     }
 
     func delete(_ convId: String) {
-        patch(V3ConvPatch(convId: convId, deleted: true)) { _ in }
+        patch(ConvPatch(convId: convId, deleted: true)) { _ in }
     }
 
     var canPatch: Bool { state == .ready }
 
-    private func patch(_ patch: V3ConvPatch, local: @escaping (inout Conversation) -> Void) {
-        guard let connection, V3Event.isId(patch.convId) else { return }
+    private func patch(_ patch: ConvPatch, local: @escaping (inout Conversation) -> Void) {
+        guard let connection, WireEvent.isId(patch.convId) else { return }
         let generation = connectionGeneration
         Task {
             guard await connection.send(.convPatch(patch)), generation == connectionGeneration else { return }
@@ -868,7 +868,7 @@ final class AppModel {
         }
     }
 
-    private func apply(_ update: V3ConvUpdate) {
+    private func apply(_ update: ConvUpdate) {
         if update.deleted == true { return forget(update.convId) }
         var conversation = conversations[update.convId]
             ?? Conversation(id: update.convId, createdAt: Self.now, updatedAt: Self.now, read: unplacedReads.removeValue(forKey: update.convId))
@@ -887,7 +887,7 @@ final class AppModel {
         if !isDemo { cache.remove(convId) }
         let waiting = Set(ShareInbox.pending().map { $0.folder.lastPathComponent.lowercased() })
         let retained = gone.items.filter { $0.kind == .user && ($0.status ?? .queued) < .delivered && waiting.contains($0.id) }
-        for item in retained { append(item, to: V3Event.newId()) }
+        for item in retained { append(item, to: WireEvent.newId()) }
         if !retained.isEmpty { pumpOutbox(resend: true) }
         if !isDemo {
             for file in gone.items.filter({ item in !retained.contains(where: { $0.id == item.id }) })
@@ -905,7 +905,7 @@ final class AppModel {
         let unread = explicit ? false : held?.unread == true
         let ahead = latest.ts > conversation.readUpTo
         guard ahead || held?.unread != unread else { return }
-        setRead(V3ReadCursor(convId: convId, messageId: ahead ? latest.id : held!.messageId,
+        setRead(ReadCursor(convId: convId, messageId: ahead ? latest.id : held!.messageId,
             ts: ahead ? latest.ts : held!.ts, unread: unread), in: conversation)
     }
 
@@ -915,7 +915,7 @@ final class AppModel {
         setRead(cursor, in: conversation)
     }
 
-    private func setRead(_ cursor: V3ReadCursor, in conversation: Conversation) {
+    private func setRead(_ cursor: ReadCursor, in conversation: Conversation) {
         var conversation = conversation
         conversation.read = cursor
         conversation.readPending = true
@@ -924,7 +924,7 @@ final class AppModel {
         if !isDemo, !cursor.unread { Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
     }
 
-    private func receive(_ cursor: V3ReadCursor) {
+    private func receive(_ cursor: ReadCursor) {
         if !isDemo, !cursor.unread { Notices.removeDelivered(convId: cursor.convId, readUpTo: cursor.ts) }
         guard var conversation = conversations[cursor.convId] else {
             unplacedReads[cursor.convId] = cursor
@@ -935,7 +935,7 @@ final class AppModel {
                 conversation.readPending = nil
                 conversation.read = cursor
             } else if cursor.ts > mine.ts {
-                conversation.read = V3ReadCursor(convId: cursor.convId, messageId: cursor.messageId, ts: cursor.ts, unread: mine.unread)
+                conversation.read = ReadCursor(convId: cursor.convId, messageId: cursor.messageId, ts: cursor.ts, unread: mine.unread)
             }
         } else {
             conversation.read = cursor
@@ -944,7 +944,7 @@ final class AppModel {
         store(conversation)
     }
 
-    private func transmit(_ event: V3Event) {
+    private func transmit(_ event: WireEvent) {
         guard let connection else { return }
         let generation = connectionGeneration
         Task {
@@ -983,7 +983,7 @@ final class AppModel {
     private static var now: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
 }
 
-extension V3Connection.State {
+extension RelayConnection.State {
     var label: String {
         switch self {
         case .ready: String(localized: "Connected")

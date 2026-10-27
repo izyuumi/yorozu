@@ -1,6 +1,6 @@
 # openclaw-yorozu
 
-The OpenClaw channel plugin `yorozu`. It holds the host keys and one outbound WebSocket to the relay, answers wire v3 handshakes from allowlisted devices ([docs/ios-relay-contract.md](../../docs/ios-relay-contract.md)), and runs one agent turn per incoming message. Install, config keys, pairing and troubleshooting: [docs/setup.md](../../docs/setup.md). The OpenClaw SDK surface it relies on: [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
+The OpenClaw channel plugin `yorozu`. It holds the host keys and one outbound WebSocket to the relay, answers wire handshakes from allowlisted devices ([docs/ios-relay-contract.md](../../docs/ios-relay-contract.md)), and runs one agent turn per incoming message. Install, config keys, pairing and troubleshooting: [docs/setup.md](../../docs/setup.md). The OpenClaw SDK surface it relies on: [docs/openclaw-channel.md](../../docs/openclaw-channel.md).
 
 ## Entry points
 

@@ -18,7 +18,7 @@ struct SettingsView: View {
     @AppStorage(MacUpdates.betaKey) private var betaUpdates = false
     #endif
     @State private var permission: UNAuthorizationStatus?
-    @State private var removing: V3DeviceInfo?
+    @State private var removing: DeviceInfo?
     @State private var unpairing = false
     @State private var addingDevice = false
     @Environment(\.openURL) private var openURL
@@ -47,7 +47,7 @@ struct SettingsView: View {
         }
     }
 
-    private var current: V3DeviceInfo? { model.devices?.first(where: \.current) }
+    private var current: DeviceInfo? { model.devices?.first(where: \.current) }
 
     @ViewBuilder private var content: some View {
         #if os(macOS)

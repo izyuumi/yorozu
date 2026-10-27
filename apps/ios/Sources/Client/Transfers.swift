@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 import YorozuWire
 
 enum AttachmentFiles {
-    static let directory = clientSupportDirectory.appending(path: "Attachments-v3", directoryHint: .isDirectory)
+    static let directory = clientDirectory("Attachments")
 
     static func url(_ attachment: ChatAttachment) -> URL {
         directory.appending(path: attachment.id, directoryHint: .isDirectory).appending(path: safeName(attachment.name))
@@ -99,7 +99,7 @@ enum AttachmentStaging {
 
     static func stage(data: Data, name: String, mime: String, limit: Int) throws -> ChatAttachment {
         guard data.count <= limit else { throw Failure.tooLarge(name: name, size: data.count, limit: limit) }
-        let attachment = ChatAttachment(id: V3Event.newId(), name: AttachmentFiles.safeName(name), mime: mime, size: data.count)
+        let attachment = ChatAttachment(id: WireEvent.newId(), name: AttachmentFiles.safeName(name), mime: mime, size: data.count)
         try AttachmentFiles.write(data, for: attachment)
         return attachment
     }
@@ -123,9 +123,9 @@ final class Transfers {
     private(set) var progress: [String: Double] = [:]
     private(set) var failures: [String: String] = [:]
 
-    enum Outcome { case ack(index: Int, done: Bool), chunk(V3Chunk), refused(String), lost }
+    enum Outcome { case ack(index: Int, done: Bool), chunk(Chunk), refused(String), lost }
 
-    @ObservationIgnored var send: (V3Event) async -> Bool = { _ in false }
+    @ObservationIgnored var send: (WireEvent) async -> Bool = { _ in false }
     @ObservationIgnored private var inbox: [String: [Outcome]] = [:]
     @ObservationIgnored private var waiters: [String: CheckedContinuation<Outcome, Never>] = [:]
     @ObservationIgnored private var wanted: [ChatAttachment] = []
@@ -135,7 +135,7 @@ final class Transfers {
     static let downloadWindow = 2
     static let ackTimeout: Duration = .seconds(30)
 
-    func receive(_ event: V3Event) {
+    func receive(_ event: WireEvent) {
         switch event {
         case .uploadAck(let ack): deliver(.ack(index: ack.index, done: ack.done), to: ack.attachmentId)
         case .chunk(let chunk): deliver(.chunk(chunk), to: chunk.attachmentId)
@@ -177,15 +177,15 @@ final class Transfers {
             return .refused(String(localized: "The file is no longer on this device."))
         }
         let id = attachment.id
-        let count = V3Attachment.chunkCount(data.count)
+        let count = Attachment.chunkCount(data.count)
         inbox[id] = nil
         progress[id] = 0
         defer { progress[id] = nil; inbox[id] = nil }
         var next = 0, inFlight = 0, acked = 0
         while true {
             while inFlight < Self.uploadWindow && next < count {
-                let range = (next * V3Attachment.chunkBytes)..<min(data.count, (next + 1) * V3Attachment.chunkBytes)
-                let upload = V3Upload(attachmentId: id, name: attachment.wire.name, mime: attachment.wire.mime, size: data.count,
+                let range = (next * Attachment.chunkBytes)..<min(data.count, (next + 1) * Attachment.chunkBytes)
+                let upload = Upload(attachmentId: id, name: attachment.wire.name, mime: attachment.wire.mime, size: data.count,
                     index: next, count: count, data: data.subdata(in: range).base64EncodedString())
                 guard await send(.upload(upload)) else { return .interrupted }
                 next += 1
@@ -240,7 +240,7 @@ final class Transfers {
         }
         while true {
             while inFlight < Self.downloadWindow && next < count {
-                guard await send(.download(V3Download(attachmentId: id, index: next))) else { return false }
+                guard await send(.download(Download(attachmentId: id, index: next))) else { return false }
                 next += 1
                 inFlight += 1
             }

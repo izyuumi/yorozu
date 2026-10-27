@@ -17,7 +17,7 @@ Yorozu is an OpenClaw chat channel. OpenClaw runs the agent, its sessions, memor
 | Channel plugin | `plugins/openclaw-yorozu` | Runs inside the Gateway. Holds the host keys, registers as host of its relay room, answers handshakes from allowlisted devices, runs one agent turn per incoming message and sends the results to every device; answers history, title, read-mark, cron, device and attachment requests; sends pushes. Adds `openclaw yorozu pair`, `devices` and `devices remove` through Gateway methods (`yorozu.*`). File-by-file reference: its [README](../plugins/openclaw-yorozu/README.md); SDK facts: [openclaw-channel.md](openclaw-channel.md). |
 | Relay | `apps/relay` | Rooms, joins, signed frames, offline buffer for device frames, APNs push, one-time mailboxes for pairing a Mac. Reads only its outer envelope. Deployed as a Cloudflare Worker; a Node variant exists ([README](../apps/relay/README.md)). |
 | Client app | `apps/ios`, one multiplatform target `YorozuIOS` (iPhone, iPad, native SwiftUI Mac) | Pairing, conversation list, chat, Automations (crons), Settings, attachments, notifications. Screens in `Sources/YorozuIOS`; state, cache and transfers in `Sources/Client` (`AppModel`, `ConversationCache` and `Pairing` in `Store.swift`, `Transfers`). |
-| Wire package | `packages/YorozuWire` | The client's side of the wire: Noise handshake, frames and boxes (`WireV3.swift`), envelope (`V3Event.swift`), relay link (`V3Connection.swift`), pairing link (`Pairing.swift`), Mac pairing code (`DeviceCode.swift`), push previews, crypto primitives. |
+| Wire package | `packages/YorozuWire` | The client's side of the wire: Noise handshake, frames and boxes (`Wire.swift`), envelope (`WireEvent.swift`), relay link (`RelayConnection.swift`), pairing link (`Pairing.swift`), Mac pairing code (`DeviceCode.swift`), push previews, crypto primitives. |
 
 ### iPhone and iPad vs Mac
 
@@ -32,7 +32,7 @@ Yorozu is an OpenClaw chat channel. OpenClaw runs the agent, its sessions, memor
 
 ## Wire
 
-Client and plugin speak wire protocol 3 through the relay; [ios-relay-contract.md](ios-relay-contract.md) is the contract. In outline:
+Client and plugin speak the wire through the relay; [ios-relay-contract.md](ios-relay-contract.md) is the contract. In outline:
 
 - **Pairing**: `openclaw yorozu pair` prints a QR and a `yorozu://pair?v=3&relay=…&key=…&token=…&room=…&secret=…` link. The client shows the host fingerprint to compare, joins the relay room with the one-time token, and proves the secret inside its first handshake; the plugin then adds the device to its allowlist (16 at most, the oldest making way). A paired device can ask the plugin for another code (`pair_invite`).
 - **Sessions**: every connection runs a Noise IK handshake (the device knows the host's static key from the link), so every connection has fresh keys. Transport boxes are ChaCha20-Poly1305; relay frames are Ed25519-signed.
@@ -77,9 +77,9 @@ Details of each are in the contract; in short:
 | Plugin | Device sessions, pending pairing secrets, partial uploads, alerted-device lists | Memory | Gone on Gateway restart: devices handshake again; an unused `pair` must be run again. |
 | OpenClaw | Sessions, transcripts, generated titles | The agent's store under `<stateDir>/agents/<agent>/` | Plaintext, the same trust model as every OpenClaw channel. |
 | OpenClaw | Attachment files | `<stateDir>/media/inbound`, `media/outbound` | As above. |
-| Client | Pairing: the link's host data, this device's Ed25519 and X25519 keys | Keychain, service `to.yumi.yorozu.ios`, account `pairing-v3` | Not synced, `AfterFirstUnlockThisDeviceOnly` so a background push can reconnect while locked. |
+| Client | Pairing: the link's host data, this device's Ed25519 and X25519 keys | Keychain, service `to.yumi.yorozu.ios`, account `pairing` (moved from `pairing-v3` on first launch) | Not synced, `AfterFirstUnlockThisDeviceOnly` so a background push can reconnect while locked. |
 | Client (iOS) | Push-preview key (opens previews only) | Keychain group shared with the notification service extension, service `to.yumi.yorozu.v2.push-preview` | `AfterFirstUnlockThisDeviceOnly`; written on each connect, deleted on unpair. |
-| Client | Conversation cache (`Conversations-v3/`), files (`Attachments-v3/`) | iOS: the app's Application Support. Mac: `~/Library/Application Support/to.yumi.yorozu/client/` | iOS: Data Protection `complete`, excluded from backup. Mac: the user account's protection (no per-file classes outside the sandbox). Wiped on unpair and on a new pairing. |
+| Client | Conversation cache (`Conversations/`), files (`Attachments/`), both moved from their `-v3` names on first use | iOS: the app's Application Support. Mac: `~/Library/Application Support/to.yumi.yorozu/client/` | iOS: Data Protection `complete`, excluded from backup. Mac: the user account's protection (no per-file classes outside the sandbox). Wiped on unpair and on a new pairing. |
 | Client (iOS) | Shares waiting for the app | App Group `group.to.yumi.yorozu`, `ShareInbox/` | Data Protection `complete`; holds no keys, and the extension cannot send. |
 | Relay | Known device keys, join tokens, APNs tokens, device frames buffered while the host is away (5 MiB, 24 h) | Durable Object storage (Worker); memory (Node) | Sees only signed outer envelopes and sealed boxes. |
 

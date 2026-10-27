@@ -1,10 +1,10 @@
-# Wire protocol 3: client ⇄ plugin
+# The wire: client ⇄ plugin
 
 The wire between the Yorozu client app (iPhone, iPad, Mac) and the OpenClaw channel plugin, through the relay. Implementations:
 
 | Side | Code |
 |---|---|
-| Client (Swift, CryptoKit) | `packages/YorozuWire/Sources/YorozuWire/`: `WireV3.swift` (Noise, frames, boxes), `V3Event.swift` (envelope), `V3Connection.swift` (relay link), `Pairing.swift`, `DeviceCode.swift`, `PushPreview.swift`, `Crypto.swift` |
+| Client (Swift, CryptoKit) | `packages/YorozuWire/Sources/YorozuWire/`: `Wire.swift` (Noise, frames, boxes), `WireEvent.swift` (envelope), `RelayConnection.swift` (relay link), `Pairing.swift`, `DeviceCode.swift`, `PushPreview.swift`, `Crypto.swift` |
 | Plugin (TypeScript, `node:crypto`) | `plugins/openclaw-yorozu/src/`: `wire.ts`, `envelope.ts`, `relay.ts` (relay link and dispatch), `push.ts`, `attachments.ts`, `history.ts`, `sessions.ts`, `reads.ts`, `cron.ts` |
 | Relay | `apps/relay/src/`: `protocol.ts` (shared rules), `worker.ts` (deployed), `index.ts` (Node), `mailbox.ts` |
 
@@ -63,7 +63,7 @@ yorozu://pair?v=3&relay=<url>&key=<host X25519 pub>&token=<one-time token>&room=
 The QR carries the same query in a fragment: `https://yorozu.yumi.to/pair#<query>`, a universal link the iOS app claims.
 
 - `key`: the host's static X25519 public key, base64url, 32 bytes; never sent over the relay. `token`: the relay's one-time join token. `room`: as above. `secret`: base64url; the relay never sees it.
-- `QrPayload.decode` takes either form. `key`, `token` and `secret` must be unpadded base64url. `relay` must be `wss://`, or `ws://` to `localhost`, `127.0.0.1` or `::1`. `V3Connection` accepts only `v=3`.
+- `QrPayload.decode` takes either form. `key`, `token` and `secret` must be unpadded base64url. `relay` must be `wss://`, or `ws://` to `localhost`, `127.0.0.1` or `::1`. A link without `v` is read as the current wire, and `RelayConnection` accepts only that or `v=3`. The plugin still sends `v=3` until every client in use reads links without it.
 - **Fingerprint**: the first 8 bytes of `key`, uppercase hex in groups of two bytes (`EED8 92A4 B33E 5EC2`): `QrPayload.fingerprint`, `fingerprint()`. The CLI prints it and the client shows it for comparison before it pairs.
 - **Proof**: while the client holds the secret, handshake message 1 carries `helloProof = base64url(sha256("<secret>.<pub>.<spub>"))`, where `pub` and `spub` are the client's X25519 static and Ed25519 keys, base64url (`YorozuCrypto.helloProof` / `helloProof`). It travels encrypted to the host's static key.
 - The secret is pending in the plugin's memory until the token's `expiresAt`, and is spent by the first device whose proof matches: one device per code. A Gateway restart forgets it. The client drops its copy after the first session opens.
@@ -81,17 +81,22 @@ A Mac, which has no camera, can pair from a code that a paired iPhone or iPad sc
 
 ## Frames
 
-The relay `payload` is unpadded base64url of one binary frame. Byte 0 is the version, `0x03` (a JSON payload starts with `{` and never parses). Byte 1 is the type.
+The relay `payload` is unpadded base64url of one binary frame. Byte 0 is the type (a JSON payload starts with `{` and never parses). Frames come in two formats, moving from the old to the new in three steps: the plugin accepts both (now); clients send the new one (0.11); the plugin drops the old one, when the owner decides.
 
-| Type | Direction | Bytes after the two-byte head |
+- **New**: one type byte, `0x11` init, `0x12` response, `0x13` box, then the bytes below. Prologue `yorozu|…`.
+- **Old**, what clients send until 0.11: the byte `0x03`, then the type `0x01`, `0x02` or `0x03`, then the bytes below. Prologue `yorozu-v3|…`.
+
+The plugin answers each session in the format of the init frame that opened it, and opens a box only in that format.
+
+| Type | Direction | Bytes after the head |
 |---|---|---|
-| `0x01` init | client → host | client Ed25519 key (32) ‖ Noise message 1 (96 to 65,535) |
-| `0x02` response | host → client | `sid` (8) ‖ Noise message 2 (48 to 65,535) |
-| `0x03` box | either | `sid` (8) ‖ counter (8, little-endian, at most 2^53 − 1) ‖ ciphertext and 16-byte tag |
+| init | client → host | client Ed25519 key (32) ‖ Noise message 1 (96 to 65,535) |
+| response | host → client | `sid` (8) ‖ Noise message 2 (48 to 65,535) |
+| box | either | `sid` (8) ‖ counter (8, little-endian, at most 2^53 − 1) ‖ ciphertext and 16-byte tag |
 
 - `sid`: the first 8 bytes of message 1, which are the first 8 bytes of the client's ephemeral key. Public.
 - A box is bounded only by the relay's 1 MiB message: roughly 760 KiB of plaintext.
-- Anything else, or a frame outside these lengths, is dropped (`V3Frame(payload:)` throws, `decodeFrame` returns null).
+- Anything else, or a frame outside these lengths, is dropped (`Frame(payload:)` throws, `decodeFrame` returns null).
 
 ## Handshake
 
@@ -107,12 +112,12 @@ IK:
 
 The client is the initiator (it knows the host's static key from the pairing link); the plugin is the responder. The 32-byte protocol name is the initial `h`. HKDF is Noise's (HMAC-SHA256, two outputs); the AEAD nonce is 4 zero bytes ‖ counter little-endian; handshake ciphertexts use `h` as associated data.
 
-- **Prologue**: UTF-8 `yorozu-v3|<room id>|<client Ed25519 key, base64url>` (`WireV3.prologue` / `prologue`). It binds the session to the room and to the key that signed the init frame.
-- **Message 1 payload**: JSON `{"proof":<helloProof>,"ts":<epoch ms>}` (`V3HandshakePayload`), `proof` omitted once the client no longer holds the secret.
+- **Prologue**: UTF-8 `yorozu|<room id>|<client Ed25519 key, base64url>` for new frames, `yorozu-v3|…` for old ones (`Wire.prologue`, old only until 0.11 / `prologue`). It binds the session to the room and to the key that signed the init frame.
+- **Message 1 payload**: JSON `{"proof":<helloProof>,"ts":<epoch ms>}` (`HandshakePayload`), `proof` omitted once the client no longer holds the secret.
 - **Message 2 payload**: empty. The client ignores its contents.
 - **Split**: the initiator sends with the first key and receives with the second; the responder the reverse.
 
-Client (`V3Connection`, `V3ClientHandshake`):
+Client (`RelayConnection`, `ClientHandshake`):
 
 1. Sends an init frame after `joined` when `ownerOnline`, again whenever `owner {online: true}` follows an offline report (the plugin may have restarted), and again after 15 s without a response and `peer_info`.
 2. Ignores responses for other `sid`s. A response that fails to verify leaves the handshake waiting, so a forged one cannot spoil the real one.
@@ -143,7 +148,7 @@ Every box's plaintext is one UTF-8 JSON object `{"kind": <string>, "data": <obje
 
 - **Unknown is answered, not dropped (plugin)**: once a session has its `peer_info`, the plugin answers a known kind whose `data` fails validation with `error bad_request` (carrying the frame's `convId`, `messageId` or `attachmentId` when they are valid ids), an unknown kind or one a device may not send with `error unsupported`, and any frame before `peer_info` with `error bad_request`; each is logged. The client decodes an unknown or malformed kind as `.unknown` and ignores it. Unknown fields are ignored on both sides.
 - **Capabilities**: optional features are announced in `peer_info.capabilities`; a change that cannot be expressed that way raises the protocol version.
-- **Ids**: `convId` and `messageId` are lowercase UUIDs, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$` (`V3Event.isId`, `isId`); a known kind with a malformed id is unknown. A conversation's OpenClaw session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`.
+- **Ids**: `convId` and `messageId` are lowercase UUIDs, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$` (`WireEvent.isId`, `isId`); a known kind with a malformed id is unknown. A conversation's OpenClaw session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`.
 - Times are epoch milliseconds (integers).
 
 ### Kinds
@@ -179,7 +184,7 @@ A request and its answer share a kind; a `cron_list`, `device_list` or `pair_inv
 
 #### `peer_info`
 
-Each side sends its own as its first box and acts on nothing else until it has the peer's. Each computes the highest version inside both ranges (`V3PeerInfo.negotiate` / `negotiate`). With none, the plugin sends `error {code: "update_required"}` and drops the session; the client stops with "update required".
+Each side sends its own as its first box and acts on nothing else until it has the peer's. Each computes the highest version inside both ranges (`PeerInfo.negotiate` / `negotiate`). With none, the plugin sends `error {code: "update_required"}` and drops the session; the client stops with "update required".
 
 | Field | Client | Plugin |
 |---|---|---|
@@ -261,7 +266,7 @@ The plugin mints the same one-time code as `openclaw yorozu pair` ([Pairing](#pa
 
 #### Attachments
 
-Files both ways, each at most the plugin's `mediaMaxBytes` (`channels.yorozu.mediaMaxMb`, else `agents.defaults.mediaMaxMb`, else 8 MB; the client assumes 8 MB until told), in chunks of 160 KiB of raw bytes (`CHUNK_BYTES`, `V3Attachment.chunkBytes`). An attachment is `{id, name, mime, size}`; `id` is a lowercase UUID made by the side that has the bytes. `count` is `max(1, ceil(size / 160 KiB))`; every chunk but the last is full.
+Files both ways, each at most the plugin's `mediaMaxBytes` (`channels.yorozu.mediaMaxMb`, else `agents.defaults.mediaMaxMb`, else 8 MB; the client assumes 8 MB until told), in chunks of 160 KiB of raw bytes (`CHUNK_BYTES`, `Attachment.chunkBytes`). An attachment is `{id, name, mime, size}`; `id` is a lowercase UUID made by the side that has the bytes. `count` is `max(1, ceil(size / 160 KiB))`; every chunk but the last is full.
 
 - **Client → agent**: the client refuses an oversized file before copying it. It holds a message with files until a session is up, uploads each file as `upload` chunks, four in flight, each answered `upload_ack` to that device only (30 s timeout per ack), then sends the `message` naming the files whose last ack said `done`. The plugin answers `error {code: "too_large", attachmentId}` for a file over its limit and `bad_request` for a chunk that does not fit its upload; the client then leaves that file out. A finished upload is saved into OpenClaw's media store (`media/inbound`) and indexed in keyed state namespace `attachments`, so re-uploading a stored id is answered `done` at once. Partial uploads live in memory (at most 8, dropped after 30 minutes idle) and start over on a new session. The turn gets the files as media facts (`toInboundMediaFactsWithMetadata`).
 - **Agent → client**: a reply's media (`MEDIA:` lines, the message tool, a delivery's `sendMedia`) is staged into `media/outbound` (`resolveOutboundAttachmentFromUrl`, the agent's media roots and limit) and announced in the `reply`'s `attachments`, on the last text chunk or a reply of its own. Nothing more is sent until a device asks: `download` per chunk, answered with `chunk` for that device only. The client fetches an image when shown and a file when tapped, one file at a time, two chunks in flight, starting over on a new session. An unknown or vanished id is answered `error {code: "not_found", attachmentId}`. A file that cannot be staged becomes a `(Couldn't attach <name>: …)` line in the reply.
@@ -315,20 +320,20 @@ One push per finished agent reply, and per cron delivery with text, through the 
 | Relay signature | `YorozuCrypto.signFrame`, `verifyFrame` | `signFrame`, `verifyFrame` |
 | Room, fingerprint, proof | `QrPayload.roomId`, `.fingerprint`, `YorozuCrypto.helloProof` | `roomId`, `fingerprint`, `helloProof` |
 | Pairing link | `QrPayload.encoded()`, `QrPayload.decode` | `beginPairing` (`relay.ts`) |
-| Handshake | `V3ClientHandshake`, `.finish(_:) -> V3Session` | `acceptHandshake` |
+| Handshake | `ClientHandshake`, `.finish(_:) -> Session` | `acceptHandshake` |
 | Noise, both roles | `NoiseIKHandshake` | `NoiseIK` |
-| Relay link | `V3Connection` | `runRelayHost` (`relay.ts`) |
-| Frames | `V3Frame(payload:)`, `.payload`, `.sid` | `decodeFrame`, `encodeFrame`, `frameSid` |
-| Boxes | `V3Session.seal`, `.open`, `.openEvent` | `Session.seal`, `.open` |
-| Envelope | `V3Event`, `V3PeerInfo.negotiate`, `V3Event.newId`, `isId` | `Event`, `parseEvent`, `encodeEvent`, `negotiate`, `isId` |
-| Capabilities | `V3Attachment.capability`, `V3Devices.capability`, `V3Invite.capability` | `ATTACHMENTS`, `DEVICES`, `INVITE` |
-| Attachments | `V3Attachment` (`chunkBytes`, `chunkCount`), `V3Upload`, `V3UploadAck`, `V3Download`, `V3Chunk` | `CHUNK_BYTES`, `attachments.ts` |
-| Push preview | `PushPreview.key`, `.open(userInfo:key:)`, `V3Connection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`push.ts`) |
+| Relay link | `RelayConnection` | `runRelayHost` (`relay.ts`) |
+| Frames | `Frame(payload:)`, `.payload`, `.sid` | `decodeFrame`, `encodeFrame`, `frameSid` |
+| Boxes | `Session.seal`, `.open`, `.openEvent` | `Session.seal`, `.open` |
+| Envelope | `WireEvent`, `PeerInfo.negotiate`, `WireEvent.newId`, `isId` | `Event`, `parseEvent`, `encodeEvent`, `negotiate`, `isId` |
+| Capabilities | `Attachment.capability`, `Devices.capability`, `Invite.capability` | `ATTACHMENTS`, `DEVICES`, `INVITE` |
+| Attachments | `Attachment` (`chunkBytes`, `chunkCount`), `Upload`, `UploadAck`, `Download`, `Chunk` | `CHUNK_BYTES`, `attachments.ts` |
+| Push preview | `PushPreview.key`, `.open(userInfo:key:)`, `RelayConnection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`push.ts`) |
 | Mac pairing code | `DeviceCode` | — |
 
 ## Validation differences
 
 Each side validates what it receives; the two are not identical.
 
-- The plugin refuses (`error bad_request`) a `message` with more than 32 attachments, an attachment or `upload` whose `name` or `mime` is empty or over 255 characters, and a `device_patch` whose `id` is over 64 characters. The client keeps within these before sending: the composer will not send more than 32 files, and names and types are trimmed to 1–255 characters (`V3Attachment.wireName`, `wireMime`).
+- The plugin refuses (`error bad_request`) a `message` with more than 32 attachments, an attachment or `upload` whose `name` or `mime` is empty or over 255 characters, and a `device_patch` whose `id` is over 64 characters. The client keeps within these before sending: the composer will not send more than 32 files, and names and types are trimmed to 1–255 characters (`Attachment.wireName`, `wireMime`).
 - The client drops malformed rows of `conv_list` and `history` individually; the plugin does not validate those answers (it only sends them).
