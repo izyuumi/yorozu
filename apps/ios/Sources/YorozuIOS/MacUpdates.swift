@@ -3,7 +3,7 @@ import AppKit
 import Sparkle
 import SwiftUI
 
-/// Sparkle on the Mac. Feed (the stable one, which every Mac reads), public key and the hourly automatic install are in
+/// Sparkle on the Mac. Feed (the stable one, unless beta updates are on), public key and the hourly automatic install are in
 /// Info.plist (apps/ios/Project.swift).
 @MainActor
 enum MacUpdates {
@@ -32,9 +32,21 @@ enum MacUpdates {
 
     static func checkForUpdates() { controller?.checkForUpdates(nil) }
 
+    /// Beta updates (owner, 2026-10-27): the beta feed serves the newest release, prereleases included. 0.5's toggle
+    /// used the same key, so a Mac that opted in there stays in.
+    nonisolated static let betaKey = "YorozuBetaUpdates"
+    nonisolated static let betaFeedURL = "https://yorozu.yumi.to/beta/appcast.xml"
+
+    /// After the toggle changes, so a Mac that just opted in gets the beta without waiting for the hourly check.
+    static func betaChanged() { controller?.updater.checkForUpdatesInBackground() }
+
     private static let delegate = Delegate()
 
     private final class Delegate: NSObject, SPUUpdaterDelegate {
+        func feedURLString(for updater: SPUUpdater) -> String? {
+            UserDefaults.standard.bool(forKey: MacUpdates.betaKey) ? MacUpdates.betaFeedURL : nil
+        }
+
         func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
             try allowUpdates()
         }

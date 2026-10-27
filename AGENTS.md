@@ -1,19 +1,19 @@
 # Yorozu v2
 
-Yorozu is an OpenClaw chat channel (#415): a TypeScript channel plugin inside the owner's OpenClaw Gateway (`plugins/openclaw-yorozu`) talks over the end-to-end-encrypted relay to one SwiftUI client app for iPhone, iPad and Mac (`apps/ios`), and OpenClaw runs the agent, sessions, memory and cron. Yorozu itself runs no agent logic. This is `main` of a public repository; work lands here, and every push to `main` that touches the app ships it (`.github/workflows/release.yml`).
+Yorozu is an OpenClaw chat channel (#415): a TypeScript channel plugin inside the owner's OpenClaw Gateway (`plugins/openclaw-yorozu`) talks over the end-to-end-encrypted relay to one SwiftUI client app for iPhone, iPad and Mac (`apps/ios`), and OpenClaw runs the agent, sessions, memory and cron. Yorozu itself runs no agent logic. This is `main` of a public repository; work lands here, and every push to `main` that touches the app ships it as a beta, a TestFlight build and a Mac prerelease (`.github/workflows/release-*.yml`); a `version.txt` bump makes the last Mac beta stable ([docs/release.md](docs/release.md)).
 
 ## Rules
 
 - When changing the iOS launch screen, use the inner oval mark from the app icon, without the square icon background, with light and dark variants (owner correction, 2026-10-19).
 
 - Write Swift wherever possible, for a native feel, and never Python. Code that has to live in another ecosystem uses its language (for example a TypeScript plugin inside the OpenClaw Gateway); a separate long-running background process of our own is Rust.
-- Tests and CI are on hold for this branch until the owner lifts it. Verify by compiling (commands below) and by running the app; leave `tests/`, `scripts/test_native.sh` and CI config alone.
+- There is no test suite yet: pull requests get compile checks for the client and the relay's tests (`.github/workflows/checks.yml`). Verify by compiling (commands below) and by running the app.
 - The repository is public. Commit code and docs only: say "the owner", write paths as `~/…` or repo-relative, and keep names, emails, secrets, key IDs and personal notes out of files and commit messages. Commit only your own changes; the owner's uncommitted files stay as they are.
 - Commit messages follow Conventional Commits and every commit is signed (signing is configured).
 - Feature work: fetch `main`, then work in a dedicated git worktree on a new branch named for the topic alone, one per independent feature. Work only in your own worktree. Once its work is merged and the tree is clean, `git worktree remove` it (plain, without `--force`) and delete the branch if nothing else uses it.
 - In an OpenClaw-managed worktree (branch `openclaw/…`), the task contract replaces the feature-work rule: stay in that worktree and merge, push and restart exactly as the contract says.
 - One app: `/Applications/Yorozu.app`, the client's Mac build (bundle id `to.yumi.yorozu`, 0.5's Mac id, so Sparkle updates it in place), rebuilt in place by `scripts/build_native.sh` from the main checkout (owner, 2026-10-12); never make a second copy with its bundle id: any other Mac build runs from derived data under an id of its own ([docs/release.md](docs/release.md#compile-checks)).
-- Upload to TestFlight (`scripts/upload_ios.sh --confirm`) only when the owner asks for that upload: each upload uses up its build number for good.
+- Releases run in CI only: never run `scripts/upload_ios.sh --confirm` or `scripts/release_mac.sh --publish`/`--promote` by hand unless the owner asks; each uses up a build number or publishes for good.
 - Approved cleanup of build outputs and stale app copies: confirm the list, then `rm -rf` it.
 - UI layout: size views from their container with the platform's native mechanisms; fixed numbers belong only inside a custom component that owns its geometry. Read [docs/ui-layout.md](docs/ui-layout.md) before changing SwiftUI layout in `apps/ios`.
 

@@ -523,6 +523,15 @@
         }
       }
     },
+    "Beta Updates" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ベータ版のアップデート" } } }
+    },
+    "Beta builds have the newest changes before a stable release. Turned off, Yorozu waits for the next stable release." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ベータ版には、安定版より先に最新の変更が入ります。オフにすると、次の安定版を待ちます。" } } }
+    },
+    "Updates" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデート" } } }
+    },
     "Check for Updates…" : {
       "localizations" : {
         "ja" : {
