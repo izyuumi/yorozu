@@ -1144,3 +1144,7 @@ Further correction, 2026-10-19 09:31 JST: plus glyph still too far right and now
 Source: direct owner message at 10:27 JST, after internal build 18.
 
 Use the oval mark inside the app icon for the splash, not the full icon; make it respond to light and dark appearance.
+
+## 2026-10-28 — 0.5 migration retired
+
+The owner: migration to 0.9.x is complete; nothing about the 0.5 migration is written any more. Removed from OWNER_DECISIONS.md: the Upgrade from 0.5.0-beta section, the migration clause of "Wire protocol 3", the 0.5 import clause of the list order, and the 0.5 rationale in the Mac bundle id and Sparkle lines. `docs/upgrade-from-0.5.md` deleted.

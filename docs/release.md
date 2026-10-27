@@ -39,7 +39,7 @@ Dependabot (`.github/dependabot.yml`) proposes weekly updates for the pinned Git
 - Signs with "Developer ID Application" (hardened runtime, timestamp) when that identity is in the Keychain, else ad hoc; always without the app's entitlements (no macOS provisioning profile exists for the Mac bundle id).
 - Writes the binary's SHA-256 to `build/native-sha256.txt`. Not notarized.
 
-The macOS destination's bundle id differs from iOS (`PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]` in `Project.swift`) so Sparkle updates the 0.5 Mac app in place. A post-build phase copies the plugin (`index.ts`, `setup-entry.ts`, `openclaw.plugin.json`, `package.json`, `README.md`, `src`) into `Contents/Resources/openclaw-channel` on macOS.
+The macOS destination's bundle id differs from iOS (`PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]` in `Project.swift`). A post-build phase copies the plugin (`index.ts`, `setup-entry.ts`, `openclaw.plugin.json`, `package.json`, `README.md`, `src`) into `Contents/Resources/openclaw-channel` on macOS.
 
 ## Mac: beta and stable releases
 
@@ -64,8 +64,6 @@ Feeds and downloads (`apps/web/worker.mjs`, `apps/web/public/_redirects`):
 - `yorozu.yumi.to/beta` and `/beta/appcast.xml`: the newest release, prereleases included.
 
 The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SUFeedURL`, automatic checks and installs every hour; Settings › Updates › Beta Updates switches to the beta feed (`feedURLString(for:)`).
-
-On first launch after a 0.5 install the Mac app migrates once ([upgrade-from-0.5.md](upgrade-from-0.5.md)).
 
 ## iOS and iPadOS: TestFlight
 

@@ -28,7 +28,7 @@ Yorozu is an OpenClaw chat channel. OpenClaw runs the agent, its sessions, memor
 | Notifications | APNs through the relay; a notification service extension (`YorozuNotificationService`) opens sealed previews | No relay push: local notifications while the app runs |
 | Extensions | Share extension (`YorozuShare`), passing shares through the App Group | None |
 | Updates | TestFlight and the App Store | Sparkle ([release.md](release.md)) |
-| Extra | — | Carries the plugin's source at `Yorozu.app/Contents/Resources/openclaw-channel`; migrates a 0.5 install ([upgrade-from-0.5.md](upgrade-from-0.5.md)) |
+| Extra | — | Carries the plugin's source at `Yorozu.app/Contents/Resources/openclaw-channel` |
 
 ## Wire
 

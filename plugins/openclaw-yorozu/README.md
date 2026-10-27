@@ -13,7 +13,7 @@ The OpenClaw channel plugin `yorozu`. It holds the host keys and one outbound We
 | `yorozu.pair.begin` | none | `openclaw yorozu pair` |
 | `yorozu.devices.list` | none | `openclaw yorozu devices` |
 | `yorozu.devices.remove` | `{id}`: full key or a unique prefix | `openclaw yorozu devices remove` |
-| `yorozu.conversations.time` | `{convId, at}` (epoch ms) | The Mac app's import from 0.5 (see Message times) |
+| `yorozu.conversations.time` | `{convId, at}` (epoch ms) | Sets a conversation's listed time (see Message times) |
 
 A method fails with `UNAVAILABLE` and the error text, for example while the channel is not connected to its relay.
 
