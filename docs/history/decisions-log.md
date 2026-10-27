@@ -1208,3 +1208,7 @@ The owner retired the naming rule (app versions in prose, no version in type nam
 ## 2026-10-28 — Self-hosted relay
 
 Replaces "Owner-specific values (such as the relay URL) are settings with generic defaults in code": the public relay is the default, and a user can optionally self-host the relay and use it (#533).
+
+## 2026-10-28 — projectx process line retired
+
+Work happens on `main`; the #415 build-order line is retired.

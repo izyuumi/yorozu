@@ -4,7 +4,7 @@ The owner's decisions that are in force now, by area. Each line ends with the da
 
 When the owner makes or changes a decision, rewrite the line here so no two lines contradict, and append the entry to the log. Open questions and their defaults live in [docs/status.md](docs/status.md).
 
-On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw channel (tracking issue #415). The secretary-era decisions are superseded and kept in the log ([Superseded](#superseded)). Code and other docs still describe the secretary until the #415 build order removes it; where they disagree with this file, this file wins.
+On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw channel (tracking issue #415). The secretary-era decisions are superseded and kept in the log ([Superseded](#superseded)). Where other docs disagree with this file, this file wins.
 
 ## Shape
 
@@ -118,7 +118,6 @@ These never change; future versions migrate around them (2026-10-17):
 
 ## Process and roadmap
 
-- Work lands on `projectx` (on `main` since 2026-10-27) through the usual worktree + PR flow, one #415 child issue per PR, in #415's build order. The secretary is deleted only after the new path works end to end. (2026-10-15)
 - No test suite yet; acceptance is compile + manual checks. Pull requests get a required compile check for iPhone, iPad and Mac, and the relay's typecheck and tests (`checks.yml`). SwiftLint and Swift tests come later. (2026-10-15, release 2026-10-17, checks 2026-10-27)
 - CI/CD (2026-10-27): the relay deploys on each push to `main` touching `apps/relay/**`, after its tests (`deploy-relay.yml`), as the website does. Dependabot: weekly, minor and patch npm bumps grouped, vitest and TypeScript majors by hand, a 3-day cooldown.
 
