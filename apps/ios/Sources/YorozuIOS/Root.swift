@@ -15,17 +15,19 @@ struct RootView: View {
                 PairingView(model: model)
             }
         }
-        // A tapped `yorozu://pair?…`, or the QR's web link opened by the system Camera, takes the same road as a scan.
+        // A tapped `yorozu://pair?…`, or the QR's web link opened by the system Camera, takes the same road as a scan;
+        // so does a Mac's code (`/add`) on a paired device.
         .onOpenURL { url in
             if let failure = model.submit(url.absoluteString) { model.pairingError = failure }
         }
+        .deviceAddingAlerts(model)
         .alert(String(localized: "Pair with this host?"),
             isPresented: Binding(get: { model.pendingPairing != nil }, set: { if !$0 { model.pendingPairing = nil } }),
             presenting: model.pendingPairing) { payload in
             Button(String(localized: "Pair")) { model.confirm(payload) }
             Button(String(localized: "Cancel"), role: .cancel) { model.pendingPairing = nil }
         } message: { payload in
-            Text(String(localized: "Check that this host key matches the one `openclaw yorozu pair` printed.\n\nHost key: \(payload.fingerprint)\nRelay: \(URL(string: payload.relayUrl)?.host() ?? payload.relayUrl)"))
+            Text(String(localized: "Check that this host key matches the one `openclaw yorozu pair` printed, or the one your other device shows.\n\nHost key: \(payload.fingerprint)\nRelay: \(URL(string: payload.relayUrl)?.host() ?? payload.relayUrl)"))
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -61,6 +63,9 @@ struct PairingView: View {
     var body: some View {
         NavigationStack {
             Form {
+                #if os(macOS)
+                if !model.connecting { deviceCode }
+                #endif
                 Section {
                     Text("Run `openclaw yorozu pair` on the computer that runs your OpenClaw Gateway. It prints a QR code and a pairing link, valid for 10 minutes.")
                 } header: {
@@ -131,4 +136,23 @@ struct PairingView: View {
         }
         #endif
     }
+
+    #if os(macOS)
+    /// A Mac has no camera: it shows a code for a paired iPhone or iPad to scan (owner, 2026-10-27).
+    private var deviceCode: some View {
+        Section {
+            if let code = model.deviceCode {
+                QRCode(text: code.link)
+                    .frame(maxWidth: .infinity)
+            } else {
+                ProgressView().frame(maxWidth: .infinity)
+            }
+        } header: {
+            Text("Pair with your iPhone or iPad")
+        } footer: {
+            Text("On an iPhone or iPad that already uses Yorozu, open Settings › Add a Device › Scan a Mac’s Code, or point its Camera at this code. A new code appears every 10 minutes.")
+        }
+        .task { await model.showDeviceCodes() }
+    }
+    #endif
 }

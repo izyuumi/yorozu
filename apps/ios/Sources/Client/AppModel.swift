@@ -50,6 +50,12 @@ final class AppModel {
     private(set) var invite: V3PairInvite?
     /// The in-app notice for a reply in another conversation while the app is active; the newest replaces it.
     var notice: InAppNotice?
+    /// A scanned or opened Mac's code waiting for "Add … ?" (DeviceCodePairing.swift).
+    var pendingDevice: DeviceCode?
+    /// Adding that Mac: asking the host, sent, or why not.
+    var deviceAdding: DeviceAdding?
+    /// The code this unpaired Mac shows, renewed every 10 minutes while the pairing screen is up.
+    var deviceCode: DeviceCode?
 
     @ObservationIgnored private var connection: (any ClientTransport)?
     @ObservationIgnored private var listener: Task<Void, Never>?
@@ -141,6 +147,13 @@ final class AppModel {
             return nil
         }
         guard !isDemo else { return String(localized: "Exit demo mode before pairing with a host.") }
+        if let code = DeviceCode.decode(text) {
+            guard inviteAvailable else {
+                return String(localized: "Scan this code with Yorozu on an iPhone or iPad that is already paired.")
+            }
+            pendingDevice = code
+            return nil
+        }
         guard let payload = try? QrPayload.decode(text), payload.v == 3, payload.roomId != nil, payload.secret != nil,
               (Data(base64URLEncoded: payload.macPubkey)?.count ?? 0) == 32 else {
             return String(localized: "This isn’t a Yorozu pairing code. Run `openclaw yorozu pair` on the host and use the code it prints.")
@@ -258,6 +271,8 @@ final class AppModel {
         devices = nil
         devicesError = nil
         invite = nil
+        pendingDevice = nil
+        deviceAdding = nil
         notice = nil
         deleted = nil
         cronsError = nil
@@ -679,6 +694,7 @@ final class AppModel {
             // A request has none of these; only the plugin's answer does.
             guard answer.link != nil || answer.error != nil else { return }
             invite = answer
+            if case .asking(let code) = deviceAdding { deliver(answer, to: code) }
         case .peerInfo, .message, .upload, .download, .foreground, .historyRequest, .convPatch, .devicePatch, .unknown:
             break
         }

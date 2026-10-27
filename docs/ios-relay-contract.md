@@ -48,6 +48,15 @@ yorozu://pair?v=3&relay=<url>&key=<host X25519 pub>&token=<one-time token>&room=
 
 Client keys are the existing `PhoneIdentity`: an Ed25519 relay key and an X25519 static key, kept in the Keychain, this device only. The plugin's keys are its Ed25519 relay key and its X25519 static key, in OpenClaw's credentials store, `0600` (#422).
 
+### Pairing from another device
+
+A new Mac has no camera, so it shows a code for a paired iPhone or iPad to scan (owner, 2026-10-27). Nothing here touches the plugin or the frames below: the paired device gets an ordinary `pair_invite` link and hands it over through a one-time mailbox on the relay, and the Mac pairs with it as with any link.
+
+- **The code** (`DeviceCode`): `https://yorozu.yumi.to/add#v=1&relay=<url>&box=<id>&key=<pub>&name=<name>`. `relay` is the Mac's default relay (`wss://relay.yumi.to`, the plugin's default too) and passes the same check as a pairing code's; `box` is 16 random bytes and `key` a fresh X25519 public key, both base64url; `name` is the Mac's, at most 64 characters, shown in "Add … ?". The Mac makes a new code every 10 minutes while its pairing screen is up. The phone app claims `/add` as a universal link, so the system Camera opens it too.
+- **The mailbox**: `wss://<relay>/mailbox/<box>`, where the Mac waits, and `POST https://<relay>/mailbox/<box>` with the letter as the body, from the paired device. One letter per mailbox: `204` when taken, `409` once one is there, `410` ten minutes after the mailbox was first used, `400` for a malformed id or letter, `413` past 4096 bytes. A waiting socket gets the letter at once, a later one as soon as it connects. The relay checks only the letter's alphabet and size (`apps/relay/src/mailbox.ts`).
+- **The letter**: base64url of an ephemeral X25519 public key (32) ‖ a nonce (12) ‖ ChaCha20-Poly1305 ciphertext and tag of the invite's `webLink`. The key is HKDF-SHA256 over the X25519 shared secret with salt = ephemeral key ‖ the code's key and info `yorozu-device-code`, 32 bytes (`DeviceCode.seal` / `DeviceCode.open`).
+- **Checks**: the paired device asks "Add … ?" with the host fingerprint; the Mac asks "Pair with this host?" with the fingerprint in the link. Someone who saw the code could drop a link of their own first; the fingerprints would then differ, and the owner cancels. The used mailbox stays used; the Mac shows a new code.
+
 ## Frames
 
 The relay `payload` is base64url (unpadded) of one binary frame. Byte 0 is the wire version, `0x03`; a v2 payload is JSON and starts with `{`, so it never parses as v3. Byte 1 is the type.

@@ -532,6 +532,57 @@
     "Updates" : {
       "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデート" } } }
     },
+    "Scan this code with Yorozu on an iPhone or iPad that is already paired." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリング済みの iPhone または iPad の Yorozu で、このコードをスキャンしてください。" } } }
+    },
+    "The host could not make a pairing code." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストがペアリングコードを作成できませんでした。" } } }
+    },
+    "This code was already used or has expired. Scan the new code on the Mac." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このコードは使用済みか、有効期限が切れています。Mac に表示された新しいコードをスキャンしてください。" } } }
+    },
+    "Couldn’t reach the relay. Check the connection and scan again." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "リレーに接続できませんでした。接続を確認して、もう一度スキャンしてください。" } } }
+    },
+    "Add %@?" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ を追加しますか？" } } }
+    },
+    "Add" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "追加" } } }
+    },
+    "It pairs with your host and sees every conversation. Next, the Mac shows a host key: pair it only if the key is\n\n%@" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストとペアリングし、すべての会話が見られるようになります。次に Mac にホストキーが表示されます。次のキーと一致する場合だけペアリングしてください。\n\n%@" } } }
+    },
+    "OK" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "OK" } } }
+    },
+    "On %@, check that the host key is %@, then click Pair." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ で、ホストキーが %2$@ であることを確認してから「ペアリング」をクリックしてください。" } } }
+    },
+    "Couldn’t add the Mac" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac を追加できませんでした" } } }
+    },
+    "Finish on the Mac" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac で操作を完了してください" } } }
+    },
+    "Scan the code on the new Mac’s pairing screen." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しい Mac のペアリング画面に表示されたコードをスキャンしてください。" } } }
+    },
+    "This isn’t a Mac’s pairing code. Open Yorozu on the new Mac and scan the code it shows." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac のペアリングコードではありません。新しい Mac で Yorozu を開き、表示されたコードをスキャンしてください。" } } }
+    },
+    "Scan a Mac’s Code" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac のコードをスキャン" } } }
+    },
+    "Sending the code to the Mac…" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac にコードを送信しています…" } } }
+    },
+    "Pair with your iPhone or iPad" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "iPhone または iPad とペアリング" } } }
+    },
+    "On an iPhone or iPad that already uses Yorozu, open Settings › Add a Device › Scan a Mac’s Code, or point its Camera at this code. A new code appears every 10 minutes." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu を使っている iPhone または iPad で、設定 › デバイスを追加 › Mac のコードをスキャン を開くか、カメラをこのコードに向けてください。コードは 10 分ごとに新しくなります。" } } }
+    },
     "Check for Updates…" : {
       "localizations" : {
         "ja" : {
@@ -542,12 +593,12 @@
         }
       }
     },
-    "Check that this host key matches the one `openclaw yorozu pair` printed.\n\nHost key: %@\nRelay: %@" : {
+    "Check that this host key matches the one `openclaw yorozu pair` printed, or the one your other device shows.\n\nHost key: %@\nRelay: %@" : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "このホストキーが `openclaw yorozu pair` の表示と一致することを確認してください。\n\nホストキー: %@\nリレー: %@"
+            "value" : "このホストキーが `openclaw yorozu pair` の表示、またはもう一方のデバイスの表示と一致することを確認してください。\n\nホストキー: %@\nリレー: %@"
           }
         }
       }

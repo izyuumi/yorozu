@@ -33,6 +33,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 ## Pairing and security
 
 - A paired device can add another from Settings › Add a Device, away from the host: the plugin sends it the same one-time code over the relay (`pair_invite`), shown as a QR and a link. (2026-10-17)
+- A new Mac, which has no camera, shows a code on its pairing screen instead; a paired iPhone or iPad scans it (Settings › Add a Device › Scan a Mac's Code, or the system Camera through `yorozu.yumi.to/add`) and, after "Add … ?", sends it a `pair_invite` link sealed to the Mac through a one-time mailbox on the relay. The Mac then asks "Pair with this host?" as always; both show the host fingerprint. Mac only: iPhones and iPads scan. ([contract](docs/ios-relay-contract.md#pairing-from-another-device)) (2026-10-27)
 - `openclaw yorozu pair` prints the pairing QR (plus the `yorozu://pair…` link) in the terminal. The QR carries relay URL, room id, host public key, one-time token and secret. Scanned devices join the plugin's allowlist. (2026-10-15)
 - Crypto: Noise-style handshake (IK: the device knows the host static key from the QR) per connection for forward secrecy, over the existing primitives (X25519, HKDF-SHA256, ChaCha20-Poly1305, Ed25519 relay frames). (2026-10-15)
 - Baseline: client cache under iOS Data Protection `complete`; client keys in Keychain, this-device-only, non-syncing; plugin keys in OpenClaw's credentials store, `0600`; push previews sealed; fingerprint shown on both sides at pairing. (2026-10-15)

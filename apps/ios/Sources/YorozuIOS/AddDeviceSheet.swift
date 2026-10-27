@@ -4,15 +4,22 @@ import YorozuWire
 
 /// Adding a device from this one, away from the host (owner, 2026-10-17): the host makes the same one-time code as
 /// `openclaw yorozu pair`, sent over the relay, shown here as a QR for the new device to scan, or a link to send it.
-/// One device, ten minutes; the new device shows the host fingerprint too, and they must match.
+/// One device, ten minutes; the new device shows the host fingerprint too, and they must match. A new Mac, which has no
+/// camera, shows a code of its own for this device to scan instead (DeviceCodePairing.swift).
 struct AddDeviceSheet: View {
     let model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var scanning = false
+    /// A scanned Mac's code, handed on once the scanner is gone so "Add … ?" has a screen to show on.
+    @State private var scanned: String?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: LayoutMetrics.section) {
+                    #if os(iOS)
+                    scanMac
+                    #endif
                     content
                 }
                 .padding(LayoutMetrics.gutter)
@@ -25,10 +32,41 @@ struct AddDeviceSheet: View {
             }
         }
         .task { model.requestInvite() }
+        #if os(iOS)
+        .sheet(isPresented: $scanning, onDismiss: {
+            if let text = scanned { model.pairingError = model.submit(text) }
+            scanned = nil
+        }) {
+            ScannerView(prompt: "Scan the code on the new Mac’s pairing screen.", onScan: { text in
+                guard DeviceCode.decode(text) != nil else {
+                    return String(localized: "This isn’t a Mac’s pairing code. Open Yorozu on the new Mac and scan the code it shows.")
+                }
+                scanned = text
+                scanning = false
+                return nil
+            }, onManualEntry: { scanning = false })
+            .yorozuTint()
+        }
+        #endif
+        .deviceAddingAlerts(model)
         #if os(macOS)
         .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
         #endif
     }
+
+    #if os(iOS)
+    /// A new Mac shows a code for this device to scan, as it has no camera of its own (owner, 2026-10-27).
+    private var scanMac: some View {
+        VStack(spacing: LayoutMetrics.tight) {
+            Button(String(localized: "Scan a Mac’s Code"), systemImage: "qrcode.viewfinder") { scanning = true }
+                .buttonStyle(.borderedProminent)
+            if case .asking? = model.deviceAdding {
+                ProgressView(String(localized: "Sending the code to the Mac…"))
+            }
+        }
+    }
+    #endif
+
 
     @ViewBuilder private var content: some View {
         if let invite = model.invite, let webLink = invite.webLink, let url = URL(string: webLink),
@@ -74,7 +112,7 @@ struct AddDeviceSheet: View {
 }
 
 /// The pairing link as a QR code, as wide as it may be up to a size that still scans from across a desk.
-private struct QRCode: View {
+struct QRCode: View {
     let text: String
 
     var body: some View {
@@ -97,4 +135,48 @@ private struct QRCode: View {
         guard let output = filter.outputImage else { return nil }
         return CIContext().createCGImage(output, from: output.extent)
     }
+}
+
+/// "Add … ?" for a Mac's code, scanned here or opened by the system Camera, then where the adding stands
+/// (DeviceCodePairing.swift). On the root view and on this sheet, which covers it.
+private struct DeviceAddingAlerts: ViewModifier {
+    let model: AppModel
+
+    func body(content: Content) -> some View {
+        content
+            .alert(String(localized: "Add \(model.pendingDevice?.name ?? "")?"),
+                isPresented: Binding(get: { model.pendingDevice != nil }, set: { if !$0 { model.pendingDevice = nil } }),
+                presenting: model.pendingDevice) { code in
+                Button(String(localized: "Add")) { model.addDevice(code) }
+                Button(String(localized: "Cancel"), role: .cancel) { model.pendingDevice = nil }
+            } message: { _ in
+                Text("It pairs with your host and sees every conversation. Next, the Mac shows a host key: pair it only if the key is\n\n\(model.fingerprint ?? "")")
+            }
+            .alert(title, isPresented: Binding(get: { done }, set: { if !$0 { model.deviceAdding = nil } })) {
+                Button(String(localized: "OK")) { model.deviceAdding = nil }
+            } message: {
+                switch model.deviceAdding {
+                case .sent(let code, let fingerprint)?:
+                    Text("On \(code.name), check that the host key is \(fingerprint), then click Pair.")
+                case .failed(let reason)?: Text(reason)
+                default: EmptyView()
+                }
+            }
+    }
+
+    private var done: Bool {
+        switch model.deviceAdding {
+        case .sent?, .failed?: true
+        default: false
+        }
+    }
+
+    private var title: String {
+        if case .failed? = model.deviceAdding { return String(localized: "Couldn’t add the Mac") }
+        return String(localized: "Finish on the Mac")
+    }
+}
+
+extension View {
+    func deviceAddingAlerts(_ model: AppModel) -> some View { modifier(DeviceAddingAlerts(model: model)) }
 }

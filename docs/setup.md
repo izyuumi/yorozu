@@ -82,6 +82,8 @@ It prints a QR code, a `yorozu://pair?…` link, the host fingerprint (`XXXX XXX
 2. The app asks "Pair with this host?" with the host key. Compare it with the fingerprint the command printed; pair only if they match.
 3. Done when the conversation list appears and `openclaw yorozu devices` lists the device by its model name. On iPhone and iPad the app then asks to allow notifications.
 
+**A new Mac from a paired iPhone or iPad:** the Mac's pairing screen shows a QR code. On the iPhone or iPad, open Settings › Add a Device › Scan a Mac's Code (or point the Camera at it), tap Add, then on the Mac check that the host key matches the one the iPhone or iPad showed and click Pair. The code renews every 10 minutes.
+
 Pair each device separately; all of them see the same conversations. At most 16 devices: a 17th replaces the oldest.
 
 ### Try demo data without a host
