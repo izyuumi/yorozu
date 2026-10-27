@@ -9,6 +9,7 @@ Current state of `main`. Version: `version.txt`. Product decisions: [OWNER_DECIS
 - **Relay** (`apps/relay`): Cloudflare Worker, one Durable Object per room, one-time pairing mailboxes, APNs sender, connect rate limit; deploys on merge after its tests.
 - **Client** (`apps/ios`, one target for iPhone, iPad and native SwiftUI Mac): pairing by QR scan or pasted link with fingerprint check; a new Mac shows a code that a paired iPhone or iPad scans; conversation list, chat, outbox and cache; unread badges and read marks synced; attachments, paste and camera; share extension and notification service extension (iOS); two conversations side by side (`Pair.swift`); read-only Crons tab with "Edit in Chat"; Settings with paired devices; App Shortcuts; offline demo (`YOROZU-DEMO` in the pairing field, or `--demo`).
 - **Mac app**: Developer ID signed, notarized DMG with Sparkle updates (stable and beta feeds), bundled plugin copy.
+- **iPhone and iPad updates**: once a day the App Store build looks up its newest App Store version; a newer one shows a dismissible row at the top of the chat list that opens the App Store. Not on TestFlight or in demo mode.
 - **Website** (`apps/web`): Astro site with pairing link page, AASA, and Mac download and update-feed redirects.
 - **CI**: PR compile checks and relay tests; Mac beta per merge, promotion to stable on a `version.txt` bump; TestFlight upload per merge; web and relay deploy per merge ([release.md](release.md#ci)).
 

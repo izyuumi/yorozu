@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Dismiss" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "閉じる" } } }
+    },
+    "Yorozu %@ is available" : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu %@ にアップデートできます" } } }
+    },
     "Pin" : {
       "extractionState" : "manual",
       "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピン留め" } } }

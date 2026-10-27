@@ -19,6 +19,9 @@ struct ConversationsView: View {
 
     var body: some View {
         list.sheet(isPresented: $showingSettings) { SettingsSheet(model: model) }
+            #if os(iOS)
+            .task { await AppStoreUpdate.shared.check(isDemo: model.isDemo) }
+            #endif
     }
 
     private var pane: Binding<Pane?> {
@@ -46,6 +49,23 @@ struct ConversationsView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("demo.indicator")
             }
+            #if os(iOS)
+            if let update = AppStoreUpdate.shared.available {
+                Section {
+                    HStack {
+                        Link(destination: update.url) {
+                            Label(String(localized: "Yorozu \(update.version) is available"), systemImage: "arrow.down.circle")
+                        }
+                        Spacer()
+                        Button(String(localized: "Dismiss"), systemImage: "xmark") { AppStoreUpdate.shared.dismiss() }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.subheadline)
+                }
+            }
+            #endif
             if let problem {
                 Section {
                     Label { Text(problem) } icon: {
