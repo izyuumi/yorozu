@@ -1212,3 +1212,7 @@ Replaces "Owner-specific values (such as the relay URL) are settings with generi
 ## 2026-10-28 — projectx process line retired
 
 Work happens on `main`; the #415 build-order line is retired.
+
+## 2026-10-28 — Direct path back, "v3" removed, compatibility without versions
+
+Replaces "Relay only. The direct path (port 8738) is dropped. The plugin only makes an outbound connection; the Gateway opens no new port. (2026-10-15)": clients connect directly over LAN, Tailscale or loopback when they can and fall back to the relay automatically. "v3" leaves names, then stored names and wire constants in phases. Changes stay backward compatible through capability flags and phased breaking changes instead of version numbers. The decisions are in #532.
