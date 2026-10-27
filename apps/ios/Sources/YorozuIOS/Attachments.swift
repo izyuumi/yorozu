@@ -42,6 +42,7 @@ struct AttachMenu: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+        .help(String(localized: "Attach"))
         .accessibilityLabel(Text("Attach"))
         .accessibilityIdentifier("composer.attach")
         .photosPicker(isPresented: $choosingPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
@@ -149,6 +150,7 @@ struct StagedFiles: View {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .help(String(localized: "Remove \(automation.name)"))
                         .accessibilityLabel(Text("Remove \(automation.name)"))
                     }
                     .font(.footnote)
@@ -179,6 +181,7 @@ struct StagedFiles: View {
                         .padding(LayoutMetrics.tight)
                 }
                 .buttonStyle(.plain)
+                .help(String(localized: "Remove \(file.name)"))
                 .accessibilityLabel(Text("Remove \(file.name)"))
             }
             .padding(.vertical, LayoutMetrics.tight)
@@ -197,6 +200,7 @@ struct StagedFiles: View {
                 Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .help(String(localized: "Remove \(file.name)"))
             .accessibilityLabel(Text("Remove \(file.name)"))
         }
         .font(.footnote)
