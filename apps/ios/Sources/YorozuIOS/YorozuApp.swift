@@ -15,7 +15,6 @@ struct YorozuApp: App {
                 .task(id: delegate.model.isDemo) {
                     guard !delegate.model.isDemo else { return }
                     MacUpdates.start(model: delegate.model)
-                    await MacMigrateFrom0_5.run(model: delegate.model)
                 }
                 .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
                 #endif
