@@ -147,7 +147,7 @@ Each session has one key and one counter per direction, counters starting at 0.
 Every box's plaintext is one UTF-8 JSON object `{"kind": <string>, "data": <object>}`. Key order is free (Swift sorts keys, `JSON.stringify` does not).
 
 - **Unknown is answered, not dropped (plugin)**: once a session has its `peer_info`, the plugin answers a known kind whose `data` fails validation with `error bad_request` (carrying the frame's `convId`, `messageId` or `attachmentId` when they are valid ids), an unknown kind or one a device may not send with `error unsupported`, and any frame before `peer_info` with `error bad_request`; each is logged. The client decodes an unknown or malformed kind as `.unknown` and ignores it. Unknown fields are ignored on both sides.
-- **Capabilities**: optional features are announced in `peer_info.capabilities`; a change that cannot be expressed that way raises the protocol version.
+- **Capabilities**: optional features are announced in `peer_info.capabilities`; a change that cannot be expressed that way goes in phases: accept both, then send new, then drop old ([decisions](../OWNER_DECISIONS.md#versioning-rules)).
 - **Ids**: `convId` and `messageId` are lowercase UUIDs, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$` (`WireEvent.isId`, `isId`); a known kind with a malformed id is unknown. A conversation's OpenClaw session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`.
 - Times are epoch milliseconds (integers).
 

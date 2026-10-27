@@ -13,6 +13,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - No Mac host process. The OpenClaw channel plugin (`plugins/openclaw-yorozu`, TypeScript) holds the host keys and the relay connection itself. Fallback, only if the spike shows a plugin cannot: a Mac bridge app between Gateway and relay. (2026-10-15)
 - One multiplatform SwiftUI client app for iPhone, iPad and Mac. Clients only; no host role anywhere in Swift. (2026-10-15)
 - Wire protocol 3. Old wire types, store and engine are deleted, not flagged off. (2026-10-15)
+- "v3" leaves names and prose: `V3Connection` → `RelayConnection`, `WireV3` → `Wire`, `V3Event` → `WireEvent`, and the other `V3…` types drop the prefix; docs say "the wire". Stored names (`pairing-v3`, `Conversations-v3/`, `Attachments-v3/`) move in two phases: read new with fallback to old and write new, then drop the fallback and delete leftovers. Wire constants (the frame's version byte, the `yorozu-v3|…` Noise prologue, the QR's `v=3`) move in three steps: the plugin accepts both formats, decided by each connection's init frame; clients send unversioned frames (type byte first, prologue `yorozu|<room>|<key>`, no `v`); the plugin drops the old format when the owner decides. ([#532](https://github.com/izyuumi/yorozu/issues/532)) (2026-10-28)
 
 ## Conversations
 
@@ -40,7 +41,18 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 
 ## Transport
 
-- Relay only. The direct path (port 8738) is dropped. The plugin only makes an outbound connection; the Gateway opens no new port. (2026-10-15)
+- Direct path with automatic fallback to the relay, for latency, working without internet, less relay load and less metadata on a third party ([#532](https://github.com/izyuumi/yorozu/issues/532); replaces "relay only" of 2026-10-15). (2026-10-28)
+  - Clients: iPhone, iPad and Mac, over the same LAN, Tailscale or WireGuard addresses, and loopback for a Mac on the Gateway's machine.
+  - Switching: the client races the candidates when connecting and re-races on any network-path change; no live migration of an open session.
+  - Encryption: the same Noise-sealed frames and pairing-key authentication as over the relay; the direct path is a byte pipe, no TLS. Before init the client sends a nonce and checks the host key's signature over `yorozu-direct|<room>|<nonce>`.
+  - Listener: the plugin's own WebSocket server, on by default (`channels.yorozu.direct.enabled`), port 8738 (`channels.yorozu.direct.port`, 1024–65535), bound only to loopback, RFC 1918, ULA and 100.64.0.0/10 addresses, never `0.0.0.0` or a public one. At most 8 pending handshakes of 10 s each, frames up to 1 MiB; close codes 4001 unauthorized, 4002 replaced, 4003 too large.
+  - Discovery: the plugin sends address hints inside the session, fresh whenever an address changes, and the client caches them with the pairing; Bonjour `_yorozu._tcp` carries a short HMAC of the room key, never the room or host name; the Tailscale IP comes with its MagicDNS name as fallback. The client skips impossible candidates (LAN off its subnet, Tailscale without a VPN interface, loopback off the Mac), dials last time's winner first and the rest 50 ms apart, gives direct a 300 ms head start over the relay only when direct won last time on that network kind, browses Bonjour alongside until a path authenticates, and starts the race on foreground and on network changes.
+  - iOS Local Network permission is asked right after pairing, on a screen that explains it; if denied, LAN candidates are skipped quietly. Settings has a switch and points to Privacy › Local Network when denied.
+  - Delivery: ✓ on direct means the plugin acknowledged the frame; nothing is buffered on direct, so without a direct answer the client uses the relay buffer, or keeps messages in its outbox when offline. After a re-race the outbox resends anything without ✓ and the plugin drops duplicates by event id. Each device uses its own path: relay fan-out and silent `sync` pushes skip devices connected directly, and presence combines both.
+  - Push: a direct client sends its APNs token inside the session; the plugin forwards it with a new relay host message `push {device, token}`. A direct client opens no relay socket.
+  - Shown only in Settings › Host › Connection: Direct (Wi-Fi), Direct (Tailscale), Direct (this Mac) or Relay, with the last switch time.
+  - Pairing works offline: the QR also carries the hints and a one-time secret (32 bytes, 10 minutes, single use) that the init frame proves with an HMAC over the client key; the relay token flow stays, and whichever path succeeds first uses up both. A Mac paired from a phone keeps the relay mailbox. "Pair with the Gateway on this Mac" pairs over loopback with a one-time secret the plugin writes to a `0600` file in the OpenClaw state directory.
+  - Sleep: nothing new; the client retries with backoff, no Wake-on-LAN or sleep assertion.
 - The deployed relay also serves 0.4 and 0.5 installs; any relay change must stay backward compatible. (2026-10-15)
 - The relay honours `notify.devices` and has a silent `sync` class (#447, merged on `main` and deployed for 0.9). (2026-10-17)
 - The relay answers each client frame with `accepted` once it has forwarded it or stored it durably. Merged on `main` in #332 and deployed by the owner. (2026-10-09)
@@ -89,7 +101,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
   - Stable: a PR that bumps `version.txt` promotes the Mac beta the owner checked, named in a `Promotes: <old> (<build>)` commit line, unchanged, to `v<old>` (2026-10-27: promoting the last beta instead shipped an unchecked one as 0.9.2); the iOS build of that version is submitted to the App Store by hand. Release tags can be neither moved nor deleted, so each version has one stable release.
   - Builds count per platform: the Mac from its beta release's build, iOS from App Store Connect.
 - The iPhone and iPad app is not offered on Apple Silicon Macs (App Store Connect availability off); Macs get the Developer ID app. (2026-10-27)
-- Clients reach the plugin through 0.5's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service. The relay may be changed when that is the better design (Transport). (2026-10-08, channel 2026-10-15)
+- Clients reach the plugin directly when they can, otherwise through 0.5's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service. The relay may be changed when that is the better design (Transport). (2026-10-08, channel 2026-10-15, direct 2026-10-28)
 - iOS ships to the public App Store (first release 0.9.0), manual release after approval, no phased release; TestFlight testers first. Review uses a live review host, with a fixture demo behind the documented code `YOROZU-DEMO` as fallback (as OpenClaw does). iOS shows a subtle, dismissible "Update available" row from Apple's lookup API; nothing is forced. (2026-10-08, App Store 2026-10-17)
 - The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`). (2026-10-08, encoding 2026-10-17)
 - The app icon is 0.5's Icon Composer mark (blob-identical to 1e2f1fba). (2026-10-08)
@@ -102,11 +114,18 @@ These never change; future versions migrate around them (2026-10-17):
 - Sparkle EdDSA key and feed URLs (`yorozu.yumi.to/appcast.xml`, `yorozu.yumi.to/beta/appcast.xml`).
 - `CFBundleVersion` formula (Platform and release); never a smaller leading number.
 - Bundled plugin path `Contents/Resources/openclaw-channel`, plugin id `yorozu`.
-- Keychain service `to.yumi.yorozu.ios` and account `pairing-v3`.
+- Keychain service `to.yumi.yorozu.ios`; account `pairing-v3`, moving to a name without "v3" in two phases (Shape).
 
 ## Versioning rules
 
-- Changes are additive: new fields optional, unknown fields ignored, not rejected. (2026-10-17)
+No version numbers: every change from now on stays backward compatible through these rules. (2026-10-28)
+
+- Additive only: new kinds, fields and enum values are added; existing ones never change meaning or type. (2026-10-17, kinds and values 2026-10-28)
+- Tolerant readers: the plugin, the client and the relay ignore unknown kinds, fields and enum values and never fail on them. (2026-10-17, relay 2026-10-28)
+- Capability flags instead of versions: each side lists what it supports in `peer_info.capabilities`, and a sender uses new behavior only when the other side listed it. `protocolMin`/`protocolMax` stay at 3. (2026-10-28)
+- Breaking changes go in phases: accept both, then send new, then drop old, and dropping is never in the same release as accepting both. (2026-10-28)
+- Crypto domain strings and storage keys change only through those phases. (2026-10-28)
+- Every new message names the capability that introduced it, in the code that defines it. (2026-10-28)
 
 ## Engineering
 

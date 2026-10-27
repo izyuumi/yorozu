@@ -36,7 +36,7 @@ Client and plugin speak the wire through the relay; [ios-relay-contract.md](ios-
 
 - **Pairing**: `openclaw yorozu pair` prints a QR and a `yorozu://pair?v=3&relay=…&key=…&token=…&room=…&secret=…` link. The client shows the host fingerprint to compare, joins the relay room with the one-time token, and proves the secret inside its first handshake; the plugin then adds the device to its allowlist (16 at most, the oldest making way). A paired device can ask the plugin for another code (`pair_invite`).
 - **Sessions**: every connection runs a Noise IK handshake (the device knows the host's static key from the link), so every connection has fresh keys. Transport boxes are ChaCha20-Poly1305; relay frames are Ed25519-signed.
-- **Envelope**: JSON `{kind, data}` per box. Unknown kinds and fields are ignored; optional features are announced in `peer_info.capabilities`; a change that cannot be expressed that way raises the protocol version.
+- **Envelope**: JSON `{kind, data}` per box. Unknown kinds and fields are ignored; optional features are announced in `peer_info.capabilities`; a change that cannot be expressed that way goes in phases: accept both, then send new, then drop old ([decisions](../OWNER_DECISIONS.md#versioning-rules)).
 
 ## Conversations and sessions
 
