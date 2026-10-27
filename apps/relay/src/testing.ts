@@ -19,7 +19,7 @@ export type Target = number | string;
 export function client(target: Target, room?: string) {
   const url = new URL(typeof target === "number" ? `ws://127.0.0.1:${target}` : target);
   if (room) url.searchParams.set("room", room);
-  const ws = new WebSocket(url);
+  const ws = new WebSocket(url.href);
   const queue: any[] = [];
   const waiters: ((v: any) => void)[] = [];
   const phones: number[] = [];
