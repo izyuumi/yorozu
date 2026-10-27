@@ -41,6 +41,7 @@ struct ChatView: View {
                 }
                 ForEach(items) { item in
                     ItemRow(model: model, item: item)
+                        .modifier(MessageTimeBelow(item: item))
                         .readableRow()
                         .modifier(MessageTime(item: item, shown: timesShown, width: timesWidth))
                 }
@@ -342,17 +343,48 @@ private struct MessageTime: ViewModifier {
         content
             .offset(x: -shown)
             .overlay(alignment: .trailing) {
-                if shown > 0, item.kind == .user || item.kind == .agent || item.kind == .error {
-                    Text(Date(timeIntervalSince1970: TimeInterval(item.ts) / 1000), format: .dateTime.hour().minute())
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                if shown > 0, Self.isTimed(item) {
+                    Self.time(item)
                         .frame(width: width, alignment: .leading)
                         .offset(x: width - shown)
                         .opacity(shown / width)
                         .accessibilityHidden(true)
                 }
             }
+    }
+
+    /// Messages have a time; tool rows and session resets do not.
+    static func isTimed(_ item: ChatItem) -> Bool { item.kind == .user || item.kind == .agent || item.kind == .error }
+
+    static func time(_ item: ChatItem) -> some View {
+        Text(Date(timeIntervalSince1970: TimeInterval(item.ts) / 1000), format: .dateTime.hour().minute())
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+}
+
+/// On the Mac, which has no swipe to reveal them (#517), each message's time sits beneath it, on its side: trailing for
+/// the user's, leading for the agent's and errors. VoiceOver reads it after the message. iPhone and iPad keep
+/// ``MessageTime``.
+private struct MessageTimeBelow: ViewModifier {
+    let item: ChatItem
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        if MessageTime.isTimed(item) {
+            let alignment: HorizontalAlignment = item.kind == .user ? .trailing : .leading
+            VStack(alignment: alignment, spacing: LayoutMetrics.hair) {
+                content
+                MessageTime.time(item)
+                    .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+            }
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
     }
 }
 
