@@ -14,8 +14,10 @@ import {
   negotiate,
   parseEvent,
   PROTOCOL_VERSION,
+  rejection,
   type DeviceList,
   type DevicePatch,
+  type ErrorInfo,
   type Event,
   type Message,
   type PeerInfo,
@@ -304,10 +306,22 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         const deviceKey = frame.type === "box" ? bySid.get(b64u(frame.sid)) : undefined;
         const entry = deviceKey ? served.get(deviceKey) : undefined;
         const plain = entry?.session.open(frame);
-        if (!deviceKey || !entry || !plain) return;
+        if (!deviceKey || !entry || !plain) {
+          return log?.info(`yorozu: dropped a frame no open session can read (${deviceKey ? "undecryptable" : "unknown session"})`);
+        }
         const event = parseEvent(plain);
+        const refuse = (data: ErrorInfo) => {
+          log?.warn(`yorozu: refused a device event: ${data.code}: ${data.message}`);
+          const now = served.get(deviceKey);
+          if (now) sendFrames([seal(now.session, { kind: "error", data })]);
+        };
+        if (entry.peer && (event === null || event.kind === "invalid" || event.kind === "unknown")) {
+          return refuse(rejection(event));
+        }
         if (!entry.peer) {
-          if (event?.kind !== "peer_info") return;
+          if (event?.kind !== "peer_info") {
+            return refuse({ code: "bad_request", message: "the session must start with peer_info" });
+          }
           if (negotiate(peerInfo, event.data) === null) {
             sendFrames([
               seal(entry.session, {
@@ -381,9 +395,16 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         }
         if (event?.kind === "cron_list" || event?.kind === "conv_list" || event?.kind === "history" || event?.kind === "conv_patch") {
           const answer = await opts.onRequest?.(event);
+          if (!answer) {
+            if (event.kind === "conv_patch") return;
+            return refuse({ code: "unsupported", message: `this host does not answer "${event.kind}"` });
+          }
           const now = served.get(deviceKey);
-          if (answer && now?.peer) sendFrames([seal(now.session, answer)]);
+          if (now?.peer) sendFrames([seal(now.session, answer)]);
+          return;
         }
+        if (event?.kind === "peer_info") return log?.info("yorozu: peer_info repeated; the first one stands");
+        return refuse({ code: "unsupported", message: `a device cannot send "${event?.kind}"` });
       }
 
       async function receive(raw: string): Promise<void> {

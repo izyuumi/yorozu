@@ -185,7 +185,7 @@ final class Transfers {
         while true {
             while inFlight < Self.uploadWindow && next < count {
                 let range = (next * V3Attachment.chunkBytes)..<min(data.count, (next + 1) * V3Attachment.chunkBytes)
-                let upload = V3Upload(attachmentId: id, name: attachment.name, mime: attachment.mime, size: data.count,
+                let upload = V3Upload(attachmentId: id, name: attachment.wire.name, mime: attachment.wire.mime, size: data.count,
                     index: next, count: count, data: data.subdata(in: range).base64EncodedString())
                 guard await send(.upload(upload)) else { return .interrupted }
                 next += 1

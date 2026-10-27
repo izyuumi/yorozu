@@ -212,13 +212,19 @@ struct ItemRow: View {
                 DeliveryMark(delivery: delivery)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(delivery.word))
+                if let rejected = item.rejected {
+                    Text(rejected)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                }
             }
         }
     }
 
     private var delivery: Delivery {
         let status = item.status ?? .queued
-        return Delivery(state: status == .read ? .read : status >= .sent ? .delivered : .sending,
+        return Delivery(state: item.rejected != nil ? .notDelivered : status == .read ? .read : status >= .sent ? .delivered : .sending,
             inFlight: status == .sending, sent: status >= .sending, sentAt: Int(item.ts), onHost: status >= .delivered)
     }
 
@@ -409,6 +415,12 @@ private struct Composer: View {
                     AttachmentFiles.remove(file)
                 }
             }
+            if files.count > V3Attachment.maxPerMessage {
+                Text("A message can carry up to \(V3Attachment.maxPerMessage) attachments.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, LayoutMetrics.stack)
+            }
             row
         }
         .padding(.top, files.isEmpty && automation == nil ? 0 : LayoutMetrics.inner)
@@ -454,7 +466,10 @@ private struct Composer: View {
         .padding(.leading, attachLimit == nil ? LayoutMetrics.stack : 0)
     }
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil }
+    private var canSend: Bool {
+        files.count <= V3Attachment.maxPerMessage
+            && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil)
+    }
 
     private func send() {
         guard canSend else { return }

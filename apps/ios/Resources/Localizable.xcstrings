@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "A message can carry up to %lld attachments." : {
+      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "1件のメッセージに添付できるのは%lld件までです。" } } }
+    },
     "Pin" : {
       "extractionState" : "manual",
       "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピン留め" } } }

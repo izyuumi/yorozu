@@ -442,8 +442,11 @@ final class AppModel {
         guard !isDemo || attachments.isEmpty else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, V3Event.isId(convId), V3Event.isId(messageId) else { return }
-        let item = ChatItem(id: messageId, kind: .user, text: text, ts: Self.now, status: .queued,
+        var item = ChatItem(id: messageId, kind: .user, text: text, ts: Self.now, status: .queued,
             attachments: attachments.isEmpty ? nil : attachments)
+        if attachments.count > V3Attachment.maxPerMessage {
+            item.rejected = String(localized: "A message can carry up to \(V3Attachment.maxPerMessage) attachments.")
+        }
         append(item, to: convId)
         pumpOutbox(resend: false)
     }
@@ -472,7 +475,8 @@ final class AppModel {
         let generation = connectionGeneration
         let pending = conversations.values.flatMap { conversation in
             conversation.items.filter { item in
-                guard item.kind == .user, let status = item.status, all ? status < .delivered : status == .queued else { return false }
+                guard item.kind == .user, item.rejected == nil, let status = item.status,
+                      all ? status < .delivered : status == .queued else { return false }
                 return !item.text.isEmpty || item.attachments?.contains { $0.failure == nil } == true
             }.map { (conversation.id, $0) }
         }
@@ -544,8 +548,9 @@ final class AppModel {
         case .error(let error) where error.attachmentId != nil:
             transfers.receive(event)
         case .error(let error):
-            if error.code == "internal", inFlight != nil { settle() }
+            if ["internal", "bad_request", "unsupported"].contains(error.code), inFlight != nil { settle() }
             guard let convId = error.convId, V3Event.isId(convId), let messageId = error.messageId else { return }
+            reject(messageId, in: convId, error.message)
             let id = "error:\(messageId)"
             let text = error.code == "run_failed"
                 ? String(localized: "The agent run failed: \(error.message)")
@@ -744,6 +749,15 @@ final class AppModel {
               (conversation.items[index].status ?? .queued) < status else { return }
         conversation.items[index].status = status
         store(conversation)
+    }
+
+    private func reject(_ messageId: String, in convId: String, _ reason: String) {
+        guard var conversation = conversations[convId],
+              let index = conversation.items.firstIndex(where: { $0.id == messageId && $0.kind == .user }),
+              (conversation.items[index].status ?? .queued) < .delivered else { return }
+        conversation.items[index].rejected = reason
+        store(conversation)
+        ShareInbox.finish(messageId: messageId)
     }
 
     private func append(_ item: ChatItem, to convId: String) {

@@ -89,7 +89,8 @@ export type Event =
   | { kind: "download"; data: Download }
   | { kind: "chunk"; data: Chunk };
 
-export type Received = Event | { kind: "unknown"; name: string };
+export type Invalid = { kind: "invalid"; name: string; convId?: string; messageId?: string; attachmentId?: string };
+export type Received = Event | Invalid | { kind: "unknown"; name: string };
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const isId = (value: unknown): value is string => typeof value === "string" && ID.test(value);
@@ -159,6 +160,15 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   conv_update: (d) => isId(d.convId),
 };
 
+export const LIMITS = "at most 32 attachments; names and types of 1 to 255 characters; device ids up to 64 characters";
+
+export function rejection(received: Invalid | { kind: "unknown"; name: string } | null): ErrorInfo {
+  if (!received) return { code: "bad_request", message: "the host could not read this event" };
+  if (received.kind === "unknown") return { code: "unsupported", message: `this host does not handle "${received.name}"` };
+  const { kind: _kind, name, ...ids } = received;
+  return { code: "bad_request", message: `"${name}" was refused: it breaks the protocol's limits (${LIMITS})`, ...ids };
+}
+
 export function parseEvent(bytes: Uint8Array): Received | null {
   let value: unknown;
   try {
@@ -170,8 +180,13 @@ export function parseEvent(bytes: Uint8Array): Received | null {
   const { kind, data } = value as Fields;
   if (!str(kind)) return null;
   const check = Object.hasOwn(valid, kind) ? valid[kind as Event["kind"]] : undefined;
-  if (check && typeof data === "object" && data !== null && !Array.isArray(data) && check(data as Fields)) {
-    return { kind, data } as Event;
-  }
-  return { kind: "unknown", name: kind };
+  const fields = typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Fields) : undefined;
+  if (!check) return { kind: "unknown", name: kind };
+  if (fields && check(fields)) return { kind, data } as Event;
+  const { convId, messageId, attachmentId } = fields ?? {};
+  const invalid: Invalid = { kind: "invalid", name: kind };
+  if (isId(convId)) invalid.convId = convId;
+  if (isId(messageId)) invalid.messageId = messageId;
+  if (isId(attachmentId)) invalid.attachmentId = attachmentId;
+  return invalid;
 }
