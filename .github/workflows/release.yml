@@ -8,7 +8,8 @@ name: Release
 on:
   push:
     branches: [main]
-    paths: ['apps/**', 'packages/**', 'plugins/**', 'scripts/**', 'version.txt']
+    # The website and relay deploy on their own (deploy-web.yml; wrangler by hand).
+    paths: ['apps/**', '!apps/web/**', '!apps/relay/**', 'packages/**', 'plugins/**', 'scripts/**', 'version.txt']
   workflow_dispatch:
 
 concurrency:

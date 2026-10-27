@@ -7,7 +7,7 @@ Yorozu is a chat channel for OpenClaw: native apps for iPhone, iPad and Mac that
 - **The relay** passes sealed boxes between them. Every connection runs a Noise IK handshake, and push previews are sealed per device.
 - **OpenClaw does the rest**: the agent, its sessions, memory and cron. Each Yorozu conversation is one OpenClaw thread session.
 
-This branch, `projectx`, is Yorozu v2. Yorozu v1 lives on `main`.
+Yorozu 0.9 lives on `main`. Older versions are in the history and the GitHub releases.
 
 ## Start
 
