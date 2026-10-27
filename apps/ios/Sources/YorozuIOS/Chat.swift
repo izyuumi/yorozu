@@ -10,7 +10,7 @@ struct ChatView: View {
 
     @State private var draft = ""
     @State private var files: [ChatAttachment] = []
-    @State private var automation: V3CronJob?
+    @State private var automation: CronJob?
     @State private var dropFailure: String?
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
@@ -152,7 +152,7 @@ extension ChatView {
         return true
     }
 
-    static func message(_ text: String, automation: V3CronJob?) -> String {
+    static func message(_ text: String, automation: CronJob?) -> String {
         guard let automation else { return text }
         let reference = "Cron job \"\(automation.name)\" (id \(automation.id))"
         let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -294,7 +294,7 @@ private struct ToolsRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder private func icon(_ status: V3Tool.Status) -> some View {
+    @ViewBuilder private func icon(_ status: Tool.Status) -> some View {
         switch status {
         case .running: ProgressView().controlSize(.mini)
         case .done: Image(systemName: "checkmark.circle")
@@ -302,7 +302,7 @@ private struct ToolsRow: View {
         }
     }
 
-    private func word(_ status: V3Tool.Status) -> String {
+    private func word(_ status: Tool.Status) -> String {
         switch status {
         case .running: String(localized: "Running")
         case .done: String(localized: "Done")
@@ -396,7 +396,7 @@ private struct TypingIndicator: View {
 private struct Composer: View {
     @Binding var text: String
     @Binding var files: [ChatAttachment]
-    @Binding var automation: V3CronJob?
+    @Binding var automation: CronJob?
     let attachLimit: Int?
     let focus: ChatView.Focus
     let onFiles: ([URL]) -> Bool
@@ -416,8 +416,8 @@ private struct Composer: View {
                     AttachmentFiles.remove(file)
                 }
             }
-            if files.count > V3Attachment.maxPerMessage {
-                Text("A message can carry up to \(V3Attachment.maxPerMessage) attachments.")
+            if files.count > Attachment.maxPerMessage {
+                Text("A message can carry up to \(Attachment.maxPerMessage) attachments.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, LayoutMetrics.stack)
@@ -469,7 +469,7 @@ private struct Composer: View {
     }
 
     private var canSend: Bool {
-        files.count <= V3Attachment.maxPerMessage
+        files.count <= Attachment.maxPerMessage
             && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil)
     }
 

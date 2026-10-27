@@ -133,7 +133,7 @@ struct ChatPairView: View {
                                 } label: {
                                     Label(String(localized: "New Conversation"), systemImage: "square.and.pencil")
                                 } primaryAction: {
-                                    self.selection = V3Event.newId()
+                                    self.selection = WireEvent.newId()
                                 }
                                 .accessibilityIdentifier("chat.new")
                             }
@@ -169,7 +169,7 @@ struct ChatPairView: View {
     }
 
     private func newBeside() {
-        withAnimation(.snappy) { pair.openBeside(V3Event.newId(), selection: &selection) }
+        withAnimation(.snappy) { pair.openBeside(WireEvent.newId(), selection: &selection) }
     }
 
     private func finishDrag() {
@@ -233,7 +233,7 @@ struct ChatPairView: View {
         if let convId, model.conversations[convId]?.items.isEmpty == false {
             ToolbarItem(placement: .pinnedAction) {
                 Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") {
-                    withAnimation(.snappy) { pair.show(V3Event.newId(), on: side, selection: &selection) }
+                    withAnimation(.snappy) { pair.show(WireEvent.newId(), on: side, selection: &selection) }
                 }
                 .accessibilityIdentifier("chat.new")
             }
@@ -369,7 +369,7 @@ private struct BesidePicker: View {
         let matches = model.list.filter { $0.id != excluding && (query.isEmpty || $0.displayTitle.localizedCaseInsensitiveContains(query)) }
         List {
             Section {
-                Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { pick(V3Event.newId()) }
+                Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { pick(WireEvent.newId()) }
             }
             Section {
                 ForEach(matches) { conversation in

@@ -117,7 +117,8 @@ public struct QrPayload: Codable, Equatable, Sendable {
         }
         let items = components.queryItems ?? []
         let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
-        guard let v = ["1": 1, "3": 3][query["v"] ?? ""], let relayUrl = query["relay"], isAcceptableRelayUrl(relayUrl) else {
+        // A link without `v` is the current wire's: the plugin stops sending `v=3` once every client reads it so.
+        guard let v = query["v"].map({ ["1": 1, "3": 3][$0] }) ?? 3, let relayUrl = query["relay"], isAcceptableRelayUrl(relayUrl) else {
             throw malformed()
         }
         return QrPayload(

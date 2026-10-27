@@ -153,7 +153,7 @@ struct ConversationsView: View {
     }
 
     private var compose: some View {
-        Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { pane.wrappedValue = .chat(V3Event.newId()) }
+        Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") { pane.wrappedValue = .chat(WireEvent.newId()) }
             .keyboardShortcut("n")
             .help(String(localized: "New Conversation"))
             .accessibilityIdentifier("conversations.new")

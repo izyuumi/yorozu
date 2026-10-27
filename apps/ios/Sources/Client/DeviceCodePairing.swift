@@ -17,7 +17,7 @@ extension AppModel {
         requestInvite()
     }
 
-    func deliver(_ answer: V3PairInvite, to code: DeviceCode) {
+    func deliver(_ answer: PairInvite, to code: DeviceCode) {
         guard let webLink = answer.webLink, let fingerprint = answer.fingerprint, let url = code.mailbox(websocket: false),
               let letter = try? code.seal(webLink) else {
             deviceAdding = .failed(answer.error ?? String(localized: "The host could not make a pairing code."))

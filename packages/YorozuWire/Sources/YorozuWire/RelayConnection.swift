@@ -1,6 +1,6 @@
 import Foundation
 
-public actor V3Connection {
+public actor RelayConnection {
     public enum State: Equatable, Sendable {
         case offline
         case connecting
@@ -14,15 +14,15 @@ public actor V3Connection {
 
     public enum Update: Sendable {
         case state(State)
-        case event(V3Event)
+        case event(WireEvent)
         case accepted(messageId: String)
         case relayJoined
-        case sessionOpen(V3PeerInfo)
+        case sessionOpen(PeerInfo)
     }
 
     private var pairing: QrPayload
     private let identity: PhoneIdentity
-    private let local: V3PeerInfo
+    private let local: PeerInfo
     private let urlSession: URLSession
     private let dial: URL
     private var relayKnows: Bool
@@ -33,8 +33,8 @@ public actor V3Connection {
     private var generation = 0
     private var socket: URLSessionWebSocketTask?
     private var hostOnline = false
-    private var handshake: V3ClientHandshake?
-    private var session: V3Session?
+    private var handshake: ClientHandshake?
+    private var session: Session?
     private var peerReady = false
     private var state = State.offline
     private var sentSigs: [String: String] = [:]
@@ -53,14 +53,14 @@ public actor V3Connection {
     static let pongTimeout: Duration = .seconds(10)
     static let handshakeTimeout: Duration = .seconds(15)
 
-    public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: V3PeerInfo,
+    public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo,
         urlSession: URLSession = .shared) throws {
         guard pairing.v == 3, let room = pairing.roomId, QrPayload.isAcceptableRelayUrl(pairing.relayUrl),
               var components = URLComponents(string: pairing.relayUrl) else {
-            throw WireV3.Failure.malformed("not a v3 pairing")
+            throw Wire.Failure.malformed("not a pairing for this app")
         }
         components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "room", value: room)]
-        guard let dial = components.url else { throw WireV3.Failure.malformed("relay URL") }
+        guard let dial = components.url else { throw Wire.Failure.malformed("relay URL") }
         self.pairing = pairing
         self.identity = identity
         self.relayKnows = relayKnows
@@ -101,7 +101,7 @@ public actor V3Connection {
     }
 
     @discardableResult
-    public func send(_ message: V3Message) -> Bool {
+    public func send(_ message: Message) -> Bool {
         guard state == .ready, var session, let socket else { return false }
         guard let frame = try? session.seal(.message(message)) else { return false }
         self.session = session
@@ -111,7 +111,7 @@ public actor V3Connection {
     }
 
     @discardableResult
-    public func send(_ event: V3Event) -> Bool {
+    public func send(_ event: WireEvent) -> Bool {
         guard state == .ready, var session, let socket, let frame = try? session.seal(event) else { return false }
         self.session = session
         return transmit(frame, on: socket) != nil
@@ -208,7 +208,7 @@ public actor V3Connection {
         continuation?.yield(.state(new))
     }
 
-    private func transmit(_ frame: V3Frame, on socket: URLSessionWebSocketTask) -> String? {
+    private func transmit(_ frame: Frame, on socket: URLSessionWebSocketTask) -> String? {
         let payload = frame.payload
         guard let sig = try? YorozuCrypto.signFrame(priv: identity.signingPrivateKey, data: Data(payload.utf8))
             .base64URLEncodedString() else { return nil }
@@ -317,7 +317,7 @@ public actor V3Connection {
 
     private func beginHandshake(on socket: URLSessionWebSocketTask) {
         endSession()
-        guard let hs = try? V3ClientHandshake(identity: identity, pairing: pairing) else { return }
+        guard let hs = try? ClientHandshake(identity: identity, pairing: pairing) else { return }
         handshake = hs
         set(.handshaking)
         _ = transmit(hs.frame, on: socket)
@@ -329,7 +329,7 @@ public actor V3Connection {
     }
 
     private func frame(_ payload: String, on socket: URLSessionWebSocketTask) {
-        guard let frame = try? V3Frame(payload: payload) else { return }
+        guard let frame = try? Frame(payload: payload) else { return }
         switch frame {
         case .handshakeResponse:
             guard session == nil, let handshake, var opened = try? handshake.finish(frame),
@@ -346,7 +346,7 @@ public actor V3Connection {
         }
     }
 
-    private func receive(_ event: V3Event) {
+    private func receive(_ event: WireEvent) {
         guard peerReady else {
             guard case .peerInfo(let peer) = event else {
                 if case .error(let error) = event, error.code == "update_required" { stopForUpdate() }

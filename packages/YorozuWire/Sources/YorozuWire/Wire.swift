@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-public enum WireV3 {
+public enum Wire {
     public static let version: UInt8 = 3
     public static let protocolName = "Noise_IK_25519_ChaChaPoly_SHA256"
     public static let sidBytes = 8
@@ -38,12 +38,12 @@ enum Noise {
 
     static func decrypt(_ key: SymmetricKey, _ n: UInt64, _ ad: Data, _ ciphertext: Data) throws -> Data {
         let c = Data(ciphertext)
-        guard c.count >= 16 else { throw WireV3.Failure.decrypt }
+        guard c.count >= 16 else { throw Wire.Failure.decrypt }
         do {
             let box = try ChaChaPoly.SealedBox(nonce: nonce(n), ciphertext: c.prefix(c.count - 16), tag: c.suffix(16))
             return try ChaChaPoly.open(box, using: key, authenticating: ad)
         } catch {
-            throw WireV3.Failure.decrypt
+            throw Wire.Failure.decrypt
         }
     }
 
@@ -107,17 +107,17 @@ public struct NoiseIKHandshake {
         s = try .init(rawRepresentation: staticKey)
         fixedEphemeral = ephemeral
         self.remoteStatic = remoteStatic
-        state = NoiseSymmetricState(protocolName: WireV3.protocolName)
+        state = NoiseSymmetricState(protocolName: Wire.protocolName)
         state.mixHash(prologue)
         let responderStatic = role == .initiator ? remoteStatic : s.publicKey.rawRepresentation
-        guard let responderStatic, responderStatic.count == 32 else { throw WireV3.Failure.malformed("responder static key") }
+        guard let responderStatic, responderStatic.count == 32 else { throw Wire.Failure.malformed("responder static key") }
         state.mixHash(responderStatic)
     }
 
     public var handshakeHash: Data { state.h }
 
     public mutating func writeMessage(_ payload: Data) throws -> Data {
-        guard step == (role == .initiator ? 0 : 1) else { throw WireV3.Failure.malformed("handshake out of order") }
+        guard step == (role == .initiator ? 0 : 1) else { throw Wire.Failure.malformed("handshake out of order") }
         let e = try fixedEphemeral.map { try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: $0) }
             ?? Curve25519.KeyAgreement.PrivateKey()
         self.e = e
@@ -125,12 +125,12 @@ public struct NoiseIKHandshake {
         state.mixHash(epub)
         var out = epub
         if role == .initiator {
-            guard let rs = remoteStatic else { throw WireV3.Failure.malformed("responder static key") }
+            guard let rs = remoteStatic else { throw Wire.Failure.malformed("responder static key") }
             state.mixKey(try Noise.dh(e, rs))
             out += try state.encryptAndHash(s.publicKey.rawRepresentation)
             state.mixKey(try Noise.dh(s, rs))
         } else {
-            guard let re, let rs = remoteStatic else { throw WireV3.Failure.malformed("handshake out of order") }
+            guard let re, let rs = remoteStatic else { throw Wire.Failure.malformed("handshake out of order") }
             state.mixKey(try Noise.dh(e, re))
             state.mixKey(try Noise.dh(e, rs))
         }
@@ -140,10 +140,10 @@ public struct NoiseIKHandshake {
     }
 
     public mutating func readMessage(_ message: Data) throws -> Data {
-        guard step == (role == .responder ? 0 : 1) else { throw WireV3.Failure.malformed("handshake out of order") }
+        guard step == (role == .responder ? 0 : 1) else { throw Wire.Failure.malformed("handshake out of order") }
         let m = Data(message)
         let minimum = role == .responder ? 32 + 48 + 16 : 32 + 16
-        guard m.count >= minimum, m.count <= 65_535 else { throw WireV3.Failure.malformed("handshake message length") }
+        guard m.count >= minimum, m.count <= 65_535 else { throw Wire.Failure.malformed("handshake message length") }
         let re = m.prefix(32)
         self.re = re
         state.mixHash(re)
@@ -155,7 +155,7 @@ public struct NoiseIKHandshake {
             remoteStatic = rs
             state.mixKey(try Noise.dh(s, rs))
         } else {
-            guard let e else { throw WireV3.Failure.malformed("handshake out of order") }
+            guard let e else { throw Wire.Failure.malformed("handshake out of order") }
             state.mixKey(try Noise.dh(e, re))
             state.mixKey(try Noise.dh(s, re))
         }
@@ -164,32 +164,32 @@ public struct NoiseIKHandshake {
         return payload
     }
 
-    public func split(sid: Data) throws -> V3Session {
-        guard step == 2 else { throw WireV3.Failure.malformed("handshake not finished") }
+    public func split(sid: Data) throws -> Session {
+        guard step == 2 else { throw Wire.Failure.malformed("handshake not finished") }
         let (k1, k2) = Noise.hkdf(state.ck, Data())
         let (send, recv) = role == .initiator ? (k1, k2) : (k2, k1)
-        return V3Session(sid: sid, handshakeHash: state.h, sendKey: send, recvKey: recv)
+        return Session(sid: sid, handshakeHash: state.h, sendKey: send, recvKey: recv)
     }
 }
 
-public enum V3Frame: Equatable, Sendable {
+public enum Frame: Equatable, Sendable {
     case handshakeInit(deviceSigningKey: Data, message: Data)
     case handshakeResponse(sid: Data, message: Data)
     case transport(sid: Data, counter: UInt64, ciphertext: Data)
 
     public var sid: Data {
         switch self {
-        case .handshakeInit(_, let message): Data(message.prefix(WireV3.sidBytes))
+        case .handshakeInit(_, let message): Data(message.prefix(Wire.sidBytes))
         case .handshakeResponse(let sid, _), .transport(let sid, _, _): sid
         }
     }
 
     public var bytes: Data {
         switch self {
-        case .handshakeInit(let key, let message): Data([WireV3.version, 1]) + key + message
-        case .handshakeResponse(let sid, let message): Data([WireV3.version, 2]) + sid + message
+        case .handshakeInit(let key, let message): Data([Wire.version, 1]) + key + message
+        case .handshakeResponse(let sid, let message): Data([Wire.version, 2]) + sid + message
         case .transport(let sid, let counter, let ciphertext):
-            Data([WireV3.version, 3]) + sid + withUnsafeBytes(of: counter.littleEndian) { Data($0) } + ciphertext
+            Data([Wire.version, 3]) + sid + withUnsafeBytes(of: counter.littleEndian) { Data($0) } + ciphertext
         }
     }
 
@@ -197,8 +197,8 @@ public enum V3Frame: Equatable, Sendable {
 
     public init(bytes raw: Data) throws {
         let b = Data(raw)
-        let sid = WireV3.sidBytes
-        guard b.count >= 2, b[0] == WireV3.version else { throw WireV3.Failure.malformed("not a v3 frame") }
+        let sid = Wire.sidBytes
+        guard b.count >= 2, b[0] == Wire.version else { throw Wire.Failure.malformed("not a wire frame") }
         let body = Data(b.dropFirst(2))
         switch b[1] {
         case 1 where body.count >= 32 + 96 && body.count <= 32 + 65_535:
@@ -207,20 +207,20 @@ public enum V3Frame: Equatable, Sendable {
             self = .handshakeResponse(sid: body.prefix(sid), message: Data(body.dropFirst(sid)))
         case 3 where body.count >= sid + 8 + 16:
             let counter = body.dropFirst(sid).prefix(8).reversed().reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
-            guard counter <= WireV3.maxCounter else { throw WireV3.Failure.malformed("counter out of range") }
+            guard counter <= Wire.maxCounter else { throw Wire.Failure.malformed("counter out of range") }
             self = .transport(sid: body.prefix(sid), counter: counter, ciphertext: Data(body.dropFirst(sid + 8)))
         default:
-            throw WireV3.Failure.malformed("bad v3 frame")
+            throw Wire.Failure.malformed("bad frame")
         }
     }
 
     public init(payload: String) throws {
-        guard let bytes = Data(base64URLEncoded: payload) else { throw WireV3.Failure.malformed("payload is not base64url") }
+        guard let bytes = Data(base64URLEncoded: payload) else { throw Wire.Failure.malformed("payload is not base64url") }
         try self.init(bytes: bytes)
     }
 }
 
-public struct V3Session: Sendable {
+public struct Session: Sendable {
     public let sid: Data
     public let handshakeHash: Data
     private let sendKey: SymmetricKey
@@ -235,31 +235,31 @@ public struct V3Session: Sendable {
         self.recvKey = SymmetricKey(data: recvKey)
     }
 
-    public mutating func seal(_ plaintext: Data) throws -> V3Frame {
-        guard sendCounter <= WireV3.maxCounter else { throw WireV3.Failure.malformed("session exhausted") }
+    public mutating func seal(_ plaintext: Data) throws -> Frame {
+        guard sendCounter <= Wire.maxCounter else { throw Wire.Failure.malformed("session exhausted") }
         let counter = sendCounter
         let ciphertext = try Noise.encrypt(sendKey, counter, Data(), plaintext)
         sendCounter += 1
         return .transport(sid: sid, counter: counter, ciphertext: ciphertext)
     }
 
-    public mutating func open(_ frame: V3Frame) throws -> Data {
-        guard case .transport(let sid, let counter, let ciphertext) = frame else { throw WireV3.Failure.malformed("not a transport frame") }
-        guard sid == self.sid else { throw WireV3.Failure.otherSession }
-        if let lastReceived, counter <= lastReceived { throw WireV3.Failure.replay }
+    public mutating func open(_ frame: Frame) throws -> Data {
+        guard case .transport(let sid, let counter, let ciphertext) = frame else { throw Wire.Failure.malformed("not a transport frame") }
+        guard sid == self.sid else { throw Wire.Failure.otherSession }
+        if let lastReceived, counter <= lastReceived { throw Wire.Failure.replay }
         let plaintext = try Noise.decrypt(recvKey, counter, Data(), ciphertext)
         lastReceived = counter
         return plaintext
     }
 
-    public mutating func seal(_ event: V3Event) throws -> V3Frame { try seal(event.encoded()) }
+    public mutating func seal(_ event: WireEvent) throws -> Frame { try seal(event.encoded()) }
 
-    public mutating func openEvent(_ frame: V3Frame) throws -> V3Event {
-        try JSONDecoder().decode(V3Event.self, from: open(frame))
+    public mutating func openEvent(_ frame: Frame) throws -> WireEvent {
+        try JSONDecoder().decode(WireEvent.self, from: open(frame))
     }
 }
 
-public struct V3HandshakePayload: Codable, Equatable, Sendable {
+public struct HandshakePayload: Codable, Equatable, Sendable {
     public var ts: Int64
     public var proof: String?
 
@@ -275,30 +275,30 @@ public struct V3HandshakePayload: Codable, Equatable, Sendable {
     }
 }
 
-public struct V3ClientHandshake {
-    public let frame: V3Frame
+public struct ClientHandshake {
+    public let frame: Frame
     private let noise: NoiseIKHandshake
 
     public init(identity: PhoneIdentity, pairing: QrPayload, now: Date = Date(), ephemeral: Data? = nil) throws {
         guard let roomId = pairing.roomId, let hostKey = Data(base64URLEncoded: pairing.macPubkey), hostKey.count == 32 else {
-            throw WireV3.Failure.malformed("pairing lacks room or host key")
+            throw Wire.Failure.malformed("pairing lacks room or host key")
         }
         var noise = try NoiseIKHandshake(role: .initiator, staticKey: identity.sessionPrivateKey, remoteStatic: hostKey,
-            prologue: WireV3.prologue(roomId: roomId, deviceSigningKey: identity.signingPublicKey), ephemeral: ephemeral)
+            prologue: Wire.prologue(roomId: roomId, deviceSigningKey: identity.signingPublicKey), ephemeral: ephemeral)
         let proof = pairing.secret.map {
             YorozuCrypto.helloProof(secret: $0, pub: identity.sessionPublicKey.base64URLEncodedString(),
                 spub: identity.signingPublicKey.base64URLEncodedString())
         }
-        let payload = try V3HandshakePayload(ts: Int64(now.timeIntervalSince1970 * 1000), proof: proof).encoded()
+        let payload = try HandshakePayload(ts: Int64(now.timeIntervalSince1970 * 1000), proof: proof).encoded()
         frame = .handshakeInit(deviceSigningKey: identity.signingPublicKey, message: try noise.writeMessage(payload))
         self.noise = noise
     }
 
     public var sid: Data { frame.sid }
 
-    public func finish(_ response: V3Frame) throws -> V3Session {
-        guard case .handshakeResponse(let sid, let message) = response else { throw WireV3.Failure.malformed("not a handshake response") }
-        guard sid == self.sid else { throw WireV3.Failure.otherSession }
+    public func finish(_ response: Frame) throws -> Session {
+        guard case .handshakeResponse(let sid, let message) = response else { throw Wire.Failure.malformed("not a handshake response") }
+        guard sid == self.sid else { throw Wire.Failure.otherSession }
         var noise = noise
         _ = try noise.readMessage(message)
         return try noise.split(sid: sid)

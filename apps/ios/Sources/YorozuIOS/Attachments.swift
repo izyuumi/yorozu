@@ -133,7 +133,7 @@ private struct CameraPicker: UIViewControllerRepresentable {
 
 struct StagedFiles: View {
     let files: [ChatAttachment]
-    var automation: V3CronJob? = nil
+    var automation: CronJob? = nil
     var onRemoveAutomation: () -> Void = {}
     let onRemove: (ChatAttachment) -> Void
     @ScaledMetric private var previewSide: CGFloat = 56

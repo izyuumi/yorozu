@@ -8,7 +8,7 @@ struct AddDeviceSheet: View {
     @State private var scanning = false
     @State private var scanned: String?
     @State private var known: Set<String>?
-    @State private var paired: V3DeviceInfo?
+    @State private var paired: DeviceInfo?
     private static let pollInterval: Duration = .seconds(2)
 
     var body: some View {
@@ -127,7 +127,7 @@ struct AddDeviceSheet: View {
 }
 
 extension AddDeviceSheet {
-    private func success(_ device: V3DeviceInfo) -> some View {
+    private func success(_ device: DeviceInfo) -> some View {
         VStack(spacing: LayoutMetrics.stack) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.largeTitle)

@@ -12,7 +12,10 @@ import {
   type KeyObject,
 } from "node:crypto";
 
-export const WIRE_VERSION = 3;
+// A frame leads with its type byte. Clients before 0.11 lead with the old version byte 3, then 1, 2 or 3;
+// each session answers in the format its init frame used, until the plugin drops the old one.
+export const LEGACY_VERSION = 3;
+const FRAME_TYPE = { init: 0x11, response: 0x12, box: 0x13 } as const;
 export const PROTOCOL_NAME = "Noise_IK_25519_ChaChaPoly_SHA256";
 export const SID_BYTES = 8;
 export const MAX_COUNTER = Number.MAX_SAFE_INTEGER;
@@ -77,8 +80,8 @@ export const helloProof = (secret: string, pub: string, spub: string): string =>
 export const fingerprint = (hostStaticPub: Uint8Array): string =>
   (Buffer.from(hostStaticPub).subarray(0, 8).toString("hex").toUpperCase().match(/.{1,4}/g) ?? []).join(" ");
 
-export const prologue = (room: string, deviceSigningPub: Uint8Array): Buffer =>
-  Buffer.from(`yorozu-v3|${room}|${b64u(deviceSigningPub)}`, "utf8");
+export const prologue = (room: string, deviceSigningPub: Uint8Array, legacy = false): Buffer =>
+  Buffer.from(`${legacy ? "yorozu-v3" : "yorozu"}|${room}|${b64u(deviceSigningPub)}`, "utf8");
 
 const hmac = (key: Uint8Array, data: Uint8Array): Buffer => createHmac("sha256", key).update(data).digest();
 
@@ -239,16 +242,19 @@ export class NoiseIK {
   }
 }
 
-export type Frame =
+export type Frame = { legacy?: boolean } & (
   | { type: "init"; deviceSigningKey: Buffer; message: Buffer }
   | { type: "response"; sid: Buffer; message: Buffer }
-  | { type: "box"; sid: Buffer; counter: number; ciphertext: Buffer };
+  | { type: "box"; sid: Buffer; counter: number; ciphertext: Buffer }
+);
 
 export const frameSid = (frame: Frame): Buffer =>
   frame.type === "init" ? frame.message.subarray(0, SID_BYTES) : frame.sid;
 
 export function encodeFrame(frame: Frame): string {
-  const head = Buffer.from([WIRE_VERSION, { init: 1, response: 2, box: 3 }[frame.type]]);
+  const head = Buffer.from(
+    frame.legacy ? [LEGACY_VERSION, { init: 1, response: 2, box: 3 }[frame.type]] : [FRAME_TYPE[frame.type]],
+  );
   if (frame.type === "init") return b64u(Buffer.concat([head, frame.deviceSigningKey, frame.message]));
   if (frame.type === "response") return b64u(Buffer.concat([head, frame.sid, frame.message]));
   const counter = Buffer.alloc(8);
@@ -258,18 +264,21 @@ export function encodeFrame(frame: Frame): string {
 
 export function decodeFrame(payload: string): Frame | null {
   const b = fromB64u(payload);
-  if (!b || b.length < 2 || b[0] !== WIRE_VERSION) return null;
-  const body = b.subarray(2);
-  if (b[1] === 1 && body.length >= 32 + 96 && body.length <= 32 + 65_535) {
-    return { type: "init", deviceSigningKey: body.subarray(0, 32), message: body.subarray(32) };
+  if (!b || b.length < 2) return null;
+  const legacy = b[0] === LEGACY_VERSION;
+  const type = legacy ? b[1] : b[0] - 0x10;
+  const body = b.subarray(legacy ? 2 : 1);
+  if (type === 1 && body.length >= 32 + 96 && body.length <= 32 + 65_535) {
+    return { legacy, type: "init", deviceSigningKey: body.subarray(0, 32), message: body.subarray(32) };
   }
-  if (b[1] === 2 && body.length >= SID_BYTES + 48 && body.length <= SID_BYTES + 65_535) {
-    return { type: "response", sid: body.subarray(0, SID_BYTES), message: body.subarray(SID_BYTES) };
+  if (type === 2 && body.length >= SID_BYTES + 48 && body.length <= SID_BYTES + 65_535) {
+    return { legacy, type: "response", sid: body.subarray(0, SID_BYTES), message: body.subarray(SID_BYTES) };
   }
-  if (b[1] === 3 && body.length >= SID_BYTES + 8 + 16) {
+  if (type === 3 && body.length >= SID_BYTES + 8 + 16) {
     const counter = body.readBigUInt64LE(SID_BYTES);
     if (counter > BigInt(MAX_COUNTER)) return null;
     return {
+      legacy,
       type: "box",
       sid: body.subarray(0, SID_BYTES),
       counter: Number(counter),
@@ -282,6 +291,7 @@ export function decodeFrame(payload: string): Frame | null {
 export class Session {
   sendCounter = 0;
   lastReceived = -1;
+  legacy = false;
 
   readonly sid: Buffer;
   readonly handshakeHash: Buffer;
@@ -299,6 +309,7 @@ export class Session {
     if (this.sendCounter > MAX_COUNTER) throw new Error("session exhausted");
     const counter = this.sendCounter++;
     return encodeFrame({
+      legacy: this.legacy,
       type: "box",
       sid: this.sid,
       counter,
@@ -307,7 +318,7 @@ export class Session {
   }
 
   open(frame: Frame): Buffer | null {
-    if (frame.type !== "box" || !this.sid.equals(frame.sid) || frame.counter <= this.lastReceived) {
+    if (frame.type !== "box" || !!frame.legacy !== this.legacy || !this.sid.equals(frame.sid) || frame.counter <= this.lastReceived) {
       return null;
     }
     const plaintext = decrypt(this.recvKey, frame.counter, Buffer.alloc(0), frame.ciphertext);
@@ -338,19 +349,21 @@ export function acceptHandshake(opts: {
   const frame = decodeFrame(opts.payload);
   if (frame?.type !== "init" || !verifyFrame(frame.deviceSigningKey, opts.payload, opts.sig)) return null;
   try {
-    const noise = new NoiseIK("responder", opts.host, null, prologue(opts.room, frame.deviceSigningKey), opts.ephemeral);
+    const noise = new NoiseIK("responder", opts.host, null, prologue(opts.room, frame.deviceSigningKey, frame.legacy), opts.ephemeral);
     const payload = parseHandshakePayload(noise.readMessage(frame.message));
     const now = opts.now ?? Date.now();
     if (!payload || Math.abs(now - payload.ts) > HANDSHAKE_MAX_AGE_MS || !noise.remoteStatic) return null;
     const sid = frameSid(frame);
     const message = noise.writeMessage(Buffer.alloc(0));
+    const session = noise.split(sid);
+    session.legacy = !!frame.legacy;
     return {
       sid: b64u(sid),
       deviceSigningKey: frame.deviceSigningKey,
       deviceStatic: noise.remoteStatic,
       payload,
-      response: encodeFrame({ type: "response", sid, message }),
-      session: noise.split(sid),
+      response: encodeFrame({ legacy: frame.legacy, type: "response", sid, message }),
+      session,
     };
   } catch {
     return null;
