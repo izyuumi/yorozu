@@ -26,7 +26,7 @@ How the client app (`apps/ios`) is versioned, built, shipped and compile-checked
 | `deploy-web.yml` | push to `main` touching `apps/web/**`; manual | `pnpm --filter @yorozu/web build`, `… test`, then `wrangler deploy`. |
 | `deploy-relay.yml` | push to `main` touching `apps/relay/**`; manual | `pnpm --filter @yorozu/relay test`, then `wrangler deploy`. |
 
-The Apple jobs run on the `xcode-27` runner with Xcode 27.1 and install Tuist 4.209.0 through mise (local `mise install` uses the `mise.toml` pin). The release workflows run no tests. Secrets, by name: `release-mac.yml` uses `DEVELOPER_ID_P12`, `DEVELOPER_ID_PASSWORD`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `SPARKLE_ED_KEY`; `release-ios.yml` uses `MAC_CERT_P12`, `MAC_CERT_PASSWORD` (the Apple Distribution identity, despite the name), `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`; the deploy workflows use `CLOUDFLARE_API_TOKEN`.
+The Apple jobs run on the `xcode-27` runner with Xcode 27.1 and install Tuist through mise at the version pinned in `mise.toml`, as `mise install` does locally. The release workflows run no tests. Secrets, by name: `release-mac.yml` uses `DEVELOPER_ID_P12`, `DEVELOPER_ID_PASSWORD`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `SPARKLE_ED_KEY`; `release-ios.yml` uses `MAC_CERT_P12`, `MAC_CERT_PASSWORD` (the Apple Distribution identity, despite the name), `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`; the deploy workflows use `CLOUDFLARE_API_TOKEN`.
 
 Dependabot (`.github/dependabot.yml`) proposes weekly updates for the pinned GitHub Actions and the pnpm workspace (minor and patch grouped into one PR), each after a 3-day cooldown; major bumps of `vitest` and `typescript` are ignored.
 
