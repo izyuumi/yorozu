@@ -113,6 +113,33 @@ openclaw yorozu devices remove <id>   # the id, or a unique start of it
 
 `remove` takes the device off the allowlist and tells the relay to forget it and close its sockets. The app then shows "Removed from the host". In the app, Settings lists the paired devices, can turn push on or off for each, and can remove other devices. Settings › Unpair This Device removes this device on the host and deletes its keys and cache.
 
+## Self-hosted relay
+
+The plugin and the apps use the public relay `wss://relay.yumi.to` unless `channels.yorozu.relayUrl` says otherwise. To run your own, use either form of `apps/relay` ([its README](../apps/relay/README.md)):
+
+- **Cloudflare Worker**: in `apps/relay/wrangler.toml`, replace the `relay.yumi.to` route with a domain in your own Cloudflare account, then run `pnpm --filter @yorozu/relay run deploy`.
+- **Docker** (Node, keeps everything in memory):
+
+  ```sh
+  docker build -f apps/relay/Dockerfile -t yorozu-relay .
+  docker run -d --restart unless-stopped -p 8787:8787 yorozu-relay
+  ```
+
+  Put it behind a TLS proxy. The apps accept only `wss://`, except `ws://` to `localhost`.
+
+Then point the plugin at it and pair every device again, because the pairing link carries the relay:
+
+```sh
+openclaw config set channels.yorozu.relayUrl wss://relay.example.com
+openclaw yorozu pair
+```
+
+What a self-hosted relay doesn't do:
+
+- **Push:** it can't send push. APNs pushes need the app developer's key, so there are no notifications while the app is closed. The Mac never gets push anyway.
+- **Mac pairing codes:** a new Mac's pairing code still goes through the public relay's one-time mailbox. Only the invite link passes there; conversations stay on your relay.
+- **Restarts:** the Docker relay loses buffered frames on restart. Devices reconnect by themselves.
+
 ## Push notifications
 
 - The relay sends the APNs pushes. It needs the Worker secrets `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_KEY_P8` (`apps/relay/src/apns.ts`). Without them, the relay still forwards frames but wakes nobody. To check the names only, run `wrangler secret list` from `apps/relay`.
