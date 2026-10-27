@@ -3,14 +3,11 @@ import AppKit
 import Sparkle
 import SwiftUI
 
-/// Sparkle on the Mac. Feed, public key and the hourly automatic install are in Info.plist (apps/ios/Project.swift); the
-/// default feed is the beta one. The Mac shares 0.5's bundle id and so its user defaults: an explicit
-/// `YorozuBetaUpdates = false` from 0.5 still picks the stable feed.
+/// Sparkle on the Mac. Feed (the stable one, which every Mac reads), public key and the hourly automatic install are in
+/// Info.plist (apps/ios/Project.swift).
 @MainActor
 enum MacUpdates {
     private static let configuredKey = "YorozuUpdatesConfigured"
-    private static let betaKey = "YorozuBetaUpdates"
-    static let stableFeedURL = "https://yorozu.yumi.to/appcast.xml"
     private static weak var model: AppModel?
 
     /// Nil in a build without a feed (dev builds that strip it), so no "feed URL is not set" alert.
@@ -26,8 +23,6 @@ enum MacUpdates {
         }
         return controller
     }()
-
-    static var beta: Bool { UserDefaults.standard.object(forKey: betaKey) as? Bool ?? true }
 
     static func start(model: AppModel) {
         self.model = model
@@ -53,15 +48,6 @@ enum MacUpdates {
                 throw NSError(domain: "YorozuDemo", code: 1,
                     userInfo: [NSLocalizedDescriptionKey: String(localized: "Exit demo mode before checking for updates.")])
             }
-        }
-
-        func feedURLString(for updater: SPUUpdater) -> String? {
-            MainActor.assumeIsolated { MacUpdates.beta ? nil : MacUpdates.stableFeedURL }
-        }
-
-        /// Beta appcast items carry `sparkle:channel` beta, as 0.5's did.
-        func allowedChannels(for updater: SPUUpdater) -> Set<String> {
-            MainActor.assumeIsolated { MacUpdates.beta ? ["beta"] : [] }
         }
     }
 }

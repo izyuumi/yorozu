@@ -59,8 +59,8 @@ let project = Project(
                 "CFBundleShortVersionString": "$(MARKETING_VERSION)",
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
                 "YorozuBuild": "$(YOROZU_BUILD)",
-                // Sparkle, read on the Mac only: the beta feed by default, 0.5's EdDSA key, hourly automatic installs.
-                "SUFeedURL": "https://yorozu.yumi.to/beta/appcast.xml",
+                // Sparkle, read on the Mac only: the stable feed, 0.5's EdDSA key, hourly automatic installs.
+                "SUFeedURL": "https://yorozu.yumi.to/appcast.xml",
                 "SUPublicEDKey": "pD6gPv1CP/XDvIJXbztjQRTIkgR/kfMMYT/Mpp8aQvI=",
                 "SUEnableAutomaticChecks": true,
                 "SUAutomaticallyUpdate": true,
