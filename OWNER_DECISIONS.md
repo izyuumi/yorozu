@@ -88,7 +88,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - Work lands on `main` through worktree + PR; `projectx` is retired. Every merge ships a beta (2026-10-27, after Home Assistant's Companion app):
   - Mac: a push touching `apps/**` (except `apps/web` and `apps/relay`), `packages/**`, `plugins/**`, `scripts/**` or `version.txt` publishes the prerelease `v<ver>-beta.<build>` (`release-mac.yml`).
   - iOS: a push touching `apps/ios/**`, `packages/**`, `version.txt` or its scripts uploads a build; TestFlight gives it to the internal group automatically (`release-ios.yml`). The plugin rides only in the Mac app.
-  - Stable: a PR that bumps `version.txt` promotes the old version's last Mac beta, unchanged, to `v<old>`; the iOS build of that version is submitted to the App Store by hand. Release tags can be neither moved nor deleted, so each version has one stable release.
+  - Stable: a PR that bumps `version.txt` promotes the Mac beta the owner checked, named in a `Promotes: v<old>-beta.<n>` commit line, unchanged, to `v<old>` (2026-10-27: promoting the last beta instead shipped an unchecked one as 0.9.2); the iOS build of that version is submitted to the App Store by hand. Release tags can be neither moved nor deleted, so each version has one stable release.
   - Builds count per platform: the Mac from its last beta tag, iOS from App Store Connect.
 - The iPhone and iPad app is not offered on Apple Silicon Macs (App Store Connect availability off); Macs get the Developer ID app. (2026-10-27)
 - The Mac signing identity is a local, gitignored build setting, not part of the repo; git history is left as it is. (2026-10-09)
