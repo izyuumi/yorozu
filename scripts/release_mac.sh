@@ -2,13 +2,14 @@
 # Builds the Mac release into dist/: Yorozu.dmg (Developer ID signed, notarized, stapled), appcast.xml (Sparkle, EdDSA
 # signed) and candidate.json, the assets of a v<version>-beta.<build> GitHub prerelease. yorozu.yumi.to/beta and
 # /beta/appcast.xml serve the newest release, prereleases included; /mac and /appcast.xml the latest stable one
-# (apps/web). Stable is the last beta of a version, promoted unchanged when version.txt moves on (release-mac.yml).
+# (apps/web). Stable is the beta the owner checked, promoted unchanged when version.txt moves on (release-mac.yml).
 #   scripts/release_mac.sh                      build only; BUILD=<n> sets the visible build, else the last beta's plus 1
 #   scripts/release_mac.sh --publish            also publishes it as v<version>-beta.<build>, which Macs with beta
 #                                               updates on install within the hour
-#   scripts/release_mac.sh --promote <version>  republishes the last v<version>-beta.<n> as v<version>, the latest
-#                                               release, which every Mac installs within the hour; release tags can be
-#                                               neither moved nor deleted, so each version has one stable release
+#   scripts/release_mac.sh --promote <version> v<version>-beta.<n>
+#                                               republishes that beta as v<version>, the latest release, which
+#                                               every Mac installs within the hour; release tags can be neither
+#                                               moved nor deleted, so each version has one stable release
 # Needs: the "Developer ID Application" identity; a notarytool keychain profile (NOTARY_PROFILE, default yorozu-notary);
 # Sparkle's EdDSA key in the login Keychain, or SPARKLE_ED_KEY_FILE; gh signed in, for --publish and --promote.
 set -eu
@@ -21,15 +22,18 @@ last_beta() {
 }
 
 if [ "${1:-}" = "--promote" ]; then
-    OLD=${2:?Usage: scripts/release_mac.sh --promote <version>}
+    OLD=${2:?Usage: scripts/release_mac.sh --promote <version> v<version>-beta.<n>}
     if gh release view "v$OLD" --repo "$REPO" >/dev/null 2>&1; then
         echo "v$OLD is already released; nothing to promote."
         exit 0
     fi
-    N=$(last_beta "$OLD")
-    [ -n "$N" ] || { echo "No v$OLD-beta.<n> release to promote" >&2; exit 1; }
+    # The beta the owner checked, named in the bump PR: a later merge may have published a newer, unchecked one.
+    BETA=${3:-}
+    case "$BETA" in "v$OLD"-beta.*) ;; *) echo "Name the checked v$OLD-beta.<n> to promote (got '$BETA')" >&2; exit 1 ;; esac
+    N=${BETA#"v$OLD"-beta.}
+    case "$N" in ''|*[!0-9]*) echo "Not a beta tag: $BETA" >&2; exit 1 ;; esac
     FILES=$(mktemp -d)
-    gh release download "v$OLD-beta.$N" --repo "$REPO" --dir "$FILES"
+    gh release download "$BETA" --repo "$REPO" --dir "$FILES"
     # The same DMG, appcast and candidate.json, so the appcast still points at the beta's DMG, which stays published.
     gh release create "v$OLD" --repo "$REPO" --target "$(jq -r .source_sha "$FILES/candidate.json")" --latest \
         --title "v$OLD" --notes "Yorozu $OLD ($N), promoted from v$OLD-beta.$N." "$FILES"/*
