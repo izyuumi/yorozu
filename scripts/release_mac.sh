@@ -43,6 +43,13 @@ env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme Y
     YOROZU_BUILD="$BUILD" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" OTHER_CODE_SIGN_FLAGS=--timestamp \
     CODE_SIGN_ENTITLEMENTS= CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO ENABLE_HARDENED_RUNTIME=YES
 ditto .build/xcode-release/Build/Products/Release/YorozuIOS.app "$APP"
+# Xcode signs Sparkle.framework but not its nested helpers, which keep Sparkle's own signature: notarization rejects
+# them. Sign them inside out (Sparkle's "Sandboxing" guide), then the framework and the app again.
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+for item in "$SPARKLE/Versions/B/XPCServices/Installer.xpc" "$SPARKLE/Versions/B/XPCServices/Downloader.xpc" \
+    "$SPARKLE/Versions/B/Autoupdate" "$SPARKLE/Versions/B/Updater.app" "$SPARKLE" "$APP"; do
+    codesign --force --timestamp --options runtime --preserve-metadata=entitlements --sign "$IDENTITY" "$item"
+done
 codesign --verify --deep --strict "$APP"
 [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Contents/Info.plist")" = to.yumi.yorozu ] \
     || { echo "The Mac app must be to.yumi.yorozu, or Sparkle cannot replace 0.5" >&2; exit 1; }
