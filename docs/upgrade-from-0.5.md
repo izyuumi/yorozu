@@ -11,7 +11,7 @@ The plan for moving Yorozu 0.5.0-beta installs (`main`) to 0.9.0 (`projectx`), a
 
 ## Version and build numbers
 
-- Version `0.9.0`, released as `v0.9.0-beta`.
+- Version `0.9.1`, released as `v0.9.1` on the stable feed (0.9.0 went to the App Store only).
 - The visible build number restarts at 1 for each version and is shown as "0.9.0 (1)".
 - `CFBundleVersion` on every platform is `major·10⁷ + minor·10⁵ + patch·10³ + build`, for example `900001` for 0.9.0 build 1. The live 0.5.0-beta is build `10279`.
 - Why the encoding: Sparkle's default comparator compares the integer `CFBundleVersion`, and TN2420 requires macOS builds to rise across versions. Dotted forms such as `0.9.0.1` sort below `10279`, and four parts are invalid.
@@ -23,8 +23,8 @@ The plan for moving Yorozu 0.5.0-beta installs (`main`) to 0.9.0 (`projectx`), a
 - The Mac destination of the shared client target builds as `to.yumi.yorozu`, the 0.5.0-beta bundle id, so Sparkle replaces it in place. It is signed with Developer ID, team `AN5KM8QGEF`, and notarized.
 - Sparkle is linked for macOS only.
   - It uses the same EdDSA public key as 0.5 (`SUPublicEDKey` `pD6gPv1C…`) and the CI secret `SPARKLE_ED_KEY`.
-  - The default feed is the beta feed `yorozu.yumi.to/beta/appcast.xml`. `YorozuBetaUpdates` is still read, so an explicit choice survives the update.
-- Releases: `projectx` merges into `main`. `main`'s `release.yml` and appcast step are ported to the Tuist layout. A green `main` publishes `v0.9.0-beta`, as in 0.5's `docs/RELEASE_WORKFLOW.md`. Only the release job is lifted from the no-CI rule, with no test jobs.
+  - The feed is the stable one, `yorozu.yumi.to/appcast.xml`. `/beta/appcast.xml`, which 0.5 Macs with beta updates on read, serves the same release, so every 0.5 Mac updates.
+- Releases: `projectx` merges into `main`. `main`'s `release.yml` and appcast step are ported to the Tuist layout. A green `main` publishes `v<version>`, as in 0.5's `docs/RELEASE_WORKFLOW.md`. Only the release job is lifted from the no-CI rule, with no test jobs.
 - The website download link points at 0.9.0.
 
 ## iOS distribution
@@ -100,6 +100,6 @@ All of this lands in 0.9.0, so later versions migrate without friction:
 
 ## Unverified, check during implementation
 
-- **Feed reach.** 0.5.0-beta Macs read the beta feed only if beta updates were switched on (`YorozuBetaUpdates`; 0.5 defaults to the stable feed, which stays at 0.4.0). A 0.5 Mac without it never sees 0.9.0.
+- **Feed reach.** Settled: the release is on the stable feed and `/beta` serves it too, so every 0.5 Mac sees it, and so do 0.4 ones.
 - 0.5's host data path is `~/Library/Application Support/Yorozu` (runtime `serve.ts`, `DEFAULT_STATE_DIR`).
 - Whether `peerDependencies: openclaw` in the plugin affects OpenClaw's dependency status.

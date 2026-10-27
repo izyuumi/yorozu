@@ -1,19 +1,19 @@
 #!/bin/sh
-# Builds the Mac beta release into dist/: Yorozu.dmg (Developer ID signed, notarized, stapled), appcast.xml (Sparkle,
-# EdDSA signed, channel beta) and candidate.json, the three assets yorozu.yumi.to/beta/appcast.xml looks for on the
-# newest v<version>-beta prerelease (main's apps/web/worker.mjs). docs/upgrade-from-0.5.md has the plan.
+# Builds the Mac release into dist/: Yorozu.dmg (Developer ID signed, notarized, stapled), appcast.xml (Sparkle, EdDSA
+# signed) and candidate.json, the assets of the v<version> GitHub release that yorozu.yumi.to/appcast.xml and /mac serve
+# (releases/latest; main's apps/web). docs/upgrade-from-0.5.md has the plan.
 #   scripts/release_mac.sh             build only; BUILD=<n> sets the visible build, else the published one plus 1
-#   scripts/release_mac.sh --publish   also replaces the GitHub prerelease, which every Mac on the beta feed installs
-#                                      within the hour; it cannot be taken back
+#   scripts/release_mac.sh --publish   also replaces the v<version> release and makes it the latest, which every Mac
+#                                      installs within the hour; it cannot be taken back
 # Needs: the "Developer ID Application" identity; a notarytool keychain profile (NOTARY_PROFILE, default yorozu-notary);
 # Sparkle's EdDSA key in the login Keychain, or SPARKLE_ED_KEY_FILE; gh signed in, for --publish.
 set -eu
 cd "$(dirname "$0")/.."
 PUBLISH=0; [ "${1:-}" = "--publish" ] && PUBLISH=1
 VERSION=$(tr -d '[:space:]' < version.txt)
-TAG="v$VERSION-beta"
+TAG="v$VERSION"
 REPO=${REPO:-izyuumi/yorozu}
-# One v<version>-beta release per version, replaced by each build (as on main before): the next build follows the one
+# One v<version> release per version, replaced by each build (as on main before): the next build follows the one
 # it replaces.
 if [ -z "${BUILD:-}" ]; then
     previous=$(gh release download "$TAG" --repo "$REPO" --pattern candidate.json --output - 2>/dev/null | jq -r .build) || previous=
@@ -69,7 +69,7 @@ spctl --assess --type open --context context:primary-signature -v "$DMG"
 
 GENERATE=$(find .build/xcode-packages/artifacts -name generate_appcast -type f -perm -u+x | head -1)
 [ -n "$GENERATE" ] || { echo "Sparkle's generate_appcast is missing from .build/xcode-packages" >&2; exit 1; }
-set -- --download-url-prefix "https://github.com/$REPO/releases/download/$TAG/" --channel beta
+set -- --download-url-prefix "https://github.com/$REPO/releases/download/$TAG/"
 [ -z "${SPARKLE_ED_KEY_FILE:-}" ] || set -- "$@" --ed-key-file "$SPARKLE_ED_KEY_FILE"
 "$GENERATE" "$@" "$DIST"
 grep -q "<sparkle:version>$BUNDLE_VERSION</sparkle:version>" "$DIST/appcast.xml" \
@@ -81,9 +81,8 @@ JSON
 echo "Built Yorozu $VERSION ($BUILD), CFBundleVersion $BUNDLE_VERSION, in $DIST/"
 
 if [ "$PUBLISH" = 1 ]; then
-    # A prerelease, so releases/latest (the stable feed and /mac) stays on 0.4.0.
     gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && gh release delete "$TAG" --repo "$REPO" --yes --cleanup-tag
-    gh release create "$TAG" --repo "$REPO" --target "$SOURCE_SHA" --prerelease --title "Yorozu $TAG" \
-        --notes "Yorozu $VERSION ($BUILD) beta." "$DMG" "$DIST/appcast.xml" "$DIST/candidate.json"
+    gh release create "$TAG" --repo "$REPO" --target "$SOURCE_SHA" --latest --title "$TAG" \
+        --notes "Yorozu $VERSION ($BUILD)." "$DMG" "$DIST/appcast.xml" "$DIST/candidate.json"
     echo "Published $TAG. Assign the iOS build to the TestFlight groups now (docs/upgrade-from-0.5.md#release-order)."
 fi

@@ -84,8 +84,8 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 ## Platform and release
 
 - The Mac app is a Tuist-generated Xcode project. Its macOS destination ships as 0.5's Mac id `to.yumi.yorozu`, Developer ID signed and notarized, team `AN5KM8QGEF`, so Sparkle updates 0.5.0-beta in place. (2026-10-07, id 2026-10-17)
-- The Mac updates through Sparkle (macOS only), with 0.5's EdDSA key, from GitHub Releases. The default feed is `yorozu.yumi.to/beta/appcast.xml`; `YorozuBetaUpdates` stays respected. The stable feed stays frozen at 0.4.0. 0.9.0 is beta. (2026-10-17) 0.9 is stable, not beta. (2026-10-23)
-- Releases: `projectx` merges into `main`, and `main`'s `release.yml` is ported to publish `v<ver>-beta` from a green `main`. (2026-10-17)
+- The Mac updates through Sparkle (macOS only), with 0.5's EdDSA key, from GitHub Releases. The feed is the stable one, `yorozu.yumi.to/appcast.xml`, for every Mac; `/beta/appcast.xml` serves the same release. (2026-10-17, stable 2026-10-27) 0.9 is stable, not beta: releases are `v<version>`, titled the same, never prereleases. (2026-10-23, naming 2026-10-27)
+- Releases: `projectx` merges into `main`, and `main`'s `release.yml` is ported to publish `v<ver>` from a green `main`. (2026-10-17, tag 2026-10-27)
 - The Mac signing identity is a local, gitignored build setting, not part of the repo; git history is left as it is. (2026-10-09)
 - Clients reach the plugin through 0.5's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service. The relay may be changed when that is the better design (Transport). (2026-10-08, channel 2026-10-15)
 - iOS ships to the public App Store (first release 0.9.0), manual release after approval, no phased release; TestFlight testers first. Review uses a live review host, with a fixture demo behind the documented code `YOROZU-DEMO` as fallback (as OpenClaw does). iOS shows a subtle, dismissible "Update available" row from Apple's lookup API; nothing is forced. (2026-10-08, App Store 2026-10-17)
