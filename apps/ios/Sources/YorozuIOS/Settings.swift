@@ -19,6 +19,9 @@ struct SettingsView: View {
     @AppStorage(SpotlightIndexer.enabledKey) private var spotlight = true
     @AppStorage(Appearance.key) private var appearance = Appearance.system
     @AppStorage(Accent.key) private var accent = Accent.vermilion
+    #if os(macOS)
+    @AppStorage(MacUpdates.betaKey) private var betaUpdates = false
+    #endif
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: V3DeviceInfo?
     @State private var unpairing = false
@@ -44,6 +47,9 @@ struct SettingsView: View {
                 notifications
                 siri
                 host
+                #if os(macOS)
+                updates
+                #endif
                 if model.devicesAvailable { devices }
                 Section {
                     Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
@@ -152,6 +158,20 @@ struct SettingsView: View {
             Text("Host")
         }
     }
+
+    #if os(macOS)
+    /// Stable or beta Sparkle feed (owner, 2026-10-27). iPhone and iPad get betas through TestFlight.
+    private var updates: some View {
+        Section {
+            Toggle(String(localized: "Beta Updates"), isOn: $betaUpdates)
+                .onChange(of: betaUpdates) { MacUpdates.betaChanged() }
+        } header: {
+            Text("Updates")
+        } footer: {
+            Text("Beta builds have the newest changes before a stable release. Turned off, Yorozu waits for the next stable release.")
+        }
+    }
+    #endif
 
     private var devices: some View {
         Section {

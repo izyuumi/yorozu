@@ -4,7 +4,7 @@
 # The visible build restarts at 1 per version (owner, 2026-10-08): the highest build App Store Connect already has for
 # THIS version, plus one. CFBundleVersion is that build encoded with the version (scripts/build-number.sh), the same
 # number on every platform. Older uploads of a version may carry the plain build; both read back. BUILD=<n> overrides
-# the visible build. An upload uses that number up for good, hence --confirm.
+# the visible build. An upload uses that number up for good, hence --confirm (release-ios.yml passes it on each merge).
 # Needs ASC_KEY_ID and ASC_ISSUER_ID, and ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8 (or ASC_KEY_PATH).
 # Uses only sh, openssl, curl, jq and Xcode. Prints no key or token.
 set -eu
@@ -74,4 +74,4 @@ env -u SDKROOT xcodebuild -exportArchive -archivePath "$ARCHIVE" \
     -exportOptionsPlist apps/ios/ExportOptions.plist -exportPath "$PWD/build/ios/export" \
     -allowProvisioningUpdates \
     -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
-echo "Uploaded Yorozu iOS $VERSION ($BUILD). Once App Store Connect has processed it, assign it to the TestFlight groups when the Mac update goes live (docs/upgrade-from-0.5.md)."
+echo "Uploaded Yorozu iOS $VERSION ($BUILD). Once App Store Connect has processed it, TestFlight gives it to the internal group."

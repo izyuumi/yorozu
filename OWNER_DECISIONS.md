@@ -84,12 +84,17 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 ## Platform and release
 
 - The Mac app is a Tuist-generated Xcode project. Its macOS destination ships as 0.5's Mac id `to.yumi.yorozu`, Developer ID signed and notarized, team `AN5KM8QGEF`, so Sparkle updates 0.5.0-beta in place. (2026-10-07, id 2026-10-17)
-- The Mac updates through Sparkle (macOS only), with 0.5's EdDSA key, from GitHub Releases. The feed is the stable one, `yorozu.yumi.to/appcast.xml`, for every Mac; `/beta/appcast.xml` serves the same release. (2026-10-17, stable 2026-10-27) 0.9 is stable, not beta: releases are `v<version>`, titled the same, never prereleases. (2026-10-23, naming 2026-10-27)
-- Work lands on `main` through worktree + PR; `projectx` is retired. Every push to `main` that touches the app (`apps/**` except `apps/web` and `apps/relay`, `packages/**`, `plugins/**`, `scripts/**`, `version.txt`) runs `release.yml`: an iOS upload and a Mac `v<ver>` release. (2026-10-17, tag and `main` 2026-10-27)
+- The Mac updates through Sparkle (macOS only), with 0.5's EdDSA key, from GitHub Releases. Two feeds: `yorozu.yumi.to/appcast.xml`, the latest stable release, and `/beta/appcast.xml`, the newest release with prereleases. Settings › Updates › Beta Updates on the Mac picks the beta feed (0.5's `YorozuBetaUpdates` key, so 0.5's opt-in carries over). (2026-10-17, channels 2026-10-27)
+- Work lands on `main` through worktree + PR; `projectx` is retired. Every merge ships a beta (2026-10-27, after Home Assistant's Companion app):
+  - Mac: a push touching `apps/**` (except `apps/web` and `apps/relay`), `packages/**`, `plugins/**`, `scripts/**` or `version.txt` publishes the prerelease `v<ver>-beta.<build>` (`release-mac.yml`).
+  - iOS: a push touching `apps/ios/**`, `packages/**`, `version.txt` or its scripts uploads a build; TestFlight gives it to the internal group automatically (`release-ios.yml`). The plugin rides only in the Mac app.
+  - Stable: a PR that bumps `version.txt` promotes the old version's last Mac beta, unchanged, to `v<old>`; the iOS build of that version is submitted to the App Store by hand. Release tags can be neither moved nor deleted, so each version has one stable release.
+  - Builds count per platform: the Mac from its last beta tag, iOS from App Store Connect.
+- The iPhone and iPad app is not offered on Apple Silicon Macs (App Store Connect availability off); Macs get the Developer ID app. (2026-10-27)
 - The Mac signing identity is a local, gitignored build setting, not part of the repo; git history is left as it is. (2026-10-09)
 - Clients reach the plugin through 0.5's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service. The relay may be changed when that is the better design (Transport). (2026-10-08, channel 2026-10-15)
 - iOS ships to the public App Store (first release 0.9.0), manual release after approval, no phased release; TestFlight testers first. Review uses a live review host, with a fixture demo behind the documented code `YOROZU-DEMO` as fallback (as OpenClaw does). iOS shows a subtle, dismissible "Update available" row from Apple's lookup API; nothing is forced. (2026-10-08, App Store 2026-10-17)
-- Version 0.9.1: iOS 0.9.0 went live on the App Store on 2026-10-23, which closed that version to new builds. The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`, above 0.5's `10279`). (2026-10-08, encoding 2026-10-17, 0.9.1 2026-10-23)
+- Version 0.9.1: iOS 0.9.0 went live on the App Store on 2026-10-23, which closed that version to new builds. The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`, above 0.5's `10279`). (2026-10-08, encoding 2026-10-17, 0.9.1 2026-10-23) Version 0.9.2 opens the beta channel: the stable `v0.9.1` tag cannot be replaced, so the first betas, which bring the Beta Updates toggle, are 0.9.2. (2026-10-27)
 - The app icon is 0.5's Icon Composer mark (blob-identical to 1e2f1fba). (2026-10-08)
 
 ## Upgrade from 0.5.0-beta
@@ -97,7 +102,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - Only 0.5.0-beta installs upgrade, to 0.9.0-beta, each migration confirmed by hand. 0.4.0 and older are not upgraded; the stable feed stays frozen at 0.4.0. Fix forward only, no rollback tooling. Plan: [docs/upgrade-from-0.5.md](docs/upgrade-from-0.5.md). (2026-10-17)
 - The Mac migrates on first launch, fully automatically (an exception to click-to-write for this one migration): the 0.9 plugin is bundled at `Yorozu.app/Contents/Resources/openclaw-channel` so 0.5's `--link` install picks it up; the app drops `channels.yorozu.socketPath`, reloads the plugin accepting its capabilities and restarts the Gateway; the plugin imports 0.5's host keys and devices so no device re-pairs; memory notes import as unverified notes; every 0.5 chat becomes a conversation seeded with one plain `chat.inject` of its last 40 turns; 0.5's watchdog LaunchAgent is removed. 0.5's data folder is never written. (2026-10-17)
 - iOS copies the keychain account `pairings` into `pairing-v3` on first launch, QR pairing as fallback, and never deletes `pairings`. (2026-10-17)
-- Release order: the iOS build is assigned to TestFlight testers at the moment the Mac appcast item goes live; iOS shows "Your Mac is updating" and reconnects by itself, the Mac nudges to update the iPhone app. (2026-10-17)
+- Release order: the iOS build is assigned to TestFlight testers at the moment the Mac appcast item goes live; iOS shows "Your Mac is updating" and reconnects by itself, the Mac nudges to update the iPhone app. (2026-10-17) Done: it applied to the 0.9.0 upgrade only; TestFlight builds now reach testers automatically. (2026-10-27)
 - No bridge 0.5.x release. Once the owner confirms every 0.5 install migrated, all migration code is deleted. (2026-10-17)
 
 ## Stable contracts
@@ -129,7 +134,8 @@ These never change; future versions migrate around them (2026-10-17):
 ## Process and roadmap
 
 - Work lands on `projectx` (on `main` since 2026-10-27) through the usual worktree + PR flow, one #415 child issue per PR, in #415's build order. The secretary is deleted only after the new path works end to end. (2026-10-15)
-- Tests and CI stay on hold; acceptance is compile + manual checks. Exception: the release job on `main`, with no test jobs. (2026-10-15, release 2026-10-17)
+- No test suite yet; acceptance is compile + manual checks. Pull requests get a required compile check for iPhone, iPad and Mac, and the relay's typecheck and tests (`checks.yml`). SwiftLint and Swift tests come later. (2026-10-15, release 2026-10-17, checks 2026-10-27)
+- CI/CD (2026-10-27): the relay deploys on each push to `main` touching `apps/relay/**`, after its tests (`deploy-relay.yml`), as the website does. Dependabot: weekly, minor and patch npm bumps grouped, vitest and TypeScript majors by hand, a 3-day cooldown.
 
 ## Superseded
 

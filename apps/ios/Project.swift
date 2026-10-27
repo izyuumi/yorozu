@@ -153,7 +153,7 @@ let project = Project(
         // Opens sealed push previews (docs/ios-relay-contract.md, "Sealed previews"). v1's extension bundle id.
         .target(
             name: "YorozuNotificationService",
-            destinations: .iOS,
+            destinations: [.iPhone, .iPad],
             product: .appExtension,
             bundleId: "to.yumi.yorozu.ios.notification-service",
             deploymentTargets: .iOS("18.0"),
@@ -177,7 +177,7 @@ let project = Project(
         // Yorozu in the share sheet: text, one link, one picture or one file, handed to the app (`ShareInbox`). v1's bundle id.
         .target(
             name: "YorozuShare",
-            destinations: .iOS,
+            destinations: [.iPhone, .iPad],
             product: .appExtension,
             bundleId: "to.yumi.yorozu.ios.share",
             deploymentTargets: .iOS("18.0"),

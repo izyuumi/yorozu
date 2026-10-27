@@ -23,9 +23,11 @@ The Mac app is `to.yumi.yorozu`, 0.5's Mac id (`PRODUCT_BUNDLE_IDENTIFIER[sdk=ma
 
 ## Mac distribution
 
-`scripts/release_mac.sh` builds the release into `dist/`: `Yorozu.dmg` (Developer ID, notarized with the `yorozu-notary` profile, stapled), `appcast.xml` (Sparkle's `generate_appcast`, no channel, signed with 0.5's EdDSA key) and `candidate.json`. With `--publish` it replaces the `v<version>` GitHub release and makes it the latest, whose assets yorozu.yumi.to/appcast.xml and /mac serve (`releases/latest`); every Mac installs it within the hour, 0.4 and 0.5 ones included. yorozu.yumi.to/beta/appcast.xml, which 0.5 Macs with beta updates on read, serves the same release. `.github/workflows/release.yml` runs `upload_ios.sh` and then it on every push to `main`, with no tests.
+`scripts/release_mac.sh` builds the release into `dist/`: `Yorozu.dmg` (Developer ID, notarized with the `yorozu-notary` profile, three tries, stapled), `appcast.xml` (Sparkle's `generate_appcast`, no channel, signed with 0.5's EdDSA key) and `candidate.json`. `.github/workflows/release-mac.yml` runs it on every push to `main` that touches the Mac app, with no tests:
 
-- Sparkle is linked for macOS only (`MacUpdates.swift`): hourly automatic installs from the stable feed. App menu: About (visible build) and Check for Updates.
+- **Beta**: `--publish` publishes the prerelease `v<version>-beta.<build>`, the build one past the version's last beta tag. yorozu.yumi.to/beta and /beta/appcast.xml serve the newest release, prereleases included (`apps/web/worker.mjs`); Macs with beta updates on, 0.5 ones too, install it within the hour.
+- **Stable**: when a push changes `version.txt`, the workflow first runs `--promote <old version>`: the last `v<old>-beta.<n>` is republished unchanged (its DMG, appcast and `candidate.json`; the appcast still points at the beta's DMG) as `v<old>`, the latest release, whose assets yorozu.yumi.to/appcast.xml and /mac serve (`releases/latest`). Every Mac installs it within the hour, 0.4 and 0.5 ones included. If `v<old>` already exists it does nothing: release tags can be neither moved nor deleted (repository ruleset), so a version has one stable release.
+- Sparkle is linked for macOS only (`MacUpdates.swift`): hourly automatic installs from the stable feed, or the beta feed with Settings › Updates › Beta Updates on (`feedURLString(for:)`). App menu: About (visible build) and Check for Updates.
 - The OpenClaw plugin is copied into `Contents/Resources/openclaw-channel` by a build phase, the path 0.5's `openclaw plugins install --link` points to.
 - First launch after 0.5 (`MacMigrateFrom0_5.swift`), once, without a click: remove 0.5's watchdog LaunchAgent; `openclaw config unset channels.yorozu.socketPath`; `openclaw plugins reload yorozu --accept-capabilities`, or `openclaw gateway restart --safe` if that fails or asks for a restart; pair this Mac with its own Gateway (`openclaw yorozu pair`, no fingerprint step); a notification to update the iPhone. The plugin imports 0.5's keys, devices, memory and chats when it loads.
 
@@ -33,16 +35,17 @@ The Mac app is `to.yumi.yorozu`, 0.5's Mac id (`PRODUCT_BUNDLE_IDENTIFIER[sdk=ma
 
 The iOS launch screen centers the inner oval mark from the app icon, without its square icon background. The mark has light and dark asset variants; the launch background uses the system color. It appears only while iOS starts the app; there is no artificial splash delay.
 
-`scripts/upload_ios.sh --confirm`, only when the owner asks for that upload: each upload uses up its build number for good. Build-number policy: [OWNER_DECISIONS.md](../OWNER_DECISIONS.md#platform-and-release).
+`scripts/upload_ios.sh --confirm` runs from `.github/workflows/release-ios.yml` on every push to `main` that touches `apps/ios/**`, `packages/**`, `version.txt` or its scripts; plugin-only changes upload nothing, as the plugin rides only in the Mac app. Each upload uses up its build number for good. Build-number policy: [OWNER_DECISIONS.md](../OWNER_DECISIONS.md#platform-and-release).
 
 - Without `--confirm` it exits 64.
 - It numbers the build from App Store Connect (highest build of this version plus one, so builds start at 1 per version). If that would reach 10000 it stops with exit 65: bump `version.txt` instead. `BUILD=<n>` skips both the lookup and that check.
 - It archives `generic/platform=iOS` only (the iPhone and iPad app, with the notification service and share extensions); the Mac destination is never uploaded.
-- `apps/ios/ExportOptions.plist` makes the export step the upload. Assign the processed build to the TestFlight groups when the Mac release goes live ([upgrade plan](upgrade-from-0.5.md#release-order)); turn off automatic distribution for the internal group so it waits.
+- `apps/ios/ExportOptions.plist` makes the export step the upload. TestFlight gives each processed build to the internal group automatically: that is the iOS beta. The App Store version is submitted by hand when `version.txt` moves on.
+- The app and its extensions target iPhone and iPad only, and App Store Connect does not offer the app on Apple Silicon Macs (Pricing and Availability): Macs get the Developer ID app.
 
 ## Compile checks
 
-`upload_ios.sh` and `build_native.sh` are the only scripted client builds. To compile without signing, uploading or touching `/Applications`:
+`upload_ios.sh`, `release_mac.sh` and `build_native.sh` are the only scripted client builds. Pull requests run the first two commands below (`.github/workflows/checks.yml`, with the relay's `pnpm --filter @yorozu/relay test`); each job runs only when its files changed. To compile without signing, uploading or touching `/Applications`:
 
 ```sh
 tuist generate --no-open --path apps/ios
@@ -67,7 +70,7 @@ The plugin typechecks per [its README](../plugins/openclaw-yorozu/README.md#type
 
 ## Website
 
-https://yorozu.yumi.to is the Astro site in `apps/web`. `.github/workflows/deploy-web.yml` deploys it on every push to `main` that touches `apps/web/**`, so merging is deploying. The pairing QR carries `https://yorozu.yumi.to/pair#<query>`, and the site's `/pair` page and AASA file are what open the app from it, so those links stay.
+https://yorozu.yumi.to is the Astro site in `apps/web`. `.github/workflows/deploy-web.yml` deploys it on every push to `main` that touches `apps/web/**`, so merging is deploying. The relay (`apps/relay`, relay.yumi.to) works the same way: `.github/workflows/deploy-relay.yml` runs its typecheck and tests, then `wrangler deploy`, on every push to `main` that touches `apps/relay/**`. The pairing QR carries `https://yorozu.yumi.to/pair#<query>`, and the site's `/pair` page and AASA file are what open the app from it, so those links stay.
 
 ## Not wired
 
