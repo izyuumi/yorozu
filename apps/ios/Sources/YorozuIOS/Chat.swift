@@ -114,6 +114,7 @@ struct ChatView: View {
         }
         .navigationTitle(model.conversations[convId]?.displayTitle ?? String(localized: "New Conversation"))
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarStaysVisible()
         .navigationSubtitleIfAvailable(model.state == .ready ? "" : model.state.label)
     }
 }
