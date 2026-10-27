@@ -2,17 +2,12 @@ import SwiftUI
 import UserNotifications
 import YorozuWire
 
-/// Whether a reply in another conversation taps the phone when its in-app notice shows. On by default.
 enum NoticeHaptics {
     static let key = "noticeHaptics"
 }
 
-/// Settings (#415): this device's notifications, the host, the paired devices, and Unpair. The host-side rows (push
-/// for a device, removing one) need a plugin with `devices`; without it they are not shown. A sheet on iPhone and
-/// iPad, the Settings window (⌘,) on the Mac.
 struct SettingsView: View {
     let model: AppModel
-    /// Called once this device is unpaired, so a sheet can close.
     var onUnpair: () -> Void = {}
 
     @AppStorage(NoticeHaptics.key) private var haptics = true
@@ -30,41 +25,9 @@ struct SettingsView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        Form {
-            looks
-            if model.isDemo {
-                Section {
-                    Label(String(localized: "Demo"), systemImage: "play.rectangle")
-                    Text("Sample conversations and scripted replies. No host connection; changes disappear when you exit.")
-                    Button(String(localized: "Exit Demo")) {
-                        onUnpair()
-                        model.exitDemo()
-                    }
-                    .accessibilityIdentifier("demo.exit")
-                }
-                devices
-            } else {
-                notifications
-                siri
-                host
-                #if os(macOS)
-                updates
-                #endif
-                if model.devicesAvailable { devices }
-                Section {
-                    Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
-                        .disabled(!model.paired)
-                } footer: {
-                    Text(model.devicesAvailable
-                        ? "Removes this device from the host, and its keys and cached conversations from this device."
-                        : "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
-                }
-            }
-        }
-        .formStyle(.grouped)
+        content
         .sheet(isPresented: $addingDevice) { AddDeviceSheet(model: model) }
         .task(id: model.state == .ready) { model.refreshDevices() }
-        // Coming back from the system's notification settings.
         .task(id: scenePhase) {
             guard !model.isDemo else { return }
             permission = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
@@ -86,6 +49,68 @@ struct SettingsView: View {
 
     private var current: V3DeviceInfo? { model.devices?.first(where: \.current) }
 
+    @ViewBuilder private var content: some View {
+        #if os(macOS)
+        TabView {
+            tab { general }
+                .tabItem { Label(String(localized: "General"), systemImage: "gearshape") }
+            tab { deviceSections }
+                .tabItem { Label(String(localized: "Devices"), systemImage: "laptopcomputer.and.iphone") }
+            if !model.isDemo {
+                tab { host }
+                    .tabItem { Label(String(localized: "Host"), systemImage: "server.rack") }
+                tab { updates }
+                    .tabItem { Label(String(localized: "Updates"), systemImage: "arrow.down.circle") }
+            }
+        }
+        #else
+        Form {
+            general
+            deviceSections
+            if !model.isDemo { host }
+        }
+        .formStyle(.grouped)
+        #endif
+    }
+
+    #if os(macOS)
+    private func tab(@ViewBuilder _ sections: () -> some View) -> some View {
+        SettingsTab { sections() }
+    }
+    #endif
+
+    @ViewBuilder private var general: some View {
+        looks
+        if model.isDemo {
+            Section {
+                Label(String(localized: "Demo"), systemImage: "play.rectangle")
+                Text("Sample conversations and scripted replies. No host connection; changes disappear when you exit.")
+                Button(String(localized: "Exit Demo")) {
+                    onUnpair()
+                    model.exitDemo()
+                }
+                .accessibilityIdentifier("demo.exit")
+            }
+        } else {
+            notifications
+            siri
+        }
+    }
+
+    @ViewBuilder private var deviceSections: some View {
+        if model.isDemo || model.devicesAvailable { devices }
+        if !model.isDemo {
+            Section {
+                Button(String(localized: "Unpair This Device"), role: .destructive) { unpairing = true }
+                    .disabled(!model.paired)
+            } footer: {
+                Text(model.devicesAvailable
+                    ? "Removes this device from the host, and its keys and cached conversations from this device."
+                    : "Removes the keys and cached conversations from this device. On the host, `openclaw yorozu devices remove` removes it there.")
+            }
+        }
+    }
+
     private var notifications: some View {
         Section {
             LabeledContent(String(localized: "Notifications"), value: permissionText)
@@ -106,7 +131,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Light, dark or the system's, and the accent (owner, 2026-10-22). Kept on this device.
     private var looks: some View {
         Section {
             Picker(String(localized: "Appearance"), selection: $appearance) {
@@ -130,7 +154,6 @@ struct SettingsView: View {
         }
     }
 
-    /// What Siri and Spotlight may search (owner, 2026-10-17).
     private var siri: some View {
         Section {
             Toggle(String(localized: "Show Conversations in Siri and Search"), isOn: $spotlight)
@@ -160,7 +183,6 @@ struct SettingsView: View {
     }
 
     #if os(macOS)
-    /// Stable or beta Sparkle feed (owner, 2026-10-27). iPhone and iPad get betas through TestFlight.
     private var updates: some View {
         Section {
             Toggle(String(localized: "Beta Updates"), isOn: $betaUpdates)
@@ -206,7 +228,6 @@ struct SettingsView: View {
             if let error = model.devicesError {
                 Text(error).foregroundStyle(YorozuPalette.warning)
             }
-            // Away from the host, a paired device adds another (owner, 2026-10-17).
             if model.inviteAvailable {
                 Button(String(localized: "Add a Device…"), systemImage: "plus") { addingDevice = true }
                     .disabled(model.state != .ready)
@@ -242,7 +263,29 @@ struct SettingsView: View {
     private static func date(_ ms: Int64) -> Date { Date(timeIntervalSince1970: TimeInterval(ms) / 1000) }
 }
 
-/// One accent to pick: a filled circle, ringed with a check when it is the current one. Its sizes are its own geometry.
+#if os(macOS)
+private struct SettingsTab<Content: View>: View {
+    @ViewBuilder let content: Content
+    @State private var contentHeight: CGFloat?
+    private let width: CGFloat = 520
+    private let windowChrome: CGFloat = 120
+
+    var body: some View {
+        Form { content }
+            .formStyle(.grouped)
+            .scrollBounceBehavior(.basedOnSize)
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
+                contentHeight = height
+            }
+            .frame(width: width, height: contentHeight.map { min($0, maxHeight) })
+    }
+
+    private var maxHeight: CGFloat {
+        (NSScreen.main?.visibleFrame.height ?? 800) - windowChrome
+    }
+}
+#endif
+
 private struct AccentSwatch: View {
     let accent: Accent
     let selected: Bool
@@ -270,7 +313,6 @@ private struct AccentSwatch: View {
     }
 }
 
-/// Settings as a sheet, with Done (iPhone, iPad).
 struct SettingsSheet: View {
     let model: AppModel
     @Environment(\.dismiss) private var dismiss

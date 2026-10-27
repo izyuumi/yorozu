@@ -1,7 +1,3 @@
-# Keeps the SHA-pinned actions in .github/workflows current and bumps the pnpm workspace's
-# dependencies (Dependabot reads pnpm-lock.yaml). Minor and patch npm bumps arrive as one
-# grouped PR a week; majors stay separate so they get read. A new version waits three days before it is
-# proposed (cooldown), so a bad or hijacked release has time to be pulled.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -23,9 +19,6 @@ updates:
           - minor
           - patch
     ignore:
-      # Majors that the rest of the toolchain has to move with, so they are taken by hand:
-      # @cloudflare/vitest-pool-workers cannot start under vitest 5 yet, and TypeScript 7 is
-      # a new compiler (it stops including Node's types implicitly, for a start).
       - dependency-name: vitest
         update-types: ["version-update:semver-major"]
       - dependency-name: typescript

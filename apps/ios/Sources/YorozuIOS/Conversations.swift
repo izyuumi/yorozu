@@ -1,25 +1,17 @@
 import SwiftUI
 import YorozuWire
 
-/// The conversation list: the sidebar on iPad and Mac, with an Automations row above it, and the Chats tab's root on iPhone.
-/// Compose opens a new `convId`, which joins the list with its first message.
 struct ConversationsView: View {
-    /// What the list selects: a conversation, or the Crons row of the sidebar.
     private enum Pane: Hashable { case chat(String), crons }
 
     let model: AppModel
-    /// The open conversation; the Crons section sets it too (#432).
     @Binding var selection: String?
     @Binding var section: HomeView.Section
-    /// The sidebar's Crons row; the iPhone has a Crons tab instead.
     let showsCrons: Bool
-    /// Side by side (iPad, iPhone Duo open): opens a conversation beside the focused one, and marks where each open one sits.
     var openBeside: ((String) -> Void)?
     var side: (String) -> PaneSide? = { _ in nil }
-    /// A row started being dragged toward the conversation area.
     var dragStarted: () -> Void = {}
     @State private var showingSettings = false
-    /// The Archived rows are shown below the list (#428).
     @State private var showingArchived = false
     @State private var renaming: Conversation?
     @State private var newTitle = ""
@@ -27,6 +19,9 @@ struct ConversationsView: View {
 
     var body: some View {
         list.sheet(isPresented: $showingSettings) { SettingsSheet(model: model) }
+            #if os(iOS)
+            .task { await AppStoreUpdate.shared.check(isDemo: model.isDemo) }
+            #endif
     }
 
     private var pane: Binding<Pane?> {
@@ -47,7 +42,6 @@ struct ConversationsView: View {
 
     private var list: some View {
         let conversations = model.list
-        // Only the sidebar selects: a stack's list selects in edit mode alone, so on iPhone each row is a button.
         return List(selection: showsCrons ? pane : nil) {
             if model.isDemo {
                 Label(String(localized: "Demo"), systemImage: "play.rectangle")
@@ -55,6 +49,23 @@ struct ConversationsView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("demo.indicator")
             }
+            #if os(iOS)
+            if let update = AppStoreUpdate.shared.available {
+                Section {
+                    HStack {
+                        Link(destination: update.url) {
+                            Label(String(localized: "Yorozu \(update.version) is available"), systemImage: "arrow.down.circle")
+                        }
+                        Spacer()
+                        Button(String(localized: "Dismiss"), systemImage: "xmark") { AppStoreUpdate.shared.dismiss() }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.subheadline)
+                }
+            }
+            #endif
             if let problem {
                 Section {
                     Label { Text(problem) } icon: {
@@ -66,7 +77,6 @@ struct ConversationsView: View {
             if showsCrons {
                 Label(String(localized: "Automations"), systemImage: "clock").tag(Pane.crons)
             }
-            // Pinned above the rest, newest pin first (owner, 2026-10-23).
             let pinned = conversations.filter { $0.pinnedAt != nil }.sorted { ($0.pinnedAt ?? 0) > ($1.pinnedAt ?? 0) }
             if !pinned.isEmpty {
                 Section {
@@ -82,7 +92,6 @@ struct ConversationsView: View {
             }
             let archived = model.archivedList
             if !archived.isEmpty {
-                // One row at the list's end opens and closes the Archived rows below it, the same on every device.
                 Section {
                     Button {
                         withAnimation { showingArchived.toggle() }
@@ -96,7 +105,6 @@ struct ConversationsView: View {
                     }
                     .foregroundStyle(.primary)
                     #if os(macOS)
-                    // A sidebar row, not a push button.
                     .buttonStyle(.plain)
                     #endif
                     .accessibilityValue(showingArchived ? Text("Shown") : Text("Hidden"))
@@ -134,14 +142,12 @@ struct ConversationsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationSubtitleIfAvailable(model.state.label)
         .toolbar {
-            // The Mac has its Settings window (⌘,) instead.
             #if os(iOS)
             ToolbarItem(placement: .topBarLeading) {
                 Button(String(localized: "Settings"), systemImage: "gearshape") { showingSettings = true }
                     .accessibilityIdentifier("conversations.settings")
             }
             #endif
-            // Compose at the top trailing corner, as in Messages (owner, 2026-10-18); the Mac's window toolbar too.
             ToolbarItem(placement: .primaryAction) { compose }
         }
     }
@@ -153,8 +159,6 @@ struct ConversationsView: View {
             .accessibilityIdentifier("conversations.new")
     }
 
-    /// One conversation's row with its actions: Mark as Read or Unread from the leading edge (as in #410), Archive and
-    /// Delete from the trailing edge, all of them and Rename in its menu. Changes need the host, so they wait for a session.
     private func row(_ conversation: Conversation) -> some View {
         let archived = conversation.archived == true
         let archive = Button(archived ? String(localized: "Unarchive") : String(localized: "Archive"),
@@ -183,7 +187,6 @@ struct ConversationsView: View {
             .tag(Pane.chat(conversation.id))
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 ReadMarkButton(model: model, conversation: conversation)
-                // An archived conversation cannot be pinned (as in OpenClaw).
                 if !archived { pin.tint(.orange).disabled(!model.canPatch) }
             }
             .swipeActions(edge: .trailing) {
@@ -210,7 +213,6 @@ struct ConversationsView: View {
             }
     }
 
-    /// A state the user must act on, instead of a list that silently never updates.
     private var problem: String? {
         switch model.state {
         case .unpaired: String(localized: "The host removed this device. Pair again to keep chatting.")
@@ -220,7 +222,6 @@ struct ConversationsView: View {
     }
 }
 
-/// Mark as Read or Mark as Unread for one conversation; nothing before its first reply.
 private struct ReadMarkButton: View {
     let model: AppModel
     let conversation: Conversation
@@ -237,25 +238,21 @@ private struct ReadMarkButton: View {
     }
 }
 
-/// The title (#428; the first message until the host has made one), the latest message below it.
 private struct ConversationRow: View {
     let conversation: Conversation
     let typing: Bool
-    /// Where it is open, with two conversations side by side.
     let side: PaneSide?
 
     var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
             HStack(alignment: .firstTextBaseline) {
                 Text(conversation.displayTitle)
-                    // Bold while unread, regular once read (#429).
                     .bold(conversation.unreadCount > 0)
                     .lineLimit(1)
                 Spacer(minLength: LayoutMetrics.inner)
                 Text(Self.time(conversation.updatedAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                // A dot, not a count (owner, 2026-10-17): orange when a run failed, blue for unread replies.
                 if let dot { Image(systemName: "circle.fill").font(.caption2).foregroundStyle(dot) }
                 if let side {
                     Image(systemName: side == .left ? "rectangle.lefthalf.filled" : "rectangle.righthalf.filled")
@@ -284,7 +281,6 @@ private struct ConversationRow: View {
         return conversation.unreadCount > 0 ? .blue : nil
     }
 
-    /// The time today, the date on any other day.
     private static func time(_ ms: Int64) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
         return Calendar.current.isDateInToday(date) ? date.formatted(date: .omitted, time: .shortened) : date.formatted(date: .abbreviated, time: .omitted)

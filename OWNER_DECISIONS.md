@@ -4,7 +4,7 @@ The owner's decisions that are in force now, by area. Each line ends with the da
 
 When the owner makes or changes a decision, rewrite the line here so no two lines contradict, and append the entry to the log. Open questions and their defaults live in [docs/status.md](docs/status.md).
 
-On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw channel (tracking issue #415). The secretary-era decisions are superseded and kept in the log ([Superseded](#superseded)). Code and other docs still describe the secretary until the #415 build order removes it; where they disagree with this file, this file wins.
+On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw channel (tracking issue #415). The secretary-era decisions are superseded and kept in the log ([Superseded](#superseded)). Where other docs disagree with this file, this file wins.
 
 ## Shape
 
@@ -12,7 +12,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - Yorozu runs nothing of its own: no routing, classification, workers, coding agents, memory, jobs, Hermes or cua. All of `Sources/ProjectXCore` engine code and the Mac host role go. (2026-10-15)
 - No Mac host process. The OpenClaw channel plugin (`plugins/openclaw-yorozu`, TypeScript) holds the host keys and the relay connection itself. Fallback, only if the spike shows a plugin cannot: a Mac bridge app between Gateway and relay. (2026-10-15)
 - One multiplatform SwiftUI client app for iPhone, iPad and Mac. Clients only; no host role anywhere in Swift. (2026-10-15)
-- Wire protocol 3. Old wire types, store and engine are deleted, not flagged off. 0.5.0-beta installs migrate once in 0.9.0, carrying pairings over ([Upgrade from 0.5.0-beta](#upgrade-from-050-beta)); 0.4.0 and older are not upgraded. (2026-10-15, migration 2026-10-17)
+- Wire protocol 3. Old wire types, store and engine are deleted, not flagged off. (2026-10-15)
 
 ## Conversations
 
@@ -27,7 +27,6 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 ## Status marks
 
 - Outgoing: ✓ sent = relay accepted; ✓✓ delivered = plugin received and decrypted; read = agent run started. Typing indicator from run start until the reply. (2026-10-15)
-- Unread mark on agent replies until opened on any device, a dot rather than a count: blue for unread replies, orange when a run failed (needs attention) (2026-10-17); read state syncs across devices; manual Mark as Read/Unread stays. The plugin stores the read cursor per conversation in its state dir. (2026-10-15)
 - Replies arrive as whole messages, chunked by length (no edit-in-place streaming). (2026-10-15)
 
 ## Pairing and security
@@ -48,15 +47,15 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 
 ## Push and attachments
 
-- One push per finished agent reply via the relay's `notify`, preview (title + first line) sealed per device. Cron output delivered into a conversation pushes the same way. No mute yet. (2026-10-15)
-- No push to a device while the app is in front on it, per device; a minimal pill at the top shows a reply in another conversation instead (tap opens it, swipe up or 3 s dismisses, the newest replaces it), with an optional light haptic, on by default. (2026-10-17)
+- One push per finished agent reply via the relay's `notify`, preview (title + first line) sealed per device, on iPhone and iPad; the Mac shows a local notification while the app runs. Cron output with text delivered into a conversation pushes the same way. No mute yet. (2026-10-15, revised 2026-10-28)
+- No push to a device while the app is in front on it, per device; a minimal pill at the top shows a reply in another conversation instead (tap opens it, swipe up or 3 s dismisses; a reply from another conversation replaces it, while a further reply from the same conversation leaves it as it is), with an optional light haptic, on by default. (2026-10-17, revised 2026-10-28)
 - Reading a conversation on any device removes its delivered notifications on the others: live over the socket, and through a silent `sync` push for devices whose app is closed. (2026-10-17)
 - Attachments both ways (`sendMedia`), 8 MB limit (OpenClaw's `mediaMaxMb` default), sealed chunks under the relay's 1 MiB frame limit. Share extension stays, with a preview of the picture or file being sent; PDFs show their first page (2026-10-17). No voice notes yet. (2026-10-15)
 - Pasting images and files into the chat input stages them as attachments. On iPhone and iPad, the composer's plus menu offers taking a photo in place. Move the plus glyph left within its full tap target so it stays close to the textarea without overlapping it. (2026-10-19) Styled text pastes as plain text, never as an attachment. (2026-10-23)
 
 ## Automations
 
-- An Automations tab (ja 自動化, `clock` icon) next to Chats: all cron jobs on the configured agent, disabled ones greyed; name, human schedule, next run, last status (error on tap). Code and wire names stay `cron`. (2026-10-17)
+- Automations (ja 自動化, `clock` icon): a tab next to Chats on iPhone, a sidebar row above the chats on iPad and the Mac; all cron jobs on the configured agent, disabled ones greyed; name, human schedule, next run, last status (error on tap). Code and wire names stay `cron`. (2026-10-17, revised 2026-10-28)
 - No cron admin calls from Yorozu. Each row has "Edit in Chat": a new conversation opens with the job attached in the composer as a chip, like a file; sent, it becomes part of the text (`Cron job "<name>" (id <id>): …`) and the agent edits the job with its cron tool. (2026-10-15, chip 2026-10-17)
 - A job delivering into a Yorozu conversation (`delivery.channel: yorozu`, `threadId`) opens that conversation from its row. (2026-10-15)
 
@@ -69,7 +68,7 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - In a conversation: a message's context menu has Copy and Select Text (a sheet to select any part); a small glass circle with a down arrow at the bottom centre appears while the newest message is out of view and scrolls back to it; the composer grows to five lines, then scrolls with the caret in view. (2026-10-17) Dragging the timeline left slides every message over and shows its time at the trailing edge, as in Messages; it springs back on release (iPhone and iPad). (2026-10-18)
 - Two conversations side by side on iPad and iPhone Duo's inner display: Open Beside from the conversation's bar (⌘\), from a row's context menu, or by dragging a row onto either half of the conversation, where it opens. One pane is focused: its composer has an accent ring, the list highlights it and it is the one the host hears is in front; a tap in the other pane moves the focus. Both stream; no in-app notice for a reply already on screen. Picking from the list opens into the focused pane, and a conversation already open only takes the focus. The divider drags and snaps to a third, a half or two thirds, a fling to an edge closes that pane, double-tap equalizes. Each pane's menu has Swap Sides, Full Screen and Close. When the window is too narrow for two comfortable panes the sidebar steps aside. At compact width (iPhone, Duo closed) the pair stays, with a segmented switcher at the top of the conversation. A draft survives its pane being rebuilt. (2026-10-21)
 - Pin a conversation from its row (swipe from the leading edge, or its menu): pinned ones sit in a Pinned section above Chats on every device, newest pin first. The pin is the OpenClaw session's (`pinnedAt`), so it is shared with OpenClaw's own UI; archiving unpins, and an archived conversation cannot be pinned. (2026-10-23)
-- The list is ordered by each conversation's last message time, and that is the time a row shows: the host reads it from the transcript, so renaming, pinning or other changes do not reorder the list; a conversation imported from 0.5 keeps its last 0.5 message's time until a new message comes. (2026-10-24)
+- The list is ordered by each conversation's last message time, and that is the time a row shows: the host reads it from the transcript, so renaming, pinning or other changes do not reorder the list. (2026-10-24)
 - On iPad and the Mac, when no conversation is open beside the list (at launch, or after the open one was deleted or archived), a new conversation opens, ready to type in, instead of an empty "No conversation selected" pane. Folding iPhone Duo to its phone layout goes back to the list if that new conversation is still empty. (2026-10-25)
 - A message's picture or file opens in Quick Look zooming out of where it sits in the conversation, and a swipe down closes it back into place, as in Photos; Done still closes it (iPhone, iPad). The Mac opens it in its default app. (2026-10-26)
 - A message sent just before leaving the app still goes out: going to the background on iPhone and iPad keeps the connection open (up to 25 s) until every message has reached the relay (✓); quitting the Mac app waits up to 10 s the same way. Whatever is still waiting after that goes out on the next launch, as before. (2026-10-26)
@@ -77,34 +76,23 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 - A control or label that a clear symbol can stand for is shown as the icon alone, with its words kept for VoiceOver (accessibility label, and a tooltip on the Mac): fewer visible strings to translate. Menu items, Settings tabs, status words and anything whose icon would be ambiguous keep their text. (2026-10-12)
 - ⌘Enter sends by default on the Mac: Enter adds a newline. Hardware keyboards on iPhone and iPad keep smart Enter; the on-screen keyboard keeps its Send button. (2026-10-09, clients 2026-10-15)
 - Siri, Shortcuts and Spotlight through App Intents: Ask Yorozu (sends, waits up to 25 s and returns the reply for Siri to read; past that, "the reply will come as a notification"), Open Conversation and New Conversation, with conversations as entities Siri can name; App Shortcuts phrases in English and Japanese. Search Yorozu finds conversations by what was said, with the matching lines; conversations (title and recent messages, up to 4,000 characters) are in an on-device Spotlight index Siri searches, Data Protection `complete`, removed on unpair, with a Settings switch (Siri & Search), on by default. (2026-10-17)
-- Interface text is in English and Japanese on every client. (2026-10-09)
 - A run that fails for a moment (a plugin reload, an overloaded or rate-limited model) before any reply or tool runs again by itself, for about four minutes, instead of showing its error; only a failure that outlasts that is shown. (2026-10-23)
 - The client app is native SwiftUI, with selective AppKit on the Mac, never a web UI or webview wrapper. Use native SwiftUI components wherever they fit. (2026-10-07, clients 2026-10-15)
-- The app takes the system look: native backgrounds, Liquid Glass bars, the vermilion accent and bubbles in system materials. Large UI changes are designed in Claude Design, mockups first; changes built from stock native controls go straight to code. (2026-10-09, mockups 2026-10-17)
 
 ## Platform and release
 
-- The Mac app is a Tuist-generated Xcode project. Its macOS destination ships as 0.5's Mac id `to.yumi.yorozu`, Developer ID signed and notarized, team `AN5KM8QGEF`, so Sparkle updates 0.5.0-beta in place. (2026-10-07, id 2026-10-17)
-- The Mac updates through Sparkle (macOS only), with 0.5's EdDSA key, from GitHub Releases. Two feeds: `yorozu.yumi.to/appcast.xml`, the latest stable release, and `/beta/appcast.xml`, the newest release with prereleases. Settings › Updates › Beta Updates on the Mac picks the beta feed (0.5's `YorozuBetaUpdates` key, so 0.5's opt-in carries over). (2026-10-17, channels 2026-10-27)
+- The Mac app is a Tuist-generated Xcode project. Its macOS destination ships as `to.yumi.yorozu`, Developer ID signed and notarized, team `AN5KM8QGEF`. (2026-10-07, id 2026-10-17)
+- The Mac updates through Sparkle (macOS only), with its EdDSA key, from GitHub Releases. Two feeds: `yorozu.yumi.to/appcast.xml`, the latest stable release, and `/beta/appcast.xml`, the newest release with prereleases. Settings › Updates › Beta Updates on the Mac picks the beta feed (`YorozuBetaUpdates`). (2026-10-17, channels 2026-10-27)
 - Work lands on `main` through worktree + PR; `projectx` is retired. Every merge ships a beta (2026-10-27, after Home Assistant's Companion app):
   - Mac: a push touching `apps/**` (except `apps/web` and `apps/relay`), `packages/**`, `plugins/**`, `scripts/**` or `version.txt` publishes the prerelease `v<ver>-beta`, replacing the last build's, with release notes generated from the Conventional Commits (`release-mac.yml`; 2026-10-28: one beta per version, not a tag per build).
   - iOS: a push touching `apps/ios/**`, `packages/**`, `version.txt` or its scripts uploads a build; TestFlight gives it to the internal group automatically (`release-ios.yml`). The plugin rides only in the Mac app.
   - Stable: a PR that bumps `version.txt` promotes the Mac beta the owner checked, named in a `Promotes: <old> (<build>)` commit line, unchanged, to `v<old>` (2026-10-27: promoting the last beta instead shipped an unchecked one as 0.9.2); the iOS build of that version is submitted to the App Store by hand. Release tags can be neither moved nor deleted, so each version has one stable release.
   - Builds count per platform: the Mac from its beta release's build, iOS from App Store Connect.
 - The iPhone and iPad app is not offered on Apple Silicon Macs (App Store Connect availability off); Macs get the Developer ID app. (2026-10-27)
-- The Mac signing identity is a local, gitignored build setting, not part of the repo; git history is left as it is. (2026-10-09)
 - Clients reach the plugin through 0.5's end-to-end-encrypted Cloudflare Workers relay, reused as a deployed service. The relay may be changed when that is the better design (Transport). (2026-10-08, channel 2026-10-15)
 - iOS ships to the public App Store (first release 0.9.0), manual release after approval, no phased release; TestFlight testers first. Review uses a live review host, with a fixture demo behind the documented code `YOROZU-DEMO` as fallback (as OpenClaw does). iOS shows a subtle, dismissible "Update available" row from Apple's lookup API; nothing is forced. (2026-10-08, App Store 2026-10-17)
-- Version 0.9.1: iOS 0.9.0 went live on the App Store on 2026-10-23, which closed that version to new builds. The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`, above 0.5's `10279`). (2026-10-08, encoding 2026-10-17, 0.9.1 2026-10-23) Version 0.9.2 opens the beta channel: the stable `v0.9.1` tag cannot be replaced, so the first betas, which bring the Beta Updates toggle, are 0.9.2. (2026-10-27)
+- The visible build restarts at 1 per version; `CFBundleVersion` = major·10⁷ + minor·10⁵ + patch·10³ + build on every platform (0.9.0 build 1 = `900001`). (2026-10-08, encoding 2026-10-17)
 - The app icon is 0.5's Icon Composer mark (blob-identical to 1e2f1fba). (2026-10-08)
-
-## Upgrade from 0.5.0-beta
-
-- Only 0.5.0-beta installs upgrade, to 0.9.0-beta, each migration confirmed by hand. 0.4.0 and older are not upgraded; the stable feed stays frozen at 0.4.0. Fix forward only, no rollback tooling. Plan: [docs/upgrade-from-0.5.md](docs/upgrade-from-0.5.md). (2026-10-17)
-- The Mac migrates on first launch, fully automatically (an exception to click-to-write for this one migration): the 0.9 plugin is bundled at `Yorozu.app/Contents/Resources/openclaw-channel` so 0.5's `--link` install picks it up; the app drops `channels.yorozu.socketPath`, reloads the plugin accepting its capabilities and restarts the Gateway; the plugin imports 0.5's host keys and devices so no device re-pairs; memory notes import as unverified notes; every 0.5 chat becomes a conversation seeded with one plain `chat.inject` of its last 40 turns; 0.5's watchdog LaunchAgent is removed. 0.5's data folder is never written. (2026-10-17)
-- iOS copies the keychain account `pairings` into `pairing-v3` on first launch, QR pairing as fallback, and never deletes `pairings`. (2026-10-17)
-- Release order: the iOS build is assigned to TestFlight testers at the moment the Mac appcast item goes live; iOS shows "Your Mac is updating" and reconnects by itself, the Mac nudges to update the iPhone app. (2026-10-17) Done: it applied to the 0.9.0 upgrade only; TestFlight builds now reach testers automatically. (2026-10-27)
-- No bridge 0.5.x release. Once the owner confirms every 0.5 install migrated, all migration code is deleted. (2026-10-17)
 
 ## Stable contracts
 
@@ -118,23 +106,18 @@ These never change; future versions migrate around them (2026-10-17):
 
 ## Versioning rules
 
-- Every stored record carries a schema version; ordered migrations `n → n+1`, each idempotent, run at launch. (2026-10-17)
-- `peer_info` negotiates `protocolMin`/`protocolMax`; each side supports one protocol version back; `update_required` only outside that. (2026-10-17)
 - Changes are additive: new fields optional, unknown fields ignored, not rejected. (2026-10-17)
-- A breaking Mac update sets Sparkle `sparkle:minimumAutoupdateVersion`. (2026-10-17)
-- Naming: prose, docs, UI and migration code name app versions ("0.5", "0.9"), never v1/v2/v3. Type names carry no version (the `V3*` prefixes are renamed in a mechanical PR). The wire protocol stays a plain integer, "protocol 3", separate from app versions. (2026-10-17)
 
 ## Engineering
 
 - Language: Swift wherever possible, for a native feel; never Python. Code that has to live in another ecosystem uses that ecosystem's language, for example the TypeScript channel plugin that runs inside the OpenClaw Gateway. A separate long-running background process of Yorozu's own is Rust. (2026-10-13)
 - Not used: Electron, Tauri, web frontends, SwiftData, Core Data, agent orchestration frameworks, vector services, or Python in the repo. (2026-10-09)
-- Owner-specific values (such as the relay URL) are settings with generic defaults in code. (2026-10-09)
+- The relay is the public `wss://relay.yumi.to` by default; a user can optionally self-host the relay (`apps/relay`) and point the plugin at it with `channels.yorozu.relayUrl`, and the apps then use that relay. (2026-10-09, self-hosting 2026-10-28)
 - The OpenClaw config sets `contextWindow: 272000` for `openai-pool/gpt-6-sol` and `openai-pool/gpt-6-astra` (the owner's global file, approved). OpenClaw's global `contextPruning` stays off. (2026-10-08)
 - Working rules the owner set live in [AGENTS.md](AGENTS.md#rules); their dates are in the log.
 
 ## Process and roadmap
 
-- Work lands on `projectx` (on `main` since 2026-10-27) through the usual worktree + PR flow, one #415 child issue per PR, in #415's build order. The secretary is deleted only after the new path works end to end. (2026-10-15)
 - No test suite yet; acceptance is compile + manual checks. Pull requests get a required compile check for iPhone, iPad and Mac, and the relay's typecheck and tests (`checks.yml`). SwiftLint and Swift tests come later. (2026-10-15, release 2026-10-17, checks 2026-10-27)
 - CI/CD (2026-10-27): the relay deploys on each push to `main` touching `apps/relay/**`, after its tests (`deploy-relay.yml`), as the website does. Dependabot: weekly, minor and patch npm bumps grouped, vitest and TypeScript majors by hand, a 3-day cooldown.
 

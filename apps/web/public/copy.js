@@ -1,5 +1,3 @@
-// Copy-to-clipboard for any [data-copy="<id>"] button. Buttons ship hidden and are
-// revealed here, so a page without JS still shows the selectable text and nothing dead.
 for (const button of document.querySelectorAll("[data-copy]")) {
   const source = document.getElementById(button.dataset.copy);
   if (!source) continue;
@@ -27,7 +25,6 @@ for (const button of document.querySelectorAll("[data-copy]")) {
       }, 1600);
     } catch {
       if (attempt !== latestAttempt) return;
-      // Keep the prompt selectable and explain how to finish when access is denied.
       const range = document.createRange();
       range.selectNodeContents(source);
       const selection = getSelection();

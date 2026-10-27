@@ -10,10 +10,6 @@ import AppKit
 import UIKit
 #endif
 
-// Attachments in the chat (#430): the composer's + and staged files, and the files on messages and replies.
-
-/// The composer's +: photos from the library and files from Files (or the Finder), each checked against the host's limit
-/// before anything is copied, so a file over it is refused here with its size and the limit.
 struct AttachMenu: View {
     let limit: Int
     let onStage: ([ChatAttachment]) -> Void
@@ -27,7 +23,6 @@ struct AttachMenu: View {
 
     var body: some View {
         Menu {
-            // A flag rather than a PhotosPicker in the menu: a picker inside a Menu never presents.
             Button(String(localized: "Photo Library"), systemImage: "photo.on.rectangle") { choosingPhotos = true }
             #if os(iOS)
             Button(String(localized: "Take Photo"), systemImage: "camera") { takingPhoto = true }
@@ -39,7 +34,6 @@ struct AttachMenu: View {
                 if loading { ProgressView().controlSize(.small) } else { Image(systemName: "plus").font(.body.weight(.semibold)) }
             }
             .foregroundStyle(.secondary)
-            // The field uses an 8-point leading inset into this target. Keep the glyph left of that inset.
             .padding(.trailing, LayoutMetrics.stack)
             .frame(width: controlTarget, height: controlTarget, alignment: .trailing)
             .contentShape(.rect)
@@ -48,6 +42,7 @@ struct AttachMenu: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+        .help(String(localized: "Attach"))
         .accessibilityLabel(Text("Attach"))
         .accessibilityIdentifier("composer.attach")
         .photosPicker(isPresented: $choosingPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
@@ -90,7 +85,6 @@ struct AttachMenu: View {
         }
     }
 
-    /// Stages what it can; one alert names everything refused.
     private func stage(_ jobs: [() throws -> ChatAttachment]) {
         var staged: [ChatAttachment] = []
         var refused: [String] = []
@@ -137,14 +131,11 @@ private struct CameraPicker: UIViewControllerRepresentable {
 }
 #endif
 
-/// Files waiting in the composer, each with a remove button.
 struct StagedFiles: View {
     let files: [ChatAttachment]
-    /// An automation from "Edit in Chat", first in the row.
     var automation: V3CronJob? = nil
     var onRemoveAutomation: () -> Void = {}
     let onRemove: (ChatAttachment) -> Void
-    /// A staged picture's preview, scaled with the text.
     @ScaledMetric private var previewSide: CGFloat = 56
 
     var body: some View {
@@ -159,6 +150,7 @@ struct StagedFiles: View {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .help(String(localized: "Remove \(automation.name)"))
                         .accessibilityLabel(Text("Remove \(automation.name)"))
                     }
                     .font(.footnote)
@@ -178,7 +170,6 @@ struct StagedFiles: View {
         }
     }
 
-    /// A picture: its preview, the remove button on its corner (owner, 2026-10-17).
     private func preview(_ file: ChatAttachment, url: URL) -> some View {
         FileThumbnail(url: url, side: previewSide, fill: true)
             .clipShape(RoundedRectangle(cornerRadius: LayoutMetrics.inner, style: .continuous))
@@ -190,6 +181,7 @@ struct StagedFiles: View {
                         .padding(LayoutMetrics.tight)
                 }
                 .buttonStyle(.plain)
+                .help(String(localized: "Remove \(file.name)"))
                 .accessibilityLabel(Text("Remove \(file.name)"))
             }
             .padding(.vertical, LayoutMetrics.tight)
@@ -197,7 +189,6 @@ struct StagedFiles: View {
             .accessibilityLabel(Text(file.name))
     }
 
-    /// Any other file: its name and size.
     private func chip(_ file: ChatAttachment) -> some View {
         HStack(spacing: LayoutMetrics.tight) {
             Image(systemName: file.isImage ? "photo" : "doc")
@@ -209,6 +200,7 @@ struct StagedFiles: View {
                 Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .help(String(localized: "Remove \(file.name)"))
             .accessibilityLabel(Text("Remove \(file.name)"))
         }
         .font(.footnote)
@@ -218,15 +210,12 @@ struct StagedFiles: View {
     }
 }
 
-/// A message's or reply's files: pictures inline, other files as rows. A reply's files download only when shown
-/// (pictures) or tapped (files); Quick Look opens them on iPhone and iPad, the default app on the Mac.
 struct AttachmentList: View {
     let model: AppModel
     let attachments: [ChatAttachment]
     let alignment: HorizontalAlignment
 
     #if os(iOS)
-    /// The file Quick Look shows, and the attachment it zooms out of.
     private struct Previewed: Identifiable {
         let id: String
         let url: URL
@@ -257,7 +246,6 @@ struct AttachmentList: View {
             }
         }
         #if os(iOS)
-        // Zooms out of the attachment and back into it; a swipe down closes it, as in Photos (owner, 2026-10-26).
         .fullScreenCover(item: $previewed) { item in
             QuickLookPreview(url: item.url) { previewed = nil }
                 .ignoresSafeArea()
@@ -277,7 +265,6 @@ struct AttachmentList: View {
 }
 
 #if os(iOS)
-/// Quick Look in a navigation bar of its own: its share and markup controls, and Done.
 private struct QuickLookPreview: UIViewControllerRepresentable {
     let url: URL
     let done: () -> Void
@@ -315,7 +302,6 @@ private struct QuickLookPreview: UIViewControllerRepresentable {
 }
 #endif
 
-/// Where a file stands: here, moving, failed, or waiting for a tap.
 private enum FileState {
     case local(URL), moving(Double), failed(String), refused(String), remote
 
@@ -332,7 +318,6 @@ private struct FileAttachment: View {
     let model: AppModel
     let attachment: ChatAttachment
     let open: (ChatAttachment) -> Void
-    /// A downloaded file's thumbnail (a PDF's first page), scaled with the text.
     @ScaledMetric(relativeTo: .title2) private var thumbnailSide: CGFloat = 40
 
     var body: some View {
@@ -375,13 +360,11 @@ private struct FileAttachment: View {
     }
 }
 
-/// A picture, fitted to the row; downloaded as soon as it is on screen.
 private struct ImageAttachment: View {
     let model: AppModel
     let attachment: ChatAttachment
     let open: (ChatAttachment) -> Void
 
-    /// The tallest a picture stands in the conversation; the rest is a tap away.
     private let maxHeight: CGFloat = 320
     @State private var image: CGImage?
 
@@ -411,7 +394,6 @@ private struct ImageAttachment: View {
         }
     }
 
-    /// Sized for a screen, never decoded whole.
     nonisolated private static func thumbnail(_ url: URL) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         return CGImageSourceCreateThumbnailAtIndex(source, 0, [

@@ -1,13 +1,10 @@
 import Foundation
 
-/// This phone's marketing name ("iPhone 17 Pro"), sent to the Mac as the name it lists the phone by.
-/// iOS hides the user's own device name without a special entitlement, so the model stands in for it.
 enum DeviceModel {
     static let name: String = {
         #if os(macOS)
         return Host.current().localizedName ?? "Mac"
         #endif
-        // The simulator reports the Mac's architecture; it names the device it simulates here.
         let id = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? machine
         return names[id] ?? (id.hasPrefix("iPad") ? "iPad" : "iPhone")
     }()
@@ -18,7 +15,6 @@ enum DeviceModel {
         return withUnsafeBytes(of: &info.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
     }
 
-    /// Hardware identifiers of the iPhones iOS 18 runs on. Newer or unknown models fall back to "iPhone" or "iPad".
     private static let names: [String: String] = [
         "iPhone11,2": "iPhone XS", "iPhone11,4": "iPhone XS Max", "iPhone11,6": "iPhone XS Max", "iPhone11,8": "iPhone XR",
         "iPhone12,1": "iPhone 11", "iPhone12,3": "iPhone 11 Pro", "iPhone12,5": "iPhone 11 Pro Max", "iPhone12,8": "iPhone SE",

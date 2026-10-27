@@ -5,6 +5,5 @@
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   Permissions-Policy: camera=(), microphone=(), geolocation=()
 
-# Apple fetches this for universal links; it has no extension to infer a type from.
 /.well-known/apple-app-site-association
   Content-Type: application/json

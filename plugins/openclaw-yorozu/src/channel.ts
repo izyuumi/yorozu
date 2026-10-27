@@ -28,10 +28,8 @@ import { yorozuRuntime } from "./runtime.js";
 import { applyPatch, watchSessions } from "./sessions.js";
 
 export const CHANNEL_ID = "yorozu";
-// Same default as the Mac app's `relay.url` (docs/setup.md).
 const DEFAULT_RELAY_URL = "wss://relay.yumi.to";
 
-/** `channels.yorozu`; every key is optional, so the channel runs with no entry at all. */
 type YorozuConfig = {
   enabled?: boolean;
   agent?: string;
@@ -60,7 +58,6 @@ function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
   };
 }
 
-/** Stays pending until the Gateway aborts the account, then settles within a second or so. */
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
   const keys = await loadHostKeys();
@@ -130,7 +127,6 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     gateway: { startAccount },
     messaging: {
       normalizeTarget: () => PEER,
-      // A delivery's thread is its conversation: `agent:<agent>:yorozu:direct:owner:thread:<convId>`.
       resolveOutboundSessionRoute: ({ cfg, agentId, accountId, threadId, currentSessionKey }) => {
         const route = resolveOwnerRoute(cfg, agentId, accountId);
         return buildThreadAwareOutboundSessionRoute({
@@ -155,7 +151,6 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
     chunkerMode: "markdown",
     textChunkLimit: DEFAULT_CHUNK_LIMIT,
     sendText: async ({ threadId, text }) => ({ channel: CHANNEL_ID, messageId: sendConversationText({ threadId, text }) }),
-    // Core calls this once per file, the caption on the first; a turn's own grouped media goes out in `deliver`.
     sendMedia: async ({ cfg, accountId, threadId, text, mediaUrl, mediaAccess, mediaLocalRoots, mediaReadFile }) => ({
       channel: CHANNEL_ID,
       messageId: await sendConversationMedia({
@@ -166,7 +161,6 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         access: { mediaAccess, localRoots: mediaLocalRoots, readFile: mediaReadFile },
       }),
     }),
-    // A delivery (cron) pushes once per payload, after all its chunks went out, like a turn's reply (#431).
     afterDeliverPayload: async ({ target, payload, results }) => {
       const convId = String(target.threadId ?? "").toLowerCase();
       const messageId = results[0]?.messageId;

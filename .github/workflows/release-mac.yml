@@ -1,16 +1,7 @@
 name: Release Mac
-# A push to main that touches the Mac app publishes a beta: the prerelease v<version>-beta, replaced by each build,
-# which Macs with beta updates on install (yorozu.yumi.to/beta/appcast.xml). A push that changes version.txt first
-# promotes the beta, if it is still the build its `Promotes:` line names, unchanged, to the stable v<old version>, which
-# every Mac installs (OWNER_DECISIONS.md, Platform and release). Release notes come from the Conventional Commits. No
-# tests run here; pull requests get a compile check (checks.yml).
-# Secrets: DEVELOPER_ID_P12 and DEVELOPER_ID_PASSWORD (Developer ID Application), ASC_KEY_ID, ASC_ISSUER_ID and
-# ASC_KEY_P8 (App Store Connect API key, base64 .p8, for notarization), SPARKLE_ED_KEY (Sparkle's private EdDSA key,
-# `generate_keys -x`).
 on:
   push:
     branches: [main]
-    # The website and relay deploy on their own (deploy-web.yml, deploy-relay.yml).
     paths: ['apps/**', '!apps/web/**', '!apps/relay/**', 'packages/**', 'plugins/**', 'scripts/**', 'version.txt']
   workflow_dispatch:
 
@@ -30,11 +21,8 @@ jobs:
       REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { fetch-depth: 0 } # the pushed commits, for their Promotes: line, and the tags, for release notes
+        with: { fetch-depth: 0 }
 
-      # Before the new version's first beta, so stable and beta never point at the same version. The bump PR names the
-      # build the owner checked in a `Promotes: <old> (<build>)` line; without it, or if a newer build replaced
-      # that one, the promotion and this run fail.
       - name: Promote the checked beta
         if: github.event_name == 'push'
         env:
@@ -48,14 +36,14 @@ jobs:
           scripts/release_mac.sh --promote "$old" "$build"
 
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
-        with: { xcode-version: '27.1' } # the owner's Xcode; the iOS 27 SDK is only on the xcode-27 image (public preview)
-      - name: Install Tuist 4.209.0
+        with: { xcode-version: '27.1' }
+      - name: Install Tuist (mise.toml)
         run: |
           command -v mise >/dev/null || brew install mise
-          mise use -g tuist@4.209.0
-          mise bin-paths tuist@4.209.0 >> "$GITHUB_PATH"
+          tuist=$(sed -n 's/^tuist = "\(.*\)"/\1/p' mise.toml)
+          mise use -g "tuist@$tuist"
+          mise bin-paths "tuist@$tuist" >> "$GITHUB_PATH"
 
-      # Secrets go only to $RUNNER_TEMP and a keychain of this job's own. Never `set -x` here.
       - name: Signing identity, notary profile and Sparkle key
         env:
           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
@@ -74,7 +62,6 @@ jobs:
           printf '%s' "$DEVELOPER_ID_P12" | base64 -d > "$RUNNER_TEMP/developer-id.p12"
           security import "$RUNNER_TEMP/developer-id.p12" -P "$DEVELOPER_ID_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
           rm "$RUNNER_TEMP/developer-id.p12"
-          # A fresh runner lacks Apple's intermediate, without which codesign won't use the identity. It is public.
           curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
           security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -t cert -k "$KEYCHAIN" 2>&1 | grep -v 'already exists' || true
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null

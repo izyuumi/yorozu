@@ -1,6 +1,5 @@
 .data/
 
-# Native generated artifacts/data; source and pinned dependency lock remain visible.
 .build/
 build/
 .swiftpm/
@@ -9,11 +8,8 @@ xcuserdata/
 *.xcworkspace/
 apps/mac/Derived/
 apps/ios/Derived/
-# The owner's signing identity (apps/mac/Signing.xcconfig includes it).
 *.local.xcconfig
 
-# OpenClaw agent-workspace files (this checkout is the projectx workspace). OpenClaw seeds and its memory
-# conventions fill them with personal directives and facts; only AGENTS.md is tracked.
 /USER.md
 /SOUL.md
 /IDENTITY.md
@@ -22,7 +18,6 @@ apps/ios/Derived/
 /MEMORY.md
 /memory/
 
-# apps/relay (TypeScript): installed packages, compiler output, local Cloudflare state.
 node_modules/
 apps/relay/dist/
 .wrangler/

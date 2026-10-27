@@ -5,7 +5,6 @@ import AppKit
 import UIKit
 #endif
 
-/// One block of a chat message's Markdown. Inline styling (bold, italic, code, links) stays in the `AttributedString`.
 enum MarkdownBlock {
     struct ListItem { let marker: String; let blocks: [MarkdownBlock] }
     case paragraph(AttributedString)
@@ -13,26 +12,20 @@ enum MarkdownBlock {
     case list([ListItem])
     case quote([MarkdownBlock])
     case code(language: String?, String)
-    /// Rows hold one cell per column; missing cells are empty.
     case table(header: [AttributedString], rows: [[AttributedString]])
     case rule
-    /// A local image file. Remote images stay links in their paragraph (#311 open question 9).
     case image(URL, alt: String)
 }
 
-/// Parses chat Markdown into blocks with Foundation's parser, whose presentation intents carry the block structure.
 enum ChatMarkdown {
     private typealias Run = (text: AttributedString, path: ArraySlice<PresentationIntent.IntentType>)
     private final class Box { let blocks: [MarkdownBlock]; init(_ blocks: [MarkdownBlock]) { self.blocks = blocks } }
-    /// Keyed by the source text, so a view rebuilt for the same message never parses twice. NSCache is thread-safe.
-    /// Bounded, so a long chat does not keep every parsed message.
     nonisolated(unsafe) private static let cache = { let c = NSCache<NSString, Box>(); c.countLimit = 200; return c }()
 
     static func blocks(_ text: String) -> [MarkdownBlock] {
         if let hit = cache.object(forKey: text as NSString) { return hit.blocks }
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
         guard let parsed = try? AttributedString(markdown: text, options: options) else { return [.paragraph(AttributedString(text))] }
-        // Intents come innermost first; the path runs outermost first so each level peels one off.
         let runs = parsed.runs.map { run -> Run in
             (AttributedString(parsed[run.range]), ArraySlice((run.presentationIntent?.components ?? []).reversed()))
         }
@@ -41,7 +34,6 @@ enum ChatMarkdown {
         return value
     }
 
-    /// Consecutive runs whose outermost remaining intent is the same block.
     private static func groups(_ runs: ArraySlice<Run>) -> [(intent: PresentationIntent.IntentType?, runs: ArraySlice<Run>)] {
         var out: [(PresentationIntent.IntentType?, ArraySlice<Run>)] = []
         var start = runs.startIndex
@@ -72,7 +64,7 @@ enum ChatMarkdown {
                     return .init(marker: marker, blocks: build(inner(runs)))
                 })]
             case .table(let columns): return [table(inner(group), columns: columns.count)]
-            default: return paragraph(group) // a paragraph, or text outside any block
+            default: return paragraph(group)
             }
         }
     }
@@ -88,7 +80,6 @@ enum ChatMarkdown {
         return .table(header: rows.first ?? [], rows: Array(rows.dropFirst()))
     }
 
-    /// Local images split the paragraph into image blocks; remote ones stay in the text as links.
     private static func paragraph(_ runs: ArraySlice<Run>) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = [], text = AttributedString()
         func flush() {
@@ -97,7 +88,6 @@ enum ChatMarkdown {
         }
         for run in runs {
             guard let url = run.text.imageURL else { text += run.text; continue }
-            // The parser can leave U+FFFC (object replacement) in an image run; it is not alt text.
             let alt = String(run.text.characters).replacingOccurrences(of: "\u{FFFC}", with: "")
             if let file = localFile(url) { flush(); blocks.append(.image(file, alt: alt)); continue }
             var link = AttributedString(alt.isEmpty ? url.absoluteString : alt)
@@ -108,7 +98,6 @@ enum ChatMarkdown {
         return blocks
     }
 
-    /// `file:` URLs and bare absolute or `~` paths; anything with another scheme is remote.
     private static func localFile(_ url: URL) -> URL? {
         if url.isFileURL { return url }
         guard url.scheme == nil, url.path.hasPrefix("/") || url.path.hasPrefix("~") else { return nil }
@@ -116,8 +105,6 @@ enum ChatMarkdown {
     }
 }
 
-/// A chat message's Markdown as blocks, one lazy row each, so very long answers lay out only what is on screen.
-/// Selection is per block (one `Text` each); copying the whole answer is the caller's job.
 struct MarkdownBlocks: View {
     let blocks: [MarkdownBlock]
     init(_ text: String) { blocks = ChatMarkdown.blocks(text) }
@@ -131,7 +118,6 @@ struct MarkdownBlocks: View {
     }
 }
 
-/// Spacing inside the renderer, which owns its geometry; its width always comes from the container.
 private enum MarkdownMetrics {
     static let blockSpacing: CGFloat = 8
     static let itemSpacing: CGFloat = 4
@@ -176,7 +162,6 @@ private struct MarkdownBlockView: View {
     }
 }
 
-/// Nested blocks (list items, quotes) are short, so they stack eagerly.
 private struct Stack: View {
     let blocks: [MarkdownBlock]
     var body: some View {
@@ -231,15 +216,12 @@ private struct CodeBlock: View {
     }
 }
 
-/// The table fits the width it is given and its cells wrap onto more lines, rather than running off sideways.
 private struct TableBlock: View {
     let header: [AttributedString]
     let rows: [[AttributedString]]
 
     var body: some View {
         Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
-            // Each header cell fills the row's height under a plain rectangle, so the fill reads as one band however the
-            // titles wrap; a bare `.fill` background took the container's rounded shape per cell, sized to its own text.
             GridRow {
                 ForEach(header.indices, id: \.self) {
                     cell(header[$0]).fontWeight(.semibold)
@@ -258,7 +240,6 @@ private struct TableBlock: View {
     }
 
     private func cell(_ text: AttributedString) -> some View {
-        // Full height at a narrow width, so a wrapped cell grows its row instead of truncating.
         Text(text)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, MarkdownMetrics.inset)
@@ -267,7 +248,6 @@ private struct TableBlock: View {
     }
 }
 
-/// A local image at its natural size, or scaled down to the width it is given; never fetched from the network.
 private struct ImageBlock: View {
     let url: URL
     let alt: String

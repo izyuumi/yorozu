@@ -2,16 +2,14 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 import YorozuWire
 
-/// Adding a device from this one, away from the host (owner, 2026-10-17): the host makes the same one-time code as
-/// `openclaw yorozu pair`, sent over the relay, shown here as a QR for the new device to scan, or a link to send it.
-/// One device, ten minutes; the new device shows the host fingerprint too, and they must match. A new Mac, which has no
-/// camera, shows a code of its own for this device to scan instead (DeviceCodePairing.swift).
 struct AddDeviceSheet: View {
     let model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var scanning = false
-    /// A scanned Mac's code, handed on once the scanner is gone so "Add … ?" has a screen to show on.
     @State private var scanned: String?
+    @State private var known: Set<String>?
+    @State private var paired: V3DeviceInfo?
+    private static let pollInterval: Duration = .seconds(2)
 
     var body: some View {
         NavigationStack {
@@ -32,6 +30,22 @@ struct AddDeviceSheet: View {
             }
         }
         .task { model.requestInvite() }
+        .task(id: paired == nil) {
+            guard paired == nil else { return }
+            while !Task.isCancelled {
+                model.refreshDevices()
+                try? await Task.sleep(for: Self.pollInterval)
+                guard let devices = model.devices else { continue }
+                guard let known else {
+                    self.known = Set(devices.map(\.id))
+                    continue
+                }
+                if let added = devices.first(where: { !known.contains($0.id) }) {
+                    withAnimation(.snappy) { paired = added }
+                    return
+                }
+            }
+        }
         #if os(iOS)
         .sheet(isPresented: $scanning, onDismiss: {
             if let text = scanned { model.pairingError = model.submit(text) }
@@ -55,7 +69,6 @@ struct AddDeviceSheet: View {
     }
 
     #if os(iOS)
-    /// A new Mac shows a code for this device to scan, as it has no camera of its own (owner, 2026-10-27).
     private var scanMac: some View {
         VStack(spacing: LayoutMetrics.tight) {
             Button(String(localized: "Scan a Mac’s Code"), systemImage: "qrcode.viewfinder") { scanning = true }
@@ -69,7 +82,9 @@ struct AddDeviceSheet: View {
 
 
     @ViewBuilder private var content: some View {
-        if let invite = model.invite, let webLink = invite.webLink, let url = URL(string: webLink),
+        if let paired {
+            success(paired)
+        } else if let invite = model.invite, let webLink = invite.webLink, let url = URL(string: webLink),
            let expiresAt = invite.expiresAt {
             let expiry = Date(timeIntervalSince1970: TimeInterval(expiresAt) / 1000)
             Text("On the new iPhone, iPad or Mac, scan this code with the camera or in Yorozu, or open the link there.")
@@ -111,7 +126,29 @@ struct AddDeviceSheet: View {
     }
 }
 
-/// The pairing link as a QR code, as wide as it may be up to a size that still scans from across a desk.
+extension AddDeviceSheet {
+    private func success(_ device: V3DeviceInfo) -> some View {
+        VStack(spacing: LayoutMetrics.stack) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.largeTitle)
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+            Text("\(device.name ?? String(localized: "The new device")) is paired")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+            Text("It sees every conversation. You can manage it in Paired Devices.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(String(localized: "Add Another")) {
+                known = Set(model.devices?.map(\.id) ?? [])
+                withAnimation(.snappy) { paired = nil }
+                model.requestInvite()
+            }
+        }
+    }
+}
+
 struct QRCode: View {
     let text: String
 
@@ -137,8 +174,6 @@ struct QRCode: View {
     }
 }
 
-/// "Add … ?" for a Mac's code, scanned here or opened by the system Camera, then where the adding stands
-/// (DeviceCodePairing.swift). On the root view and on this sheet, which covers it.
 private struct DeviceAddingAlerts: ViewModifier {
     let model: AppModel
 

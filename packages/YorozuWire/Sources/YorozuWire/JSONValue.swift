@@ -1,6 +1,5 @@
 import Foundation
 
-/// Arbitrary JSON: the data of an event kind this client does not know.
 public enum JSONValue: Codable, Equatable, Sendable {
     case null
     case bool(Bool)

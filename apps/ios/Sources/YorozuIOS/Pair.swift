@@ -2,24 +2,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 import YorozuWire
 
-/// A side of the conversation area when two conversations are open side by side.
 enum PaneSide { case left, right }
 
-/// Two conversations side by side on iPad and iPhone Duo's inner display (owner, 2026-10-21). `selection` stays the
-/// focused conversation, the one the composer types into and the list highlights; this holds the other one and where it sits.
 struct ChatPair {
-    /// The other pane's conversation; nil with one conversation open.
     var partner: String?
     var partnerOnLeft = false
-    /// The right pane is choosing a conversation to open beside the focused one.
     var choosing = false
-    /// The left pane's share of the width.
     var fraction: CGFloat = 0.5
 
     var isOpen: Bool { partner != nil || choosing }
     var focusedSide: PaneSide { partnerOnLeft ? .right : .left }
 
-    /// `convId` beside the focused conversation, focused itself: the focus moves to the other side.
     mutating func openBeside(_ convId: String, selection: inout String?) {
         choosing = false
         guard let current = selection, current != convId else { selection = convId; return }
@@ -36,7 +29,6 @@ struct ChatPair {
         partnerOnLeft.toggle()
     }
 
-    /// The conversations trade sides; the focus stays with its conversation.
     mutating func swapSides() { partnerOnLeft.toggle() }
 
     mutating func close(_ side: PaneSide, selection: inout String?) {
@@ -47,7 +39,6 @@ struct ChatPair {
         fraction = 0.5
     }
 
-    /// Shows `convId` on `side`, focused there. A conversation already open only takes the focus, so none is ever shown twice.
     mutating func show(_ convId: String, on side: PaneSide, selection: inout String?) {
         if convId == selection { return }
         if convId == partner { return focus(focusedSide == .left ? .right : .left, selection: &selection) }
@@ -59,7 +50,6 @@ struct ChatPair {
         }
     }
 
-    /// A conversation dropped on `side`: beside the one open, on that side; with two open, in that pane.
     mutating func drop(_ convId: String, on side: PaneSide, selection: inout String?) {
         guard partner == nil, let current = selection, current != convId else { return show(convId, on: side, selection: &selection) }
         choosing = false
@@ -68,19 +58,16 @@ struct ChatPair {
         partnerOnLeft = side == .right
     }
 
-    /// The list, a notice or a deletion moved the selection from `old` to `new`.
     mutating func selectionChanged(from old: String?, to new: String?, compact: Bool, selection: inout String?) {
         if choosing, let old, let new, old != new {
             choosing = false
             partner = old
             partnerOnLeft = true
         } else if let new, new == partner {
-            // The list picked the other pane's conversation: it takes the focus where it is.
             partner = old
             partnerOnLeft.toggle()
             if old == nil { partnerOnLeft = false }
         } else if new == nil, !compact, let partner {
-            // The focused conversation was deleted or archived: the other one fills the area. A phone's Back keeps the pair.
             self.partner = nil
             partnerOnLeft = false
             selection = partner
@@ -95,13 +82,11 @@ struct ChatPair {
 }
 
 extension UTType {
-    /// A conversation dragged from the list onto a side of the conversation area; it never leaves the app.
     static let yorozuConversation = UTType(exportedAs: "to.yumi.yorozu.conversation")
 }
 
 #if os(iOS)
 extension View {
-    /// A row the list lets go of as a conversation, for a side of the conversation area to take.
     func conversationDrag(_ convId: String, started: @escaping () -> Void) -> some View {
         onDrag {
             started()
@@ -115,19 +100,14 @@ extension View {
     }
 }
 
-/// The detail of the split view: one conversation with Open Beside, or two side by side, each in its own navigation
-/// stack with its own bar, and a divider between them.
 struct ChatPairView: View {
     let model: AppModel
     @Binding var selection: String?
     @Binding var pair: ChatPair
     @Binding var columns: NavigationSplitViewVisibility
-    /// A conversation is being dragged from the list.
     @Binding var dragging: Bool
-    /// The whole window's width: the sidebar is beside the conversations when they are narrower.
     let windowWidth: CGFloat
 
-    /// Each conversation needs this much to read comfortably; narrower, opening a pair puts the sidebar away.
     private static let comfortablePane: CGFloat = 360
     @State private var width: CGFloat = 0
     @State private var dropSide: PaneSide?
@@ -145,8 +125,6 @@ struct ChatPairView: View {
                                 .keyboardShortcut("\\", modifiers: .command)
                                 .accessibilityIdentifier("pair.openBeside")
                         }
-                        // Tap: a new conversation here. Hold: one beside this, keeping it in view (owner, 2026-10-23). Not from
-                        // one still empty.
                         if model.conversations[selection]?.items.isEmpty == false {
                             ToolbarItem(placement: .pinnedAction) {
                                 Menu {
@@ -172,8 +150,6 @@ struct ChatPairView: View {
                 columns = .automatic
             }
         }
-        // While a conversation is dragged, a layer over the panes takes it: under it, the chat's own drop (files) would
-        // refuse it. A sidebar that covers the conversation steps aside so there is somewhere to drop.
         .overlay {
             if dragging {
                 Color.clear
@@ -237,8 +213,6 @@ struct ChatPairView: View {
             .toolbar { paneToolbar(side: side, convId: convId) }
         }
         .id(convId ?? "beside")
-        // A tap anywhere in a pane, its composer included, moves the focus there.
-        // Not on the picker: a tap gesture over a List kept its rows from taking taps.
         .simultaneousGesture(TapGesture().onEnded {
             guard !pair.choosing, side != pair.focusedSide else { return }
             withAnimation(.snappy) { pair.focus(side, selection: &selection) }
@@ -256,7 +230,6 @@ struct ChatPairView: View {
                 }
             }
         }
-        // A new conversation in this pane, focused; not from one still empty.
         if let convId, model.conversations[convId]?.items.isEmpty == false {
             ToolbarItem(placement: .pinnedAction) {
                 Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") {
@@ -281,7 +254,6 @@ struct ChatPairView: View {
         }
     }
 
-    /// The side a dragged conversation would land on.
     private func dropHint(_ side: PaneSide) -> some View {
         let label = String(localized: "Open Here")
         return HStack(spacing: 0) {
@@ -304,7 +276,6 @@ struct ChatPairView: View {
     }
 }
 
-/// Where a dragged conversation is over the conversation area, and what to do when it is let go.
 private struct PaneDrop: DropDelegate {
     let width: CGFloat
     @Binding var side: PaneSide?
@@ -333,8 +304,6 @@ private struct PaneDrop: DropDelegate {
     }
 }
 
-/// The line between the panes and its grabber: drag to resize, snapping to a third, a half or two thirds; fling to an
-/// edge to close the pane there; double-tap for equal halves. Its sizes are its own geometry.
 private struct PaneDivider: View {
     static let space = "pair"
     private static let stops: [CGFloat] = [1.0 / 3, 0.5, 2.0 / 3]
@@ -389,7 +358,6 @@ private struct PaneDivider: View {
     }
 }
 
-/// The right pane before it holds a conversation: the recent ones to open beside the focused one, or a new one.
 private struct BesidePicker: View {
     let model: AppModel
     let excluding: String?
@@ -419,7 +387,6 @@ private struct BesidePicker: View {
                 Text("Or drag a conversation from the list onto this side.")
             }
         }
-        // The system's grouped list, with its own margins, in a pane as narrow as half an iPad mini.
         .listStyle(.insetGrouped)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: Text("Search"))
         .navigationTitle("Open Beside")
@@ -432,7 +399,6 @@ private struct BesidePicker: View {
     }
 }
 
-/// On a phone, or iPhone Duo closed, the pair stays: the two conversations' titles at the top switch between them.
 struct PairSwitcher: View {
     let model: AppModel
     @Binding var selection: String?

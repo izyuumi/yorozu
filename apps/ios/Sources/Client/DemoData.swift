@@ -1,7 +1,6 @@
 import Foundation
 import YorozuWire
 
-/// Fictional examples, recreated for each demo session and never persisted.
 enum DemoData {
     static let welcomeID = "d0000000-0000-4000-8000-000000000001"
     static let travelID = "d0000000-0000-4000-8000-000000000002"
@@ -79,7 +78,6 @@ enum DemoData {
         ]
     }
 
-    /// A fictional current-device row; its id is deliberately not a relay public key.
     static var devices: [V3DeviceInfo] {
         let json = """
         [{"id":"demo-device","pairedAt":1781827200000,"push":false,"current":true}]
@@ -90,7 +88,6 @@ enum DemoData {
     }
 
     static var crons: [V3CronJob] {
-        // Decode the public wire shape, just like a cron_list answer from the plugin.
         let json = """
         [{"id":"demo-morning","name":"Morning check-in","enabled":true,
           "schedule":{"kind":"cron","expr":"0 9 * * 1-5","tz":"Asia/Tokyo"},

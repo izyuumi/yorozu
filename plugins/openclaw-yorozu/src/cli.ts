@@ -1,7 +1,3 @@
-/**
- * `openclaw yorozu pair | devices | devices remove <id>`. The CLI runs in its own process, so every command calls
- * the running plugin through the Gateway methods `index.ts` registers (`yorozu.*`, scope `operator.admin`).
- */
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
 import { addGatewayClientOptions, callGatewayFromCli, type GatewayRpcOpts } from "openclaw/plugin-sdk/gateway-runtime";
 import { renderQrTerminal } from "openclaw/plugin-sdk/media-runtime";
@@ -14,7 +10,6 @@ const call = async <T>(method: string, opts: GatewayRpcOpts, params?: unknown): 
   (await callGatewayFromCli(method, { ...opts, json: true }, params, { progress: false })) as T;
 
 const time = (ms: number): string => new Date(ms).toLocaleString();
-/** Straight to stdout: OpenClaw's console capture redacts key- and token-like text, and the link is all of that. */
 const print = (line: string): void => void process.stdout.write(`${line}\n`);
 
 export function registerYorozuCli(program: Program): void {

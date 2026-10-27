@@ -3,10 +3,6 @@ import SwiftUI
 import UIKit
 #endif
 
-// The system look (#311): system backgrounds, materials and standard bars, with the accent the user picked
-// (vermilion by default) and a few state colours. Every colour has an explicit dark counterpart.
-
-/// Light, dark, or the system's (owner, 2026-10-22).
 enum Appearance: String, CaseIterable, Identifiable {
     case system, light, dark
 
@@ -22,7 +18,6 @@ enum Appearance: String, CaseIterable, Identifiable {
     }
 }
 
-/// The accent the user picked (owner, 2026-10-22): the tint, the user's bubble, the send control and the focus ring.
 enum Accent: String, CaseIterable, Identifiable {
     case vermilion, pink, purple, indigo, blue, teal, green, graphite
 
@@ -42,7 +37,6 @@ enum Accent: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Tint, links, labels: lighter in dark mode so it reads on a dark background.
     var tint: Color {
         switch self {
         case .vermilion: YorozuPalette.adaptive(light: (0.737, 0.176, 0.110), dark: (0.941, 0.376, 0.278))
@@ -56,7 +50,6 @@ enum Accent: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The user's bubble behind white text: darker than the tint in dark mode, so the text holds 4.5:1 in both.
     var bubble: Color {
         switch self {
         case .vermilion: YorozuPalette.adaptive(light: (0.737, 0.176, 0.110), dark: (0.722, 0.220, 0.165))
@@ -72,8 +65,6 @@ enum Accent: String, CaseIterable, Identifiable {
 }
 
 extension ToolbarItemPlacement {
-    /// A conversation's prominent action (owner, 2026-10-25): from iOS 27 pinned at the trailing edge, which iPhone Duo's
-    /// side bars place right after navigation and keep out of the overflow; the primary action before, and on the Mac.
     static var pinnedAction: ToolbarItemPlacement {
         #if os(iOS)
         if #available(iOS 27, *) { return .topBarPinnedTrailing }
@@ -83,13 +74,10 @@ extension ToolbarItemPlacement {
 }
 
 extension EnvironmentValues {
-    /// The accent the user picked, for the colours `.tint` cannot stand in for (the bubble).
     @Entry var accent = Accent.vermilion
 }
 
 enum YorozuPalette {
-    /// Amber for a state that needs attention without being an error: an offline Mac, a failed task,
-    /// an over-long draft. Darker than the system orange so it holds 4.5:1 as text.
     static let warning = adaptive(
         light: (0.604, 0.322, 0.000),
         dark: (0.941, 0.639, 0.251)
@@ -114,17 +102,12 @@ enum YorozuPalette {
 }
 
 extension View {
-    /// One row of a scrolling column: its gutter, prose stopped at the reading width, centred in the scroll view's full
-    /// width (a no-op on a phone). Each row is centred rather than the column: with `scrollTargetLayout`, a
-    /// `ScrollPosition` scroll lines the target layout's leading edge up with the view's, which on an iPad shifted a
-    /// centred column to the left edge.
     func readableRow(gutter: CGFloat = LayoutMetrics.gutter) -> some View {
         padding(.horizontal, gutter)
             .frame(maxWidth: LayoutMetrics.readingWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
     }
 
-    /// Liquid Glass on iOS 26, the regular material before it.
     @ViewBuilder func yorozuGlass(in shape: some Shape) -> some View {
         if #available(iOS 26, macOS 26, *) {
             glassEffect(.regular, in: shape)
@@ -133,8 +116,6 @@ extension View {
         }
     }
 
-    /// A bar along the bottom edge: content scrolls under it with the system's edge effect on
-    /// iOS 26, over the bar material before it.
     @ViewBuilder func yorozuBottomBar(@ViewBuilder _ content: () -> some View) -> some View {
         if #available(iOS 26, macOS 26, *) {
             safeAreaBar(edge: .bottom, spacing: 0, content: content)
@@ -143,7 +124,6 @@ extension View {
         }
     }
 
-    /// The system subtitle under the navigation title on iOS 26; nothing before it.
     @ViewBuilder func navigationSubtitleIfAvailable(_ text: String) -> some View {
         if #available(iOS 26, macOS 26, *) {
             navigationSubtitle(text)
@@ -152,10 +132,8 @@ extension View {
         }
     }
 
-    /// Applies the accent the user picked without replacing semantic warning/error colours.
     func yorozuTint() -> some View { modifier(YorozuTint()) }
 
-    /// Light, dark or the system's, as picked in Settings: for a window's root.
     func yorozuAppearance() -> some View { modifier(YorozuAppearance()) }
 }
 
@@ -172,7 +150,6 @@ private struct YorozuAppearance: ViewModifier {
 
     func body(content: Content) -> some View {
         #if os(macOS)
-        // On the Mac `preferredColorScheme(nil)` does not hand a window back to the system: the app's appearance does.
         content.onChange(of: appearance, initial: true) { _, appearance in
             NSApp.appearance = switch appearance {
             case .system: nil
@@ -181,7 +158,6 @@ private struct YorozuAppearance: ViewModifier {
             }
         }
         #else
-        // On the windows, not `preferredColorScheme`: a sheet already open (Settings, where it is changed) did not follow.
         content.onChange(of: appearance, initial: true) { _, appearance in
             let style: UIUserInterfaceStyle = switch appearance {
             case .system: .unspecified

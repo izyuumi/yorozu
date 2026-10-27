@@ -5,7 +5,6 @@ import vm from 'node:vm';
 
 const script = await readFile(new URL('../public/copy.js', import.meta.url), 'utf8');
 
-// Exercise the script's browser-facing contract: click, clipboard, selection and status.
 function browser(writeText) {
   const classes = new Set();
   const source = { textContent: 'Read the setup guide.' };

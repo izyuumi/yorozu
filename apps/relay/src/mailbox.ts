@@ -1,17 +1,10 @@
 /// <reference types="@cloudflare/workers-types" />
-/**
- * One-time mailboxes for pairing a Mac from a paired iPhone or iPad (docs/ios-relay-contract.md, "Pairing from another
- * device"). The new Mac waits on `/mailbox/<id>` as a WebSocket; the paired device POSTs one letter, which the Mac's
- * socket gets at once, or as soon as it dials again. One letter per mailbox, ten minutes from first use, then gone.
- * Blind like the rooms: the letter is sealed to the Mac's key, and only its size and alphabet are checked.
- */
 export const MAILBOX_TTL_MS = 10 * 60_000;
 export const MAX_LETTER_BYTES = 4096;
 
 const MAILBOX_ID = /^[A-Za-z0-9_-]{22}$/;
 const LETTER = /^[A-Za-z0-9_-]+$/;
 
-/** 16 random bytes, base64url: what a Mac's code names. */
 export const isMailboxId = (value: string): boolean => MAILBOX_ID.test(value);
 
 export class Mailbox implements DurableObject {
@@ -39,7 +32,6 @@ export class Mailbox implements DurableObject {
         try {
           ws.send(body);
         } catch {
-          // Racing a close; the Mac dials again and gets the stored letter.
         }
       }
       return new Response(null, { status: 204 });
@@ -53,12 +45,10 @@ export class Mailbox implements DurableObject {
     return new Response("method not allowed", { status: 405, headers: { Allow: "GET, POST" } });
   }
 
-  /** The Mac only listens. */
   webSocketMessage(ws: WebSocket): void {
     ws.close(1008, "mailboxes only deliver");
   }
 
-  /** Ten minutes on: the waiting sockets close and the letter is forgotten. */
   async alarm(): Promise<void> {
     for (const ws of this.state.getWebSockets()) ws.close(1000, "expired");
     await this.state.storage.deleteAll();

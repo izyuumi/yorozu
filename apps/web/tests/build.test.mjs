@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 
-// Checks `astro build` output (run it first): what the Worker serves and what the CSP allows.
 const dist = new URL('../dist/', import.meta.url);
 const pages = (await readdir(dist, { recursive: true })).filter(file => file.endsWith('.html'));
 
@@ -26,7 +25,6 @@ test('the phone app claims the pairing and add-a-Mac pages, and nothing broader'
   const [details] = association.applinks.details;
   assert.deepEqual(details.appIDs, ['AN5KM8QGEF.to.yumi.yorozu.ios']);
   assert.deepEqual(details.components.map(component => component['/']), ['/pair', '/pair/', '/add', '/add/']);
-  // Served as JSON: without an extension, the default type would be a guess.
   assert.match(await readFile(new URL('_headers', dist), 'utf8'),
     /\/\.well-known\/apple-app-site-association\n\s+Content-Type: application\/json/);
 });

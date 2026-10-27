@@ -2,21 +2,14 @@ import AppIntents
 import CoreSpotlight
 import YorozuWire
 
-// Siri, Shortcuts and Spotlight (owner, 2026-10-17): ask the agent and hear its reply, open a conversation, start one.
-// The model is the app delegate's, registered with `AppDependencyManager` at launch (Push.swift).
-
-/// A conversation, by its title, for Siri to name and Shortcuts to pick, and, with its recent text, in the on-device
-/// Spotlight index Siri searches (``SpotlightIndexer``; owner, 2026-10-17).
 struct ConversationEntity: IndexedEntity {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Conversation")
     static let defaultQuery = ConversationQuery()
 
-    /// The messages Siri and Spotlight see: the newest, as "You:" and "Yorozu:" lines, at most this many characters.
     static let indexedCharacters = 4_000
 
     let id: String
     let title: String
-    /// The conversation's recent messages, newest last.
     let recentText: String
 
     var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(title)") }
@@ -38,7 +31,6 @@ struct ConversationEntity: IndexedEntity {
         recentText = String(lines.joined(separator: "\n").suffix(Self.indexedCharacters))
     }
 
-    /// The lines that contain `query`, for a search's answer.
     func lines(matching query: String) -> [String] {
         recentText.split(separator: "\n").map(String.init).filter { $0.localizedCaseInsensitiveContains(query) }
     }
@@ -59,7 +51,6 @@ struct ConversationQuery: EntityStringQuery {
         await MainActor.run { recent() }
     }
 
-    /// The list's conversations, newest first, archived ones left out.
     @MainActor private func recent() -> [ConversationEntity] {
         guard !model.isDemo else { return [] }
         return model.conversations.values.filter { $0.archived != true }.sorted { $0.updatedAt > $1.updatedAt }
@@ -67,8 +58,6 @@ struct ConversationQuery: EntityStringQuery {
     }
 }
 
-/// Sends a message and returns the agent's reply, which Siri reads out. A run longer than the wait still finishes: its
-/// reply arrives as the usual notification.
 struct AskYorozuIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask Yorozu"
     static let description = IntentDescription("Sends a message to your agent and returns its reply.")
@@ -123,7 +112,6 @@ struct NewConversationIntent: AppIntent {
     }
 }
 
-/// Ready without setup, in Siri and Spotlight. Japanese phrases are in AppShortcuts.xcstrings.
 struct YorozuShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: AskYorozuIntent(), phrases: ["Ask \(.applicationName)", "Ask \(.applicationName) something"],
@@ -152,8 +140,6 @@ enum IntentFailure: Error, CustomLocalizedStringResourceConvertible {
 extension AppModel {
     enum AskOutcome { case reply(String), pending }
 
-    /// Sends `text` (into a new conversation when `convId` is nil) and waits for the run's reply: the reply items that
-    /// were not there before, once the agent has stopped typing. `pending` past `timeout`.
     func ask(_ text: String, in convId: String?, timeout: Duration = .seconds(25)) async throws -> AskOutcome {
         guard !isDemo, pairing != nil else { throw IntentFailure.notPaired }
         let convId = convId ?? V3Event.newId()
@@ -172,7 +158,6 @@ extension AppModel {
     }
 }
 
-/// Finds conversations by what was said in them, for Siri to answer from: the matching lines, newest conversation first.
 struct SearchYorozuIntent: AppIntent {
     static let title: LocalizedStringResource = "Search Yorozu"
     static let description = IntentDescription("Finds conversations that mention something, with the lines that match.")
@@ -196,7 +181,6 @@ struct SearchYorozuIntent: AppIntent {
 }
 
 extension AppModel {
-    /// Conversations whose title or messages contain `query`, newest first, archived ones left out.
     func search(_ query: String) -> [Conversation] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
@@ -207,9 +191,6 @@ extension AppModel {
     }
 }
 
-/// Keeps the on-device Spotlight index (what Siri searches) in step with the conversations: each changed one again,
-/// a deleted or archived one out, all of them out when unpaired or when Settings turns it off. A separate index under
-/// Data Protection `complete` on iPhone and iPad, like the cache: searchable only after the device is unlocked.
 @MainActor
 final class SpotlightIndexer {
     static let enabledKey = "spotlightIndexing"
@@ -222,7 +203,6 @@ final class SpotlightIndexer {
     #else
     private let index = CSSearchableIndex(name: "conversations")
     #endif
-    /// What was last indexed, by conversation: its title, newest item and count, to skip the unchanged.
     private var indexed: [String: String]?
 
     static func start(model: AppModel) {
@@ -240,13 +220,11 @@ final class SpotlightIndexer {
             await withCheckedContinuation { done in
                 withObservationTracking { _ = model.conversations; _ = model.pairing; _ = model.isDemo } onChange: { done.resume() }
             }
-            // A burst of history pages or a streamed reply, indexed once.
             try? await Task.sleep(for: .seconds(2))
         }
     }
 
     func sync() async {
-        // Keep the real index untouched while the in-memory sample conversations are visible.
         guard !model.isDemo else { return }
         guard Self.enabled, model.pairing != nil else {
             if indexed != [:] { try? await index.deleteAllSearchableItems() }
@@ -264,7 +242,6 @@ final class SpotlightIndexer {
             if !gone.isEmpty { try await index.deleteAppEntities(identifiedBy: gone, ofType: ConversationEntity.self) }
             indexed = marks
         } catch {
-            // Tried again on the next change.
         }
     }
 }

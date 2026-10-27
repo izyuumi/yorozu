@@ -1,7 +1,6 @@
 import SwiftUI
 import YorozuWire
 
-/// The v3 app (#425): the pairing screen until the plugin has answered this device once, then the conversations.
 struct RootView: View {
     let model: AppModel
     @Environment(\.scenePhase) private var scenePhase
@@ -15,8 +14,6 @@ struct RootView: View {
                 PairingView(model: model)
             }
         }
-        // A tapped `yorozu://pair?…`, or the QR's web link opened by the system Camera, takes the same road as a scan;
-        // so does a Mac's code (`/add`) on a paired device.
         .onOpenURL { url in
             if let failure = model.submit(url.absoluteString) { model.pairingError = failure }
         }
@@ -31,10 +28,8 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            // iOS suspends a background app and its socket with it; a Mac app keeps running and keeps its link.
             #if os(iOS)
             case .background:
-                // A message just sent goes out before the socket closes: iOS lends a background app about 30 s.
                 let task = UIApplication.shared.beginBackgroundTask(withName: "Sending messages")
                 Task {
                     _ = await model.waitUntilSent(limit: .seconds(25))
@@ -46,14 +41,12 @@ struct RootView: View {
             default: break
             }
         }
-        // Only an active app has a conversation in the foreground (#431).
         .onChange(of: scenePhase, initial: true) { _, phase in model.setActive(phase == .active) }
         .yorozuTint()
         .yorozuAppearance()
     }
 }
 
-/// Scan (iPhone, iPad) or paste (every platform) the code `openclaw yorozu pair` prints, then compare the host key.
 struct PairingView: View {
     let model: AppModel
 
@@ -98,7 +91,6 @@ struct PairingView: View {
                             .autocorrectionDisabled()
                             .lineLimit(2...6)
                             .accessibilityIdentifier("pairing.code")
-                        // The system's paste control: no paste prompt, and the link is checked before anything else.
                         PasteButton(payloadType: String.self) { strings in
                             guard let text = strings.first else { return }
                             Task { @MainActor in
@@ -138,7 +130,6 @@ struct PairingView: View {
     }
 
     #if os(macOS)
-    /// A Mac has no camera: it shows a code for a paired iPhone or iPad to scan (owner, 2026-10-27).
     private var deviceCode: some View {
         Section {
             if let code = model.deviceCode {

@@ -1,7 +1,5 @@
 import SwiftUI
 
-/// The in-app notice (#415): a capsule at the top for a reply in another conversation while the app is in front. It
-/// goes after a few seconds or when swiped up; a tap opens the conversation; the next reply replaces it.
 struct NoticePill: View {
     let notice: InAppNotice
     let open: () -> Void
@@ -37,7 +35,6 @@ struct NoticePill: View {
 }
 
 extension View {
-    /// Shows the model's in-app notice over the top edge; `open` shows its conversation.
     func inAppNotices(_ model: AppModel, open: @escaping (String) -> Void) -> some View {
         modifier(InAppNotices(model: model, open: open))
     }

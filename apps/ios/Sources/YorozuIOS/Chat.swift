@@ -1,11 +1,7 @@
 import SwiftUI
 import YorozuWire
 
-/// One conversation: the user's bubbles with their marks, each reply chunk as its own card (replies arrive whole,
-/// chunked by length), tool calls collapsed under the message whose run made them, `/new` boundaries, the typing
-/// indicator, the composer. Opening it fetches what is newer than the cache; reaching the top loads the page before.
 struct ChatView: View {
-    /// With two conversations side by side, one is focused: it types and is the one the plugin hears is in front.
     enum Focus { case only, focused, unfocused }
 
     let model: AppModel
@@ -13,15 +9,11 @@ struct ChatView: View {
     var focus = Focus.only
 
     @State private var draft = ""
-    /// Files in the composer, already copied into `AttachmentFiles` (#430).
     @State private var files: [ChatAttachment] = []
-    /// An automation attached from "Edit in Chat": a chip in the composer, part of the text once sent.
     @State private var automation: V3CronJob?
     @State private var dropFailure: String?
     @State private var position = ScrollPosition(edge: .bottom)
-    /// The newest message is in view: hides the jump-to-latest button.
     @State private var atBottom = true
-    /// How far the timeline is dragged left to show the times, as in Messages (owner, 2026-10-18); 0 at rest.
     @State private var timesShown: CGFloat = 0
     @ScaledMetric(relativeTo: .caption2) private var timesWidth: CGFloat = 64
     @Environment(\.scenePhase) private var scenePhase
@@ -33,7 +25,6 @@ struct ChatView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
                 if let conversation, conversation.complete != true {
-                    // In view at the top: the older page. Again whenever one arrived and the top is still in view.
                     ProgressView()
                         .frame(maxWidth: .infinity)
                         .opacity(model.loadingOlder.contains(convId) ? 1 : 0)
@@ -53,30 +44,21 @@ struct ChatView: View {
         }
         .scrollPosition($position)
         #if os(iOS)
-        // A leftward drag shows the times: the timeline follows the finger, then springs back. A UIKit pan that only
-        // begins on a mostly horizontal leftward drag, so the vertical scroll never waits on it (a SwiftUI DragGesture
-        // in a ScrollView took touches from the scroll and stalled it).
         .gesture(LeftwardPan { dx in timesShown = min(max(-dx, 0), timesWidth) } ended: {
             withAnimation(.snappy) { timesShown = 0 }
         })
         #endif
-        // Scrolling the conversation puts the keyboard away, following the finger (owner, 2026-10-17).
         .scrollDismissesKeyboard(.interactively)
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentSize.height - geometry.visibleRect.maxY
         } action: { _, distance in
-            // The distance, not a Bool: a Bool that flipped and back within the first layouts left the button showing.
             atBottom = distance <= LayoutMetrics.section * 2
         }
         .defaultScrollAnchor(.bottom)
-        // An older page grows the content upward: what is on screen stays put.
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
-        // Follows new messages only from the bottom, or the user's own: a reader scrolled up stays where they are.
         .onChange(of: items.last?.id) { if atBottom || items.last?.kind == .user { position.scrollTo(edge: .bottom) } }
         .task(id: model.state == .ready) { model.open(convId) }
         .onChange(of: typing) { if atBottom { position.scrollTo(edge: .bottom) } }
-        // Opening reads it on every device (#429), Mark as Unread included; a reply that arrives while it is on screen
-        // only moves the cursor, and so does coming back to the foreground with it open.
         .onAppear {
             model.markRead(convId, explicit: true)
             model.setOnScreen(convId, true)
@@ -92,7 +74,6 @@ struct ChatView: View {
         .onChange(of: model.conversations[convId]?.latestReply?.id) { readIfActive() }
         .onChange(of: scenePhase) { readIfActive() }
         .overlay(alignment: .bottom) {
-            // Animated here only: on the whole conversation it animated every change made in the same moment.
             ZStack {
                 if !atBottom {
                     JumpToLatestButton { withAnimation { position.scrollTo(edge: .bottom) } }
@@ -117,7 +98,6 @@ struct ChatView: View {
                 automation = nil
             }
         }
-        // Files dropped anywhere on the conversation (the Finder on a Mac, another app on an iPad) join the composer.
         .dropDestination(for: URL.self) { urls, _ in
             guard model.attachmentsAvailable else { return false }
             return attach(urls)
@@ -127,7 +107,6 @@ struct ChatView: View {
         } message: {
             Text(dropFailure ?? "")
         }
-        // "Edit in Chat" leaves its automation here, unsent.
         .onChange(of: model.automationDrafts[convId], initial: true) { _, seed in
             guard let seed else { return }
             automation = seed
@@ -140,7 +119,6 @@ struct ChatView: View {
 }
 
 extension ChatView {
-    /// Files from a drop or a paste: staged when under the host's limit, the rest named in one alert.
     @discardableResult
     private func attach(_ urls: [URL]) -> Bool {
         guard model.attachmentsAvailable else { return false }
@@ -174,7 +152,6 @@ extension ChatView {
         return true
     }
 
-    /// The attached automation goes into the text the agent reads: its name and id, then what the user typed.
     static func message(_ text: String, automation: V3CronJob?) -> String {
         guard let automation else { return text }
         let reference = "Cron job \"\(automation.name)\" (id \(automation.id))"
@@ -206,7 +183,6 @@ struct ItemRow: View {
         .sheet(isPresented: $selecting) { SelectTextSheet(text: item.text) }
     }
 
-    /// `/new`: the session started over here; what is above is no longer in the agent's context.
     private var reset: some View {
         HStack(spacing: LayoutMetrics.inner) {
             VStack { Divider() }
@@ -218,7 +194,6 @@ struct ItemRow: View {
 
     private var user: some View {
         HStack(spacing: 0) {
-            // A bubble stops short of the far edge, so its side says who spoke even when it is long.
             Spacer(minLength: LayoutMetrics.section * 2)
             VStack(alignment: .trailing, spacing: LayoutMetrics.tight) {
                 if let files = item.attachments, !files.isEmpty {
@@ -237,14 +212,19 @@ struct ItemRow: View {
                 DeliveryMark(delivery: delivery)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(delivery.word))
+                if let rejected = item.rejected {
+                    Text(rejected)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                }
             }
         }
     }
 
-    /// The v2 mark's look for v3's steps (#415): queued and sending, ✓ sent, ✓✓ delivered, read.
     private var delivery: Delivery {
         let status = item.status ?? .queued
-        return Delivery(state: status == .read ? .read : status >= .sent ? .delivered : .sending,
+        return Delivery(state: item.rejected != nil ? .notDelivered : status == .read ? .read : status >= .sent ? .delivered : .sending,
             inFlight: status == .sending, sent: status >= .sending, sentAt: Int(item.ts), onHost: status >= .delivered)
     }
 
@@ -264,7 +244,6 @@ struct ItemRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Amber, not red: red is the mark of a message that did not go out.
     private var error: some View {
         Label { Text(item.text) } icon: {
             Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
@@ -283,7 +262,6 @@ struct ItemRow: View {
     }
 }
 
-/// A run's tool calls, collapsed to one line; open, each call's name and its last status.
 private struct ToolsRow: View {
     let calls: [ToolCall]
 
@@ -333,8 +311,6 @@ private struct ToolsRow: View {
     }
 }
 
-/// Each message's time, hidden past the trailing edge until the timeline is dragged left (Messages' gesture): every row
-/// slides by the drag and the time slides in after it.
 private struct MessageTime: ViewModifier {
     let item: ChatItem
     let shown: CGFloat
@@ -354,7 +330,6 @@ private struct MessageTime: ViewModifier {
             }
     }
 
-    /// Messages have a time; tool rows and session resets do not.
     static func isTimed(_ item: ChatItem) -> Bool { item.kind == .user || item.kind == .agent || item.kind == .error }
 
     static func time(_ item: ChatItem) -> some View {
@@ -365,9 +340,6 @@ private struct MessageTime: ViewModifier {
     }
 }
 
-/// On the Mac, which has no swipe to reveal them (#517), each message's time sits beneath it, on its side: trailing for
-/// the user's, leading for the agent's and errors. VoiceOver reads it after the message. iPhone and iPad keep
-/// ``MessageTime``.
 private struct MessageTimeBelow: ViewModifier {
     let item: ChatItem
 
@@ -389,7 +361,6 @@ private struct MessageTimeBelow: ViewModifier {
     }
 }
 
-/// A small glass circle at the bottom centre while the newest message is out of view: back to it.
 private struct JumpToLatestButton: View {
     let action: () -> Void
 
@@ -402,11 +373,11 @@ private struct JumpToLatestButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .help(String(localized: "Jump to Latest"))
         .accessibilityLabel(Text("Jump to Latest"))
     }
 }
 
-/// The agent is working: from `run_started` until the run ends (#415).
 private struct TypingIndicator: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -422,25 +393,18 @@ private struct TypingIndicator: View {
     }
 }
 
-/// The field, the + for attachments (#430) and the send control in one glass container, as v2's composer, with the
-/// staged files above it. Messages typed while offline wait in the outbox, so sending is never disabled by the link.
-/// On the Mac Return is a new line and ⌘Return sends (owner, 2026-10-09); iPhone and iPad keep smart Enter.
 private struct Composer: View {
     @Binding var text: String
     @Binding var files: [ChatAttachment]
     @Binding var automation: V3CronJob?
-    /// The host's limit; nil when it takes no attachments, which hides the +.
     let attachLimit: Int?
-    /// Side by side, the focused composer wears an accent ring and the other invites a tap.
     let focus: ChatView.Focus
-    /// Files pasted or dropped onto the field.
     let onFiles: ([URL]) -> Bool
     let onImages: ([Data]) -> Bool
     let onPasteData: (Data, String, String) -> Bool
     let onSend: () -> Void
     @Environment(\.accent) private var accent
 
-    /// The send circle inside the ``controlTarget``-tall row; smaller, so the fill reads as a button.
     private let sendCircle: CGFloat = 32
     private let radius: CGFloat = 22
 
@@ -451,6 +415,12 @@ private struct Composer: View {
                     files.removeAll { $0.id == file.id }
                     AttachmentFiles.remove(file)
                 }
+            }
+            if files.count > V3Attachment.maxPerMessage {
+                Text("A message can carry up to \(V3Attachment.maxPerMessage) attachments.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, LayoutMetrics.stack)
             }
             row
         }
@@ -476,7 +446,6 @@ private struct Composer: View {
             }
             ComposerTextView(text: $text, placeholder: focus == .unfocused ? String(localized: "Tap to reply here") : String(localized: "Message"), onSubmit: send, onFiles: onFiles, onImages: onImages,
                 onPasteData: onPasteData)
-                // Room above and below the text, inside the glass; right up to the + on the left (owner, 2026-10-17).
                 .padding(.vertical, LayoutMetrics.inner)
                 .padding(.leading, attachLimit == nil ? 0 : -LayoutMetrics.inner)
                 .frame(minHeight: controlTarget)
@@ -490,17 +459,19 @@ private struct Composer: View {
             }
             .buttonStyle(.plain)
             .frame(width: controlTarget, height: controlTarget)
-            // ⌘Enter sends on the Mac (owner, 2026-10-09).
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(!canSend)
+            .help(String(localized: "Send"))
             .accessibilityLabel(Text("Send"))
             .accessibilityIdentifier("composer.send")
         }
-        // Without the +, the text keeps the inset the + would have given it.
         .padding(.leading, attachLimit == nil ? LayoutMetrics.stack : 0)
     }
 
-    private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil }
+    private var canSend: Bool {
+        files.count <= V3Attachment.maxPerMessage
+            && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil)
+    }
 
     private func send() {
         guard canSend else { return }
@@ -509,8 +480,6 @@ private struct Composer: View {
 }
 
 #if os(iOS)
-/// A pan that begins only on a leftward, mostly horizontal drag, beside the scroll view's own: a vertical drag never
-/// starts it, so scrolling is never held up. `changed` gets the horizontal translation (negative to the left).
 private struct LeftwardPan: UIGestureRecognizerRepresentable {
     let changed: (CGFloat) -> Void
     let ended: () -> Void
@@ -543,7 +512,6 @@ private struct LeftwardPan: UIGestureRecognizerRepresentable {
             return velocity.x < 0 && abs(velocity.x) > abs(velocity.y) * 2
         }
 
-        /// Context menus and taps on bubbles keep working beside it.
         func gestureRecognizer(_ recognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
             !(other.view is UIScrollView)

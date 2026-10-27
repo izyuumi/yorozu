@@ -1,37 +1,22 @@
 import Foundation
 
-/// The client's relay link for wire v3 (docs/ios-relay-contract.md): one relay socket at a time, a Noise IK
-/// handshake on every socket and whenever the relay reports the host back online, then sealed `V3Event`s.
-/// Re-dials with a capped backoff until ``stop()``. Every relay message is attacker-controlled: anything that does
-/// not parse or open is dropped, never thrown.
 public actor V3Connection {
     public enum State: Equatable, Sendable {
-        /// Stopped, or between sockets.
         case offline
-        /// Dialling or joining the relay.
         case connecting
-        /// Joined; the relay says the plugin holds no socket. Messages wait for it.
         case hostOffline
-        /// Joined, the init frame is out, waiting for the plugin's response and `peer_info`.
         case handshaking
-        /// The session is up and both `peer_info`s are exchanged: messages may go.
         case ready
-        /// No common protocol version. Stopped.
         case updateRequired
-        /// The pairing code was refused (expired or already used). Stopped.
         case pairingFailed(String)
-        /// The relay or the plugin no longer knows this device. Stopped.
         case unpaired
     }
 
     public enum Update: Sendable {
         case state(State)
         case event(V3Event)
-        /// The relay's `accepted` for the frame that carried this `messageId`: ✓ sent.
         case accepted(messageId: String)
-        /// The relay let this device in for the first time: the one-time token is spent.
         case relayJoined
-        /// A session is up and the plugin's `peer_info` arrived. The first one also proves the pairing.
         case sessionOpen(V3PeerInfo)
     }
 
@@ -40,14 +25,11 @@ public actor V3Connection {
     private let local: V3PeerInfo
     private let urlSession: URLSession
     private let dial: URL
-    /// The relay knows this device: joins sign the connect nonce instead of spending the token.
     private var relayKnows: Bool
-    /// A token join failed as unknown: the token may have been spent on a socket lost before `joined`.
     private var triedAsKnown = false
 
     private var continuation: AsyncStream<Update>.Continuation?
     private var running = false
-    /// Bumped per socket, so callbacks from an old one are ignored.
     private var generation = 0
     private var socket: URLSessionWebSocketTask?
     private var hostOnline = false
@@ -55,7 +37,6 @@ public actor V3Connection {
     private var session: V3Session?
     private var peerReady = false
     private var state = State.offline
-    /// Frame signature -> messageId, for `accepted`. Per socket.
     private var sentSigs: [String: String] = [:]
     private var attempt = 0
     private var flowControl = false
@@ -65,25 +46,19 @@ public actor V3Connection {
     private var pinger: Task<Void, Never>?
     private var pongDeadline: Task<Void, Never>?
     private var handshakeDeadline: Task<Void, Never>?
-    /// The APNs token (lowercase hex), told to the relay after every `joined` (#431).
     private var pushToken: String?
-    /// The current socket got `joined`: the relay drops a socket that sends `push` before it.
     private var joined = false
 
     static let pingInterval: Duration = .seconds(25)
     static let pongTimeout: Duration = .seconds(10)
-    /// No response and `peer_info` within this: a new init frame (the plugin may have restarted meanwhile).
     static let handshakeTimeout: Duration = .seconds(15)
 
-    /// `relayKnows`: the relay accepted this device before, so `pairing.token` is spent. `pairing.secret`, while
-    /// present, goes into every handshake as the pairing proof; it is dropped after the first ``Update/sessionOpen(_:)``.
     public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: V3PeerInfo,
         urlSession: URLSession = .shared) throws {
         guard pairing.v == 3, let room = pairing.roomId, QrPayload.isAcceptableRelayUrl(pairing.relayUrl),
               var components = URLComponents(string: pairing.relayUrl) else {
             throw WireV3.Failure.malformed("not a v3 pairing")
         }
-        // The relay routes the socket on the room before it reads anything.
         components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "room", value: room)]
         guard let dial = components.url else { throw WireV3.Failure.malformed("relay URL") }
         self.pairing = pairing
@@ -94,14 +69,12 @@ public actor V3Connection {
         self.dial = dial
     }
 
-    /// One stream per connection; call once, before ``start()``.
     public func updates() -> AsyncStream<Update> {
         let (stream, continuation) = AsyncStream<Update>.makeStream()
         self.continuation = continuation
         return stream
     }
 
-    /// Dials, and keeps re-dialling until ``stop()``.
     public func start() {
         guard !running else { return }
         running = true
@@ -109,8 +82,6 @@ public actor V3Connection {
         connect()
     }
 
-    /// Drops any socket now and dials again without waiting out the backoff (the app came back to the foreground:
-    /// a socket iOS suspended may be half open).
     public func reconnect() {
         guard running else { return start() }
         attempt = 0
@@ -124,13 +95,11 @@ public actor V3Connection {
         set(.offline)
     }
 
-    /// The device's APNs token for the relay's alerts (`{"type":"push"}`): sent now when joined, and after every join.
     public func registerPush(deviceToken: String) {
         pushToken = deviceToken
         if joined, let socket { send(["type": "push", "deviceToken": deviceToken], on: socket) }
     }
 
-    /// Seals and sends a user message. False when no session is ready: the caller keeps it for the next one.
     @discardableResult
     public func send(_ message: V3Message) -> Bool {
         guard state == .ready, var session, let socket else { return false }
@@ -141,15 +110,12 @@ public actor V3Connection {
         return true
     }
 
-    /// Seals and sends any other event (no `accepted` tracking). False when no session is ready.
     @discardableResult
     public func send(_ event: V3Event) -> Bool {
         guard state == .ready, var session, let socket, let frame = try? session.seal(event) else { return false }
         self.session = session
         return transmit(frame, on: socket) != nil
     }
-
-    // MARK: Socket
 
     private func connect() {
         drop()
@@ -159,7 +125,6 @@ public actor V3Connection {
         joined = false
         let gen = generation
         let task = urlSession.webSocketTask(with: dial)
-        // The relay's own cap is 1 MiB per message; room for its JSON around it.
         task.maximumMessageSize = 4 << 20
         socket = task
         set(.connecting)
@@ -181,7 +146,6 @@ public actor V3Connection {
         }
     }
 
-    /// Ends the current socket and its session; no state change, no retry.
     private func drop() {
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
@@ -211,8 +175,6 @@ public actor V3Connection {
         case "unknown device" where relayKnows:
             return terminal(.unpaired)
         case "unknown token", "expired token", "unknown device":
-            // A new device whose token the relay refused: it may have spent it on this device on a socket lost
-            // before `joined`, so one join as a known device; past that the code is used up.
             if !relayKnows && !triedAsKnown && reason == "unknown token" {
                 triedAsKnown = true
                 return connect()
@@ -230,7 +192,6 @@ public actor V3Connection {
         set(final)
     }
 
-    /// 1 s, doubling to 30 s.
     private func scheduleRetry() {
         attempt += 1
         let delay = min(30, 1 << min(attempt - 1, 5))
@@ -247,7 +208,6 @@ public actor V3Connection {
         continuation?.yield(.state(new))
     }
 
-    /// Enqueued on the socket synchronously, so frames leave in the order they were sealed. Returns the signature.
     private func transmit(_ frame: V3Frame, on socket: URLSessionWebSocketTask) -> String? {
         let payload = frame.payload
         guard let sig = try? YorozuCrypto.signFrame(priv: identity.signingPrivateKey, data: Data(payload.utf8))
@@ -258,11 +218,8 @@ public actor V3Connection {
 
     private func send(_ message: [String: String], on socket: URLSessionWebSocketTask) {
         guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
-        // A failed send ends the socket, which the receive loop reports.
         socket.send(.string(String(decoding: data, as: UTF8.self))) { _ in }
     }
-
-    // MARK: Relay
 
     private func handle(_ text: String) {
         guard let socket,
@@ -286,12 +243,10 @@ public actor V3Connection {
             startPings(on: socket)
             hostOnline = message["ownerOnline"] as? Bool == true
             if hostOnline { beginHandshake(on: socket) } else { set(.hostOffline) }
-            // `joined` says presence as of when it was written; ask for the live answer.
             send(["type": "owner"], on: socket)
         case "owner":
             let online = message["online"] as? Bool == true
             if online && !hostOnline {
-                // Back after being away: the plugin may have restarted and lost its sessions.
                 hostOnline = true
                 beginHandshake(on: socket)
             } else if !online && hostOnline {
@@ -323,7 +278,6 @@ public actor V3Connection {
         }
     }
 
-    /// The first join spends the one-time token; every later one signs the relay's connect nonce.
     private func join(nonce: String, on socket: URLSessionWebSocketTask) {
         let known = relayKnows || triedAsKnown
         let challenge = known ? nonce : pairing.token
@@ -350,7 +304,6 @@ public actor V3Connection {
         }
     }
 
-    /// A missed pong is the only way to tell a half-open socket from a quiet one.
     private func ping(on socket: URLSessionWebSocketTask) {
         guard socket === self.socket, pongDeadline == nil else { return }
         pongDeadline = Task {
@@ -361,8 +314,6 @@ public actor V3Connection {
         }
         send(["type": "ping"], on: socket)
     }
-
-    // MARK: Session
 
     private func beginHandshake(on socket: URLSessionWebSocketTask) {
         endSession()
@@ -381,7 +332,6 @@ public actor V3Connection {
         guard let frame = try? V3Frame(payload: payload) else { return }
         switch frame {
         case .handshakeResponse:
-            // Other devices' responses carry other sids; a forged one fails and leaves the handshake waiting.
             guard session == nil, let handshake, var opened = try? handshake.finish(frame),
                   let hello = try? opened.seal(.peerInfo(local)) else { return }
             session = opened
@@ -398,7 +348,6 @@ public actor V3Connection {
 
     private func receive(_ event: V3Event) {
         guard peerReady else {
-            // Nothing counts before the plugin's `peer_info`.
             guard case .peerInfo(let peer) = event else {
                 if case .error(let error) = event, error.code == "update_required" { stopForUpdate() }
                 return
@@ -407,7 +356,6 @@ public actor V3Connection {
             peerReady = true
             handshakeDeadline?.cancel()
             handshakeDeadline = nil
-            // The plugin answered, so the proof was accepted: the secret has done its job.
             pairing.secret = nil
             set(.ready)
             continuation?.yield(.sessionOpen(peer))

@@ -1,8 +1,5 @@
 import Foundation
 
-/// The plaintext of every v3 transport box: `{"kind": …, "data": {…}}` (docs/ios-relay-contract.md, "Envelope").
-/// An unknown kind, or a known kind whose data does not decode, is `.unknown` and ignored, so later kinds and
-/// optional fields never break an older peer. Mirrors plugins/openclaw-yorozu/src/envelope.ts.
 public enum V3Event: Equatable, Sendable {
     case peerInfo(V3PeerInfo)
     case message(V3Message)
@@ -12,24 +9,16 @@ public enum V3Event: Equatable, Sendable {
     case reply(V3Reply)
     case error(V3ErrorInfo)
     case tool(V3Tool)
-    /// `conv_list`: `conversations` nil is the client's request, otherwise the plugin's answer.
     case convList(V3ConvList)
-    /// `history`, client -> plugin: one page of a conversation.
     case historyRequest(V3HistoryRequest)
-    /// `history`, plugin -> the asking client: that page.
     case history(V3History)
     case readCursor(V3ReadCursor)
     case foreground(V3Foreground)
-    /// Client -> plugin (#428): rename, archive or unarchive, or delete one conversation.
     case convPatch(V3ConvPatch)
-    /// Plugin -> every client (#428): a conversation's title and archive state now, or that it was deleted.
     case convUpdate(V3ConvUpdate)
     case cronList(V3CronList)
-    /// `device_list` (Settings): `devices` and `error` nil is the client's request, otherwise the plugin's answer.
     case deviceList(V3DeviceList)
-    /// Client -> plugin (Settings): a device's push on or off, or its removal.
     case devicePatch(V3DevicePatch)
-    /// Client -> plugin: a one-time pairing code for another device; the plugin answers with the code or an error.
     case pairInvite(V3PairInvite)
     case upload(V3Upload)
     case uploadAck(V3UploadAck)
@@ -65,13 +54,11 @@ public enum V3Event: Equatable, Sendable {
         }
     }
 
-    /// Lowercase UUID, the only spelling of a `convId` or `messageId`: OpenClaw lowercases session keys.
     public static func isId(_ value: String) -> Bool {
         value.utf8.count == 36 && value.range(of: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
             options: .regularExpression) != nil
     }
 
-    /// A fresh `convId` or `messageId`.
     public static func newId() -> String { UUID().uuidString.lowercased() }
 
     public func encoded() throws -> Data {
@@ -86,17 +73,11 @@ public struct V3PeerInfo: Codable, Equatable, Sendable {
 
     public var protocolMin: Int
     public var protocolMax: Int
-    /// The sender's app or plugin version, diagnostic only.
     public var app: String
-    /// Client: the device model ("iPhone 17 Pro"). Host: the Mac's name.
     public var name: String?
-    /// Optional features this side speaks; a later kind is sent only to a peer that lists its capability.
     public var capabilities: [String]
-    /// Plugin: the largest attachment it takes or sends, in bytes (`mediaMaxMb`, #430).
     public var mediaMaxBytes: Int?
-    /// Plugin: the agent that answers (`channels.yorozu.agent`).
     public var agent: String?
-    /// Plugin: the OpenClaw version it runs in.
     public var hostVersion: String?
 
     public init(app: String, name: String? = nil, capabilities: [String] = [],
@@ -110,20 +91,16 @@ public struct V3PeerInfo: Codable, Equatable, Sendable {
         self.mediaMaxBytes = mediaMaxBytes
     }
 
-    /// The highest protocol both ranges hold, or nil: the peers cannot talk ("update required").
     public func negotiate(with peer: V3PeerInfo) -> Int? {
         let version = min(protocolMax, peer.protocolMax)
         return version >= max(protocolMin, peer.protocolMin) ? version : nil
     }
 }
 
-/// Client -> plugin: a user message for one conversation.
 public struct V3Message: Codable, Equatable, Sendable {
     public var convId: String
-    /// Made by the client; the plugin answers `delivered` and `run_started` with it and drops a repeat.
     public var messageId: String
     public var text: String
-    /// Files uploaded (`upload`, every one `done`) before this message went (#430).
     public var attachments: [V3Attachment]?
 
     public init(convId: String, messageId: String, text: String, attachments: [V3Attachment]? = nil) {
@@ -134,7 +111,6 @@ public struct V3Message: Codable, Equatable, Sendable {
     }
 }
 
-/// Plugin -> clients: `delivered` (received and decrypted) or `run_started` (the agent run began: read).
 public struct V3MessageRef: Codable, Equatable, Sendable {
     public var convId: String
     public var messageId: String
@@ -145,7 +121,6 @@ public struct V3MessageRef: Codable, Equatable, Sendable {
     }
 }
 
-/// Plugin -> clients: the agent is (still) working on a conversation, or has stopped.
 public struct V3Typing: Codable, Equatable, Sendable {
     public var convId: String
     public var active: Bool
@@ -156,15 +131,11 @@ public struct V3Typing: Codable, Equatable, Sendable {
     }
 }
 
-/// Plugin -> clients: one whole reply message (one chunk of a long reply).
 public struct V3Reply: Codable, Equatable, Sendable {
     public var convId: String
-    /// Made by the plugin.
     public var messageId: String
     public var text: String
-    /// Epoch milliseconds, plugin clock.
     public var ts: Int64
-    /// Files the agent sent with this reply, announced only: each device downloads one on request (#430).
     public var attachments: [V3Attachment]?
 
     public init(convId: String, messageId: String, text: String, ts: Int64, attachments: [V3Attachment]? = nil) {
@@ -176,13 +147,11 @@ public struct V3Reply: Codable, Equatable, Sendable {
     }
 }
 
-/// Either way: something the sender could not do. `code` is machine-readable; `message` is English for logs.
 public struct V3ErrorInfo: Codable, Equatable, Sendable {
     public var code: String
     public var message: String
     public var convId: String?
     public var messageId: String?
-    /// The transfer it is about: `too_large` for an upload, `not_found` for a download (#430).
     public var attachmentId: String?
 
     public init(code: String, message: String, convId: String? = nil, messageId: String? = nil, attachmentId: String? = nil) {
@@ -194,16 +163,12 @@ public struct V3ErrorInfo: Codable, Equatable, Sendable {
     }
 }
 
-// MARK: Attachments (#430)
-
-/// A file in a `message` or `reply`. `id` (a lowercase UUID, made by the side that has the bytes) names its transfer.
 public struct V3Attachment: Codable, Equatable, Sendable, Identifiable {
-    /// Peers that list this in `capabilities` speak the attachment kinds and fields.
     public static let capability = "attachments"
-    /// Raw bytes per `upload` or `chunk`: a sealed box of one stays far under the relay's 1 MiB frame.
     public static let chunkBytes = 160 * 1024
-    /// OpenClaw's `mediaMaxMb` default, until the plugin's `peer_info` says otherwise.
     public static let defaultMaxBytes = 8 * 1024 * 1024
+    public static let maxPerMessage = 32
+    public static let maxLabel = 255
 
     public var id: String
     public var name: String
@@ -218,9 +183,22 @@ public struct V3Attachment: Codable, Equatable, Sendable, Identifiable {
     }
 
     public static func chunkCount(_ size: Int) -> Int { max(1, (size + chunkBytes - 1) / chunkBytes) }
+
+    public static func wireName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let named = trimmed.isEmpty ? "file" : trimmed
+        guard named.count > maxLabel else { return named }
+        let ext = (named as NSString).pathExtension
+        guard !ext.isEmpty, ext.count < maxLabel / 2 else { return String(named.prefix(maxLabel)) }
+        return String((named as NSString).deletingPathExtension.prefix(maxLabel - ext.count - 1)) + "." + ext
+    }
+
+    public static func wireMime(_ mime: String) -> String {
+        let trimmed = mime.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed.count > maxLabel ? "application/octet-stream" : trimmed
+    }
 }
 
-/// Client -> plugin: chunk `index` of `count` of a file this client sends; `data` is base64.
 public struct V3Upload: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var name: String
@@ -241,7 +219,6 @@ public struct V3Upload: Codable, Equatable, Sendable {
     }
 }
 
-/// Plugin -> the uploading client: chunk `index` arrived; `done` once the whole file is stored.
 public struct V3UploadAck: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var index: Int
@@ -254,7 +231,6 @@ public struct V3UploadAck: Codable, Equatable, Sendable {
     }
 }
 
-/// Client -> plugin: send chunk `index` of an attachment.
 public struct V3Download: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var index: Int
@@ -265,7 +241,6 @@ public struct V3Download: Codable, Equatable, Sendable {
     }
 }
 
-/// Plugin -> the requesting client: chunk `index` of `count`; `data` is base64.
 public struct V3Chunk: Codable, Equatable, Sendable {
     public var attachmentId: String
     public var index: Int
@@ -280,16 +255,12 @@ public struct V3Chunk: Codable, Equatable, Sendable {
     }
 }
 
-/// Plugin -> clients: one tool call of the run answering `messageId`, for a collapsed row. Updates of one call share
-/// `callId` (OpenClaw's tool call id, not a UUID); the last status wins.
 public struct V3Tool: Codable, Equatable, Sendable {
     public enum Status: String, Codable, Sendable { case running, done, failed }
 
     public var convId: String
-    /// The user message whose run made the call.
     public var messageId: String
     public var callId: String
-    /// The tool's name, as the agent calls it ("exec", "web_search").
     public var name: String
     public var status: Status
 
@@ -302,7 +273,6 @@ public struct V3Tool: Codable, Equatable, Sendable {
     }
 }
 
-/// `conv_list`. Asked with `conversations` nil; answered with the owner's Yorozu conversations, newest first.
 public struct V3ConvList: Codable, Equatable, Sendable {
     public var conversations: [V3ConvSummary]?
 
@@ -310,7 +280,6 @@ public struct V3ConvList: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        // One malformed row drops that row, not the list.
         conversations = try c.decodeIfPresent([Lossy<V3ConvSummary>].self, forKey: .conversations)?
             .compactMap(\.value).filter { V3Event.isId($0.convId) }
     }
@@ -318,16 +287,11 @@ public struct V3ConvList: Codable, Equatable, Sendable {
 
 public struct V3ConvSummary: Codable, Equatable, Sendable {
     public var convId: String
-    /// Epoch ms of the session's last change.
     public var updatedAt: Int64
-    /// The transcript's newest event seq: a client whose last page carried this `rev` has nothing newer to fetch.
     public var rev: Int
 
-    /// The manual rename, else the generated title (#428); nil before either.
     public var title: String?
-    /// Archived: listed under Archived, not in the main list. Sent only when true.
     public var archived: Bool?
-    /// Pinned at (epoch ms): listed under Pinned, newest pin first. Sent only when pinned.
     public var pinnedAt: Int64?
 
     public init(convId: String, updatedAt: Int64, rev: Int, title: String? = nil, archived: Bool? = nil, pinnedAt: Int64? = nil) {
@@ -340,7 +304,6 @@ public struct V3ConvSummary: Codable, Equatable, Sendable {
     }
 }
 
-/// Client -> plugin: one page of a conversation's transcript. `before`/`after` are item seqs; neither: the newest page.
 public struct V3HistoryRequest: Codable, Equatable, Sendable {
     public var convId: String
     public var before: Int?
@@ -353,8 +316,6 @@ public struct V3HistoryRequest: Codable, Equatable, Sendable {
     }
 }
 
-/// Plugin -> the asking client: the request's fields again, the page oldest first, and whether another page lies
-/// further the same way (`more`).
 public struct V3History: Codable, Equatable, Sendable {
     public var convId: String
     public var before: Int?
@@ -377,7 +338,6 @@ public struct V3History: Codable, Equatable, Sendable {
         convId = try c.decode(String.self, forKey: .convId)
         before = try c.decodeIfPresent(Int.self, forKey: .before)
         after = try c.decodeIfPresent(Int.self, forKey: .after)
-        // An item of a kind this client does not know, or a malformed one, is skipped.
         items = try c.decode([Lossy<V3HistoryItem>].self, forKey: .items).compactMap(\.value)
             .filter { V3Event.isId($0.id) }
         more = try c.decode(Bool.self, forKey: .more)
@@ -385,8 +345,6 @@ public struct V3History: Codable, Equatable, Sendable {
     }
 }
 
-/// One transcript item. Items of one transcript event share its `seq`. `id`: the client's `messageId` for a user
-/// message, the user message's for its run's `tools` row, the transcript's (or one derived from it) otherwise.
 public struct V3HistoryItem: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable { case user, agent, tools, reset }
     public struct Call: Codable, Equatable, Sendable {
@@ -398,11 +356,9 @@ public struct V3HistoryItem: Codable, Equatable, Sendable {
     public var kind: Kind
     public var id: String
     public var seq: Int
-    /// Epoch ms, Gateway clock.
     public var ts: Int64
     public var text: String?
     public var tools: [Call]?
-    /// `user` and `agent`: the files the live `message` or `reply` carried, that the plugin still holds (#430).
     public var attachments: [V3Attachment]?
 
     public init(kind: Kind, id: String, seq: Int, ts: Int64, text: String? = nil, tools: [Call]? = nil,
@@ -417,16 +373,11 @@ public struct V3HistoryItem: Codable, Equatable, Sendable {
     }
 }
 
-/// Decodes to nil instead of failing the whole array.
 private struct Lossy<T: Decodable>: Decodable {
     let value: T?
     init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }
 
-/// Both ways: a conversation's read state, the same on every device (#429). Replies up to and including the one at `ts`
-/// (the reply's own plugin-clock `ts`; `messageId` is that reply) are read, later ones unread. `unread` is Mark as
-/// Unread: the conversation counts as unread whatever the cursor says, until a read clears it. The plugin keeps the
-/// cursor forward-only, sends the merged one to every device, and every stored one to a device whose session opens.
 public struct V3ReadCursor: Codable, Equatable, Sendable {
     public var convId: String
     public var messageId: String
@@ -441,11 +392,8 @@ public struct V3ReadCursor: Codable, Equatable, Sendable {
     }
 }
 
-/// Client -> plugin: the conversation on this device's screen while the app is in the foreground, or nil (#431). The
-/// plugin sends no push for a reply in it to this device while its session lasts.
 public struct V3Foreground: Codable, Equatable, Sendable {
     public var convId: String?
-    /// The app is in the foreground at all: a plugin with `devices` sends this device no push, it shows its own notice.
     public var active: Bool?
 
     public init(convId: String?, active: Bool? = nil) {
@@ -454,22 +402,18 @@ public struct V3Foreground: Codable, Equatable, Sendable {
     }
 }
 
-/// Settings: peers that list this capability speak `device_list` and `device_patch`, and `foreground.active`.
 public enum V3Devices {
     public static let capability = "devices"
 }
 
-/// One paired device. `id` is its Ed25519 relay key; `current`: the device that asked.
 public struct V3DeviceInfo: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String?
-    /// Epoch ms.
     public var pairedAt: Int64
     public var push: Bool
     public var current: Bool
 }
 
-/// Client -> plugin: empty, a request. Plugin -> that client: `devices`, or `error`.
 public struct V3DeviceList: Codable, Equatable, Sendable {
     public var devices: [V3DeviceInfo]?
     public var error: String?
@@ -480,7 +424,6 @@ public struct V3DeviceList: Codable, Equatable, Sendable {
     }
 }
 
-/// Client -> plugin: turn a device's push on or off, or remove it. Answered with `device_list` to the sender.
 public struct V3DevicePatch: Codable, Equatable, Sendable {
     public var id: String
     public var push: Bool?
@@ -493,13 +436,10 @@ public struct V3DevicePatch: Codable, Equatable, Sendable {
     }
 }
 
-/// Adding a device from a device (owner, 2026-10-17): peers that list this capability speak `pair_invite`.
 public enum V3Invite {
     public static let capability = "invite"
 }
 
-/// Client -> plugin: empty, a request for a one-time pairing code for another device. Plugin -> that client: the code as
-/// `openclaw yorozu pair` prints it (`link`, the QR's `webLink`, the host `fingerprint`, `expiresAt` epoch ms), or `error`.
 public struct V3PairInvite: Codable, Equatable, Sendable {
     public var link: String?
     public var webLink: String?
@@ -510,8 +450,6 @@ public struct V3PairInvite: Codable, Equatable, Sendable {
     public init() {}
 }
 
-/// The Crons tab (#432). Client -> plugin: empty, a request. Plugin -> that client: `jobs`, or `error` when the
-/// plugin cannot read the cron store.
 public struct V3CronList: Codable, Equatable, Sendable {
     public var jobs: [V3CronJob]?
     public var error: String?
@@ -522,37 +460,26 @@ public struct V3CronList: Codable, Equatable, Sendable {
     }
 }
 
-/// One cron job of the configured agent. Times are epoch milliseconds.
 public struct V3CronJob: Codable, Equatable, Sendable, Identifiable {
     public struct Delivery: Codable, Equatable, Sendable {
-        /// Always "yorozu": the plugin names only deliveries into a Yorozu conversation.
         public var channel: String
-        /// The conversation's `convId`.
         public var threadId: String
     }
 
     public var id: String
     public var name: String
     public var enabled: Bool
-    /// OpenClaw's schedule object as stored (`kind` plus its fields).
     public var schedule: JSONValue
-    /// The plugin's English wording of `schedule`.
     public var scheduleText: String
     public var nextRunAt: Int64?
     public var lastRunAt: Int64?
-    /// "ok", "error" or "skipped".
     public var lastStatus: String?
     public var lastError: String?
     public var delivery: Delivery?
 
-    /// The conversation the job delivers into, if it is a well-formed Yorozu one.
     public var convId: String? { delivery.flatMap { $0.channel == "yorozu" && V3Event.isId($0.threadId) ? $0.threadId : nil } }
 }
 
-/// Client -> plugin (#428). `title`: rename (empty clears the rename, so the generated title shows again);
-/// `archived`: archive or unarchive (archiving also unpins); `pinned`: pin or unpin; `deleted`: delete (the plugin
-/// archives, then deletes session and transcript). The plugin answers every device with `conv_update`, or the sender
-/// with `error`.
 public struct V3ConvPatch: Codable, Equatable, Sendable {
     public var convId: String
     public var title: String?
@@ -569,8 +496,6 @@ public struct V3ConvPatch: Codable, Equatable, Sendable {
     }
 }
 
-/// Plugin -> every client (#428): the conversation's state as it is now, whoever changed it. Absent `title` means none
-/// yet; absent `archived` means not archived; absent `pinnedAt` means not pinned; `deleted`: the conversation is gone.
 public struct V3ConvUpdate: Codable, Equatable, Sendable {
     public var convId: String
     public var title: String?

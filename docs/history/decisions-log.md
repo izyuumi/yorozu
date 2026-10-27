@@ -1144,3 +1144,71 @@ Further correction, 2026-10-19 09:31 JST: plus glyph still too far right and now
 Source: direct owner message at 10:27 JST, after internal build 18.
 
 Use the oval mark inside the app icon for the splash, not the full icon; make it respond to light and dark appearance.
+
+## 2026-10-28 — 0.5 migration retired
+
+The owner: migration to 0.9.x is complete; nothing about the 0.5 migration is written any more. Removed from OWNER_DECISIONS.md: the Upgrade from 0.5.0-beta section, the migration clause of "Wire protocol 3", the 0.5 import clause of the list order, and the 0.5 rationale in the Mac bundle id and Sparkle lines. `docs/upgrade-from-0.5.md` deleted.
+
+## 2026-10-28 — Unread mark retired
+
+The owner retired: "Unread mark on agent replies until opened on any device, a dot rather than a count: blue for unread replies, orange when a run failed (needs attention) (2026-10-17); read state syncs across devices; manual Mark as Read/Unread stays. The plugin stores the read cursor per conversation in its state dir. (2026-10-15)"
+
+## 2026-10-28 — Push scope revised
+
+Push per reply is iPhone and iPad only; the Mac shows a local notification while the app runs; only cron output with text pushes.
+
+## 2026-10-28 — Notice pill revised
+
+A reply from another conversation replaces the pill; a further reply from the same conversation leaves it as it is.
+
+## 2026-10-28 — Automations placement revised
+
+Automations is a tab next to Chats on iPhone and a sidebar row above the chats on iPad and the Mac.
+
+## 2026-10-28 — Splash research note retired
+
+The "Decision for Yorozu" in docs/research/splash-screen-psychology.md duplicated the launch-screen decision ("No timed splash delay"); the note is deleted.
+
+## 2026-10-28 — Old Settings window rule retired
+
+The 0.7 host Settings-window sizing note in ui-layout.md is retired; how Settings should look is now an open issue.
+
+## 2026-10-28 — English and Japanese only retired
+
+The owner retired "Interface text is in English and Japanese on every client. (2026-10-09)": Yorozu should support more languages (#530).
+
+## 2026-10-28 — System look retired
+
+The owner retired "The app takes the system look: native backgrounds, Liquid Glass bars, the vermilion accent and bubbles in system materials. Large UI changes are designed in Claude Design, mockups first; changes built from stock native controls go straight to code."
+
+## 2026-10-28 — Local signing identity retired
+
+The owner retired "The Mac signing identity is a local, gitignored build setting, not part of the repo; git history is left as it is. (2026-10-09)"
+
+## 2026-10-28 — Version line trimmed
+
+The 0.9.1 and 0.9.2 history and the 0.5 build reference are removed; the build-number rule stays.
+
+## 2026-10-28 — Record schema versions retired
+
+The owner retired "Every stored record carries a schema version; ordered migrations n → n+1, each idempotent, run at launch. (2026-10-17)"
+
+## 2026-10-28 — Protocol one-back rule retired
+
+The owner retired "`peer_info` negotiates `protocolMin`/`protocolMax`; each side supports one protocol version back; `update_required` only outside that. (2026-10-17)"
+
+## 2026-10-28 — minimumAutoupdateVersion rule retired
+
+The owner retired "A breaking Mac update sets Sparkle `sparkle:minimumAutoupdateVersion`. (2026-10-17)"
+
+## 2026-10-28 — Naming rule retired
+
+The owner retired the naming rule (app versions in prose, no version in type names, `V3*` rename).
+
+## 2026-10-28 — Self-hosted relay
+
+Replaces "Owner-specific values (such as the relay URL) are settings with generic defaults in code": the public relay is the default, and a user can optionally self-host the relay and use it (#533).
+
+## 2026-10-28 — projectx process line retired
+
+Work happens on `main`; the #415 build-order line is retired.

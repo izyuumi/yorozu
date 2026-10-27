@@ -1,7 +1,3 @@
-/**
- * The host identity: an X25519 static key (Noise, and the QR's `key`) and an Ed25519 relay key (the room and
- * every signed frame). Made on first start, then kept in OpenClaw's credentials store, `0600`, and never logged.
- */
 import path from "node:path";
 import { createSecretFileAtomic, tryReadSecretFileSync } from "openclaw/plugin-sdk/secret-file";
 import { resolveOAuthDir } from "openclaw/plugin-sdk/state-paths";
@@ -9,7 +5,6 @@ import { b64u, ed25519Keypair, fromB64u, roomId, x25519Keypair, type Keypair } f
 
 export type HostKeys = { static: Keypair; signing: Keypair; room: string };
 
-/** `<stateDir>/credentials/yorozu/host-keys.json`: the two private keys, base64url. */
 export const hostKeysPath = (): string => path.join(resolveOAuthDir(), "yorozu", "host-keys.json");
 
 type Stored = { v: 1; static: string; signing: string };
@@ -25,7 +20,6 @@ function parse(text: string): HostKeys {
   return { static: x25519Keypair(staticPriv), signing, room: roomId(signing.publicKey) };
 }
 
-/** Reads the host keys, making them on first start. A malformed file throws: replacing it would unpair every device. */
 export async function loadHostKeys(): Promise<HostKeys> {
   const filePath = hostKeysPath();
   const existing = tryReadSecretFileSync(filePath, "yorozu host keys");
@@ -42,7 +36,6 @@ export async function loadHostKeys(): Promise<HostKeys> {
       content: JSON.stringify(fresh),
     });
   } catch (error) {
-    // First writer wins: another start got there in between, so its keys are the ones.
     const raced = tryReadSecretFileSync(filePath, "yorozu host keys");
     if (!raced) throw error;
     return parse(raced);
