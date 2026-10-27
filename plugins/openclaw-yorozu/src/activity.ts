@@ -1,5 +1,4 @@
-import { getSessionEntry, readTranscriptStatsSync } from "openclaw/plugin-sdk/session-store-runtime";
-import { isId } from "./envelope.js";
+import { readTranscriptStatsSync } from "openclaw/plugin-sdk/session-store-runtime";
 import { yorozuRuntime } from "./runtime.js";
 
 type Known = { rev: number; at: number };
@@ -27,17 +26,6 @@ export function messageTime(convId: string, rev: number, read: () => number | un
   if (at === undefined) return fallback;
   remember(convId, { rev, at });
   return at;
-}
-
-export async function holdTime(agent: string, params: Record<string, unknown>): Promise<{ held: boolean }> {
-  const { convId, at } = params;
-  if (typeof convId !== "string" || !isId(convId)) throw new Error("convId must be a conversation id");
-  if (typeof at !== "number" || !Number.isSafeInteger(at) || at <= 0) throw new Error("at must be epoch milliseconds");
-  const sessionKey = `agent:${agent}:yorozu:direct:owner:thread:${convId}`;
-  const entry = getSessionEntry({ agentId: agent, sessionKey });
-  if (!entry?.sessionId) return { held: false };
-  await remember(convId, { rev: revOf(agent, sessionKey, entry.sessionId), at });
-  return { held: true };
 }
 
 function remember(convId: string, value: Known): Promise<void> {

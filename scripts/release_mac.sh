@@ -62,7 +62,7 @@ for item in "$SPARKLE/Versions/B/XPCServices/Installer.xpc" "$SPARKLE/Versions/B
 done
 codesign --verify --deep --strict "$APP"
 [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Contents/Info.plist")" = to.yumi.yorozu ] \
-    || { echo "The Mac app must be to.yumi.yorozu, or Sparkle cannot replace 0.5" >&2; exit 1; }
+    || { echo "The Mac app must be to.yumi.yorozu, the id Sparkle updates" >&2; exit 1; }
 [ -f "$APP/Contents/Resources/openclaw-channel/openclaw.plugin.json" ] \
     || { echo "The OpenClaw plugin is missing from the bundle" >&2; exit 1; }
 

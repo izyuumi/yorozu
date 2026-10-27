@@ -13,7 +13,6 @@ The OpenClaw channel plugin `yorozu`. It holds the host keys and one outbound We
 | `yorozu.pair.begin` | none | `openclaw yorozu pair` |
 | `yorozu.devices.list` | none | `openclaw yorozu devices` |
 | `yorozu.devices.remove` | `{id}`: full key or a unique prefix | `openclaw yorozu devices remove` |
-| `yorozu.conversations.time` | `{convId, at}` (epoch ms) | Sets a conversation's listed time (see Message times) |
 
 A method fails with `UNAVAILABLE` and the error text, for example while the channel is not connected to its relay.
 
@@ -50,7 +49,7 @@ Every device is the same channel peer, `owner`. A conversation is the session `a
 
 - `conv_list` and `history` are answered to the asking device only. They are read from the session store and the transcript (`listSessionEntries`, `getSessionEntry`, `loadTranscriptEventsSync`, `readTranscriptStatsSync`), never from `chat.history`. Pages hold up to 60 items and 192 KiB; one item's text is cut at 60,000 characters (the transcript keeps the whole text). Built item lists are cached for the 8 most recent sessions.
 - Live replies take their ids from the transcript message they came from, so a device does not show a reply twice after paging.
-- **Message times**: `conv_list`'s `updatedAt` is the conversation's newest user or agent message time from its transcript. It is kept per transcript revision in the keyed state store (namespace `message-times`). `yorozu.conversations.time` sets that time for an imported conversation until a new message arrives.
+- **Message times**: `conv_list`'s `updatedAt` is the conversation's newest user or agent message time from its transcript. It is kept per transcript revision in the keyed state store (namespace `message-times`).
 
 ## Titles, rename, pin, archive, delete (`src/sessions.ts`)
 
