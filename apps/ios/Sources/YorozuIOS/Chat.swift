@@ -62,10 +62,11 @@ struct ChatView: View {
         #endif
         // Scrolling the conversation puts the keyboard away, following the finger (owner, 2026-10-17).
         .scrollDismissesKeyboard(.interactively)
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.visibleRect.maxY >= geometry.contentSize.height - LayoutMetrics.section * 2
-        } action: { _, bottom in
-            atBottom = bottom
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentSize.height - geometry.visibleRect.maxY
+        } action: { _, distance in
+            // The distance, not a Bool: a Bool that flipped and back within the first layouts left the button showing.
+            atBottom = distance <= LayoutMetrics.section * 2
         }
         .defaultScrollAnchor(.bottom)
         // An older page grows the content upward: what is on screen stays put.
