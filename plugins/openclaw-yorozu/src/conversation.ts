@@ -72,7 +72,17 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
   const route = resolveOwnerRoute(cfg, ctx.agent, accountId);
   const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: convId });
   const files = await uploadedFiles(message.attachments);
-  if (files.length < (message.attachments?.length ?? 0)) log?.warn("yorozu: a message names attachments this host does not hold");
+  const held = new Set(files.map((file) => file.id));
+  const missing = (message.attachments ?? []).filter((a) => !held.has(a.id)).map((a) => a.name);
+  if (missing.length) {
+    log?.warn(`yorozu: a message names ${missing.length} attachment(s) this host does not hold`);
+    if (attempt === 0) {
+      send({
+        kind: "error",
+        data: { code: "attachment_missing", message: `not on the host, so the agent did not get them: ${missing.join(", ")}`, convId, messageId },
+      });
+    }
+  }
   const media = await toInboundMediaFactsWithMetadata(
     files.map((file) => ({ path: file.path, contentType: file.mime, fileName: file.name, messageId })),
   );

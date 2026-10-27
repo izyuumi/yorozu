@@ -2,214 +2,499 @@
   "sourceLanguage" : "en",
   "strings" : {
     "Dismiss" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "閉じる" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "閉じる"
+          }
+        }
+      }
     },
     "Yorozu %@ is available" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu %@ にアップデートできます" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu %@ にアップデートできます"
+          }
+        }
+      }
     },
     "Pin" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピン留め" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ピン留め"
+          }
+        }
+      }
     },
     "Unpin" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピン留めを解除" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ピン留めを解除"
+          }
+        }
+      }
     },
     "Pinned" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピン留め" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ピン留め"
+          }
+        }
+      }
     },
     "New Conversation Beside" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "横に新しい会話" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "横に新しい会話"
+          }
+        }
+      }
     },
     "Appearance" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "外観" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外観"
+          }
+        }
+      }
     },
     "System" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "システム" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "システム"
+          }
+        }
+      }
     },
     "Light" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ライト" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ライト"
+          }
+        }
+      }
     },
     "Dark" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ダーク" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ダーク"
+          }
+        }
+      }
     },
     "Accent Color" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アクセントカラー" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクセントカラー"
+          }
+        }
+      }
     },
     "Vermilion" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "朱色" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "朱色"
+          }
+        }
+      }
     },
     "Pink" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ピンク" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ピンク"
+          }
+        }
+      }
     },
     "Purple" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "紫" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "紫"
+          }
+        }
+      }
     },
     "Indigo" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "藍色" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "藍色"
+          }
+        }
+      }
     },
     "Blue" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "青" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "青"
+          }
+        }
+      }
     },
     "Teal" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "青緑" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "青緑"
+          }
+        }
+      }
     },
     "Green" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "緑" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "緑"
+          }
+        }
+      }
     },
     "Graphite" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "グラファイト" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "グラファイト"
+          }
+        }
+      }
     },
     "Open Beside" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "横に開く" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "横に開く"
+          }
+        }
+      }
     },
     "Show Sidebar" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイドバーを表示" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "サイドバーを表示"
+          }
+        }
+      }
     },
     "Hide Sidebar" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイドバーを隠す" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "サイドバーを隠す"
+          }
+        }
+      }
     },
     "Pane Options" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペインのオプション" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペインのオプション"
+          }
+        }
+      }
     },
     "Swap Sides" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "左右を入れ替え" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左右を入れ替え"
+          }
+        }
+      }
     },
     "Full Screen" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "フルスクリーン" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フルスクリーン"
+          }
+        }
+      }
     },
     "Close" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "閉じる" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "閉じる"
+          }
+        }
+      }
     },
     "Open Here" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ここに開く" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ここに開く"
+          }
+        }
+      }
     },
     "Recent" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "最近" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近"
+          }
+        }
+      }
     },
     "Search" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "検索" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検索"
+          }
+        }
+      }
     },
     "Or drag a conversation from the list onto this side." : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "一覧から会話をこちら側へドラッグすることもできます。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一覧から会話をこちら側へドラッグすることもできます。"
+          }
+        }
+      }
     },
     "Tap to reply here" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "タップしてここで返信" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "タップしてここで返信"
+          }
+        }
+      }
     },
     "Left pane" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "左のペイン" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左のペイン"
+          }
+        }
+      }
     },
     "Right pane" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "右のペイン" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右のペイン"
+          }
+        }
+      }
     },
     "Divider" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "区切り" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "区切り"
+          }
+        }
+      }
     },
     "Open on the left" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "左に表示中" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左に表示中"
+          }
+        }
+      }
     },
     "Open on the right" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "右に表示中" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "右に表示中"
+          }
+        }
+      }
     },
     "Pasted image" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "貼り付けた画像" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "貼り付けた画像"
+          }
+        }
+      }
     },
     "Take Photo" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真を撮る" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写真を撮る"
+          }
+        }
+      }
     },
     "Demo Device" : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "デモデバイス" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デモデバイス"
+          }
+        }
+      }
     },
     "This fictional device is for preview only. No host is paired." : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "プレビュー用の架空のデバイスです。ホストとはペアリングしていません。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "プレビュー用の架空のデバイスです。ホストとはペアリングしていません。"
+          }
+        }
+      }
     },
     "Exit demo mode before checking for updates." : {
       "extractionState" : "manual",
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデートを確認する前にデモを終了してください。" } } }
-    },
-    "Exit demo mode before pairing with a host.": {
-      "extractionState": "manual",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ホストとペアリングする前にデモを終了してください。"
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アップデートを確認する前にデモを終了してください。"
           }
         }
       }
     },
-    "Sample conversations and scripted replies. No host connection; changes disappear when you exit.": {
-      "extractionState": "manual",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "サンプルの会話と定型の返信です。ホストには接続しません。変更内容はデモを終了すると消えます。"
+    "Exit demo mode before pairing with a host." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストとペアリングする前にデモを終了してください。"
           }
         }
       }
     },
-    "Exit Demo": {
-      "extractionState": "manual",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "デモを終了"
+    "Sample conversations and scripted replies. No host connection; changes disappear when you exit." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "サンプルの会話と定型の返信です。ホストには接続しません。変更内容はデモを終了すると消えます。"
           }
         }
       }
     },
-    "Demo": {
-      "extractionState": "manual",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "デモ"
+    "Exit Demo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デモを終了"
           }
         }
       }
     },
-    "" : {
-
+    "Demo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デモ"
+          }
+        }
+      }
     },
+    "" : {},
     "%@, %@" : {
       "localizations" : {
         "en" : {
@@ -220,9 +505,7 @@
         }
       }
     },
-    "^[%@ tool call](inflect: true)" : {
-
-    },
+    "^[%@ tool call](inflect: true)" : {},
     "^[%lld tool call](inflect: true)" : {
       "localizations" : {
         "ja" : {
@@ -360,9 +643,7 @@
         }
       }
     },
-    "Archived" : {
-
-    },
+    "Archived" : {},
     "Ask Yorozu" : {
       "localizations" : {
         "ja" : {
@@ -393,9 +674,7 @@
         }
       }
     },
-    "Attach" : {
-
-    },
+    "Attach" : {},
     "Automations" : {
       "localizations" : {
         "ja" : {
@@ -530,64 +809,204 @@
       }
     },
     "Beta Updates" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ベータ版のアップデート" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ベータ版のアップデート"
+          }
+        }
+      }
     },
     "Beta builds have the newest changes before a stable release. Turned off, Yorozu waits for the next stable release." : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ベータ版には、安定版より先に最新の変更が入ります。オフにすると、次の安定版を待ちます。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ベータ版には、安定版より先に最新の変更が入ります。オフにすると、次の安定版を待ちます。"
+          }
+        }
+      }
     },
     "Updates" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "アップデート" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アップデート"
+          }
+        }
+      }
     },
     "Scan this code with Yorozu on an iPhone or iPad that is already paired." : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペアリング済みの iPhone または iPad の Yorozu で、このコードをスキャンしてください。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ペアリング済みの iPhone または iPad の Yorozu で、このコードをスキャンしてください。"
+          }
+        }
+      }
     },
     "The host could not make a pairing code." : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストがペアリングコードを作成できませんでした。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストがペアリングコードを作成できませんでした。"
+          }
+        }
+      }
     },
     "This code was already used or has expired. Scan the new code on the Mac." : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "このコードは使用済みか、有効期限が切れています。Mac に表示された新しいコードをスキャンしてください。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このコードは使用済みか、有効期限が切れています。Mac に表示された新しいコードをスキャンしてください。"
+          }
+        }
+      }
     },
     "Couldn’t reach the relay. Check the connection and scan again." : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "リレーに接続できませんでした。接続を確認して、もう一度スキャンしてください。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リレーに接続できませんでした。接続を確認して、もう一度スキャンしてください。"
+          }
+        }
+      }
     },
     "Add %@?" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "%@ を追加しますか？" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ を追加しますか？"
+          }
+        }
+      }
     },
     "Add" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "追加" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "追加"
+          }
+        }
+      }
     },
     "It pairs with your host and sees every conversation. Next, the Mac shows a host key: pair it only if the key is\n\n%@" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "ホストとペアリングし、すべての会話が見られるようになります。次に Mac にホストキーが表示されます。次のキーと一致する場合だけペアリングしてください。\n\n%@" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストとペアリングし、すべての会話が見られるようになります。次に Mac にホストキーが表示されます。次のキーと一致する場合だけペアリングしてください。\n\n%@"
+          }
+        }
+      }
     },
     "OK" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "OK" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
+          }
+        }
+      }
     },
     "On %@, check that the host key is %@, then click Pair." : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ で、ホストキーが %2$@ であることを確認してから「ペアリング」をクリックしてください。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ で、ホストキーが %2$@ であることを確認してから「ペアリング」をクリックしてください。"
+          }
+        }
+      }
     },
     "Couldn’t add the Mac" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac を追加できませんでした" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac を追加できませんでした"
+          }
+        }
+      }
     },
     "Finish on the Mac" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac で操作を完了してください" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac で操作を完了してください"
+          }
+        }
+      }
     },
     "Scan the code on the new Mac’s pairing screen." : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "新しい Mac のペアリング画面に表示されたコードをスキャンしてください。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい Mac のペアリング画面に表示されたコードをスキャンしてください。"
+          }
+        }
+      }
     },
     "This isn’t a Mac’s pairing code. Open Yorozu on the new Mac and scan the code it shows." : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac のペアリングコードではありません。新しい Mac で Yorozu を開き、表示されたコードをスキャンしてください。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac のペアリングコードではありません。新しい Mac で Yorozu を開き、表示されたコードをスキャンしてください。"
+          }
+        }
+      }
     },
     "Scan a Mac’s Code" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac のコードをスキャン" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac のコードをスキャン"
+          }
+        }
+      }
     },
     "Sending the code to the Mac…" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Mac にコードを送信しています…" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac にコードを送信しています…"
+          }
+        }
+      }
     },
     "Pair with your iPhone or iPad" : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "iPhone または iPad とペアリング" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone または iPad とペアリング"
+          }
+        }
+      }
     },
     "On an iPhone or iPad that already uses Yorozu, open Settings › Add a Device › Scan a Mac’s Code, or point its Camera at this code. A new code appears every 10 minutes." : {
-      "localizations" : { "ja" : { "stringUnit" : { "state" : "translated", "value" : "Yorozu を使っている iPhone または iPad で、設定 › デバイスを追加 › Mac のコードをスキャン を開くか、カメラをこのコードに向けてください。コードは 10 分ごとに新しくなります。" } } }
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu を使っている iPhone または iPad で、設定 › デバイスを追加 › Mac のコードをスキャン を開くか、カメラをこのコードに向けてください。コードは 10 分ごとに新しくなります。"
+          }
+        }
+      }
     },
     "Check for Updates…" : {
       "localizations" : {
@@ -832,9 +1251,7 @@
         }
       }
     },
-    "Disabled" : {
-
-    },
+    "Disabled" : {},
     "Done" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -864,9 +1281,7 @@
         }
       }
     },
-    "Edit in Chat" : {
-
-    },
+    "Edit in Chat" : {},
     "Enter code manually" : {
       "localizations" : {
         "es" : {
@@ -943,9 +1358,7 @@
         }
       }
     },
-    "Hidden" : {
-
-    },
+    "Hidden" : {},
     "Host" : {
       "localizations" : {
         "ja" : {
@@ -1004,9 +1417,7 @@
         }
       }
     },
-    "It is deleted on the host and on every device, with its history." : {
-
-    },
+    "It is deleted on the host and on every device, with its history." : {},
     "It stops reaching the host and has to pair again." : {
       "localizations" : {
         "ja" : {
@@ -1027,18 +1438,10 @@
         }
       }
     },
-    "Last run failed. Show the error" : {
-
-    },
-    "Last run skipped" : {
-
-    },
-    "Last run succeeded" : {
-
-    },
-    "Leave it empty to use the automatic title." : {
-
-    },
+    "Last run failed. Show the error" : {},
+    "Last run skipped" : {},
+    "Last run succeeded" : {},
+    "Leave it empty to use the automatic title." : {},
     "Message" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1118,12 +1521,8 @@
         }
       }
     },
-    "New session" : {
-
-    },
-    "Next run %@" : {
-
-    },
+    "New session" : {},
+    "Next run %@" : {},
     "No automations" : {
       "localizations" : {
         "ja" : {
@@ -1906,9 +2305,7 @@
         }
       }
     },
-    "Shown" : {
-
-    },
+    "Shown" : {},
     "Siri & Search" : {
       "localizations" : {
         "ja" : {
@@ -2629,6 +3026,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "最初のメッセージでホストに新しいセッションが始まります。"
+          }
+        }
+      }
+    },
+    "A message can carry up to %lld attachments." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1件のメッセージに添付できるのは%lld件までです。"
           }
         }
       }

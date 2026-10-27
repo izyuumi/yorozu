@@ -110,6 +110,7 @@ struct ChatItem: Codable, Identifiable, Equatable {
     var text: String
     var ts: Int64
     var status: SendStatus?
+    var rejected: String?
     var tools: [ToolCall]?
     var attachments: [ChatAttachment]?
     var seq: Int?
@@ -127,7 +128,7 @@ struct ChatAttachment: Codable, Equatable, Identifiable {
     var uploaded: Bool?
     var failure: String?
 
-    var wire: V3Attachment { V3Attachment(id: id, name: name, mime: mime, size: size) }
+    var wire: V3Attachment { V3Attachment(id: id, name: V3Attachment.wireName(name), mime: V3Attachment.wireMime(mime), size: size) }
 
     static func list(_ files: [V3Attachment]?, uploaded: Bool? = nil) -> [ChatAttachment]? {
         guard let files, !files.isEmpty else { return nil }

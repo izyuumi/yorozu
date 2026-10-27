@@ -167,6 +167,8 @@ public struct V3Attachment: Codable, Equatable, Sendable, Identifiable {
     public static let capability = "attachments"
     public static let chunkBytes = 160 * 1024
     public static let defaultMaxBytes = 8 * 1024 * 1024
+    public static let maxPerMessage = 32
+    public static let maxLabel = 255
 
     public var id: String
     public var name: String
@@ -181,6 +183,20 @@ public struct V3Attachment: Codable, Equatable, Sendable, Identifiable {
     }
 
     public static func chunkCount(_ size: Int) -> Int { max(1, (size + chunkBytes - 1) / chunkBytes) }
+
+    public static func wireName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let named = trimmed.isEmpty ? "file" : trimmed
+        guard named.count > maxLabel else { return named }
+        let ext = (named as NSString).pathExtension
+        guard !ext.isEmpty, ext.count < maxLabel / 2 else { return String(named.prefix(maxLabel)) }
+        return String((named as NSString).deletingPathExtension.prefix(maxLabel - ext.count - 1)) + "." + ext
+    }
+
+    public static func wireMime(_ mime: String) -> String {
+        let trimmed = mime.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed.count > maxLabel ? "application/octet-stream" : trimmed
+    }
 }
 
 public struct V3Upload: Codable, Equatable, Sendable {

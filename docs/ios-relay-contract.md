@@ -141,7 +141,7 @@ Each session has one key and one counter per direction, counters starting at 0.
 
 Every box's plaintext is one UTF-8 JSON object `{"kind": <string>, "data": <object>}`. Key order is free (Swift sorts keys, `JSON.stringify` does not).
 
-- **Unknown is ignored**: an unknown `kind`, or a known kind whose `data` fails validation, decodes as `.unknown` (Swift) / `{kind: "unknown"}` (TS) and is dropped without an answer. Unknown fields are ignored.
+- **Unknown is answered, not dropped (plugin)**: once a session has its `peer_info`, the plugin answers a known kind whose `data` fails validation with `error bad_request` (carrying the frame's `convId`, `messageId` or `attachmentId` when they are valid ids), an unknown kind or one a device may not send with `error unsupported`, and any frame before `peer_info` with `error bad_request`; each is logged. The client decodes an unknown or malformed kind as `.unknown` and ignores it. Unknown fields are ignored on both sides.
 - **Capabilities**: optional features are announced in `peer_info.capabilities`; a change that cannot be expressed that way raises the protocol version.
 - **Ids**: `convId` and `messageId` are lowercase UUIDs, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$` (`V3Event.isId`, `isId`); a known kind with a malformed id is unknown. A conversation's OpenClaw session key is `agent:<agent>:yorozu:direct:owner:thread:<convId>`.
 - Times are epoch milliseconds (integers).
@@ -271,7 +271,9 @@ Files both ways, each at most the plugin's `mediaMaxBytes` (`channels.yorozu.med
 | `code` | Meaning |
 |---|---|
 | `update_required` | No common protocol version |
-| `bad_request` | The receiver knows the kind but cannot act on it (pinning an archived conversation, an upload chunk that does not fit) |
+| `bad_request` | The receiver knows the kind but cannot act on it: data that fails validation, pinning an archived conversation, an upload chunk that does not fit. For a `message` it arrives instead of `delivered`, and the client marks the message not delivered with the reason and stops resending it |
+| `unsupported` | A kind the plugin does not handle from a device |
+| `attachment_missing` | A `message` named attachments the plugin does not hold; the turn runs without them, with `convId` and `messageId` |
 | `run_failed` | The agent run for `messageId` failed; `message` says why |
 | `too_large` | An `upload` over `mediaMaxBytes` |
 | `not_found` | A `download` of an attachment the plugin does not hold |
@@ -328,5 +330,5 @@ One push per finished agent reply, and per cron delivery with text, through the 
 
 Each side validates what it receives; the two are not identical.
 
-- The plugin treats as unknown (and so silently drops) a `message` or `reply` with more than 32 attachments, or an attachment or `upload` whose `name` or `mime` is empty or over 255 characters, and a `device_patch` whose `id` is over 64 characters. The client enforces none of these before sending.
+- The plugin refuses (`error bad_request`) a `message` with more than 32 attachments, an attachment or `upload` whose `name` or `mime` is empty or over 255 characters, and a `device_patch` whose `id` is over 64 characters. The client keeps within these before sending: the composer will not send more than 32 files, and names and types are trimmed to 1–255 characters (`V3Attachment.wireName`, `wireMime`).
 - The client drops malformed rows of `conv_list` and `history` individually; the plugin does not validate those answers (it only sends them).
