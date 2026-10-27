@@ -1148,3 +1148,27 @@ Use the oval mark inside the app icon for the splash, not the full icon; make it
 ## 2026-10-28 — 0.5 migration retired
 
 The owner: migration to 0.9.x is complete; nothing about the 0.5 migration is written any more. Removed from OWNER_DECISIONS.md: the Upgrade from 0.5.0-beta section, the migration clause of "Wire protocol 3", the 0.5 import clause of the list order, and the 0.5 rationale in the Mac bundle id and Sparkle lines. `docs/upgrade-from-0.5.md` deleted.
+
+## 2026-10-28 — Unread mark retired
+
+The owner retired: "Unread mark on agent replies until opened on any device, a dot rather than a count: blue for unread replies, orange when a run failed (needs attention) (2026-10-17); read state syncs across devices; manual Mark as Read/Unread stays. The plugin stores the read cursor per conversation in its state dir. (2026-10-15)"
+
+## 2026-10-28 — Push scope revised
+
+Push per reply is iPhone and iPad only; the Mac shows a local notification while the app runs; only cron output with text pushes.
+
+## 2026-10-28 — Notice pill revised
+
+A reply from another conversation replaces the pill; a further reply from the same conversation leaves it as it is.
+
+## 2026-10-28 — Automations placement revised
+
+Automations is a tab next to Chats on iPhone and a sidebar row above the chats on iPad and the Mac.
+
+## 2026-10-28 — Splash research note retired
+
+The "Decision for Yorozu" in docs/research/splash-screen-psychology.md duplicated the launch-screen decision ("No timed splash delay"); the note is deleted.
+
+## 2026-10-28 — Old Settings window rule retired
+
+The 0.7 host Settings-window sizing note in ui-layout.md is retired; how Settings should look is now an open issue.

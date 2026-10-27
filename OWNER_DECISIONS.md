@@ -27,7 +27,6 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 ## Status marks
 
 - Outgoing: ✓ sent = relay accepted; ✓✓ delivered = plugin received and decrypted; read = agent run started. Typing indicator from run start until the reply. (2026-10-15)
-- Unread mark on agent replies until opened on any device, a dot rather than a count: blue for unread replies, orange when a run failed (needs attention) (2026-10-17); read state syncs across devices; manual Mark as Read/Unread stays. The plugin stores the read cursor per conversation in its state dir. (2026-10-15)
 - Replies arrive as whole messages, chunked by length (no edit-in-place streaming). (2026-10-15)
 
 ## Pairing and security
@@ -48,15 +47,15 @@ On 2026-10-15 the owner replaced the secretary system with Yorozu as an OpenClaw
 
 ## Push and attachments
 
-- One push per finished agent reply via the relay's `notify`, preview (title + first line) sealed per device. Cron output delivered into a conversation pushes the same way. No mute yet. (2026-10-15)
-- No push to a device while the app is in front on it, per device; a minimal pill at the top shows a reply in another conversation instead (tap opens it, swipe up or 3 s dismisses, the newest replaces it), with an optional light haptic, on by default. (2026-10-17)
+- One push per finished agent reply via the relay's `notify`, preview (title + first line) sealed per device, on iPhone and iPad; the Mac shows a local notification while the app runs. Cron output with text delivered into a conversation pushes the same way. No mute yet. (2026-10-15, revised 2026-10-28)
+- No push to a device while the app is in front on it, per device; a minimal pill at the top shows a reply in another conversation instead (tap opens it, swipe up or 3 s dismisses; a reply from another conversation replaces it, while a further reply from the same conversation leaves it as it is), with an optional light haptic, on by default. (2026-10-17, revised 2026-10-28)
 - Reading a conversation on any device removes its delivered notifications on the others: live over the socket, and through a silent `sync` push for devices whose app is closed. (2026-10-17)
 - Attachments both ways (`sendMedia`), 8 MB limit (OpenClaw's `mediaMaxMb` default), sealed chunks under the relay's 1 MiB frame limit. Share extension stays, with a preview of the picture or file being sent; PDFs show their first page (2026-10-17). No voice notes yet. (2026-10-15)
 - Pasting images and files into the chat input stages them as attachments. On iPhone and iPad, the composer's plus menu offers taking a photo in place. Move the plus glyph left within its full tap target so it stays close to the textarea without overlapping it. (2026-10-19) Styled text pastes as plain text, never as an attachment. (2026-10-23)
 
 ## Automations
 
-- An Automations tab (ja 自動化, `clock` icon) next to Chats: all cron jobs on the configured agent, disabled ones greyed; name, human schedule, next run, last status (error on tap). Code and wire names stay `cron`. (2026-10-17)
+- Automations (ja 自動化, `clock` icon): a tab next to Chats on iPhone, a sidebar row above the chats on iPad and the Mac; all cron jobs on the configured agent, disabled ones greyed; name, human schedule, next run, last status (error on tap). Code and wire names stay `cron`. (2026-10-17, revised 2026-10-28)
 - No cron admin calls from Yorozu. Each row has "Edit in Chat": a new conversation opens with the job attached in the composer as a chip, like a file; sent, it becomes part of the text (`Cron job "<name>" (id <id>): …`) and the agent edits the job with its cron tool. (2026-10-15, chip 2026-10-17)
 - A job delivering into a Yorozu conversation (`delivery.channel: yorozu`, `threadId`) opens that conversation from its row. (2026-10-15)
 

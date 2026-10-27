@@ -66,8 +66,3 @@ All paths are under `apps/ios/Sources/YorozuIOS/`.
 - A user bubble leaves `2 × section` of space at the far edge (`Spacer(minLength:)` in
   `Chat.swift`) instead of a fixed width.
 
-## Owner decision pending review
-
-Kept verbatim from the earlier version of this file (it describes the removed secretary Mac host's Settings window) until the owner reviews it:
-
-> The Settings window's width is likewise one constant in `SettingsView`; its height comes from the selected tab: `settingsForm()` in `Sources/ProjectXApp/SettingsView.swift` gives each tab's form its ideal height (`fixedSize(horizontal: false, vertical: true)`, since a window proposes no height), so the window fits the tab and no tab scrolls (owner decision). A tab too tall for a 1080-point screen is split, as Harness was from Advanced, not given a scroll view.
