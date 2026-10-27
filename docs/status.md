@@ -35,4 +35,5 @@ Pending owner decisions or owner-only checks. Each row keeps its current default
 - An interrupted attachment upload starts over (partials are dropped after 30 minutes).
 - `openclaw cron add --thread-id` accepts only numeric (Telegram) ids, so a job delivering into a Yorozu conversation is made with the agent's cron tool or `cron.add`.
 - The plugin's keyed state (allowlist, read cursors) and OpenClaw's transcripts are not encrypted at rest beyond the disk's encryption.
+- Relay only for now: the direct path (LAN, Tailscale, loopback) is decided for 0.10.0 ([#532](https://github.com/izyuumi/yorozu/issues/532)).
 - No push on the Mac; no mute; no voice notes.
