@@ -67,10 +67,9 @@ The plugin typechecks per [its README](../plugins/openclaw-yorozu/README.md#type
 
 ## Website
 
-https://yorozu.yumi.to is the Astro site in `apps/web` on `main`, not on `projectx`. `.github/workflows/deploy-web.yml` deploys it on every push to `main` that touches `apps/web/**`, so merging is deploying. The pairing QR carries `https://yorozu.yumi.to/pair#<query>`, and the site's `/pair` page and AASA file are what open the app from it, so those links stay.
+https://yorozu.yumi.to is the Astro site in `apps/web`. `.github/workflows/deploy-web.yml` deploys it on every push to `main` that touches `apps/web/**`, so merging is deploying. The pairing QR carries `https://yorozu.yumi.to/pair#<query>`, and the site's `/pair` page and AASA file are what open the app from it, so those links stay.
 
 ## Not wired
 
 - APNs on the Mac: the Mac client registers no push token; it notifies only while running.
-- Merging `projectx` into `main` removes what `projectx` deleted, including `apps/web` and main's other workflows (`deploy-web.yml` deploys the site and the feed redirects). Keep those in the merge.
 - App Store submission: by hand in App Store Connect after TestFlight, with `apps/ios/APP-REVIEW-NOTES.md`.
