@@ -42,7 +42,7 @@ jobs:
           [ "$old" = "$(tr -d '[:space:]' < version.txt)" ] || scripts/release_mac.sh --promote "$old"
 
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
-        with: { xcode-version: latest-stable }
+        with: { xcode-version: '27.1' } # the Xcode the owner builds with; the code needs the iOS 27 SDK
       - name: Install Tuist 4.209.0
         run: |
           command -v mise >/dev/null || brew install mise
