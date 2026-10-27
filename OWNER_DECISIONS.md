@@ -114,7 +114,7 @@ These never change; future versions migrate around them (2026-10-17):
 - Sparkle EdDSA key and feed URLs (`yorozu.yumi.to/appcast.xml`, `yorozu.yumi.to/beta/appcast.xml`).
 - `CFBundleVersion` formula (Platform and release); never a smaller leading number.
 - Bundled plugin path `Contents/Resources/openclaw-channel`, plugin id `yorozu`.
-- Keychain service `to.yumi.yorozu.ios`; account `pairing-v3`, moving to a name without "v3" in two phases (Shape).
+- Keychain service `to.yumi.yorozu.ios`; account `pairing`, moved from `pairing-v3` in two phases (Shape).
 
 ## Versioning rules
 
