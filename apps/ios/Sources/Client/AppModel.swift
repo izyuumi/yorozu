@@ -582,6 +582,10 @@ final class AppModel {
             mark(ref.messageId, .delivered, in: ref.convId)
             ShareInbox.finish(messageId: ref.messageId)
         case .runStarted(let ref):
+            // Another device's message: only the host's history has its text.
+            if conversations[ref.convId]?.items.contains(where: { $0.id == ref.messageId }) != true {
+                enqueue(.historyRequest(V3HistoryRequest(convId: ref.convId, after: conversations[ref.convId]?.newestSeq)))
+            }
             mark(ref.messageId, .read, in: ref.convId)
             ShareInbox.finish(messageId: ref.messageId)
             setTyping(ref.convId, true)
