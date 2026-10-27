@@ -1,42 +1,46 @@
 #!/bin/sh
 # Builds the Mac release into dist/: Yorozu.dmg (Developer ID signed, notarized, stapled), appcast.xml (Sparkle, EdDSA
-# signed) and candidate.json, the assets of a v<version>-beta.<build> GitHub prerelease. yorozu.yumi.to/beta and
-# /beta/appcast.xml serve the newest release, prereleases included; /mac and /appcast.xml the latest stable one
-# (apps/web). Stable is the beta the owner checked, promoted unchanged when version.txt moves on (release-mac.yml).
-#   scripts/release_mac.sh                      build only; BUILD=<n> sets the visible build, else the last beta's plus 1
-#   scripts/release_mac.sh --publish            also publishes it as v<version>-beta.<build>, which Macs with beta
-#                                               updates on install within the hour
-#   scripts/release_mac.sh --promote <version> v<version>-beta.<n>
-#                                               republishes that beta as v<version>, the latest release, which
-#                                               every Mac installs within the hour; release tags can be neither
-#                                               moved nor deleted, so each version has one stable release
+# signed) and candidate.json, the assets of the v<version>-beta GitHub prerelease, which each build replaces.
+# yorozu.yumi.to/beta and /beta/appcast.xml serve the newest release, prereleases included; /mac and /appcast.xml the
+# latest stable one (apps/web). Stable is the beta the owner checked, promoted unchanged when version.txt moves on
+# (release-mac.yml). Release notes come from the Conventional Commits since the last stable release (release_notes.sh).
+#   scripts/release_mac.sh                      build only; BUILD=<n> sets the visible build, else the beta's plus 1
+#   scripts/release_mac.sh --publish            also publishes it as v<version>-beta, replacing the last beta, which
+#                                               Macs with beta updates on install within the hour
+#   scripts/release_mac.sh --promote <version> <build>
+#                                               republishes v<version>-beta, if it is still that build, as
+#                                               v<version>, the latest release, which every Mac installs within the
+#                                               hour; stable tags can be neither moved nor deleted, so each version
+#                                               has one stable release
 # Needs: the "Developer ID Application" identity; a notarytool keychain profile (NOTARY_PROFILE, default yorozu-notary);
 # Sparkle's EdDSA key in the login Keychain, or SPARKLE_ED_KEY_FILE; gh signed in, for --publish and --promote.
 set -eu
 cd "$(dirname "$0")/.."
 REPO=${REPO:-izyuumi/yorozu}
-# The highest n of the v<version>-beta.<n> releases, or nothing.
-last_beta() {
-    gh release list --repo "$REPO" --limit 1000 --json tagName -q '.[].tagName' \
-        | sed -n "s/^v$(printf '%s' "$1" | sed 's/\./\\./g')-beta\.\([0-9]*\)\$/\1/p" | sort -n | tail -1
+# The visible build of the v<version>-beta release, or nothing.
+beta_build() {
+    gh release download "v$1-beta" --repo "$REPO" --pattern candidate.json --output - 2>/dev/null \
+        | jq -r '.build | tonumber % 1000' || true
 }
 
 if [ "${1:-}" = "--promote" ]; then
-    OLD=${2:?Usage: scripts/release_mac.sh --promote <version> v<version>-beta.<n>}
+    OLD=${2:?Usage: scripts/release_mac.sh --promote <version> <build>}
     if gh release view "v$OLD" --repo "$REPO" >/dev/null 2>&1; then
         echo "v$OLD is already released; nothing to promote."
         exit 0
     fi
-    # The beta the owner checked, named in the bump PR: a later merge may have published a newer, unchecked one.
-    BETA=${3:-}
-    case "$BETA" in "v$OLD"-beta.*) ;; *) echo "Name the checked v$OLD-beta.<n> to promote (got '$BETA')" >&2; exit 1 ;; esac
-    N=${BETA#"v$OLD"-beta.}
-    case "$N" in ''|*[!0-9]*) echo "Not a beta tag: $BETA" >&2; exit 1 ;; esac
+    # The build the owner checked, named in the bump PR: a later merge may have replaced it with a newer, unchecked one.
+    N=${3:-}
+    case "$N" in ''|*[!0-9]*) echo "Name the checked build of v$OLD-beta to promote (got '$N')" >&2; exit 1 ;; esac
+    BETA=$(beta_build "$OLD")
+    [ "$BETA" = "$N" ] || { echo "v$OLD-beta is build ${BETA:-missing}, not the checked $N: check it, then name it" >&2; exit 1; }
     FILES=$(mktemp -d)
-    gh release download "$BETA" --repo "$REPO" --dir "$FILES"
-    # The same DMG, appcast and candidate.json, so the appcast still points at the beta's DMG, which stays published.
-    gh release create "v$OLD" --repo "$REPO" --target "$(jq -r .source_sha "$FILES/candidate.json")" --latest \
-        --title "v$OLD" --notes "Yorozu $OLD ($N), promoted from v$OLD-beta.$N." "$FILES"/*
+    gh release download "v$OLD-beta" --repo "$REPO" --dir "$FILES"
+    # The same DMG and signature; the appcast points at this release's copy, so the beta can go.
+    sed -i '' "s|/releases/download/v$OLD-beta/|/releases/download/v$OLD/|" "$FILES/appcast.xml"
+    SHA=$(jq -r .source_sha "$FILES/candidate.json")
+    { echo "Yorozu $OLD ($N)."; echo; scripts/release_notes.sh "$SHA"; } > "$FILES.md"
+    gh release create "v$OLD" --repo "$REPO" --target "$SHA" --latest --title "v$OLD" --notes-file "$FILES.md" "$FILES"/*
     echo "Published v$OLD. Submit the iOS build for $OLD to the App Store in App Store Connect."
     exit 0
 fi
@@ -44,10 +48,10 @@ fi
 PUBLISH=0; [ "${1:-}" = "--publish" ] && PUBLISH=1
 VERSION=$(tr -d '[:space:]' < version.txt)
 if [ -z "${BUILD:-}" ]; then
-    previous=$(last_beta "$VERSION")
+    previous=$(beta_build "$VERSION")
     BUILD=$((${previous:-0} + 1))
 fi
-TAG="v$VERSION-beta.$BUILD"
+TAG="v$VERSION-beta"
 BUNDLE_VERSION=$(scripts/build-number.sh "$VERSION" "$BUILD")
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
 NOTARY_PROFILE=${NOTARY_PROFILE:-yorozu-notary}
@@ -114,7 +118,10 @@ JSON
 echo "Built Yorozu $VERSION ($BUILD), CFBundleVersion $BUNDLE_VERSION, in $DIST/"
 
 if [ "$PUBLISH" = 1 ]; then
+    { echo "Yorozu $VERSION ($BUILD), beta."; echo; scripts/release_notes.sh "$SOURCE_SHA"; } > "$DIST/notes.md"
+    # One beta per version: the new build replaces the last one, tag included (the tag ruleset leaves *-beta alone).
+    gh release delete "$TAG" --repo "$REPO" --cleanup-tag --yes 2>/dev/null || true
     gh release create "$TAG" --repo "$REPO" --target "$SOURCE_SHA" --prerelease --latest=false --title "$TAG" \
-        --notes "Yorozu $VERSION ($BUILD), beta." "$DMG" "$DIST/appcast.xml" "$DIST/candidate.json"
+        --notes-file "$DIST/notes.md" "$DMG" "$DIST/appcast.xml" "$DIST/candidate.json"
     echo "Published $TAG."
 fi
