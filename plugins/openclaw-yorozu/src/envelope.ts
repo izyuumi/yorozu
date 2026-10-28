@@ -14,11 +14,15 @@ export const ATTACHMENTS = "attachments";
 export const DEVICES = "devices";
 export const INVITE = "invite";
 export const REPLIES = "replies";
+export const REACTIONS = "reactions";
 export const CHUNK_BYTES = 160 * 1024;
 export type Attachment = { id: string; name: string; mime: string; size: number };
 // Capability `replies`.
 export type ReplyTo = { messageId: string; text?: string };
 export type Message = { convId: string; messageId: string; text: string; attachments?: Attachment[]; replyTo?: ReplyTo };
+// Capability `reactions`: one emoji per person per message; `by` is set by the plugin.
+export type Reaction = { convId: string; messageId: string; emoji: string; remove?: true; by?: "user" | "agent" };
+export type Reactions = { user?: string; agent?: string };
 export type MessageRef = { convId: string; messageId: string };
 export type Typing = { convId: string; active: boolean };
 export type Reply = { convId: string; messageId: string; text: string; ts: number; attachments?: Attachment[]; replyTo?: ReplyTo };
@@ -45,7 +49,7 @@ export type HistoryRequest = { convId: string; before?: number; after?: number }
 export type History = HistoryRequest & { items: HistoryItem[]; more: boolean; rev: number };
 export type HistoryTool = { callId: string; name: string; status: ToolStatus };
 export type HistoryItem =
-  | { kind: "user" | "agent"; id: string; seq: number; ts: number; text: string; attachments?: Attachment[]; replyTo?: ReplyTo }
+  | { kind: "user" | "agent"; id: string; seq: number; ts: number; text: string; attachments?: Attachment[]; replyTo?: ReplyTo; reactions?: Reactions }
   | { kind: "tools"; id: string; seq: number; ts: number; tools: HistoryTool[] }
   | { kind: "reset"; id: string; seq: number; ts: number };
 export type ReadCursor = { convId: string; messageId: string; ts: number; unread: boolean };
@@ -75,6 +79,7 @@ export type Event =
   | { kind: "run_started"; data: MessageRef }
   | { kind: "typing"; data: Typing }
   | { kind: "reply"; data: Reply }
+  | { kind: "reaction"; data: Reaction }
   | { kind: "error"; data: ErrorInfo }
   | { kind: "tool"; data: Tool }
   | { kind: "conv_list"; data: Partial<ConvList> }
@@ -137,6 +142,8 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   run_started: ref,
   typing: (d) => isId(d.convId) && typeof d.active === "boolean",
   reply: (d) => ref(d) && str(d.text) && int(d.ts) && attachments(d.attachments) && replyTo(d.replyTo),
+  reaction: (d) =>
+    ref(d) && label(d.emoji, 32) && (d.remove === undefined || d.remove === true) && (d.by === undefined || d.by === "user" || d.by === "agent"),
   error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId) && optStr(d.attachmentId),
   tool: (d) =>
     ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),
@@ -165,7 +172,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   conv_update: (d) => isId(d.convId),
 };
 
-export const LIMITS = "at most 32 attachments; names and types of 1 to 255 characters; device ids up to 64 characters";
+export const LIMITS = "at most 32 attachments; names and types of 1 to 255 characters; device ids up to 64 characters; emoji up to 32";
 
 export function rejection(received: Invalid | { kind: "unknown"; name: string } | null): ErrorInfo {
   if (!received) return { code: "bad_request", message: "the host could not read this event" };

@@ -7,6 +7,7 @@ import {
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/channel-core";
 import { chunkMarkdownText } from "openclaw/plugin-sdk/reply-runtime";
+import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { channelReadyPatch, channelStoppedPatch } from "openclaw/plugin-sdk/gateway-runtime";
 import { loadAttachmentIndex, mediaMaxBytes } from "./attachments.js";
 import {
@@ -24,6 +25,7 @@ import { listCronJobs } from "./cron.js";
 import { loadHostKeys } from "./keys.js";
 import { notifyReply, runRelayHost } from "./relay.js";
 import { loadMessageTimes } from "./activity.js";
+import { loadReactions, reactionActions, userReaction } from "./reactions.js";
 import { loadReplies } from "./replies.js";
 import { runParked } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
@@ -70,6 +72,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
   await loadAttachmentIndex().catch((error: unknown) => ctx.log?.warn?.(`yorozu: attachment index failed: ${String(error)}`));
   await loadMessageTimes().catch((error: unknown) => ctx.log?.warn?.(`yorozu: message times failed: ${String(error)}`));
   await loadReplies().catch((error: unknown) => ctx.log?.warn?.(`yorozu: replies failed: ${String(error)}`));
+  await loadReactions().catch((error: unknown) => ctx.log?.warn?.(`yorozu: reactions failed: ${String(error)}`));
   const maxBytes = mediaMaxBytes(ctx.cfg, account.accountId);
   ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
@@ -87,6 +90,11 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       agent: account.agent,
       hostVersion: yorozuRuntime.getRuntime().version,
       onMessage: (message) => void handleMessage(turn, message),
+      onReaction: (reaction) => {
+        const route = resolveOwnerRoute(ctx.cfg, account.agent, account.accountId);
+        const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: reaction.convId });
+        userReaction(reaction, { agentId: route.agentId, sessionKey });
+      },
       onRequest: async (event) => {
         if (event.kind === "conv_list" || event.kind === "history") return answerRequest(ctx.cfg, account.agent, event, ctx.log);
         if (event.kind === "conv_patch") return applyPatch(account.agent, event.data, ctx.log);
@@ -131,8 +139,9 @@ export const yorozuPlugin: ChannelPlugin<YorozuAccount> = createChatChannelPlugi
         return { enabled, configured };
       },
     },
-    capabilities: { chatTypes: ["direct"], media: true, reply: true },
+    capabilities: { chatTypes: ["direct"], media: true, reply: true, reactions: true, reactionSlots: "single" },
     gateway: { startAccount },
+    actions: reactionActions,
     messaging: {
       normalizeTarget: () => PEER,
       resolveOutboundSessionRoute: ({ cfg, agentId, accountId, threadId, currentSessionKey }) => {

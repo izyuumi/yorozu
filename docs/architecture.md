@@ -73,7 +73,7 @@ Details of each are in the contract; in short:
 | Side | Data | Where | Protection |
 |---|---|---|---|
 | Plugin | Host keys: X25519 static (Noise) and Ed25519 (relay room, signed frames) | `<stateDir>/credentials/yorozu/host-keys.json` | `0600`; made once, never rewritten or logged. Deleting it means a new room: every device pairs again. |
-| Plugin | Device allowlist, read cursors, push titles, stored attachments, last-message times, retried messages, reply targets | OpenClaw's keyed state store, `<stateDir>/state/openclaw.sqlite`, namespaces `devices`, `read`, `push-titles`, `attachments`, `message-times`, `retry`, `replies` | The OpenClaw state dir's file permissions; assume not encrypted at rest. |
+| Plugin | Device allowlist, read cursors, push titles, stored attachments, last-message times, retried messages, reply targets, reactions | OpenClaw's keyed state store, `<stateDir>/state/openclaw.sqlite`, namespaces `devices`, `read`, `push-titles`, `attachments`, `message-times`, `retry`, `replies`, `reactions` | The OpenClaw state dir's file permissions; assume not encrypted at rest. |
 | Plugin | Device sessions, pending pairing secrets, partial uploads, alerted-device lists | Memory | Gone on Gateway restart: devices handshake again; an unused `pair` must be run again. |
 | OpenClaw | Sessions, transcripts, generated titles | The agent's store under `<stateDir>/agents/<agent>/` | Plaintext, the same trust model as every OpenClaw channel. |
 | OpenClaw | Attachment files | `<stateDir>/media/inbound`, `media/outbound` | As above. |
