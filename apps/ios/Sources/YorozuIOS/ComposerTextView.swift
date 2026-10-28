@@ -14,6 +14,7 @@ struct ComposerTextView: NSViewRepresentable {
     var onFiles: ([URL]) -> Bool = { _ in false }
     var onImages: ([Data]) -> Bool = { _ in false }
     var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
+    var cursor: ComposerCursor?
 
     @Environment(\.textZoom) private var zoom
 
@@ -57,6 +58,8 @@ struct ComposerTextView: NSViewRepresentable {
             view.string = text
             view.needsDisplay = true
         }
+        context.coordinator.cursor = cursor
+        if let range = cursor?.take(within: (view.string as NSString).length) { view.setSelectedRange(range) }
         if view.placeholder != placeholder {
             view.placeholder = placeholder
             view.needsDisplay = true
@@ -77,11 +80,17 @@ struct ComposerTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
+        var cursor: ComposerCursor?
         init(text: Binding<String>) { self.text = text }
 
         func textDidChange(_ notification: Notification) {
             guard let view = notification.object as? NSTextView else { return }
             text.wrappedValue = view.string
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let view = notification.object as? NSTextView else { return }
+            cursor?.track(view.selectedRange())
         }
     }
 }
@@ -135,6 +144,7 @@ struct ComposerTextView: UIViewRepresentable {
     var onFiles: ([URL]) -> Bool = { _ in false }
     var onImages: ([Data]) -> Bool = { _ in false }
     var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
+    var cursor: ComposerCursor?
 
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -173,6 +183,8 @@ struct ComposerTextView: UIViewRepresentable {
             view.placeholderLabel.font = font
         }
         if view.text != text { view.text = text }
+        context.coordinator.cursor = cursor
+        if let range = cursor?.take(within: (view.text as NSString).length) { view.selectedRange = range }
         view.placeholderLabel.text = placeholder
         view.placeholderLabel.isHidden = !text.isEmpty
         view.onSubmit = onSubmit
@@ -193,7 +205,10 @@ struct ComposerTextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var text: Binding<String>
+        var cursor: ComposerCursor?
         init(text: Binding<String>) { self.text = text }
+
+        func textViewDidChangeSelection(_ textView: UITextView) { cursor?.track(textView.selectedRange) }
 
         func textViewDidChange(_ textView: UITextView) {
             text.wrappedValue = textView.text
@@ -261,3 +276,33 @@ final class ComposerUITextView: UITextView {
     }
 }
 #endif
+
+/// The composer's caret, kept outside the text view so dictated text lands where the caret was, even though
+/// the voice bar replaced the text view meanwhile; a second dictation goes after the first.
+final class ComposerCursor {
+    private var range: NSRange?
+    private var pending = false
+
+    func track(_ range: NSRange) {
+        if !pending { self.range = range }
+    }
+
+    /// The caret to restore after an insertion, once.
+    func take(within length: Int) -> NSRange? {
+        guard pending, let range, NSMaxRange(range) <= length else { return nil }
+        pending = false
+        return range
+    }
+
+    /// Inserts `piece` at the caret (the end if none), with a space after a Latin word, and moves the caret after it.
+    func insert(_ piece: String, into text: inout String) {
+        let current = text as NSString
+        var at = range ?? NSRange(location: current.length, length: 0)
+        if NSMaxRange(at) > current.length { at = NSRange(location: current.length, length: 0) }
+        let before = at.location > 0 ? current.substring(with: NSRange(location: at.location - 1, length: 1)).first : nil
+        let spaced = if let before, !before.isWhitespace, before.isASCII || piece.first?.isASCII == true { " " + piece } else { piece }
+        text = current.replacingCharacters(in: at, with: spaced)
+        range = NSRange(location: at.location + (spaced as NSString).length, length: 0)
+        pending = true
+    }
+}

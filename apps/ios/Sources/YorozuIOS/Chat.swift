@@ -519,6 +519,10 @@ private struct Composer: View {
     let onPasteData: (Data, String, String) -> Bool
     let onSend: () -> Void
     @Environment(\.accent) private var accent
+    @AppStorage(VoiceModel.enabledKey) private var voiceEnabled = false
+    @State private var voice = VoiceSession()
+    @State private var cursor = ComposerCursor()
+    @Environment(\.openURL) private var openURL
 
     private let sendCircle: CGFloat = 32
     private let radius: CGFloat = 22
@@ -549,7 +553,17 @@ private struct Composer: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, LayoutMetrics.stack)
             }
-            row
+            if voice.phase == .idle {
+                row
+            } else {
+                VoiceBar(session: voice, onInsert: { cursor.insert($0, into: &text) }, onSend: sendTranscript)
+            }
+        }
+        .alert(String(localized: "Microphone access is off"), isPresented: $voice.micDenied) {
+            Button(String(localized: "Open Settings")) { openMicrophoneSettings() }
+            Button(String(localized: "Cancel"), role: .cancel) {}
+        } message: {
+            Text("To speak a message, allow Yorozu to use the microphone in Privacy & Security › Microphone.")
         }
         .padding(.top, files.isEmpty && automation == nil && replyingTo == nil ? 0 : LayoutMetrics.inner)
         .yorozuGlass(in: RoundedRectangle(cornerRadius: radius, style: .continuous))
@@ -572,11 +586,19 @@ private struct Composer: View {
                 AttachMenu(limit: attachLimit) { files.append(contentsOf: $0) }
             }
             ComposerTextView(text: $text, placeholder: focus == .unfocused ? String(localized: "Tap to reply here") : String(localized: "Message"), onSubmit: send, onFiles: onFiles, onImages: onImages,
-                onPasteData: onPasteData)
+                onPasteData: onPasteData, cursor: cursor)
                 .padding(.vertical, LayoutMetrics.inner)
                 .padding(.leading, attachLimit == nil ? 0 : -LayoutMetrics.inner)
                 .frame(minHeight: controlTarget)
                 .accessibilityIdentifier("composer.text")
+            if voiceEnabled, VoiceModel.supported, VoiceModel.shared.state == .ready {
+                Button { Task { await voice.start() } } label: {
+                    Image(systemName: "mic").textStyle(.body).foregroundStyle(.secondary).frame(width: controlTarget, height: controlTarget)
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Voice Input"))
+                .accessibilityLabel(Text("Voice Input"))
+            }
             Button(action: send) {
                 Image(systemName: "arrow.up")
                     .textStyle(.body, weight: .bold)
@@ -603,6 +625,21 @@ private struct Composer: View {
     private func send() {
         guard canSend else { return }
         onSend()
+    }
+
+    /// Sends the draft and the transcript, joined with a space, as one message.
+    private func sendTranscript(_ transcript: String) {
+        let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        text = draft.isEmpty ? transcript : draft + " " + transcript
+        send()
+    }
+
+    private func openMicrophoneSettings() {
+        #if os(iOS)
+        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+        #else
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") { openURL(url) }
+        #endif
     }
 }
 

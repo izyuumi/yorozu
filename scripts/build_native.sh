@@ -21,7 +21,7 @@ tuist generate --no-open --path apps/ios
 env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuIOS -configuration Release \
     -destination 'platform=macOS' -derivedDataPath .build/xcode-native -clonedSourcePackagesDirPath .build/xcode-packages \
     -skipPackagePluginValidation -quiet MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$(scripts/build-number.sh "$VERSION" "$BUILD")" YOROZU_BUILD="$BUILD" \
-    CODE_SIGN_STYLE=Manual "$@" CODE_SIGN_ENTITLEMENTS= CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO ENABLE_HARDENED_RUNTIME=YES
+    CODE_SIGN_STYLE=Manual "$@" CODE_SIGN_ENTITLEMENTS=Resources/MacHardenedRuntime.entitlements CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO ENABLE_HARDENED_RUNTIME=YES
 WAS_RUNNING=0
 for PID in $(running); do
     WAS_RUNNING=1; kill -TERM "$PID"

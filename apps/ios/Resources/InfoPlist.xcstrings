@@ -298,6 +298,65 @@
           }
         }
       }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Privacy - Microphone Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yorozu turns what you say into a message, on this device, when you use voice input."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音声入力を使うと、話した内容をこのデバイス上でメッセージにします。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用语音输入时，Yorozu 会在此设备上把你说的话转为信息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用語音輸入時，Yorozu 會在此裝置上把你說的話轉為訊息。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "음성 입력을 사용하면 Yorozu가 이 기기에서 말한 내용을 메시지로 바꿉니다."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cuando usas la entrada de voz, Yorozu convierte lo que dices en un mensaje, en este dispositivo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avec la saisie vocale, Yorozu transforme ce que vous dites en message, sur cet appareil."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bei der Spracheingabe macht Yorozu aus dem Gesagten eine Nachricht, auf diesem Gerät."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Com a entrada de voz, o Yorozu transforma o que você diz em uma mensagem, neste dispositivo."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
