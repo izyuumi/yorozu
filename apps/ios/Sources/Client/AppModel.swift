@@ -245,7 +245,7 @@ final class AppModel {
     private func connect() {
         guard !isDemo, let pairing else { return }
         let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
-            name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability, ReplyTo.capability])
+            name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability, ReplyTo.capability, Reaction.capability])
         guard let connection = try? RelayConnection(pairing: pairing.pairing, identity: pairing.identity,
             relayKnows: pairing.relayKnows, local: local) else {
             return failPairing(String(localized: "This pairing code can’t be used."))
@@ -468,6 +468,32 @@ final class AppModel {
     var attachmentsAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(Attachment.capability) } ?? true) }
     var mediaMaxBytes: Int { hostInfo?.mediaMaxBytes ?? Attachment.defaultMaxBytes }
     var repliesAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(ReplyTo.capability) } ?? true) }
+    var reactionsAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(Reaction.capability) == true }
+
+    /// One reaction per person: picking the one the message already has removes it.
+    func react(_ emoji: String, to item: ChatItem, in convId: String) {
+        guard let connection, reactionsAvailable, WireEvent.isId(convId), WireEvent.isId(item.id) else { return }
+        let reaction = Reaction(convId: convId, messageId: item.id, emoji: emoji, remove: item.reactions?.user == emoji)
+        let generation = connectionGeneration
+        Task {
+            guard await connection.send(.reaction(reaction)), generation == connectionGeneration else { return }
+            var mine = reaction
+            mine.by = .user
+            receive(mine)
+        }
+    }
+
+    private func receive(_ reaction: Reaction) {
+        guard let by = reaction.by, var conversation = conversations[reaction.convId],
+              let index = conversation.items.firstIndex(where: { $0.id == reaction.messageId }) else { return }
+        var reactions = conversation.items[index].reactions ?? Reactions()
+        let slot: WritableKeyPath<Reactions, String?> = by == .user ? \.user : \.agent
+        if reaction.remove != true { reactions[keyPath: slot] = reaction.emoji }
+        else if reactions[keyPath: slot] == reaction.emoji { reactions[keyPath: slot] = nil }
+        else { return }
+        conversation.items[index].reactions = reactions.user == nil && reactions.agent == nil ? nil : reactions
+        store(conversation)
+    }
 
     private func pumpOutbox(resend: Bool) {
         if resend { outboxResend = true }
@@ -556,6 +582,8 @@ final class AppModel {
             let files = ChatAttachment.list(reply.attachments)
             append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files, replyTo: reply.replyTo),
                 to: reply.convId)
+        case .reaction(let reaction):
+            receive(reaction)
         case .uploadAck, .chunk:
             transfers.receive(event)
         case .tool(let tool):

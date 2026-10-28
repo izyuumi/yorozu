@@ -36,7 +36,8 @@ struct ChatView: View {
                 }
                 ForEach(items) { item in
                     ItemRow(model: model, item: item, latest: item.id == latestReply, quote: quote(of: item, in: items),
-                        onReply: model.repliesAvailable ? { replyingTo = $0 } : nil, onQuote: show)
+                        onReply: model.repliesAvailable ? { replyingTo = $0 } : nil,
+                        onReact: model.reactionsAvailable ? { model.react($0, to: item, in: convId) } : nil, onQuote: show)
                         .background(.tint.opacity(highlighted == item.id ? 0.15 : 0),
                             in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
                         .modifier(MessageTimeBelow(item: item))
@@ -219,8 +220,10 @@ struct ItemRow: View {
     var latest = false
     var quote: Quote?
     var onReply: ((ChatItem) -> Void)?
+    var onReact: ((String) -> Void)?
     var onQuote: (String) -> Void = { _ in }
     @State private var selecting = false
+    @State private var choosingEmoji = false
     @State private var hovering = false
     @Environment(\.accent) private var accent
 
@@ -235,6 +238,7 @@ struct ItemRow: View {
             }
         }
         .sheet(isPresented: $selecting) { SelectTextSheet(text: item.text) }
+        .sheet(isPresented: $choosingEmoji) { EmojiSheet { onReact?($0) } }
     }
 
     private var reset: some View {
@@ -264,9 +268,10 @@ struct ItemRow: View {
                         #if os(macOS)
                         .textSelection(.enabled)
                         #endif
-                        .contextMenu { reply; copy; selectText }
+                        .contextMenu { reply; react; copy; selectText }
                         .accessibilityLabel(Text("You: \(item.text)"))
                 }
+                chips
                 DeliveryMark(delivery: delivery)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(delivery.word))
@@ -294,16 +299,17 @@ struct ItemRow: View {
                     .padding(LayoutMetrics.stack)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
-                    .contextMenu { reply; copy; selectText }
+                    .contextMenu { reply; react; copy; selectText }
             }
             if let files = item.attachments, !files.isEmpty {
                 AttachmentList(model: model, attachments: files, alignment: .leading)
             }
+            chips
             // Pointer platforms keep the row's space and reveal it on hover; iPhone shows it on the latest reply only.
             #if os(macOS)
-            if !item.text.isEmpty { ReplyActions(text: item.text, onReply: onReply.map { f in { f(item) } }).opacity(latest || hovering ? 1 : 0) }
+            if !item.text.isEmpty { actions.opacity(latest || hovering ? 1 : 0) }
             #else
-            if latest, !item.text.isEmpty { ReplyActions(text: item.text, onReply: onReply.map { f in { f(item) } }) }
+            if latest, !item.text.isEmpty { actions }
             #endif
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -327,6 +333,24 @@ struct ItemRow: View {
         }
     }
 
+    private var actions: some View {
+        ReplyActions(text: item.text, onReply: onReply.map { f in { f(item) } }, react: onReact.map { f in
+            ReactionChoices(current: item.reactions?.user, onReact: f) { choosingEmoji = true }
+        })
+    }
+
+    @ViewBuilder private var chips: some View {
+        if let reactions = item.reactions { ReactionChips(reactions: reactions, onReact: onReact) }
+    }
+
+    @ViewBuilder private var react: some View {
+        if let onReact {
+            Menu(String(localized: "React"), systemImage: "face.smiling") {
+                ReactionChoices(current: item.reactions?.user, onReact: onReact) { choosingEmoji = true }
+            }
+        }
+    }
+
     @ViewBuilder private var reply: some View {
         if let onReply {
             Button(String(localized: "Reply"), systemImage: "arrowshape.turn.up.left") { onReply(item) }
@@ -345,6 +369,7 @@ struct ItemRow: View {
 private struct ReplyActions: View {
     let text: String
     let onReply: (() -> Void)?
+    let react: ReactionChoices?
     @State private var copied = false
 
     var body: some View {
@@ -355,6 +380,14 @@ private struct ReplyActions: View {
                 }
                 .help(String(localized: "Reply"))
                 .accessibilityLabel(Text("Reply"))
+            }
+            if let react {
+                Menu { react } label: {
+                    Image(systemName: "face.smiling").frame(minWidth: controlTarget, minHeight: controlTarget)
+                }
+                .menuIndicator(.hidden)
+                .help(String(localized: "React"))
+                .accessibilityLabel(Text("React"))
             }
             Button {
                 UIPasteboard.general.string = text

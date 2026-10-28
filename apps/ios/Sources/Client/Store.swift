@@ -96,6 +96,7 @@ struct ChatItem: Codable, Identifiable, Equatable {
     var attachments: [ChatAttachment]?
     var seq: Int?
     var replyTo: ReplyTo?
+    var reactions: Reactions?
 
     var summary: String {
         text.isEmpty ? attachments?.first.map { "📎 \($0.name)" } ?? "" : text
@@ -131,10 +132,10 @@ extension ChatItem {
         switch item.kind {
         case .user:
             self.init(id: item.id, kind: .user, text: item.text ?? "", ts: item.ts, status: .read,
-                attachments: ChatAttachment.list(item.attachments, uploaded: true), seq: item.seq, replyTo: item.replyTo)
+                attachments: ChatAttachment.list(item.attachments, uploaded: true), seq: item.seq, replyTo: item.replyTo, reactions: item.reactions)
         case .agent:
             self.init(id: item.id, kind: .agent, text: item.text ?? "", ts: item.ts,
-                attachments: ChatAttachment.list(item.attachments), seq: item.seq, replyTo: item.replyTo)
+                attachments: ChatAttachment.list(item.attachments), seq: item.seq, replyTo: item.replyTo, reactions: item.reactions)
         case .tools:
             self.init(id: "tools:\(item.id)", kind: .tools, text: "", ts: item.ts,
                 tools: (item.tools ?? []).map { ToolCall(id: $0.callId, name: $0.name, status: $0.status) }, seq: item.seq)

@@ -7,6 +7,7 @@ public enum WireEvent: Equatable, Sendable {
     case runStarted(MessageRef)
     case typing(Typing)
     case reply(Reply)
+    case reaction(Reaction)
     case error(ErrorInfo)
     case tool(Tool)
     case convList(ConvList)
@@ -34,6 +35,7 @@ public enum WireEvent: Equatable, Sendable {
         case .runStarted: "run_started"
         case .typing: "typing"
         case .reply: "reply"
+        case .reaction: "reaction"
         case .error: "error"
         case .tool: "tool"
         case .convList: "conv_list"
@@ -124,6 +126,37 @@ public struct ReplyTo: Codable, Equatable, Sendable {
     public init(messageId: String, text: String? = nil) {
         self.messageId = messageId
         self.text = text.map { String($0.prefix(Self.maxText)) }
+    }
+}
+
+/// One person's reaction on a message, both ways; capability `reactions`. The plugin sets `by`.
+public struct Reaction: Codable, Equatable, Sendable {
+    public static let capability = "reactions"
+    public static let maxEmoji = 32
+    public enum By: String, Codable, Sendable { case user, agent }
+
+    public var convId: String
+    public var messageId: String
+    public var emoji: String
+    public var remove: Bool?
+    public var by: By?
+
+    public init(convId: String, messageId: String, emoji: String, remove: Bool = false) {
+        self.convId = convId
+        self.messageId = messageId
+        self.emoji = emoji
+        self.remove = remove ? true : nil
+    }
+}
+
+/// The reactions on a message, one emoji per person.
+public struct Reactions: Codable, Equatable, Sendable {
+    public var user: String?
+    public var agent: String?
+
+    public init(user: String? = nil, agent: String? = nil) {
+        self.user = user
+        self.agent = agent
     }
 }
 
@@ -379,9 +412,10 @@ public struct HistoryItem: Codable, Equatable, Sendable {
     public var tools: [Call]?
     public var attachments: [Attachment]?
     public var replyTo: ReplyTo?
+    public var reactions: Reactions?
 
     public init(kind: Kind, id: String, seq: Int, ts: Int64, text: String? = nil, tools: [Call]? = nil,
-        attachments: [Attachment]? = nil, replyTo: ReplyTo? = nil) {
+        attachments: [Attachment]? = nil, replyTo: ReplyTo? = nil, reactions: Reactions? = nil) {
         self.kind = kind
         self.id = id
         self.seq = seq
@@ -390,6 +424,7 @@ public struct HistoryItem: Codable, Equatable, Sendable {
         self.tools = tools
         self.attachments = attachments
         self.replyTo = replyTo
+        self.reactions = reactions
     }
 }
 
@@ -556,6 +591,10 @@ extension WireEvent: Codable {
             if let v = data(Typing.self), WireEvent.isId(v.convId) { self = .typing(v); return }
         case "reply":
             if let v = data(Reply.self), ids(v.convId, v.messageId), files(v.attachments), answers(v.replyTo) { self = .reply(v); return }
+        case "reaction":
+            if let v = data(Reaction.self), ids(v.convId, v.messageId), !v.emoji.isEmpty, v.emoji.utf16.count <= Reaction.maxEmoji {
+                self = .reaction(v); return
+            }
         case "error":
             if let v = data(ErrorInfo.self) { self = .error(v); return }
         case "tool":
@@ -604,6 +643,7 @@ extension WireEvent: Codable {
         case .delivered(let v), .runStarted(let v): try c.encode(v, forKey: .data)
         case .typing(let v): try c.encode(v, forKey: .data)
         case .reply(let v): try c.encode(v, forKey: .data)
+        case .reaction(let v): try c.encode(v, forKey: .data)
         case .error(let v): try c.encode(v, forKey: .data)
         case .tool(let v): try c.encode(v, forKey: .data)
         case .convList(let v): try c.encode(v, forKey: .data)
