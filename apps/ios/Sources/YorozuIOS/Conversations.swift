@@ -1,4 +1,5 @@
 import SwiftUI
+import TipKit
 import YorozuWire
 
 struct ConversationsView: View {
@@ -12,6 +13,7 @@ struct ConversationsView: View {
     var side: (String) -> PaneSide? = { _ in nil }
     var dragStarted: () -> Void = {}
     @State private var showingSettings = false
+    @AppStorage(VoiceModel.enabledKey) private var voiceEnabled = false
     @State private var showingArchived = false
     @State private var renaming: Conversation?
     @State private var newTitle = ""
@@ -153,8 +155,9 @@ struct ConversationsView: View {
         .toolbar {
             #if os(iOS)
             ToolbarItem(placement: .topBarLeading) {
-                Button(String(localized: "Settings"), systemImage: "gearshape") { showingSettings = true }
+                Button(String(localized: "Settings"), systemImage: "gearshape") { showingSettings = true; VoiceSetupTip().invalidate(reason: .actionPerformed) }
                     .accessibilityIdentifier("conversations.settings")
+                    .popoverTip(VoiceModel.supported && !voiceEnabled ? VoiceSetupTip() : nil)
             }
             #endif
             ToolbarItem(placement: .primaryAction) { compose }

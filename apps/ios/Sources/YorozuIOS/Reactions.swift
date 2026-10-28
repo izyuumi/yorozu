@@ -1,4 +1,5 @@
 import SwiftUI
+import TipKit
 import YorozuWire
 #if os(macOS)
 import AppKit
@@ -19,7 +20,10 @@ struct ReactionChoices: View {
     }
 
     private func choice(_ emoji: String) -> some View {
-        Button { onReact(emoji) } label: {
+        Button {
+            ReactTip().invalidate(reason: .actionPerformed)
+            onReact(emoji)
+        } label: {
             if emoji == current { Label(emoji, systemImage: "checkmark") } else { Text(emoji) }
         }
     }

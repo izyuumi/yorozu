@@ -1,4 +1,5 @@
 import SwiftUI
+import TipKit
 import YorozuWire
 
 struct ChatView: View {
@@ -366,7 +367,7 @@ struct ItemRow: View {
     }
 
     private var actions: some View {
-        ReplyActions(text: item.text, onReply: onReply.map { f in { f(item) } }, react: onReact.map { f in
+        ReplyActions(text: item.text, tips: latest, onReply: onReply.map { f in { f(item) } }, react: onReact.map { f in
             ReactionChoices(current: item.reactions?.user, onReact: f) { choosingEmoji = true }
         })
     }
@@ -407,6 +408,7 @@ struct ItemRow: View {
 
 private struct ReplyActions: View {
     let text: String
+    var tips = false
     let onReply: (() -> Void)?
     let react: ReactionChoices?
     @State private var copied = false
@@ -441,6 +443,7 @@ private struct ReplyActions: View {
                     .menuIndicator(.hidden)
                     .help(String(localized: "React"))
                     .accessibilityLabel(Text("React"))
+                    .popoverTip(tips ? ReactTip() : nil)
             }
         }
         .buttonStyle(.borderless)
@@ -686,12 +689,16 @@ private struct Composer: View {
                 .padding(.leading, attachLimit == nil ? LayoutMetrics.inner : 0)
                 .accessibilityIdentifier("composer.text")
             if voiceEnabled, VoiceModel.supported, VoiceModel.shared.state == .ready {
-                Button { Task { await voice.start() } } label: {
+                Button {
+                    VoiceInputTip().invalidate(reason: .actionPerformed)
+                    Task { await voice.start() }
+                } label: {
                     Image(systemName: "mic").textStyle(.body).foregroundStyle(.secondary).frame(width: controlTarget, height: rowHeight)
                 }
                 .buttonStyle(.plain)
                 .help(String(localized: "Voice Input"))
                 .accessibilityLabel(Text("Voice Input"))
+                .popoverTip(VoiceInputTip())
             }
             Button(action: send) {
                 Image(systemName: "arrow.up")
