@@ -14,6 +14,10 @@ final class AppModel {
     private(set) var state = RelayConnection.State.offline
     private(set) var conversations: [String: Conversation] = [:]
     private(set) var typing: Set<String> = []
+    /// The last relay outage (`.offline` or `.hostOffline`), kept while reconnecting until the state is `.ready` again.
+    private(set) var outage: RelayConnection.State?
+    /// Conversations whose running turn has sent no reply or tool event for `stallTimeout`.
+    private(set) var stalled: Set<String> = []
     private(set) var loadingOlder: Set<String> = []
     var pendingPairing: QrPayload?
     var pairingError: String?
@@ -35,6 +39,7 @@ final class AppModel {
     @ObservationIgnored private var connection: (any ClientTransport)?
     @ObservationIgnored private var listener: Task<Void, Never>?
     @ObservationIgnored private var typingTimers: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var stallTimers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private let cache = ConversationCache()
     @ObservationIgnored private var requests: [WireEvent] = []
     @ObservationIgnored private var inFlight: WireEvent?
@@ -64,6 +69,7 @@ final class AppModel {
     private static let logger = Logger(subsystem: "to.yumi.yorozu", category: "Demo")
 
     static let typingTimeout: Duration = .seconds(30)
+    static let stallTimeout: Duration = .seconds(5 * 60)
     static let requestTimeout: Duration = .seconds(30)
 
     init() {
@@ -215,6 +221,9 @@ final class AppModel {
         for timer in typingTimers.values { timer.cancel() }
         typingTimers = [:]
         typing = []
+        for timer in stallTimers.values { timer.cancel() }
+        stallTimers = [:]
+        stalled = []
         inFlightTimer?.cancel()
         inFlightTimer = nil
         inFlight = nil
@@ -288,6 +297,7 @@ final class AppModel {
         if let connection { Task { await connection.stop() } }
         connection = nil
         state = .offline
+        outage = nil
     }
 
     func resume() {
@@ -409,6 +419,13 @@ final class AppModel {
         case .state(let new):
             state = new
             if new != .ready { transfers.sessionLost() }
+            switch new {
+            case .hostOffline: outage = new
+            // The app's own stop on suspend also reports `.offline`; only an active app is out of reach.
+            case .offline: if active { outage = new }
+            case .connecting, .handshaking: break
+            default: outage = nil
+            }
             switch new {
             case .pairingFailed:
                 if !paired { failPairing(String(localized: "The host refused this pairing code. It may have expired or been used. Run `openclaw yorozu pair` again.")) }
@@ -565,6 +582,7 @@ final class AppModel {
             mark(ref.messageId, .read, in: ref.convId)
             ShareInbox.finish(messageId: ref.messageId)
             setTyping(ref.convId, true)
+            progressed(ref.convId)
         case .typing(let t):
             setTyping(t.convId, t.active)
         case .reply(let reply):
@@ -582,12 +600,14 @@ final class AppModel {
             let files = ChatAttachment.list(reply.attachments)
             append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files, replyTo: reply.replyTo),
                 to: reply.convId)
+            progressed(reply.convId)
         case .reaction(let reaction):
             receive(reaction)
         case .uploadAck, .chunk:
             transfers.receive(event)
         case .tool(let tool):
             self.tool(tool)
+            progressed(tool.convId)
         case .readCursor(let cursor):
             receive(cursor)
         case .error(let error) where error.attachmentId != nil:
@@ -796,6 +816,17 @@ final class AppModel {
         store(conversation)
     }
 
+    /// Deletes a message still waiting in the outbox (clock mark), before it reaches the relay.
+    func discard(_ messageId: String) {
+        guard var conversation = conversations.values.first(where: { $0.items.contains { $0.id == messageId } }),
+              let index = conversation.items.firstIndex(where: { $0.id == messageId && $0.kind == .user && $0.status == .queued }) else { return }
+        let item = conversation.items.remove(at: index)
+        conversation.items.removeAll { $0.id == "error:\(messageId)" }
+        store(conversation)
+        if !isDemo { for file in item.attachments ?? [] { AttachmentFiles.remove(file) } }
+        ShareInbox.finish(messageId: messageId)
+    }
+
     private func reject(_ messageId: String, in convId: String, _ reason: String) {
         guard var conversation = conversations[convId],
               let index = conversation.items.firstIndex(where: { $0.id == messageId && $0.kind == .user }),
@@ -938,7 +969,7 @@ final class AppModel {
             for file in gone.items.filter({ item in !retained.contains(where: { $0.id == item.id }) })
                 .flatMap({ $0.attachments ?? [] }) { AttachmentFiles.remove(file) }
         }
-        typing.remove(convId)
+        setTyping(convId, false)
         automationDrafts[convId] = nil
         updateBadge()
         publishShareDirectory()
@@ -1015,13 +1046,28 @@ final class AppModel {
         typingTimers[convId] = nil
         guard active else {
             typing.remove(convId)
+            stallTimers.removeValue(forKey: convId)?.cancel()
+            stalled.remove(convId)
             return
         }
         typing.insert(convId)
+        if stallTimers[convId] == nil { progressed(convId) }
         typingTimers[convId] = Task { [weak self] in
             try? await Task.sleep(for: Self.typingTimeout)
             guard !Task.isCancelled else { return }
-            self?.typing.remove(convId)
+            self?.setTyping(convId, false)
+        }
+    }
+
+    /// Restarts the stall clock of a running turn; typing keepalives alone don't count as progress.
+    private func progressed(_ convId: String) {
+        guard typing.contains(convId) else { return }
+        stallTimers[convId]?.cancel()
+        stalled.remove(convId)
+        stallTimers[convId] = Task { [weak self] in
+            try? await Task.sleep(for: Self.stallTimeout)
+            guard !Task.isCancelled else { return }
+            self?.stalled.insert(convId)
         }
     }
 
