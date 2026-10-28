@@ -3,7 +3,7 @@ import Base from '../layouts/Base.astro';
 ---
 <Base title="Privacy Policy — Yorozu" description="What Yorozu collects, what its relay can see, and what it cannot." mainClass="legal">
   <h1>Privacy Policy</h1>
-  <p class="effective">Effective October 23, 2026</p>
+  <p class="effective">Effective October 29, 2026</p>
 
   <p>Yorozu is an app for iPhone, iPad and Mac and a plugin for OpenClaw, made by Yumi Izumi ("we"). This policy explains what data Yorozu 0.9 and later handles. In short: <strong>we don't run accounts, analytics or advertising, and we can't read your conversations.</strong></p>
 
@@ -35,10 +35,10 @@ import Base from '../layouts/Base.astro';
   <p>Yorozu hands your messages to your OpenClaw agent. OpenClaw and the tools it runs send data to their model providers (for example Anthropic or OpenAI) under their own privacy policies and your agreements with those providers. We are not a party to that and don't receive that data.</p>
 
   <h2>Updates and downloads</h2>
-  <p>The iPhone and iPad app is installed and updated through the App Store. The Mac app checks <code>yorozu.yumi.to</code> for updates and downloads them from GitHub, which reveals your IP address and app version to Cloudflare and GitHub under their privacy policies. No system profile is sent. This website uses no cookies, analytics or trackers.</p>
+  <p>The iPhone and iPad app is installed and updated through the App Store. The Mac app checks <code>yorozu.yumi.to</code> for updates and downloads them from GitHub, which reveals your IP address and app version to Cloudflare and GitHub under their privacy policies. No system profile is sent. If you turn on voice input, the app downloads its speech model from Hugging Face (<code>huggingface.co</code>), which reveals your IP address to Hugging Face under its privacy policy. This website uses no cookies, analytics or trackers.</p>
 
   <h2>Permissions</h2>
-  <p>Yorozu asks for permissions only for the feature that needs them: the camera to scan a pairing code or take a photo to send, photos to attach or save pictures, and notifications for replies. Data accessed through permissions is used on your devices and is sent only to your own Gateway, end-to-end encrypted.</p>
+  <p>Yorozu asks for permissions only for the feature that needs them: the camera to scan a pairing code or take a photo to send, the microphone for voice input, photos to attach or save pictures, and notifications for replies. Voice input is transcribed on your device; the audio is never sent anywhere. Data accessed through permissions is used on your devices and is sent only to your own Gateway, end-to-end encrypted.</p>
 
   <h2>Earlier versions</h2>
   <p>Earlier versions of the Mac app ran their own assistant. Their data stays on your Mac, in <code>~/Yorozu</code> and Yorozu's folder in <code>~/Library/Application Support/</code>, until you delete it.</p>
