@@ -267,7 +267,7 @@ struct ChatPairView: View {
                 .strokeBorder(.tint, lineWidth: 2)
                 .overlay {
                     Label(label, systemImage: side == .right ? "rectangle.righthalf.filled" : "rectangle.lefthalf.filled")
-                        .font(.headline)
+                        .textStyle(.headline)
                         .padding(.horizontal, LayoutMetrics.gutter)
                         .padding(.vertical, LayoutMetrics.inner)
                         .yorozuGlass(in: Capsule())
@@ -380,7 +380,7 @@ private struct BesidePicker: View {
                     Button { pick(conversation.id) } label: {
                         VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                             Text(conversation.displayTitle).lineLimit(1)
-                            Text(conversation.lastText).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            Text(conversation.lastText).textStyle(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
                     .foregroundStyle(.primary)

@@ -10,8 +10,8 @@ struct NoticePill: View {
             HStack(spacing: LayoutMetrics.inner) {
                 Image(systemName: "bubble.left.fill").foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(notice.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    Text(notice.text).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    Text(notice.title).textStyle(.subheadline, weight: .semibold).lineLimit(1)
+                    Text(notice.text).textStyle(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             .padding(.horizontal, LayoutMetrics.stack)
