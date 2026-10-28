@@ -6,6 +6,10 @@ enum NoticeHaptics {
     static let key = "noticeHaptics"
 }
 
+enum CommandReturnSends {
+    static let key = "commandReturnSends"
+}
+
 struct SettingsView: View {
     let model: AppModel
     var onUnpair: () -> Void = {}
@@ -16,6 +20,7 @@ struct SettingsView: View {
     @AppStorage(Accent.key) private var accent = Accent.vermilion
     #if os(macOS)
     @AppStorage(MacUpdates.betaKey) private var betaUpdates = false
+    @AppStorage(CommandReturnSends.key) private var commandReturnSends = false
     #endif
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: DeviceInfo?
@@ -100,6 +105,17 @@ struct SettingsView: View {
             notifications
             siri
         }
+        #if os(macOS)
+        Section {
+            Toggle(String(localized: "Send with ⌘Return"), isOn: $commandReturnSends)
+        } header: {
+            Text("Send Key")
+        } footer: {
+            Text(commandReturnSends
+                ? "Return adds a new line; ⌘Return sends."
+                : "Return sends a one-line message. Shift-Return adds a new line, and once a message has several lines Return adds more; ⌘Return sends.")
+        }
+        #endif
     }
 
     @ViewBuilder private var deviceSections: some View {

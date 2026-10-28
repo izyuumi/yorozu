@@ -105,6 +105,8 @@ final class ComposerNSTextView: NSTextView {
         guard event.keyCode == 36 || event.keyCode == 76, !hasMarkedText() else { return super.keyDown(with: event) }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function, .capsLock])
         if modifiers == .command { return submit() }
+        // Return sends a one-line message unless the owner opted into ⌘Return; Shift-Return always adds a line.
+        if modifiers.isEmpty, !UserDefaults.standard.bool(forKey: CommandReturnSends.key), !string.contains("\n") { return submit() }
         insertNewline(nil)
     }
 
