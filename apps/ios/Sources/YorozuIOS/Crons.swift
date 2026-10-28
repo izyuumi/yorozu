@@ -168,8 +168,11 @@ struct CronsView: View {
             if model.crons == nil, model.state == .ready {
                 ProgressView()
             } else if jobs.isEmpty {
-                ContentUnavailableView("No automations", systemImage: "clock",
-                    description: Text(model.state == .ready ? "Ask the agent in a chat to schedule something." : model.state.label))
+                ContentUnavailableView {
+                    Label("No automations", systemImage: "clock").zoomedFont(.title3)
+                } description: {
+                    Text(model.state == .ready ? "Ask the agent in a chat to schedule something." : model.state.label).zoomedFont()
+                }
             }
         }
         .refreshable { await model.refreshCrons() }
@@ -231,10 +234,10 @@ private struct CronRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
             HStack(spacing: LayoutMetrics.inner) {
-                Text(job.name).font(.headline).lineLimit(1)
+                Text(job.name).textStyle(.headline).lineLimit(1)
                 status.layoutPriority(1)
             }
-            Text(job.scheduleText).font(.subheadline)
+            Text(job.scheduleText).textStyle(.subheadline)
             Group {
                 if !job.enabled {
                     Text("Disabled")
@@ -242,11 +245,11 @@ private struct CronRow: View {
                     Text("Next run \(Self.date(next), format: .relative(presentation: .named))")
                 }
             }
-            .font(.caption)
+            .textStyle(.caption)
             .foregroundStyle(.secondary)
             if job.convId != nil {
                 Label(String(localized: "Delivers to a conversation"), systemImage: "bubble.left")
-                    .font(.caption)
+                    .textStyle(.caption)
                     .foregroundStyle(.secondary)
             }
         }

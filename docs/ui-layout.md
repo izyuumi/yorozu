@@ -34,6 +34,13 @@ out at its ideal width rather than the room left in the bar. Before building on 
 confirm it on each target device: `onGeometryChange` and a `print` of the frame settle it.
 Where the platform withholds the width, use the platform view that has it (the system title).
 
+## Text
+
+Fonts are text styles only, set with `textStyle(_:weight:monospaced:)` from `Zoom.swift` rather than `font(_:)`:
+on the Mac it applies the app's zoom (⌘+ / ⌘−), which `dynamicTypeSize` does not reach there. A size that
+grows with text uses `@ScaledMetric` times the `textZoom` environment value. A view that keeps a
+system font (a sidebar row, `ContentUnavailableView`) takes `zoomedFont(_:)`.
+
 ## Where the constants live
 
 All paths are under `apps/ios/Sources/YorozuIOS/`.

@@ -31,7 +31,7 @@ struct AttachMenu: View {
             Button(String(localized: "Files"), systemImage: "folder") { browsingFiles = true }
         } label: {
             Group {
-                if loading { ProgressView().controlSize(.small) } else { Image(systemName: "plus").font(.body.weight(.semibold)) }
+                if loading { ProgressView().controlSize(.small) } else { Image(systemName: "plus").textStyle(.body, weight: .semibold) }
             }
             .foregroundStyle(.secondary)
             .padding(.trailing, LayoutMetrics.stack)
@@ -137,6 +137,7 @@ struct StagedFiles: View {
     var onRemoveAutomation: () -> Void = {}
     let onRemove: (ChatAttachment) -> Void
     @ScaledMetric private var previewSide: CGFloat = 56
+    @Environment(\.textZoom) private var zoom
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -153,7 +154,7 @@ struct StagedFiles: View {
                         .help(String(localized: "Remove \(automation.name)"))
                         .accessibilityLabel(Text("Remove \(automation.name)"))
                     }
-                    .font(.footnote)
+                    .textStyle(.footnote)
                     .padding(.horizontal, LayoutMetrics.inner)
                     .padding(.vertical, LayoutMetrics.tight)
                     .background(.fill.tertiary, in: Capsule())
@@ -171,7 +172,7 @@ struct StagedFiles: View {
     }
 
     private func preview(_ file: ChatAttachment, url: URL) -> some View {
-        FileThumbnail(url: url, side: previewSide, fill: true)
+        FileThumbnail(url: url, side: previewSide * zoom, fill: true)
             .clipShape(RoundedRectangle(cornerRadius: LayoutMetrics.inner, style: .continuous))
             .overlay(alignment: .topTrailing) {
                 Button { onRemove(file) } label: {
@@ -203,7 +204,7 @@ struct StagedFiles: View {
             .help(String(localized: "Remove \(file.name)"))
             .accessibilityLabel(Text("Remove \(file.name)"))
         }
-        .font(.footnote)
+        .textStyle(.footnote)
         .padding(.horizontal, LayoutMetrics.inner)
         .padding(.vertical, LayoutMetrics.tight)
         .background(.fill.tertiary, in: Capsule())
@@ -319,15 +320,16 @@ private struct FileAttachment: View {
     let attachment: ChatAttachment
     let open: (ChatAttachment) -> Void
     @ScaledMetric(relativeTo: .title2) private var thumbnailSide: CGFloat = 40
+    @Environment(\.textZoom) private var zoom
 
     var body: some View {
         let state = FileState(attachment, model: model)
         Button { open(attachment) } label: {
             HStack(spacing: LayoutMetrics.inner) {
-                icon(state).font(.title2).foregroundStyle(.secondary)
+                icon(state).textStyle(.title2).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(attachment.name).lineLimit(1).truncationMode(.middle)
-                    Text(detail(state)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(detail(state)).textStyle(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
             .padding(LayoutMetrics.inner)
@@ -344,7 +346,7 @@ private struct FileAttachment: View {
         case .moving(let progress): ProgressView(value: progress).progressViewStyle(.circular).controlSize(.small)
         case .failed, .refused: Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
         case .remote: Image(systemName: "arrow.down.circle")
-        case .local(let url): FileThumbnail(url: url, side: thumbnailSide)
+        case .local(let url): FileThumbnail(url: url, side: thumbnailSide * zoom)
         }
     }
 
