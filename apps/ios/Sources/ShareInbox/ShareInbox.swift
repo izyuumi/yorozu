@@ -29,9 +29,11 @@ enum ShareInbox {
         #endif
     }
 
-    static func write(text: String, file: URL?, convId: String?) throws {
+    /// The folder is named for `messageId` and the app sends the share under that id, so a share the
+    /// extension already got to the host is answered `delivered` again rather than run twice.
+    static func write(text: String, file: URL?, convId: String?, messageId: String) throws {
         guard let directory else { throw CocoaError(.fileNoSuchFile) }
-        let folder = directory.appending(path: UUID().uuidString.lowercased(), directoryHint: .isDirectory)
+        let folder = directory.appending(path: messageId, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         if let file { try FileManager.default.copyItem(at: file, to: folder.appending(path: file.lastPathComponent)) }
         try JSONEncoder().encode(Share(text: text, fileName: file?.lastPathComponent, convId: convId))
@@ -71,6 +73,15 @@ enum ShareInbox {
             return Directory(conversations: [], maxBytes: defaultMaxBytes)
         }
         return directory
+    }
+
+    /// Posted by the extension after it sent a share itself. The host keeps one session per device, so the
+    /// extension's replaced the app's, and an app that is open reconnects.
+    static let sentNotification = "to.yumi.yorozu.share-sent"
+
+    static func announceSent() {
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(sentNotification as CFString), nil, nil, true)
     }
 
     static func clear() {
