@@ -17114,6 +17114,214 @@
           }
         }
       }
+    },
+    "Send with ⌘Return" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit ⌘Return senden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviar con ⌘Retorno"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoyer avec ⌘Retour"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘Returnで送信"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⌘Return으로 보내기"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviar com ⌘Return"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 ⌘Return 发送"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 ⌘Return 傳送"
+          }
+        }
+      }
+    },
+    "Return adds a new line; ⌘Return sends." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return fügt eine neue Zeile ein; ⌘Return sendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retorno añade una línea nueva; ⌘Retorno envía."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retour ajoute une ligne ; ⌘Retour envoie."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Returnで改行し、⌘Returnで送信します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return은 줄을 바꾸고, ⌘Return은 보냅니다."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return adiciona uma nova linha; ⌘Return envia."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return 换行；⌘Return 发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return 換行；⌘Return 傳送。"
+          }
+        }
+      }
+    },
+    "Return sends a one-line message. Shift-Return adds a new line, and once a message has several lines Return adds more; ⌘Return sends." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return sendet eine einzeilige Nachricht. Umschalt-Return fügt eine neue Zeile ein; hat eine Nachricht mehrere Zeilen, fügt auch Return weitere hinzu. ⌘Return sendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retorno envía un mensaje de una línea. Mayúsculas-Retorno añade una línea nueva y, cuando el mensaje ya tiene varias líneas, Retorno añade más; ⌘Retorno envía."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retour envoie un message d’une ligne. Maj-Retour ajoute une ligne et, dès qu’un message a plusieurs lignes, Retour en ajoute d’autres ; ⌘Retour envoie."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1行のメッセージはReturnで送信します。Shift-Returnで改行でき、複数行になったメッセージではReturnでも改行します。⌘Returnで送信します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "한 줄 메시지는 Return으로 보냅니다. Shift-Return은 줄을 바꾸고, 여러 줄이 된 메시지에서는 Return도 줄을 바꿉니다. ⌘Return은 보냅니다."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return envia uma mensagem de uma linha. Shift-Return adiciona uma nova linha e, quando a mensagem já tem várias linhas, Return adiciona mais; ⌘Return envia."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "单行消息按 Return 发送。Shift-Return 换行；消息已有多行时，Return 也会换行。⌘Return 发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "單行訊息按 Return 傳送。Shift-Return 換行；訊息已有多行時，Return 也會換行。⌘Return 傳送。"
+          }
+        }
+      }
+    },
+    "Send Key" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sendetaste"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tecla de envío"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Touche d’envoi"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信キー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보내기 키"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tecla de envio"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送键"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "傳送鍵"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
