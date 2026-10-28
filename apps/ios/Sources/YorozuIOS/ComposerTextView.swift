@@ -15,6 +15,8 @@ struct ComposerTextView: NSViewRepresentable {
     var onImages: ([Data]) -> Bool = { _ in false }
     var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
     var cursor: ComposerCursor?
+    /// Takes keyboard focus once for each new value, so a new conversation is ready to type into.
+    var focusKey: String?
 
     @Environment(\.textZoom) private var zoom
 
@@ -47,6 +49,10 @@ struct ComposerTextView: NSViewRepresentable {
         guard let view = scroll.documentView as? ComposerNSTextView else { return }
         context.coordinator.text = $text
         view.submit = onSubmit
+        if let focusKey, context.coordinator.focusedKey != focusKey {
+            context.coordinator.focusedKey = focusKey
+            DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+        }
         view.takeFiles = onFiles
         view.takeImages = onImages
         let font = NSFont.preferred(.body, zoom: zoom)
@@ -81,6 +87,7 @@ struct ComposerTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         var cursor: ComposerCursor?
+        var focusedKey: String?
         init(text: Binding<String>) { self.text = text }
 
         func textDidChange(_ notification: Notification) {
@@ -147,6 +154,7 @@ struct ComposerTextView: UIViewRepresentable {
     var onImages: ([Data]) -> Bool = { _ in false }
     var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
     var cursor: ComposerCursor?
+    var focusKey: String?
 
     @Environment(\.dynamicTypeSize) private var typeSize
 
