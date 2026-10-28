@@ -11,8 +11,9 @@ import { createTypingCallbacks } from "openclaw/plugin-sdk/channel-outbound";
 import { chunkMarkdownText, resolveTextChunkLimit } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveAgentRoute, resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { stageOutbound, uploadedFiles, type MediaAccess } from "./attachments.js";
-import { isId, type Attachment, type Event, type Message, type ToolStatus } from "./envelope.js";
-import { liveReplyIds } from "./history.js";
+import { isId, type Attachment, type Event, type Message, type ReplyTo, type ToolStatus } from "./envelope.js";
+import { itemText, liveReplyIds } from "./history.js";
+import { noteReply } from "./replies.js";
 import { noteFirstMessage } from "./push.js";
 import { broadcast, notifyReply } from "./relay.js";
 import { isTemporary, park } from "./retry.js";
@@ -43,20 +44,32 @@ export function replyEvents(
   accountId?: string | null,
   ids?: { id: (chunk: number) => string; ts: number },
   attachments: Attachment[] = [],
+  replyTo?: ReplyTo,
 ): Event[] {
   const limit = resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, { fallbackLimit: DEFAULT_CHUNK_LIMIT });
   const chunks = chunkMarkdownText(text, limit).filter((chunk) => chunk.trim());
   if (attachments.length && !chunks.length) chunks.push("");
-  return chunks.map((chunk, k) => ({
-    kind: "reply",
-    data: {
-      convId,
-      messageId: ids?.id(k) ?? randomUUID(),
-      text: chunk,
-      ts: ids?.ts ?? Date.now(),
-      ...(attachments.length && k === chunks.length - 1 ? { attachments } : {}),
-    },
-  }));
+  return chunks.map((chunk, k) => {
+    const messageId = ids?.id(k) ?? randomUUID();
+    return {
+      kind: "reply",
+      data: {
+        convId,
+        messageId,
+        text: chunk,
+        ts: ids?.ts ?? Date.now(),
+        ...(attachments.length && k === chunks.length - 1 ? { attachments } : {}),
+        ...(replyTo && k === 0 ? { replyTo: noteReply(messageId, replyTo) } : {}),
+      },
+    };
+  });
+}
+
+export function replyTarget(cfg: OpenClawConfig, agent: string, convId: string, id?: string | null, current?: Message): ReplyTo | undefined {
+  const messageId = id?.trim().toLowerCase();
+  if (!isId(messageId)) return undefined;
+  const text = messageId === current?.messageId ? current.text : itemText(cfg, agent, convId, messageId);
+  return { messageId, ...(text ? { text } : {}) };
 }
 
 export function mediaUrls(...urls: (string | null | undefined)[]): string[] {
@@ -88,6 +101,8 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
   );
   const access: MediaAccess = { localRoots: getAgentScopedMediaLocalRoots(cfg, route.agentId) };
   await noteFirstMessage(convId, text).catch((error: unknown) => log?.warn(`yorozu: push title failed: ${String(error)}`));
+  const quote = message.replyTo;
+  if (quote) noteReply(messageId, quote);
   let firstReply: { messageId: string; text: string } | undefined;
 
   const usedReplies = new Set<string>();
@@ -143,6 +158,7 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
     reply: { to: PEER, originatingTo: PEER, messageThreadId: convId },
     message: { body: text, bodyForAgent: text, rawBody: text, commandBody: text },
     media,
+    ...(quote && { supplemental: { quote: { id: quote.messageId, fullId: quote.messageId, body: quote.text, senderAllowed: true } } }),
     access: { commands: { authorized: true } },
   });
 
@@ -170,7 +186,8 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
               const ids = liveReplyIds(route.agentId, sessionKey, messageId, usedReplies);
               const { attachments, failures } = await stageOutbound(urls, ctx.mediaMaxBytes, access, ids?.id(0));
               const body = [payload.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
-              const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments);
+              const replyTo = replyTarget(cfg, ctx.agent, convId, payload.replyToId, message);
+              const replies = replyEvents(cfg, convId, body, route.accountId, ids, attachments, replyTo);
               const first = replies[0];
               if (!firstReply && first?.kind === "reply") firstReply = { messageId: first.data.messageId, text: body || "📎" };
               send(...replies);
@@ -216,14 +233,13 @@ const deliveryConv = (threadId: string | number | null | undefined): string => {
   return convId;
 };
 
-export function sendConversationText(params: { threadId?: string | number | null; text: string }): string {
+const quoted = (messageId: string, replyTo?: ReplyTo) => (replyTo ? { replyTo: noteReply(messageId, replyTo) } : {});
+
+export function sendConversationText(params: { threadId?: string | number | null; text: string; replyTo?: ReplyTo }): string {
   const convId = deliveryConv(params.threadId);
-  const reply: Event = {
-    kind: "reply",
-    data: { convId, messageId: randomUUID(), text: params.text, ts: Date.now() },
-  };
-  broadcast([reply]);
-  return reply.data.messageId;
+  const messageId = randomUUID();
+  broadcast([{ kind: "reply", data: { convId, messageId, text: params.text, ts: Date.now(), ...quoted(messageId, params.replyTo) } }]);
+  return messageId;
 }
 
 export async function sendConversationMedia(params: {
@@ -232,14 +248,16 @@ export async function sendConversationMedia(params: {
   mediaUrl?: string;
   maxBytes: number;
   access: MediaAccess;
+  replyTo?: ReplyTo;
 }): Promise<string> {
   const convId = deliveryConv(params.threadId);
   const { attachments, failures } = await stageOutbound(mediaUrls(params.mediaUrl), params.maxBytes, params.access);
   const text = [params.text ?? "", ...failures].filter((line) => line.trim()).join("\n\n");
+  const messageId = randomUUID();
   const reply: Event = {
     kind: "reply",
-    data: { convId, messageId: randomUUID(), text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) },
+    data: { convId, messageId, text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...quoted(messageId, params.replyTo) },
   };
   broadcast([reply]);
-  return reply.data.messageId;
+  return messageId;
 }

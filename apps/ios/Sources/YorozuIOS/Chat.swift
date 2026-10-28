@@ -11,6 +11,8 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var files: [ChatAttachment] = []
     @State private var automation: CronJob?
+    @State private var replyingTo: ChatItem?
+    @State private var highlighted: String?
     @State private var dropFailure: String?
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
@@ -32,7 +34,10 @@ struct ChatView: View {
                         .task(id: conversation.oldestSeq) { model.loadOlder(convId) }
                 }
                 ForEach(items) { item in
-                    ItemRow(model: model, item: item, latest: item.id == latestReply)
+                    ItemRow(model: model, item: item, latest: item.id == latestReply, quote: quote(of: item, in: items),
+                        onReply: model.repliesAvailable ? { replyingTo = $0 } : nil, onQuote: show)
+                        .background(.tint.opacity(highlighted == item.id ? 0.15 : 0),
+                            in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
                         .modifier(MessageTimeBelow(item: item))
                         .readableRow()
                         .modifier(MessageTime(item: item, shown: timesShown, width: timesWidth))
@@ -59,6 +64,11 @@ struct ChatView: View {
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .onChange(of: items.last?.id) { if atBottom || items.last?.kind == .user { position.scrollTo(edge: .bottom) } }
         .task(id: model.state == .ready) { model.open(convId) }
+        .task(id: highlighted) {
+            guard highlighted != nil else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation { highlighted = nil }
+        }
         .onChange(of: typing) { if atBottom { position.scrollTo(edge: .bottom) } }
         .onAppear {
             model.markRead(convId, explicit: true)
@@ -91,12 +101,14 @@ struct ChatView: View {
             }
         }
         .yorozuBottomBar {
-            Composer(text: $draft, files: $files, automation: $automation, attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
+            Composer(text: $draft, files: $files, automation: $automation, replyingTo: $replyingTo,
+                attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
                 focus: focus, onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
-                model.send(Self.message(draft, automation: automation), attachments: files, in: convId)
+                model.send(Self.message(draft, automation: automation), attachments: files, in: convId, replyingTo: replyingTo)
                 draft = ""
                 files = []
                 automation = nil
+                replyingTo = nil
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -164,12 +176,46 @@ extension ChatView {
     private func readIfActive() {
         if scenePhase == .active { model.markRead(convId, explicit: false) }
     }
+
+    private func quote(of item: ChatItem, in items: [ChatItem]) -> Quote? {
+        guard let to = item.replyTo else { return nil }
+        if let target = items.first(where: { $0.id == to.messageId }) { return Quote(id: target.id, text: target.firstLine, loaded: true) }
+        return Quote(id: to.messageId, text: ChatItem.firstLine(to.text ?? ""), loaded: false)
+    }
+
+    private func show(_ id: String) {
+        withAnimation { position.scrollTo(id: id, anchor: .center) }
+        highlighted = id
+    }
+}
+
+struct Quote {
+    let id: String
+    let text: String
+    let loaded: Bool
+}
+
+private struct QuoteHeader: View {
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text.isEmpty ? String(localized: "Message") : text).lineLimit(1)
+        } icon: {
+            Image(systemName: "arrowshape.turn.up.left")
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+    }
 }
 
 struct ItemRow: View {
     let model: AppModel
     let item: ChatItem
     var latest = false
+    var quote: Quote?
+    var onReply: ((ChatItem) -> Void)?
+    var onQuote: (String) -> Void = { _ in }
     @State private var selecting = false
     @State private var hovering = false
     @Environment(\.accent) private var accent
@@ -200,6 +246,7 @@ struct ItemRow: View {
         HStack(spacing: 0) {
             Spacer(minLength: LayoutMetrics.section * 2)
             VStack(alignment: .trailing, spacing: LayoutMetrics.tight) {
+                quoteHeader
                 if let files = item.attachments, !files.isEmpty {
                     AttachmentList(model: model, attachments: files, alignment: .trailing)
                 }
@@ -213,7 +260,7 @@ struct ItemRow: View {
                         #if os(macOS)
                         .textSelection(.enabled)
                         #endif
-                        .contextMenu { copy; selectText }
+                        .contextMenu { reply; copy; selectText }
                         .accessibilityLabel(Text("You: \(item.text)"))
                 }
                 DeliveryMark(delivery: delivery)
@@ -237,21 +284,22 @@ struct ItemRow: View {
 
     private var agent: some View {
         VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
+            quoteHeader
             if !item.text.isEmpty {
                 MarkdownBlocks(item.text)
                     .padding(LayoutMetrics.stack)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
-                    .contextMenu { copy; selectText }
+                    .contextMenu { reply; copy; selectText }
             }
             if let files = item.attachments, !files.isEmpty {
                 AttachmentList(model: model, attachments: files, alignment: .leading)
             }
             // Pointer platforms keep the row's space and reveal it on hover; iPhone shows it on the latest reply only.
             #if os(macOS)
-            if !item.text.isEmpty { ReplyActions(text: item.text).opacity(latest || hovering ? 1 : 0) }
+            if !item.text.isEmpty { ReplyActions(text: item.text, onReply: onReply.map { f in { f(item) } }).opacity(latest || hovering ? 1 : 0) }
             #else
-            if latest, !item.text.isEmpty { ReplyActions(text: item.text) }
+            if latest, !item.text.isEmpty { ReplyActions(text: item.text, onReply: onReply.map { f in { f(item) } }) }
             #endif
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -267,6 +315,20 @@ struct ItemRow: View {
         .textSelection(.enabled)
     }
 
+    @ViewBuilder private var quoteHeader: some View {
+        if let quote {
+            Button { onQuote(quote.id) } label: { QuoteHeader(text: quote.text) }
+                .buttonStyle(.plain)
+                .disabled(!quote.loaded)
+        }
+    }
+
+    @ViewBuilder private var reply: some View {
+        if let onReply {
+            Button(String(localized: "Reply"), systemImage: "arrowshape.turn.up.left") { onReply(item) }
+        }
+    }
+
     private var copy: some View {
         Button(String(localized: "Copy"), systemImage: "doc.on.doc") { UIPasteboard.general.string = item.text }
     }
@@ -278,10 +340,18 @@ struct ItemRow: View {
 
 private struct ReplyActions: View {
     let text: String
+    let onReply: (() -> Void)?
     @State private var copied = false
 
     var body: some View {
         HStack(spacing: LayoutMetrics.tight) {
+            if let onReply {
+                Button(action: onReply) {
+                    Image(systemName: "arrowshape.turn.up.left").frame(minWidth: controlTarget, minHeight: controlTarget)
+                }
+                .help(String(localized: "Reply"))
+                .accessibilityLabel(Text("Reply"))
+            }
             Button {
                 UIPasteboard.general.string = text
                 copied = true
@@ -437,6 +507,7 @@ private struct Composer: View {
     @Binding var text: String
     @Binding var files: [ChatAttachment]
     @Binding var automation: CronJob?
+    @Binding var replyingTo: ChatItem?
     let attachLimit: Int?
     let focus: ChatView.Focus
     let onFiles: ([URL]) -> Bool
@@ -450,6 +521,18 @@ private struct Composer: View {
 
     var body: some View {
         VStack(spacing: LayoutMetrics.tight) {
+            if let replyingTo {
+                HStack(spacing: LayoutMetrics.inner) {
+                    QuoteHeader(text: replyingTo.firstLine).frame(maxWidth: .infinity, alignment: .leading)
+                    Button { self.replyingTo = nil } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Cancel Reply"))
+                    .accessibilityLabel(Text("Cancel Reply"))
+                }
+                .padding(.horizontal, LayoutMetrics.stack)
+            }
             if !files.isEmpty || automation != nil {
                 StagedFiles(files: files, automation: automation, onRemoveAutomation: { automation = nil }) { file in
                     files.removeAll { $0.id == file.id }
@@ -464,7 +547,7 @@ private struct Composer: View {
             }
             row
         }
-        .padding(.top, files.isEmpty && automation == nil ? 0 : LayoutMetrics.inner)
+        .padding(.top, files.isEmpty && automation == nil && replyingTo == nil ? 0 : LayoutMetrics.inner)
         .yorozuGlass(in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: radius, style: .continuous)

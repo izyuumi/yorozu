@@ -102,12 +102,28 @@ public struct Message: Codable, Equatable, Sendable {
     public var messageId: String
     public var text: String
     public var attachments: [Attachment]?
+    public var replyTo: ReplyTo?
 
-    public init(convId: String, messageId: String, text: String, attachments: [Attachment]? = nil) {
+    public init(convId: String, messageId: String, text: String, attachments: [Attachment]? = nil, replyTo: ReplyTo? = nil) {
         self.convId = convId
         self.messageId = messageId
         self.text = text
         self.attachments = attachments
+        self.replyTo = replyTo
+    }
+}
+
+/// The message a `message`, `reply` or history item answers; capability `replies`.
+public struct ReplyTo: Codable, Equatable, Sendable {
+    public static let capability = "replies"
+    public static let maxText = 2000
+
+    public var messageId: String
+    public var text: String?
+
+    public init(messageId: String, text: String? = nil) {
+        self.messageId = messageId
+        self.text = text.map { String($0.prefix(Self.maxText)) }
     }
 }
 
@@ -137,13 +153,15 @@ public struct Reply: Codable, Equatable, Sendable {
     public var text: String
     public var ts: Int64
     public var attachments: [Attachment]?
+    public var replyTo: ReplyTo?
 
-    public init(convId: String, messageId: String, text: String, ts: Int64, attachments: [Attachment]? = nil) {
+    public init(convId: String, messageId: String, text: String, ts: Int64, attachments: [Attachment]? = nil, replyTo: ReplyTo? = nil) {
         self.convId = convId
         self.messageId = messageId
         self.text = text
         self.ts = ts
         self.attachments = attachments
+        self.replyTo = replyTo
     }
 }
 
@@ -360,9 +378,10 @@ public struct HistoryItem: Codable, Equatable, Sendable {
     public var text: String?
     public var tools: [Call]?
     public var attachments: [Attachment]?
+    public var replyTo: ReplyTo?
 
     public init(kind: Kind, id: String, seq: Int, ts: Int64, text: String? = nil, tools: [Call]? = nil,
-        attachments: [Attachment]? = nil) {
+        attachments: [Attachment]? = nil, replyTo: ReplyTo? = nil) {
         self.kind = kind
         self.id = id
         self.seq = seq
@@ -370,6 +389,7 @@ public struct HistoryItem: Codable, Equatable, Sendable {
         self.text = text
         self.tools = tools
         self.attachments = attachments
+        self.replyTo = replyTo
     }
 }
 
@@ -521,12 +541,13 @@ extension WireEvent: Codable {
         func data<T: Decodable>(_: T.Type) -> T? { try? c.decode(T.self, forKey: .data) }
         let ids = { (conv: String, message: String) in WireEvent.isId(conv) && WireEvent.isId(message) }
         let files = { (list: [Attachment]?) in (list ?? []).allSatisfy { WireEvent.isId($0.id) && $0.size >= 0 } }
+        let answers = { (to: ReplyTo?) in to.map { WireEvent.isId($0.messageId) } ?? true }
         let part = { (id: String, index: Int, count: Int) in WireEvent.isId(id) && index >= 0 && index < count }
         switch kind {
         case "peer_info":
             if let v = data(PeerInfo.self) { self = .peerInfo(v); return }
         case "message":
-            if let v = data(Message.self), ids(v.convId, v.messageId), files(v.attachments) { self = .message(v); return }
+            if let v = data(Message.self), ids(v.convId, v.messageId), files(v.attachments), answers(v.replyTo) { self = .message(v); return }
         case "delivered":
             if let v = data(MessageRef.self), ids(v.convId, v.messageId) { self = .delivered(v); return }
         case "run_started":
@@ -534,7 +555,7 @@ extension WireEvent: Codable {
         case "typing":
             if let v = data(Typing.self), WireEvent.isId(v.convId) { self = .typing(v); return }
         case "reply":
-            if let v = data(Reply.self), ids(v.convId, v.messageId), files(v.attachments) { self = .reply(v); return }
+            if let v = data(Reply.self), ids(v.convId, v.messageId), files(v.attachments), answers(v.replyTo) { self = .reply(v); return }
         case "error":
             if let v = data(ErrorInfo.self) { self = .error(v); return }
         case "tool":
