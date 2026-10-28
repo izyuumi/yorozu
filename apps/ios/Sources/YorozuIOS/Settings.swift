@@ -68,11 +68,18 @@ struct SettingsView: View {
             }
         }
         #else
+        // The same groups as the Mac's tabs, each on a page of its own.
         Form {
-            general
-            if Transcriber.available { VoiceInputSection() }
-            deviceSections
-            if !model.isDemo { host }
+            Section {
+                page(String(localized: "General"), systemImage: "gearshape") { general }
+                if Transcriber.available {
+                    page(String(localized: "Voice Input"), systemImage: "mic") { VoiceInputSection() }
+                }
+                page(String(localized: "Devices"), systemImage: "laptopcomputer.and.iphone") { deviceSections }
+                if !model.isDemo {
+                    page(String(localized: "Host"), systemImage: "server.rack") { host }
+                }
+            }
         }
         .formStyle(.grouped)
         #endif
@@ -81,6 +88,17 @@ struct SettingsView: View {
     #if os(macOS)
     private func tab(@ViewBuilder _ sections: () -> some View) -> some View {
         SettingsTab { sections() }
+    }
+    #else
+    private func page(_ title: String, systemImage: String, @ViewBuilder _ sections: @escaping () -> some View) -> some View {
+        NavigationLink {
+            Form { sections() }
+                .formStyle(.grouped)
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
     }
     #endif
 
