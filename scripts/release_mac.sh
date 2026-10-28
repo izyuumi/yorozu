@@ -53,7 +53,7 @@ env -u SDKROOT xcodebuild build -workspace apps/ios/Yorozu.xcworkspace -scheme Y
     -destination 'platform=macOS' -derivedDataPath .build/xcode-release -clonedSourcePackagesDirPath .build/xcode-packages \
     -skipPackagePluginValidation -quiet MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUNDLE_VERSION" \
     YOROZU_BUILD="$BUILD" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" OTHER_CODE_SIGN_FLAGS=--timestamp \
-    CODE_SIGN_ENTITLEMENTS= CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO ENABLE_HARDENED_RUNTIME=YES
+    CODE_SIGN_ENTITLEMENTS=Resources/MacHardenedRuntime.entitlements CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO ENABLE_HARDENED_RUNTIME=YES
 ditto .build/xcode-release/Build/Products/Release/YorozuIOS.app "$APP"
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
 for item in "$SPARKLE/Versions/B/XPCServices/Installer.xpc" "$SPARKLE/Versions/B/XPCServices/Downloader.xpc" \

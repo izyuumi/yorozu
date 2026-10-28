@@ -36,7 +36,7 @@ Dependabot (`.github/dependabot.yml`) proposes weekly updates for the pinned Git
 
 - Exits 3 if the app at that path is running, unless `--restart` is given. With `--restart` it quits that app's processes by pid after a successful build, swaps the bundle and relaunches with `open -n`.
 - Visible build is 1 unless `BUILD` is set.
-- Signs with "Developer ID Application" (hardened runtime, timestamp) when that identity is in the Keychain, else ad hoc; always without the app's entitlements (no macOS provisioning profile exists for the Mac bundle id).
+- Signs with "Developer ID Application" (hardened runtime, timestamp) when that identity is in the Keychain, else ad hoc; always without the app's entitlements (no macOS provisioning profile exists for the Mac bundle id), except the microphone entitlement in `apps/ios/Resources/MacHardenedRuntime.entitlements`, which needs no profile.
 - Writes the binary's SHA-256 to `build/native-sha256.txt`. Not notarized.
 
 The macOS destination's bundle id differs from iOS (`PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]` in `Project.swift`). A post-build phase copies the plugin (`index.ts`, `setup-entry.ts`, `openclaw.plugin.json`, `package.json`, `README.md`, `src`) into `Contents/Resources/openclaw-channel` on macOS.
@@ -103,7 +103,7 @@ pnpm --filter @yorozu/web test                   # the website (deploy-web.yml r
 
 The plugin typechecks per [its README](../plugins/openclaw-yorozu/README.md#typecheck).
 
-- **Simulator**: build for `platform=iOS Simulator,id=<udid>` with `CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=` instead of `CODE_SIGNING_ALLOWED=NO`; an unsigned simulator build has no Keychain entitlement, so saving a pairing fails. Install and launch with `xcrun simctl install <udid> <app>` and `xcrun simctl launch <udid> <iOS bundle id>`.
+- **Simulator**: generate with `TUIST_VOICE_INPUT=0 tuist generate --no-open --path apps/ios` (llama.cpp's xcframework has no simulator slice, so this leaves voice input out), then build for `platform=iOS Simulator,id=<udid>` with `CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=` instead of `CODE_SIGNING_ALLOWED=NO`; an unsigned simulator build has no Keychain entitlement, so saving a pairing fails. Install and launch with `xcrun simctl install <udid> <app>` and `xcrun simctl launch <udid> <iOS bundle id>`.
 - **Mac dev build**: the Mac compile check builds Debug at `.build/xcode-mac/Build/Products/Debug/YorozuIOS.app` under the installed app's bundle id. To run one, add `PRODUCT_BUNDLE_IDENTIFIER=<an id of its own>` so it never passes for `/Applications/Yorozu.app`. It is ad hoc signed (runs only on the Mac that built it; Keychain prompts after each rebuild), and its Keychain items still use the iOS bundle id as service, so pairing or unpairing in it can replace or delete the installed app's pairing.
 
 ## Website and relay

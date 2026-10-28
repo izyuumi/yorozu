@@ -22,6 +22,9 @@ let notificationKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.notificati
 // same group first to read it. Reordering or renaming it would hide existing pairings and unpair devices.
 let pairingKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.ios"
 let appGroup = "group.to.yumi.yorozu"
+// llama.cpp's xcframework (voice input) has no iOS Simulator slice: `TUIST_VOICE_INPUT=0 tuist generate` leaves
+// it out, for simulator builds.
+let voiceInput = Environment.voiceInput.getBoolean(default: true)
 func signing(_ extra: SettingsDictionary = [:]) -> Settings {
     .settings(base: [
         "DEVELOPMENT_TEAM": "AN5KM8QGEF",
@@ -37,7 +40,7 @@ let project = Project(
     packages: [
         .local(path: "../../packages/YorozuWire"),
         .remote(url: "https://github.com/sparkle-project/Sparkle", requirement: .upToNextMajor(from: "2.9.0")),
-    ],
+    ] + (voiceInput ? [.local(path: "../../packages/Llama")] : []),
     targets: [
         .target(
             name: "YorozuIOS",
@@ -62,6 +65,7 @@ let project = Project(
                 "LSApplicationCategoryType": "public.app-category.productivity",
                 "NSCameraUsageDescription": "Yorozu scans the pairing QR code shown by your Mac, and takes photos you choose to send in a message.",
                 "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
+                "NSMicrophoneUsageDescription": "Yorozu turns what you say into a message, on this device, when you use voice input.",
                 "UIBackgroundModes": ["remote-notification"],
                 "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
                 "UTExportedTypeDeclarations": [
@@ -113,7 +117,7 @@ let project = Project(
                 .package(product: "Sparkle", condition: .when([.macos])),
                 .target(name: "YorozuNotificationService", condition: .when([.ios])),
                 .target(name: "YorozuShare", condition: .when([.ios])),
-            ],
+            ] + (voiceInput ? [.package(product: "llama")] : []),
             settings: signing([
                 "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
                 "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": "to.yumi.yorozu",

@@ -56,6 +56,10 @@ struct SettingsView: View {
                 .tabItem { Label(String(localized: "General"), systemImage: "gearshape") }
             tab { deviceSections }
                 .tabItem { Label(String(localized: "Devices"), systemImage: "laptopcomputer.and.iphone") }
+            if Transcriber.available {
+                tab { VoiceInputSection() }
+                    .tabItem { Label(String(localized: "Voice Input"), systemImage: "mic") }
+            }
             if !model.isDemo {
                 tab { host }
                     .tabItem { Label(String(localized: "Host"), systemImage: "server.rack") }
@@ -66,6 +70,7 @@ struct SettingsView: View {
         #else
         Form {
             general
+            if Transcriber.available { VoiceInputSection() }
             deviceSections
             if !model.isDemo { host }
         }
