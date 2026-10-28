@@ -208,7 +208,7 @@ private struct QuoteHeader: View {
         } icon: {
             Image(systemName: "arrowshape.turn.up.left")
         }
-        .font(.footnote)
+        .textStyle(.footnote)
         .foregroundStyle(.secondary)
     }
 }
