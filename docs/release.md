@@ -75,6 +75,10 @@ The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SU
 - `apps/ios/ExportOptions.plist` (`destination` = `upload`) makes the export step the upload. TestFlight gives processed builds to the internal group.
 - App Store submission is by hand in App Store Connect (review notes: `apps/ios/APP-REVIEW-NOTES.md`).
 
+## Voice model asset pack
+
+On iPhone and iPad the voice model is an Apple-hosted, on-demand asset pack (ID `VoiceModel`, `VoiceModel.packID`), uploaded once and updated independently of app builds. `scripts/voice_asset_pack.sh <dir>` downloads the pinned files, checks their SHA-256 and writes `<dir>/VoiceModel.aar`; upload it with Transporter, then submit it for review in App Store Connect with a build. A new model revision needs the script, `VoiceModel.files` and the pack updated together.
+
 ## Compile checks
 
 The commands `checks.yml` runs, without signing, uploading or touching `/Applications` (CI adds `-quiet`):

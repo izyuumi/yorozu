@@ -67,6 +67,10 @@ let project = Project(
                 "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
                 "NSMicrophoneUsageDescription": "Yorozu turns what you say into a message, on this device, when you use voice input.",
                 "UIBackgroundModes": ["remote-notification"],
+                // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).
+                "BAAppGroupID": .string(appGroup),
+                "BAHasManagedAssetPacks": true,
+                "BAUsesAppleHosting": true,
                 "YorozuNotificationKeychainAccessGroup": .string(notificationKeychainGroup),
                 "UTExportedTypeDeclarations": [
                     [
@@ -117,6 +121,7 @@ let project = Project(
                 .package(product: "Sparkle", condition: .when([.macos])),
                 .target(name: "YorozuNotificationService", condition: .when([.ios])),
                 .target(name: "YorozuShare", condition: .when([.ios])),
+                .target(name: "YorozuAssets", condition: .when([.ios])),
             ] + (voiceInput ? [.package(product: "llama")] : []),
             settings: signing([
                 "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
@@ -176,6 +181,24 @@ let project = Project(
                 "com.apple.security.application-groups": [.string(appGroup)],
             ]),
             dependencies: [.package(product: "YorozuWire")],
+            settings: signing()
+        ),
+        .target(
+            name: "YorozuAssets",
+            destinations: [.iPhone, .iPad],
+            product: .extensionKitExtension,
+            bundleId: "to.yumi.yorozu.ios.assets",
+            deploymentTargets: .iOS("26.0"),
+            infoPlist: .extendingDefault(with: [
+                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "CFBundleDisplayName": "Yorozu Assets",
+                "EXAppExtensionAttributes": [
+                    "EXExtensionPointIdentifier": "com.apple.background-asset-downloader-extension",
+                ],
+            ]),
+            sources: ["Sources/YorozuAssets/**"],
+            entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             settings: signing()
         ),
     ]

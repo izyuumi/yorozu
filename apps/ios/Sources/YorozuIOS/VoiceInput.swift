@@ -322,7 +322,13 @@ struct VoiceInputSection: View {
         } footer: {
             VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                 if VoiceModel.supported {
+                    #if os(iOS)
+                    Text("Speak a message instead of typing it. Speech is transcribed on this device; turning this on downloads the \(Self.size(VoiceModel.totalBytes)) model from Apple.")
+                    #else
                     Text("Speak a message instead of typing it. Speech is transcribed on this device; turning this on downloads the \(Self.size(VoiceModel.totalBytes)) model from Hugging Face.")
+                    #endif
+                } else if !VoiceModel.appleHosting {
+                    Text("Voice input needs iOS 26 or later.")
                 } else {
                     Text("This device needs more memory for voice input.")
                 }
