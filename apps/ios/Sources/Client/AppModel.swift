@@ -71,6 +71,14 @@ final class AppModel {
             guard let self, !self.isDemo, let connection = self.connection else { return false }
             return await connection.send(event)
         }
+        #if os(iOS)
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), Unmanaged.passUnretained(self).toOpaque(),
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let model = Unmanaged<AppModel>.fromOpaque(observer).takeUnretainedValue()
+                Task { @MainActor in model.shareSent() }
+            }, ShareInbox.sentNotification as CFString, nil, .deliverImmediately)
+        #endif
         if ProcessInfo.processInfo.arguments.contains("--demo") {
             enterDemo()
             return
@@ -286,6 +294,11 @@ final class AppModel {
         setActive(true)
         takeShares()
         guard let connection else { return connect() }
+        Task { await connection.reconnect() }
+    }
+
+    private func shareSent() {
+        guard active, !isDemo, let connection else { return }
         Task { await connection.reconnect() }
     }
 
