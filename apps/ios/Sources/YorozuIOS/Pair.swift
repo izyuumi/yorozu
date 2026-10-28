@@ -120,6 +120,7 @@ struct ChatPairView: View {
                 ChatView(model: model, convId: selection)
                     .id(selection)
                     .toolbar {
+                        ToolbarItem(placement: .primaryAction) { sidebarToggle }
                         ToolbarItem(placement: .primaryAction) {
                             Button(String(localized: "Open Beside"), systemImage: "rectangle.split.2x1") { withAnimation(.snappy) { pair.choosing = true } }
                                 .keyboardShortcut("\\", modifiers: .command)
@@ -221,14 +222,17 @@ struct ChatPairView: View {
         .accessibilityLabel(side == .left ? Text("Left pane") : Text("Right pane"))
     }
 
+    private var sidebarToggle: some View {
+        let shown = width < windowWidth - 1
+        return Button(shown ? String(localized: "Hide Sidebar") : String(localized: "Show Sidebar"), systemImage: "sidebar.left") {
+            withAnimation { columns = shown ? .detailOnly : .all }
+        }
+    }
+
     @ToolbarContentBuilder private func paneToolbar(side: PaneSide, convId: String?) -> some ToolbarContent {
         let isChat = convId != nil
         if side == .left {
-            ToolbarItem(placement: .topBarLeading) {
-                Button(columns == .detailOnly ? String(localized: "Show Sidebar") : String(localized: "Hide Sidebar"), systemImage: "sidebar.left") {
-                    withAnimation { columns = columns == .detailOnly ? .all : .detailOnly }
-                }
-            }
+            ToolbarItem(placement: .topBarLeading) { sidebarToggle }
         }
         if let convId, model.conversations[convId]?.items.isEmpty == false {
             ToolbarItem(placement: .pinnedAction) {

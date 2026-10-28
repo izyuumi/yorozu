@@ -69,6 +69,7 @@ struct HomeView: View {
             ConversationsView(model: model, selection: $selection, section: $section, showsCrons: true,
                 openBeside: { convId in withAnimation(.snappy) { pair.openBeside(convId, selection: &selection) } }, side: side,
                 dragStarted: { dragging = true })
+                .toolbar(removing: section == .chats && selection != nil ? .sidebarToggle : nil)
         } detail: {
             if section == .crons {
                 CronsView(model: model, open: open)

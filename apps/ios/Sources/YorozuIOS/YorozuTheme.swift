@@ -124,6 +124,18 @@ extension View {
         }
     }
 
+    @ViewBuilder func navigationBarStaysVisible() -> some View {
+        #if os(iOS)
+        if #available(iOS 27, *) {
+            toolbarMinimizationBehavior(.never, for: .navigationBar)
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
+
     @ViewBuilder func navigationSubtitleIfAvailable(_ text: String) -> some View {
         if #available(iOS 26, macOS 26, *) {
             navigationSubtitle(text)
