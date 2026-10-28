@@ -45,6 +45,13 @@ Every device is the same channel peer, `owner`. A conversation is the session `a
 - **Retries** (`src/retry.ts`): a run that fails with a temporary error (plugin reload, overload, rate limit, 429/503/529, connection reset) before any reply or tool call is parked in the keyed state store (namespace `retry`). It runs again after 5, 15, 30, 60 and 120 s, and only the last failure is shown. A generation that replaces this one after a reload picks up the parked runs.
 - **Deliveries from outside a turn** (cron): the outbound adapter's `sendText` and `sendMedia` send a `reply` into the conversation named by the delivery's `threadId`, with `to: "owner"`. `resolveOutboundSessionRoute` maps it to the thread session, so OpenClaw mirrors the text into that transcript.
 
+## Gateway notices (`src/updates.ts`)
+
+Yorozu never updates OpenClaw itself; it relies on OpenClaw's auto-update ([setup.md](../../docs/setup.md#openclaw-updates)). Each time the channel starts, the plugin may post up to two notices into the most recent unarchived conversation. Each goes out through `sendDurableMessageBatch` with a transcript mirror, so a device that connects later finds it in history. With no conversation yet, nothing is posted.
+
+- **Version**: the OpenClaw version (`runtime.version`) is kept in the keyed state store (namespace `gateway`, key `version`). When it differs from the one stored at the last start, the plugin posts `Updated OpenClaw <old> → <new>` once. The first start only stores it.
+- **Auto-update**: the plugin checks what OpenClaw's auto-updater checks: `update.auto.enabled` is `true`, `update.checkOnStart` is not `false`, `OPENCLAW_NO_AUTO_UPDATE` is not set, and the Gateway runs as the service `openclaw gateway install` made (`OPENCLAW_SERVICE_MARKER=openclaw` and `OPENCLAW_SERVICE_KIND=gateway` in its environment). If any check fails, it posts one notice that names each failing check and how to fix it. The list of failures is stored (key `auto-update`), and the notice is posted again only when that list changes. Once every check passes, the stored list is cleared.
+
 ## History (`src/history.ts`, `src/activity.ts`)
 
 - `conv_list` and `history` are answered to the asking device only. They are read from the session store and the transcript (`listSessionEntries`, `getSessionEntry`, `loadTranscriptEventsSync`, `readTranscriptStatsSync`), never from `chat.history`. Pages hold up to 60 items and 192 KiB; one item's text is cut at 60,000 characters (the transcript keeps the whole text). Built item lists are cached for the 8 most recent sessions.
