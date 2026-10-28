@@ -44,6 +44,7 @@ struct ChatView: View {
                         .readableRow()
                         .modifier(MessageTime(item: item, shown: timesShown, width: timesWidth * zoom))
                 }
+                pendingVoice
                 if typing {
                     TypingIndicator().readableRow().id("typing")
                 }
@@ -105,18 +106,7 @@ struct ChatView: View {
                 }
             }
         }
-        .yorozuBottomBar {
-            Composer(text: $draft, files: $files, automation: $automation, replyingTo: $replyingTo,
-                attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
-                focus: focus, focusKey: Self.focusKey(convId, empty: items.isEmpty, focus: focus),
-                onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
-                model.send(Self.message(draft, automation: automation), attachments: files, in: convId, replyingTo: replyingTo)
-                draft = ""
-                files = []
-                automation = nil
-                replyingTo = nil
-            }
-        }
+        .yorozuBottomBar { composer(empty: items.isEmpty) }
         .dropDestination(for: URL.self) { urls, _ in
             guard model.attachmentsAvailable else { return false }
             return attach(urls)
@@ -171,6 +161,37 @@ extension ChatView {
         do { files.append(try AttachmentStaging.stage(data: data, name: name, mime: mime, limit: model.mediaMaxBytes)) }
         catch { dropFailure = error.localizedDescription }
         return true
+    }
+
+    private func composer(empty: Bool) -> some View {
+        Composer(text: $draft, files: $files, automation: $automation, replyingTo: $replyingTo,
+            attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
+            focus: focus, focusKey: Self.focusKey(convId, empty: empty, focus: focus),
+            onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
+            model.send(Self.message(draft, automation: automation), attachments: files, in: convId, replyingTo: replyingTo)
+            draft = ""
+            files = []
+            automation = nil
+            replyingTo = nil
+        } onVoiceSend: { sendVoice($0) }
+    }
+
+    private var pendingVoice: some View {
+        ForEach(VoiceSends.shared.pending[convId] ?? []) { PendingVoiceBubble(item: $0, convId: convId).readableRow() }
+            .onChange(of: VoiceSends.shared.pending[convId]?.count) { position.scrollTo(edge: .bottom) }
+    }
+
+    /// Clears the composer at once; the transcript, after any typed draft, goes out with what was staged.
+    private func sendVoice(_ clip: VoiceClip) {
+        let (typed, staged, cron, target) = (draft.trimmingCharacters(in: .whitespacesAndNewlines), files, automation, replyingTo)
+        draft = ""
+        files = []
+        automation = nil
+        replyingTo = nil
+        VoiceSends.shared.add(clip, in: convId) { [model, convId] transcript in
+            let text = typed.isEmpty ? transcript : typed + " " + transcript
+            model.send(Self.message(text, automation: cron), attachments: staged, in: convId, replyingTo: target)
+        }
     }
 
     /// On the Mac a new conversation focuses its composer; elsewhere the keyboard stays down until tapped.
@@ -390,12 +411,14 @@ private struct ReplyActions: View {
     let react: ReactionChoices?
     @State private var copied = false
 
-    // Icons sit in square hit targets; the leading pull lines the first icon up with the reply text.
+    // Icons sit close together in narrow targets as tall as a control; the leading pull lines the first icon up
+    // with the reply text.
     #if os(macOS)
-    private let pull: CGFloat = LayoutMetrics.tight
+    private let iconWidth: CGFloat = 24
     #else
-    private let pull: CGFloat = 0
+    private let iconWidth: CGFloat = 32
     #endif
+    private let pull: CGFloat = LayoutMetrics.tight
 
     var body: some View {
         HStack(spacing: 0) {
@@ -434,7 +457,7 @@ private struct ReplyActions: View {
 
     private func icon(_ name: String) -> some View {
         Image(systemName: name)
-            .frame(width: controlTarget, height: controlTarget)
+            .frame(width: iconWidth, height: controlTarget)
             .contentShape(Rectangle())
     }
 }
@@ -582,6 +605,7 @@ private struct Composer: View {
     let onImages: ([Data]) -> Bool
     let onPasteData: (Data, String, String) -> Bool
     let onSend: () -> Void
+    var onVoiceSend: (VoiceClip) -> Void = { _ in }
     @Environment(\.accent) private var accent
     @AppStorage(VoiceModel.enabledKey) private var voiceEnabled = false
     @State private var voice = VoiceSession()
@@ -620,7 +644,7 @@ private struct Composer: View {
             if voice.phase == .idle {
                 row
             } else {
-                VoiceBar(session: voice, onInsert: { cursor.insert($0, into: &text) }, onSend: sendTranscript)
+                VoiceBar(session: voice, onInsert: { cursor.insert($0, into: &text) }, onSend: { if let clip = voice.handOff() { onVoiceSend(clip) } })
             }
         }
         .alert(String(localized: "Microphone access is off"), isPresented: $voice.micDenied) {
@@ -695,13 +719,6 @@ private struct Composer: View {
     private func send() {
         guard canSend else { return }
         onSend()
-    }
-
-    /// Sends the draft and the transcript, joined with a space, as one message.
-    private func sendTranscript(_ transcript: String) {
-        let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        text = draft.isEmpty ? transcript : draft + " " + transcript
-        send()
     }
 
     private func openMicrophoneSettings() {

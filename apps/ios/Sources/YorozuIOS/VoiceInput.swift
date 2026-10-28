@@ -49,28 +49,27 @@ final class VoiceSession {
         retry()
     }
 
+    /// Stops recording and hands the clip over, leaving the composer free; nil unless recording.
+    func handOff() -> VoiceClip? {
+        guard phase == .recording else { return nil }
+        let handed = VoiceClip(samples: recorder.stop(), loading: loading)
+        loading = nil
+        reset()
+        return handed.samples.isEmpty ? nil : handed
+    }
+
     func retry() {
         guard let deliver, !clip.isEmpty else { return cancel() }
         phase = .transcribing
-        let clip = clip
-        let language = Transcriber.Language(rawValue: UserDefaults.standard.string(forKey: VoiceModel.languageKey) ?? "") ?? .automatic
-        let model = VoiceModel.shared
-        let (modelURL, projector) = (model.modelURL, model.projectorURL)
-        let loading = loading ?? Task.detached(priority: .userInitiated) { try Transcriber(model: modelURL, projector: projector) }
-        self.loading = nil
+        let clip = VoiceClip(samples: clip, loading: loading)
+        loading = nil
         job = Task {
-            let work = Task.detached(priority: .userInitiated) { () -> Result<String, Error> in
-                do { return .success(try await loading.value.transcribe(clip, language: language)) } catch { return .failure(error) }
-            }
-            let result = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
-            guard !Task.isCancelled else { return }
-            switch result {
-            case .success(let text) where !text.isEmpty:
+            switch await clip.transcribe() {
+            case .success(let text):
                 reset()
                 deliver(text)
-            case .success:
-                phase = .failed(String(localized: "No speech was recognized."))
             case .failure(let error):
+                guard !Task.isCancelled else { return }
                 phase = .failed(error.localizedDescription)
             }
         }
@@ -92,12 +91,121 @@ final class VoiceSession {
     }
 }
 
+/// A finished recording and the model load started while it was spoken.
+struct VoiceClip {
+    let samples: [Float]
+    var loading: Task<Transcriber, Error>?
+
+    /// The transcript in the chosen language; an empty one counts as a failure.
+    @MainActor func transcribe() async -> Result<String, Error> {
+        let language = Transcriber.Language(rawValue: UserDefaults.standard.string(forKey: VoiceModel.languageKey) ?? "") ?? .automatic
+        let model = VoiceModel.shared
+        let (modelURL, projector) = (model.modelURL, model.projectorURL)
+        let loading = loading ?? Task.detached(priority: .userInitiated) { try Transcriber(model: modelURL, projector: projector) }
+        let samples = samples
+        let work = Task.detached(priority: .userInitiated) { () -> Result<String, Error> in
+            do { return .success(try await loading.value.transcribe(samples, language: language)) } catch { return .failure(error) }
+        }
+        let result = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+        if case .success(let text) = result, text.isEmpty { return .failure(VoiceModel.Failure(String(localized: "No speech was recognized."))) }
+        return result
+    }
+}
+
+/// Voice messages sent straight from the composer: each shows as a "Transcribing…" bubble in its conversation
+/// until the transcript goes out as a message. A failure keeps the clip on the bubble for Retry.
+@MainActor @Observable
+final class VoiceSends {
+    static let shared = VoiceSends()
+
+    struct Pending: Identifiable {
+        let id = UUID()
+        var failure: String?
+    }
+
+    private(set) var pending: [String: [Pending]] = [:]
+    @ObservationIgnored private var work: [UUID: (clip: VoiceClip, send: (String) -> Void)] = [:]
+
+    func add(_ clip: VoiceClip, in convId: String, send: @escaping (String) -> Void) {
+        let item = Pending()
+        pending[convId, default: []].append(item)
+        work[item.id] = (clip, send)
+        run(item.id, in: convId)
+    }
+
+    func retry(_ id: UUID, in convId: String) {
+        set(id, in: convId, failure: nil)
+        run(id, in: convId)
+    }
+
+    func discard(_ id: UUID, in convId: String) {
+        work[id] = nil
+        pending[convId]?.removeAll { $0.id == id }
+    }
+
+    private func run(_ id: UUID, in convId: String) {
+        guard let (clip, send) = work[id] else { return }
+        work[id]?.clip.loading = nil
+        Task {
+            switch await clip.transcribe() {
+            case .success(let text):
+                discard(id, in: convId)
+                send(text)
+            case .failure(let error):
+                set(id, in: convId, failure: error.localizedDescription)
+            }
+        }
+    }
+
+    private func set(_ id: UUID, in convId: String, failure: String?) {
+        guard let index = pending[convId]?.firstIndex(where: { $0.id == id }) else { return }
+        pending[convId]?[index].failure = failure
+    }
+}
+
+/// A voice message on its way: the sender's bubble with "Transcribing…", or the error with Retry and Delete.
+struct PendingVoiceBubble: View {
+    let item: VoiceSends.Pending
+    let convId: String
+    @Environment(\.accent) private var accent
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: LayoutMetrics.tight) {
+            HStack(spacing: LayoutMetrics.inner) {
+                if item.failure == nil {
+                    ProgressView().controlSize(.small).tint(.white)
+                    Text("Transcribing…")
+                } else {
+                    Image(systemName: "waveform")
+                    Text("Voice message")
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, LayoutMetrics.stack)
+            .padding(.vertical, LayoutMetrics.inner)
+            .background(accent.bubble.opacity(item.failure == nil ? 0.7 : 0.5),
+                in: RoundedRectangle(cornerRadius: LayoutMetrics.bubbleRadius, style: .continuous))
+            if let failure = item.failure {
+                HStack(spacing: LayoutMetrics.inner) {
+                    Text(failure).foregroundStyle(YorozuPalette.warning)
+                    Button(String(localized: "Retry")) { VoiceSends.shared.retry(item.id, in: convId) }
+                    Button(String(localized: "Delete"), role: .destructive) { VoiceSends.shared.discard(item.id, in: convId) }
+                }
+                .textStyle(.caption)
+                .buttonStyle(.borderless)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 /// Replaces the composer's row while dictating: ✕, a waveform and timer (or progress, or an error with Retry),
-/// ✓ to put the text in the field, and send to post it at once.
+/// stop to put the text in the field, and send to post it as a message that transcribes in the chat.
 struct VoiceBar: View {
     let session: VoiceSession
     let onInsert: (String) -> Void
-    let onSend: (String) -> Void
+    let onSend: () -> Void
     @Environment(\.accent) private var accent
 
     private let sendCircle: CGFloat = 32
@@ -134,9 +242,9 @@ struct VoiceBar: View {
             }
             .frame(maxWidth: .infinity)
             if session.phase == .recording {
-                icon("checkmark", label: String(localized: "Insert Transcript")) { session.finish(onInsert) }
+                icon("stop.circle.fill", label: String(localized: "Insert Transcript")) { session.finish(onInsert) }
                     .keyboardShortcut(.defaultAction)
-                Button { session.finish(onSend) } label: {
+                Button(action: onSend) {
                     Image(systemName: "arrow.up")
                         .textStyle(.body, weight: .bold)
                         .foregroundStyle(Color.white)
