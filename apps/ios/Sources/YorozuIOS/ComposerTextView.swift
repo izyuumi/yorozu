@@ -15,6 +15,8 @@ struct ComposerTextView: NSViewRepresentable {
     var onImages: ([Data]) -> Bool = { _ in false }
     var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
 
+    @Environment(\.textZoom) private var zoom
+
     private static let maxLines: CGFloat = 5
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -25,7 +27,6 @@ struct ComposerTextView: NSViewRepresentable {
         scroll.borderType = .noBorder
         let view = ComposerNSTextView()
         view.delegate = context.coordinator
-        view.font = .preferredFont(forTextStyle: .body)
         view.textColor = .labelColor
         view.drawsBackground = false
         view.isRichText = false
@@ -47,6 +48,11 @@ struct ComposerTextView: NSViewRepresentable {
         view.submit = onSubmit
         view.takeFiles = onFiles
         view.takeImages = onImages
+        let font = NSFont.preferred(.body, zoom: zoom)
+        if view.font != font {
+            view.font = font
+            view.needsDisplay = true
+        }
         if view.string != text, !view.hasMarkedText() {
             view.string = text
             view.needsDisplay = true
@@ -130,14 +136,14 @@ struct ComposerTextView: UIViewRepresentable {
     var onImages: ([Data]) -> Bool = { _ in false }
     var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     private static let maxLines: CGFloat = 5
     private static let measuredLimit = 1_000
 
     func makeUIView(context: Context) -> ComposerUITextView {
         let view = ComposerUITextView()
         view.delegate = context.coordinator
-        view.font = .preferredFont(forTextStyle: .body)
-        view.adjustsFontForContentSizeCategory = true
         view.backgroundColor = .clear
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
@@ -148,8 +154,6 @@ struct ComposerTextView: UIViewRepresentable {
 
         let label = view.placeholderLabel
         label.text = placeholder
-        label.font = view.font
-        label.adjustsFontForContentSizeCategory = true
         label.textColor = .placeholderText
         label.isAccessibilityElement = false
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -163,6 +167,11 @@ struct ComposerTextView: UIViewRepresentable {
 
     func updateUIView(_ view: ComposerUITextView, context: Context) {
         context.coordinator.text = $text
+        let font = UIFont.preferred(.body, size: typeSize)
+        if view.font != font {
+            view.font = font
+            view.placeholderLabel.font = font
+        }
         if view.text != text { view.text = text }
         view.placeholderLabel.text = placeholder
         view.placeholderLabel.isHidden = !text.isEmpty

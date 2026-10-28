@@ -202,10 +202,10 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: LayoutMetrics.hair) {
                         HStack {
                             Text(device.name ?? String(localized: "Unknown device"))
-                            if device.current { Text("This Device").font(.caption).foregroundStyle(.secondary) }
+                            if device.current { Text("This Device").textStyle(.caption).foregroundStyle(.secondary) }
                         }
                         Text(Self.date(device.pairedAt), format: .dateTime.year().month().day())
-                            .font(.caption)
+                            .textStyle(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .badge(device.push ? nil : Text("Push off"))
@@ -299,7 +299,7 @@ private struct AccentSwatch: View {
                 .frame(width: circle, height: circle)
                 .overlay {
                     if selected {
-                        Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(.background)
+                        Image(systemName: "checkmark").textStyle(.caption, weight: .bold).foregroundStyle(.background)
                     }
                 }
                 .padding(LayoutMetrics.tight / 2)

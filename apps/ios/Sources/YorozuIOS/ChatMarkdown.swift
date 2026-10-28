@@ -154,7 +154,7 @@ private struct MarkdownBlockView: View {
         case .paragraph(let text):
             Text(text)
         case .heading(let level, let text):
-            Text(text).font(level == 1 ? .title2 : level == 2 ? .title3 : .headline).bold()
+            Text(text).textStyle(level == 1 ? .title2 : level == 2 ? .title3 : .headline).bold()
         case .list(let items):
             VStack(alignment: .leading, spacing: MarkdownMetrics.itemSpacing) {
                 ForEach(items.indices, id: \.self) { i in
@@ -198,10 +198,10 @@ private struct CodeBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(verbatim: language ?? "").font(.caption.monospaced())
+                Text(verbatim: language ?? "").textStyle(.caption, monospaced: true)
                 Spacer()
                 Button(action: copy) {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.caption)
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc").textStyle(.caption)
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(copied ? "Code copied" : "Copy code")
@@ -212,7 +212,7 @@ private struct CodeBlock: View {
             .padding(.vertical, MarkdownMetrics.tight)
             Divider()
             ScrollView(.horizontal) {
-                Text(verbatim: code).font(.callout.monospaced()).padding(MarkdownMetrics.inset)
+                Text(verbatim: code).textStyle(.callout, monospaced: true).padding(MarkdownMetrics.inset)
             }
         }
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: MarkdownMetrics.radius, style: .continuous))
@@ -253,7 +253,7 @@ private struct TableBlock: View {
                 GridRow { ForEach(rows[r].indices, id: \.self) { cell(rows[r][$0]) } }
             }
         }
-        .font(.callout.monospacedDigit())
+        .textStyle(.callout).monospacedDigit()
         .clipShape(RoundedRectangle(cornerRadius: MarkdownMetrics.radius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: MarkdownMetrics.radius, style: .continuous).strokeBorder(.separator))
     }
@@ -287,7 +287,7 @@ private struct ImageBlock: View {
                 }
             }
             .accessibilityLabel(alt.isEmpty ? url.lastPathComponent : alt)
-            if !alt.isEmpty { Text(verbatim: alt).font(.caption).foregroundStyle(.secondary) }
+            if !alt.isEmpty { Text(verbatim: alt).textStyle(.caption).foregroundStyle(.secondary) }
         }
     }
 }

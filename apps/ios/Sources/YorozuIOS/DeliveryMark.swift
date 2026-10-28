@@ -40,6 +40,7 @@ struct DeliveryMark: View {
     @Environment(\.displayScale) private var displayScale
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .caption) private var overlap: CGFloat = 7
+    @Environment(\.textZoom) private var zoom
 
     var body: some View {
         Group {
@@ -59,14 +60,14 @@ struct DeliveryMark: View {
                 Image(systemName: "exclamationmark.circle")
             }
         }
-        .font(.caption)
+        .textStyle(.caption)
         .foregroundStyle(delivery.state == .notDelivered ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
         .accessibilityElement()
         .accessibilityLabel(delivery.word)
     }
 
     private func pair(_ symbol: String) -> some View {
-        HStack(spacing: -overlap) {
+        HStack(spacing: -overlap * zoom) {
             outlined(symbol)
             outlined(symbol)
                 .background { Circle().fill(Color(.systemBackground)) }

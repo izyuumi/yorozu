@@ -71,7 +71,7 @@ private struct StatusBannerBar: ViewModifier {
             } icon: {
                 Image(systemName: banner.symbol).foregroundStyle(YorozuPalette.warning)
             }
-            .font(.footnote)
+            .textStyle(.footnote)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, LayoutMetrics.gutter)

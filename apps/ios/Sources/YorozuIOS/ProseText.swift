@@ -6,6 +6,7 @@ import SwiftUI
 // paragraphs, headings, lists and quotes. SwiftUI `Text` selects one view at a time and has no hanging indent.
 struct ProseText: NSViewRepresentable {
     let blocks: [MarkdownBlock]
+    @Environment(\.textZoom) private var zoom
 
     static func isProse(_ block: MarkdownBlock) -> Bool {
         switch block {
@@ -31,7 +32,7 @@ struct ProseText: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSTextView, context: Context) {
-        let text = Self.render(blocks)
+        let text = Self.render(blocks, zoom: zoom)
         if view.textStorage?.isEqual(to: text) != true { view.textStorage?.setAttributedString(text) }
     }
 
@@ -48,28 +49,29 @@ struct ProseText: NSViewRepresentable {
     private static let itemSpacing: CGFloat = 4
     private static let indent: CGFloat = 18
 
-    private static func render(_ blocks: [MarkdownBlock]) -> NSAttributedString {
+    private static func render(_ blocks: [MarkdownBlock], zoom: CGFloat) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        append(blocks, to: out, level: 0, quoted: false)
+        append(blocks, to: out, level: 0, quoted: false, zoom: zoom)
         if out.string.hasSuffix("\n") { out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1)) }
         return out
     }
 
-    private static func append(_ blocks: [MarkdownBlock], to out: NSMutableAttributedString, level: Int, quoted: Bool, marker: String? = nil) {
+    private static func append(_ blocks: [MarkdownBlock], to out: NSMutableAttributedString, level: Int, quoted: Bool, zoom: CGFloat,
+                               marker: String? = nil) {
         var marker = marker
         for (i, block) in blocks.enumerated() {
             let spacing = i == blocks.count - 1 && level > 0 ? itemSpacing : blockSpacing
             switch block {
             case .paragraph(let text):
-                out.append(line(text, style: .body, level: level, quoted: quoted, marker: marker, spacing: spacing))
+                out.append(line(text, style: .body, level: level, quoted: quoted, zoom: zoom, marker: marker, spacing: spacing))
             case .heading(let depth, let text):
                 let style: NSFont.TextStyle = depth == 1 ? .title2 : depth == 2 ? .title3 : .headline
-                out.append(line(text, style: style, bold: true, level: level, quoted: quoted, marker: marker, spacing: spacing))
+                out.append(line(text, style: style, bold: true, level: level, quoted: quoted, zoom: zoom, marker: marker, spacing: spacing))
             case .list(let items):
-                for item in items { append(item.blocks, to: out, level: level + 1, quoted: quoted, marker: item.marker) }
+                for item in items { append(item.blocks, to: out, level: level + 1, quoted: quoted, zoom: zoom, marker: item.marker) }
                 trimSpacing(out, to: spacing)
             case .quote(let inner):
-                append(inner, to: out, level: level + 1, quoted: true)
+                append(inner, to: out, level: level + 1, quoted: true, zoom: zoom)
             case .code, .table, .rule, .image:
                 continue
             }
@@ -78,8 +80,8 @@ struct ProseText: NSViewRepresentable {
     }
 
     private static func line(_ text: AttributedString, style: NSFont.TextStyle, bold: Bool = false, level: Int, quoted: Bool,
-                             marker: String?, spacing: CGFloat) -> NSAttributedString {
-        let base = NSFont.preferredFont(forTextStyle: style)
+                             zoom: CGFloat, marker: String?, spacing: CGFloat) -> NSAttributedString {
+        let base = NSFont.preferred(style, zoom: zoom)
         let color: NSColor = quoted ? .secondaryLabelColor : .labelColor
         let paragraph = NSMutableParagraphStyle()
         paragraph.headIndent = CGFloat(level) * indent

@@ -22,7 +22,7 @@ struct ScannerView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     Text(prompt)
-                        .font(.headline)
+                        .textStyle(.headline)
                         .multilineTextAlignment(.center)
 
                     if authorization == .denied {
@@ -56,14 +56,14 @@ struct ScannerView: View {
                     }
 
                     Text("Scan a code from a host you trust. Pairing codes are secret.")
-                        .font(.footnote)
+                        .textStyle(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                     if let error {
                         Label { Text(error) } icon: {
                             Image(systemName: "exclamationmark.circle").foregroundStyle(.red)
                         }
-                        .font(.footnote)
+                        .textStyle(.footnote)
                     }
                     Button("Enter code manually", action: onManualEntry)
                         .frame(minHeight: 44)
@@ -98,9 +98,9 @@ struct ScannerView: View {
     private func unavailable(_ title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "qrcode.viewfinder")
-                .font(.largeTitle)
+                .textStyle(.largeTitle)
                 .accessibilityHidden(true)
-            Text(title).font(.headline)
+            Text(title).textStyle(.headline)
             Text(detail).foregroundStyle(.secondary)
         }
         .multilineTextAlignment(.center)

@@ -94,7 +94,7 @@ struct AddDeviceSheet: View {
                     VStack(spacing: LayoutMetrics.stack) {
                         QRCode(text: webLink)
                         Text("Valid for \(Text(timerInterval: Date.now...expiry, countsDown: true)), for one device.")
-                            .font(.footnote).foregroundStyle(.secondary)
+                            .textStyle(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
                     VStack(spacing: LayoutMetrics.stack) {
@@ -106,17 +106,17 @@ struct AddDeviceSheet: View {
             ShareLink(item: url) { Label(String(localized: "Send the Link"), systemImage: "square.and.arrow.up") }
             if let fingerprint = invite.fingerprint {
                 VStack(spacing: LayoutMetrics.tight) {
-                    Text("Host fingerprint").font(.footnote).foregroundStyle(.secondary)
-                    Text(fingerprint).font(.body.monospaced()).textSelection(.enabled)
+                    Text("Host fingerprint").textStyle(.footnote).foregroundStyle(.secondary)
+                    Text(fingerprint).textStyle(.body, monospaced: true).textSelection(.enabled)
                     Text("The new device shows it before pairing. Pair only if they match.")
-                        .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .textStyle(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
             }
         } else if let error = model.invite?.error {
             ContentUnavailableView {
-                Label(String(localized: "Couldn’t make a code"), systemImage: "exclamationmark.triangle")
+                Label(String(localized: "Couldn’t make a code"), systemImage: "exclamationmark.triangle").zoomedFont(.title3)
             } description: {
-                Text(error)
+                Text(error).zoomedFont()
             } actions: {
                 Button(String(localized: "Try Again")) { model.requestInvite() }
             }
@@ -130,14 +130,14 @@ extension AddDeviceSheet {
     private func success(_ device: DeviceInfo) -> some View {
         VStack(spacing: LayoutMetrics.stack) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.largeTitle)
+                .textStyle(.largeTitle)
                 .foregroundStyle(.tint)
                 .accessibilityHidden(true)
             Text("\(device.name ?? String(localized: "The new device")) is paired")
-                .font(.headline)
+                .textStyle(.headline)
                 .multilineTextAlignment(.center)
             Text("It sees every conversation. You can manage it in Paired Devices.")
-                .font(.footnote)
+                .textStyle(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button(String(localized: "Add Another")) {

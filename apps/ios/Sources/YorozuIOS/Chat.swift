@@ -18,6 +18,7 @@ struct ChatView: View {
     @State private var atBottom = true
     @State private var timesShown: CGFloat = 0
     @ScaledMetric(relativeTo: .caption2) private var timesWidth: CGFloat = 64
+    @Environment(\.textZoom) private var zoom
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -40,7 +41,7 @@ struct ChatView: View {
                             in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
                         .modifier(MessageTimeBelow(item: item))
                         .readableRow()
-                        .modifier(MessageTime(item: item, shown: timesShown, width: timesWidth))
+                        .modifier(MessageTime(item: item, shown: timesShown, width: timesWidth * zoom))
                 }
                 if typing {
                     TypingIndicator().readableRow().id("typing")
@@ -50,7 +51,7 @@ struct ChatView: View {
         }
         .scrollPosition($position)
         #if os(iOS)
-        .gesture(LeftwardPan { dx in timesShown = min(max(-dx, 0), timesWidth) } ended: {
+        .gesture(LeftwardPan { dx in timesShown = min(max(-dx, 0), timesWidth * zoom) } ended: {
             withAnimation(.snappy) { timesShown = 0 }
         })
         #endif
@@ -96,8 +97,11 @@ struct ChatView: View {
         }
         .overlay {
             if items.isEmpty && !typing {
-                ContentUnavailableView("New conversation", systemImage: "bubble.left.and.bubble.right",
-                    description: Text("Your first message starts a new session on the host."))
+                ContentUnavailableView {
+                    Label("New conversation", systemImage: "bubble.left.and.bubble.right").zoomedFont(.title3)
+                } description: {
+                    Text("Your first message starts a new session on the host.").zoomedFont()
+                }
             }
         }
         .yorozuBottomBar {
@@ -205,7 +209,7 @@ private struct QuoteHeader: View {
         } icon: {
             Image(systemName: "arrowshape.turn.up.left")
         }
-        .font(.footnote)
+        .textStyle(.footnote)
         .foregroundStyle(.secondary)
     }
 }
@@ -237,7 +241,7 @@ struct ItemRow: View {
     private var reset: some View {
         HStack(spacing: LayoutMetrics.inner) {
             VStack { Divider() }
-            Text("New session").font(.caption).foregroundStyle(.secondary).lineLimit(1).layoutPriority(1)
+            Text("New session").textStyle(.caption).foregroundStyle(.secondary).lineLimit(1).layoutPriority(1)
             VStack { Divider() }
         }
         .accessibilityElement(children: .combine)
@@ -269,7 +273,7 @@ struct ItemRow: View {
                     .accessibilityLabel(Text(delivery.word))
                 if let rejected = item.rejected {
                     Text(rejected)
-                        .font(.caption)
+                        .textStyle(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.trailing)
                 }
@@ -311,7 +315,7 @@ struct ItemRow: View {
         Label { Text(item.text) } icon: {
             Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
         }
-        .font(.footnote)
+        .textStyle(.footnote)
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
     }
@@ -370,7 +374,7 @@ private struct ReplyActions: View {
             .accessibilityLabel(Text(copied ? "Copied" : "Copy as Markdown"))
         }
         .buttonStyle(.borderless)
-        .font(.footnote)
+        .textStyle(.footnote)
         .foregroundStyle(.secondary)
         .task(id: copied) {
             guard copied else { return }
@@ -388,7 +392,7 @@ private struct ToolsRow: View {
             VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
                 ForEach(calls) { call in
                     Label {
-                        Text(call.name).font(.footnote.monospaced())
+                        Text(call.name).textStyle(.footnote, monospaced: true)
                     } icon: {
                         icon(call.status)
                     }
@@ -406,7 +410,7 @@ private struct ToolsRow: View {
                     Image(systemName: "wrench.and.screwdriver")
                 }
             }
-            .font(.footnote)
+            .textStyle(.footnote)
         }
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -452,7 +456,7 @@ private struct MessageTime: ViewModifier {
 
     static func time(_ item: ChatItem) -> some View {
         Text(Date(timeIntervalSince1970: TimeInterval(item.ts) / 1000), format: .dateTime.hour().minute())
-            .font(.caption2)
+            .textStyle(.caption2)
             .foregroundStyle(.secondary)
             .lineLimit(1)
     }
@@ -485,7 +489,7 @@ private struct JumpToLatestButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "arrow.down")
-                .font(.body.weight(.semibold))
+                .textStyle(.body, weight: .semibold)
                 .frame(width: controlTarget, height: controlTarget)
                 .yorozuGlass(in: Circle())
                 .contentShape(Circle())
@@ -501,7 +505,7 @@ private struct TypingIndicator: View {
 
     var body: some View {
         Image(systemName: "ellipsis")
-            .font(.title3.weight(.bold))
+            .textStyle(.title3, weight: .bold)
             .symbolEffect(.variableColor.iterative, isActive: !reduceMotion)
             .foregroundStyle(.secondary)
             .padding(.horizontal, LayoutMetrics.stack)
@@ -549,7 +553,7 @@ private struct Composer: View {
             }
             if files.count > Attachment.maxPerMessage {
                 Text("A message can carry up to \(Attachment.maxPerMessage) attachments.")
-                    .font(.caption)
+                    .textStyle(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, LayoutMetrics.stack)
             }
@@ -583,7 +587,7 @@ private struct Composer: View {
                 .accessibilityIdentifier("composer.text")
             Button(action: send) {
                 Image(systemName: "arrow.up")
-                    .font(.body.weight(.bold))
+                    .textStyle(.body, weight: .bold)
                     .foregroundStyle(canSend ? Color.white : Color.secondary)
                     .frame(width: sendCircle, height: sendCircle)
                     .background(canSend ? AnyShapeStyle(accent.bubble) : AnyShapeStyle(.fill.tertiary), in: Circle())

@@ -32,13 +32,12 @@ private struct SelectableText: View {
 #else
 private struct SelectableText: UIViewRepresentable {
     let text: String
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
         view.isEditable = false
         view.isSelectable = true
-        view.font = .preferredFont(forTextStyle: .body)
-        view.adjustsFontForContentSizeCategory = true
         view.backgroundColor = .clear
         view.textContainer.lineFragmentPadding = 0
         view.dataDetectorTypes = [.link]
@@ -46,6 +45,7 @@ private struct SelectableText: UIViewRepresentable {
     }
 
     func updateUIView(_ view: UITextView, context: Context) {
+        view.font = .preferred(.body, size: typeSize)
         if view.text != text { view.text = text }
     }
 }

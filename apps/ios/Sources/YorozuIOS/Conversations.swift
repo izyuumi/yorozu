@@ -45,7 +45,7 @@ struct ConversationsView: View {
         return List(selection: showsCrons ? pane : nil) {
             if model.isDemo {
                 Label(String(localized: "Demo"), systemImage: "play.rectangle")
-                    .font(.caption)
+                    .textStyle(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("demo.indicator")
             }
@@ -62,7 +62,7 @@ struct ConversationsView: View {
                             .buttonStyle(.borderless)
                             .foregroundStyle(.secondary)
                     }
-                    .font(.subheadline)
+                    .textStyle(.subheadline)
                 }
             }
             #endif
@@ -71,24 +71,26 @@ struct ConversationsView: View {
                     Label { Text(problem) } icon: {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(YorozuPalette.warning)
                     }
+                    .zoomedFont()
                     Button(String(localized: "Pair Again")) { model.unpair() }
+                        .zoomedFont()
                 }
             }
             if showsCrons {
-                Label(String(localized: "Automations"), systemImage: "clock").tag(Pane.crons)
+                Label(String(localized: "Automations"), systemImage: "clock").zoomedFont().tag(Pane.crons)
             }
             let pinned = conversations.filter { $0.pinnedAt != nil }.sorted { ($0.pinnedAt ?? 0) > ($1.pinnedAt ?? 0) }
             if !pinned.isEmpty {
                 Section {
                     ForEach(pinned, content: row)
                 } header: {
-                    Text("Pinned")
+                    Text("Pinned").zoomedFont(.subheadline)
                 }
             }
             Section {
                 ForEach(conversations.filter { $0.pinnedAt == nil }, content: row)
             } header: {
-                if showsCrons || !pinned.isEmpty { Text("Chats") }
+                if showsCrons || !pinned.isEmpty { Text("Chats").zoomedFont(.subheadline) }
             }
             let archived = model.archivedList
             if !archived.isEmpty {
@@ -103,6 +105,7 @@ struct ConversationsView: View {
                         }
                         .badge(archived.count)
                     }
+                    .zoomedFont()
                     .foregroundStyle(.primary)
                     #if os(macOS)
                     .buttonStyle(.plain)
@@ -113,6 +116,8 @@ struct ConversationsView: View {
                 }
             }
         }
+        // A Mac sidebar drops a row font equal to the one the list inherits; with none inherited, the rows' zoomed fonts stand.
+        .font(nil)
         .alert(String(localized: "Rename Conversation"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
             presenting: renaming) { conversation in
             TextField(String(localized: "Title"), text: $newTitle)
@@ -134,8 +139,11 @@ struct ConversationsView: View {
         }
         .overlay {
             if conversations.isEmpty && model.archivedList.isEmpty {
-                ContentUnavailableView("No conversations yet", systemImage: "bubble.left.and.bubble.right",
-                    description: Text("Start one with the compose button."))
+                ContentUnavailableView {
+                    Label("No conversations yet", systemImage: "bubble.left.and.bubble.right").zoomedFont(.title3)
+                } description: {
+                    Text("Start one with the compose button.").zoomedFont()
+                }
             }
         }
         .navigationTitle("Chats")
@@ -252,12 +260,12 @@ private struct ConversationRow: View {
                     .lineLimit(1)
                 Spacer(minLength: LayoutMetrics.inner)
                 Text(Self.time(conversation.updatedAt))
-                    .font(.caption)
+                    .textStyle(.caption)
                     .foregroundStyle(.secondary)
-                if let dot { Image(systemName: "circle.fill").font(.caption2).foregroundStyle(dot) }
+                if let dot { Image(systemName: "circle.fill").textStyle(.caption2).foregroundStyle(dot) }
                 if let side {
                     Image(systemName: side == .left ? "rectangle.lefthalf.filled" : "rectangle.righthalf.filled")
-                        .font(.caption)
+                        .textStyle(.caption)
                         .foregroundStyle(.tint)
                         .accessibilityLabel(side == .left ? Text("Open on the left") : Text("Open on the right"))
                 }
@@ -269,10 +277,11 @@ private struct ConversationRow: View {
                     Text(conversation.lastText)
                 }
             }
-            .font(.subheadline)
+            .textStyle(.subheadline)
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }
+        .zoomedFont()
         .accessibilityElement(children: .combine)
         .accessibilityValue(conversation.needsAttention ? Text("Needs attention") : conversation.unreadCount > 0 ? Text("Unread") : Text(""))
     }

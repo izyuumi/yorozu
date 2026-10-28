@@ -84,7 +84,7 @@ struct PairingView: View {
                     #endif
                     Section {
                         TextField(String(localized: "Pairing link"), text: $code, axis: .vertical)
-                            .font(.system(.footnote, design: .monospaced))
+                            .textStyle(.footnote, monospaced: true)
                             #if os(iOS)
                             .textInputAutocapitalization(.never)
                             #endif
