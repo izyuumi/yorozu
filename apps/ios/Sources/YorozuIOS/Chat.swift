@@ -132,7 +132,8 @@ struct ChatView: View {
         .navigationTitle(model.conversations[convId]?.displayTitle ?? String(localized: "New Conversation"))
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarStaysVisible()
-        .navigationSubtitleIfAvailable(model.state == .ready ? "" : model.state.label)
+        .statusBanner(StatusBanner(model: model, convId: convId))
+        .navigationSubtitleIfAvailable(model.state == .ready || model.outage != nil ? "" : model.state.label)
     }
 }
 
@@ -264,7 +265,7 @@ struct ItemRow: View {
                         #if os(macOS)
                         .textSelection(.enabled)
                         #endif
-                        .contextMenu { reply; copy; selectText }
+                        .contextMenu { reply; copy; selectText; discard }
                         .accessibilityLabel(Text("You: \(item.text)"))
                 }
                 DeliveryMark(delivery: delivery)
@@ -335,6 +336,13 @@ struct ItemRow: View {
 
     private var copy: some View {
         Button(String(localized: "Copy"), systemImage: "doc.on.doc") { UIPasteboard.general.string = item.text }
+    }
+
+    @ViewBuilder private var discard: some View {
+        if item.status == .queued {
+            Divider()
+            Button(String(localized: "Delete"), systemImage: "trash", role: .destructive) { model.discard(item.id) }
+        }
     }
 
     private var selectText: some View {

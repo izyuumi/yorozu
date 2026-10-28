@@ -45,6 +45,8 @@ struct DeliveryMark: View {
     var body: some View {
         Group {
             switch delivery.step {
+            case .sending where !delivery.sent:
+                Image(systemName: "clock")
             case .sending:
                 Image(systemName: "circle.dotted")
                     .symbolEffect(.rotate, isActive: delivery.inFlight && !reduceMotion)
