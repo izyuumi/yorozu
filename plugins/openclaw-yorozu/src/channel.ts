@@ -26,6 +26,7 @@ import { loadMessageTimes } from "./activity.js";
 import { runParked } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
 import { applyPatch, watchSessions } from "./sessions.js";
+import { announceGatewayState } from "./updates.js";
 
 export const CHANNEL_ID = "yorozu";
 const DEFAULT_RELAY_URL = "wss://relay.yumi.to";
@@ -69,6 +70,7 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
   watchSessions(account.agent, abortSignal, ctx.log);
   const turn = { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent, mediaMaxBytes: maxBytes };
   runParked(abortSignal, (message, attempt) => void handleMessage(turn, message, attempt));
+  void announceGatewayState(turn, account.agent).catch((error: unknown) => ctx.log?.warn?.(`yorozu: gateway notice failed: ${String(error)}`));
   try {
     await runRelayHost({
       relayUrl: account.relayUrl,

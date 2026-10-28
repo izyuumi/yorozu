@@ -58,6 +58,24 @@ openclaw config set commands.ownerAllowFrom '[<existing entries>, "yorozu:owner"
 
 This gives every paired device the owner's authority over the agent.
 
+### OpenClaw updates
+
+Yorozu does not update OpenClaw. OpenClaw's own auto-update does it: when the Gateway is idle, it drains running turns, updates, restarts and checks the result, and rolls back if that fails. Meanwhile the apps show the Gateway as offline. Auto-update needs both of these:
+
+- `update.auto.enabled` set to `true` (it is off by default), with `update.checkOnStart` not `false` and `OPENCLAW_NO_AUTO_UPDATE` not set:
+
+  ```sh
+  openclaw config set update.auto.enabled true
+  ```
+
+- The Gateway running as a managed service (launchd, systemd or a Scheduled Task). A Gateway started in a terminal only logs that an update is available:
+
+  ```sh
+  openclaw gateway install
+  ```
+
+If either is missing, the plugin posts a notice into the most recent conversation after the Gateway starts. It posts it again only when what is missing changes. After an update, it posts `Updated OpenClaw <old> → <new>` there once ([plugin README](../plugins/openclaw-yorozu/README.md#gateway-notices-srcupdatests)). OpenClaw's own guide: `docs/install/updating/automatic-updates.md` in the OpenClaw source.
+
 ### Models
 
 Yorozu has no model settings of its own; it uses the configured agent's models. Titles come from OpenClaw's title generator, which uses the agent's utility model first and then its primary model. Attachments reach the model as media, so pictures need a model that accepts image input.
