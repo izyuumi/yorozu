@@ -45,9 +45,8 @@ struct Conversation: Codable, Identifiable, Equatable {
 
     var displayTitle: String {
         if let title, !title.isEmpty { return title }
-        let first = (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.summary ?? ""
-        let line = first.split(separator: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
-        return line ?? String(localized: "New Conversation")
+        let line = (items.first { $0.kind == .user } ?? items.first { $0.kind == .agent })?.firstLine ?? ""
+        return line.isEmpty ? String(localized: "New Conversation") : line
     }
 
     var lastText: String {
@@ -74,6 +73,7 @@ struct Conversation: Codable, Identifiable, Equatable {
                 if item.kind == .user { item.status = max(old.status ?? .read, .read) }
                 if item.kind == .tools { item.tools = ToolCall.union(old.tools ?? [], item.tools ?? []) }
                 if item.attachments == nil { item.attachments = old.attachments }
+                if item.replyTo == nil { item.replyTo = old.replyTo }
             }
             let lower = lowerBound()
             let at = items[lower...].firstIndex { other in other.seq.map { $0 > seq } ?? (other.ts > item.ts) } ?? items.endIndex
@@ -95,9 +95,16 @@ struct ChatItem: Codable, Identifiable, Equatable {
     var tools: [ToolCall]?
     var attachments: [ChatAttachment]?
     var seq: Int?
+    var replyTo: ReplyTo?
 
     var summary: String {
         text.isEmpty ? attachments?.first.map { "📎 \($0.name)" } ?? "" : text
+    }
+
+    var firstLine: String { Self.firstLine(summary) }
+
+    static func firstLine(_ text: String) -> String {
+        text.split(separator: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
     }
 }
 
@@ -124,10 +131,10 @@ extension ChatItem {
         switch item.kind {
         case .user:
             self.init(id: item.id, kind: .user, text: item.text ?? "", ts: item.ts, status: .read,
-                attachments: ChatAttachment.list(item.attachments, uploaded: true), seq: item.seq)
+                attachments: ChatAttachment.list(item.attachments, uploaded: true), seq: item.seq, replyTo: item.replyTo)
         case .agent:
             self.init(id: item.id, kind: .agent, text: item.text ?? "", ts: item.ts,
-                attachments: ChatAttachment.list(item.attachments), seq: item.seq)
+                attachments: ChatAttachment.list(item.attachments), seq: item.seq, replyTo: item.replyTo)
         case .tools:
             self.init(id: "tools:\(item.id)", kind: .tools, text: "", ts: item.ts,
                 tools: (item.tools ?? []).map { ToolCall(id: $0.callId, name: $0.name, status: $0.status) }, seq: item.seq)

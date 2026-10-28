@@ -158,11 +158,11 @@ Every box's plaintext is one UTF-8 JSON object `{"kind": <string>, "data": <obje
 | `kind` | Direction | `data` |
 |---|---|---|
 | `peer_info` | both, first box | `protocolMin`, `protocolMax` (both 3), `app`, `name`?, `capabilities` (strings), `mediaMaxBytes`?, `agent`?, `hostVersion`? |
-| `message` | client → plugin | `convId`, `messageId` (client-made), `text` (may be empty with attachments), `attachments`? |
+| `message` | client → plugin | `convId`, `messageId` (client-made), `text` (may be empty with attachments), `attachments`?, `replyTo`? |
 | `delivered` | plugin → clients | `convId`, `messageId` |
 | `run_started` | plugin → clients | `convId`, `messageId` |
 | `typing` | plugin → clients | `convId`, `active` |
-| `reply` | plugin → clients | `convId`, `messageId` (plugin-made), `text`, `ts`, `attachments`? |
+| `reply` | plugin → clients | `convId`, `messageId` (plugin-made), `text`, `ts`, `attachments`?, `replyTo`? |
 | `tool` | plugin → clients | `convId`, `messageId` (the user message whose run made the call), `callId`, `name`, `status` |
 | `error` | both | `code`, `message` (English, for logs), `convId`?, `messageId`?, `attachmentId`? |
 | `conv_list` | request `{}`; answer to that client | `conversations`: [`convId`, `updatedAt`, `rev`, `title`?, `archived`?, `pinnedAt`?] |
@@ -190,12 +190,21 @@ Each side sends its own as its first box and acts on nothing else until it has t
 |---|---|---|
 | `app` | the app version | the plugin version (`0.1.0`) |
 | `name` | device model | the host's hostname |
-| `capabilities` | `attachments`, `devices` | `attachments`, `devices`, `invite` |
+| `capabilities` | `attachments`, `devices`, `replies` | `attachments`, `devices`, `invite`, `replies` |
 | `mediaMaxBytes`, `agent`, `hostVersion` | — | attachment limit; `channels.yorozu.agent`; OpenClaw version |
 
-The client offers attachments, Settings devices and adding a device only when the plugin lists `attachments`, `devices` and `invite`. The plugin answers `device_list`, `device_patch` and `pair_invite` from any client and reads `foreground.active` whenever present; the only thing it gates on the client's capabilities is a reply's files, sent to a client without `attachments` as one text line each. The plugin stores the client's `name` (cut to 64) for `openclaw yorozu devices`.
+The client offers attachments, Settings devices, adding a device and replying only when the plugin lists `attachments`, `devices`, `invite` and `replies` (attachments and replies also before it has the plugin's `peer_info`), and sends `replyTo` only to a plugin listing `replies`. The plugin answers `device_list`, `device_patch` and `pair_invite` from any client and reads `foreground.active` whenever present; it gates two things on the client's capabilities: a reply's files, sent to a client without `attachments` as one text line each, and `replyTo` on `reply` and history items, left out for a client without `replies`. The plugin stores the client's `name` (cut to 64) for `openclaw yorozu devices`.
 
 Right after the client's `peer_info`, the plugin sends that device every stored [`read_cursor`](#read_cursor).
+
+#### Replies: `replyTo`
+
+Capability `replies`. A `message`, `reply`, or `user` or `agent` history item may name the message it answers: `replyTo: {messageId, text?}`. `messageId` is a lowercase UUID (an id that is not makes the event unknown on the client and `bad_request` on the plugin); `text` is the target's text as the sender knew it, for a header when the target is not loaded.
+
+- **Client → agent**: the client sends the target's text (cut to 2,000 characters, `ReplyTo.maxText`). The plugin hands the turn the target as OpenClaw's reply context (`ReplyToId`, `ReplyToBody`); the `message`'s `messageId` is the turn's `MessageSid`.
+- **Agent → client**: the agent replies to a message with `[[reply_to_current]]` or `[[reply_to:<messageId>]]`, or the message tool's `replyTo`; the channel's reply mode is `off`, so nothing else quotes. The plugin puts `replyTo` on the first chunk of that reply, with the target's text from the turn's `message` or the transcript.
+- The plugin keeps each `replyTo` it saw or sent, `text` cut to 280 characters, by the replying message's id (keyed state namespace `replies`, at most 10,000, oldest dropped), and adds it to that message's history item.
+- The client shows a header with the first line of the target (the loaded message's text, else `text`); tapping it scrolls to the target when it is loaded.
 
 #### `tool`
 
@@ -213,8 +222,8 @@ Items carry `kind`, `id`, `seq` (the transcript event's; shared by items of one 
 
 | `kind` | Fields | From |
 |---|---|---|
-| `user` | `text`, `attachments`? | a user message from the owner (OpenClaw-internal user-role turns are skipped); `id` is the client's `messageId`; `<file …>` blocks OpenClaw appends for documents are removed |
-| `agent` | `text`, `attachments`? | assistant text without `MEDIA:` lines, trimmed and chunked by `textChunkLimit` like live replies, files on the last chunk (or an item with empty `text`); cron deliveries mirrored into the transcript come out here too |
+| `user` | `text`, `attachments`?, `replyTo`? | a user message from the owner (OpenClaw-internal user-role turns are skipped); `id` is the client's `messageId`; `<file …>` blocks OpenClaw appends for documents are removed |
+| `agent` | `text`, `attachments`?, `replyTo`? | assistant text without `MEDIA:` lines, trimmed and chunked by `textChunkLimit` like live replies, files on the last chunk (or an item with empty `text`); cron deliveries mirrored into the transcript come out here too |
 | `tools` | `tools`: [`callId`, `name`, `status`] | one row per run, at its first tool call; `id` is the run's user `messageId`; a call without a result is `running` only while the run is the transcript's last |
 | `reset` | — | a `/new` or `/reset` boundary |
 
@@ -326,7 +335,7 @@ One push per finished agent reply, and per cron delivery with text, through the 
 | Frames | `Frame(payload:)`, `.payload`, `.sid` | `decodeFrame`, `encodeFrame`, `frameSid` |
 | Boxes | `Session.seal`, `.open`, `.openEvent` | `Session.seal`, `.open` |
 | Envelope | `WireEvent`, `PeerInfo.negotiate`, `WireEvent.newId`, `isId` | `Event`, `parseEvent`, `encodeEvent`, `negotiate`, `isId` |
-| Capabilities | `Attachment.capability`, `Devices.capability`, `Invite.capability` | `ATTACHMENTS`, `DEVICES`, `INVITE` |
+| Capabilities | `Attachment.capability`, `Devices.capability`, `Invite.capability`, `ReplyTo.capability` | `ATTACHMENTS`, `DEVICES`, `INVITE`, `REPLIES` |
 | Attachments | `Attachment` (`chunkBytes`, `chunkCount`), `Upload`, `UploadAck`, `Download`, `Chunk` | `CHUNK_BYTES`, `attachments.ts` |
 | Push preview | `PushPreview.key`, `.open(userInfo:key:)`, `RelayConnection.registerPush` | `previewKey`, `previewPlaintext`, `sealPreview`, `threadRef` (`push.ts`) |
 | Mac pairing code | `DeviceCode` | — |
