@@ -108,7 +108,8 @@ struct ChatView: View {
         .yorozuBottomBar {
             Composer(text: $draft, files: $files, automation: $automation, replyingTo: $replyingTo,
                 attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
-                focus: focus, onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
+                focus: focus, focusKey: Self.focusKey(convId, empty: items.isEmpty, focus: focus),
+                onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
                 model.send(Self.message(draft, automation: automation), attachments: files, in: convId, replyingTo: replyingTo)
                 draft = ""
                 files = []
@@ -170,6 +171,15 @@ extension ChatView {
         do { files.append(try AttachmentStaging.stage(data: data, name: name, mime: mime, limit: model.mediaMaxBytes)) }
         catch { dropFailure = error.localizedDescription }
         return true
+    }
+
+    /// On the Mac a new conversation focuses its composer; elsewhere the keyboard stays down until tapped.
+    static func focusKey(_ convId: String, empty: Bool, focus: Focus) -> String? {
+        #if os(macOS)
+        empty && focus != .unfocused ? convId : nil
+        #else
+        nil
+        #endif
     }
 
     static func message(_ text: String, automation: CronJob?) -> String {
@@ -567,6 +577,7 @@ private struct Composer: View {
     @Binding var replyingTo: ChatItem?
     let attachLimit: Int?
     let focus: ChatView.Focus
+    var focusKey: String? = nil
     let onFiles: ([URL]) -> Bool
     let onImages: ([Data]) -> Bool
     let onPasteData: (Data, String, String) -> Bool
@@ -633,20 +644,26 @@ private struct Composer: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// One line of the row: every control and a single line of text share this height, so they center on one axis.
+    private var rowHeight: CGFloat { max(sendCircle, controlTarget) }
+    /// The same space above, below and beside the row's ends, so the send circle sits concentric in the capsule.
+    private var inset: CGFloat { max(radius - rowHeight / 2, 0) }
+
+    // Like a flex row aligned to the end: controls stay on the last line while the text grows.
     private var row: some View {
-        HStack(alignment: .bottom, spacing: 0) {
+        HStack(alignment: .bottom, spacing: LayoutMetrics.tight) {
             if let attachLimit {
                 AttachMenu(limit: attachLimit) { files.append(contentsOf: $0) }
+                    .frame(height: rowHeight)
             }
             ComposerTextView(text: $text, placeholder: focus == .unfocused ? String(localized: "Tap to reply here") : String(localized: "Message"), onSubmit: send, onFiles: onFiles, onImages: onImages,
-                onPasteData: onPasteData, cursor: cursor)
-                .padding(.vertical, LayoutMetrics.inner)
-                .padding(.leading, attachLimit == nil ? 0 : -LayoutMetrics.inner)
-                .frame(minHeight: controlTarget)
+                onPasteData: onPasteData, cursor: cursor, focusKey: focusKey)
+                .frame(minHeight: rowHeight)
+                .padding(.leading, attachLimit == nil ? LayoutMetrics.inner : 0)
                 .accessibilityIdentifier("composer.text")
             if voiceEnabled, VoiceModel.supported, VoiceModel.shared.state == .ready {
                 Button { Task { await voice.start() } } label: {
-                    Image(systemName: "mic").textStyle(.body).foregroundStyle(.secondary).frame(width: controlTarget, height: controlTarget)
+                    Image(systemName: "mic").textStyle(.body).foregroundStyle(.secondary).frame(width: controlTarget, height: rowHeight)
                 }
                 .buttonStyle(.plain)
                 .help(String(localized: "Voice Input"))
@@ -660,14 +677,14 @@ private struct Composer: View {
                     .background(canSend ? AnyShapeStyle(accent.bubble) : AnyShapeStyle(.fill.tertiary), in: Circle())
             }
             .buttonStyle(.plain)
-            .frame(width: controlTarget, height: controlTarget)
+            .frame(width: rowHeight, height: rowHeight)
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(!canSend)
             .help(String(localized: "Send"))
             .accessibilityLabel(Text("Send"))
             .accessibilityIdentifier("composer.send")
         }
-        .padding(.leading, attachLimit == nil ? LayoutMetrics.stack : 0)
+        .padding(inset)
     }
 
     private var canSend: Bool {
