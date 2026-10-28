@@ -140,7 +140,8 @@ struct ConversationsView: View {
         }
         .navigationTitle("Chats")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationSubtitleIfAvailable(model.state.label)
+        .statusBanner(StatusBanner(model: model, convId: nil))
+        .navigationSubtitleIfAvailable(model.outage != nil ? "" : model.state.label)
         .toolbar {
             #if os(iOS)
             ToolbarItem(placement: .topBarLeading) {
