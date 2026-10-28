@@ -17946,6 +17946,110 @@
           }
         }
       }
+    },
+    "Speak a message instead of typing it. Speech is transcribed on this device; turning this on downloads the %@ model from Apple." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メッセージを入力する代わりに話せます。音声はこのデバイス上で文字起こしされます。オンにすると、%@のモデルを Apple からダウンロードします。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用说话代替打字来输入信息。语音在此设备上转写；打开后会从 Apple 下载 %@ 的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用說話代替打字來輸入訊息。語音在此裝置上轉寫；開啟後會從 Apple 下載 %@ 的模型。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메시지를 입력하는 대신 말로 할 수 있습니다. 음성은 이 기기에서 받아쓰며, 켜면 Apple에서 %@ 모델을 다운로드합니다."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dicta un mensaje en lugar de escribirlo. La voz se transcribe en este dispositivo; al activarlo se descarga el modelo de %@ desde Apple."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dictez un message au lieu de le taper. La parole est transcrite sur cet appareil ; l’activer télécharge le modèle de %@ depuis Apple."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sprich eine Nachricht, statt sie zu tippen. Die Sprache wird auf diesem Gerät transkribiert; beim Einschalten wird das Modell (%@) von Apple geladen."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fale uma mensagem em vez de digitá-la. A fala é transcrita neste dispositivo; ao ativar, o modelo de %@ é baixado da Apple."
+          }
+        }
+      }
+    },
+    "Voice input needs iOS 26 or later." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音声入力には iOS 26 以降が必要です。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "语音输入需要 iOS 26 或更高版本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "語音輸入需要 iOS 26 或以上版本。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "음성 입력에는 iOS 26 이상이 필요합니다."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La entrada de voz requiere iOS 26 o posterior."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La saisie vocale nécessite iOS 26 ou une version ultérieure."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spracheingabe erfordert iOS 26 oder neuer."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A entrada de voz requer o iOS 26 ou posterior."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

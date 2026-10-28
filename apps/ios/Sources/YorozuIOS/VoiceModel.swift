@@ -1,9 +1,15 @@
 import CryptoKit
 import Foundation
 import Observation
+#if os(iOS)
+import BackgroundAssets
+import Network
+import System
+#endif
 
-/// The opt-in voice input model (LFM3-Audio-2B, GGUF): downloaded from Hugging Face into Application Support,
-/// resumable, excluded from backup, checked against pinned hashes before use.
+/// The opt-in voice input model (LFM3-Audio-2B, GGUF). iPhone and iPad get it as an Apple-hosted asset pack
+/// (`scripts/voice_asset_pack.sh` builds it), so no third party sees the download; the Mac downloads it from
+/// Hugging Face into Application Support, resumable, excluded from backup, checked against pinned hashes.
 @MainActor @Observable
 final class VoiceModel {
     static let shared = VoiceModel()
@@ -24,8 +30,19 @@ final class VoiceModel {
             sha256: "26601e904245a85bd8f3cf320a629e897cfc01c1d09369e8b4fd951f13024d3e"),
     ]
     static let totalBytes = files.reduce(0) { $0 + $1.bytes }
+    static let supported = Transcriber.available && enoughMemory && appleHosting
     /// About 6 GB of RAM: those devices report a little under 6 GiB, 4 GB ones well below this.
-    static let supported = Transcriber.available && ProcessInfo.processInfo.physicalMemory >= 5 << 30
+    static let enoughMemory = ProcessInfo.processInfo.physicalMemory >= 5 << 30
+    static let packID = "VoiceModel"
+    /// iPhone and iPad need iOS 26 for Apple-hosted asset packs.
+    static var appleHosting: Bool {
+        #if os(iOS)
+        if #available(iOS 26, *) { return true }
+        return false
+        #else
+        true
+        #endif
+    }
 
     enum State: Equatable {
         case absent, downloading, ready
@@ -40,8 +57,8 @@ final class VoiceModel {
     private var cellular = false
     private let directory = clientSupportDirectory.appending(path: "VoiceModel", directoryHint: .isDirectory)
 
-    var modelURL: URL { directory.appending(path: Self.files[0].name) }
-    var projectorURL: URL { directory.appending(path: Self.files[1].name) }
+    var modelURL: URL { final(Self.files[0]) }
+    var projectorURL: URL { final(Self.files[1]) }
     var hasFiles: Bool { received > 0 }
 
     private init() {
@@ -69,6 +86,9 @@ final class VoiceModel {
 
     func delete() {
         pause()
+        #if os(iOS)
+        if #available(iOS 26, *) { Task { try? await AssetPackManager.shared.remove(assetPackWithID: Self.packID) } }
+        #endif
         try? FileManager.default.removeItem(at: directory)
         received = 0
         state = .absent
@@ -81,9 +101,13 @@ final class VoiceModel {
             values.isExcludedFromBackup = true
             var excluded = directory
             try excluded.setResourceValues(values)
+            #if os(iOS)
+            if #available(iOS 26, *) { try await fetchPack() }
+            #else
             for file in Self.files where size(of: final(file)) != file.bytes {
                 try await fetch(file)
             }
+            #endif
             guard !Task.isCancelled else { return }
             state = .ready
         } catch {
@@ -124,7 +148,35 @@ final class VoiceModel {
         try FileManager.default.moveItem(at: part, to: final(file))
     }
 
-    private func final(_ file: File) -> URL { directory.appending(path: file.name) }
+    #if os(iOS)
+    /// Waits for Wi-Fi unless cellular was allowed, then has the system download the pack from Apple.
+    @available(iOS 26, *)
+    private func fetchPack() async throws {
+        if !cellular {
+            for await path in NWPathMonitor() {
+                if path.status == .satisfied, !path.isExpensive, !path.isConstrained { break }
+                waitingForWiFi = true
+            }
+            waitingForWiFi = false
+            try Task.checkCancellation()
+        }
+        let manager = AssetPackManager.shared
+        let progress = Task {
+            for await update in manager.statusUpdates(forAssetPackWithID: Self.packID) {
+                if case .downloading(_, let progress) = update { received = Int64(progress.fractionCompleted * Double(Self.totalBytes)) }
+            }
+        }
+        defer { progress.cancel() }
+        try await manager.ensureLocalAvailability(of: manager.assetPack(withID: Self.packID))
+    }
+    #endif
+
+    private func final(_ file: File) -> URL {
+        #if os(iOS)
+        if #available(iOS 26, *), let url = try? AssetPackManager.shared.url(for: FilePath(file.name)) { return url }
+        #endif
+        return directory.appending(path: file.name)
+    }
 
     private func size(of url: URL) -> Int64 {
         ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? 0
