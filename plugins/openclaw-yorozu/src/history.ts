@@ -22,6 +22,7 @@ import {
   type HistoryTool,
   type ToolStatus,
 } from "./envelope.js";
+import { reactionsOf } from "./reactions.js";
 import { replyOf } from "./replies.js";
 import { titleOf } from "./sessions.js";
 
@@ -82,8 +83,10 @@ export function historyPage(cfg: OpenClawConfig, agent: string, request: History
   const { rev } = built;
   const groups: HistoryItem[][] = [];
   for (const raw of built.items) {
-    const replyTo = raw.kind === "user" || raw.kind === "agent" ? replyOf(raw.id) : undefined;
-    const item = replyTo ? { ...raw, replyTo } : raw;
+    const said = raw.kind === "user" || raw.kind === "agent";
+    const replyTo = said ? replyOf(raw.id) : undefined;
+    const reactions = said ? reactionsOf(raw.id) : undefined;
+    const item = replyTo || reactions ? { ...raw, ...(replyTo && { replyTo }), ...(reactions && { reactions }) } : raw;
     const last = groups.at(-1);
     if (last && last[0]!.seq === item.seq) last.push(item);
     else groups.push([item]);

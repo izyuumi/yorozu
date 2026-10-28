@@ -11,6 +11,7 @@ import {
   DEVICES,
   encodeEvent,
   INVITE,
+  REACTIONS,
   REPLIES,
   negotiate,
   parseEvent,
@@ -21,6 +22,7 @@ import {
   type ErrorInfo,
   type Event,
   type Message,
+  type Reaction,
   type PeerInfo,
 } from "./envelope.js";
 import type { HostKeys } from "./keys.js";
@@ -52,7 +54,7 @@ const PEER_INFO: PeerInfo = {
   protocolMax: PROTOCOL_VERSION,
   app: "0.1.0",
   name: os.hostname().replace(/\.local$/, ""),
-  capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES],
+  capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES, REACTIONS],
 };
 
 function downgrade(event: Event, peer: PeerInfo): Event {
@@ -64,6 +66,10 @@ function downgrade(event: Event, peer: PeerInfo): Event {
       const items = event.data.items.map((item) => ("replyTo" in item ? { ...item, replyTo: undefined } : item));
       event = { kind: "history", data: { ...event.data, items } };
     }
+  }
+  if (!peer.capabilities.includes(REACTIONS) && event.kind === "history" && "items" in event.data) {
+    const items = event.data.items.map((item) => ("reactions" in item ? { ...item, reactions: undefined } : item));
+    event = { kind: "history", data: { ...event.data, items } };
   }
   if (peer.capabilities.includes(ATTACHMENTS) || event.kind !== "reply" || !event.data.attachments) return event;
   const { attachments, ...reply } = event.data;
@@ -81,6 +87,7 @@ export type RelayHostOptions = {
   log?: ChannelGatewayContext["log"];
   onStatus: (status: Status) => void;
   onMessage: (message: Message) => void;
+  onReaction: (reaction: Reaction) => void;
   onRequest?: (event: Event) => Promise<Event | undefined>;
   mediaMaxBytes: number;
   agent?: string;
@@ -220,7 +227,12 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
       };
       const broadcastHere = (events: Event[]): number => {
         const live = [...served.values()].filter((entry) => entry.peer);
-        sendFrames(events.flatMap((event) => live.map((entry) => seal(entry.session, downgrade(event, entry.peer!)))));
+        const takes = (event: Event, peer: PeerInfo) => event.kind !== "reaction" || peer.capabilities.includes(REACTIONS);
+        sendFrames(
+          events.flatMap((event) =>
+            live.filter((entry) => takes(event, entry.peer!)).map((entry) => seal(entry.session, downgrade(event, entry.peer!))),
+          ),
+        );
         return live.length;
       };
       const seal = (session: Session, event: Event): string => session.seal(encodeEvent(event));
@@ -363,6 +375,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           taken.set(messageId, now);
           return opts.onMessage(event.data);
         }
+        if (event?.kind === "reaction") return opts.onReaction(event.data);
         if (event?.kind === "read_cursor") {
           const merged = await mergeCursor(event.data);
           broadcastHere([{ kind: "read_cursor", data: merged }]);
