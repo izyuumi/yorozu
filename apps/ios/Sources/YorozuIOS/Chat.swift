@@ -207,6 +207,9 @@ struct ItemRow: View {
                         .padding(.horizontal, LayoutMetrics.stack)
                         .padding(.vertical, LayoutMetrics.inner)
                         .background(accent.bubble, in: RoundedRectangle(cornerRadius: LayoutMetrics.bubbleRadius, style: .continuous))
+                        #if os(macOS)
+                        .textSelection(.enabled)
+                        #endif
                         .contextMenu { copy; selectText }
                         .accessibilityLabel(Text("You: \(item.text)"))
                 }

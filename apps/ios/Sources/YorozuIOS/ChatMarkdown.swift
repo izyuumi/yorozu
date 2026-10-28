@@ -111,11 +111,30 @@ struct MarkdownBlocks: View {
     init(blocks: [MarkdownBlock]) { self.blocks = blocks }
 
     var body: some View {
+        #if os(macOS)
+        let segments = Self.segments(blocks)
+        LazyVStack(alignment: .leading, spacing: MarkdownMetrics.blockSpacing) {
+            ForEach(segments.indices, id: \.self) { i in
+                if ProseText.isProse(segments[i][0]) { ProseText(blocks: segments[i]) } else { MarkdownBlockView(block: segments[i][0]) }
+            }
+        }
+        .textSelection(.enabled)
+        #else
         LazyVStack(alignment: .leading, spacing: MarkdownMetrics.blockSpacing) {
             ForEach(blocks.indices, id: \.self) { MarkdownBlockView(block: blocks[$0]) }
         }
         .textSelection(.enabled)
+        #endif
     }
+
+    #if os(macOS)
+    // Runs of prose blocks become one segment; every other block is a segment of its own.
+    private static func segments(_ blocks: [MarkdownBlock]) -> [[MarkdownBlock]] {
+        blocks.reduce(into: []) { out, block in
+            if ProseText.isProse(block), let last = out.last?.first, ProseText.isProse(last) { out[out.count - 1].append(block) } else { out.append([block]) }
+        }
+    }
+    #endif
 }
 
 private enum MarkdownMetrics {
