@@ -191,6 +191,7 @@ struct VoiceInputSection: View {
     @AppStorage(VoiceModel.enabledKey) private var enabled = false
     @AppStorage(VoiceModel.languageKey) private var language = Transcriber.Language.automatic
     @State private var deleting = false
+    @State private var confirmingCellular = false
     private let model = VoiceModel.shared
 
     var body: some View {
@@ -202,8 +203,7 @@ struct VoiceInputSection: View {
                 status
                 Picker(String(localized: "Language"), selection: $language) {
                     Text("Automatic").tag(Transcriber.Language.automatic)
-                    Text(verbatim: "日本語").tag(Transcriber.Language.japanese)
-                    Text(verbatim: "English").tag(Transcriber.Language.english)
+                    ForEach(Transcriber.Language.allCases.dropFirst()) { Text(verbatim: $0.name).tag($0) }
                 }
             }
             if model.hasFiles {
@@ -230,6 +230,11 @@ struct VoiceInputSection: View {
         } message: {
             Text("Voice input turns off. Turning it on again downloads the model again.")
         }
+        .confirmationDialog(String(localized: "Download using cellular data?"), isPresented: $confirmingCellular, titleVisibility: .visible) {
+            Button(String(localized: "Download Using Cellular")) { model.start(cellular: true) }
+        } message: {
+            Text("Up to \(Self.size(VoiceModel.totalBytes - model.received)) more will be downloaded over cellular or a personal hotspot. Charges may apply.")
+        }
     }
 
     @ViewBuilder private var status: some View {
@@ -241,6 +246,11 @@ struct VoiceInputSection: View {
                 Text("Downloading the model…")
             } currentValueLabel: {
                 Text("\(Self.size(model.received)) of \(Self.size(VoiceModel.totalBytes))")
+            }
+            if model.waitingForWiFi {
+                Text("Waiting for Wi-Fi. The model downloads on Wi-Fi so it doesn’t use cellular data.")
+                    .foregroundStyle(.secondary)
+                Button(String(localized: "Download Using Cellular…")) { confirmingCellular = true }
             }
         case .absent:
             Button(String(localized: "Download the Model")) { model.start() }

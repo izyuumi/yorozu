@@ -34,7 +34,10 @@ final class VoiceModel {
 
     private(set) var state: State = .absent
     private(set) var received: Int64 = 0
+    /// The download is held back because the only network is cellular, a hotspot or in Low Data Mode.
+    private(set) var waitingForWiFi = false
     private var download: Task<Void, Never>?
+    private var cellular = false
     private let directory = clientSupportDirectory.appending(path: "VoiceModel", directoryHint: .isDirectory)
 
     var modelURL: URL { directory.appending(path: Self.files[0].name) }
@@ -46,9 +49,12 @@ final class VoiceModel {
         if Self.files.allSatisfy({ size(of: final($0)) == $0.bytes }) { state = .ready }
     }
 
-    /// Starts or resumes the download; does nothing while one runs or once the model is ready.
-    func start() {
+    /// Starts or resumes the download; does nothing while one runs or once the model is ready. It waits for
+    /// Wi-Fi unless `cellular` allows expensive and Low Data Mode networks for this download.
+    func start(cellular: Bool = false) {
+        if cellular, !self.cellular { pause() }
         guard state != .ready, download == nil else { return }
+        self.cellular = cellular
         state = .downloading
         download = Task { await run() }
     }
@@ -57,6 +63,7 @@ final class VoiceModel {
     func pause() {
         download?.cancel()
         download = nil
+        waitingForWiFi = false
         if state == .downloading { state = .absent }
     }
 
@@ -85,6 +92,8 @@ final class VoiceModel {
         }
         received = onDisk()
         download = nil
+        waitingForWiFi = false
+        cellular = false
     }
 
     private func fetch(_ file: File) async throws {
@@ -96,11 +105,14 @@ final class VoiceModel {
             var request = URLRequest(url: URL(string: "https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/resolve/\(Self.revision)/\(file.name)")!)
             if offset > 0 { request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range") }
             let before = onDisk() - offset
-            try await PartWriter(file: part, offset: offset) { [weak self] written in
+            try await PartWriter(file: part, offset: offset, cellular: cellular) { [weak self] written in
                 Task { @MainActor in
                     guard let self, self.download != nil else { return }
                     self.received = before + written
+                    self.waitingForWiFi = false
                 }
+            } waiting: { [weak self] in
+                Task { @MainActor in if self?.download != nil { self?.waitingForWiFi = true } }
             }.run(request)
         }
         guard size(of: part) == file.bytes else { throw Failure(String(localized: "The download was interrupted. Try again.")) }
@@ -146,16 +158,26 @@ private final class PartWriter: NSObject, URLSessionDataDelegate, @unchecked Sen
     private var failure: Error?
     private var continuation: CheckedContinuation<Void, Error>?
     private let report: @Sendable (Int64) -> Void
+    private let waiting: @Sendable () -> Void
+    private let cellular: Bool
 
-    init(file: URL, offset: Int64, report: @escaping @Sendable (Int64) -> Void) throws {
+    init(file: URL, offset: Int64, cellular: Bool, report: @escaping @Sendable (Int64) -> Void,
+         waiting: @escaping @Sendable () -> Void) throws {
         handle = try FileHandle(forWritingTo: file)
         try handle.seek(toOffset: UInt64(offset))
         written = offset
+        self.cellular = cellular
         self.report = report
+        self.waiting = waiting
     }
 
     func run(_ request: URLRequest) async throws {
-        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        // Without consent the download holds on cellular, hotspots and Low Data Mode and resumes on Wi-Fi.
+        let configuration = URLSessionConfiguration.default
+        configuration.allowsExpensiveNetworkAccess = cellular
+        configuration.allowsConstrainedNetworkAccess = cellular
+        configuration.waitsForConnectivity = true
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         let task = session.dataTask(with: request)
         try await withTaskCancellationHandler {
@@ -186,6 +208,10 @@ private final class PartWriter: NSObject, URLSessionDataDelegate, @unchecked Sen
             failure = VoiceModel.Failure(String(localized: "The download failed (HTTP \(code ?? 0)). Try again."))
             completionHandler(.cancel)
         }
+    }
+
+    func urlSession(_ session: URLSession, taskIsWaitingForConnectivity task: URLSessionTask) {
+        waiting()
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {

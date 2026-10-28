@@ -8,15 +8,41 @@ import llama
 final class Transcriber: @unchecked Sendable {
     static let sampleRate = 16_000
 
+    /// The speech languages LFM3-Audio-2B transcribes; the raw value is the English name its prompt takes.
     enum Language: String, CaseIterable, Identifiable {
-        case automatic, japanese, english
+        case automatic, arabic, chinese, danish, dutch, english, finnish, french, german, greek, hebrew, italian,
+            japanese, korean, polish, portuguese, spanish, swedish, turkish
         var id: Self { self }
-        var prompt: String {
+        var prompt: String { self == .automatic ? "Perform ASR." : "Perform ASR in \(rawValue.capitalized)." }
+
+        private var code: String {
             switch self {
-            case .automatic: "Perform ASR."
-            case .japanese: "Perform ASR in Japanese."
-            case .english: "Perform ASR in English."
+            case .automatic: ""
+            case .arabic: "ar"
+            case .chinese: "zh"
+            case .danish: "da"
+            case .dutch: "nl"
+            case .english: "en"
+            case .finnish: "fi"
+            case .french: "fr"
+            case .german: "de"
+            case .greek: "el"
+            case .hebrew: "he"
+            case .italian: "it"
+            case .japanese: "ja"
+            case .korean: "ko"
+            case .polish: "pl"
+            case .portuguese: "pt"
+            case .spanish: "es"
+            case .swedish: "sv"
+            case .turkish: "tr"
             }
+        }
+
+        /// The language's name in itself, as the system writes it.
+        var name: String {
+            let locale = Locale(identifier: code)
+            return locale.localizedString(forLanguageCode: code)?.capitalized(with: locale) ?? rawValue.capitalized
         }
     }
 
