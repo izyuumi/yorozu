@@ -22,6 +22,7 @@ struct ChatView: View {
         let conversation = model.conversations[convId]
         let items = conversation?.items ?? []
         let typing = model.typing.contains(convId)
+        let latestReply = typing ? nil : items.last(where: { $0.kind == .agent })?.id
         ScrollView {
             LazyVStack(alignment: .leading, spacing: LayoutMetrics.stack) {
                 if let conversation, conversation.complete != true {
@@ -31,7 +32,7 @@ struct ChatView: View {
                         .task(id: conversation.oldestSeq) { model.loadOlder(convId) }
                 }
                 ForEach(items) { item in
-                    ItemRow(model: model, item: item)
+                    ItemRow(model: model, item: item, latest: item.id == latestReply)
                         .modifier(MessageTimeBelow(item: item))
                         .readableRow()
                         .modifier(MessageTime(item: item, shown: timesShown, width: timesWidth))
@@ -168,7 +169,9 @@ extension ChatView {
 struct ItemRow: View {
     let model: AppModel
     let item: ChatItem
+    var latest = false
     @State private var selecting = false
+    @State private var hovering = false
     @Environment(\.accent) private var accent
 
     var body: some View {
@@ -244,8 +247,15 @@ struct ItemRow: View {
             if let files = item.attachments, !files.isEmpty {
                 AttachmentList(model: model, attachments: files, alignment: .leading)
             }
+            // Pointer platforms keep the row's space and reveal it on hover; iPhone shows it on the latest reply only.
+            #if os(macOS)
+            if !item.text.isEmpty { ReplyActions(text: item.text).opacity(latest || hovering ? 1 : 0) }
+            #else
+            if latest, !item.text.isEmpty { ReplyActions(text: item.text) }
+            #endif
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onHover { hovering = $0 }
     }
 
     private var error: some View {
@@ -263,6 +273,32 @@ struct ItemRow: View {
 
     private var selectText: some View {
         Button(String(localized: "Select Text"), systemImage: "selection.pin.in.out") { selecting = true }
+    }
+}
+
+private struct ReplyActions: View {
+    let text: String
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: LayoutMetrics.tight) {
+            Button {
+                UIPasteboard.general.string = text
+                copied = true
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc").frame(minWidth: controlTarget, minHeight: controlTarget)
+            }
+            .help(String(localized: "Copy as Markdown"))
+            .accessibilityLabel(Text(copied ? "Copied" : "Copy as Markdown"))
+        }
+        .buttonStyle(.borderless)
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+        }
     }
 }
 
