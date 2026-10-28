@@ -380,40 +380,52 @@ private struct ReplyActions: View {
     let react: ReactionChoices?
     @State private var copied = false
 
+    // Icons sit in square hit targets; the leading pull lines the first icon up with the reply text.
+    #if os(macOS)
+    private let pull: CGFloat = LayoutMetrics.tight
+    #else
+    private let pull: CGFloat = 0
+    #endif
+
     var body: some View {
-        HStack(spacing: LayoutMetrics.tight) {
+        HStack(spacing: 0) {
             if let onReply {
-                Button(action: onReply) {
-                    Image(systemName: "arrowshape.turn.up.left").frame(minWidth: controlTarget, minHeight: controlTarget)
-                }
-                .help(String(localized: "Reply"))
-                .accessibilityLabel(Text("Reply"))
-            }
-            if let react {
-                Menu { react } label: {
-                    Image(systemName: "face.smiling").frame(minWidth: controlTarget, minHeight: controlTarget)
-                }
-                .menuIndicator(.hidden)
-                .help(String(localized: "React"))
-                .accessibilityLabel(Text("React"))
+                Button(action: onReply) { icon("arrowshape.turn.up.left") }
+                    .help(String(localized: "Reply"))
+                    .accessibilityLabel(Text("Reply"))
             }
             Button {
                 UIPasteboard.general.string = text
                 copied = true
             } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc").frame(minWidth: controlTarget, minHeight: controlTarget)
+                icon(copied ? "checkmark" : "doc.on.doc")
             }
             .help(String(localized: "Copy as Markdown"))
             .accessibilityLabel(Text(copied ? "Copied" : "Copy as Markdown"))
+            if let react {
+                Menu { react } label: { icon("face.smiling") }
+                    .menuStyle(.button)
+                    .menuIndicator(.hidden)
+                    .help(String(localized: "React"))
+                    .accessibilityLabel(Text("React"))
+            }
         }
         .buttonStyle(.borderless)
-        .textStyle(.footnote)
+        .tint(.secondary)
+        .textStyle(.subheadline)
         .foregroundStyle(.secondary)
+        .padding(.leading, pull)
         .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(2))
             copied = false
         }
+    }
+
+    private func icon(_ name: String) -> some View {
+        Image(systemName: name)
+            .frame(width: controlTarget, height: controlTarget)
+            .contentShape(Rectangle())
     }
 }
 
