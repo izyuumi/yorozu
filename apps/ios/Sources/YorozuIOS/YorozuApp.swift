@@ -8,6 +8,8 @@ struct YorozuApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     #endif
 
+    init() { FeatureTips.configure() }
+
     var body: some Scene {
         WindowGroup {
             RootView(model: delegate.model)
