@@ -71,6 +71,14 @@ final class AppModel {
             guard let self, !self.isDemo, let connection = self.connection else { return false }
             return await connection.send(event)
         }
+        #if os(iOS)
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), Unmanaged.passUnretained(self).toOpaque(),
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let model = Unmanaged<AppModel>.fromOpaque(observer).takeUnretainedValue()
+                Task { @MainActor in model.shareSent() }
+            }, ShareInbox.sentNotification as CFString, nil, .deliverImmediately)
+        #endif
         if ProcessInfo.processInfo.arguments.contains("--demo") {
             enterDemo()
             return
@@ -237,7 +245,7 @@ final class AppModel {
     private func connect() {
         guard !isDemo, let pairing else { return }
         let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
-            name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability])
+            name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability, ReplyTo.capability])
         guard let connection = try? RelayConnection(pairing: pairing.pairing, identity: pairing.identity,
             relayKnows: pairing.relayKnows, local: local) else {
             return failPairing(String(localized: "This pairing code can’t be used."))
@@ -286,6 +294,11 @@ final class AppModel {
         setActive(true)
         takeShares()
         guard let connection else { return connect() }
+        Task { await connection.reconnect() }
+    }
+
+    private func shareSent() {
+        guard active, !isDemo, let connection else { return }
         Task { await connection.reconnect() }
     }
 
@@ -438,12 +451,13 @@ final class AppModel {
         try? pairing.save()
     }
 
-    func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String, messageId: String = WireEvent.newId()) {
+    func send(_ text: String, attachments: [ChatAttachment] = [], in convId: String, messageId: String = WireEvent.newId(),
+        replyingTo target: ChatItem? = nil) {
         guard !isDemo || attachments.isEmpty else { return }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, WireEvent.isId(convId), WireEvent.isId(messageId) else { return }
         var item = ChatItem(id: messageId, kind: .user, text: text, ts: Self.now, status: .queued,
-            attachments: attachments.isEmpty ? nil : attachments)
+            attachments: attachments.isEmpty ? nil : attachments, replyTo: target.map { ReplyTo(messageId: $0.id, text: $0.summary) })
         if attachments.count > Attachment.maxPerMessage {
             item.rejected = String(localized: "A message can carry up to \(Attachment.maxPerMessage) attachments.")
         }
@@ -453,6 +467,7 @@ final class AppModel {
 
     var attachmentsAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(Attachment.capability) } ?? true) }
     var mediaMaxBytes: Int { hostInfo?.mediaMaxBytes ?? Attachment.defaultMaxBytes }
+    var repliesAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(ReplyTo.capability) } ?? true) }
 
     private func pumpOutbox(resend: Bool) {
         if resend { outboxResend = true }
@@ -492,7 +507,8 @@ final class AppModel {
             guard let item = conversations[convId]?.items.first(where: { $0.id == queued.id }) else { continue }
             let files = (item.attachments ?? []).filter { $0.uploaded == true && $0.failure == nil }.map(\.wire)
             guard !item.text.isEmpty || !files.isEmpty else { continue }
-            let message = Message(convId: convId, messageId: item.id, text: item.text, attachments: files.isEmpty ? nil : files)
+            let message = Message(convId: convId, messageId: item.id, text: item.text, attachments: files.isEmpty ? nil : files,
+                replyTo: repliesAvailable ? item.replyTo : nil)
             guard await connection.send(message), generation == connectionGeneration else { return false }
             mark(item.id, .sending, in: convId)
         }
@@ -538,7 +554,8 @@ final class AppModel {
                 }
             }
             let files = ChatAttachment.list(reply.attachments)
-            append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files), to: reply.convId)
+            append(ChatItem(id: reply.messageId, kind: .agent, text: reply.text, ts: reply.ts, attachments: files, replyTo: reply.replyTo),
+                to: reply.convId)
         case .uploadAck, .chunk:
             transfers.receive(event)
         case .tool(let tool):

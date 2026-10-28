@@ -22,7 +22,7 @@ A `--link` install is an untrusted plugin. The plugin is designed around that:
 | `secret-file`, `state-paths` | `createSecretFileAtomic` / `tryReadSecretFileSync` under `resolveOAuthDir()` (host keys) |
 | `routing` | `resolveAgentRoute` (with `dmScope: "per-channel-peer"`), `resolveThreadSessionKeys`, `normalizeAgentId` |
 | `channel-inbound` | `buildChannelInboundEventContext`, `runChannelInboundEvent`, `toInboundMediaFactsWithMetadata` |
-| `channel-outbound` | `createTypingCallbacks` |
+| `channel-outbound` | `createTypingCallbacks`, `sendDurableMessageBatch` (Gateway notices, with a transcript `mirror`) |
 | `reply-runtime` | `chunkMarkdownText`, `resolveTextChunkLimit`, `generateConversationLabel` |
 | `session-store-runtime` | `listSessionEntries`, `getSessionEntry`, `patchSessionEntry`, `deleteSessionEntry`, `loadTranscriptEventsSync`, `readTranscriptStatsSync` |
 | `cron-store-runtime`, `agent-scope-runtime` | `loadCronStore`, `resolveCronStorePath`, `tryResolveDefaultAgentId` |
@@ -38,6 +38,7 @@ A `--link` install is an untrusted plugin. The plugin is designed around that:
 - **`/new` and `/reset`** reset only the thread session. The `sessionId` and the transcript stay the same, and a reset event is appended to the transcript. History shows it as a `reset` item. `label` and `displayName` survive the reset.
 - **Tool progress**: the plugin passes `replyOptions.onToolStart` and `onItemEvent`, with `allowToolLifecycleWhenProgressHidden` and `suppressDefaultToolProgressMessages`. Without those two flags, tool callbacks depend on verbose mode, and tool summaries would arrive as text.
 - **Replies**: whole messages, not streamed (`disableBlockStreaming`). They are chunked by `resolveTextChunkLimit`, which reads `channels.yorozu.textChunkLimit` with 4000 as the fallback.
+- **Reply targets**: `buildChannelInboundEventContext`'s `messageId` becomes `MessageSid`, and `supplemental.quote` (`id`, `body`, `senderAllowed`) becomes `ReplyToId` and `ReplyToBody`, shown to the agent as "Reply target of current user message". Outbound, a channel without its own `threading.resolveReplyToMode` defaults to `all`, which puts the current message's id on every reply; the plugin returns `off`, so only `[[reply_to_current]]`, `[[reply_to:<id>]]` and the message tool's `replyTo` reach `deliver`, `sendText` and `sendMedia` as `replyToId`. `capabilities.reply` is descriptive only.
 - **Titles**: OpenClaw titles only its own dashboard and node sessions, not channel thread sessions. So the plugin calls `generateConversationLabel` itself; it tries the agent's `utilityModel` first, then the primary model. A manual `label` wins over `displayName`.
 - **Session-store writes** skip `sessions.patch` validation, including label uniqueness. `preserveActivity: true` leaves `updatedAt` alone. `subscribeSessionChanges` fires for these writes and for changes made through the Gateway.
 - **Cron delivery** (`delivery: { mode: "announce", channel: "yorozu", to: "owner", threadId: "<convId>" }`) needs:
@@ -46,6 +47,7 @@ A `--link` install is an untrusted plugin. The plugin is designed around that:
   - `messaging.resolveOutboundSessionRoute`, so the transcript mirror goes to the thread session. Only text is mirrored, and only when the session entry already exists.
 - **`openclaw cron add --thread-id`** accepts only positive integers (Telegram topic ids). A job that delivers into a Yorozu conversation is made with the agent's cron tool or `cron.add`.
 - **Media**: outbound media paths must be under `getAgentScopedMediaLocalRoots(cfg, agentId)`. `sendMedia` is called once per file, with the caption on the first.
+- **Auto-update checks**: OpenClaw exports no helper that says whether its auto-updater can run, so the plugin repeats its checks: the `update.auto` and `update.checkOnStart` config, `OPENCLAW_NO_AUTO_UPDATE`, and the service marker `OPENCLAW_SERVICE_MARKER=openclaw` with `OPENCLAW_SERVICE_KIND=gateway`, which the service environment from `openclaw gateway install` carries on every platform. OpenClaw's own supervisor check also accepts other launchd and systemd hints, so a Gateway under a hand-written service gets the "not running as a service" notice anyway. `update.run` and `update.status` need `operator.admin`, so the plugin does not trigger updates.
 - **Keyed state store** rows live in OpenClaw's state database. They are not known to be encrypted at rest.
 
 ## Gateway gotchas

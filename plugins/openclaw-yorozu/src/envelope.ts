@@ -13,12 +13,15 @@ export type PeerInfo = {
 export const ATTACHMENTS = "attachments";
 export const DEVICES = "devices";
 export const INVITE = "invite";
+export const REPLIES = "replies";
 export const CHUNK_BYTES = 160 * 1024;
 export type Attachment = { id: string; name: string; mime: string; size: number };
-export type Message = { convId: string; messageId: string; text: string; attachments?: Attachment[] };
+// Capability `replies`.
+export type ReplyTo = { messageId: string; text?: string };
+export type Message = { convId: string; messageId: string; text: string; attachments?: Attachment[]; replyTo?: ReplyTo };
 export type MessageRef = { convId: string; messageId: string };
 export type Typing = { convId: string; active: boolean };
-export type Reply = { convId: string; messageId: string; text: string; ts: number; attachments?: Attachment[] };
+export type Reply = { convId: string; messageId: string; text: string; ts: number; attachments?: Attachment[]; replyTo?: ReplyTo };
 export type ErrorInfo = { code: string; message: string; convId?: string; messageId?: string; attachmentId?: string };
 export type Upload = {
   attachmentId: string;
@@ -42,7 +45,7 @@ export type HistoryRequest = { convId: string; before?: number; after?: number }
 export type History = HistoryRequest & { items: HistoryItem[]; more: boolean; rev: number };
 export type HistoryTool = { callId: string; name: string; status: ToolStatus };
 export type HistoryItem =
-  | { kind: "user" | "agent"; id: string; seq: number; ts: number; text: string; attachments?: Attachment[] }
+  | { kind: "user" | "agent"; id: string; seq: number; ts: number; text: string; attachments?: Attachment[]; replyTo?: ReplyTo }
   | { kind: "tools"; id: string; seq: number; ts: number; tools: HistoryTool[] }
   | { kind: "reset"; id: string; seq: number; ts: number };
 export type ReadCursor = { convId: string; messageId: string; ts: number; unread: boolean };
@@ -117,6 +120,8 @@ const attachment = (a: unknown): boolean => {
 };
 const attachments = (v: unknown): boolean => v === undefined || (Array.isArray(v) && v.length <= 32 && v.every(attachment));
 const part = (d: Fields): boolean => isId(d.attachmentId) && nat(d.index);
+const replyTo = (v: unknown): boolean =>
+  v === undefined || (typeof v === "object" && v !== null && isId((v as Fields).messageId) && optStr((v as Fields).text));
 
 const valid: Record<Event["kind"], (d: Fields) => boolean> = {
   peer_info: (d) =>
@@ -127,11 +132,11 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     Array.isArray(d.capabilities) &&
     d.capabilities.every(str) &&
     (d.mediaMaxBytes === undefined || nat(d.mediaMaxBytes)),
-  message: (d) => ref(d) && str(d.text) && attachments(d.attachments),
+  message: (d) => ref(d) && str(d.text) && attachments(d.attachments) && replyTo(d.replyTo),
   delivered: ref,
   run_started: ref,
   typing: (d) => isId(d.convId) && typeof d.active === "boolean",
-  reply: (d) => ref(d) && str(d.text) && int(d.ts) && attachments(d.attachments),
+  reply: (d) => ref(d) && str(d.text) && int(d.ts) && attachments(d.attachments) && replyTo(d.replyTo),
   error: (d) => str(d.code) && str(d.message) && optStr(d.convId) && optStr(d.messageId) && optStr(d.attachmentId),
   tool: (d) =>
     ref(d) && str(d.callId) && str(d.name) && (d.status === "running" || d.status === "done" || d.status === "failed"),

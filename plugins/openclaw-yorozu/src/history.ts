@@ -22,6 +22,7 @@ import {
   type HistoryTool,
   type ToolStatus,
 } from "./envelope.js";
+import { replyOf } from "./replies.js";
 import { titleOf } from "./sessions.js";
 
 const CHANNEL_ID = "yorozu";
@@ -75,21 +76,14 @@ export function listConversations(agent: string): ConvList {
 
 export function historyPage(cfg: OpenClawConfig, agent: string, request: HistoryRequest): History {
   const { convId, before, after } = request;
-  const sessionKey = prefix(agent) + convId;
-  const entry = getSessionEntry({ agentId: agent, sessionKey });
   const empty: History = { convId, items: [], more: false, rev: 0, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) };
-  if (!entry?.sessionId) return empty;
-  const rev = revOf(agent, sessionKey, entry.sessionId);
-  let built = cache.get(sessionKey);
-  if (!built || built.sessionId !== entry.sessionId || built.rev !== rev) {
-    const events = loadTranscriptEventsSync({ agentId: agent, sessionId: entry.sessionId, sessionKey });
-    built = { sessionId: entry.sessionId, rev, items: buildItems(cfg, entry.sessionId, events) };
-    cache.delete(sessionKey);
-    cache.set(sessionKey, built);
-    for (const key of cache.keys()) if (cache.size > CACHE_MAX) cache.delete(key);
-  }
+  const built = itemsOf(cfg, agent, convId);
+  if (!built) return empty;
+  const { rev } = built;
   const groups: HistoryItem[][] = [];
-  for (const item of built.items) {
+  for (const raw of built.items) {
+    const replyTo = raw.kind === "user" || raw.kind === "agent" ? replyOf(raw.id) : undefined;
+    const item = replyTo ? { ...raw, replyTo } : raw;
     const last = groups.at(-1);
     if (last && last[0]!.seq === item.seq) last.push(item);
     else groups.push([item]);
@@ -120,6 +114,31 @@ export function historyPage(cfg: OpenClawConfig, agent: string, request: History
   }
   const page = picked.flat();
   return { ...empty, items: page, more, rev };
+}
+
+function itemsOf(cfg: OpenClawConfig, agent: string, convId: string) {
+  const sessionKey = prefix(agent) + convId;
+  const entry = getSessionEntry({ agentId: agent, sessionKey });
+  if (!entry?.sessionId) return undefined;
+  const rev = revOf(agent, sessionKey, entry.sessionId);
+  let built = cache.get(sessionKey);
+  if (!built || built.sessionId !== entry.sessionId || built.rev !== rev) {
+    const events = loadTranscriptEventsSync({ agentId: agent, sessionId: entry.sessionId, sessionKey });
+    built = { sessionId: entry.sessionId, rev, items: buildItems(cfg, entry.sessionId, events) };
+    cache.delete(sessionKey);
+    cache.set(sessionKey, built);
+    for (const key of cache.keys()) if (cache.size > CACHE_MAX) cache.delete(key);
+  }
+  return built;
+}
+
+export function itemText(cfg: OpenClawConfig, agent: string, convId: string, id: string): string | undefined {
+  try {
+    const item = itemsOf(cfg, agent, convId)?.items.find((item) => item.id === id);
+    return item && "text" in item ? item.text : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const chunkId = (sessionId: string, eventId: string, k: number) =>

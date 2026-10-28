@@ -11,6 +11,7 @@ import {
   DEVICES,
   encodeEvent,
   INVITE,
+  REPLIES,
   negotiate,
   parseEvent,
   PROTOCOL_VERSION,
@@ -51,10 +52,19 @@ const PEER_INFO: PeerInfo = {
   protocolMax: PROTOCOL_VERSION,
   app: "0.1.0",
   name: os.hostname().replace(/\.local$/, ""),
-  capabilities: [ATTACHMENTS, DEVICES, INVITE],
+  capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES],
 };
 
 function downgrade(event: Event, peer: PeerInfo): Event {
+  if (!peer.capabilities.includes(REPLIES)) {
+    if (event.kind === "reply" && event.data.replyTo) {
+      const { replyTo: _, ...reply } = event.data;
+      event = { kind: "reply", data: reply };
+    } else if (event.kind === "history" && "items" in event.data) {
+      const items = event.data.items.map((item) => ("replyTo" in item ? { ...item, replyTo: undefined } : item));
+      event = { kind: "history", data: { ...event.data, items } };
+    }
+  }
   if (peer.capabilities.includes(ATTACHMENTS) || event.kind !== "reply" || !event.data.attachments) return event;
   const { attachments, ...reply } = event.data;
   const lines = attachments.map((a) => `(Attachment: ${a.name}; update Yorozu to open it.)`);
@@ -400,7 +410,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
             return refuse({ code: "unsupported", message: `this host does not answer "${event.kind}"` });
           }
           const now = served.get(deviceKey);
-          if (now?.peer) sendFrames([seal(now.session, answer)]);
+          if (now?.peer) sendFrames([seal(now.session, downgrade(answer, now.peer))]);
           return;
         }
         if (event?.kind === "peer_info") return log?.info("yorozu: peer_info repeated; the first one stands");

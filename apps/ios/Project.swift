@@ -17,6 +17,10 @@ func bundleVersion(build: Int) -> String {
 }
 
 let notificationKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.notifications"
+// The pairing lives in the app's default Keychain group (the first entry below, which equals the app's
+// identifier, so items saved before the entitlement existed are there too). The share extension lists the
+// same group first to read it. Reordering or renaming it would hide existing pairings and unpair devices.
+let pairingKeychainGroup = "$(AppIdentifierPrefix)to.yumi.yorozu.ios"
 let appGroup = "group.to.yumi.yorozu"
 func signing(_ extra: SettingsDictionary = [:]) -> Settings {
     .settings(base: [
@@ -87,7 +91,7 @@ let project = Project(
             entitlements: .dictionary([
                 "aps-environment": "production",
                 "com.apple.developer.associated-domains": ["applinks:yorozu.yumi.to"],
-                "keychain-access-groups": ["$(AppIdentifierPrefix)to.yumi.yorozu.ios", .string(notificationKeychainGroup)],
+                "keychain-access-groups": [.string(pairingKeychainGroup), .string(notificationKeychainGroup)],
                 "com.apple.security.application-groups": [.string(appGroup)],
             ]),
             scripts: [
@@ -163,7 +167,11 @@ let project = Project(
             ]),
             sources: ["Sources/YorozuShare/**", "Sources/ShareInbox/**"],
             resources: ["Resources/Localizable.xcstrings"],
-            entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
+            entitlements: .dictionary([
+                "keychain-access-groups": [.string(pairingKeychainGroup)],
+                "com.apple.security.application-groups": [.string(appGroup)],
+            ]),
+            dependencies: [.package(product: "YorozuWire")],
             settings: signing()
         ),
     ]
