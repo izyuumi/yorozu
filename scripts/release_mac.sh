@@ -29,7 +29,7 @@ if [ "${1:-}" = "--promote" ]; then
     SHA=$(jq -r .source_sha "$FILES/candidate.json")
     { echo "Yorozu $OLD ($N)."; echo; scripts/release_notes.sh "$SHA"; } > "$FILES.md"
     gh release create "v$OLD" --repo "$REPO" --target "$SHA" --latest --title "v$OLD" --notes-file "$FILES.md" "$FILES"/*
-    gh release delete "$BETA" --repo "$REPO" --cleanup-tag --yes
+    gh release delete "$BETA" --repo "$REPO" --yes
     echo "Published v$OLD. Submit the iOS build for $OLD to the App Store in App Store Connect."
     exit 0
 fi
@@ -38,7 +38,9 @@ PUBLISH=0; [ "${1:-}" = "--publish" ] && PUBLISH=1
 VERSION=${VERSION:-$(scripts/version.sh)}
 BETA=$(beta_tag)
 if [ -z "${BUILD:-}" ]; then
-    case "$BETA" in "v$VERSION-beta"*) previous=$(beta_build "$BETA") ;; *) previous=0 ;; esac
+    # Beta tags outlive their releases (the ruleset keeps v* tags), so the highest one numbers the next build.
+    git fetch -q --tags origin 2>/dev/null || true
+    previous=$(git tag -l "v$VERSION-beta.*" | sed 's/.*-beta\.//' | sort -n | tail -1)
     BUILD=$((${previous:-0} + 1))
 fi
 TAG="v$VERSION-beta.$BUILD"
@@ -104,7 +106,7 @@ echo "Built Yorozu $VERSION ($BUILD), CFBundleVersion $BUNDLE_VERSION, in $DIST/
 
 if [ "$PUBLISH" = 1 ]; then
     { echo "Yorozu $VERSION ($BUILD), beta."; echo; scripts/release_notes.sh "$SOURCE_SHA"; } > "$DIST/notes.md"
-    [ -z "$BETA" ] || gh release delete "$BETA" --repo "$REPO" --cleanup-tag --yes
+    [ -z "$BETA" ] || gh release delete "$BETA" --repo "$REPO" --yes
     gh release create "$TAG" --repo "$REPO" --target "$SOURCE_SHA" --prerelease --latest=false --title "$TAG" \
         --notes-file "$DIST/notes.md" "$DMG" "$DIST/appcast.xml" "$DIST/candidate.json"
     echo "Published $TAG."
