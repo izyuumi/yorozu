@@ -49,6 +49,11 @@ struct ProseText: NSViewRepresentable {
     private static let itemSpacing: CGFloat = 4
     private static let indent: CGFloat = 18
 
+    /// The blocks as plain text, for the SwiftUI accessibility label over the NSTextView (#584).
+    static func plainText(_ blocks: [MarkdownBlock]) -> String {
+        render(blocks, zoom: 1).string
+    }
+
     private static func render(_ blocks: [MarkdownBlock], zoom: CGFloat) -> NSAttributedString {
         let out = NSMutableAttributedString()
         append(blocks, to: out, level: 0, quoted: false, zoom: zoom)

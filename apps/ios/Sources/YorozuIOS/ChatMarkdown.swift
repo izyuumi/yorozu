@@ -115,7 +115,14 @@ struct MarkdownBlocks: View {
         let segments = Self.segments(blocks)
         LazyVStack(alignment: .leading, spacing: MarkdownMetrics.blockSpacing) {
             ForEach(segments.indices, id: \.self) { i in
-                if ProseText.isProse(segments[i][0]) { ProseText(blocks: segments[i]) } else { MarkdownBlockView(block: segments[i][0]) }
+                if ProseText.isProse(segments[i][0]) {
+                    // Without a label of its own, the SwiftUI node over the NSTextView asks the view for one, the view asks the
+                    // node back, and an accessibility client reading it overflows the stack (#584).
+                    ProseText(blocks: segments[i])
+                        .accessibilityLabel(Text(verbatim: ProseText.plainText(segments[i])))
+                } else {
+                    MarkdownBlockView(block: segments[i][0])
+                }
             }
         }
         .textSelection(.enabled)
