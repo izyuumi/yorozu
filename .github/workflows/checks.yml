@@ -1,8 +1,6 @@
 name: Checks
 on:
   pull_request:
-  # scripts/release_pr.sh runs it on the release PR, which the Actions token opens without starting workflows.
-  workflow_dispatch:
 
 concurrency:
   group: checks-${{ github.ref }}
@@ -23,7 +21,7 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          files=$(git diff --name-only "${BASE:-HEAD~1}" HEAD)
+          files=$(git diff --name-only "$BASE" HEAD)
           match() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
           echo "app=$(match '^(apps/ios/|packages/|plugins/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           echo "relay=$(match '^(apps/relay/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"

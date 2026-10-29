@@ -28,6 +28,14 @@ if [ -n "$PR" ]; then
 else
     gh pr create --repo "$REPO" --head release --base main --title "chore: release $VERSION" --body "$BODY" >/dev/null
 fi
-# Pull requests opened by the Actions token start no workflows, so run the required checks by hand.
-gh workflow run checks.yml --repo "$REPO" --ref release
+# The bot-authored PR's checks wait for approval; approve them so the required checks run.
+for _ in 1 2 3 4 5 6; do
+    sleep 10
+    runs=$(gh run list --repo "$REPO" --workflow checks.yml --branch release --event pull_request --status action_required \
+        --json databaseId -q '.[].databaseId' || true)
+    [ -n "$runs" ] && break
+done
+for run in $runs; do
+    gh api -X POST "repos/$REPO/actions/runs/$run/approve" >/dev/null || echo "Approve the checks on the release PR by hand." >&2
+done
 echo "Release PR for $VERSION names build $BUILD."
