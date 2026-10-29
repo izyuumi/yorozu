@@ -24,7 +24,7 @@ import {
 } from "./envelope.js";
 import { reactionsOf } from "./reactions.js";
 import { replyOf } from "./replies.js";
-import { titleOf } from "./sessions.js";
+import { prefix, titleOf } from "./sessions.js";
 
 const CHANNEL_ID = "yorozu";
 const PAGE_ITEMS = 60;
@@ -33,8 +33,6 @@ const ITEM_CHARS = 60_000;
 const LIST_MAX = 2000;
 const CACHE_MAX = 8;
 const cache = new Map<string, { sessionId: string; rev: number; items: HistoryItem[] }>();
-
-const prefix = (agent: string) => `agent:${agent}:yorozu:direct:owner:thread:`;
 
 export function answerRequest(
   cfg: OpenClawConfig,

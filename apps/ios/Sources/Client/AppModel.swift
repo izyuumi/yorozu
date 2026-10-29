@@ -794,7 +794,8 @@ final class AppModel {
         if page.before == nil {
             if page.after != nil && page.more {
                 enqueue(.historyRequest(HistoryRequest(convId: page.convId, after: conversation.newestSeq)), first: true)
-            } else {
+            } else if page.rev > 0 || !page.items.isEmpty {
+                // An empty page with rev 0 means the host has no session yet; a rev would let the list prune the thread.
                 conversation.rev = page.rev
             }
         }

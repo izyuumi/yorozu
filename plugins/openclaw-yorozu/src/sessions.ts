@@ -12,7 +12,12 @@ import { forgetCursor } from "./reads.js";
 import { broadcast } from "./relay.js";
 import { yorozuRuntime } from "./runtime.js";
 
-const prefix = (agent: string) => `agent:${agent}:yorozu:direct:owner:thread:`;
+const bases = new Map<string, string>();
+/** Threads hang off the owner's routed session key, which bindings and identity links can change. */
+export function setThreadBase(agent: string, baseSessionKey: string): void {
+  bases.set(agent, baseSessionKey);
+}
+export const prefix = (agent: string) => `${bases.get(agent) ?? `agent:${agent}:yorozu:direct:owner`}:thread:`;
 export const TITLE_MAX = 60;
 const TITLE_SOURCE_MAX = 1000;
 const TITLE_TIMEOUT_MS = 20_000;
