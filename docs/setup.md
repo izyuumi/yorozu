@@ -38,7 +38,7 @@ Every key under `channels.yorozu` is optional:
 | `channels.yorozu.enabled` | `true` | `false` stops the channel |
 | `channels.yorozu.agent` | `main` | The agent that answers every Yorozu conversation, and whose cron jobs the Automations tab lists |
 | `channels.yorozu.relayUrl` | `wss://relay.yumi.to` | The relay that the plugin and the apps meet on. It goes into the pairing link. |
-| `channels.yorozu.mediaMaxMb` | `agents.defaults.mediaMaxMb`, else 8 | Attachment size limit, both ways |
+| `channels.yorozu.mediaMaxMb` | `agents.defaults.mediaMaxMb`, else 128 | Attachment size limit, both ways |
 | `channels.yorozu.textChunkLimit` | 4000 | Longest reply chunk, in characters |
 
 ```sh
