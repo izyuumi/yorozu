@@ -23,6 +23,7 @@ if [ "${1:-}" = "--promote" ]; then
     SHA=$(jq -r .source_sha "$FILES/candidate.json")
     { echo "Yorozu $OLD ($N)."; echo; scripts/release_notes.sh "$SHA"; } > "$FILES.md"
     gh release create "v$OLD" --repo "$REPO" --target "$SHA" --latest --title "v$OLD" --notes-file "$FILES.md" "$FILES"/*
+    gh release delete "v$OLD-beta" --repo "$REPO" --cleanup-tag --yes
     echo "Published v$OLD. Submit the iOS build for $OLD to the App Store in App Store Connect."
     exit 0
 fi
