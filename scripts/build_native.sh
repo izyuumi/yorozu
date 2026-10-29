@@ -14,7 +14,7 @@ else
     echo "No Developer ID Application identity: signing ad hoc." >&2
     set -- CODE_SIGN_IDENTITY=-
 fi
-VERSION=$(tr -d '[:space:]' < version.txt)
+VERSION=${VERSION:-$(scripts/version.sh)}
 BUILD=${BUILD:-1}
 mkdir -p build
 tuist generate --no-open --path apps/ios

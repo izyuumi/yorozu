@@ -1,14 +1,8 @@
 import Foundation
 import ProjectDescription
 
-let versionFile = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-    .appendingPathComponent("../../version.txt").standardizedFileURL
-let version: String = {
-    guard let raw = try? String(contentsOf: versionFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
-          raw.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil
-    else { fatalError("Expected numeric major.minor.patch in \(versionFile.path)") }
-    return raw
-}()
+// The release scripts pass the real version (`scripts/version.sh`) and build to xcodebuild.
+let version = "0.0.0"
 
 func bundleVersion(build: Int) -> String {
     let p = version.split(separator: ".").compactMap { Int($0) }

@@ -2,39 +2,46 @@
 set -eu
 cd "$(dirname "$0")/.."
 REPO=${REPO:-izyuumi/yorozu}
+# The one beta release: v<version>-beta.<build> (older ones: v<version>-beta).
+beta_tag() {
+    gh release list --repo "$REPO" --limit 100 --json tagName,isPrerelease -q '.[] | select(.isPrerelease) | .tagName' \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta(\.[0-9]+)?$' | head -1 || true
+}
 beta_build() {
-    gh release download "v$1-beta" --repo "$REPO" --pattern candidate.json --output - 2>/dev/null \
+    gh release download "$1" --repo "$REPO" --pattern candidate.json --output - 2>/dev/null \
         | jq -r '.build | tonumber % 1000' || true
 }
 
 if [ "${1:-}" = "--promote" ]; then
-    OLD=${2:?Usage: scripts/release_mac.sh --promote <version> <build>}
+    N=${2:-}
+    case "$N" in ''|*[!0-9]*) echo "Usage: scripts/release_mac.sh --promote <checked beta build>" >&2; exit 64 ;; esac
+    BETA=$(beta_tag)
+    [ -n "$BETA" ] || { echo "There is no beta to promote" >&2; exit 1; }
+    OLD=${BETA#v}; OLD=${OLD%%-*}
     if gh release view "v$OLD" --repo "$REPO" >/dev/null 2>&1; then
         echo "v$OLD is already released; nothing to promote."
         exit 0
     fi
-    N=${3:-}
-    case "$N" in ''|*[!0-9]*) echo "Name the checked build of v$OLD-beta to promote (got '$N')" >&2; exit 1 ;; esac
-    BETA=$(beta_build "$OLD")
-    [ "$BETA" = "$N" ] || { echo "v$OLD-beta is build ${BETA:-missing}, not the checked $N: check it, then name it" >&2; exit 1; }
+    [ "$(beta_build "$BETA")" = "$N" ] || { echo "$BETA is not build $N: check it, then name it" >&2; exit 1; }
     FILES=$(mktemp -d)
-    gh release download "v$OLD-beta" --repo "$REPO" --dir "$FILES"
-    sed -i '' "s|/releases/download/v$OLD-beta/|/releases/download/v$OLD/|" "$FILES/appcast.xml"
+    gh release download "$BETA" --repo "$REPO" --dir "$FILES"
+    sed -i '' "s|/releases/download/$BETA/|/releases/download/v$OLD/|" "$FILES/appcast.xml"
     SHA=$(jq -r .source_sha "$FILES/candidate.json")
     { echo "Yorozu $OLD ($N)."; echo; scripts/release_notes.sh "$SHA"; } > "$FILES.md"
     gh release create "v$OLD" --repo "$REPO" --target "$SHA" --latest --title "v$OLD" --notes-file "$FILES.md" "$FILES"/*
-    gh release delete "v$OLD-beta" --repo "$REPO" --cleanup-tag --yes
+    gh release delete "$BETA" --repo "$REPO" --cleanup-tag --yes
     echo "Published v$OLD. Submit the iOS build for $OLD to the App Store in App Store Connect."
     exit 0
 fi
 
 PUBLISH=0; [ "${1:-}" = "--publish" ] && PUBLISH=1
-VERSION=$(tr -d '[:space:]' < version.txt)
+VERSION=${VERSION:-$(scripts/version.sh)}
+BETA=$(beta_tag)
 if [ -z "${BUILD:-}" ]; then
-    previous=$(beta_build "$VERSION")
+    case "$BETA" in "v$VERSION-beta"*) previous=$(beta_build "$BETA") ;; *) previous=0 ;; esac
     BUILD=$((${previous:-0} + 1))
 fi
-TAG="v$VERSION-beta"
+TAG="v$VERSION-beta.$BUILD"
 BUNDLE_VERSION=$(scripts/build-number.sh "$VERSION" "$BUILD")
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
 NOTARY_PROFILE=${NOTARY_PROFILE:-yorozu-notary}
@@ -97,7 +104,7 @@ echo "Built Yorozu $VERSION ($BUILD), CFBundleVersion $BUNDLE_VERSION, in $DIST/
 
 if [ "$PUBLISH" = 1 ]; then
     { echo "Yorozu $VERSION ($BUILD), beta."; echo; scripts/release_notes.sh "$SOURCE_SHA"; } > "$DIST/notes.md"
-    gh release delete "$TAG" --repo "$REPO" --cleanup-tag --yes 2>/dev/null || true
+    [ -z "$BETA" ] || gh release delete "$BETA" --repo "$REPO" --cleanup-tag --yes
     gh release create "$TAG" --repo "$REPO" --target "$SOURCE_SHA" --prerelease --latest=false --title "$TAG" \
         --notes-file "$DIST/notes.md" "$DMG" "$DIST/appcast.xml" "$DIST/candidate.json"
     echo "Published $TAG."

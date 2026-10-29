@@ -1,6 +1,6 @@
 # Status
 
-Current state of `main`. Version: `version.txt`. Product decisions: [OWNER_DECISIONS.md](../OWNER_DECISIONS.md). Release flow: [release.md](release.md).
+Current state of `main`. Version: SemVer from the Conventional Commits since the last stable tag (`scripts/version.sh`). Product decisions: [OWNER_DECISIONS.md](../OWNER_DECISIONS.md). Release flow: [release.md](release.md).
 
 ## Implemented
 
@@ -13,7 +13,7 @@ Current state of `main`. Version: `version.txt`. Product decisions: [OWNER_DECIS
 - **Voice input** (opt-in, iPhone, iPad and Mac; `VoiceModel.swift`, `VoiceRecorder.swift`, `VoiceInput.swift`, `Transcriber.swift`): Settings › Voice Input turns it on and downloads LFM3-Audio-2B (Q4_K_M model and Q8_0 audio projector, 1.44 GB): iPhone and iPad (iOS 26 or later, greyed below) get the on-demand Apple-hosted asset pack `VoiceModel` through the `YorozuAssets` downloader extension ([release.md](release.md#voice-model-asset-pack)); the Mac gets the pinned Hugging Face revision, checked by SHA-256, into Application Support, excluded from backup, resuming a partial download; Delete Model removes it; language Automatic or one of the model’s 18 speech languages, named in themselves; the download waits for Wi-Fi (no cellular, hotspot or Low Data Mode) unless Download Using Cellular… is confirmed; the license notice links the LFM Open License v1.0. Devices under about 6 GB of RAM see the switch greyed. The composer's mic (left of Send) records 16 kHz mono up to 5 minutes with a waveform and timer: ✕ (Esc) cancels, ✓ (Return) inserts the transcript at the caret, send (⌘Return) posts draft and transcript as one message. Transcription runs on device through llama.cpp b11954 (`packages/Llama`, binary target pinned by checksum), off the main thread; a failure keeps the clip for Retry. Measured on an M4 Mac mini: 27 s of English speech in about 2 s, model load 0.2–5 s (cold), peak footprint about 0.8 GB with 1.9 GB resident including the mapped weights.
 - **iPhone and iPad updates**: once a day the App Store build looks up its newest App Store version; a newer one shows a dismissible row at the top of the chat list that opens the App Store. Not on TestFlight or in demo mode.
 - **Website** (`apps/web`): Astro site with pairing link page, AASA, and Mac download and update-feed redirects.
-- **CI**: PR compile checks and relay tests; Mac beta per merge, promotion to stable on a `version.txt` bump; TestFlight upload per merge; web and relay deploy per merge ([release.md](release.md#ci)).
+- **CI**: PR compile checks and relay tests; Mac beta per merge, promotion to stable by a manual run naming the checked build; TestFlight upload per merge; web and relay deploy per merge ([release.md](release.md#ci)).
 
 ## Open items
 
