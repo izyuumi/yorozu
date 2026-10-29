@@ -687,6 +687,7 @@ private struct Composer: View {
                 onPasteData: onPasteData, cursor: cursor, focusKey: focusKey)
                 .frame(minHeight: rowHeight)
                 .padding(.leading, attachLimit == nil ? LayoutMetrics.inner : 0)
+                .accessibilityLabel(Text("Message"))
                 .accessibilityIdentifier("composer.text")
             if voiceEnabled, VoiceModel.supported, VoiceModel.shared.state == .ready {
                 Button {
