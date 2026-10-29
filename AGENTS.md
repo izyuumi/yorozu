@@ -1,6 +1,6 @@
 # Yorozu v2
 
-Yorozu is an OpenClaw chat channel (#415): a TypeScript channel plugin inside the owner's OpenClaw Gateway (`plugins/openclaw-yorozu`) talks over the end-to-end-encrypted relay to one SwiftUI client app for iPhone, iPad and Mac (`apps/ios`), and OpenClaw runs the agent, sessions, memory and cron. Yorozu itself runs no agent logic. This is `main` of a public repository; work lands here, and every push to `main` that touches the app ships it as a beta, a TestFlight build and a Mac prerelease (`.github/workflows/release-*.yml`); a manual `release-mac.yml` run naming a checked beta build makes it stable, and `scripts/version.sh` derives the SemVer version from the Conventional Commits ([docs/release.md](docs/release.md)).
+Yorozu is an OpenClaw chat channel (#415): a TypeScript channel plugin inside the owner's OpenClaw Gateway (`plugins/openclaw-yorozu`) talks over the end-to-end-encrypted relay to one SwiftUI client app for iPhone, iPad and Mac (`apps/ios`), and OpenClaw runs the agent, sessions, memory and cron. Yorozu itself runs no agent logic. This is `main` of a public repository; work lands here, and every push to `main` that touches the app ships it as a beta, a TestFlight build and a Mac prerelease (`.github/workflows/release-*.yml`); merging the release PR (`chore: release <version>`) makes the beta it names stable, and `scripts/version.sh` derives the SemVer version from the Conventional Commits ([docs/release.md](docs/release.md)).
 
 ## Rules
 
