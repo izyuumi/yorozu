@@ -108,4 +108,5 @@ if [ "$PUBLISH" = 1 ]; then
     gh release create "$TAG" --repo "$REPO" --target "$SOURCE_SHA" --prerelease --latest=false --title "$TAG" \
         --notes-file "$DIST/notes.md" "$DMG" "$DIST/appcast.xml" "$DIST/candidate.json"
     echo "Published $TAG."
+    scripts/release_pr.sh "$VERSION" "$BUILD" "$SOURCE_SHA"
 fi

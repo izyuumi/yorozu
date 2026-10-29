@@ -20,8 +20,9 @@ How the client app (`apps/ios`) is versioned, built, shipped and compile-checked
 
 | Workflow | Trigger | Does |
 |---|---|---|
-| `checks.yml` | every pull request | `app` job (when `apps/ios/`, `packages/`, `plugins/` or the workflow changed): the iOS and Mac compile checks below. `relay` job (when `apps/relay/`, `pnpm-lock.yaml` or the workflow changed): `pnpm --filter @yorozu/relay test` (typecheck + vitest). A skipped job counts as passed. |
-| `release-mac.yml` | push to `main` touching `apps/**` (except `apps/web/**`, `apps/relay/**`), `packages/**`, `plugins/**`, or `scripts/**`; manual | `scripts/release_mac.sh --publish`. A manual run with `promote: <build>` runs only `scripts/release_mac.sh --promote <build>`. |
+| `checks.yml` | every pull request; manual (the release PR) | `app` job (when `apps/ios/`, `packages/`, `plugins/` or the workflow changed): the iOS and Mac compile checks below. `relay` job (when `apps/relay/`, `pnpm-lock.yaml` or the workflow changed): `pnpm --filter @yorozu/relay test` (typecheck + vitest). A skipped job counts as passed. |
+| `release-mac.yml` | push to `main` touching `apps/**` (except `apps/web/**`, `apps/relay/**`), `packages/**`, `plugins/**`, or `scripts/**`; manual | `scripts/release_mac.sh --publish`, which then opens or updates the release PR. |
+| `promote.yml` | the release PR (branch `release`) merged | `scripts/release_mac.sh --promote <build>` with the build from the PR's `Release-Build:` line. |
 | `release-ios.yml` | push to `main` touching `apps/ios/**`, `packages/**`, `scripts/upload_ios.sh`, `scripts/version.sh` or `scripts/build-number.sh`; manual | `scripts/upload_ios.sh --confirm`. |
 | `deploy-web.yml` | push to `main` touching `apps/web/**`; manual | `pnpm --filter @yorozu/web build`, `… test`, then `wrangler deploy`. |
 | `deploy-relay.yml` | push to `main` touching `apps/relay/**`; manual | `pnpm --filter @yorozu/relay test`, then `wrangler deploy`. |
@@ -56,7 +57,7 @@ Modes:
 - `--publish`: refuses a dirty tree, deletes the current beta release and its tag, then creates the prerelease `v<version>-beta.<build>` (a SemVer prerelease) with the three assets and notes from `scripts/release_notes.sh` (feat, fix and perf Conventional Commits since the last stable tag, dependency bumps left out). There is one beta release at a time; when a `feat` lands, the next beta moves to the new minor version.
 - `--promote <build>`: if the current beta `v<version>-beta.<build>` is that build and `v<version>` does not exist yet, downloads its assets, points the appcast at the stable release, republishes them as `v<version>`, marked latest, with generated notes, then deletes the beta and its tag (the beta feed falls back to the stable release until the next beta). Fails if the beta is a different build; does nothing if `v<version>` exists.
 
-To make a checked beta stable, run `release-mac.yml` by hand with `promote` set to its visible build (`gh workflow run release-mac.yml -f promote=<build>`). Naming the build keeps a beta published after the check from being promoted unchecked. The next push publishes the next version's first beta.
+Stable releases work like release-please. After each beta, `scripts/release_pr.sh` resets the branch `release` to the beta's commit, commits `CHANGELOG.md` with the version's notes through the contents API (so GitHub signs it, as the `main` ruleset requires), opens or updates the PR `chore: release <version>`, whose body ends with `Release-Build: <build>`, and dispatches `checks.yml` on it (a PR opened by the Actions token starts no workflows; with only `CHANGELOG.md` changed, both required checks skip, which counts as passing). Check that beta, then merge the PR: `promote.yml` promotes the named build. A newer beta updates the PR to name it, and `--promote` refuses a beta that is not the named build. Merging changes only `CHANGELOG.md`, so it starts no new beta; the next push does.
 
 Feeds and downloads (`apps/web/worker.mjs`, `apps/web/public/_redirects`):
 
