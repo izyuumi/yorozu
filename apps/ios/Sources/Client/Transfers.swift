@@ -79,7 +79,7 @@ enum AttachmentStaging {
         let name = url.lastPathComponent
         guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else { throw Failure.unreadable(name: name) }
         guard size <= limit else { throw Failure.tooLarge(name: name, size: size, limit: limit) }
-        guard let data = try? Data(contentsOf: url) else { throw Failure.unreadable(name: name) }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { throw Failure.unreadable(name: name) }
         let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
         return try stage(data: data, name: name, mime: mime, limit: limit)
     }
@@ -173,7 +173,7 @@ final class Transfers {
     enum UploadResult { case stored, refused(String), interrupted }
 
     func upload(_ attachment: ChatAttachment) async -> UploadResult {
-        guard let url = AttachmentFiles.local(attachment), let data = try? Data(contentsOf: url) else {
+        guard let url = AttachmentFiles.local(attachment), let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
             return .refused(String(localized: "The file is no longer on this device."))
         }
         let id = attachment.id

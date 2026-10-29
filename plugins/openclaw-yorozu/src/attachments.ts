@@ -12,7 +12,7 @@ import { CHUNK_BYTES, type Attachment, type Download, type Event, type Upload } 
 import { yorozuRuntime } from "./runtime.js";
 
 const MB = 1024 * 1024;
-export const DEFAULT_MEDIA_MAX_BYTES = 8 * MB;
+export const DEFAULT_MEDIA_MAX_BYTES = 128 * MB;
 const PARTIALS_MAX = 8;
 const PARTIAL_MS = 30 * 60 * 1000;
 

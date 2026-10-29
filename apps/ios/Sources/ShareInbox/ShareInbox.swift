@@ -1,4 +1,5 @@
 import Foundation
+import YorozuWire
 
 enum ShareInbox {
     static let appGroup = "group.to.yumi.yorozu"
@@ -12,7 +13,7 @@ enum ShareInbox {
         var title: String
     }
 
-    static let defaultMaxBytes = 8 * 1024 * 1024
+    static let defaultMaxBytes = Attachment.defaultMaxBytes
 
     private static var container: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)

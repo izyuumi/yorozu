@@ -217,7 +217,7 @@ public struct ErrorInfo: Codable, Equatable, Sendable {
 public struct Attachment: Codable, Equatable, Sendable, Identifiable {
     public static let capability = "attachments"
     public static let chunkBytes = 160 * 1024
-    public static let defaultMaxBytes = 8 * 1024 * 1024
+    public static let defaultMaxBytes = 128 * 1024 * 1024
     public static let maxPerMessage = 32
     public static let maxLabel = 255
 
