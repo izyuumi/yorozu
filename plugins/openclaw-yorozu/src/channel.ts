@@ -29,7 +29,7 @@ import { loadReactions, reactionActions, userReaction } from "./reactions.js";
 import { loadReplies } from "./replies.js";
 import { runParked } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
-import { applyPatch, watchSessions } from "./sessions.js";
+import { applyPatch, setThreadBase, watchSessions } from "./sessions.js";
 import { announceGatewayState } from "./updates.js";
 
 export const CHANNEL_ID = "yorozu";
@@ -64,22 +64,26 @@ function resolveAccount(cfg: OpenClawConfig): YorozuAccount {
 }
 
 const deliveryReplyTo = (cfg: OpenClawConfig, threadId?: string | number | null, replyToId?: string | null) =>
-  replyTarget(cfg, resolveAccount(cfg).agent, String(threadId ?? "").toLowerCase(), replyToId);
+  replyTarget(cfg, resolveOwnerRoute(cfg, resolveAccount(cfg).agent).agentId, String(threadId ?? "").toLowerCase(), replyToId);
 
 async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<void> {
   const { account, abortSignal } = ctx;
+  // The agent and thread keys OpenClaw routes Yorozu to; bindings and identity links can differ from the config.
+  const route = resolveOwnerRoute(ctx.cfg, account.agent, account.accountId);
+  const agent = route.agentId;
+  setThreadBase(agent, route.sessionKey);
   const keys = await loadHostKeys();
   await loadAttachmentIndex().catch((error: unknown) => ctx.log?.warn?.(`yorozu: attachment index failed: ${String(error)}`));
   await loadMessageTimes().catch((error: unknown) => ctx.log?.warn?.(`yorozu: message times failed: ${String(error)}`));
   await loadReplies().catch((error: unknown) => ctx.log?.warn?.(`yorozu: replies failed: ${String(error)}`));
   await loadReactions().catch((error: unknown) => ctx.log?.warn?.(`yorozu: reactions failed: ${String(error)}`));
   const maxBytes = mediaMaxBytes(ctx.cfg, account.accountId);
-  ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${account.agent}, room ${keys.room})`);
+  ctx.log?.info?.(`[${account.accountId}] yorozu started (agent ${agent}, room ${keys.room})`);
   ctx.setStatus({ accountId: account.accountId, running: true, connected: false, lifecycle: "starting" });
-  watchSessions(account.agent, abortSignal, ctx.log);
-  const turn = { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent: account.agent, mediaMaxBytes: maxBytes };
+  watchSessions(agent, abortSignal, ctx.log);
+  const turn = { cfg: ctx.cfg, accountId: account.accountId, log: ctx.log, agent, mediaMaxBytes: maxBytes };
   runParked(abortSignal, (message, attempt) => void handleMessage(turn, message, attempt));
-  void announceGatewayState(turn, account.agent).catch((error: unknown) => ctx.log?.warn?.(`yorozu: gateway notice failed: ${String(error)}`));
+  void announceGatewayState(turn, agent).catch((error: unknown) => ctx.log?.warn?.(`yorozu: gateway notice failed: ${String(error)}`));
   try {
     await runRelayHost({
       relayUrl: account.relayUrl,
@@ -87,20 +91,19 @@ async function startAccount(ctx: ChannelGatewayContext<YorozuAccount>): Promise<
       signal: abortSignal,
       log: ctx.log,
       mediaMaxBytes: maxBytes,
-      agent: account.agent,
+      agent,
       hostVersion: yorozuRuntime.getRuntime().version,
       onMessage: (message) => void handleMessage(turn, message),
       onReaction: (reaction) => {
-        const route = resolveOwnerRoute(ctx.cfg, account.agent, account.accountId);
         const { sessionKey } = resolveThreadSessionKeys({ baseSessionKey: route.sessionKey, threadId: reaction.convId });
         userReaction(reaction, { agentId: route.agentId, sessionKey });
       },
       onRequest: async (event) => {
-        if (event.kind === "conv_list" || event.kind === "history") return answerRequest(ctx.cfg, account.agent, event, ctx.log);
-        if (event.kind === "conv_patch") return applyPatch(account.agent, event.data, ctx.log);
+        if (event.kind === "conv_list" || event.kind === "history") return answerRequest(ctx.cfg, agent, event, ctx.log);
+        if (event.kind === "conv_patch") return applyPatch(agent, event.data, ctx.log);
         if (event.kind !== "cron_list") return undefined;
         try {
-          return { kind: "cron_list", data: { jobs: await listCronJobs(ctx.cfg, account.agent) } };
+          return { kind: "cron_list", data: { jobs: await listCronJobs(ctx.cfg, agent) } };
         } catch (error) {
           ctx.log?.warn?.(`yorozu: cron list failed: ${String(error)}`);
           return { kind: "cron_list", data: { jobs: [], error: String(error).slice(0, 500) } };

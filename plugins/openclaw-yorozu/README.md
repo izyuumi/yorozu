@@ -38,7 +38,7 @@ A method fails with `UNAVAILABLE` and the error text, for example while the chan
 
 ## Conversations (`src/conversation.ts`)
 
-Every device is the same channel peer, `owner`. A conversation is the session `agent:<agent>:yorozu:direct:owner:thread:<convId>`, where `<agent>` comes from `channels.yorozu.agent`.
+Every device is the same channel peer, `owner`. A conversation is the session `<owner session>:thread:<convId>`, where `<owner session>` is the key OpenClaw routes the peer to: `agent:<agent>:yorozu:direct:owner` by default, with `<agent>` from `channels.yorozu.agent`, but `bindings` and `session.identityLinks` can change the agent or the peer part, so the plugin resolves it at start (`setThreadBase`).
 
 - **In**: a `message` is answered `delivered` to every device at once. A repeated `messageId` gets `delivered` again but does not run twice (remembered for 24 h). The message's uploaded files become media facts, and the turn runs through `runChannelInboundEvent` with commands authorized. Slash commands pass through as text; OpenClaw handles `/new` for that thread only.
 - **Out**, to every device with a live session: `run_started`, then `typing` (repeated every 8 s), then `tool` per tool call (`running`, then `done` or `failed`), then one `reply` per chunk of the text chunk limit. Media goes on the last chunk as `attachments`. A failure sends `error run_failed`. Nothing is queued for offline devices; `history` serves the reply from the transcript later.
