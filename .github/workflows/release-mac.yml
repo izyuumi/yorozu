@@ -2,8 +2,13 @@ name: Release Mac
 on:
   push:
     branches: [main]
-    paths: ['apps/**', '!apps/web/**', '!apps/relay/**', 'packages/**', 'plugins/**', 'scripts/**', 'version.txt']
+    paths: ['apps/**', '!apps/web/**', '!apps/relay/**', 'packages/**', 'plugins/**', 'scripts/**']
   workflow_dispatch:
+    inputs:
+      promote:
+        description: Visible build of the checked beta to promote to stable (empty publishes a beta)
+        required: false
+        default: ''
 
 concurrency:
   group: release-mac
@@ -24,20 +29,16 @@ jobs:
         with: { fetch-depth: 0 }
 
       - name: Promote the checked beta
-        if: github.event_name == 'push'
+        if: ${{ inputs.promote }}
         env:
-          BEFORE: ${{ github.event.before }}
-        run: |
-          set -eu
-          git cat-file -e "$BEFORE^{commit}" 2>/dev/null || { echo "No previous commit to compare"; exit 0; }
-          old=$(git show "$BEFORE:version.txt" | tr -d '[:space:]')
-          [ "$old" != "$(tr -d '[:space:]' < version.txt)" ] || exit 0
-          build=$(git log --format=%B "$BEFORE..HEAD" | sed -n 's/^Promotes:.*(\([0-9]*\)).*/\1/p' | tail -1)
-          scripts/release_mac.sh --promote "$old" "$build"
+          BUILD: ${{ inputs.promote }}
+        run: scripts/release_mac.sh --promote "$BUILD"
 
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        if: ${{ !inputs.promote }}
         with: { xcode-version: '27.1' }
       - name: Install Tuist (mise.toml)
+        if: ${{ !inputs.promote }}
         run: |
           command -v mise >/dev/null || brew install mise
           tuist=$(sed -n 's/^tuist = "\(.*\)"/\1/p' mise.toml)
@@ -45,6 +46,7 @@ jobs:
           mise bin-paths "tuist@$tuist" >> "$GITHUB_PATH"
 
       - name: Signing identity, notary profile and Sparkle key
+        if: ${{ !inputs.promote }}
         env:
           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
           DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
@@ -76,11 +78,12 @@ jobs:
           printf '%s' "$SPARKLE_ED_KEY" > "$RUNNER_TEMP/sparkle.key"
 
       - name: Build, notarize and publish the Mac beta
+        if: ${{ !inputs.promote }}
         env:
           SPARKLE_ED_KEY_FILE: ${{ runner.temp }}/sparkle.key
         run: scripts/release_mac.sh --publish
       - name: Forget signing credentials
-        if: always()
+        if: always() && !inputs.promote
         run: |
           rm -f "$RUNNER_TEMP/sparkle.key" "$RUNNER_TEMP/AuthKey.p8"
           security delete-keychain "$RUNNER_TEMP/release.keychain-db" 2>/dev/null || true

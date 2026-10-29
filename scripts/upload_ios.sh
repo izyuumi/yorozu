@@ -11,7 +11,7 @@ case "$KEY" in /*) ;; *) KEY="$PWD/$KEY" ;; esac
 [ -r "$KEY" ] || { echo "Cannot read the App Store Connect key at $KEY" >&2; exit 1; }
 APP_ID=6811274963
 API=https://api.appstoreconnect.apple.com
-VERSION=$(tr -d '[:space:]' < version.txt)
+VERSION=${VERSION:-$(scripts/version.sh)}
 BASE=$(($(scripts/build-number.sh "$VERSION" 1) - 1))
 ARCHIVE="$PWD/build/ios/YorozuIOS.xcarchive"
 

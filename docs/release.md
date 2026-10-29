@@ -4,7 +4,7 @@ How the client app (`apps/ios`) is versioned, built, shipped and compile-checked
 
 ## Version and build numbers
 
-- `version.txt` holds one numeric `major.minor.patch` for every platform. `apps/ios/Project.swift` stops with a fatal error on any other format.
+- The version follows SemVer and is the same on every platform. `scripts/version.sh` computes it from the Conventional Commits since the last stable tag `v<major.minor.patch>`: a breaking change (`type!:` or a `BREAKING CHANGE:` footer) bumps major (minor while below 1.0), a `feat` bumps minor, anything else patch. Nobody picks it by hand. The scripts need the tags (`fetch-depth: 0` in CI). `VERSION=<x.y.z>` overrides it. `apps/ios/Project.swift` holds only a placeholder `0.0.0`.
 - The visible build restarts at 1 per version. It is stored in the Info.plist key `YorozuBuild` (build setting `YOROZU_BUILD`).
 - `CFBundleVersion` encodes version and build as one integer, computed by `scripts/build-number.sh <version> <build>` (same formula as `bundleVersion` in `Project.swift`):
 
@@ -13,16 +13,16 @@ How the client app (`apps/ios`) is versioned, built, shipped and compile-checked
   ```
 
   The script exits 64 on a non-numeric input and 65 unless minor and patch are below 100 and build is 1 to 999. Sparkle compares this integer, so it must only ever rise.
-- Every script passes `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION` and `YOROZU_BUILD` to `xcodebuild` explicitly: Tuist caches the manifest, so a `version.txt` change alone may not reach the build.
+- Every script passes `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION` and `YOROZU_BUILD` to `xcodebuild` explicitly: Tuist caches the manifest, and the manifest holds only a placeholder version.
 - A wire-breaking change raises the protocol in `peer_info` (`protocolMin` / `protocolMax`, currently 3; [contract](ios-relay-contract.md#peer_info)) on both client and plugin; a client and plugin without a common version show an update-required state, so such a change ships to both together.
 
 ## CI
 
 | Workflow | Trigger | Does |
 |---|---|---|
-| `checks.yml` | every pull request | `app` job (when `apps/ios/`, `packages/`, `plugins/`, `version.txt` or the workflow changed): the iOS and Mac compile checks below. `relay` job (when `apps/relay/`, `pnpm-lock.yaml` or the workflow changed): `pnpm --filter @yorozu/relay test` (typecheck + vitest). A skipped job counts as passed. |
-| `release-mac.yml` | push to `main` touching `apps/**` (except `apps/web/**`, `apps/relay/**`), `packages/**`, `plugins/**`, `scripts/**` or `version.txt`; manual | Promotes a beta if `version.txt` changed, then `scripts/release_mac.sh --publish`. |
-| `release-ios.yml` | push to `main` touching `apps/ios/**`, `packages/**`, `version.txt`, `scripts/upload_ios.sh` or `scripts/build-number.sh`; manual | `scripts/upload_ios.sh --confirm`. |
+| `checks.yml` | every pull request | `app` job (when `apps/ios/`, `packages/`, `plugins/` or the workflow changed): the iOS and Mac compile checks below. `relay` job (when `apps/relay/`, `pnpm-lock.yaml` or the workflow changed): `pnpm --filter @yorozu/relay test` (typecheck + vitest). A skipped job counts as passed. |
+| `release-mac.yml` | push to `main` touching `apps/**` (except `apps/web/**`, `apps/relay/**`), `packages/**`, `plugins/**`, or `scripts/**`; manual | `scripts/release_mac.sh --publish`. A manual run with `promote: <build>` runs only `scripts/release_mac.sh --promote <build>`. |
+| `release-ios.yml` | push to `main` touching `apps/ios/**`, `packages/**`, `scripts/upload_ios.sh`, `scripts/version.sh` or `scripts/build-number.sh`; manual | `scripts/upload_ios.sh --confirm`. |
 | `deploy-web.yml` | push to `main` touching `apps/web/**`; manual | `pnpm --filter @yorozu/web build`, `… test`, then `wrangler deploy`. |
 | `deploy-relay.yml` | push to `main` touching `apps/relay/**`; manual | `pnpm --filter @yorozu/relay test`, then `wrangler deploy`. |
 
@@ -52,11 +52,11 @@ The macOS destination's bundle id differs from iOS (`PRODUCT_BUNDLE_IDENTIFIER[s
 
 Modes:
 
-- No flag: build only. Visible build is `BUILD`, else the build of the current `v<version>-beta` release (from its `candidate.json`) plus one (needs `gh`).
-- `--publish`: refuses a dirty tree, deletes the existing `v<version>-beta` release and tag, then creates the prerelease `v<version>-beta` with the three assets and notes from `scripts/release_notes.sh` (feat, fix and perf Conventional Commits since the last stable tag, dependency bumps left out). A version has one beta release.
-- `--promote <version> <build>`: if `v<version>` does not exist yet and `v<version>-beta` is still that build, downloads its assets, points the appcast at the stable release, republishes them as `v<version>`, marked latest, with generated notes, then deletes `v<version>-beta` and its tag (the beta feed falls back to the stable release until the next beta). Fails if the beta is a different build; does nothing if `v<version>` exists.
+- No flag: build only. Visible build is `BUILD`, else the build of the current beta release (from its `candidate.json`) plus one when it is the same version, or 1 (needs `gh`).
+- `--publish`: refuses a dirty tree, deletes the current beta release and its tag, then creates the prerelease `v<version>-beta.<build>` (a SemVer prerelease) with the three assets and notes from `scripts/release_notes.sh` (feat, fix and perf Conventional Commits since the last stable tag, dependency bumps left out). There is one beta release at a time; when a `feat` lands, the next beta moves to the new minor version.
+- `--promote <build>`: if the current beta `v<version>-beta.<build>` is that build and `v<version>` does not exist yet, downloads its assets, points the appcast at the stable release, republishes them as `v<version>`, marked latest, with generated notes, then deletes the beta and its tag (the beta feed falls back to the stable release until the next beta). Fails if the beta is a different build; does nothing if `v<version>` exists.
 
-`release-mac.yml` runs the promotion first when a push changes `version.txt`: `<version>` is the previous `version.txt`, and the build comes from the last `Promotes: <old> (<build>)` line in the pushed commit messages. Without that line the promotion and the run fail (unless `v<old>` is already released). It then publishes the new version's first beta.
+To make a checked beta stable, run `release-mac.yml` by hand with `promote` set to its visible build (`gh workflow run release-mac.yml -f promote=<build>`). Naming the build keeps a beta published after the check from being promoted unchecked. The next push publishes the next version's first beta.
 
 Feeds and downloads (`apps/web/worker.mjs`, `apps/web/public/_redirects`):
 
@@ -70,7 +70,7 @@ The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SU
 `scripts/upload_ios.sh --confirm` archives and uploads. Each upload uses up its build number.
 
 - Without `--confirm` it exits 64. Needs `ASC_KEY_ID`, `ASC_ISSUER_ID` and the `.p8` key (`ASC_KEY_PATH`, else `~/.appstoreconnect/private_keys/AuthKey_<id>.p8`).
-- Visible build: the highest build App Store Connect has for this version, plus one; `BUILD=<n>` skips the lookup. Either way `build-number.sh` rejects a build past 999 (exit 65): bump `version.txt` instead.
+- Visible build: the highest build App Store Connect has for this version, plus one; `BUILD=<n>` skips the lookup. Either way `build-number.sh` rejects a build past 999 (exit 65): promote, so the next build starts a new version.
 - Archives `generic/platform=iOS` only (app plus notification service and share extensions) with automatic signing and `-allowProvisioningUpdates`. The Mac destination is never uploaded.
 - `apps/ios/ExportOptions.plist` (`destination` = `upload`) makes the export step the upload. TestFlight gives processed builds to the internal group.
 - App Store submission is by hand in App Store Connect (review notes: `apps/ios/APP-REVIEW-NOTES.md`).
