@@ -54,7 +54,7 @@ Modes:
 
 - No flag: build only. Visible build is `BUILD`, else the build of the current `v<version>-beta` release (from its `candidate.json`) plus one (needs `gh`).
 - `--publish`: refuses a dirty tree, deletes the existing `v<version>-beta` release and tag, then creates the prerelease `v<version>-beta` with the three assets and notes from `scripts/release_notes.sh` (feat, fix and perf Conventional Commits since the last stable tag, dependency bumps left out). A version has one beta release.
-- `--promote <version> <build>`: if `v<version>` does not exist yet and `v<version>-beta` is still that build, downloads its assets, points the appcast at the stable release, and republishes them as `v<version>`, marked latest, with generated notes. Fails if the beta is a different build; does nothing if `v<version>` exists.
+- `--promote <version> <build>`: if `v<version>` does not exist yet and `v<version>-beta` is still that build, downloads its assets, points the appcast at the stable release, republishes them as `v<version>`, marked latest, with generated notes, then deletes `v<version>-beta` and its tag (the beta feed falls back to the stable release until the next beta). Fails if the beta is a different build; does nothing if `v<version>` exists.
 
 `release-mac.yml` runs the promotion first when a push changes `version.txt`: `<version>` is the previous `version.txt`, and the build comes from the last `Promotes: <old> (<build>)` line in the pushed commit messages. Without that line the promotion and the run fail (unless `v<old>` is already released). It then publishes the new version's first beta.
 
