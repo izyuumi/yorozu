@@ -20,7 +20,7 @@ How the client app (`apps/ios`) is versioned, built, shipped and compile-checked
 
 | Workflow | Trigger | Does |
 |---|---|---|
-| `checks.yml` | every pull request | `app` job (when `apps/ios/`, `packages/`, `plugins/` or the workflow changed): the iOS and Mac compile checks below. `relay` job (when `apps/relay/`, `pnpm-lock.yaml` or the workflow changed): `pnpm --filter @yorozu/relay test` (typecheck + vitest). A skipped job counts as passed. |
+| `checks.yml` | every pull request | `app` job (when `apps/ios/`, `packages/`, `plugins/` or the workflow changed): the iOS and Mac compile checks below. `relay` job (when `apps/relay/`, `pnpm-lock.yaml` or the workflow changed): `pnpm --filter @yorozu/relay test` (typecheck + vitest). A skipped job counts as passed. `release-guards` job (always): `scripts/external_testflight.sh --audit` ([TestFlight](#ios-and-ipados-testflight)). |
 | `release-mac.yml` | push to `main` touching `apps/**` (except `apps/web/**`, `apps/relay/**`), `packages/**`, `plugins/**`, or `scripts/**`; manual | `scripts/release_mac.sh --publish`, which then opens or updates the release PR. |
 | `promote.yml` | the release PR (branch `release`) merged | `scripts/release_mac.sh --promote <build>` with the build from the PR's `Release-Build:` line. |
 | `release-ios.yml` | push to `main` touching `apps/ios/**`, `packages/**`, `scripts/upload_ios.sh`, `scripts/version.sh` or `scripts/build-number.sh`; manual | `scripts/upload_ios.sh --confirm`. |
@@ -71,6 +71,7 @@ The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SU
 `scripts/upload_ios.sh --confirm` archives and uploads. Each upload uses up its build number.
 
 - Without `--confirm` it exits 64. Needs `ASC_KEY_ID`, `ASC_ISSUER_ID` and the `.p8` key (`ASC_KEY_PATH`, else `~/.appstoreconnect/private_keys/AuthKey_<id>.p8`).
+- External TestFlight is off. The repository variable `YOROZU_EXTERNAL_TESTFLIGHT` is unset, and `release-ios.yml` passes it to the upload step. Nothing in CI gives a build to an external TestFlight group or submits it to Beta App Review; a step that ever does must run `scripts/external_testflight.sh` first and stop unless it exits 0, which it does only when the variable is exactly `true` (unset, empty, `false` or `TRUE` exit 1). `scripts/upload_ios.sh` prints the switch's state before it archives. The `release-guards` job in `checks.yml` runs `scripts/external_testflight.sh --audit`, which fails a pull request whose workflows or scripts name an App Store Connect group or Beta App Review call (`betaGroups`, `betaAppReviewSubmissions`, …) without running the switch.
 - Visible build: the highest build App Store Connect has for this version, plus one; `BUILD=<n>` skips the lookup. Either way `build-number.sh` rejects a build past 999 (exit 65): promote, so the next build starts a new version.
 - Archives `generic/platform=iOS` only (app plus notification service and share extensions) with automatic signing and `-allowProvisioningUpdates`. The Mac destination is never uploaded.
 - `apps/ios/ExportOptions.plist` (`destination` = `upload`) makes the export step the upload. TestFlight gives processed builds to the internal group.

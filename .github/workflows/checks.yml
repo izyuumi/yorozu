@@ -55,6 +55,13 @@ jobs:
             -clonedSourcePackagesDirPath .build/xcode-packages -skipPackagePluginValidation -quiet \
             CODE_SIGNING_ALLOWED=NO
 
+  # Every external TestFlight or Beta App Review path must pass the kill switch (scripts/external_testflight.sh).
+  release-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: scripts/external_testflight.sh --audit
+
   relay:
     needs: changes
     if: needs.changes.outputs.relay == 'true'

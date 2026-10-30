@@ -45,6 +45,8 @@ if [ -z "${BUILD:-}" ]; then
 fi
 BUNDLE_VERSION=$(scripts/build-number.sh "$VERSION" "$BUILD")
 echo "Uploading Yorozu iOS $VERSION ($BUILD), CFBundleVersion $BUNDLE_VERSION"
+# Nothing here gives the build to an external group or to Beta App Review; such a step must pass this switch first.
+scripts/external_testflight.sh 2>&1 || true
 
 mkdir -p build/ios
 rm -rf "$ARCHIVE" build/ios/export
