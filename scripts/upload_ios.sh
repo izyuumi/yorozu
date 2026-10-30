@@ -37,13 +37,12 @@ asc_send() {
         | curl -fsS --config - -X "$1" --data "$3" "$2"
 }
 
-# What to Test on the uploaded build: the notes of the PRs merged since the last stable tag
-# (scripts/release_notes.sh --plain). It is the build's own text, so it reaches only the groups that get the
-# build: TestFlight's internal group. Nothing here adds the build to a group or submits it for Beta App Review.
-set_whats_new() {
-    text=$({ echo "Yorozu $VERSION ($BUILD), beta."; echo; scripts/release_notes.sh --plain HEAD; } | head -c 4000)
+# Prints the uploaded build's App Store Connect id once App Store Connect lists it, polling every 30 s for up to
+# LIST_WAIT seconds (default 3600). The next upload numbers its build from that list, so until then a second merge
+# would reuse this build's number; release-ios.yml runs one upload at a time, so waiting here closes that gap.
+wait_listed() {
     url="$API/v1/builds?filter%5Bapp%5D=$APP_ID&filter%5Bversion%5D=$BUNDLE_VERSION&filter%5BpreReleaseVersion.version%5D=$VERSION&limit=1"
-    tries=$((${WHATS_NEW_WAIT:-1800} / 30))
+    tries=$((${LIST_WAIT:-3600} / 30))
     id=
     while [ "$tries" -gt 0 ]; do
         id=$(asc_get "$url" | jq -r '.data[0].id // empty') || id=
@@ -51,8 +50,15 @@ set_whats_new() {
         tries=$((tries - 1))
         [ "$tries" -gt 0 ] && sleep 30
     done
-    [ -n "$id" ] || return 1
-    locales=$(asc_get "$API/v1/builds/$id/betaBuildLocalizations?fields%5BbetaBuildLocalizations%5D=locale&limit=50") || return 1
+    [ -n "$id" ] && printf '%s' "$id"
+}
+
+# What to Test on the uploaded build: the notes of the PRs merged since the last stable tag
+# (scripts/release_notes.sh --plain). It is the build's own text, so it reaches only the groups that get the
+# build: TestFlight's internal group. Nothing here adds the build to a group or submits it for Beta App Review.
+set_whats_new() {
+    text=$({ echo "Yorozu $VERSION ($BUILD), beta."; echo; scripts/release_notes.sh --plain HEAD; } | head -c 4000)
+    locales=$(asc_get "$API/v1/builds/$BUILD_ID/betaBuildLocalizations?fields%5BbetaBuildLocalizations%5D=locale&limit=50") || return 1
     existing=$(printf '%s' "$locales" | jq -r '.data[].id')
     if [ -n "$existing" ]; then
         for loc in $existing; do
@@ -60,7 +66,7 @@ set_whats_new() {
                 '{data: {type: "betaBuildLocalizations", id: $id, attributes: {whatsNew: $t}}}')" >/dev/null || return 1
         done
     else
-        asc_send POST "$API/v1/betaBuildLocalizations" "$(jq -n --arg id "$id" --arg t "$text" \
+        asc_send POST "$API/v1/betaBuildLocalizations" "$(jq -n --arg id "$BUILD_ID" --arg t "$text" \
             '{data: {type: "betaBuildLocalizations", attributes: {locale: "en-US", whatsNew: $t},
               relationships: {build: {data: {type: "builds", id: $id}}}}}')" >/dev/null || return 1
     fi
@@ -98,7 +104,11 @@ env -u SDKROOT xcodebuild -exportArchive -archivePath "$ARCHIVE" \
     -allowProvisioningUpdates \
     -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 echo "Uploaded Yorozu iOS $VERSION ($BUILD). Once App Store Connect has processed it, TestFlight gives it to the internal group."
+BUILD_ID=$(wait_listed) || {
+    echo "::error::Uploaded Yorozu iOS $VERSION ($BUILD), but App Store Connect did not list build $BUNDLE_VERSION within ${LIST_WAIT:-3600} s, so the next upload could reuse build $BUILD. Wait until it is listed before rerunning or merging." >&2
+    exit 1
+}
 set_whats_new || {
-    echo "::error::Uploaded Yorozu iOS $VERSION ($BUILD), but its What to Test was not set: App Store Connect did not list build $BUNDLE_VERSION within ${WHATS_NEW_WAIT:-1800} s, or refused the text. Set it in App Store Connect by hand." >&2
+    echo "::error::Uploaded Yorozu iOS $VERSION ($BUILD), but App Store Connect refused its What to Test. Set it in App Store Connect by hand." >&2
     exit 1
 }
