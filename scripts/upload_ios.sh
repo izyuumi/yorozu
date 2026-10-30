@@ -38,11 +38,11 @@ asc_send() {
 }
 
 # Prints the uploaded build's App Store Connect id once App Store Connect lists it, polling every 30 s for up to
-# LIST_WAIT seconds (default 1800). The next upload numbers its build from that list, so until then a second merge
+# LIST_WAIT seconds (default 3600). The next upload numbers its build from that list, so until then a second merge
 # would reuse this build's number; release-ios.yml runs one upload at a time, so waiting here closes that gap.
 wait_listed() {
     url="$API/v1/builds?filter%5Bapp%5D=$APP_ID&filter%5Bversion%5D=$BUNDLE_VERSION&filter%5BpreReleaseVersion.version%5D=$VERSION&limit=1"
-    tries=$((${LIST_WAIT:-1800} / 30))
+    tries=$((${LIST_WAIT:-3600} / 30))
     id=
     while [ "$tries" -gt 0 ]; do
         id=$(asc_get "$url" | jq -r '.data[0].id // empty') || id=
@@ -105,7 +105,7 @@ env -u SDKROOT xcodebuild -exportArchive -archivePath "$ARCHIVE" \
     -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 echo "Uploaded Yorozu iOS $VERSION ($BUILD). Once App Store Connect has processed it, TestFlight gives it to the internal group."
 BUILD_ID=$(wait_listed) || {
-    echo "::error::Uploaded Yorozu iOS $VERSION ($BUILD), but App Store Connect did not list build $BUNDLE_VERSION within ${LIST_WAIT:-1800} s, so the next upload could reuse build $BUILD. Wait until it is listed before rerunning or merging." >&2
+    echo "::error::Uploaded Yorozu iOS $VERSION ($BUILD), but App Store Connect did not list build $BUNDLE_VERSION within ${LIST_WAIT:-3600} s, so the next upload could reuse build $BUILD. Wait until it is listed before rerunning or merging." >&2
     exit 1
 }
 set_whats_new || {
