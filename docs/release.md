@@ -66,7 +66,7 @@ Feeds and downloads (`apps/web/worker.mjs`, `apps/web/public/_redirects`):
 
 Release notes come from `scripts/release_notes.sh [<commit>]`: the pull requests merged into `main` since the last stable tag (never a `-beta` tag), each with its number, grouped by the feat, fix and perf Conventional Commits types of their titles, with dependency bumps and other types left out. A PR is a merge `Merge pull request #N …` on `main`'s first-parent line (titled by the merge's body) or a squashed commit ending `(#N)`; a commit pushed straight to `main` counts by its subject. `<` and `>` are escaped for Markdown. Every `--publish` writes them into the beta's body again, so it always lists everything since the last stable release; the release PR, `CHANGELOG.md` and the stable release use the same notes, and `--what-to-test <locale> <version> <build>` gives a TestFlight build's What to Test in one locale ([TestFlight](#ios-and-ipados-testflight)). These notes stay in English: the release body, the release PR and `CHANGELOG.md` are read on GitHub, which has no per-language text.
 
-The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SUFeedURL`, automatic checks and installs every hour; Settings › Updates › Beta Updates switches to the beta feed (`feedURLString(for:)`).
+The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SUFeedURL`, automatic checks and installs every hour; Settings › About has the Sparkle switches, Check Now and the last check; its Update to: Beta Versions switches to the beta feed (`feedURLString(for:)`).
 
 ## iOS and iPadOS: TestFlight
 
