@@ -24,4 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
-      - run: scripts/release_mac.sh --promote "$(printf '%s\n' "$BODY" | sed -n 's/^Release-Build: *\([0-9]*\).*/\1/p' | tail -1)"
+      # Block scalar: the ": " in the sed pattern breaks a plain YAML scalar.
+      - run: |
+          scripts/release_mac.sh --promote "$(printf '%s\n' "$BODY" | sed -n 's/^Release-Build: *\([0-9]*\).*/\1/p' | tail -1)"
