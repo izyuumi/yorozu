@@ -1,0 +1,6 @@
+intro=Yorozu {version} ({build}) 베타입니다.
+note=변경 사항은 PR의 영어 제목 그대로 표시됩니다.
+feat=새로운 기능:
+fix=수정:
+perf=성능:
+more=… 외 {count}개는 GitHub 릴리스에서 확인하세요.

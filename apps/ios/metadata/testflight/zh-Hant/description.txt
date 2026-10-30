@@ -1,0 +1,1 @@
+Yorozu 是一款原生聊天 App，連接你自己的 OpenClaw Gateway。用 Gateway 提供的連結配對一次後，就能與你的智慧代理聊天、查看它的回覆與工具呼叫、管理對話和自動化，並在它回覆時收到通知，全程透過端對端加密的中繼傳輸。需要你自己的、已安裝 Yorozu 外掛的 OpenClaw Gateway。不需要 Yorozu 帳號。在配對畫面輸入 YOROZU-DEMO 即可試用示範。

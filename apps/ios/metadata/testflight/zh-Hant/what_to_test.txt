@@ -1,0 +1,6 @@
+intro=Yorozu {version} ({build}) 測試版。
+note=以下變更沿用 PR 的英文標題。
+feat=新功能：
+fix=修正：
+perf=效能：
+more=……另有 {count} 項，請查看 GitHub 發布頁面。
