@@ -15,7 +15,7 @@ struct ComposerTextView: NSViewRepresentable {
     var onImages: ([Data]) -> Bool = { _ in false }
     var onPasteData: (Data, String, String) -> Bool = { _, _, _ in false }
     var cursor: ComposerCursor?
-    /// Takes keyboard focus once for each new value, so a new conversation is ready to type into.
+    /// Takes keyboard focus once for each new value, so an opened conversation is ready to type into.
     var focusKey: String?
 
     @Environment(\.textZoom) private var zoom
@@ -51,7 +51,7 @@ struct ComposerTextView: NSViewRepresentable {
         view.submit = onSubmit
         if let focusKey, context.coordinator.focusedKey != focusKey {
             context.coordinator.focusedKey = focusKey
-            DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+            DispatchQueue.main.async { view.takeFocusIfFree() }
         }
         view.takeFiles = onFiles
         view.takeImages = onImages
@@ -107,6 +107,18 @@ final class ComposerNSTextView: NSTextView {
     var submit: () -> Void = {}
     var takeFiles: ([URL]) -> Bool = { _ in false }
     var takeImages: ([Data]) -> Bool = { _ in false }
+
+    func takeFocusIfFree() {
+        guard let window, window.attachedSheet == nil, window.childWindows?.contains(where: \.isVisible) != true,
+              NSApp.keyWindow.map({ $0 === window }) ?? true,
+              !NSApp.windows.contains(where: { $0.isVisible && $0.level == .popUpMenu }) else { return }
+        switch window.firstResponder {
+        case is ComposerNSTextView: break
+        case is NSText: return
+        default: break
+        }
+        window.makeFirstResponder(self)
+    }
 
     override func keyDown(with event: NSEvent) {
         guard event.keyCode == 36 || event.keyCode == 76, !hasMarkedText() else { return super.keyDown(with: event) }

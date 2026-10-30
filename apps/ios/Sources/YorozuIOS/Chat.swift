@@ -107,7 +107,7 @@ struct ChatView: View {
                 }
             }
         }
-        .yorozuBottomBar { composer(empty: items.isEmpty) }
+        .yorozuBottomBar { composer }
         .dropDestination(for: URL.self) { urls, _ in
             guard model.attachmentsAvailable else { return false }
             return attach(urls)
@@ -164,10 +164,10 @@ extension ChatView {
         return true
     }
 
-    private func composer(empty: Bool) -> some View {
+    private var composer: some View {
         Composer(text: $draft, files: $files, automation: $automation, replyingTo: $replyingTo,
             attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
-            focus: focus, focusKey: Self.focusKey(convId, empty: empty, focus: focus),
+            focus: focus, focusKey: Self.focusKey(convId, focus: focus),
             onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
             model.send(Self.message(draft, automation: automation), attachments: files, in: convId, replyingTo: replyingTo)
             draft = ""
@@ -195,10 +195,10 @@ extension ChatView {
         }
     }
 
-    /// On the Mac a new conversation focuses its composer; elsewhere the keyboard stays down until tapped.
-    static func focusKey(_ convId: String, empty: Bool, focus: Focus) -> String? {
+    /// On the Mac an opened conversation focuses its composer; elsewhere the keyboard stays down until tapped.
+    static func focusKey(_ convId: String, focus: Focus) -> String? {
         #if os(macOS)
-        empty && focus != .unfocused ? convId : nil
+        focus != .unfocused ? convId : nil
         #else
         nil
         #endif
