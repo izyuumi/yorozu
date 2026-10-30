@@ -67,6 +67,7 @@ final class AppModel {
         var hostInfo: PeerInfo?
     }
     private static let logger = Logger(subsystem: "to.yumi.yorozu", category: "Demo")
+    private static let connectionLog = Logger(subsystem: "to.yumi.yorozu", category: "Connection")
 
     static let typingTimeout: Duration = .seconds(30)
     static let stallTimeout: Duration = .seconds(5 * 60)
@@ -417,6 +418,7 @@ final class AppModel {
     private func apply(_ update: RelayConnection.Update) {
         switch update {
         case .state(let new):
+            Self.connectionLog.info("state \(String(describing: new), privacy: .public)")
             state = new
             if new != .ready { transfers.sessionLost() }
             switch new {
@@ -437,6 +439,7 @@ final class AppModel {
         case .relayJoined:
             updatePairing { $0.relayKnows = true; $0.pairing.token = "" }
         case .sessionOpen(let host):
+            Self.connectionLog.info("session open, host \(host.app, privacy: .public) OpenClaw \(host.hostVersion ?? "?", privacy: .public)")
             hostInfo = host
             if !paired { updatePairing { $0.paired = true; $0.pairedAt = Date(); $0.pairing.secret = nil } }
             requestNotifications()
@@ -457,6 +460,7 @@ final class AppModel {
     }
 
     private func failPairing(_ message: String) {
+        Self.connectionLog.error("pairing failed: \(message, privacy: .public)")
         unpair()
         pairingError = message
     }

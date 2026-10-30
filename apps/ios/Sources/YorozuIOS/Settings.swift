@@ -19,7 +19,6 @@ struct SettingsView: View {
     @AppStorage(Appearance.key) private var appearance = Appearance.system
     @AppStorage(Accent.key) private var accent = Accent.vermilion
     #if os(macOS)
-    @AppStorage(MacUpdates.betaKey) private var betaUpdates = false
     @AppStorage(CommandReturnSends.key) private var commandReturnSends = false
     #endif
     @State private var permission: UNAuthorizationStatus?
@@ -68,9 +67,9 @@ struct SettingsView: View {
             if !model.isDemo {
                 tab { host }
                     .tabItem { Label(String(localized: "Host"), systemImage: "server.rack") }
-                tab { updates }
-                    .tabItem { Label(String(localized: "Updates"), systemImage: "arrow.down.circle") }
             }
+            MacAboutTab(model: model)
+                .tabItem { Label(String(localized: "About"), systemImage: "info.circle") }
         }
         #else
         // The same groups as the Mac's tabs, each on a page of its own.
@@ -84,6 +83,9 @@ struct SettingsView: View {
                 if !model.isDemo {
                     page(String(localized: "Host"), systemImage: "server.rack") { host }
                 }
+            }
+            Section {
+                page(String(localized: "About"), systemImage: "info.circle") { AboutSections(model: model) }
             }
         }
         .formStyle(.grouped)
@@ -221,19 +223,6 @@ struct SettingsView: View {
         }
     }
 
-    #if os(macOS)
-    private var updates: some View {
-        Section {
-            Toggle(String(localized: "Beta Updates"), isOn: $betaUpdates)
-                .onChange(of: betaUpdates) { MacUpdates.betaChanged() }
-        } header: {
-            Text("Updates")
-        } footer: {
-            Text("Beta builds have the newest changes before a stable release. Turned off, Yorozu waits for the next stable release.")
-        }
-    }
-    #endif
-
     private var devices: some View {
         Section {
             if let devices = model.devices {
@@ -306,7 +295,6 @@ struct SettingsView: View {
 private struct SettingsTab<Content: View>: View {
     @ViewBuilder let content: Content
     @State private var contentHeight: CGFloat?
-    private let width: CGFloat = 520
     private let windowChrome: CGFloat = 120
 
     var body: some View {
@@ -316,7 +304,7 @@ private struct SettingsTab<Content: View>: View {
             .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
                 contentHeight = height
             }
-            .frame(width: width, height: contentHeight.map { min($0, maxHeight) })
+            .frame(width: LayoutMetrics.settingsWidth, height: contentHeight.map { min($0, maxHeight) })
     }
 
     private var maxHeight: CGFloat {

@@ -33,6 +33,14 @@ enum MacUpdates {
 
     static func betaChanged() { controller?.updater.checkForUpdatesInBackground() }
 
+    /// The last check's outcome, for the About tab.
+    @Observable final class Status {
+        var lastCheck: Date?
+        var message: String?
+    }
+
+    static let status = Status()
+
     private static let delegate = Delegate()
 
     private final class Delegate: NSObject, SPUUpdaterDelegate {
@@ -46,6 +54,25 @@ enum MacUpdates {
 
         func updater(_ updater: SPUUpdater, shouldProceedWithUpdate item: SUAppcastItem, updateCheck: SPUUpdateCheck) throws {
             try allowUpdates()
+        }
+
+        func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+            MainActor.assumeIsolated { MacUpdates.status.message = String(localized: "You’re up to date.") }
+        }
+
+        func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+            let version = item.displayVersionString
+            MainActor.assumeIsolated { MacUpdates.status.message = String(localized: "Version \(version) is available.") }
+        }
+
+        func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
+            let date = updater.lastUpdateCheckDate
+            // 1001 is Sparkle's SUNoUpdateError, already reported above.
+            let failure = (error as NSError?).flatMap { $0.code == 1001 ? nil : $0.localizedDescription }
+            MainActor.assumeIsolated {
+                MacUpdates.status.lastCheck = date
+                if let failure { MacUpdates.status.message = failure }
+            }
         }
 
         private func allowUpdates() throws {
