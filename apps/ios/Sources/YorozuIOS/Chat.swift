@@ -483,7 +483,7 @@ private struct ToolsRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
             Label {
-                Text("^[\(calls.count) tool call](inflect: true)")
+                Text("\(calls.count) tool calls")
             } icon: {
                 if calls.contains(where: { $0.status == .running }) {
                     ProgressView().controlSize(.small)
