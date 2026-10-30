@@ -1,0 +1,6 @@
+intro=Yorozu {version} ({build}) のベータ版です。
+note=変更点は PR のタイトル（英語）のまま載せています。
+feat=新機能：
+fix=修正：
+perf=パフォーマンス：
+more=…ほか {count} 件は GitHub のリリースをご覧ください。

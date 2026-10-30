@@ -1,0 +1,6 @@
+intro=Yorozu {version} ({build}), beta.
+note=Los cambios aparecen con el título original en inglés de cada PR.
+feat=Novedades:
+fix=Correcciones:
+perf=Rendimiento:
+more=… y {count} más en la versión de GitHub.

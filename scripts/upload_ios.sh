@@ -5,37 +5,10 @@ if [ "${1:-}" != "--confirm" ]; then
     echo "Refusing to upload without --confirm: it archives, signs and uploads a TestFlight build, which cannot be undone." >&2
     exit 64
 fi
-: "${ASC_KEY_ID:?ASC_KEY_ID is required}" "${ASC_ISSUER_ID:?ASC_ISSUER_ID is required}"
-KEY=${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8}
-case "$KEY" in /*) ;; *) KEY="$PWD/$KEY" ;; esac
-[ -r "$KEY" ] || { echo "Cannot read the App Store Connect key at $KEY" >&2; exit 1; }
-APP_ID=6811274963
-API=https://api.appstoreconnect.apple.com
+. scripts/asc_lib.sh
 VERSION=${VERSION:-$(scripts/version.sh)}
 BASE=$(($(scripts/build-number.sh "$VERSION" 1) - 1))
 ARCHIVE="$PWD/build/ios/YorozuIOS.xcarchive"
-
-b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
-
-jwt() {
-    now=$(date +%s)
-    header=$(printf '{"alg":"ES256","kid":"%s","typ":"JWT"}' "$ASC_KEY_ID" | b64url)
-    claims=$(printf '{"iss":"%s","iat":%s,"exp":%s,"aud":"appstoreconnect-v1"}' "$ASC_ISSUER_ID" "$now" $((now + 1200)) | b64url)
-    signature=$(printf '%s.%s' "$header" "$claims" | openssl dgst -sha256 -sign "$KEY" | openssl asn1parse -inform DER \
-        | awk -F: '/INTEGER/ { s = $NF; while (length(s) < 64) s = "0" s; printf "%s", substr(s, length(s) - 63) }' \
-        | xxd -r -p | b64url)
-    printf '%s.%s.%s' "$header" "$claims" "$signature"
-}
-
-asc_get() {
-    printf 'header = "Authorization: Bearer %s"\n' "$(jwt)" | curl -fsS --config - "$1"
-}
-
-# asc_send <method> <url> <json>
-asc_send() {
-    printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$(jwt)" \
-        | curl -fsS --config - -X "$1" --data "$3" "$2"
-}
 
 # Prints the uploaded build's App Store Connect id once App Store Connect lists it, polling every 30 s for up to
 # LIST_WAIT seconds (default 3600). The next upload numbers its build from that list, so until then a second merge
@@ -53,24 +26,45 @@ wait_listed() {
     [ -n "$id" ] && printf '%s' "$id"
 }
 
-# What to Test on the uploaded build: the notes of the PRs merged since the last stable tag
-# (scripts/release_notes.sh --plain). It is the build's own text, so it reaches only the groups that get the
-# build: TestFlight's internal group. Nothing here adds the build to a group or submits it for Beta App Review.
+# What to Test on the uploaded build, in every locale with a folder in apps/ios/metadata/testflight: the PRs merged
+# since the last stable tag (scripts/release_notes.sh --what-to-test). A locale App Store Connect lacks is created; one
+# it has is set only while empty or still holding this script's text for this build (its first line is one of the
+# intros), so What to Test someone wrote by hand stays, and locales without a folder are left alone. It is the build's
+# own text, so it reaches only the groups that get the build: TestFlight's internal group. Nothing here adds the
+# build to a group or submits it for Beta App Review.
 set_whats_new() {
-    text=$({ echo "Yorozu $VERSION ($BUILD), beta."; echo; scripts/release_notes.sh --plain HEAD; } | head -c 4000)
-    locales=$(asc_get "$API/v1/builds/$BUILD_ID/betaBuildLocalizations?fields%5BbetaBuildLocalizations%5D=locale&limit=50") || return 1
-    existing=$(printf '%s' "$locales" | jq -r '.data[].id')
-    if [ -n "$existing" ]; then
-        for loc in $existing; do
-            asc_send PATCH "$API/v1/betaBuildLocalizations/$loc" "$(jq -n --arg id "$loc" --arg t "$text" \
-                '{data: {type: "betaBuildLocalizations", id: $id, attributes: {whatsNew: $t}}}')" >/dev/null || return 1
-        done
-    else
-        asc_send POST "$API/v1/betaBuildLocalizations" "$(jq -n --arg id "$BUILD_ID" --arg t "$text" \
-            '{data: {type: "betaBuildLocalizations", attributes: {locale: "en-US", whatsNew: $t},
-              relationships: {build: {data: {type: "builds", id: $id}}}}}')" >/dev/null || return 1
-    fi
-    printf 'What to Test on build %s:\n%s\n' "$BUNDLE_VERSION" "$text"
+    notes=$(mktemp -d)
+    for dir in apps/ios/metadata/testflight/*/; do
+        loc=$(basename "$dir")
+        scripts/release_notes.sh --what-to-test "$loc" "$VERSION" "$BUILD" HEAD > "$notes/$loc" || { rm -rf "$notes"; return 1; }
+        bytes=$(wc -c < "$notes/$loc")
+        [ "$bytes" -le 4000 ] || { echo "What to Test for $loc is $bytes bytes, over 4,000" >&2; rm -rf "$notes"; return 1; }
+        head -n 1 "$notes/$loc" >> "$notes/.intros"
+    done
+    current=$(asc_get "$API/v1/builds/$BUILD_ID/betaBuildLocalizations?fields%5BbetaBuildLocalizations%5D=locale,whatsNew&limit=50") \
+        || { rm -rf "$notes"; return 1; }
+    for file in "$notes"/*; do
+        loc=$(basename "$file"); text=$(cat "$file")
+        id=$(printf '%s' "$current" | jq -r --arg l "$loc" '.data[] | select(.attributes.locale == $l) | .id')
+        was=$(printf '%s' "$current" | jq -r --arg l "$loc" '.data[] | select(.attributes.locale == $l) | .attributes.whatsNew // ""')
+        if [ -z "$id" ]; then
+            asc_send POST "$API/v1/betaBuildLocalizations" "$(jq -n --arg id "$BUILD_ID" --arg l "$loc" --arg t "$text" \
+                '{data: {type: "betaBuildLocalizations", attributes: {locale: $l, whatsNew: $t},
+                  relationships: {build: {data: {type: "builds", id: $id}}}}}')" >/dev/null || { rm -rf "$notes"; return 1; }
+            echo "What to Test $loc: created."
+        elif [ "$was" = "$text" ]; then
+            echo "What to Test $loc: already set."
+        elif [ -z "$was" ] || grep -qxF -- "$(printf '%s\n' "$was" | head -n 1)" "$notes/.intros"; then
+            asc_send PATCH "$API/v1/betaBuildLocalizations/$id" "$(jq -n --arg id "$id" --arg t "$text" \
+                '{data: {type: "betaBuildLocalizations", id: $id, attributes: {whatsNew: $t}}}')" >/dev/null \
+                || { rm -rf "$notes"; return 1; }
+            echo "What to Test $loc: set."
+        else
+            echo "What to Test $loc: kept, it holds text this script did not write."
+        fi
+    done
+    printf 'What to Test on build %s (en-US):\n%s\n' "$BUNDLE_VERSION" "$(cat "$notes/en-US")"
+    rm -rf "$notes"
 }
 
 if [ -z "${BUILD:-}" ]; then
