@@ -17,7 +17,7 @@ gh api -X PATCH "repos/$REPO/git/refs/heads/release" -f sha="$SHA" -F force=true
 blob=$(gh api "repos/$REPO/contents/CHANGELOG.md?ref=release" -q .sha 2>/dev/null || true)
 gh api -X PUT "repos/$REPO/contents/CHANGELOG.md" -f message="chore: release $VERSION" -f branch=release \
     -f content="$(base64 < "$FILE" | tr -d '\n')" ${blob:+-f sha="$blob"} >/dev/null
-BODY="Merging this makes the Mac beta \`v$VERSION-beta.$BUILD\` stable as \`v$VERSION\` and deletes the beta. A newer beta updates this PR to name it.
+BODY="Merging this makes the Mac beta \`v$VERSION-beta\` (build $BUILD) stable as \`v$VERSION\` and deletes the beta. A newer beta updates this PR to name it.
 
 $NOTES
 
