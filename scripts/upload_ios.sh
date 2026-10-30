@@ -31,6 +31,42 @@ asc_get() {
     printf 'header = "Authorization: Bearer %s"\n' "$(jwt)" | curl -fsS --config - "$1"
 }
 
+# asc_send <method> <url> <json>
+asc_send() {
+    printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$(jwt)" \
+        | curl -fsS --config - -X "$1" --data "$3" "$2"
+}
+
+# What to Test on the uploaded build: the notes of the PRs merged since the last stable tag
+# (scripts/release_notes.sh --plain). It is the build's own text, so it reaches only the groups that get the
+# build: TestFlight's internal group. Nothing here adds the build to a group or submits it for Beta App Review.
+set_whats_new() {
+    text=$({ echo "Yorozu $VERSION ($BUILD), beta."; echo; scripts/release_notes.sh --plain HEAD; } | head -c 4000)
+    url="$API/v1/builds?filter%5Bapp%5D=$APP_ID&filter%5Bversion%5D=$BUNDLE_VERSION&filter%5BpreReleaseVersion.version%5D=$VERSION&limit=1"
+    tries=$((${WHATS_NEW_WAIT:-1800} / 30))
+    id=
+    while [ "$tries" -gt 0 ]; do
+        id=$(asc_get "$url" | jq -r '.data[0].id // empty') || id=
+        [ -n "$id" ] && break
+        tries=$((tries - 1))
+        [ "$tries" -gt 0 ] && sleep 30
+    done
+    [ -n "$id" ] || return 1
+    locales=$(asc_get "$API/v1/builds/$id/betaBuildLocalizations?fields%5BbetaBuildLocalizations%5D=locale&limit=50") || return 1
+    existing=$(printf '%s' "$locales" | jq -r '.data[].id')
+    if [ -n "$existing" ]; then
+        for loc in $existing; do
+            asc_send PATCH "$API/v1/betaBuildLocalizations/$loc" "$(jq -n --arg id "$loc" --arg t "$text" \
+                '{data: {type: "betaBuildLocalizations", id: $id, attributes: {whatsNew: $t}}}')" >/dev/null || return 1
+        done
+    else
+        asc_send POST "$API/v1/betaBuildLocalizations" "$(jq -n --arg id "$id" --arg t "$text" \
+            '{data: {type: "betaBuildLocalizations", attributes: {locale: "en-US", whatsNew: $t},
+              relationships: {build: {data: {type: "builds", id: $id}}}}}')" >/dev/null || return 1
+    fi
+    printf 'What to Test on build %s:\n%s\n' "$BUNDLE_VERSION" "$text"
+}
+
 if [ -z "${BUILD:-}" ]; then
     url="$API/v1/builds?filter%5Bapp%5D=$APP_ID&filter%5BpreReleaseVersion.platform%5D=IOS&filter%5BpreReleaseVersion.version%5D=$VERSION&fields%5Bbuilds%5D=version&limit=200"
     max=0
@@ -62,3 +98,7 @@ env -u SDKROOT xcodebuild -exportArchive -archivePath "$ARCHIVE" \
     -allowProvisioningUpdates \
     -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 echo "Uploaded Yorozu iOS $VERSION ($BUILD). Once App Store Connect has processed it, TestFlight gives it to the internal group."
+set_whats_new || {
+    echo "::error::Uploaded Yorozu iOS $VERSION ($BUILD), but its What to Test was not set: App Store Connect did not list build $BUNDLE_VERSION within ${WHATS_NEW_WAIT:-1800} s, or refused the text. Set it in App Store Connect by hand." >&2
+    exit 1
+}
