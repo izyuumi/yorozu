@@ -21,8 +21,13 @@ drop_beta() {
 }
 
 if [ "${1:-}" = "--promote" ]; then
-    N=${2:-}
-    case "$N" in ''|*[!0-9]*) echo "Usage: scripts/release_mac.sh --promote <checked beta build>" >&2; exit 64 ;; esac
+    # The release PR names the beta it promotes by build, source commit and DMG digest (scripts/release_pr.sh);
+    # promote.yml passes all three. The beta must still be exactly that release, or nothing is published.
+    N=${2:-}; WANT_SHA=${3:-}; WANT_DIGEST=${4:-}
+    usage="Usage: scripts/release_mac.sh --promote <build> <source sha> <sha256:dmg digest>, from the release PR's Release-Build, Release-Commit and Release-Digest lines"
+    case "$N" in ''|*[!0-9]*) echo "$usage" >&2; exit 64 ;; esac
+    printf '%s' "$WANT_SHA" | grep -qE '^[0-9a-f]{40}$' || { echo "$usage (Release-Commit is '${WANT_SHA}')" >&2; exit 64; }
+    printf '%s' "$WANT_DIGEST" | grep -qE '^sha256:[0-9a-f]{64}$' || { echo "$usage (Release-Digest is '${WANT_DIGEST}')" >&2; exit 64; }
     BETA=$(beta_tag)
     [ -n "$BETA" ] || { echo "There is no beta to promote" >&2; exit 1; }
     OLD=${BETA#v}; OLD=${OLD%%-*}
@@ -30,13 +35,34 @@ if [ "${1:-}" = "--promote" ]; then
         echo "v$OLD is already released; nothing to promote."
         exit 0
     fi
-    [ "$(beta_build "$BETA")" = "$N" ] || { echo "$BETA is not build $N: check it, then name it" >&2; exit 1; }
     FILES=$(mktemp -d)
+    gh release view "$BETA" --repo "$REPO" --json tagName,targetCommitish,assets > "$FILES.release.json"
     gh release download "$BETA" --repo "$REPO" --dir "$FILES"
+    # Every way the beta can differ from the one the release PR names, all reported, before anything is published.
+    bad=
+    mismatch() { bad=1; echo "::error::$BETA no longer matches the release PR: $1 is ${2:-missing}, the PR names $3."; }
+    have=$(jq -r '.build // empty' "$FILES/candidate.json" 2>/dev/null || true)
+    want=$(scripts/build-number.sh "$OLD" "$N")
+    [ "$have" = "$want" ] || mismatch "candidate.json's build" "$have" "$want (build $N)"
+    have=$(jq -r '.tag // empty' "$FILES/candidate.json" 2>/dev/null || true)
+    [ "$have" = "$BETA" ] || mismatch "candidate.json's tag" "$have" "$BETA"
+    have=$(jq -r '.source_sha // empty' "$FILES/candidate.json" 2>/dev/null || true)
+    [ "$have" = "$WANT_SHA" ] || mismatch "candidate.json's source commit" "$have" "$WANT_SHA"
+    have=$(jq -r '.targetCommitish // empty' "$FILES.release.json")
+    [ "$have" = "$WANT_SHA" ] || mismatch "the release's target commit" "$have" "$WANT_SHA"
+    have=$(gh api "repos/$REPO/commits/$BETA" -q .sha 2>/dev/null || true)
+    [ "$have" = "$WANT_SHA" ] || mismatch "the commit the tag $BETA names" "$have" "$WANT_SHA"
+    have=$(jq -r '.assets[] | select(.name == "Yorozu.dmg") | .digest // empty' "$FILES.release.json")
+    [ "$have" = "$WANT_DIGEST" ] || mismatch "Yorozu.dmg's digest on GitHub" "$have" "$WANT_DIGEST"
+    have=$([ -f "$FILES/Yorozu.dmg" ] && printf 'sha256:%s' "$(shasum -a 256 "$FILES/Yorozu.dmg" | cut -d' ' -f1)" || true)
+    [ "$have" = "$WANT_DIGEST" ] || mismatch "the downloaded Yorozu.dmg's digest" "$have" "$WANT_DIGEST"
+    if [ -n "$bad" ]; then
+        echo "Not promoting $BETA: it is not the beta the release PR named, so nothing was published or deleted. The next beta opens a new release PR; check that beta, then merge it." >&2
+        exit 1
+    fi
     sed -i '' "s|/releases/download/$BETA/|/releases/download/v$OLD/|" "$FILES/appcast.xml"
-    SHA=$(jq -r .source_sha "$FILES/candidate.json")
-    { echo "Yorozu $OLD ($N)."; echo; scripts/release_notes.sh "$SHA"; } > "$FILES.md"
-    gh release create "v$OLD" --repo "$REPO" --target "$SHA" --latest --title "v$OLD" --notes-file "$FILES.md" "$FILES"/*
+    { echo "Yorozu $OLD ($N)."; echo; scripts/release_notes.sh "$WANT_SHA"; } > "$FILES.md"
+    gh release create "v$OLD" --repo "$REPO" --target "$WANT_SHA" --latest --title "v$OLD" --notes-file "$FILES.md" "$FILES"/*
     drop_beta "$BETA"
     echo "Published v$OLD. Submit the iOS build for $OLD to the App Store in App Store Connect."
     exit 0
@@ -121,5 +147,5 @@ if [ "$PUBLISH" = 1 ]; then
     gh release create "$TAG" --repo "$REPO" --target "$SOURCE_SHA" --prerelease --latest=false --title "$TAG" \
         --notes-file "$DIST/notes.md" "$DMG" "$DIST/appcast.xml" "$DIST/candidate.json"
     echo "Published $TAG."
-    scripts/release_pr.sh "$VERSION" "$BUILD" "$SOURCE_SHA"
+    scripts/release_pr.sh "$VERSION" "$BUILD" "$SOURCE_SHA" "sha256:$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
 fi

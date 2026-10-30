@@ -1,12 +1,14 @@
 #!/bin/sh
 # Opens or updates the release PR (branch `release`, like release-please): CHANGELOG.md gains the notes for
-# <version>, and the body names the beta build that merging it makes stable (promote.yml).
+# <version>, and the body names the beta that merging it makes stable (promote.yml) by build, source commit and
+# DMG digest; promote refuses a beta that no longer matches all three.
 set -eu
 cd "$(dirname "$0")/.."
 REPO=${REPO:-izyuumi/yorozu}
-VERSION=${1:?usage: scripts/release_pr.sh <version> <build> <source sha>}
+VERSION=${1:?usage: scripts/release_pr.sh <version> <build> <source sha> <sha256:dmg digest>}
 BUILD=${2:?}
 SHA=${3:?}
+DIGEST=${4:?}
 NOTES=$(scripts/release_notes.sh "$SHA")
 OLD=$(git show "$SHA:CHANGELOG.md" 2>/dev/null | sed '1,2d' || true)
 FILE=$(mktemp)
@@ -21,7 +23,9 @@ BODY="Merging this makes the Mac beta \`v$VERSION-beta\` (build $BUILD) stable a
 
 $NOTES
 
-Release-Build: $BUILD"
+Release-Build: $BUILD
+Release-Commit: $SHA
+Release-Digest: $DIGEST"
 PR=$(gh pr list --repo "$REPO" --head release --state open --json number -q '.[0].number')
 if [ -n "$PR" ]; then
     gh pr edit "$PR" --repo "$REPO" --title "chore: release $VERSION" --body "$BODY" >/dev/null
