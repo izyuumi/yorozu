@@ -1216,3 +1216,7 @@ Work happens on `main`; the #415 build-order line is retired.
 ## 2026-10-28 — Direct path back, "v3" removed, compatibility without versions
 
 Replaces "Relay only. The direct path (port 8738) is dropped. The plugin only makes an outbound connection; the Gateway opens no new port. (2026-10-15)": clients connect directly over LAN, Tailscale or loopback when they can and fall back to the relay automatically. "v3" leaves names, then stored names and wire constants in phases. Changes stay backward compatible through capability flags and phased breaking changes instead of version numbers. The decisions are in #532.
+
+## 2026-10-31 — External TestFlight kill switch; stable releases name the beta by commit and digest
+
+External TestFlight groups and Beta App Review stay off unless the repository variable `YOROZU_EXTERNAL_TESTFLIGHT` is exactly `true`, checked by `scripts/external_testflight.sh` (#592). The release PR names the beta it promotes by build, source commit and DMG digest, and promote refuses a beta that no longer matches (#590). The stable line now points to `scripts/version.sh`, which replaced `version.txt`.
