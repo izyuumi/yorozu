@@ -64,6 +64,8 @@ Feeds and downloads (`apps/web/worker.mjs`, `apps/web/public/_redirects`):
 - `yorozu.yumi.to/appcast.xml` and `/mac`: the latest stable release's appcast and DMG.
 - `yorozu.yumi.to/beta` and `/beta/appcast.xml`: the newest release, prereleases included.
 
+Release notes come from `scripts/release_notes.sh [<commit>]`: the pull requests merged into `main` since the last stable tag (never a `-beta` tag), each with its number, grouped by the feat, fix and perf Conventional Commits types of their titles, with dependency bumps and other types left out. A PR is a merge `Merge pull request #N …` on `main`'s first-parent line (titled by the merge's body) or a squashed commit ending `(#N)`; a commit pushed straight to `main` counts by its subject. `<` and `>` are escaped for Markdown. Every `--publish` writes them into the beta's body again, so it always lists everything since the last stable release; the release PR, `CHANGELOG.md` and the stable release use the same notes, and `--plain` gives TestFlight's What to Test ([TestFlight](#ios-and-ipados-testflight)).
+
 The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SUFeedURL`, automatic checks and installs every hour; Settings › Updates › Beta Updates switches to the beta feed (`feedURLString(for:)`).
 
 ## iOS and iPadOS: TestFlight
@@ -74,6 +76,7 @@ The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SU
 - Visible build: the highest build App Store Connect has for this version, plus one; `BUILD=<n>` skips the lookup. Either way `build-number.sh` rejects a build past 999 (exit 65): promote, so the next build starts a new version.
 - Archives `generic/platform=iOS` only (app plus notification service and share extensions) with automatic signing and `-allowProvisioningUpdates`. The Mac destination is never uploaded.
 - `apps/ios/ExportOptions.plist` (`destination` = `upload`) makes the export step the upload. TestFlight gives processed builds to the internal group.
+- After the upload it sets the build's What to Test to `Yorozu <version> (<build>), beta.` followed by `scripts/release_notes.sh --plain`: the same PRs as the Mac beta's notes, as plain text within App Store Connect's 4,000 bytes (past that the list ends with `… and N more`). It waits up to `WHATS_NEW_WAIT` seconds (default 1800) for App Store Connect to list the build, then updates the build's existing What to Test localizations, or creates `en-US`. What to Test belongs to the build, so only the groups that get the build see it: the internal group. The script adds the build to no group and submits nothing to Beta App Review. If the text cannot be set, the job fails after the upload with an error saying so; set it in App Store Connect by hand.
 - App Store submission is by hand in App Store Connect (review notes: `apps/ios/APP-REVIEW-NOTES.md`).
 
 ## Voice model asset pack
