@@ -1,0 +1,1 @@
+IA,chat,asistente,autoalojado,privado,cifrado,automatización,cron,gateway,LLM,bot,remoto

@@ -1,0 +1,1 @@
+KI,Chat,Assistent,selbst gehostet,privat,verschlüsselt,Automation,Cron,Gateway,LLM,Bot

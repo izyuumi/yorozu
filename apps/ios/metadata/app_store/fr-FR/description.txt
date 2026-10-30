@@ -1,0 +1,24 @@
+Yorozu est une app de chat native pour votre propre OpenClaw Gateway. Parlez à votre agent depuis votre iPhone ou votre iPad, où que vous soyez, pendant que l’agent, sa mémoire et ses outils restent sur l’ordinateur où vous l’exécutez.
+
+Les messages passent par un relais chiffré de bout en bout : le relais les transmet sans pouvoir les lire. Le jumelage se fait en scannant un code QR, et vous comparez une clé d’hôte des deux côtés pour savoir exactement à quel ordinateur vous parlez.
+
+CONVERSATIONS
+• Suivez les réponses à mesure qu’elles arrivent, avec texte mis en forme, blocs de code et les outils utilisés par votre agent.
+• Épinglez, archivez, renommez et recherchez vos conversations ; Siri et Spotlight les trouvent aussi.
+• Ouvrez deux conversations côte à côte sur iPad et sur iPhone Duo.
+• Envoyez photos et fichiers, collez des images ou prenez une photo directement depuis le champ de saisie.
+• Partagez vers Yorozu depuis n’importe quelle app.
+
+AUTOMATISATIONS
+• Voyez toutes les tâches planifiées de votre agent : leur prochaine exécution, le résultat de la dernière et celles qui sont désactivées.
+• Demandez à votre agent d’en modifier une avec Modifier dans la discussion.
+
+PENSÉ POUR VOS APPAREILS
+• Une seule notification par réponse terminée, avec un aperçu qui reste chiffré jusqu’à votre appareil.
+• L’état de lecture reste synchronisé entre votre iPhone, votre iPad et votre Mac.
+• Apparence claire, sombre ou celle du système, avec huit couleurs d’accentuation.
+
+CE QU’IL VOUS FAUT
+Pour un usage réel, il faut un OpenClaw Gateway avec le plug-in de canal Yorozu, installé sur votre propre ordinateur. Yorozu n’exécute aucun modèle d’IA sur votre appareil et n’inclut aucun accès à un modèle. La démo, clairement signalée, permet d’essayer des conversations et des automatisations d’exemple sans Gateway : ouvrez l’écran de jumelage et saisissez YOROZU-DEMO. Ses réponses sont préécrites.
+
+Yorozu est open source et n’est affilié ni à OpenClaw, ni à Anthropic, ni à OpenAI.
