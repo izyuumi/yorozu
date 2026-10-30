@@ -2,7 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 REPO=${REPO:-izyuumi/yorozu}
-# The one beta release: v<version>-beta.<build> (older ones: v<version>-beta).
+# The one beta release: v<version>-beta, which each build replaces (before this, v<version>-beta.<build>).
 beta_tag() {
     gh release list --repo "$REPO" --limit 100 --json tagName,isPrerelease -q '.[] | select(.isPrerelease) | .tagName' \
         | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta(\.[0-9]+)?$' | head -1 || true
@@ -10,6 +10,14 @@ beta_tag() {
 beta_build() {
     gh release download "$1" --repo "$REPO" --pattern candidate.json --output - 2>/dev/null \
         | jq -r '.build | tonumber % 1000' || true
+}
+# Deletes a beta release. The tag ruleset leaves *-beta tags alone, so v<version>-beta goes too; an older
+# v<version>-beta.<n> tag is immutable, so only its release goes.
+drop_beta() {
+    case "$1" in
+        *-beta) gh release delete "$1" --repo "$REPO" --cleanup-tag --yes ;;
+        *) gh release delete "$1" --repo "$REPO" --yes ;;
+    esac
 }
 
 if [ "${1:-}" = "--promote" ]; then
@@ -29,7 +37,7 @@ if [ "${1:-}" = "--promote" ]; then
     SHA=$(jq -r .source_sha "$FILES/candidate.json")
     { echo "Yorozu $OLD ($N)."; echo; scripts/release_notes.sh "$SHA"; } > "$FILES.md"
     gh release create "v$OLD" --repo "$REPO" --target "$SHA" --latest --title "v$OLD" --notes-file "$FILES.md" "$FILES"/*
-    gh release delete "$BETA" --repo "$REPO" --yes
+    drop_beta "$BETA"
     echo "Published v$OLD. Submit the iOS build for $OLD to the App Store in App Store Connect."
     exit 0
 fi
@@ -38,12 +46,15 @@ PUBLISH=0; [ "${1:-}" = "--publish" ] && PUBLISH=1
 VERSION=${VERSION:-$(scripts/version.sh)}
 BETA=$(beta_tag)
 if [ -z "${BUILD:-}" ]; then
-    # Beta tags outlive their releases (the ruleset keeps v* tags), so the highest one numbers the next build.
+    # The beta's build plus one, or past the highest older v<version>-beta.<n> tag, so Sparkle still sees it rise.
+    case "$BETA" in "v$VERSION-beta" | "v$VERSION-beta."*) previous=$(beta_build "$BETA") ;; *) previous= ;; esac
     git fetch -q --tags origin 2>/dev/null || true
-    previous=$(git tag -l "v$VERSION-beta.*" | sed 's/.*-beta\.//' | sort -n | tail -1)
-    BUILD=$((${previous:-0} + 1))
+    tagged=$(git tag -l "v$VERSION-beta.*" | sed 's/.*-beta\.//' | grep -E '^[0-9]+$' | sort -n | tail -1 || true)
+    previous=${previous:-0}; tagged=${tagged:-0}
+    [ "$tagged" -le "$previous" ] || previous=$tagged
+    BUILD=$((previous + 1))
 fi
-TAG="v$VERSION-beta.$BUILD"
+TAG="v$VERSION-beta"
 BUNDLE_VERSION=$(scripts/build-number.sh "$VERSION" "$BUILD")
 IDENTITY=${IDENTITY:-"Developer ID Application: Yumi Izumi (AN5KM8QGEF)"}
 NOTARY_PROFILE=${NOTARY_PROFILE:-yorozu-notary}
@@ -106,7 +117,7 @@ echo "Built Yorozu $VERSION ($BUILD), CFBundleVersion $BUNDLE_VERSION, in $DIST/
 
 if [ "$PUBLISH" = 1 ]; then
     { echo "Yorozu $VERSION ($BUILD), beta."; echo; scripts/release_notes.sh "$SOURCE_SHA"; } > "$DIST/notes.md"
-    [ -z "$BETA" ] || gh release delete "$BETA" --repo "$REPO" --yes
+    [ -z "$BETA" ] || drop_beta "$BETA"
     gh release create "$TAG" --repo "$REPO" --target "$SOURCE_SHA" --prerelease --latest=false --title "$TAG" \
         --notes-file "$DIST/notes.md" "$DMG" "$DIST/appcast.xml" "$DIST/candidate.json"
     echo "Published $TAG."
