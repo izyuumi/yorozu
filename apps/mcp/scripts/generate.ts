@@ -101,7 +101,7 @@ function swiftFacts(files: { path: string; text: string }[]): SwiftFacts {
         const names = list.replace(/^\s*case\s+/, "").split(",").map((s) => s.trim()).filter(Boolean);
         facts.cases.set(type, [...(facts.cases.get(type) ?? []), ...names]);
       }
-      const storage = /@AppStorage\((\w+\.\w+)\)\s+(?:private\s+)?var\s+\w+\s*=\s*(.+?)\s*$/.exec(line);
+      const storage = /@AppStorage\((\w+\.\w+)(?:,\s*store:\s*[\w.]+)?\)\s+(?:private\s+)?var\s+\w+\s*=\s*(.+?)\s*$/.exec(line);
       if (storage) facts.storage.push({ ref: storage[1], defaultExpr: storage[2], file: path });
     }
   }

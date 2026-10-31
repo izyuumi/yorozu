@@ -60,6 +60,12 @@ jobs:
             -destination 'platform=macOS' -derivedDataPath .build/xcode-mac \
             -clonedSourcePackagesDirPath .build/xcode-packages -skipPackagePluginValidation -quiet \
             CODE_SIGNING_ALLOWED=NO
+      - name: Unit tests
+        run: |
+          env -u SDKROOT xcodebuild test -workspace apps/ios/Yorozu.xcworkspace -scheme YorozuTests \
+            -destination 'platform=macOS' -derivedDataPath .build/xcode-tests \
+            -clonedSourcePackagesDirPath .build/xcode-packages -skipPackagePluginValidation -quiet \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
 
   # Every external TestFlight or Beta App Review path must pass the kill switch (scripts/external_testflight.sh).
   release-guards:

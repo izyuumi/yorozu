@@ -15,6 +15,7 @@ struct RootView: View {
             }
         }
         .onOpenURL { url in
+            if let link = WidgetLink(url: url) { return model.open(link) }
             if let failure = model.submit(url.absoluteString) { model.pairingError = failure }
         }
         .deviceAddingAlerts(model)
@@ -26,7 +27,7 @@ struct RootView: View {
         } message: { payload in
             Text(String(localized: "Check that this host key matches the one `openclaw yorozu pair` printed, or the one your other device shows.\n\nHost key: \(payload.fingerprint)\nRelay: \(URL(string: payload.relayUrl)?.host() ?? payload.relayUrl)"))
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase) { previous, phase in
             switch phase {
             #if os(iOS)
             case .background:
@@ -37,7 +38,16 @@ struct RootView: View {
                     UIApplication.shared.endBackgroundTask(task)
                 }
             #endif
-            case .active: model.resume()
+            case .active:
+                model.resume()
+                #if os(iOS)
+                TurnActivities.shared?.returned()
+                #endif
+            #if os(iOS)
+            case .inactive:
+                // Still in the foreground: the last moment a Live Activity can start.
+                if previous == .active { TurnActivities.shared?.leaving() }
+            #endif
             default: break
             }
         }

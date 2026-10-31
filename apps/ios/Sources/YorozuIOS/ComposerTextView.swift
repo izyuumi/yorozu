@@ -213,6 +213,10 @@ struct ComposerTextView: UIViewRepresentable {
         view.takeFiles = onFiles
         view.takeImages = onImages
         view.takeData = onPasteData
+        if let focusKey, context.coordinator.focusedKey != focusKey {
+            context.coordinator.focusedKey = focusKey
+            DispatchQueue.main.async { view.becomeFirstResponder() }
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: ComposerUITextView, context: Context) -> CGSize? {
@@ -228,6 +232,7 @@ struct ComposerTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var text: Binding<String>
         var cursor: ComposerCursor?
+        var focusedKey: String?
         init(text: Binding<String>) { self.text = text }
 
         func textViewDidChangeSelection(_ textView: UITextView) { cursor?.track(textView.selectedRange) }

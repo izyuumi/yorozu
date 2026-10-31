@@ -11,11 +11,15 @@ final class AppDelegate: NSObject, UNUserNotificationCenterDelegate {
         super.init()
         let model = model
         AppDependencyManager.shared.add(dependency: model)
+        WidgetRouter.handler = { model.open($0) }
     }
 
     fileprivate func launched() {
         UNUserNotificationCenter.current().delegate = self
         SpotlightIndexer.start(model: model)
+        #if os(iOS)
+        TurnActivities.start(model: model)
+        #endif
         model.requestNotifications()
     }
 

@@ -26,7 +26,7 @@ Yorozu is an OpenClaw chat channel. OpenClaw runs the agent, its sessions, memor
 | Bundle id | `to.yumi.yorozu.ios` | `to.yumi.yorozu` |
 | Pairing | Scans the host's QR or opens its link; can scan a Mac's code to add it | Opens a pairing link, or shows a code for a paired iPhone or iPad to scan |
 | Notifications | APNs through the relay; a notification service extension (`YorozuNotificationService`) opens sealed previews | No relay push: local notifications while the app runs |
-| Extensions | Share extension (`YorozuShare`), sending a share over a relay session of its own, or passing it to the app through the App Group | None |
+| Extensions | Share extension (`YorozuShare`), sending a share over a relay session of its own, or passing it to the app through the App Group; widgets, controls and the Live Activity's views (`YorozuWidgets`), reading only the App Group snapshot | None |
 | Updates | TestFlight and the App Store | Sparkle ([release.md](release.md)) |
 | Extra | — | Carries the plugin's source at `Yorozu.app/Contents/Resources/openclaw-channel` |
 
@@ -81,6 +81,7 @@ Details of each are in the contract; in short:
 | Client (iOS) | Push-preview key (opens previews only) | Keychain group shared with the notification service extension, service `to.yumi.yorozu.v2.push-preview` | `AfterFirstUnlockThisDeviceOnly`; written on each connect, deleted on unpair. |
 | Client | Conversation cache (`Conversations/`), files (`Attachments/`), both moved from their `-v3` names on first use | iOS: the app's Application Support. Mac: `~/Library/Application Support/to.yumi.yorozu/client/` | iOS: Data Protection `complete`, excluded from backup. Mac: the user account's protection (no per-file classes outside the sandbox). Wiped on unpair and on a new pairing. |
 | Client (iOS) | Shares waiting for the app | App Group `group.to.yumi.yorozu`, `ShareInbox/` | Data Protection `complete`; holds no keys. |
+| Client (iOS) | Widget snapshot: up to 12 conversation titles, pins, unread counts and reply times; the latest reply's first line only with Show Message Previews in Widgets | App Group `group.to.yumi.yorozu`, `WidgetSnapshot.json`, written by the app and the notification service | Data Protection `completeUntilFirstUserAuthentication`, so a push can update it while locked; holds no keys; none in demo mode, deleted on unpair. |
 | Relay | Known device keys, join tokens, APNs tokens, device frames buffered while the host is away (5 MiB, 24 h) | Durable Object storage (Worker); memory (Node) | Sees only signed outer envelopes and sealed boxes. |
 
 `<stateDir>` is OpenClaw's state directory: `~/.openclaw`, or `~/.openclaw-<name>` for `openclaw --profile <name>`.

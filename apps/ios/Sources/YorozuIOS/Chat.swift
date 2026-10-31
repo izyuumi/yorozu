@@ -168,6 +168,8 @@ extension ChatView {
         Composer(text: $draft, files: $files, automation: $automation, replyingTo: $replyingTo,
             attachLimit: model.attachmentsAvailable ? model.mediaMaxBytes : nil,
             focus: focus, focusKey: Self.focusKey(convId, focus: focus),
+            request: model.composeRequest?.convId == convId ? model.composeRequest : nil,
+            onRequestHandled: { model.composeRequest = nil },
             onFiles: attach, onImages: attachImages, onPasteData: attachPasteData) {
             model.send(Self.message(draft, automation: automation), attachments: files, in: convId, replyingTo: replyingTo)
             draft = ""
@@ -604,6 +606,9 @@ private struct Composer: View {
     let attachLimit: Int?
     let focus: ChatView.Focus
     var focusKey: String? = nil
+    /// A widget or control asked for the keyboard or for voice input.
+    var request: ComposeRequest? = nil
+    var onRequestHandled: () -> Void = {}
     let onFiles: ([URL]) -> Bool
     let onImages: ([Data]) -> Bool
     let onPasteData: (Data, String, String) -> Bool
@@ -614,6 +619,7 @@ private struct Composer: View {
     @State private var voice = VoiceSession()
     @State private var cursor = ComposerCursor()
     @State private var settingUpVoice = false
+    @State private var requestedFocus: String?
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -653,6 +659,12 @@ private struct Composer: View {
             }
         }
         .sheet(isPresented: $settingUpVoice) { VoiceSetupSheet() }
+        .task(id: request) {
+            guard let request else { return }
+            onRequestHandled()
+            guard request.talk else { return requestedFocus = request.convId }
+            if voiceAvailable, VoiceModel.shared.state == .ready { await voice.start() } else { settingUpVoice = true }
+        }
         .alert(String(localized: "Microphone access is off"), isPresented: $voice.micDenied) {
             Button(String(localized: "Open Settings")) { openMicrophoneSettings() }
             Button(String(localized: "Cancel"), role: .cancel) {}
@@ -686,7 +698,7 @@ private struct Composer: View {
                     .frame(height: rowHeight)
             }
             ComposerTextView(text: $text, placeholder: focus == .unfocused ? String(localized: "Tap to reply here") : String(localized: "Message"), onSubmit: send, onFiles: onFiles, onImages: onImages,
-                onPasteData: onPasteData, cursor: cursor, focusKey: focusKey)
+                onPasteData: onPasteData, cursor: cursor, focusKey: focusKey ?? requestedFocus)
                 .frame(minHeight: rowHeight)
                 .padding(.leading, attachLimit == nil ? LayoutMetrics.inner : 0)
                 .accessibilityLabel(Text("Message"))

@@ -1,4 +1,5 @@
 import UserNotifications
+import WidgetKit
 import YorozuWire
 
 final class NotificationService: UNNotificationServiceExtension {
@@ -14,6 +15,15 @@ final class NotificationService: UNNotificationServiceExtension {
             ?? Bundle.main.localizedString(forKey: fallback, value: nil, table: nil)
         content.body = preview.body
         if let convId = preview.convId { content.userInfo["convId"] = convId }
-        contentHandler(content)
+        guard let convId = preview.convId, WireEvent.isId(convId), preview.cls != "approval" else { return contentHandler(content) }
+        if preview.cls == "reply", WidgetStore.update({
+            $0.receive(convId: convId, title: preview.title, body: preview.body, event: preview.event, at: Date(), previews: WidgetStore.previews)
+        }) {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+        Task {
+            await TurnActivityAttributes.end(convId: convId)
+            contentHandler(content)
+        }
     }
 }

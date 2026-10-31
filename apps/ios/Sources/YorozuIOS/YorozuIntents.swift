@@ -99,19 +99,6 @@ struct OpenConversationIntent: AppIntent {
     }
 }
 
-struct NewConversationIntent: AppIntent {
-    static let title: LocalizedStringResource = "New Conversation"
-    static let description = IntentDescription("Opens a new conversation in Yorozu.")
-    static let openAppWhenRun = true
-
-    @Dependency private var model: AppModel
-
-    func perform() async throws -> some IntentResult {
-        await MainActor.run { if !model.isDemo { model.requestedConversation = WireEvent.newId() } }
-        return .result()
-    }
-}
-
 struct YorozuShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: AskYorozuIntent(), phrases: ["Ask \(.applicationName)", "Ask \(.applicationName) something"],

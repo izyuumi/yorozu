@@ -61,6 +61,8 @@ let project = Project(
                 "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
                 "NSMicrophoneUsageDescription": "Yorozu turns what you say into a message, on this device, when you use voice input.",
                 "UIBackgroundModes": ["remote-notification"],
+                // Device-local only: started in the app, ended by the app or the notification service, never by push.
+                "NSSupportsLiveActivities": true,
                 // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).
                 "BAAppGroupID": .string(appGroup),
                 "BAHasManagedAssetPacks": true,
@@ -80,7 +82,10 @@ let project = Project(
                     ]
                 ],
             ]),
-            sources: ["Sources/YorozuIOS/**", "Sources/Shared/**", "Sources/Client/**", "Sources/ShareInbox/**"],
+            sources: [
+                "Sources/YorozuIOS/**", "Sources/Shared/**", "Sources/Client/**", "Sources/ShareInbox/**",
+                "Sources/WidgetShared/**",
+            ],
             resources: [
                 "Resources/AppIcon.icon",
                 .glob(pattern: "Resources/LaunchScreen.storyboard", inclusionCondition: .when([.ios])),
@@ -116,6 +121,7 @@ let project = Project(
                 .target(name: "YorozuNotificationService", condition: .when([.ios])),
                 .target(name: "YorozuShare", condition: .when([.ios])),
                 .target(name: "YorozuAssets", condition: .when([.ios])),
+                .target(name: "YorozuWidgets", condition: .when([.ios])),
             ] + (voiceInput ? [.package(product: "llama")] : []),
             settings: signing([
                 "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
@@ -139,9 +145,13 @@ let project = Project(
                     "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).NotificationService",
                 ],
             ]),
-            sources: ["Sources/YorozuNotificationService/**", "Sources/Shared/**"],
+            sources: ["Sources/YorozuNotificationService/**", "Sources/Shared/**", "Sources/WidgetShared/Model/**"],
             resources: ["Resources/Localizable.xcstrings"],
-            entitlements: .dictionary(["keychain-access-groups": [.string(notificationKeychainGroup)]]),
+            // The App Group holds the widgets' snapshot, which a reply's notification updates.
+            entitlements: .dictionary([
+                "keychain-access-groups": [.string(notificationKeychainGroup)],
+                "com.apple.security.application-groups": [.string(appGroup)],
+            ]),
             dependencies: [.package(product: "YorozuWire")],
             settings: signing()
         ),
@@ -194,6 +204,40 @@ let project = Project(
             sources: ["Sources/YorozuAssets/**"],
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             settings: signing()
+        ),
+        // Home and Lock Screen widgets, Control Center controls and the Live Activity's views. Reads only the
+        // App Group snapshot; never pairs, connects or runs the agent.
+        .target(
+            name: "YorozuWidgets",
+            destinations: [.iPhone, .iPad],
+            product: .appExtension,
+            bundleId: "to.yumi.yorozu.ios.widgets",
+            deploymentTargets: .iOS("18.0"),
+            infoPlist: .extendingDefault(with: [
+                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "CFBundleDisplayName": "Yorozu",
+                "NSExtension": ["NSExtensionPointIdentifier": "com.apple.widgetkit-extension"],
+            ]),
+            sources: ["Sources/YorozuWidgets/**", "Sources/WidgetShared/**"],
+            resources: ["Resources/Localizable.xcstrings"],
+            entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
+            settings: signing()
+        ),
+        // The snapshot's encoding, redaction and unread math, on the Mac without the app.
+        .target(
+            name: "YorozuTests",
+            destinations: [.mac],
+            product: .unitTests,
+            bundleId: "to.yumi.yorozu.tests",
+            deploymentTargets: .macOS("15.0"),
+            sources: [
+                "Tests/**", "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift",
+                "Sources/Client/WidgetPublisher.swift",
+                "Sources/WidgetShared/Model/**",
+            ],
+            dependencies: [.package(product: "YorozuWire")],
+            settings: .settings(base: ["DEVELOPMENT_TEAM": "AN5KM8QGEF", "CODE_SIGN_STYLE": "Automatic"])
         ),
     ]
 )

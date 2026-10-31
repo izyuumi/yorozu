@@ -54,6 +54,18 @@
       "platforms": ["macos"],
       "location": "Settings › About › Update to:",
       "description": "Off (Stable Versions): Sparkle offers only stable releases. On (Beta Versions): it also offers betas, which have the newest changes before a stable release."
+    },
+    "widgetPreviews": {
+      "title": "Show Message Previews in Widgets",
+      "platforms": ["ios"],
+      "location": "Settings › General › Widgets & Live Activities",
+      "description": "Off by default. Widgets and Lock Screen accessories show conversation titles, unread counts and reply times, hidden on the Lock Screen until the device is unlocked. On: the medium and large widgets also show the first line of the latest reply. The snapshot stays in the app's App Group container on the device and is deleted when you unpair."
+    },
+    "turnLiveActivity": {
+      "title": "Live Activity While the Agent Works",
+      "platforms": ["ios"],
+      "location": "Settings › General › Widgets & Live Activities",
+      "description": "On by default. When you leave Yorozu while the agent is still answering, a Live Activity on the Lock Screen and in the Dynamic Island shows that it is working and how many tool steps it took, never message text or tool details. It runs on the device only (no push) and ends when the reply arrives, when you return to the app, or after 15 minutes."
     }
   }
 }

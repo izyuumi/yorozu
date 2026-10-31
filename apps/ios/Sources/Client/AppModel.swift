@@ -22,6 +22,8 @@ final class AppModel {
     var pendingPairing: QrPayload?
     var pairingError: String?
     var requestedConversation: String?
+    /// What a widget or control asked the opened conversation's composer to do.
+    var composeRequest: ComposeRequest?
     private(set) var foreground: String?
     private(set) var crons: [CronJob]?
     private(set) var cronsError: String?
@@ -99,6 +101,7 @@ final class AppModel {
         guard pairing != nil else { return }
         for conversation in cache.loadAll() { conversations[conversation.id] = conversation }
         updateBadge()
+        publishWidgets()
         connect()
         takeShares()
     }
@@ -153,6 +156,7 @@ final class AppModel {
             return
         }
         pairing = new
+        publishWidgets()
         connect()
     }
 
@@ -166,6 +170,7 @@ final class AppModel {
         cache.wipe()
         AttachmentFiles.wipe()
         ShareInbox.clear()
+        WidgetPublisher.clear()
         pairing = nil
         conversations = [:]
         typing = []
@@ -214,6 +219,7 @@ final class AppModel {
             }
         }
         updateBadge()
+        publishWidgets()
         Self.logger.debug("Leaving memory-only demo mode")
         connect()
     }
@@ -236,6 +242,7 @@ final class AppModel {
         pendingPairing = nil
         pairingError = nil
         requestedConversation = nil
+        composeRequest = nil
         visible = nil
         onScreen = []
         textDrafts = [:]
@@ -339,6 +346,7 @@ final class AppModel {
     func setActive(_ active: Bool) {
         self.active = active
         updateForeground()
+        publishWidgets()
     }
 
     func setVisible(_ convId: String?, leaving: String? = nil) {
@@ -882,6 +890,7 @@ final class AppModel {
         if !isDemo { cache.save(conversation) }
         updateBadge()
         publishShareDirectory()
+        publishWidgets()
     }
 
     func takeShares() {
@@ -919,6 +928,42 @@ final class AppModel {
             return ShareInbox.Conversation(id: conversation.id, title: String(title.prefix(80)))
         }
         ShareInbox.publish(.init(conversations: Array(rows), maxBytes: mediaMaxBytes))
+    }
+
+    /// Conversations whose turn has no answer yet: the agent is typing, or the owner's last message went
+    /// out in the last `awaitingWindow` with nothing after it.
+    var awaitingReply: [String] {
+        let since = Self.now - Self.awaitingWindow
+        return conversations.values.filter { conversation in
+            if typing.contains(conversation.id) { return true }
+            guard let last = conversation.items.last(where: { $0.kind != .tools }), last.kind == .user, last.rejected == nil else { return false }
+            return (last.status ?? .queued) >= .sending && last.ts >= since
+        }.map(\.id)
+    }
+
+    private static let awaitingWindow: Int64 = 10 * 60 * 1000
+
+    /// The widgets' snapshot (`WidgetSnapshot`); nothing in demo mode or before pairing.
+    func publishWidgets() {
+        guard !isDemo, pairing != nil else { return }
+        WidgetPublisher.publish(WidgetSnapshot(conversations: Array(conversations.values), previews: WidgetStore.previews,
+            accent: UserDefaults.standard.string(forKey: Accent.key), live: active))
+    }
+
+    /// Opens what a widget, a control or a Lock Screen accessory asked for. Without a pairing the app just comes forward.
+    func open(_ link: WidgetLink) {
+        guard !isDemo, pairing != nil else { return }
+        switch link {
+        case .conversation(let convId):
+            guard WireEvent.isId(convId) else { return }
+            requestedConversation = convId
+        case .new:
+            requestedConversation = WireEvent.newId()
+        case .ask, .talk:
+            let convId = WireEvent.newId()
+            composeRequest = ComposeRequest(convId: convId, talk: link == .talk)
+            requestedConversation = convId
+        }
     }
 
     func rename(_ convId: String, to title: String) {
@@ -984,6 +1029,7 @@ final class AppModel {
         automationDrafts[convId] = nil
         updateBadge()
         publishShareDirectory()
+        publishWidgets()
     }
 
     func markRead(_ convId: String, explicit: Bool) {
@@ -1097,6 +1143,12 @@ extension RelayConnection.State {
         case .unpaired: String(localized: "Removed from the host")
         }
     }
+}
+
+struct ComposeRequest: Equatable {
+    let convId: String
+    /// Start voice input; otherwise focus the text field.
+    let talk: Bool
 }
 
 struct InAppNotice: Equatable, Identifiable {

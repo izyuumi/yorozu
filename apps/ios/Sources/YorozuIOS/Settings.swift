@@ -20,6 +20,9 @@ struct SettingsView: View {
     @AppStorage(Accent.key) private var accent = Accent.vermilion
     #if os(macOS)
     @AppStorage(CommandReturnSends.key) private var commandReturnSends = false
+    #else
+    @AppStorage(WidgetStore.previewsKey, store: WidgetStore.defaults) private var widgetPreviews = false
+    @AppStorage(TurnActivities.enabledKey) private var turnActivity = true
     #endif
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: DeviceInfo?
@@ -124,6 +127,9 @@ struct SettingsView: View {
         } else {
             notifications
             siri
+            #if os(iOS)
+            widgets
+            #endif
         }
         #if os(macOS)
         Section {
@@ -186,6 +192,7 @@ struct SettingsView: View {
                 ForEach(Accent.allCases) { choice in
                     AccentSwatch(accent: choice, selected: choice == accent) {
                         withAnimation(.snappy) { accent = choice }
+                        model.publishWidgets()
                     }
                 }
             }
@@ -194,6 +201,20 @@ struct SettingsView: View {
             Text("Appearance")
         }
     }
+
+    #if os(iOS)
+    private var widgets: some View {
+        Section {
+            Toggle(String(localized: "Show Message Previews in Widgets"), isOn: $widgetPreviews)
+                .onChange(of: widgetPreviews) { model.publishWidgets() }
+            Toggle(String(localized: "Live Activity While the Agent Works"), isOn: $turnActivity)
+        } header: {
+            Text("Widgets & Live Activities")
+        } footer: {
+            Text("Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply. The Live Activity shows only that the agent is working and how many tool steps it took.")
+        }
+    }
+    #endif
 
     private var siri: some View {
         Section {
