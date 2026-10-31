@@ -1,10 +1,2 @@
-• Open two conversations side by side on iPad and iPhone Duo, and drag a conversation onto the screen to open it beside the one you are in.
-• Pin conversations to the top of the list. The list now orders by the latest message.
-• Choose light, dark or system appearance and an accent color in Settings.
-• Start a new conversation from inside one; on iPad a fresh conversation is ready when nothing is open.
-• Paste images and files into the composer, or take a photo from it.
-• Swipe down to close a picture's preview.
-• Messages you just sent finish sending when you leave the app.
-• Read state stays in step across your devices.
-• A new launch screen, plus fixes for the composer on iPhone Duo, shared images and conversation times.
-• Pair a new Mac by scanning its code with your iPhone or iPad.
+• Voice input on iPhone and iPad now tells you plainly when the voice model isn’t available yet, instead of showing a system error.
+• A refreshed App Store page with a new look.
