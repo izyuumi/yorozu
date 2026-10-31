@@ -7,7 +7,11 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/main/docs/setup.md';
     <meta property="og:title" content="Yorozu">
     <meta property="og:description" content="A native chat app for your own OpenClaw agent, on iPhone, iPad and Mac. End-to-end encrypted.">
     <meta property="og:url" content="https://yorozu.yumi.to/">
-    <meta property="og:image" content="https://yorozu.yumi.to/assets/icon.png">
+    <meta property="og:image" content="https://yorozu.yumi.to/assets/og.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="The Yorozu app icon beside the words: Your OpenClaw agent, anywhere.">
+    <meta name="twitter:card" content="summary_large_image">
   </Fragment>
   <section class="hero" aria-labelledby="title">
     <div class="hero-inner">
@@ -19,7 +23,7 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/main/docs/setup.md';
           <a class="button ghost" href="/mac">Download for Mac</a>
           <a class="button ghost" href={guide}>Set up the plugin</a>
         </div>
-        <p class="fine">Yorozu 0.9 · iPhone and iPad: iOS 18+ · Mac: macOS 15+ · Needs your own OpenClaw Gateway · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
+        <p class="fine">Mac: Yorozu 0.10, macOS 15 or later · iPhone and iPad: on the App Store, iOS 18 or later · Needs your own OpenClaw Gateway · <a href="https://github.com/izyuumi/yorozu">Open source, MIT</a></p>
       </div>
     </div>
   </section>
@@ -30,21 +34,25 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/main/docs/setup.md';
 
   <section class="more" aria-labelledby="chat-title">
     <h2 id="chat-title">Every conversation, on every device.</h2>
-    <dl class="facts">
+    <dl class="facts three">
       <div><dt>Many conversations</dt><dd>Start a new conversation with +. Each one is its own OpenClaw session, listed on every paired device, with full history loaded from your Gateway.</dd></div>
+      <div><dt>Side by side</dt><dd>Open two conversations side by side on iPad and iPhone Duo, or drag a conversation onto the screen to open it beside the one you are in.</dd></div>
       <div><dt>See the work</dt><dd>Replies arrive whole, with a typing indicator while the agent runs and each tool call shown as a collapsed row.</dd></div>
       <div><dt>Delivery and read marks</dt><dd>Every message goes from Sent to Delivered to Read. Read state and unread badges stay in step across your devices.</dd></div>
-      <div><dt>Rename, archive, delete</dt><dd>Titles are made for you after the first turn. Rename, archive or delete from any device and the others follow.</dd></div>
+      <div><dt>Replies and reactions</dt><dd>Reply to a particular message or react to it with an emoji. Your agent sees which message you mean, and can react too.</dd></div>
+      <div><dt>Pin, search, rename</dt><dd>Pin the conversations you use most to the top of the list, and search them; Siri and Spotlight can find them too. Titles are made for you after the first turn. Rename, archive or delete from any device and the others follow.</dd></div>
     </dl>
   </section>
 
   <section class="more" aria-labelledby="more-title">
     <h2 id="more-title">Built for the agent you already run.</h2>
-    <dl class="facts">
+    <dl class="facts three">
       <div><dt>Automations</dt><dd>See your agent's scheduled jobs with their next run, and change one with Edit in Chat: the agent edits it with its own tools. A job can deliver its result into a conversation.</dd></div>
-      <div><dt>Files, both ways</dt><dd>Send photos, camera shots and files, or share them from other apps. Files the agent returns open in the conversation.</dd></div>
+      <div><dt>Files, both ways</dt><dd>Send photos and files, paste them into the composer or take a photo from it, or share them from other apps. Files the agent returns open in the conversation.</dd></div>
       <div><dt>Notifications</dt><dd>One push per finished reply, with a preview only your device can open. Nothing is pushed for the conversation you are looking at.</dd></div>
-      <div><dt>A native app</dt><dd>SwiftUI on iPhone, iPad and Mac, with light, dark or system appearance and an accent colour of your choice.</dd></div>
+      <div><dt>Voice input</dt><dd>Turn it on in Settings and speak instead of typing. Speech is transcribed on your device and the audio is never sent anywhere. On iPhone and iPad it needs iOS 26 or later.</dd></div>
+      <div><dt>A native app</dt><dd>SwiftUI on iPhone, iPad and Mac, with light, dark or system appearance and eight accent colors. On the Mac and iPad, zoom the text from 75% to 200%.</dd></div>
+      <div><dt>In your language</dt><dd>The app speaks English, Japanese, Simplified and Traditional Chinese, Korean, Spanish, French, German and Brazilian Portuguese.</dd></div>
     </dl>
   </section>
 
@@ -83,7 +91,7 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/main/docs/setup.md';
       </article>
       <article>
         <h3>Mac</h3>
-        <p>The same app runs natively on Macs with macOS 15 or later. Move it to Applications and open it; it updates itself.</p>
+        <p>The same app runs natively on Macs with macOS 15 or later; Yorozu 0.10 is the current release. Move it to Applications and open it; it updates itself.</p>
         <a href="/mac">Download for Mac</a>
       </article>
     </div>
@@ -101,7 +109,7 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/main/docs/setup.md';
       <li>
         <span class="num" aria-hidden="true">2</span>
         <h3>Pair your device</h3>
-        <p>Scan the QR with the Camera or in Yorozu, or paste the link. Check that the fingerprint matches the one the command printed. No Yorozu account needed.</p>
+        <p>Scan the QR with the Camera or in Yorozu, or paste the link. Check that the fingerprint matches the one the command printed. No Yorozu account needed. To add a Mac later, scan the code it shows with a paired iPhone or iPad.</p>
       </li>
       <li>
         <span class="num" aria-hidden="true">3</span>

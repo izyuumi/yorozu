@@ -6,7 +6,8 @@ const dist = new URL('../dist/', import.meta.url);
 const pages = (await readdir(dist, { recursive: true })).filter(file => file.endsWith('.html'));
 
 test('the build keeps every public URL and the Cloudflare routing files', async () => {
-  for (const file of ['index.html', 'privacy/index.html', 'terms/index.html', '_headers', '_redirects', 'copy.js', 'styles.css', 'pair/index.html', 'pair.js', 'add/index.html']) {
+  for (const file of ['index.html', 'privacy/index.html', 'terms/index.html', '_headers', '_redirects', 'copy.js', 'styles.css', 'pair/index.html', 'pair.js', 'add/index.html',
+    'favicon.svg', 'favicon.png', 'apple-touch-icon.png', 'assets/icon.png', 'assets/icon-dark.png', 'assets/og.png']) {
     await readFile(new URL(file, dist));
   }
 });
