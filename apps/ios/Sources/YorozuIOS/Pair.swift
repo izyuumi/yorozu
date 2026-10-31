@@ -122,7 +122,7 @@ struct ChatPairView: View {
                     .toolbar {
                         ToolbarItem(placement: .primaryAction) { sidebarToggle }
                         ToolbarItem(placement: .primaryAction) {
-                            Button(String(localized: "Open Beside"), systemImage: "rectangle.split.2x1") { withAnimation(.snappy) { pair.choosing = true } }
+                            Button(String(localized: "Open Beside"), systemImage: "rectangle.split.2x1") { pair.choosing = true }
                                 .keyboardShortcut("\\", modifiers: .command)
                                 .accessibilityIdentifier("pair.openBeside")
                         }
@@ -170,7 +170,7 @@ struct ChatPairView: View {
     }
 
     private func newBeside() {
-        withAnimation(.snappy) { pair.openBeside(WireEvent.newId(), selection: &selection) }
+        pair.openBeside(WireEvent.newId(), selection: &selection)
     }
 
     private func finishDrag() {
@@ -216,7 +216,7 @@ struct ChatPairView: View {
         .id(convId ?? "beside")
         .simultaneousGesture(TapGesture().onEnded {
             guard !pair.choosing, side != pair.focusedSide else { return }
-            withAnimation(.snappy) { pair.focus(side, selection: &selection) }
+            pair.focus(side, selection: &selection)
         }, including: convId == nil ? .subviews : .all)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(side == .left ? Text("Left pane") : Text("Right pane"))

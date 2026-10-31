@@ -172,7 +172,7 @@ extension AddDeviceSheet {
     }
 
     private func shrink() {
-        withAnimation(.snappy) { enlarged = false }
+        enlarged = false
     }
 
     private func success(_ device: DeviceInfo) -> some View {

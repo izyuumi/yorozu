@@ -100,7 +100,7 @@ header nav .button { margin-left: 8px; }
   font-weight: 650;
   font-size: 16px;
   text-decoration: none;
-  transition: transform 0.35s var(--ease), background-color 0.2s;
+  transition: transform 0.2s var(--ease), background-color 0.2s;
 }
 .button:hover { transform: translateY(-1px); }
 .button:active { transform: translateY(0); transition-duration: 0.08s; }
@@ -228,7 +228,7 @@ section[id] { scroll-margin-top: 24px; }
   font-size: 14px;
   font-weight: 650;
   cursor: pointer;
-  transition: background-color 0.2s, transform 0.35s var(--ease);
+  transition: background-color 0.2s, transform 0.2s var(--ease);
 }
 .copy:hover { transform: translateY(-1px); }
 .copy.done { background: var(--accent); color: var(--on-accent); }
