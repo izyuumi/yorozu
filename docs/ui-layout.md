@@ -66,8 +66,11 @@ All paths are under `apps/ios/Sources/YorozuIOS/`.
 - iPhone and iPad split view only (`#if os(iOS)`): when two conversations open side by side,
   `ChatPairView` in `Pair.swift` measures its width with `onGeometryChange` and hides the
   sidebar when each pane would get less than `comfortablePane` (360 points).
-- The pairing QR code (`QRCode` in `AddDeviceSheet.swift`) sizes itself with
-  `containerRelativeFrame`: 70% of the width it is given, up to half of `readingWidth`.
+- The pairing QR code (`QRCode` in `AddDeviceSheet.swift`) owns its compact size,
+  `compactSide` (180 points), snapped to whole pixels per module so it stays sharp; clicked or
+  tapped, it fills the sheet in an overlay. A Mac sheet proposes no height, so on the Mac
+  `AddDeviceSheet` fixes its scroll view at the content's height and asks for `.fitted`
+  presentation sizing: the sheet grows to show everything without scrolling.
 - The composer grows with its text up to five lines (`ComposerTextView.maxLines`), then
   scrolls, rather than taking a fixed height.
 - A user bubble leaves `2 × section` of space at the far edge (`Spacer(minLength:)` in

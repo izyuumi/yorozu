@@ -9,6 +9,7 @@ struct AddDeviceSheet: View {
     @State private var scanned: String?
     @State private var known: Set<String>?
     @State private var paired: DeviceInfo?
+    @State private var enlarged = false
     private static let pollInterval: Duration = .seconds(2)
 
     var body: some View {
@@ -22,6 +23,15 @@ struct AddDeviceSheet: View {
                 }
                 .padding(LayoutMetrics.gutter)
                 .frame(maxWidth: .infinity)
+                .accessibilityHidden(enlarged)
+            }
+            #if os(macOS)
+            .fixedSize(horizontal: false, vertical: true)
+            #endif
+            .overlay {
+                if enlarged, paired == nil, let webLink = model.invite?.webLink {
+                    enlargedCode(webLink)
+                }
             }
             .navigationTitle(String(localized: "Add a Device"))
             .navigationBarTitleDisplayMode(.inline)
@@ -65,6 +75,7 @@ struct AddDeviceSheet: View {
         .deviceAddingAlerts(model)
         #if os(macOS)
         .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
+        .presentationSizing(.fitted)
         #endif
     }
 
@@ -92,13 +103,19 @@ struct AddDeviceSheet: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 if context.date < expiry {
                     VStack(spacing: LayoutMetrics.stack) {
-                        QRCode(text: webLink)
+                        Button { withAnimation(.snappy) { enlarged = true } } label: { QRCode(text: webLink) }
+                            .buttonStyle(.plain)
+                            .pointingHand()
+                            .accessibilityLabel(Text("Pairing code"))
+                            .accessibilityHint(Text("Enlarges the code."))
+                        Text(Self.enlargeHint).textStyle(.footnote).foregroundStyle(.secondary).accessibilityHidden(true)
                         Text("Valid for \(Text(timerInterval: Date.now...expiry, countsDown: true)), for one device.")
                             .textStyle(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
                     VStack(spacing: LayoutMetrics.stack) {
                         Text("This code has expired.").foregroundStyle(.secondary)
+                            .onAppear { enlarged = false }
                         Button(String(localized: "New Code")) { model.requestInvite() }
                     }
                 }
@@ -127,6 +144,37 @@ struct AddDeviceSheet: View {
 }
 
 extension AddDeviceSheet {
+    #if os(macOS)
+    private static var enlargeHint: String { String(localized: "Click the code to enlarge it.") }
+    private static var shrinkHint: String { String(localized: "Click the code or press Esc to shrink it.") }
+    #else
+    private static var enlargeHint: String { String(localized: "Tap the code to enlarge it.") }
+    private static var shrinkHint: String { String(localized: "Tap the code to shrink it.") }
+    #endif
+
+    private func enlargedCode(_ webLink: String) -> some View {
+        VStack(spacing: LayoutMetrics.stack) {
+            Button { shrink() } label: { QRCode(text: webLink, enlarged: true) }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .pointingHand()
+                .accessibilityLabel(Text("Pairing code"))
+                .accessibilityHint(Text("Shrinks the code."))
+            Text(Self.shrinkHint).textStyle(.footnote).foregroundStyle(.secondary).accessibilityHidden(true)
+        }
+        .padding(LayoutMetrics.gutter)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.background)
+        .contentShape(.rect)
+        .onTapGesture { shrink() }
+        .accessibilityAddTraits(.isModal)
+        .transition(.opacity)
+    }
+
+    private func shrink() {
+        withAnimation(.snappy) { enlarged = false }
+    }
+
     private func success(_ device: DeviceInfo) -> some View {
         VStack(spacing: LayoutMetrics.stack) {
             Image(systemName: "checkmark.circle.fill")
@@ -150,19 +198,33 @@ extension AddDeviceSheet {
 }
 
 struct QRCode: View {
+    static let compactSide: CGFloat = 180
     let text: String
+    var enlarged = false
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         if let image = Self.image(text) {
-            Image(decorative: image, scale: 1)
+            let code = Image(decorative: image, scale: 1)
                 .interpolation(.none)
                 .resizable()
                 .scaledToFit()
-                .containerRelativeFrame(.horizontal) { width, _ in min(width * 0.7, LayoutMetrics.readingWidth / 2) }
-                .padding(LayoutMetrics.stack)
-                .background(.white, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
-                .accessibilityLabel(Text("Pairing code"))
+            Group {
+                if enlarged {
+                    code
+                } else {
+                    code.frame(width: side(image), height: side(image))
+                }
+            }
+            .padding(LayoutMetrics.stack)
+            .background(.white, in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
         }
+    }
+
+    private func side(_ image: CGImage) -> CGFloat {
+        let modules = CGFloat(image.width)
+        let pixelsPerModule = max(1, (Self.compactSide * displayScale / modules).rounded())
+        return pixelsPerModule * modules / displayScale
     }
 
     private static func image(_ text: String) -> CGImage? {
@@ -209,6 +271,16 @@ private struct DeviceAddingAlerts: ViewModifier {
     private var title: String {
         if case .failed? = model.deviceAdding { return String(localized: "Couldn’t add the Mac") }
         return String(localized: "Finish on the Mac")
+    }
+}
+
+extension View {
+    @ViewBuilder fileprivate func pointingHand() -> some View {
+        #if os(macOS)
+        pointerStyle(.link)
+        #else
+        hoverEffect()
+        #endif
     }
 }
 
