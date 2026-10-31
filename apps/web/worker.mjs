@@ -1,3 +1,4 @@
+import { createHandler, handlerDefaults } from '@yorozu/help-mcp/fetch';
 import { cookieLocale, detectLocale, localePath, pages } from './src/i18n/locales.mjs';
 
 const repository = 'izyuumi/yorozu';
@@ -82,9 +83,14 @@ async function page(request, env, english) {
   return response;
 }
 
+// The help MCP server (apps/mcp) at /mcp, with its health check at /healthz. It answers from the bundled
+// content alone. The rate limit counts per visitor IP within this isolate.
+const helpMcp = createHandler(handlerDefaults);
+
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
+    if (path === '/mcp' || path === '/healthz') return helpMcp(request, request.headers.get('CF-Connecting-IP') ?? 'unknown');
     const english = englishPage(path);
     if (english) return page(request, env, english);
     if (!['/mac', '/beta', '/beta/', '/beta/appcast.xml'].includes(path)) return env.ASSETS.fetch(request);

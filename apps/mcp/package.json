@@ -8,6 +8,9 @@
   "bin": {
     "yorozu-help-mcp": "src/stdio.ts"
   },
+  "exports": {
+    "./fetch": "./src/fetch.ts"
+  },
   "files": [
     "src"
   ],

@@ -1,36 +1,20 @@
-// Streamable HTTP transport, stateless: each POST gets a fresh server, so nothing is kept between requests.
+// Node entry point for the Streamable HTTP server in src/fetch.ts.
 // Run with `node src/http.ts`; settings come from the environment (optionsFromEnv).
-import { createServer as createHttp, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createHttp, type IncomingMessage, type Server } from "node:http";
+import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import pkg from "../package.json" with { type: "json" };
-import { createServer } from "./server.ts";
+import { createHandler, handlerDefaults, type HandlerOptions } from "./fetch.ts";
 
-export interface HttpOptions {
+export { rateLimiter } from "./fetch.ts";
+
+export interface HttpOptions extends HandlerOptions {
   port: number;
   host: string;
-  /** Path prefix the server answers under, like "/yorozu"; "" for none. */
-  basePath: string;
   /** Number of reverse proxies in front whose X-Forwarded-For entries to trust; 0 uses the socket address. */
   trustProxy: number;
-  /** Requests per client IP per window, for the MCP endpoint. */
-  rateLimit: number;
-  rateWindowMs: number;
-  /** Allowed browser origins, or "*" for any. */
-  corsOrigins: "*" | string[];
-  maxBodyBytes: number;
 }
 
-export const defaults: HttpOptions = {
-  port: 8790,
-  host: "127.0.0.1",
-  basePath: "",
-  trustProxy: 0,
-  rateLimit: 60,
-  rateWindowMs: 60_000,
-  corsOrigins: "*",
-  maxBodyBytes: 64 * 1024,
-};
+export const defaults: HttpOptions = { ...handlerDefaults, port: 8790, host: "127.0.0.1", trustProxy: 0 };
 
 /** Reads PORT, HOST, BASE_PATH, TRUST_PROXY, RATE_LIMIT, RATE_LIMIT_WINDOW_MS and CORS_ORIGINS; throws on a bad value. */
 export function optionsFromEnv(env: Record<string, string | undefined>): HttpOptions {
@@ -65,91 +49,27 @@ export function clientIp(req: IncomingMessage, trustProxy: number): string {
   return chain[Math.max(0, chain.length - 1 - trustProxy)];
 }
 
-/** Fixed-window counter per key. Returns seconds to wait, or 0 when the request may go ahead. */
-export function rateLimiter(limit: number, windowMs: number, now: () => number = Date.now) {
-  const windows = new Map<string, { start: number; count: number }>();
-  return (key: string): number => {
-    const t = now();
-    if (windows.size > 10_000) for (const [k, w] of windows) if (t - w.start >= windowMs) windows.delete(k);
-    const w = windows.get(key);
-    if (!w || t - w.start >= windowMs) {
-      windows.set(key, { start: t, count: 1 });
-      return 0;
-    }
-    w.count++;
-    return w.count > limit ? Math.max(1, Math.ceil((w.start + windowMs - t) / 1000)) : 0;
-  };
-}
-
-const corsHeaders = {
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID",
-  "Access-Control-Expose-Headers": "Mcp-Session-Id, Mcp-Protocol-Version, Retry-After",
-  "Access-Control-Max-Age": "86400",
-};
-
-function send(res: ServerResponse, status: number, body: object, headers: Record<string, string> = {}) {
-  res.writeHead(status, { "Content-Type": "application/json", ...headers }).end(JSON.stringify(body));
-}
-const rpcError = (code: number, message: string) => ({ jsonrpc: "2.0", error: { code, message }, id: null });
-
-async function readJson(req: IncomingMessage, max: number): Promise<{ body?: unknown; status?: number }> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > max) return { status: 413 };
-    chunks.push(chunk);
+/** The web Request for a Node request; the body streams through unread. */
+function toRequest(req: IncomingMessage): Request {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
   }
-  try {
-    return { body: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
-  } catch {
-    return { status: 400 };
-  }
+  const hasBody = req.method !== "GET" && req.method !== "HEAD";
+  return new Request(new URL(req.url ?? "/", "http://localhost"), {
+    method: req.method,
+    headers,
+    body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
+    duplex: "half",
+  } as RequestInit);
 }
 
 export function createHttpServer(options: HttpOptions): Server {
-  const base = options.basePath;
-  const mcpPaths = new Set([base || "/", `${base}/`, `${base}/mcp`]);
-  const limited = rateLimiter(options.rateLimit, options.rateWindowMs);
-
+  const handle = createHandler(options);
   return createHttp(async (req, res) => {
-    const path = new URL(req.url ?? "/", "http://localhost").pathname;
-    const origin = req.headers.origin;
-    if (origin && (options.corsOrigins === "*" || options.corsOrigins.includes(origin))) {
-      res.setHeader("Access-Control-Allow-Origin", options.corsOrigins === "*" ? "*" : origin);
-      if (options.corsOrigins !== "*") res.setHeader("Vary", "Origin");
-      for (const [name, value] of Object.entries(corsHeaders)) res.setHeader(name, value);
-    }
-    if (req.method === "OPTIONS") return void res.writeHead(204).end();
-
-    if (path === `${base}/healthz`) {
-      if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, { error: "method not allowed" }, { Allow: "GET, HEAD" });
-      return send(res, 200, { status: "ok", name: "yorozu-help", version: pkg.version });
-    }
-    if (!mcpPaths.has(path)) return send(res, 404, { error: "not found" });
-
-    const wait = limited(clientIp(req, options.trustProxy));
-    if (wait) return send(res, 429, rpcError(-32000, "Too many requests"), { "Retry-After": String(wait) });
-    if (req.method !== "POST") return send(res, 405, rpcError(-32000, "Method not allowed: this server is stateless, POST only"), { Allow: "POST, OPTIONS" });
-
-    const { body, status } = await readJson(req, options.maxBodyBytes);
-    if (status === 413) return send(res, 413, rpcError(-32600, "Request too large"));
-    if (status === 400) return send(res, 400, rpcError(-32700, "Parse error"));
-
-    const server = createServer();
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    res.on("close", () => {
-      void transport.close();
-      void server.close();
-    });
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(req, res, body);
-    } catch (error) {
-      console.error("yorozu-help: request failed:", error);
-      if (!res.headersSent) send(res, 500, rpcError(-32603, "Internal error"));
-    }
+    const response = await handle(toRequest(req), clientIp(req, options.trustProxy));
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    res.end(req.method === "HEAD" ? undefined : Buffer.from(await response.arrayBuffer()));
   });
 }
 
