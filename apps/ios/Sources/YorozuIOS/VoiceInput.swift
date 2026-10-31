@@ -368,6 +368,10 @@ struct VoiceInputSection: View {
             }
         case .absent:
             Button(String(localized: "Download the Model")) { model.start() }
+        case .unavailable:
+            Text("The voice model isn’t available for this version of Yorozu yet. Try again later.")
+                .foregroundStyle(.secondary)
+            Button(String(localized: "Try Again")) { model.start() }
         case .failed(let message):
             Text(message).foregroundStyle(YorozuPalette.warning)
             Button(String(localized: "Try Again")) { model.start() }
