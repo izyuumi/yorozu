@@ -9,6 +9,7 @@
     "deploy": "astro build && wrangler deploy"
   },
   "devDependencies": {
+    "@yorozu/help-mcp": "workspace:*",
     "astro": "^7.4.2",
     "wrangler": "^4.152.0"
   }

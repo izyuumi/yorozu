@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -28,13 +30,24 @@ test("stdio: every tool, a resource and the prompt, end to end", async () => {
   await client.close();
 });
 
-test("the sandbox denies network access (control)", () => {
-  const probe = `require("node:net").connect(9, "127.0.0.1").on("error", (e) => { console.log(e.code); process.exit(0); });`;
-  const result = spawnSync(process.execPath, [...sandbox, "-e", probe], { encoding: "utf8" });
-  assert.equal(result.stdout.trim(), "ERR_ACCESS_DENIED", result.stderr);
+// Node 24 has no network permission (--allow-net came in Node 25), so there the sandbox does not block connections.
+const netPermission = process.allowedNodeEnvironmentFlags.has("--allow-net");
+
+test("the sandbox denies network access (control)", { skip: !netPermission && "this Node has no network permission (--allow-net needs Node 25 or later)" }, async () => {
+  // A listening server, so a refused connection cannot pass for a denied one.
+  const server = createNetServer((socket) => socket.end()).listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const probe = `require("node:net").connect(${port}, "127.0.0.1").on("connect", () => { console.log("connected"); process.exit(0); }).on("error", () => { console.log("blocked"); process.exit(0); });`;
+  const child = spawn(process.execPath, [...sandbox, "-e", probe]);
+  let stdout = "";
+  child.stdout.on("data", (d) => (stdout += d));
+  await once(child, "exit");
+  server.close();
+  assert.equal(stdout.trim(), "blocked");
 });
 
-test("stdio: every tool answers with network, writes and child processes denied", async () => {
+test("stdio: every tool answers in the sandbox (no writes or child processes; no network on Node 25 or later)", async () => {
   const client = await run([...sandbox, "src/stdio.ts"]);
   await callEveryTool(client);
   await client.close();

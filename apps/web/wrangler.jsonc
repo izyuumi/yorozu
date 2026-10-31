@@ -8,8 +8,9 @@
     "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
     // The pages without a language prefix go through the worker, which picks the visitor's language.
+    // /mcp and /healthz are the help MCP server (apps/mcp).
     "run_worker_first": ["/", "/pair", "/pair/", "/add", "/add/", "/support", "/support/", "/privacy", "/privacy/",
-      "/terms", "/terms/", "/mac", "/beta", "/beta/*"]
+      "/terms", "/terms/", "/mac", "/beta", "/beta/*", "/mcp", "/healthz"]
   },
   "routes": [{ "pattern": "yorozu.yumi.to", "custom_domain": true }]
 }
