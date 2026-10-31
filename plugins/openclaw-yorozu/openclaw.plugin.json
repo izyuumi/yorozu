@@ -22,7 +22,7 @@
           "enabled": { "type": "boolean" },
           "agent": { "type": "string", "default": "main" },
           "relayUrl": { "type": "string", "default": "wss://relay.yumi.to" },
-          "mediaMaxMb": { "type": "number", "default": 8 },
+          "mediaMaxMb": { "type": "number" },
           "textChunkLimit": { "type": "integer" }
         }
       }
