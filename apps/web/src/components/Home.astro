@@ -1,87 +1,50 @@
 ---
 import Base from '../layouts/Base.astro';
+import { agentPrompt, setupGuideUrl } from '../agent-prompt.mjs';
+import { localePath } from '../i18n/locales.mjs';
 import { localize, strings } from '../i18n/strings.mjs';
 
 interface Props { locale: string }
 const { locale } = Astro.props;
 const h = strings[locale].home;
 const html = (text: string) => localize(text, locale);
-const guide = 'https://github.com/izyuumi/yorozu/blob/main/docs/setup.md';
+const docLinks = [
+  setupGuideUrl,
+  'https://github.com/izyuumi/yorozu/blob/main/docs/help-mcp.md',
+  localePath(locale, '/support/'),
+  'https://github.com/izyuumi/yorozu',
+];
 ---
 <Base locale={locale} page="/" title={h.title} description={h.description} og={h.og}>
   <section class="hero" aria-labelledby="title">
     <div class="hero-inner">
       <div class="hero-copy">
         <h1 id="title" set:html={h.hero} />
-        <p class="lede" set:html={html(h.lede)} />
+        <p class="lede">{h.og.description}</p>
         <div class="actions">
           <a class="button" href="/iphone">{h.appStore}</a>
           <a class="button ghost" href="/mac">{h.downloadMac}</a>
-          <a class="button ghost" href={guide}>{h.setUpPlugin}</a>
         </div>
         <p class="fine" set:html={h.fine} />
       </div>
     </div>
   </section>
-  <style>
-    .hero-inner { grid-template-columns: minmax(0, 1fr); }
-    .hero-copy { padding-bottom: clamp(48px, 8vw, 110px); }
-  </style>
 
-  <section class="more" aria-labelledby="chat-title">
-    <h2 id="chat-title">{h.chatTitle}</h2>
-    <dl class="facts three">
-      {h.chatFacts.map(([term, text]: string[]) => <div><dt>{term}</dt><dd set:html={text} /></div>)}
-    </dl>
-  </section>
-
-  <section class="more" aria-labelledby="more-title">
-    <h2 id="more-title">{h.moreTitle}</h2>
-    <dl class="facts three">
-      {h.moreFacts.map(([term, text]: string[]) => <div><dt>{term}</dt><dd set:html={text} /></div>)}
-    </dl>
-  </section>
-
-  <section class="relay" aria-labelledby="relay-title">
-    <h2 id="relay-title">{h.relayTitle}</h2>
-    <figure class="diagram" role="img" aria-label={h.diagram.label}>
-      <span class="diagram-art" aria-hidden="true"></span>
-      <figcaption aria-hidden="true">
-        <span class="diagram-encryption">{h.diagram.encryption}</span>
-        <span class="diagram-labels"><span>iPhone</span><span class="diagram-relay">{h.diagram.relay}</span><span>Gateway</span></span>
-      </figcaption>
-    </figure>
-    <dl class="facts">
-      {h.relayFacts.map(([term, text]: string[]) => <div><dt>{term}</dt><dd set:html={text} /></div>)}
-    </dl>
-  </section>
-
-  <section class="iphone-availability" id="get" aria-labelledby="get-title">
-    <div class="availability-intro">
-      <h2 id="get-title">{h.getTitle}</h2>
-      <p>{h.getIntro}</p>
+  <section class="agent-setup" id="agent" aria-labelledby="agent-title">
+    <div class="agent-setup-text">
+      <h2 id="agent-title">{h.agent.title}</h2>
+      <p>{h.agent.intro}</p>
     </div>
-    <div class="installation-options">
-      <article>
-        <h3>{h.plugin.title}</h3>
-        <p set:html={h.plugin.text} />
-        <a href={guide}>{h.plugin.link}</a>
-      </article>
-      <article>
-        <h3>{h.ios.title}</h3>
-        <p set:html={h.ios.text} />
-        <a href="/iphone">{h.appStore}</a>
-      </article>
-      <article>
-        <h3>{h.mac.title}</h3>
-        <p set:html={h.mac.text} />
-        <a href="/mac">{h.downloadMac}</a>
-      </article>
+    <div class="prompt">
+      <pre><code id="agent-prompt">{agentPrompt(h.agent.language)}</code></pre>
+      <button class="copy" type="button" data-copy="agent-prompt" data-copied={h.agent.copied} data-status={h.agent.status} data-failed={h.agent.failed} aria-label={h.agent.copyLabel} hidden>{h.agent.copy}</button>
     </div>
+    <p class="copy-status" id="agent-prompt-status" role="status" aria-live="polite"></p>
+    <p class="fine">{h.agent.note}</p>
   </section>
 
-  <section class="steps" id="pair" aria-labelledby="steps-title">
-    <h2 id="steps-title">{h.stepsTitle}</h2>
+  <section class="steps" id="setup" aria-labelledby="setup-title">
+    <h2 id="setup-title">{h.setupTitle}</h2>
     <p class="steps-intro" set:html={h.stepsIntro} />
     <ol>
       {h.steps.map(([title, text]: string[], index: number) => <li>
@@ -92,8 +55,19 @@ const guide = 'https://github.com/izyuumi/yorozu/blob/main/docs/setup.md';
     </ol>
   </section>
 
+  <section class="docs" id="docs" aria-labelledby="docs-title">
+    <h2 id="docs-title">{h.docsTitle}</h2>
+    <ul class="doc-links">
+      {h.docs.map(([label, text]: string[], index: number) => <li>
+        <a href={docLinks[index]}>{label}</a>
+        <p set:html={text} />
+      </li>)}
+    </ul>
+  </section>
+
   <section class="warning" id="before-you-install" aria-labelledby="risk-title">
     <h2 id="risk-title">{h.riskTitle}</h2>
     {h.risk.map((text: string) => <p set:html={html(text)} />)}
   </section>
+  <script is:inline src="/copy.js" defer></script>
 </Base>

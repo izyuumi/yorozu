@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const script = await readFile(new URL('../public/copy.js', import.meta.url), 'utf8');
 
-function browser(writeText) {
+function browser(writeText, words = {}) {
   const classes = new Set();
   const source = { textContent: 'Read the setup guide.' };
   const status = { textContent: '' };
@@ -16,7 +16,7 @@ function browser(writeText) {
   const button = {
     hidden: true,
     textContent: 'Copy',
-    dataset: { copy: 'agent-prompt' },
+    dataset: { copy: 'agent-prompt', ...words },
     classList: { add: value => classes.add(value), remove: value => classes.delete(value) },
     addEventListener: (_, listener) => { click = listener; },
   };
@@ -41,11 +41,11 @@ test('copy writes the prompt and announces success without changing the selectio
   await page.click();
   assert.equal(copied, 'Read the setup guide.');
   assert.equal(page.button.textContent, 'Copied');
-  assert.equal(page.status.textContent, 'Prompt copied.');
+  assert.equal(page.status.textContent, 'Copied.');
   assert.equal(page.selected(), undefined);
   [...page.timers.values()][0]();
   assert.equal(page.button.textContent, 'Copy');
-  assert.equal(page.status.textContent, 'Prompt copied.');
+  assert.equal(page.status.textContent, 'Copied.');
 });
 
 test('denied clipboard selects the prompt and explains how to copy it manually', async () => {
@@ -77,8 +77,19 @@ test('a delayed earlier failure cannot replace a newer successful copy', async (
   await latest;
   pending[0].reject(new Error('Delayed denial'));
   await earlier;
-  assert.equal(page.status.textContent, 'Prompt copied.');
+  assert.equal(page.status.textContent, 'Copied.');
   assert.equal(page.button.textContent, 'Copied');
   assert.equal(page.selected(), undefined);
   assert.equal(page.timers.size, 1);
+});
+
+test('the page supplies the translated button, status and failure text', async () => {
+  const words = { copied: 'コピーしました', status: 'プロンプトをコピーしました。', failed: '自動でコピーできませんでした。' };
+  const copied = browser(async () => {}, words);
+  await copied.click();
+  assert.equal(copied.button.textContent, 'コピーしました');
+  assert.equal(copied.status.textContent, 'プロンプトをコピーしました。');
+  const denied = browser(async () => { throw new Error('Permission denied'); }, words);
+  await denied.click();
+  assert.equal(denied.status.textContent, '自動でコピーできませんでした。');
 });

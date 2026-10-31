@@ -1,8 +1,15 @@
+// Copy buttons: <button data-copy="ID"> copies the text of #ID and reports in #ID-status.
+// The page supplies the translated words in data-copied, data-status and data-failed.
 for (const button of document.querySelectorAll("[data-copy]")) {
   const source = document.getElementById(button.dataset.copy);
   if (!source) continue;
   button.hidden = false;
   const label = button.textContent;
+  const words = {
+    copied: button.dataset.copied || "Copied",
+    status: button.dataset.status || "Copied.",
+    failed: button.dataset.failed || "Couldn’t copy automatically. The text is selected; use your device’s Copy command.",
+  };
   const status = document.getElementById(`${button.dataset.copy}-status`);
   let resetTimer;
   let latestAttempt = 0;
@@ -16,9 +23,9 @@ for (const button of document.querySelectorAll("[data-copy]")) {
     try {
       await navigator.clipboard.writeText(text);
       if (attempt !== latestAttempt) return;
-      button.textContent = "Copied";
+      button.textContent = words.copied;
       button.classList.add("done");
-      if (status) status.textContent = "Prompt copied.";
+      if (status) status.textContent = words.status;
       resetTimer = setTimeout(() => {
         button.textContent = label;
         button.classList.remove("done");
@@ -30,7 +37,7 @@ for (const button of document.querySelectorAll("[data-copy]")) {
       const selection = getSelection();
       selection.removeAllRanges();
       selection.addRange(range);
-      if (status) status.textContent = "Couldn’t copy automatically. The prompt is selected; use your device’s Copy command.";
+      if (status) status.textContent = words.failed;
     }
   });
 }
