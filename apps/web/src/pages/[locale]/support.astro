@@ -1,0 +1,6 @@
+---
+import Legal from '../../components/Legal.astro';
+import { localeRoutes } from '../../components/routes.mjs';
+export const getStaticPaths = localeRoutes;
+---
+<Legal locale={Astro.props.locale} kind="support" />

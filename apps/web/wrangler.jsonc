@@ -7,7 +7,9 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
-    "run_worker_first": ["/mac", "/beta", "/beta/*"]
+    // The pages without a language prefix go through the worker, which picks the visitor's language.
+    "run_worker_first": ["/", "/pair", "/pair/", "/add", "/add/", "/support", "/support/", "/privacy", "/privacy/",
+      "/terms", "/terms/", "/mac", "/beta", "/beta/*"]
   },
   "routes": [{ "pattern": "yorozu.yumi.to", "custom_domain": true }]
 }

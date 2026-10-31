@@ -1,12 +1,4 @@
 ---
-import Base from '../layouts/Base.astro';
+import Code from '../components/Code.astro';
 ---
-<Base title="Add a Mac to Yorozu" description="Open this code in Yorozu on a paired iPhone or iPad." mainClass="legal">
-  <Fragment slot="head">
-    <meta name="robots" content="noindex">
-  </Fragment>
-  <h1>Add a Mac to Yorozu</h1>
-  <p>This is the code a new Mac shows to pair with your host. Scan it with the Camera, or in Yorozu under Settings › Add a Device › Scan a Mac’s Code, on an iPhone or iPad that already uses Yorozu.</p>
-  <p><a class="button" href="/iphone">Get Yorozu on the App Store</a></p>
-  <p>The code stays on this device: it is in the part of the link your browser never sends to us. It works once and expires after 10 minutes.</p>
-</Base>
+<Code locale="en" kind="add" />
