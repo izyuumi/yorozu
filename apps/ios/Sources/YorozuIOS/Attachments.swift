@@ -34,8 +34,7 @@ struct AttachMenu: View {
                 if loading { ProgressView().controlSize(.small) } else { Image(systemName: "plus").textStyle(.body, weight: .semibold) }
             }
             .foregroundStyle(.secondary)
-            .frame(width: controlTarget, height: controlTarget)
-            .contentShape(.rect)
+            .composerControl()
         }
         .menuStyle(.button)
         .buttonStyle(.plain)

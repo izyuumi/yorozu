@@ -613,9 +613,11 @@ private struct Composer: View {
     @AppStorage(VoiceModel.enabledKey) private var voiceEnabled = false
     @State private var voice = VoiceSession()
     @State private var cursor = ComposerCursor()
+    @State private var settingUpVoice = false
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let sendCircle: CGFloat = 32
+    private let sendCircle = LayoutMetrics.controlCircle
     private let radius: CGFloat = 22
 
     var body: some View {
@@ -650,6 +652,7 @@ private struct Composer: View {
                 VoiceBar(session: voice, onInsert: { cursor.insert($0, into: &text) }, onSend: { if let clip = voice.handOff() { onVoiceSend(clip) } })
             }
         }
+        .sheet(isPresented: $settingUpVoice) { VoiceSetupSheet() }
         .alert(String(localized: "Microphone access is off"), isPresented: $voice.micDenied) {
             Button(String(localized: "Open Settings")) { openMicrophoneSettings() }
             Button(String(localized: "Cancel"), role: .cancel) {}
@@ -688,40 +691,61 @@ private struct Composer: View {
                 .padding(.leading, attachLimit == nil ? LayoutMetrics.inner : 0)
                 .accessibilityLabel(Text("Message"))
                 .accessibilityIdentifier("composer.text")
-            if voiceEnabled, VoiceModel.supported, VoiceModel.shared.state == .ready {
-                Button {
-                    VoiceInputTip().invalidate(reason: .actionPerformed)
-                    Task { await voice.start() }
-                } label: {
-                    Image(systemName: "mic").textStyle(.body).foregroundStyle(.secondary).frame(width: controlTarget, height: rowHeight)
+            ZStack {
+                if showsMic {
+                    mic.transition(.controlSwap(reduceMotion: reduceMotion))
+                } else {
+                    sendButton.transition(.controlSwap(reduceMotion: reduceMotion))
                 }
-                .buttonStyle(.plain)
-                .help(String(localized: "Voice Input"))
-                .accessibilityLabel(Text("Voice Input"))
-                .popoverTip(VoiceInputTip())
             }
-            Button(action: send) {
-                Image(systemName: "arrow.up")
-                    .textStyle(.body, weight: .bold)
-                    .foregroundStyle(canSend ? Color.white : Color.secondary)
-                    .frame(width: sendCircle, height: sendCircle)
-                    .background(canSend ? AnyShapeStyle(accent.bubble) : AnyShapeStyle(.fill.tertiary), in: Circle())
-            }
-            .buttonStyle(.plain)
             .frame(width: rowHeight, height: rowHeight)
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(!canSend)
-            .help(String(localized: "Send"))
-            .accessibilityLabel(Text("Send"))
-            .accessibilityIdentifier("composer.send")
+            .animation(.easeOut(duration: 0.15), value: showsMic)
         }
         .padding(inset)
     }
 
-    private var canSend: Bool {
-        files.count <= Attachment.maxPerMessage
-            && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil)
+    private var mic: some View {
+        Button {
+            if VoiceModel.shared.state == .ready {
+                VoiceInputTip().invalidate(reason: .actionPerformed)
+                Task { await voice.start() }
+            } else {
+                settingUpVoice = true
+            }
+        } label: {
+            Image(systemName: "mic").textStyle(.body, weight: .semibold).foregroundStyle(.secondary).composerControl()
+        }
+        .buttonStyle(.plain)
+        .help(String(localized: "Voice Input"))
+        .accessibilityLabel(Text("Voice Input"))
+        .accessibilityIdentifier("composer.mic")
+        .popoverTip(VoiceModel.shared.state == .ready ? VoiceInputTip() : nil)
     }
+
+    private var sendButton: some View {
+        Button(action: send) {
+            Image(systemName: "arrow.up")
+                .textStyle(.body, weight: .bold)
+                .foregroundStyle(canSend ? Color.white : Color.secondary)
+                .frame(width: sendCircle, height: sendCircle)
+                .background(canSend ? AnyShapeStyle(accent.bubble) : AnyShapeStyle(.fill.tertiary), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: rowHeight, height: rowHeight)
+        .keyboardShortcut(.return, modifiers: .command)
+        .disabled(!canSend)
+        .help(String(localized: "Send"))
+        .accessibilityLabel(Text("Send"))
+        .accessibilityIdentifier("composer.send")
+    }
+
+    private var hasContent: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil
+    }
+
+    private var showsMic: Bool { voiceEnabled && VoiceModel.supported && !hasContent }
+
+    private var canSend: Bool { files.count <= Attachment.maxPerMessage && hasContent }
 
     private func send() {
         guard canSend else { return }

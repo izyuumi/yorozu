@@ -189,4 +189,17 @@ extension AnyTransition {
     static func fromTop(reduceMotion: Bool) -> AnyTransition {
         reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
+
+    static func controlSwap(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : .scale(scale: 0.8).combined(with: .opacity)
+    }
+}
+
+extension View {
+    func composerControl() -> some View {
+        frame(width: LayoutMetrics.controlCircle, height: LayoutMetrics.controlCircle)
+            .background(.fill.tertiary, in: Circle())
+            .frame(width: max(LayoutMetrics.controlCircle, controlTarget), height: max(LayoutMetrics.controlCircle, controlTarget))
+            .contentShape(.rect)
+    }
 }
