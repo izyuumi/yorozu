@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.0
+
+### Features
+
+- show the mic in the send slot while the composer is empty (#613)
+
+### Fixes
+
+- keep the mic beside send while the composer has content (#615)
+- **ios:** drop the chat-bubble icon from in-app reply notices (#614)
+- use continuous rounded corners for in-app notices (#612)
+- drop animations on keyboard and high-frequency actions (#609)
+
 ## 0.11.0
 
 ### Features
