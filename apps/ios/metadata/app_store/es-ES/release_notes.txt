@@ -1,10 +1,2 @@
-• Abre dos conversaciones una al lado de otra en el iPad y el iPhone Duo, y arrastra una conversación a la pantalla para abrirla junto a la actual.
-• Fija conversaciones arriba de la lista. Ahora la lista se ordena por el mensaje más reciente.
-• Elige apariencia clara, oscura o del sistema y un color de acento en Ajustes.
-• Empieza una conversación nueva desde otra; en el iPad hay una conversación nueva lista cuando no hay nada abierto.
-• Pega imágenes y archivos en el campo de texto o haz una foto desde él.
-• Desliza hacia abajo para cerrar la vista previa de una imagen.
-• Los mensajes que acabas de enviar terminan de enviarse aunque salgas de la app.
-• El estado de lectura se mantiene al día en tus dispositivos.
-• Una nueva pantalla de inicio y correcciones en el campo de texto del iPhone Duo, las imágenes compartidas y las horas de las conversaciones.
-• Empareja un Mac nuevo escaneando su código con el iPhone o el iPad.
+• La entrada de voz en el iPhone y el iPad ahora indica claramente cuándo el modelo de voz aún no está disponible, en lugar de mostrar un error del sistema.
+• Una página del App Store renovada, con un aspecto nuevo.

@@ -1,10 +1,2 @@
-• Abra duas conversas lado a lado no iPad e no iPhone Duo, e arraste uma conversa para a tela para abri-la ao lado da atual.
-• Fixe conversas no topo da lista. Agora a lista é ordenada pela mensagem mais recente.
-• Escolha aparência clara, escura ou do sistema e uma cor de destaque em Ajustes.
-• Comece uma nova conversa de dentro de outra; no iPad, uma nova conversa fica pronta quando nada está aberto.
-• Cole imagens e arquivos no campo de mensagem ou tire uma foto a partir dele.
-• Deslize para baixo para fechar a prévia de uma imagem.
-• Mensagens que você acabou de enviar terminam de ser enviadas mesmo se você sair do app.
-• O status de leitura fica sincronizado entre seus dispositivos.
-• Uma nova tela de abertura, além de correções no campo de mensagem do iPhone Duo, nas imagens compartilhadas e nos horários das conversas.
-• Emparelhe um novo Mac escaneando o código dele com o iPhone ou iPad.
+• No iPhone e no iPad, a entrada de voz agora avisa com clareza quando o modelo de voz ainda não está disponível, em vez de mostrar um erro do sistema.
+• Uma página renovada na App Store, com um visual novo.
