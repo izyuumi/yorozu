@@ -68,9 +68,9 @@ All paths are under `apps/ios/Sources/YorozuIOS/`.
   sidebar when each pane would get less than `comfortablePane` (360 points).
 - The pairing QR code (`QRCode` in `AddDeviceSheet.swift`) owns its compact size,
   `compactSide` (180 points), snapped to whole pixels per module so it stays sharp; clicked or
-  tapped, it fills the sheet in an overlay. On the Mac, `AddDeviceSheet` measures its content
-  with `onGeometryChange` and gives the scroll view that ideal height, so the sheet opens tall
-  enough to show everything without scrolling.
+  tapped, it fills the sheet in an overlay. A Mac sheet proposes no height, so on the Mac
+  `AddDeviceSheet` fixes its scroll view at the content's height and asks for `.fitted`
+  presentation sizing: the sheet grows to show everything without scrolling.
 - The composer grows with its text up to five lines (`ComposerTextView.maxLines`), then
   scrolls, rather than taking a fixed height.
 - A user bubble leaves `2 × section` of space at the far edge (`Spacer(minLength:)` in

@@ -10,9 +10,6 @@ struct AddDeviceSheet: View {
     @State private var known: Set<String>?
     @State private var paired: DeviceInfo?
     @State private var enlarged = false
-    #if os(macOS)
-    @State private var contentHeight: CGFloat?
-    #endif
     private static let pollInterval: Duration = .seconds(2)
 
     var body: some View {
@@ -27,12 +24,9 @@ struct AddDeviceSheet: View {
                 .padding(LayoutMetrics.gutter)
                 .frame(maxWidth: .infinity)
                 .accessibilityHidden(enlarged)
-                #if os(macOS)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
-                #endif
             }
             #if os(macOS)
-            .frame(idealHeight: contentHeight)
+            .fixedSize(horizontal: false, vertical: true)
             #endif
             .overlay {
                 if enlarged, paired == nil, let webLink = model.invite?.webLink {
@@ -81,6 +75,7 @@ struct AddDeviceSheet: View {
         .deviceAddingAlerts(model)
         #if os(macOS)
         .frame(minWidth: LayoutMetrics.windowMinWidth, minHeight: LayoutMetrics.windowMinHeight)
+        .presentationSizing(.fitted)
         #endif
     }
 
