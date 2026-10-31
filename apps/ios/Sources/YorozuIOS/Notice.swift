@@ -22,7 +22,9 @@ struct NoticePill: View {
         .yorozuGlass(in: shape)
         .padding(.horizontal, LayoutMetrics.gutter)
         .gesture(DragGesture(minimumDistance: 8).onEnded { if $0.translation.height < 0 { dismiss() } })
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("New reply in \(notice.title)"))
+        .accessibilityValue(Text(notice.text))
         .accessibilityHint(Text("Opens the conversation"))
         .accessibilityAddTraits(.isButton)
         .task(id: notice.id) {

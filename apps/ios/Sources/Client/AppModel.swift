@@ -380,7 +380,13 @@ final class AppModel {
     private func showNotice(convId: String, title: String, text: String) {
         let line = text.split(whereSeparator: \.isNewline).lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
         guard let line, notice?.convId != convId else { return }
-        notice = InAppNotice(convId: convId, title: title.isEmpty ? String(localized: "Yorozu replied.") : title, text: line)
+        notice = InAppNotice(convId: convId, title: noticeTitle(convId, hint: title), text: line)
+    }
+
+    private func noticeTitle(_ convId: String, hint: String) -> String {
+        if let conversation = conversations[convId] { return conversation.displayTitle }
+        let generic: Set = ["", "Yorozu", "Yorozu replied.", String(localized: "Yorozu replied.")]
+        return generic.contains(hint) ? String(localized: "New Conversation") : hint
     }
 
     func showNotice(for convId: String, title: String, body: String) {
@@ -591,7 +597,7 @@ final class AppModel {
             setTyping(t.convId, t.active)
         case .reply(let reply):
             if !inView(reply.convId), conversations[reply.convId]?.items.contains(where: { $0.id == reply.messageId }) != true {
-                let title = conversations[reply.convId]?.displayTitle ?? ""
+                let title = noticeTitle(reply.convId, hint: "")
                 let text = reply.text.isEmpty ? (reply.attachments?.first.map { "📎 \($0.name)" } ?? "") : reply.text
                 if active {
                     showNotice(convId: reply.convId, title: title, text: text)

@@ -85,7 +85,7 @@ enum Notices {
     static func reply(convId: String, title: String, text: String) {
         let content = UNMutableNotificationContent()
         let line = text.split(whereSeparator: \.isNewline).lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
-        content.title = title.isEmpty ? String(localized: "Yorozu replied.") : String(title.prefix(80))
+        content.title = String(title.prefix(80))
         content.body = String((line ?? "").prefix(180))
         content.threadIdentifier = YorozuCrypto.threadRef(convId)
         content.userInfo = ["convId": convId]
