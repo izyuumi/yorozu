@@ -1,0 +1,24 @@
+Yorozu is a native chat app for your own OpenClaw Gateway. Talk to your agent from iPhone or iPad, wherever you are, while the agent, its memory and its tools stay on the computer you run it on.
+
+Messages travel through an end-to-end-encrypted relay: the relay passes them along but cannot read them. Pairing is a QR code scan, and you compare a host key on both sides so you know exactly which computer you are talking to.
+
+CONVERSATIONS
+• Follow replies as they arrive, with formatted text, code blocks and the tools your agent used.
+• Pin, archive, rename and search conversations; Siri and Spotlight can find them too.
+• Open two conversations side by side on iPad and on iPhone Duo.
+• Send pictures and files, paste images, or take a photo right from the composer.
+• Share to Yorozu from any app.
+
+AUTOMATIONS
+• See every scheduled job on your agent: when it runs next, how the last run went, and which ones are off.
+• Ask your agent to change one with Edit in Chat.
+
+MADE FOR YOUR DEVICES
+• One notification per finished reply, with a preview that stays sealed until it reaches your device.
+• Read state stays in step across your iPhone, iPad and Mac.
+• Light, dark or system appearance, with eight accent colors.
+
+WHAT YOU NEED
+Live use requires an OpenClaw Gateway with the Yorozu channel plugin, set up on your own computer. Yorozu does not run an AI model on your device or include model access. The clearly marked demo lets you try sample conversations and automations without a Gateway: open the pairing screen and enter YOROZU-DEMO. Its replies are scripted.
+
+Yorozu is open source and not affiliated with OpenClaw, Anthropic or OpenAI.

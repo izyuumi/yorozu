@@ -1,0 +1,10 @@
+• Ouvrez deux conversations côte à côte sur iPad et iPhone Duo, et faites glisser une conversation sur l’écran pour l’ouvrir à côté de celle en cours.
+• Épinglez des conversations en haut de la liste. La liste est désormais triée par dernier message.
+• Choisissez l’apparence claire, sombre ou celle du système et une couleur d’accentuation dans Réglages.
+• Lancez une nouvelle conversation depuis une autre ; sur iPad, une nouvelle conversation est prête quand rien n’est ouvert.
+• Collez des images et des fichiers dans le champ de saisie, ou prenez une photo depuis celui-ci.
+• Balayez vers le bas pour fermer l’aperçu d’une image.
+• Les messages que vous venez d’envoyer finissent de partir même si vous quittez l’app.
+• L’état de lecture reste synchronisé entre vos appareils.
+• Un nouvel écran de lancement, et des corrections pour le champ de saisie sur iPhone Duo, les images partagées et l’heure des conversations.
+• Jumelez un nouveau Mac en scannant son code avec votre iPhone ou votre iPad.

@@ -1,0 +1,10 @@
+• Öffne zwei Unterhaltungen nebeneinander auf iPad und iPhone Duo, und zieh eine Unterhaltung auf den Bildschirm, um sie neben der aktuellen zu öffnen.
+• Hefte Unterhaltungen oben in der Liste an. Die Liste ist jetzt nach der neuesten Nachricht sortiert.
+• Wähle in den Einstellungen helles, dunkles oder System-Erscheinungsbild und eine Akzentfarbe.
+• Starte eine neue Unterhaltung aus einer bestehenden heraus; auf dem iPad steht eine neue bereit, wenn nichts geöffnet ist.
+• Füge Bilder und Dateien ins Eingabefeld ein oder mach von dort ein Foto.
+• Wische nach unten, um die Vorschau eines Bildes zu schließen.
+• Gerade gesendete Nachrichten werden fertig gesendet, auch wenn du die App verlässt.
+• Der Gelesen-Status bleibt auf deinen Geräten abgeglichen.
+• Ein neuer Startbildschirm sowie Korrekturen am Eingabefeld auf dem iPhone Duo, an geteilten Bildern und an den Zeiten der Unterhaltungen.
+• Kopple einen neuen Mac, indem du seinen Code mit dem iPhone oder iPad scannst.
