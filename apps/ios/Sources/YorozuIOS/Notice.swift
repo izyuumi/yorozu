@@ -4,6 +4,7 @@ struct NoticePill: View {
     let notice: InAppNotice
     let open: () -> Void
     let dismiss: () -> Void
+    private let shape = RoundedRectangle(cornerRadius: LayoutMetrics.noticeRadius, style: .continuous)
 
     var body: some View {
         Button(action: open) {
@@ -18,10 +19,10 @@ struct NoticePill: View {
             .padding(.vertical, LayoutMetrics.inner)
             .frame(maxWidth: LayoutMetrics.readingWidth, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
-            .contentShape(Capsule())
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
-        .yorozuGlass(in: Capsule())
+        .yorozuGlass(in: shape)
         .padding(.horizontal, LayoutMetrics.gutter)
         .gesture(DragGesture(minimumDistance: 8).onEnded { if $0.translation.height < 0 { dismiss() } })
         .accessibilityElement(children: .combine)
