@@ -1220,3 +1220,7 @@ Replaces "Relay only. The direct path (port 8738) is dropped. The plugin only ma
 ## 2026-10-31 — External TestFlight kill switch; stable releases name the beta by commit and digest
 
 External TestFlight groups and Beta App Review stay off unless the repository variable `YOROZU_EXTERNAL_TESTFLIGHT` is exactly `true`, checked by `scripts/external_testflight.sh` (#592). The release PR names the beta it promotes by build, source commit and DMG digest, and promote refuses a beta that no longer matches (#590). The stable line now points to `scripts/version.sh`, which replaced `version.txt`.
+
+## 2026-11-01 — Attachment limit 128 MB by default
+
+Replaces "Attachments both ways (`sendMedia`), 8 MB limit (OpenClaw's `mediaMaxMb` default), sealed chunks under the relay's 1 MiB frame limit. Share extension stays, with a preview of the picture or file being sent; PDFs show their first page (2026-10-17). No voice notes yet. (2026-10-15)": the default attachment limit is 128 MB, overridable through `agents.defaults.mediaMaxMb` or `channels.yorozu.mediaMaxMb`; the channel setting wins (#618).
