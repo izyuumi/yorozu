@@ -47,6 +47,7 @@ enum Diagnostics {
             "Conversations: \(model.conversations.count), stalled \(model.stalled.count)",
             "Devices: \(model.devices?.count.description ?? "unknown")",
             "Notifications: \(notificationName(notifications))",
+            "Voice model: \(VoiceModel.shared.state)",
         ]
         #if os(macOS)
         lines.append("Beta updates: \(UserDefaults.standard.bool(forKey: MacUpdates.betaKey))")

@@ -15749,6 +15749,110 @@
         }
       }
     },
+    "The voice model isn’t available for this version of Yorozu yet. Try again later." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このバージョンの Yorozu では、音声モデルをまだ利用できません。しばらくしてからもう一度お試しください。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此版本的 Yorozu 暂时还无法使用语音模型。请稍后再试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這個版本的 Yorozu 暫時還無法使用語音模型。請稍後再試一次。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 버전의 Yorozu에서는 아직 음성 모델을 사용할 수 없습니다. 나중에 다시 시도하세요."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El modelo de voz aún no está disponible para esta versión de Yorozu. Inténtalo de nuevo más tarde."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le modèle vocal n’est pas encore disponible pour cette version de Yorozu. Réessayez plus tard."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Sprachmodell ist für diese Version von Yorozu noch nicht verfügbar. Versuche es später erneut."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O modelo de voz ainda não está disponível para esta versão do Yorozu. Tente novamente mais tarde."
+          }
+        }
+      }
+    },
+    "The voice model couldn’t be downloaded. Try again." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音声モデルをダウンロードできませんでした。もう一度お試しください。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法下载语音模型。请重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法下載語音模型。請再試一次。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "음성 모델을 다운로드할 수 없습니다. 다시 시도하세요."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo descargar el modelo de voz. Inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de télécharger le modèle vocal. Réessayez."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Sprachmodell konnte nicht heruntergeladen werden. Versuche es erneut."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível baixar o modelo de voz. Tente novamente."
+          }
+        }
+      }
+    },
     "The downloaded model was damaged. Try again." : {
       "localizations" : {
         "ja" : {

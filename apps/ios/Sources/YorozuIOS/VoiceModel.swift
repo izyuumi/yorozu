@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Observation
+import OSLog
 #if os(iOS)
 import BackgroundAssets
 import Network
@@ -46,8 +47,11 @@ final class VoiceModel {
 
     enum State: Equatable {
         case absent, downloading, ready
+        case unavailable
         case failed(String)
     }
+
+    private static let log = Logger(subsystem: Diagnostics.subsystem, category: "VoiceModel")
 
     private(set) var state: State = .absent
     private(set) var received: Int64 = 0
@@ -112,7 +116,8 @@ final class VoiceModel {
             state = .ready
         } catch {
             guard !Task.isCancelled, !(error is CancellationError) else { return }
-            state = .failed(error.localizedDescription)
+            Self.log.error("Voice model download failed: \(String(describing: error), privacy: .public)")
+            state = Self.state(for: error)
         }
         received = onDisk()
         download = nil
@@ -146,6 +151,19 @@ final class VoiceModel {
             throw Failure(String(localized: "The downloaded model was damaged. Try again."))
         }
         try FileManager.default.moveItem(at: part, to: final(file))
+    }
+
+    private static func state(for error: any Error) -> State {
+        #if os(iOS)
+        if #available(iOS 27, *), let error = error as? AssetPackManager.LocalAvailabilityError,
+            let failure = error.failures.values.first {
+            return state(for: failure)
+        }
+        if #available(iOS 26, *), case .assetPackNotFound? = error as? ManagedBackgroundAssetsError { return .unavailable }
+        #endif
+        if let failure = error as? Failure, let message = failure.errorDescription { return .failed(message) }
+        if error is URLError { return .failed(error.localizedDescription) }
+        return .failed(String(localized: "The voice model couldn’t be downloaded. Try again."))
     }
 
     #if os(iOS)

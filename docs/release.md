@@ -86,6 +86,8 @@ The Mac app links Sparkle (macOS only, `MacUpdates.swift`): stable feed from `SU
 
 On iPhone and iPad the voice model is an Apple-hosted, on-demand asset pack (ID `VoiceModel`, `VoiceModel.packID`), uploaded once and updated independently of app builds. `scripts/voice_asset_pack.sh <dir>` downloads the pinned files, checks their SHA-256 and writes `<dir>/VoiceModel.aar`; upload it with Transporter, then submit it for review in App Store Connect with a build. A new model revision needs the script, `VoiceModel.files` and the pack updated together.
 
+Until App Store Connect has processed a version of the pack, the system knows no pack with that ID (`ManagedBackgroundAssetsError.assetPackNotFound`), and Settings › Voice Input says the model isn’t available for this version yet, with Try Again; the underlying error goes to the log that Copy Diagnostics includes. Internal TestFlight uses the latest processed version on its own; external TestFlight needs that version approved in TestFlight App Review, and the App Store needs it approved in a review submission, alone or with an app version. Check what App Store Connect has with `GET /v1/apps/{id}/backgroundAssets`.
+
 ## Compile checks
 
 The commands `checks.yml` runs, without signing, uploading or touching `/Applications` (CI adds `-quiet`):
