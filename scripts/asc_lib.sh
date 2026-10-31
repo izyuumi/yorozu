@@ -27,8 +27,21 @@ asc_get() {
     printf 'header = "Authorization: Bearer %s"\n' "$(jwt)" | curl -fsS --config - "$1"
 }
 
-# asc_send <method> <url> <json>
+# asc_send <method> <url> <json>: prints the response body on a 2xx. Otherwise it prints App Store Connect's errors
+# (status, code, title and detail of each) to standard error and returns 22, like curl -f; a transport failure
+# returns curl's own exit code. The response body never holds the key or the token.
 asc_send() {
-    printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$(jwt)" \
-        | curl -fsS --config - -X "$1" --data "$3" "$2"
+    asc_body=$(mktemp) || return 1
+    asc_status=$(printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$(jwt)" \
+        | curl -sS --config - -X "$1" --data "$3" -o "$asc_body" -w '%{http_code}' "$2") \
+        || { asc_rc=$?; rm -f "$asc_body"; return "$asc_rc"; }
+    case "$asc_status" in
+        2??) cat "$asc_body"; rm -f "$asc_body"; return 0 ;;
+    esac
+    echo "App Store Connect answered HTTP $asc_status to $1 ${2%%\?*}" >&2
+    asc_errors=$(jq -r '.errors[]? | "  \(.status // "?") \(.code // "?"): \(.title // "")"
+        + (if .detail then " - \(.detail)" else "" end)' "$asc_body" 2>/dev/null) || asc_errors=
+    if [ -n "$asc_errors" ]; then printf '%s\n' "$asc_errors" >&2; else head -c 500 "$asc_body" >&2; echo >&2; fi
+    rm -f "$asc_body"
+    return 22
 }
