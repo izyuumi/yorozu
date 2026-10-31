@@ -59,10 +59,10 @@ struct ChatView: View {
         })
         #endif
         .scrollDismissesKeyboard(.interactively)
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentSize.height - geometry.visibleRect.maxY
-        } action: { _, distance in
-            atBottom = distance <= LayoutMetrics.section * 2
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentSize.height - geometry.visibleRect.maxY <= LayoutMetrics.section * 2
+        } action: { _, bottom in
+            atBottom = bottom
         }
         .defaultScrollAnchor(.bottom)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
