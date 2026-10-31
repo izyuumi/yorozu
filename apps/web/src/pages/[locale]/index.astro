@@ -1,0 +1,6 @@
+---
+import Home from '../../components/Home.astro';
+import { localeRoutes } from '../../components/routes.mjs';
+export const getStaticPaths = localeRoutes;
+---
+<Home locale={Astro.props.locale} />

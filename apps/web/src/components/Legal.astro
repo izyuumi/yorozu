@@ -1,0 +1,16 @@
+---
+// Support, privacy and terms: text pages. Translations of the privacy policy and terms say the English version governs.
+import Base from '../layouts/Base.astro';
+import { localize, strings } from '../i18n/strings.mjs';
+
+interface Props { locale: string; kind: 'support' | 'privacy' | 'terms' }
+const { locale, kind } = Astro.props;
+const t = strings[locale];
+const p = t[kind];
+---
+<Base locale={locale} page={`/${kind}/`} title={p.title} description={p.description} mainClass="legal">
+  <h1>{p.heading}</h1>
+  {p.effective && <p class="effective">{p.effective}</p>}
+  {kind !== 'support' && t.governs && <p class="translation-note" lang={locale} set:html={t.governs.replace('@en', `/${kind}/`)} />}
+  <Fragment set:html={localize(p.body, locale)} />
+</Base>

@@ -1,41 +1,66 @@
 ---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { byCode, locales, pages as allPages } from '../i18n/locales.mjs';
+import { strings } from '../i18n/strings.mjs';
+
 interface Props {
+  locale: string;
+  page: string;
   title: string;
   description: string;
   mainClass?: string;
+  og?: { title: string; description: string; imageAlt: string };
 }
-const { title, description, mainClass } = Astro.props;
-const path = Astro.url.pathname;
-const home = path === '/';
-const current = (href: string) => (href === path ? 'page' : undefined);
-const pages = [['/', 'Home'], ['/support/', 'Support'], ['/privacy/', 'Privacy'], ['/terms/', 'Terms']];
+const { locale, page, title, description, mainClass, og } = Astro.props;
+const t = strings[locale];
+const url = (code: string, english: string) => getRelativeLocaleUrl(code, english.slice(1));
+const here = url(locale, page);
+const home = page === '/';
+const current = (english: string) => (english === page ? 'page' : undefined);
+const footerPages = [['/', t.nav.home], ['/support/', t.nav.support], ['/privacy/', t.nav.privacy], ['/terms/', t.nav.terms]];
+if (!allPages.includes(page) || !byCode[locale]) throw new Error(`Unknown page ${locale} ${page}`);
 ---
 <!DOCTYPE html>
-<html lang={Astro.currentLocale ?? 'en'}>
+<html lang={locale}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{title}</title>
   <meta name="description" content={description}>
-  <link rel="canonical" href={new URL(path, Astro.site).href}>
+  <link rel="canonical" href={new URL(here, Astro.site).href}>
+  {locales.map(({ code }) => <link rel="alternate" hreflang={code} href={new URL(url(code, page), Astro.site).href}>)}
+  <link rel="alternate" hreflang="x-default" href={new URL(page, Astro.site).href}>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64">
   <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/styles.css">
+  {og && <>
+    <meta property="og:title" content={og.title}>
+    <meta property="og:description" content={og.description}>
+    <meta property="og:url" content={new URL(here, Astro.site).href}>
+    <meta property="og:locale" content={locale.replace('-', '_')}>
+    <meta property="og:image" content="https://yorozu.yumi.to/assets/og.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content={og.imageAlt}>
+    <meta name="twitter:card" content="summary_large_image">
+  </>}
+  <script is:inline src="/lang.js" defer></script>
   <slot name="head" />
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
+  <a class="skip-link" href="#main">{t.skip}</a>
   <header class="site">
-    <a class="wordmark" href="/"><picture><source srcset="/assets/icon-dark.png" media="(prefers-color-scheme: dark)"><img src="/assets/icon.png" alt="" width="34" height="34"></picture>Yorozu</a>
-    <nav aria-label="Primary">
-      <a href="/support/" aria-current={current('/support/')}>Support</a>
-      <a href="/privacy/" aria-current={current('/privacy/')}>Privacy</a>
-      <a href="/terms/" aria-current={current('/terms/')}>Terms</a>
+    <a class="wordmark" href={url(locale, '/')}><picture><source srcset="/assets/icon-dark.png" media="(prefers-color-scheme: dark)"><img src="/assets/icon.png" alt="" width="34" height="34"></picture>{t.name}</a>
+    <nav aria-label={t.nav.primary}>
+      <a href={url(locale, '/support/')} aria-current={current('/support/')}>{t.nav.support}</a>
+      <a href={url(locale, '/privacy/')} aria-current={current('/privacy/')}>{t.nav.privacy}</a>
+      <a href={url(locale, '/terms/')} aria-current={current('/terms/')}>{t.nav.terms}</a>
       <a href="https://github.com/izyuumi/yorozu">GitHub</a>
-      {home && <a class="button small" href="/iphone">Get the app</a>}
+      <a class="language-link" href="#languages" aria-label={`${t.nav.language}: ${byCode[locale].label}`}>{byCode[locale].label}</a>
+      {home && <a class="button small" href="/iphone">{t.nav.getApp}</a>}
     </nav>
   </header>
 
@@ -44,10 +69,13 @@ const pages = [['/', 'Home'], ['/support/', 'Support'], ['/privacy/', 'Privacy']
   </main>
 
   <footer class="site">
-    <span>© 2026 Yumi Izumi{home && '. Yorozu is not affiliated with OpenClaw, Nous Research (Hermes Agent), Cua (CuaDriver), Anthropic or OpenAI.'}</span>
-    <nav aria-label="Footer">
-      {pages.filter(([href]) => href !== path).map(([href, label]) => <a href={href}>{label}</a>)}
+    <span>{t.footer.copyright}{home && t.footer.affiliation}</span>
+    <nav aria-label={t.nav.footer}>
+      {footerPages.filter(([english]) => english !== page).map(([english, label]) => <a href={url(locale, english)}>{label}</a>)}
       <a href="https://github.com/izyuumi/yorozu">GitHub</a>
+    </nav>
+    <nav class="languages" id="languages" aria-label={t.nav.language}>
+      {locales.map(({ code, label }) => <a href={url(code, page)} hreflang={code} lang={code} data-locale={code} aria-current={code === locale ? 'true' : undefined}>{label}</a>)}
     </nav>
   </footer>
 </body>

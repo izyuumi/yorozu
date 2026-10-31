@@ -1,0 +1,22 @@
+---
+// The pages a pairing or add-a-Mac QR code opens when Yorozu is not installed. The code is in the #fragment.
+import Base from '../layouts/Base.astro';
+import { strings } from '../i18n/strings.mjs';
+
+interface Props { locale: string; kind: 'pair' | 'add' }
+const { locale, kind } = Astro.props;
+const p = strings[locale][kind];
+---
+<Base locale={locale} page={`/${kind}/`} title={p.title} description={p.description} mainClass="legal">
+  <Fragment slot="head">
+    <meta name="robots" content="noindex">
+    {kind === 'pair' && <script is:inline src="/pair.js" defer></script>}
+  </Fragment>
+  <h1>{p.title}</h1>
+  <p>{p.intro}</p>
+  <p>
+    <a class="button" href="/iphone">{strings[locale].home.appStore}</a>
+    {kind === 'pair' && <a class="button ghost" id="open-in-app" href="/iphone" hidden>{p.open}</a>}
+  </p>
+  <p>{p.private}</p>
+</Base>

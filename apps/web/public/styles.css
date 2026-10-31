@@ -273,6 +273,14 @@ footer.site {
 footer nav { display: flex; gap: 4px; }
 footer nav a { padding: 4px 8px; text-decoration: none; }
 footer nav a:hover { color: var(--ink); }
+footer nav.languages { flex-basis: 100%; flex-wrap: wrap; gap: 2px 4px; margin-left: -8px; }
+footer nav.languages a[aria-current="true"] { color: var(--ink); font-weight: 650; }
+
+/* Italic and tight tracking suit Latin type, not Chinese, Japanese or Korean. */
+:lang(ja) em, :lang(zh) em, :lang(ko) em { font-style: normal; }
+:lang(ja) :is(h1, h2, h3), :lang(zh) :is(h1, h2, h3), :lang(ko) :is(h1, h2, h3) { letter-spacing: 0; }
+:lang(ja) :is(h1, h2, h3, dt), :lang(ko) :is(h1, h2, h3, dt) { word-break: auto-phrase; }
+.legal .translation-note { margin: 0 0 28px; padding: 14px 18px; border-radius: 14px; background: var(--raised); color: var(--muted); font-size: 15px; }
 
 
 @media (max-width: 820px) {
@@ -288,5 +296,6 @@ footer nav a:hover { color: var(--ink); }
   header.site { flex-wrap: wrap; justify-content: center; }
   header nav { flex-wrap: wrap; justify-content: center; }
   .hero h1 { font-size: clamp(40px, 12vw, 56px); }
+  :lang(ja) .hero h1, :lang(zh) .hero h1, :lang(ko) .hero h1 { font-size: clamp(32px, 9.5vw, 56px); }
   .steps .num { font-size: 48px; }
 }

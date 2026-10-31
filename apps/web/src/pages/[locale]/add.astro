@@ -1,0 +1,6 @@
+---
+import Code from '../../components/Code.astro';
+import { localeRoutes } from '../../components/routes.mjs';
+export const getStaticPaths = localeRoutes;
+---
+<Code locale={Astro.props.locale} kind="add" />
