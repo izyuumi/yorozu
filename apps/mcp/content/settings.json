@@ -1,0 +1,59 @@
+{
+  "$comment": "What each app setting means to a user. The keys, defaults and options come from the Swift sources (scripts/generate.ts); every @AppStorage key in apps/ios/Sources needs an entry here, and every entry needs a key in code.",
+  "app": {
+    "appearance": {
+      "title": "Appearance",
+      "platforms": ["ios", "macos"],
+      "location": "Settings › General › Appearance",
+      "description": "Light, Dark or System (follows the device)."
+    },
+    "accent": {
+      "title": "Accent Color",
+      "platforms": ["ios", "macos"],
+      "location": "Settings › General › Appearance",
+      "description": "The tint used for buttons, your message bubbles and highlights."
+    },
+    "noticeHaptics": {
+      "title": "Haptic for In-App Notices",
+      "platforms": ["ios"],
+      "location": "Settings › General › Notifications",
+      "description": "Plays a light haptic when a reply in another conversation shows as a notice at the top of the screen while Yorozu is open."
+    },
+    "spotlightIndexing": {
+      "title": "Show Conversations in Siri and Search",
+      "platforms": ["ios", "macos"],
+      "location": "Settings › General › Siri & Search",
+      "description": "Lets Siri and Spotlight find conversations by their titles and recent messages. The index stays on the device and is removed when you unpair. Not shown in demo mode."
+    },
+    "commandReturnSends": {
+      "title": "Send with ⌘Return",
+      "platforms": ["macos"],
+      "location": "Settings › General › Send Key",
+      "description": "Off: Return sends a one-line message, Shift-Return adds a new line, and ⌘Return always sends. On: Return adds a new line and only ⌘Return sends."
+    },
+    "voiceInput": {
+      "title": "Voice Input",
+      "platforms": ["ios", "macos"],
+      "location": "Settings › Voice Input",
+      "description": "Speak a message instead of typing it. Speech is transcribed on the device. Turning it on downloads the voice model (about 1.44 GB): from Apple as an asset pack on iPhone and iPad (iOS 26 or later), from Hugging Face on the Mac. Devices with less than about 6 GB of RAM can't turn it on."
+    },
+    "voiceInputLanguage": {
+      "title": "Language",
+      "platforms": ["ios", "macos"],
+      "location": "Settings › Voice Input",
+      "description": "The spoken language for voice input: Automatic, or one of the 18 speech languages the model supports, each named in its own language."
+    },
+    "YorozuZoomStep": {
+      "title": "Zoom",
+      "platforms": ["ios", "macos"],
+      "location": "View › Zoom In (⌘+), Zoom Out (⌘−), Actual Size (⌘0)",
+      "description": "Scales the app's text in seven steps from 75% to 200% (step -2 to 4, 0 is actual size), stored per device. Works on the Mac and on iPad with a keyboard; iPhone follows the system text size only."
+    },
+    "YorozuBetaUpdates": {
+      "title": "Update to: Beta Versions",
+      "platforms": ["macos"],
+      "location": "Settings › About › Update to:",
+      "description": "Off (Stable Versions): Sparkle offers only stable releases. On (Beta Versions): it also offers betas, which have the newest changes before a stable release."
+    }
+  }
+}

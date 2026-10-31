@@ -8,6 +8,7 @@ Yorozu is an end-to-end-encrypted chat channel for OpenClaw: a native app for iP
 - `apps/relay`: the relay, a Cloudflare Worker that passes sealed frames between plugin and devices and sends push.
 - `apps/ios`: the SwiftUI client for iPhone, iPad and Mac (Tuist project).
 - `packages/YorozuWire`: the shared Swift wire package.
+- `apps/mcp`: a read-only help MCP server for AI agents ([docs/help-mcp.md](docs/help-mcp.md)).
 - `apps/web`: the website, yorozu.yumi.to (Astro on Cloudflare): `pnpm --filter @yorozu/web dev|build|test`; deploys on merge (`deploy-web.yml`).
 
 ## Install
@@ -38,6 +39,7 @@ Compile checks, releases and CI: [docs/release.md](docs/release.md).
 - [Setup](docs/setup.md)
 - [Release](docs/release.md)
 - [Plugin reference](plugins/openclaw-yorozu/README.md)
+- [Help MCP server](docs/help-mcp.md): lets an AI agent answer Yorozu setup and usage questions
 - [OpenClaw channel SDK facts](docs/openclaw-channel.md)
 - [Wire contract](docs/ios-relay-contract.md)
 - [Owner decisions](OWNER_DECISIONS.md)

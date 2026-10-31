@@ -1,0 +1,72 @@
+{
+  "$comment": "Step order per platform. A step's `section` names a heading in a bundled doc, whose text scripts/generate.ts copies in; a missing heading fails generation. `quote` must appear in its file.",
+  "platforms": {
+    "ios": {
+      "title": "Set up Yorozu on iPhone or iPad",
+      "steps": [
+        {
+          "title": "Install the Yorozu plugin on the computer that runs OpenClaw",
+          "text": "Yorozu needs your own OpenClaw Gateway (2026.9.8 or later). Run these on that computer, from a checkout of the Yorozu repository that will stay in place.",
+          "section": { "doc": "setup", "heading": "1. Install the plugin" }
+        },
+        {
+          "title": "Check the config (optional)",
+          "text": "Every key under channels.yorozu has a default, so no config is needed. Change `channels.yorozu.agent` to pick which agent answers. Use list_settings for every key.",
+          "section": { "doc": "setup", "heading": "2. Config" },
+          "inline": false
+        },
+        {
+          "title": "Install the app",
+          "text": "Install Yorozu from the App Store on the iPhone or iPad."
+        },
+        {
+          "title": "Pair the device",
+          "text": "On the Gateway computer run `openclaw yorozu pair`, then in the app tap Scan QR Code and scan it. Check that the host key matches the fingerprint the command printed.",
+          "section": { "doc": "setup", "heading": "4. Pair a device" }
+        },
+        {
+          "title": "Allow notifications",
+          "text": "The app asks right after pairing. Allowing it lets replies arrive as push notifications while the app is closed."
+        },
+        {
+          "title": "Turn on voice input (optional)",
+          "text": "Settings › Voice Input downloads the on-device voice model from Apple (about 1.44 GB, on Wi-Fi unless you allow cellular). Needs iOS 26 or later and about 6 GB of RAM."
+        }
+      ]
+    },
+    "macos": {
+      "title": "Set up Yorozu on a Mac",
+      "steps": [
+        {
+          "title": "Install the Yorozu plugin on the computer that runs OpenClaw",
+          "text": "Yorozu needs your own OpenClaw Gateway (2026.9.8 or later). It can be this Mac or another computer. Run these on that computer, from a checkout of the Yorozu repository that will stay in place.",
+          "section": { "doc": "setup", "heading": "1. Install the plugin" }
+        },
+        {
+          "title": "Check the config (optional)",
+          "text": "Every key under channels.yorozu has a default, so no config is needed. Change `channels.yorozu.agent` to pick which agent answers. Use list_settings for every key.",
+          "section": { "doc": "setup", "heading": "2. Config" },
+          "inline": false
+        },
+        {
+          "title": "Install the app",
+          "text": "Download the signed, notarized DMG from https://yorozu.yumi.to/mac (the latest stable release) and drag Yorozu to Applications. It updates itself with Sparkle. To build from source instead, run `scripts/build_native.sh`.",
+          "quote": { "file": "apps/web/worker.mjs", "text": "'/mac'" }
+        },
+        {
+          "title": "Pair the Mac",
+          "text": "On the Gateway computer run `openclaw yorozu pair` and paste the printed link into Pairing link, then click Pair. If an iPhone or iPad is already paired, you can instead scan the code the Mac shows from Settings › Add a Device › Scan a Mac's Code on that device.",
+          "section": { "doc": "setup", "heading": "4. Pair a device" }
+        },
+        {
+          "title": "Allow notifications",
+          "text": "The app asks right after pairing. The Mac gets no push; while Yorozu runs, replies in other conversations post local notifications."
+        },
+        {
+          "title": "Turn on voice input (optional)",
+          "text": "Settings › Voice Input downloads the on-device voice model from Hugging Face (about 1.44 GB, checked by SHA-256). macOS asks for the microphone the first time you record."
+        }
+      ]
+    }
+  }
+}
