@@ -1,17 +1,21 @@
 :root {
   color-scheme: light dark;
-  --canvas: oklch(0.985 0.004 80);
-  --raised: oklch(0.955 0.006 80);
-  --ink: oklch(0.19 0.03 60);
-  --muted: oklch(0.42 0.02 60);
-  --line: oklch(0.88 0.01 80);
-  --amber: oklch(0.82 0.15 80);
-  --amber-deep: oklch(0.7 0.16 72);
-  --amber-ink: oklch(0.32 0.08 68);
-  --red: oklch(0.55 0.19 35);
-  --on-red: white;
-  --red-bg: oklch(0.96 0.03 45);
-  --shadow: 0 30px 80px -30px oklch(0.3 0.08 70 / 0.55);
+  /* The app's colors: system backgrounds, the Vermilion accent (AccentColor.colorset, Accent.vermilion)
+     and the app icon's paper and slate (AppIcon.icon). */
+  --canvas: #FFFFFF;
+  --raised: #F2F2F7;
+  --ink: #000000;
+  --muted: #6C6C70;
+  --line: #C6C6C8;
+  --paper: #F1ECE4;
+  --slate: #4C5760;
+  --hero: var(--paper);
+  --hero-ink: var(--slate);
+  --hero-em: var(--accent);
+  --accent: #BC2D1C;
+  --on-accent: #FFFFFF;
+  --accent-bg: color-mix(in srgb, var(--accent) 9%, var(--canvas));
+  --shadow: 0 30px 80px -30px rgb(76 87 96 / 0.55);
   --page: min(1120px, calc(100% - clamp(32px, 6vw, 64px)));
   --display: ui-serif, "New York", "Iowan Old Style", Charter, Georgia, serif;
   --text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
@@ -24,15 +28,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --canvas: oklch(0.16 0.012 60);
-    --raised: oklch(0.21 0.014 60);
-    --ink: oklch(0.95 0.01 80);
-    --muted: oklch(0.76 0.015 80);
-    --line: oklch(0.3 0.015 60);
-    --red: oklch(0.74 0.16 35);
-    --on-red: oklch(0.16 0.012 60);
-    --red-bg: oklch(0.25 0.05 40);
-    --shadow: 0 30px 80px -30px oklch(0 0 0 / 0.8);
+    --canvas: #000000;
+    --raised: #1C1C1E;
+    --ink: #FFFFFF;
+    --muted: #AEAEB2;
+    --line: #38383A;
+    --hero: var(--slate);
+    --hero-ink: var(--paper);
+    --hero-em: var(--paper);
+    --accent: #F06047;
+    --on-accent: #000000;
+    --accent-bg: color-mix(in srgb, var(--accent) 16%, var(--canvas));
+    --shadow: 0 30px 80px -30px rgb(0 0 0 / 0.8);
   }
 }
 
@@ -48,7 +55,7 @@ body {
 
 a { color: inherit; text-decoration-color: color-mix(in oklch, currentColor 40%, transparent); text-underline-offset: 0.18em; }
 a:hover { text-decoration-color: currentColor; }
-a:focus-visible, button:focus-visible { outline: 3px solid var(--red); outline-offset: 3px; border-radius: 6px; }
+a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
 img, svg { display: block; max-width: 100%; height: auto; }
 h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -0.02em; text-wrap: balance; margin: 0; }
 h2 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
@@ -73,7 +80,7 @@ header.site {
 }
 
 .wordmark { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; text-decoration: none; }
-.wordmark img { width: 34px; height: 34px; border-radius: 9px; }
+.wordmark img { width: 34px; height: 34px; border-radius: 9px; box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.12); }
 
 header nav { display: flex; align-items: center; gap: 2px; font-size: 15px; font-weight: 600; }
 header nav a { padding: 8px 12px; border-radius: 9px; text-decoration: none; color: var(--muted); }
@@ -98,14 +105,14 @@ header nav .button { margin-left: 8px; }
 .button:hover { transform: translateY(-1px); }
 .button:active { transform: translateY(0); transition-duration: 0.08s; }
 header nav a.button { min-height: 38px; padding: 0 16px; font-size: 14px; background: var(--ink); color: var(--canvas); }
-header nav a.button:hover { background: var(--red); color: var(--on-red); }
+header nav a.button:hover { background: var(--accent); color: var(--on-accent); }
 .button.ghost { background: transparent; color: inherit; box-shadow: inset 0 0 0 2px currentColor; }
 .button.ghost:hover { background: oklch(1 0 0 / 0.25); }
 
 
 .hero {
-  background: var(--amber);
-  color: var(--amber-ink);
+  background: var(--hero);
+  color: var(--hero-ink);
   overflow: hidden;
   border-radius: 0 0 clamp(20px, 3vw, 36px) clamp(20px, 3vw, 36px);
 }
@@ -118,15 +125,16 @@ header nav a.button:hover { background: var(--red); color: var(--on-red); }
   align-items: end;
   padding-top: clamp(48px, 9vw, 120px);
 }
-.hero-copy { padding-bottom: clamp(48px, 8vw, 110px); color: oklch(0.15 0.03 60); }
+.hero-copy { padding-bottom: clamp(48px, 8vw, 110px); color: var(--hero-ink); }
 .hero h1 { font-size: clamp(44px, 6.6vw, 88px); line-height: 0.98; letter-spacing: -0.03em; }
-.hero h1 em { font-weight: 500; }
-.lede { max-width: 32em; margin-top: 24px; font-size: clamp(18px, 1.6vw, 21px); line-height: 1.5; color: oklch(0.24 0.05 65); }
+.hero h1 em { font-weight: 500; color: var(--hero-em); }
+.hero .button:not(.ghost) { background: var(--accent); color: var(--on-accent); }
+.lede { max-width: 32em; margin-top: 24px; font-size: clamp(18px, 1.6vw, 21px); line-height: 1.5; color: var(--hero-ink); }
 .kana { font-weight: 500; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
 .hero .fine { margin-top: 22px; }
 .fine { font-size: 14px; color: var(--muted); }
-.hero .fine { color: var(--amber-ink); }
+.hero .fine { color: var(--hero-ink); }
 
 .phone { margin: 0; justify-self: center; width: min(100%, 340px); margin-bottom: -22%; }
 .iphone-device { position: relative; aspect-ratio: 1350 / 2760; }
@@ -157,7 +165,7 @@ main > section + section:not(.hero) { border-top: 1px solid var(--line); }
 section[id] { scroll-margin-top: 24px; }
 .steps ol { list-style: none; margin: 40px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: clamp(24px, 4vw, 56px); }
 .steps li { display: grid; gap: 8px; }
-.steps .num { font-family: var(--display); font-size: 64px; line-height: 1; color: var(--amber-deep); margin-bottom: 8px; }
+.steps .num { font-family: var(--display); font-size: 64px; line-height: 1; color: var(--accent); margin-bottom: 8px; }
 .steps p { color: var(--muted); max-width: 30em; }
 
 
@@ -188,6 +196,7 @@ section[id] { scroll-margin-top: 24px; }
 .facts { margin: clamp(32px, 5vw, 56px) 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 32px clamp(24px, 4vw, 56px); }
 .facts dt { font-weight: 650; font-size: 18px; }
 .facts dd { margin: 6px 0 0; color: var(--muted); }
+.facts.three { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
 
 
 .agent-setup-text { max-width: 40em; }
@@ -222,7 +231,7 @@ section[id] { scroll-margin-top: 24px; }
   transition: background-color 0.2s, transform 0.35s var(--ease);
 }
 .copy:hover { transform: translateY(-1px); }
-.copy.done { background: var(--red); color: var(--on-red); }
+.copy.done { background: var(--accent); color: var(--on-accent); }
 .agent-setup .fine { margin-top: 14px; }
 .copy-status { margin-top: 12px; font-size: 14px; color: var(--muted); }
 .copy-status:empty { margin-top: 0; }
@@ -234,9 +243,9 @@ section[id] { scroll-margin-top: 24px; }
 
 
 .warning { max-width: 46em; }
-.warning h2 { font-family: var(--text); font-size: 18px; font-weight: 700; letter-spacing: 0; color: var(--red); }
+.warning h2 { font-family: var(--text); font-size: 18px; font-weight: 700; letter-spacing: 0; color: var(--accent); }
 .warning p { margin-top: 12px; }
-main > section.warning { padding: clamp(24px, 3vw, 32px); margin-block: 0 clamp(56px, 8vw, 112px); border: 0; border-radius: 20px; background: var(--red-bg); }
+main > section.warning { padding: clamp(24px, 3vw, 32px); margin-block: 0 clamp(56px, 8vw, 112px); border: 0; border-radius: 20px; background: var(--accent-bg); }
 
 
 .legal { width: min(720px, var(--page)); margin-inline: auto; padding-block: clamp(40px, 6vw, 72px) 80px; }
@@ -245,7 +254,7 @@ main > section.warning { padding: clamp(24px, 3vw, 32px); margin-block: 0 clamp(
 .legal h2 { font-size: 24px; margin: 40px 0 10px; }
 .legal p { margin: 0 0 14px; }
 .legal li { margin-bottom: 8px; }
-.legal .warning { margin-block: 28px; padding: 24px; border-radius: 20px; background: var(--red-bg); }
+.legal .warning { margin-block: 28px; padding: 24px; border-radius: 20px; background: var(--accent-bg); }
 .legal .warning h2 { margin-top: 0; font-size: 20px; }
 
 
