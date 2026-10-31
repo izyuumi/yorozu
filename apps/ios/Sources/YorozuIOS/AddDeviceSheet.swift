@@ -10,6 +10,7 @@ struct AddDeviceSheet: View {
     @State private var known: Set<String>?
     @State private var paired: DeviceInfo?
     @State private var enlarged = false
+    @State private var expired: Int64?
     private static let pollInterval: Duration = .seconds(2)
 
     var body: some View {
@@ -100,8 +101,8 @@ struct AddDeviceSheet: View {
             let expiry = Date(timeIntervalSince1970: TimeInterval(expiresAt) / 1000)
             Text("On the new iPhone, iPad or Mac, scan this code with the camera or in Yorozu, or open the link there.")
                 .multilineTextAlignment(.center)
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                if context.date < expiry {
+            Group {
+                if expired != expiresAt {
                     VStack(spacing: LayoutMetrics.stack) {
                         Button { withAnimation(.snappy) { enlarged = true } } label: { QRCode(text: webLink) }
                             .buttonStyle(.plain)
@@ -119,6 +120,10 @@ struct AddDeviceSheet: View {
                         Button(String(localized: "New Code")) { model.requestInvite() }
                     }
                 }
+            }
+            .task(id: expiresAt) {
+                try? await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSinceNow)))
+                if !Task.isCancelled { expired = expiresAt }
             }
             ShareLink(item: url) { Label(String(localized: "Send the Link"), systemImage: "square.and.arrow.up") }
             if let fingerprint = invite.fingerprint {
@@ -227,12 +232,17 @@ struct QRCode: View {
         return pixelsPerModule * modules / displayScale
     }
 
+    private static let context = CIContext()
+    private static var cached: (text: String, image: CGImage)?
+
     private static func image(_ text: String) -> CGImage? {
+        if let cached, cached.text == text { return cached.image }
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(text.utf8)
         filter.correctionLevel = "M"
-        guard let output = filter.outputImage else { return nil }
-        return CIContext().createCGImage(output, from: output.extent)
+        guard let output = filter.outputImage, let image = context.createCGImage(output, from: output.extent) else { return nil }
+        cached = (text, image)
+        return image
     }
 }
 

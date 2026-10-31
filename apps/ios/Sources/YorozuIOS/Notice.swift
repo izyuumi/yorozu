@@ -44,6 +44,7 @@ private struct InAppNotices: ViewModifier {
     let model: AppModel
     let open: (String) -> Void
     @AppStorage(NoticeHaptics.key) private var haptics = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
@@ -56,7 +57,7 @@ private struct InAppNotices: ViewModifier {
                         if model.notice?.id == notice.id { model.notice = nil }
                     }
                     .id(notice.id)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.fromTop(reduceMotion: reduceMotion))
                 }
             }
             .animation(.snappy, value: model.notice?.id)

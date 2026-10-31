@@ -49,6 +49,7 @@ extension View {
 
 private struct StatusBannerBar: ViewModifier {
     let banner: StatusBanner?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         Group {
@@ -77,7 +78,7 @@ private struct StatusBannerBar: ViewModifier {
             .padding(.horizontal, LayoutMetrics.gutter)
             .padding(.vertical, LayoutMetrics.inner)
             .accessibilityElement(children: .combine)
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(.fromTop(reduceMotion: reduceMotion))
         }
     }
 }
