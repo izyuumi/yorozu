@@ -691,16 +691,14 @@ private struct Composer: View {
                 .padding(.leading, attachLimit == nil ? LayoutMetrics.inner : 0)
                 .accessibilityLabel(Text("Message"))
                 .accessibilityIdentifier("composer.text")
-            ZStack {
-                if showsMic {
-                    mic.transition(.controlSwap(reduceMotion: reduceMotion))
-                } else {
-                    sendButton.transition(.controlSwap(reduceMotion: reduceMotion))
-                }
+            if voiceAvailable {
+                mic
             }
-            .frame(width: rowHeight, height: rowHeight)
-            .animation(.easeOut(duration: 0.15), value: showsMic)
+            if showsSend {
+                sendButton.transition(.controlSwap(reduceMotion: reduceMotion))
+            }
         }
+        .animation(.easeOut(duration: 0.15), value: showsSend)
         .padding(inset)
     }
 
@@ -743,7 +741,9 @@ private struct Composer: View {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil
     }
 
-    private var showsMic: Bool { voiceEnabled && VoiceModel.supported && !hasContent }
+    private var voiceAvailable: Bool { voiceEnabled && VoiceModel.supported }
+
+    private var showsSend: Bool { hasContent || !voiceAvailable }
 
     private var canSend: Bool { files.count <= Attachment.maxPerMessage && hasContent }
 
