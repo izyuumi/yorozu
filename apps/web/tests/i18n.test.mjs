@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import worker, { chooseLocale, securityHeaders } from '../worker.mjs';
 import { cookieLocale, detectLocale, localePath, locales, matchTag, pages } from '../src/i18n/locales.mjs';
 import { strings } from '../src/i18n/strings.mjs';
+import { agentPrompt } from '../src/agent-prompt.mjs';
 
 const dist = new URL('../dist/', import.meta.url);
 const site = 'https://yorozu.yumi.to';
@@ -128,11 +129,9 @@ function texts(value, path = '') {
 
 test('every translation has the English text\'s shape, links, tags and code, and is actually translated', () => {
   const en = strings.en;
-  // Words that are the same in a language: names, and "Notifications" in French or "Support" in German.
-  const same = new Set(['.name', '.footer.copyright', '.home.og.title', '.home.mac.title']);
-  const sameIn = { fr: ['.home.moreFacts.2.0'], de: ['.nav.support', '.support.title'] };
-  // The Japanese name already says よろず, so its lede drops the kana aside.
-  const dropped = { ja: { '.home.lede': ['span', '/span'] } };
+  // Words that are the same in a language: names, and "Support" in German.
+  const same = new Set(['.name', '.footer.copyright', '.home.og.title']);
+  const sameIn = { de: ['.nav.support', '.support.title', '.home.docs.2.0'] };
   for (const { code } of translated) {
     const t = strings[code];
     assert.deepEqual(shape({ ...t, governs: null }), shape(en), code);
@@ -140,8 +139,7 @@ test('every translation has the English text\'s shape, links, tags and code, and
     const source = new Map(texts(en));
     for (const [path, text] of texts(t)) {
       if (path === '.governs') continue;
-      const expected = markup(source.get(path)).filter(item => !dropped[code]?.[path]?.includes(item));
-      assert.deepEqual(markup(text), expected, `${code}${path}`);
+      assert.deepEqual(markup(text), markup(source.get(path)), `${code}${path}`);
       if (!same.has(path) && !sameIn[code]?.includes(path)) assert.notEqual(text, source.get(path), `${code}${path} is still English`);
     }
     assert.notEqual(t.privacy.effective, en.privacy.effective, code);
@@ -212,4 +210,59 @@ test('choosing a language remembers it and keeps the pairing code in the #fragme
   assert.equal(link.href, 'https://yorozu.yumi.to/de/pair/?v=1#yorozu-pair-code');
   assert.match(document.cookie, /^yorozu_lang=de; Path=\/; Max-Age=31536000; SameSite=Lax; Secure$/);
   assert.equal(cookieLocale(document.cookie.split(';')[0]), 'de');
+});
+
+const htmlText = text => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+const attrText = text => text.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+
+test('the agent setup prompt connects the help server, falls back to the guide, and asks for the page language', () => {
+  const english = agentPrompt();
+  assert.ok(english.includes('claude mcp add --transport http yorozu-help https://yorozu.yumi.to/mcp'));
+  const config = JSON.parse(english.match(/\{"mcpServers".*\}\}\}/)[0]);
+  assert.deepEqual(config, { mcpServers: { 'yorozu-help': { url: 'https://yorozu.yumi.to/mcp' } } });
+  assert.ok(english.includes('https://github.com/izyuumi/yorozu/blob/main/docs/setup.md'));
+  assert.match(english, /Mac or on an iPhone or iPad/);
+  assert.doesNotMatch(english, /Reply to me in/);
+  assert.ok(agentPrompt(strings.ja.home.agent.language).endsWith('\n\nReply to me in Japanese.'));
+  for (const { code } of translated) assert.match(strings[code].home.agent.language, /^[A-Z][a-z]+( [A-Z][a-z]+)?$/, code);
+});
+
+test('every home page has the same copy block, labelled and announced in its own language', async () => {
+  const en = strings.en.home;
+  for (const { code } of locales) {
+    const a = strings[code].home.agent;
+    const html = await readFile(distFile(localePath(code, '/')), 'utf8');
+    assert.ok(html.includes(`<code id="agent-prompt">${htmlText(agentPrompt(a.language))}</code>`), `${code} shows the prompt`);
+    const [button] = html.match(/<button[^>]*data-copy="agent-prompt"[^>]*>[^<]*<\/button>/) ?? [];
+    assert.ok(button, `${code} copy button`);
+    assert.match(button, /type="button"/);
+    assert.match(button, /\shidden[\s>]/, `${code}: hidden until copy.js runs`);
+    for (const [attribute, value] of [['aria-label', a.copyLabel], ['data-copied', a.copied], ['data-status', a.status], ['data-failed', a.failed]]) {
+      assert.ok(button.includes(`${attribute}="${attrText(value)}"`), `${code} ${attribute}`);
+    }
+    assert.ok(button.endsWith(`>${htmlText(a.copy)}</button>`), `${code} button text`);
+    assert.ok(a.copyLabel.toLowerCase().includes(a.copy.toLowerCase()), `${code}: the accessible name contains the visible label`);
+    assert.match(html, /<p class="copy-status" id="agent-prompt-status" role="status" aria-live="polite"><\/p>/, code);
+    assert.ok(html.includes('<script src="/copy.js" defer></script>'), code);
+    for (const href of ['/iphone', '/mac', 'https://github.com/izyuumi/yorozu/blob/main/docs/setup.md', 'https://github.com/izyuumi/yorozu/blob/main/docs/help-mcp.md', localePath(code, '/support/')]) {
+      assert.ok(html.includes(`href="${href}"`), `${code} links ${href}`);
+    }
+    if (code === 'en') continue;
+    for (const key of ['title', 'intro', 'copy', 'copyLabel', 'status', 'failed', 'note']) {
+      assert.ok(!html.includes(`>${htmlText(en.agent[key])}<`) && !html.includes(`="${attrText(en.agent[key])}"`), `${code} has no English ${key}`);
+    }
+    for (const text of [en.setupTitle, en.docsTitle]) assert.ok(!html.includes(htmlText(text)), `${code}: ${text}`);
+  }
+});
+
+test('the home page links only to pages, files and redirects that exist', async () => {
+  const redirects = (await readFile(new URL('_redirects', dist), 'utf8')).split('\n').filter(Boolean).map(line => line.split(/\s+/)[0]);
+  const workerRoutes = ['/mac'];
+  for (const { code } of locales) {
+    const html = await readFile(distFile(localePath(code, '/')), 'utf8');
+    for (const [, href] of html.matchAll(/href="(\/[^"#]*)/g)) {
+      if (redirects.includes(href) || workerRoutes.includes(href)) continue;
+      await readFile(new URL(`.${href}${href.endsWith('/') ? 'index.html' : ''}`, dist));
+    }
+  }
 });
