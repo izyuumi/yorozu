@@ -59,10 +59,10 @@ struct ChatView: View {
         })
         #endif
         .scrollDismissesKeyboard(.interactively)
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentSize.height - geometry.visibleRect.maxY
-        } action: { _, distance in
-            atBottom = distance <= LayoutMetrics.section * 2
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentSize.height - geometry.visibleRect.maxY <= LayoutMetrics.section * 2
+        } action: { _, bottom in
+            atBottom = bottom
         }
         .defaultScrollAnchor(.bottom)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
@@ -93,10 +93,10 @@ struct ChatView: View {
                 if !atBottom {
                     JumpToLatestButton { withAnimation { position.scrollTo(edge: .bottom) } }
                         .padding(.bottom, LayoutMetrics.inner)
-                        .transition(.scale.combined(with: .opacity))
+                        .transition(.opacity)
                 }
             }
-            .animation(.snappy, value: atBottom)
+            .animation(.easeOut(duration: 0.15), value: atBottom)
         }
         .overlay {
             if items.isEmpty && !typing {
@@ -662,7 +662,6 @@ private struct Composer: View {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(.tint, lineWidth: 1.5)
                 .opacity(focus == .focused ? 1 : 0)
-                .animation(.snappy, value: focus)
                 .allowsHitTesting(false)
         }
         .padding(.horizontal, LayoutMetrics.stack)
