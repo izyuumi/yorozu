@@ -15,6 +15,7 @@ struct HomeView: View {
     @State private var columns = NavigationSplitViewVisibility.automatic
     @State private var windowWidth: CGFloat = 0
     @State private var dragging = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #endif
 
     var body: some View {
@@ -67,7 +68,7 @@ struct HomeView: View {
         #if os(iOS)
         NavigationSplitView(columnVisibility: $columns) {
             ConversationsView(model: model, selection: $selection, section: $section, showsCrons: true,
-                openBeside: { convId in withAnimation(.snappy) { pair.openBeside(convId, selection: &selection) } }, side: side,
+                openBeside: { convId in withAnimation(reduceMotion ? nil : .snappy) { pair.openBeside(convId, selection: &selection) } }, side: side,
                 dragStarted: { dragging = true })
                 .toolbar(removing: section == .chats && selection != nil ? .sidebarToggle : nil)
         } detail: {

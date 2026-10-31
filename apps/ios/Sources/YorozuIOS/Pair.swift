@@ -111,6 +111,8 @@ struct ChatPairView: View {
     private static let comfortablePane: CGFloat = 360
     @State private var width: CGFloat = 0
     @State private var dropSide: PaneSide?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var paneMotion: Animation? { reduceMotion ? nil : .snappy }
 
     var body: some View {
         Group {
@@ -166,7 +168,7 @@ struct ChatPairView: View {
     }
 
     private func drop(_ convId: String, on side: PaneSide) {
-        withAnimation(.snappy) { pair.drop(convId, on: side, selection: &selection) }
+        withAnimation(paneMotion) { pair.drop(convId, on: side, selection: &selection) }
     }
 
     private func newBeside() {
@@ -189,7 +191,7 @@ struct ChatPairView: View {
             pane(left, side: .left, focused: focused == .left)
                 .frame(width: leftWidth)
             PaneDivider(fraction: $pair.fraction, width: width) { side in
-                withAnimation(.snappy) { pair.close(side, selection: &selection) }
+                withAnimation(paneMotion) { pair.close(side, selection: &selection) }
             }
             .zIndex(1)
             pane(right, side: .right, focused: focused == .right)
@@ -205,9 +207,9 @@ struct ChatPairView: View {
                     ChatView(model: model, convId: convId, focus: pair.choosing ? .only : focused ? .focused : .unfocused)
                 } else {
                     BesidePicker(model: model, excluding: selection) { convId in
-                        withAnimation(.snappy) { pair.openBeside(convId, selection: &selection) }
+                        withAnimation(paneMotion) { pair.openBeside(convId, selection: &selection) }
                     } cancel: {
-                        withAnimation(.snappy) { pair.choosing = false }
+                        withAnimation(paneMotion) { pair.choosing = false }
                     }
                 }
             }
@@ -237,7 +239,7 @@ struct ChatPairView: View {
         if let convId, model.conversations[convId]?.items.isEmpty == false {
             ToolbarItem(placement: .pinnedAction) {
                 Button(String(localized: "New Conversation"), systemImage: "square.and.pencil") {
-                    withAnimation(.snappy) { pair.show(WireEvent.newId(), on: side, selection: &selection) }
+                    withAnimation(paneMotion) { pair.show(WireEvent.newId(), on: side, selection: &selection) }
                 }
                 .accessibilityIdentifier("chat.new")
             }
@@ -246,12 +248,12 @@ struct ChatPairView: View {
             ToolbarItem(placement: .primaryAction) {
                 Menu(String(localized: "Pane Options"), systemImage: "ellipsis") {
                     if !pair.choosing {
-                        Button(String(localized: "Swap Sides"), systemImage: "arrow.left.arrow.right") { withAnimation(.snappy) { pair.swapSides() } }
+                        Button(String(localized: "Swap Sides"), systemImage: "arrow.left.arrow.right") { withAnimation(paneMotion) { pair.swapSides() } }
                         Button(String(localized: "Full Screen"), systemImage: "arrow.up.left.and.arrow.down.right") {
-                            withAnimation(.snappy) { pair.close(side == .left ? .right : .left, selection: &selection) }
+                            withAnimation(paneMotion) { pair.close(side == .left ? .right : .left, selection: &selection) }
                         }
                     }
-                    Button(String(localized: "Close"), systemImage: "xmark") { withAnimation(.snappy) { pair.close(side, selection: &selection) } }
+                    Button(String(localized: "Close"), systemImage: "xmark") { withAnimation(paneMotion) { pair.close(side, selection: &selection) } }
                 }
                 .accessibilityIdentifier("pair.options")
             }
@@ -317,6 +319,8 @@ private struct PaneDivider: View {
     let width: CGFloat
     let close: (PaneSide) -> Void
     @GestureState private var dragging = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var paneMotion: Animation? { reduceMotion ? nil : .snappy }
 
     var body: some View {
         Rectangle()
@@ -329,7 +333,7 @@ private struct PaneDivider: View {
                     .frame(width: controlTarget, height: controlTarget * 2)
                     .contentShape(Rectangle())
                     .gesture(drag)
-                    .onTapGesture(count: 2) { withAnimation(.snappy) { fraction = 0.5 } }
+                    .onTapGesture(count: 2) { withAnimation(paneMotion) { fraction = 0.5 } }
                     #if os(iOS)
                     .hoverEffect(.highlight)
                     #endif
@@ -340,7 +344,7 @@ private struct PaneDivider: View {
             .accessibilityAdjustableAction { direction in
                 let index = Self.stops.firstIndex { abs($0 - fraction) < 0.01 } ?? 1
                 let next = direction == .increment ? min(index + 1, Self.stops.count - 1) : max(index - 1, 0)
-                withAnimation(.snappy) { fraction = Self.stops[next] }
+                withAnimation(paneMotion) { fraction = Self.stops[next] }
             }
     }
 
@@ -357,7 +361,7 @@ private struct PaneDivider: View {
                 if landing < 0.1 { return close(.left) }
                 if landing > 0.9 { return close(.right) }
                 let nearest = Self.stops.min { abs($0 - fraction) < abs($1 - fraction) } ?? 0.5
-                withAnimation(.snappy) { fraction = nearest }
+                withAnimation(paneMotion) { fraction = nearest }
             }
     }
 }
