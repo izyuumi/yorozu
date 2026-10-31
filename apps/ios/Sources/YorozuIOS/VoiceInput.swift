@@ -208,7 +208,7 @@ struct VoiceBar: View {
     let onSend: () -> Void
     @Environment(\.accent) private var accent
 
-    private let sendCircle: CGFloat = 32
+    private let sendCircle = LayoutMetrics.controlCircle
 
     var body: some View {
         HStack(spacing: 0) {
@@ -242,7 +242,7 @@ struct VoiceBar: View {
             }
             .frame(maxWidth: .infinity)
             if session.phase == .recording {
-                icon("stop.circle.fill", label: String(localized: "Insert Transcript")) { session.finish(onInsert) }
+                icon("stop.fill", label: String(localized: "Insert Transcript")) { session.finish(onInsert) }
                     .keyboardShortcut(.defaultAction)
                 Button(action: onSend) {
                     Image(systemName: "arrow.up")
@@ -265,11 +265,38 @@ struct VoiceBar: View {
 
     private func icon(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).textStyle(.body, weight: .semibold).frame(width: controlTarget, height: controlTarget)
+            Image(systemName: symbol).textStyle(.body, weight: .semibold).composerControl()
         }
         .buttonStyle(.plain)
         .help(label)
         .accessibilityLabel(Text(label))
+    }
+}
+
+struct VoiceSetupSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    private let model = VoiceModel.shared
+
+    var body: some View {
+        NavigationStack {
+            Form { VoiceInputSection() }
+                .formStyle(.grouped)
+                .navigationTitle(String(localized: "Voice Input"))
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                #endif
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(String(localized: "Done")) { dismiss() }
+                    }
+                }
+        }
+        #if os(iOS)
+        .presentationDetents([.medium, .large])
+        #else
+        .frame(width: LayoutMetrics.settingsWidth, height: 360)
+        #endif
+        .onChange(of: model.state) { _, state in if state == .ready { dismiss() } }
     }
 }
 

@@ -9,6 +9,7 @@ public enum LayoutMetrics {
     public static let section: CGFloat = 24
     public static let readingWidth: CGFloat = 700
     public static let composerWidth: CGFloat = 640
+    public static let controlCircle: CGFloat = 32
 
     #if os(macOS)
         public static let cardRadius: CGFloat = 10
