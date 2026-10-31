@@ -13,6 +13,7 @@ public enum LayoutMetrics {
     #if os(macOS)
         public static let cardRadius: CGFloat = 10
         public static let bubbleRadius: CGFloat = 10
+        public static let noticeRadius: CGFloat = 12
         public static let sidebarMinWidth: CGFloat = 220
         public static let sidebarIdealWidth: CGFloat = 270
         public static let sidebarMaxWidth: CGFloat = 340
@@ -22,6 +23,7 @@ public enum LayoutMetrics {
     #else
         public static let cardRadius: CGFloat = 14
         public static let bubbleRadius: CGFloat = 16
+        public static let noticeRadius: CGFloat = 18
     #endif
 }
 
