@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds VoiceModel.aar, the Apple-hosted asset pack iPhone and iPad download for voice input, from the
 # pinned Hugging Face revision in VoiceModel.swift (keep the revision, names and hashes in sync).
-# Upload the result with Transporter; the pack ID must match VoiceModel.packID.
+# Upload the result with xcrun altool --upload-asset-pack (docs/release.md); the pack ID must match VoiceModel.packID.
 set -eu
 OUT=${1:?usage: scripts/voice_asset_pack.sh <output directory>}
 REVISION=fcfae9027c00a6f3f872c48a841cfeb77e2b5a1c
