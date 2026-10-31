@@ -2,7 +2,7 @@ name: Release Mac
 on:
   push:
     branches: [main]
-    paths: ['apps/**', '!apps/web/**', '!apps/relay/**', 'packages/**', 'plugins/**', 'scripts/**']
+    paths: ['apps/**', '!apps/web/**', '!apps/relay/**', '!apps/mcp/**', 'packages/**', 'plugins/**', 'scripts/**']
   workflow_dispatch:
 
 concurrency:

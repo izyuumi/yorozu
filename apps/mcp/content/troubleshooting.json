@@ -1,0 +1,84 @@
+{
+  "$comment": "App-side states a user may see. Each entry quotes the exact text from the cited source file; scripts/generate.ts fails when a quote no longer appears there, so a renamed message makes CI fail until this file is updated.",
+  "entries": [
+    {
+      "symptom": "The app shows \"Can’t reach the relay. Retrying…\" or the status \"Offline\"",
+      "fix": "The device can't reach the relay (wss://relay.yumi.to, or the relayUrl the host was paired with). Check the device's internet connection, VPN or firewall. The app retries by itself; messages you send wait in the outbox. With a self-hosted relay, check that it is running and reachable over wss:// (ws:// works only for localhost).",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/StatusBanner.swift", "text": "Can’t reach the relay. Retrying…" },
+        { "file": "apps/ios/Sources/Client/AppModel.swift", "text": "case .offline: String(localized: \"Offline\")" }
+      ]
+    },
+    {
+      "symptom": "The app shows \"OpenClaw Gateway is offline. Messages will send when it’s back.\" or the status \"Host offline\"",
+      "fix": "The relay is reachable but the OpenClaw Gateway with the Yorozu plugin isn't connected to it. On the computer that runs the Gateway, check `openclaw gateway status` and `openclaw channels status`; start or restart it with `openclaw gateway restart`. The banner also shows briefly while OpenClaw updates itself and restarts. Messages sent meanwhile go out when the Gateway is back.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/StatusBanner.swift", "text": "OpenClaw Gateway is offline. Messages will send when it’s back." },
+        { "file": "apps/ios/Sources/Client/AppModel.swift", "text": "case .hostOffline: String(localized: \"Host offline\")" }
+      ]
+    },
+    {
+      "symptom": "The app shows \"The agent hasn’t responded in 5 minutes.\"",
+      "fix": "A turn started but the agent has sent nothing for 5 minutes. Check the Gateway's log and the agent's model provider (rate limits, an expired key, a long tool call). Yorozu only carries messages; the agent runs in OpenClaw.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/StatusBanner.swift", "text": "The agent hasn’t responded in 5 minutes." }
+      ]
+    },
+    {
+      "symptom": "Voice input says \"The voice model isn’t available for this version of Yorozu yet. Try again later.\"",
+      "fix": "On iPhone and iPad the voice model is an Apple-hosted asset pack (ID VoiceModel). Until App Store Connect has processed the pack (and, for the App Store and external TestFlight, approved it), the system knows no pack with that ID (ManagedBackgroundAssetsError.assetPackNotFound). Nothing on the device fixes it: tap Try Again later, or update the app. Copy Diagnostics (Settings › About) includes the underlying error.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "The voice model isn’t available for this version of Yorozu yet. Try again later." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "case .assetPackNotFound?" }
+      ]
+    },
+    {
+      "symptom": "The voice model download says \"Waiting for Wi-Fi\"",
+      "fix": "The download waits for Wi-Fi and doesn't use cellular, a personal hotspot or Low Data Mode. Join Wi-Fi, or tap Download Using Cellular… and confirm.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "Waiting for Wi-Fi. The model downloads on Wi-Fi so it doesn’t use cellular data." }
+      ]
+    },
+    {
+      "symptom": "Voice input is greyed out: \"Voice input needs iOS 26 or later.\" or \"This device needs more memory for voice input.\"",
+      "fix": "Voice input needs iOS 26 or later on iPhone and iPad (Apple-hosted asset packs) and about 6 GB of RAM on any device. Update iOS if the device supports it; otherwise use the system keyboard's dictation.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "Voice input needs iOS 26 or later." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "This device needs more memory for voice input." }
+      ]
+    },
+    {
+      "symptom": "The voice model download fails: interrupted, damaged, or an HTTP error",
+      "fix": "Tap Try Again. On the Mac the model comes from Hugging Face and resumes a partial download; a damaged file fails its SHA-256 check and is downloaded again. Check the network and that there is about 1.5 GB of free disk space. Keep the app open while it downloads on the Mac.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "The download was interrupted. Try again." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "The downloaded model was damaged. Try again." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "The download failed (HTTP" },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "The voice model couldn’t be downloaded. Try again." }
+      ]
+    },
+    {
+      "symptom": "\"Microphone access is off\" when tapping the mic",
+      "fix": "Yorozu was denied the microphone. Allow it in Settings › Privacy & Security › Microphone (iPhone and iPad) or System Settings › Privacy & Security › Microphone (Mac); the alert's Open Settings button goes there.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/Chat.swift", "text": "Microphone access is off" }
+      ]
+    },
+    {
+      "symptom": "Voice input says \"No speech was recognized.\", \"No microphone is available.\" or \"Not enough memory to transcribe.\"",
+      "fix": "No speech: speak closer to the microphone, or set Settings › Voice Input › Language to the language you speak. No microphone: connect or select an input device (Mac). Not enough memory: close other apps and tap Retry; the clip is kept until a transcript is delivered.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "No speech was recognized." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceRecorder.swift", "text": "No microphone is available." },
+        { "file": "apps/ios/Sources/YorozuIOS/Transcriber.swift", "text": "Not enough memory to transcribe." }
+      ]
+    },
+    {
+      "symptom": "Adding a Mac from an iPhone or iPad fails with \"Couldn’t reach the relay. Check the connection and scan again.\"",
+      "fix": "The Mac's pairing code goes through the public relay's one-time mailbox, even with a self-hosted relay. Check both devices' internet connection and scan the Mac's current code again; the code changes every 10 minutes.",
+      "quotes": [
+        { "file": "apps/ios/Sources/Client/DeviceCodePairing.swift", "text": "Couldn’t reach the relay. Check the connection and scan again." }
+      ]
+    }
+  ]
+}
