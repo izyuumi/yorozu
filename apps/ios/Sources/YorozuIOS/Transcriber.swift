@@ -224,10 +224,10 @@ extension Transcriber: SpeechEngine {
     }
 
     /// One window, or part of one. A window with speech that fails (`transcript`), or one of a longer clip
-    /// that comes back empty despite `emptySpeechSeconds` of speech, is decoded again in two halves
-    /// (`AudioWindowPlan.split`), up to `splitDepth` times; LFM3-Audio's misses are occasional, and a part
-    /// decoded on its own usually comes out whole. Only a part that can't be split further fails the clip,
-    /// rather than leave a hole in it; a silent window recognized nothing.
+    /// that comes back empty despite `emptySpeechSeconds` of speech or stops before its end (`reachesEnd`),
+    /// is decoded again in two halves (`AudioWindowPlan.split`), up to `splitDepth` times; LFM3-Audio's
+    /// misses are occasional, and a part decoded on its own usually comes out whole. Only a part that can't
+    /// be split further fails the clip, rather than leave a hole in it; a silent window recognized nothing.
     private func transcribe(
         _ window: AudioWindow, of samples: [Float], activity: VoiceActivity, language: VoiceLanguage, hints: [String],
         alone: Bool, depth: Int, progress: (AudioWindow) -> Void
@@ -235,7 +235,10 @@ extension Transcriber: SpeechEngine {
         progress(window)
         let text = try transcript(samples[window.range], language: language, hints: hints)
         let missing = text?.isEmpty == true && !alone && window.speechSeconds >= Self.emptySpeechSeconds
-        if let text, !missing { return text }
+        if let text, !missing,
+           try reachesEnd(text, of: window, samples: samples, activity: activity, language: language, hints: hints) {
+            return text
+        }
         guard window.voiced else { return text ?? "" }
         if depth < Self.splitDepth,
            let halves = AudioWindowPlan.split(window, sampleRate: Self.sampleRate, activity: activity) {
@@ -248,6 +251,18 @@ extension Transcriber: SpeechEngine {
             return TranscriptSeam.join(parts, overlapSpeechSeconds: Self.seams(halves, activity: activity))
         }
         throw Failure(String(localized: "Part of the recording couldn’t be transcribed. Try again."))
+    }
+
+    /// Whether `text` ends with what the window's last seconds, decoded on their own, say (`TranscriptTail`);
+    /// true when the window isn't probed or the probe's decode fails.
+    private func reachesEnd(
+        _ text: String, of window: AudioWindow, samples: [Float], activity: VoiceActivity, language: VoiceLanguage,
+        hints: [String]
+    ) throws -> Bool {
+        guard let probe = TranscriptTail.probe(of: window, sampleRate: Self.sampleRate, activity: activity) else { return true }
+        try Task.checkCancellation()
+        guard let tail = try transcript(samples[probe.range], language: language, hints: hints) else { return true }
+        return TranscriptTail.covers(text, tail: tail)
     }
 
     /// One decode's transcript, nil when it failed. With hints, LFM3-Audio can loop or read the vocabulary
