@@ -1,3 +1,5 @@
+import { validReport, type ActivityReport } from "./liveactivity.js";
+
 export const PROTOCOL_VERSION = 3;
 
 export type PeerInfo = {
@@ -15,6 +17,8 @@ export const DEVICES = "devices";
 export const INVITE = "invite";
 export const REPLIES = "replies";
 export const REACTIONS = "reactions";
+/** Counts-only Live Activity pushes through the relay; listed only while the relay can send them. */
+export const LIVE_ACTIVITY_PUSH = "liveActivityPush";
 export const CHUNK_BYTES = 160 * 1024;
 export type Attachment = { id: string; name: string; mime: string; size: number };
 // Capability `replies`.
@@ -95,7 +99,8 @@ export type Event =
   | { kind: "upload"; data: Upload }
   | { kind: "upload_ack"; data: UploadAck }
   | { kind: "download"; data: Download }
-  | { kind: "chunk"; data: Chunk };
+  | { kind: "chunk"; data: Chunk }
+  | { kind: "live_activity"; data: ActivityReport };
 
 export type Invalid = { kind: "invalid"; name: string; convId?: string; messageId?: string; attachmentId?: string };
 export type Received = Event | Invalid | { kind: "unknown"; name: string };
@@ -170,6 +175,7 @@ const valid: Record<Event["kind"], (d: Fields) => boolean> = {
     (d.pinned === undefined || typeof d.pinned === "boolean") &&
     (d.deleted === undefined || d.deleted === true),
   conv_update: (d) => isId(d.convId),
+  live_activity: validReport,
 };
 
 export const LIMITS = "at most 32 attachments; names and types of 1 to 255 characters; device ids up to 64 characters; emoji up to 32";

@@ -14,6 +14,7 @@ jobs:
     outputs:
       app: ${{ steps.diff.outputs.app }}
       relay: ${{ steps.diff.outputs.relay }}
+      plugin: ${{ steps.diff.outputs.plugin }}
       mcp: ${{ steps.diff.outputs.mcp }}
       web: ${{ steps.diff.outputs.web }}
     steps:
@@ -26,7 +27,8 @@ jobs:
           files=$(git diff --name-only "$BASE" HEAD)
           match() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
           echo "app=$(match '^(apps/ios/|packages/|plugins/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "relay=$(match '^(apps/relay/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "relay=$(match '^(apps/relay/|apps/ios/Tests/Fixtures/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "plugin=$(match '^(plugins/openclaw-yorozu/|apps/ios/Tests/Fixtures/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           # The help MCP bundle is generated from these (not CHANGELOG.md: the release PR changes only that).
           echo "mcp=$(match '^(apps/mcp/|apps/ios/|plugins/openclaw-yorozu/|docs/|README\.md$|apps/web/worker\.mjs$|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           # The website's Worker serves the help MCP server, so its tests run for both.
@@ -90,6 +92,18 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter @yorozu/relay
       - run: pnpm --filter @yorozu/relay test
+
+  # The plugin's Live Activity math; the rest of the plugin needs an OpenClaw checkout and is typechecked by hand.
+  plugin:
+    needs: changes
+    if: needs.changes.outputs.plugin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - run: node --test plugins/openclaw-yorozu/test/*.test.ts
 
   mcp:
     needs: changes

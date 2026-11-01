@@ -897,3 +897,121 @@ test("the default token cap retains the newest eight pairing tokens", async () =
     expect(await (await connectPhone(name, token)).phone.next()).toMatchObject({ type: "joined" });
   }
 });
+
+const ACTIVITY_TOKEN = "e".repeat(64);
+const ACTIVITY_STATE = {
+  jobs: [{ token: "AAAAAAAAAAAAAAAA", kind: "turn", state: "running", steps: 3, startedAt: 821_692_800 }],
+};
+
+const activityRecord = async (room: string, pubkey: string): Promise<any> => {
+  const rooms = (env as unknown as Env).ROOM;
+  return await runInDurableObject(rooms.get(rooms.idFromName(room)), async (_room, state) =>
+    state.storage.get(`activity:${pubkey}`),
+  );
+};
+
+async function withActivity() {
+  const setup = await paired();
+  setup.mac.send({ type: "activityToken", device: setup.keys.pub, token: ACTIVITY_TOKEN });
+  await macSettled(setup.mac);
+  return setup;
+}
+
+const activityPush = (device: string, extra: Record<string, unknown> = {}) => ({
+  type: "activityPush",
+  device,
+  event: "update",
+  priority: 5,
+  state: ACTIVITY_STATE,
+  staleDate: 1_800_000_900,
+  ...extra,
+});
+
+test("a relay that can push says so when the host registers", async () => {
+  const keys = await keypair();
+  const mac = await connect(await roomId(keys.pub));
+  const { nonce } = await mac.next();
+  mac.send({ type: "register", pubkey: keys.pub, nonceSig: await sign(nonce, keys) });
+  expect(await mac.next()).toMatchObject({ type: "registered", liveActivity: true });
+});
+
+test("a live activity push carries counts only, to the activity topic, with no alert", async () => {
+  const calls = fakeApns();
+  const { mac, keys, room } = await withActivity();
+  expect(await activityRecord(room, keys.pub)).toEqual({ token: ACTIVITY_TOKEN });
+
+  mac.send(activityPush(keys.pub, { title: "secret", convId: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b" }));
+  await vi.waitFor(() => expect(calls).toHaveLength(1));
+  const call = calls[0]!;
+  expect(call.url).toBe(`https://apns.test/3/device/${ACTIVITY_TOKEN}`);
+  expect(call.headers.get("apns-push-type")).toBe("liveactivity");
+  expect(call.headers.get("apns-topic")).toBe("to.yumi.yorozu.ios.push-type.liveactivity");
+  expect(call.headers.get("apns-priority")).toBe("5");
+  expect(Object.keys(call.body)).toEqual(["aps"]);
+  expect(Object.keys(call.body.aps).sort()).toEqual(["content-state", "event", "stale-date", "timestamp"]);
+  expect(call.body.aps["content-state"]).toEqual(ACTIVITY_STATE);
+  expect(JSON.stringify(call.body)).not.toMatch(/secret|6f1c2a3b|alert/);
+
+  mac.send(activityPush(keys.pub, { priority: 10 }));
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls[1]!.headers.get("apns-priority")).toBe("10");
+});
+
+test("only the host registers activity tokens, only for known devices, and a malformed push closes it", async () => {
+  const calls = fakeApns();
+  const { mac, phone, keys, room } = await paired();
+  phone.send({ type: "activityToken", device: keys.pub, token: ACTIVITY_TOKEN });
+  expect(await phone.closed()).toBe(4001);
+
+  mac.send({ type: "activityToken", device: "D".repeat(43), token: ACTIVITY_TOKEN });
+  mac.send(activityPush("D".repeat(43)));
+  await macSettled(mac);
+  expect(await activityRecord(room, "D".repeat(43))).toBeUndefined();
+  expect(calls).toHaveLength(0);
+
+  mac.send(activityPush(keys.pub, { priority: 1 }));
+  expect(await mac.closed()).toBe(4001);
+});
+
+test("an activity token apple calls gone is forgotten and the host is told", async () => {
+  const calls = fakeApns(() => 410);
+  const { mac, keys, room } = await withActivity();
+
+  mac.send(activityPush(keys.pub));
+  expect(await mac.next()).toEqual({ type: "activityGone", device: keys.pub });
+  expect(await activityRecord(room, keys.pub)).toBeUndefined();
+  expect(calls).toHaveLength(1);
+  expect(await record(room, keys.pub)).toEqual({ deviceToken: DEVICE_TOKEN });
+});
+
+test("an activity ends: after the end push, or when the host forgets it, or the device is revoked", async () => {
+  const calls = fakeApns();
+  const { mac, phone, keys, room } = await withActivity();
+
+  mac.send(activityPush(keys.pub, { event: "end", priority: 10, dismissalDate: 1_800_000_120 }));
+  await vi.waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0]!.body.aps["dismissal-date"]).toBe(1_800_000_120);
+  await vi.waitFor(async () => expect(await activityRecord(room, keys.pub)).toBeUndefined());
+
+  mac.send({ type: "activityToken", device: keys.pub, token: ACTIVITY_TOKEN });
+  await macSettled(mac);
+  expect(await activityRecord(room, keys.pub)).toEqual({ token: ACTIVITY_TOKEN });
+  mac.send({ type: "activityToken", device: keys.pub });
+  await macSettled(mac);
+  expect(await activityRecord(room, keys.pub)).toBeUndefined();
+
+  mac.send({ type: "activityToken", device: keys.pub, token: ACTIVITY_TOKEN });
+  mac.send({ type: "revoke", pubkey: keys.pub });
+  expect(await phone.closed()).toBe(4001);
+  expect(await activityRecord(room, keys.pub)).toBeUndefined();
+});
+
+test("an activity token follows the device into sandbox", async () => {
+  const calls = fakeApns((url) => (url.startsWith("https://apns.test/") ? 400 : 200));
+  const { mac, keys, room } = await withActivity();
+
+  mac.send(activityPush(keys.pub));
+  await vi.waitFor(() => expect(calls).toHaveLength(2));
+  expect(calls.map((call) => new URL(call.url).host)).toEqual(["apns.test", "apns-sandbox.test"]);
+  await vi.waitFor(async () => expect(await activityRecord(room, keys.pub)).toEqual({ token: ACTIVITY_TOKEN, sandbox: true }));
+});

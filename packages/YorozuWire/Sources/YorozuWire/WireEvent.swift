@@ -25,6 +25,7 @@ public enum WireEvent: Equatable, Sendable {
     case uploadAck(UploadAck)
     case download(Download)
     case chunk(Chunk)
+    case liveActivity(ActivityReport)
     case unknown(kind: String, data: JSONValue?)
 
     public var kind: String {
@@ -52,6 +53,7 @@ public enum WireEvent: Equatable, Sendable {
         case .uploadAck: "upload_ack"
         case .download: "download"
         case .chunk: "chunk"
+        case .liveActivity: "live_activity"
         case .unknown(let kind, _): kind
         }
     }
@@ -505,6 +507,42 @@ public struct PairInvite: Codable, Equatable, Sendable {
     public init() {}
 }
 
+/// The device's Live Activity, client → plugin; capability `liveActivityPush`, which the plugin lists only while its
+/// relay can push. `pushToken` (hex) is the activity's ActivityKit token, absent once the activity ended. `jobs` is the
+/// activity's whole content state with times in epoch milliseconds; `turns` maps the token of each running turn job to
+/// its conversation, so the plugin can count that turn's steps and end it while the app is suspended.
+public struct ActivityReport: Codable, Equatable, Sendable {
+    public static let capability = "liveActivityPush"
+
+    public struct Job: Codable, Equatable, Sendable {
+        public var token: String
+        public var kind: String
+        public var state: String
+        public var steps: Int?
+        public var startedAt: Int64
+        public var finishedAt: Int64?
+
+        public init(token: String, kind: String, state: String, steps: Int? = nil, startedAt: Int64, finishedAt: Int64? = nil) {
+            self.token = token
+            self.kind = kind
+            self.state = state
+            self.steps = steps
+            self.startedAt = startedAt
+            self.finishedAt = finishedAt
+        }
+    }
+
+    public var pushToken: String?
+    public var jobs: [Job]
+    public var turns: [String: String]
+
+    public init(pushToken: String?, jobs: [Job] = [], turns: [String: String] = [:]) {
+        self.pushToken = pushToken
+        self.jobs = jobs
+        self.turns = turns
+    }
+}
+
 public struct CronList: Codable, Equatable, Sendable {
     public var jobs: [CronJob]?
     public var error: String?
@@ -628,6 +666,8 @@ extension WireEvent: Codable {
             if let v = data(Download.self), part(v.attachmentId, v.index, v.index + 1) { self = .download(v); return }
         case "chunk":
             if let v = data(Chunk.self), part(v.attachmentId, v.index, v.count) { self = .chunk(v); return }
+        case "live_activity":
+            if let v = data(ActivityReport.self) { self = .liveActivity(v); return }
         default:
             break
         }
@@ -661,6 +701,7 @@ extension WireEvent: Codable {
         case .uploadAck(let v): try c.encode(v, forKey: .data)
         case .download(let v): try c.encode(v, forKey: .data)
         case .chunk(let v): try c.encode(v, forKey: .data)
+        case .liveActivity(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }
     }

@@ -257,6 +257,104 @@ export function alertPayload(
   };
 }
 
+export type ActivityJob = {
+  token: string;
+  kind: (typeof ACTIVITY_KINDS)[number];
+  state: (typeof ACTIVITY_STATES)[number];
+  steps?: number;
+  startedAt: number;
+  finishedAt?: number;
+};
+export type ActivityState = { jobs: ActivityJob[] };
+export type ActivityToken = { device: string; token?: string };
+export type ActivityPush = {
+  device: string;
+  event: "update" | "end";
+  state: ActivityState;
+  priority: 5 | 10;
+  staleDate?: number;
+  dismissalDate?: number;
+};
+
+export const ACTIVITY_KINDS = ["turn", "recording", "transcribing", "needsYou"] as const;
+export const ACTIVITY_STATES = ["running", "done", "failed"] as const;
+export const MAX_ACTIVITY_JOBS = 8;
+const MAX_STEPS = 100_000;
+const JOB_TOKEN = /^[A-Za-z0-9_-]{16}$/;
+
+const deviceKey = (value: unknown): value is string =>
+  typeof value === "string" && value.length === 43 && base64url.test(value);
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const epochSeconds = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0;
+
+function parseActivityJob(value: unknown): ActivityJob | null {
+  if (!isEnvelope(value)) return null;
+  const { token, kind, state, steps, startedAt, finishedAt } = value;
+  if (typeof token !== "string" || !JOB_TOKEN.test(token)) return null;
+  if (!ACTIVITY_KINDS.includes(kind as ActivityJob["kind"])) return null;
+  if (!ACTIVITY_STATES.includes(state as ActivityJob["state"])) return null;
+  if (steps !== undefined && !(Number.isSafeInteger(steps) && (steps as number) >= 0 && (steps as number) <= MAX_STEPS)) return null;
+  if (!finite(startedAt) || (finishedAt !== undefined && !finite(finishedAt))) return null;
+  return {
+    token,
+    kind: kind as ActivityJob["kind"],
+    state: state as ActivityJob["state"],
+    ...(steps !== undefined ? { steps: steps as number } : {}),
+    startedAt,
+    ...(finishedAt !== undefined ? { finishedAt: finishedAt as number } : {}),
+  };
+}
+
+/** The Live Activity's content state, rebuilt from known fields only: opaque tokens, kinds, states, counts, times. */
+export function parseActivityState(value: unknown): ActivityState | null {
+  if (!isEnvelope(value) || !Array.isArray(value.jobs) || value.jobs.length > MAX_ACTIVITY_JOBS) return null;
+  const jobs: ActivityJob[] = [];
+  for (const entry of value.jobs) {
+    const job = parseActivityJob(entry);
+    if (!job) return null;
+    jobs.push(job);
+  }
+  return { jobs };
+}
+
+export const parseActivityToken = (msg: Record<string, unknown>): ActivityToken | null => {
+  const device = msg.device;
+  if (!deviceKey(device)) return null;
+  if (msg.token === undefined) return { device };
+  const token = parsePush({ deviceToken: msg.token });
+  return token ? { device, token: token.deviceToken } : null;
+};
+
+export const parseActivityPush = (msg: Record<string, unknown>): ActivityPush | null => {
+  if (!deviceKey(msg.device) || (msg.event !== "update" && msg.event !== "end")) return null;
+  if (msg.priority !== 5 && msg.priority !== 10) return null;
+  if (msg.staleDate !== undefined && !epochSeconds(msg.staleDate)) return null;
+  if (msg.dismissalDate !== undefined && !epochSeconds(msg.dismissalDate)) return null;
+  const state = parseActivityState(msg.state);
+  if (!state) return null;
+  return {
+    device: msg.device as string,
+    event: msg.event as ActivityPush["event"],
+    state,
+    priority: msg.priority as ActivityPush["priority"],
+    ...(msg.staleDate !== undefined ? { staleDate: msg.staleDate as number } : {}),
+    ...(msg.dismissalDate !== undefined ? { dismissalDate: msg.dismissalDate as number } : {}),
+  };
+};
+
+/** No alert: the activity changes silently, its own view is the notice. */
+export function activityPayload(push: ActivityPush, now: number): unknown {
+  return {
+    aps: {
+      timestamp: Math.floor(now / 1000),
+      event: push.event,
+      "content-state": push.state,
+      ...(push.staleDate !== undefined ? { "stale-date": push.staleDate } : {}),
+      ...(push.dismissalDate !== undefined ? { "dismissal-date": push.dismissalDate } : {}),
+    },
+  };
+}
+
 export const BACKGROUND_CLASSES: readonly NotifyClass[] = ["reply", "approval", "done", "failed"];
 
 export const BACKGROUND_INTERVAL_MS = 60_000;

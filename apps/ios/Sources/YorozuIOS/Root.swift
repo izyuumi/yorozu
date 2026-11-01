@@ -34,6 +34,7 @@ struct RootView: View {
                 let task = UIApplication.shared.beginBackgroundTask(withName: "Sending messages")
                 Task {
                     _ = await model.waitUntilSent(limit: .seconds(25))
+                    await YorozuActivities.shared?.waitUntilReported(limit: .seconds(5))
                     model.suspend()
                     UIApplication.shared.endBackgroundTask(task)
                 }

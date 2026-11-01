@@ -1,10 +1,13 @@
 /// <reference types="@cloudflare/workers-types" />
 import {
+  activityPayload,
   alertPayload,
   allowFrame,
   allowNotify,
   AUTH_TIMEOUT_MS,
   parseAck,
+  parseActivityPush,
+  parseActivityToken,
   BACKGROUND_CLASSES,
   BACKGROUND_INTERVAL_MS,
   backgroundPayload,
@@ -36,6 +39,7 @@ import {
   PONG,
   safeReason,
   TOKEN_TTL_MS,
+  type ActivityPush,
   type Bucket,
   type Notify,
   type NotifyWindow,
@@ -113,8 +117,15 @@ type PushRecord = {
 
 const tokenPrefix = "t:";
 
+/** A device's Live Activity push token, registered by the host; the activity's content never stays here. */
+const activityPrefix = "activity:";
+
+type ActivityRecord = { token: string; sandbox?: boolean };
+
 export class Room implements DurableObject {
   private tail: Promise<unknown> = Promise.resolve();
+  /** Activity pushes in the order the host sent them, apart from the frame queue so APNs never delays a frame. */
+  private activityTail: Promise<unknown> = Promise.resolve();
   private keys = new Map<string, Promise<CryptoKey>>();
   private backgroundPending = new Set<string>();
 
@@ -360,6 +371,7 @@ export class Room implements DurableObject {
     if (pubkeys.length === 0) return;
     await this.state.storage.delete(pubkeys.map((key) => devicePrefix + key));
     await this.state.storage.delete(pubkeys.map((key) => pushPrefix + key));
+    await this.state.storage.delete(pubkeys.map((key) => activityPrefix + key));
     const gone = new Set(pubkeys);
     for (const phone of this.sockets("phone")) {
       const key = (phone.deserializeAttachment() as Conn | null)?.key;
@@ -371,7 +383,7 @@ export class Room implements DurableObject {
     request: apns.ApnsRequest,
     now: number,
     sandbox = false,
-  ): Promise<{ code: number; sandbox: boolean } | null> {
+  ): Promise<{ code: number; reason?: string; sandbox: boolean } | null> {
     try {
       let result = await apns.send(this.env, request, now, sandbox);
       if (apns.misaddressed(result)) {
@@ -380,7 +392,7 @@ export class Room implements DurableObject {
       }
       const { status: code, reason } = result;
       if (code < 200 || code >= 300) log("apns", { pushType: request.pushType, code, reason, sandbox });
-      return { code, sandbox };
+      return { code, ...(reason ? { reason } : {}), sandbox };
     } catch (error) {
       log("apns", { pushType: request.pushType, error: String(error) });
       return null;
@@ -480,6 +492,50 @@ export class Room implements DurableObject {
     if (silent) await this.recordPush(key, record.deviceToken, silent, now);
   }
 
+  private async registerActivity(device: string, token: string | undefined): Promise<void> {
+    const key = activityPrefix + device;
+    if (token === undefined) {
+      await this.state.storage.delete(key);
+      return;
+    }
+    const current = await this.state.storage.get<ActivityRecord>(key);
+    if (current?.token === token) return;
+    if ((await this.state.storage.get<number>(devicePrefix + device)) === undefined) return;
+    // An activity token lives in the same APNs environment as the device's own token.
+    const sandbox = (await this.state.storage.get<PushRecord>(pushPrefix + device))?.sandbox;
+    await this.state.storage.put(key, { token, ...(sandbox ? { sandbox } : {}) } satisfies ActivityRecord);
+  }
+
+  private async pushActivity(push: ActivityPush, now: number): Promise<void> {
+    if (!apns.configured(this.env)) return;
+    const key = activityPrefix + push.device;
+    const record = await this.state.storage.get<ActivityRecord>(key);
+    if (!record) return;
+    const result = await this.push({
+      token: record.token,
+      payload: activityPayload(push, now),
+      pushType: "liveactivity",
+      priority: push.priority,
+    }, now, record.sandbox ?? false);
+    if (result === null) return;
+    const dead = apns.dead({ status: result.code, ...(result.reason ? { reason: result.reason } : {}) });
+    const ok = result.code >= 200 && result.code < 300;
+    const forgotten = await this.state.storage.transaction(async (storage) => {
+      const current = await storage.get<ActivityRecord>(key);
+      if (current?.token !== record.token) return false;
+      if (dead || (ok && push.event === "end")) {
+        await storage.delete(key);
+        return dead;
+      }
+      if (ok && result.sandbox !== (current.sandbox ?? false)) {
+        await storage.put(key, { token: current.token, ...(result.sandbox ? { sandbox: true } : {}) } satisfies ActivityRecord);
+      }
+      return false;
+    });
+    const mac = forgotten ? this.mac() : null;
+    if (mac) send(mac, JSON.stringify({ type: "activityGone", device: push.device }));
+  }
+
   private async handle(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
     if (ws.readyState !== WebSocket.OPEN) return;
     const bytes = typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength;
@@ -520,7 +576,12 @@ export class Room implements DurableObject {
           if (stale !== ws) this.drop(stale, CLOSE_PROTOCOL, "replaced");
         }
         ws.serializeAttachment({ ...conn, role: "mac", key: pubkey } satisfies Conn);
-        ws.send(JSON.stringify({ type: "registered", roomId: id, phones: this.phoneCount() }));
+        ws.send(JSON.stringify({
+          type: "registered",
+          roomId: id,
+          phones: this.phoneCount(),
+          ...(apns.configured(this.env) ? { liveActivity: true } : {}),
+        }));
         log("registered", { phones: this.sockets("phone").length });
         this.notifyOwner(true);
         return await this.drain(ws, now);
@@ -652,6 +713,29 @@ export class Room implements DurableObject {
           log("error", { role: "mac", error: String(error) }),
         );
         this.state.waitUntil(woken);
+        return;
+      }
+
+      case "activityToken": {
+        if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
+        const registration = parseActivityToken(msg);
+        if (!registration) return this.drop(ws, CLOSE_PROTOCOL, "bad activity token");
+        return await this.registerActivity(registration.device, registration.token);
+      }
+
+      case "activityPush": {
+        if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
+        const push = parseActivityPush(msg);
+        if (!push) return this.drop(ws, CLOSE_PROTOCOL, "bad activity push");
+        if (!(await this.reserveNotify(now))) {
+          ws.send(JSON.stringify({ type: "state", state: "notify rate limit" }));
+          return;
+        }
+        const pushed = this.activityTail
+          .then(() => this.pushActivity(push, now))
+          .catch((error: unknown) => log("error", { role: "mac", error: String(error) }));
+        this.activityTail = pushed;
+        this.state.waitUntil(pushed);
         return;
       }
 

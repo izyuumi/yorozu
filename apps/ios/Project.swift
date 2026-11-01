@@ -236,7 +236,7 @@ let project = Project(
             deploymentTargets: .macOS("15.0"),
             sources: [
                 "Tests/**", "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift",
-                "Sources/Client/WidgetPublisher.swift",
+                "Sources/Client/WidgetPublisher.swift", "Sources/Client/ActivityReports.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
                 "Sources/WidgetShared/Interface/Launcher.swift",
             ],

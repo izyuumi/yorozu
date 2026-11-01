@@ -4,6 +4,9 @@
   "private": true,
   "description": "Yorozu channel for OpenClaw: the Yorozu apps talk to the Gateway through the relay",
   "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
   "peerDependencies": {
     "openclaw": ">=2026.9.8"
   },

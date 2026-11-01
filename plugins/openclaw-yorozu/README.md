@@ -21,7 +21,7 @@ A method fails with `UNAVAILABLE` and the error text, for example while the chan
 - Connects to `<relayUrl>?room=<room id>`, registers by signing the relay's nonce, then sends the device allowlist (`devices`). Pings every 30 s and drops a half-open socket. Redials with backoff from 1 s up to 30 s until the account stops.
 - A handshake is answered only when the device's Ed25519 key and the X25519 key its handshake authenticates both match an allowlist row, or when it proves a pending pairing. Anything else gets a `revoke` to the relay. A handshake id that was already answered is not answered again within the 5-minute freshness window.
 - One session per device, in memory. Sessions survive relay reconnects but not a channel or Gateway restart.
-- Each device must send `peer_info` before anything else counts. If the protocol versions do not overlap, the device gets `error update_required` and its session is dropped. The host's `peer_info` carries the agent, the OpenClaw version, `mediaMaxBytes` and the capabilities `attachments`, `devices`, `invite`, `replies` and `reactions`.
+- Each device must send `peer_info` before anything else counts. If the protocol versions do not overlap, the device gets `error update_required` and its session is dropped. The host's `peer_info` carries the agent, the OpenClaw version, `mediaMaxBytes` and the capabilities `attachments`, `devices`, `invite`, `replies` and `reactions`, plus `liveActivityPush` while the relay can push.
 - Frames the relay buffered (`seq`) are acked after handling. Host frames are batched at up to 16 frames and under 1 MiB per batch.
 
 ## Keys and devices (`src/keys.ts`, `src/devices.ts`)
@@ -75,6 +75,7 @@ Yorozu never updates OpenClaw itself; it relies on OpenClaw's auto-update ([setu
 
 - **Read marks** (`src/reads.ts`): one cursor per conversation (namespace `read`). It only moves forward, is broadcast to every device, and goes to each device when its session opens.
 - **Push** (`src/push.ts`): one relay `notify` per finished reply, including cron deliveries with text. It is sealed per device (title and first line, 256 bytes at most). It goes to every paired device except those with push off and those whose live session reports the app in front or this conversation open. When a device reads a conversation, the other devices alerted for it get a silent `notify` of class `sync`.
+- **Live Activity push** (`src/liveactivity.ts`, wired in `src/relay.ts` and `src/conversation.ts`): capability `liveActivityPush`, listed only while the relay's `registered` says `liveActivity: true`. A device's `live_activity` report (push token, jobs, running turn → conversation) is kept in memory and its token sent to the relay (`activityToken`). Tool calls and the end of a turn change only that turn's job; the whole state goes to the relay as `activityPush`, steps at priority 5 at most once per 15 s, finished rows at priority 10, `end` when nothing runs. Other jobs pass through unchanged. Details: [Live Activity push](../../docs/ios-relay-contract.md#live-activity-push).
 - **Automations** (`src/cron.ts`): `cron_list` is answered with every job of the configured agent, including disabled ones. A job without `agentId` counts for the system agent, or else the default agent. Each job comes with its schedule in English words, next and last run, last status and error, and its Yorozu conversation when it delivers into one. The list is read from the cron store with `loadCronStore`. If that fails, the answer carries `error`. Yorozu only reads the jobs.
 - **Attachments** (`src/attachments.ts`): uploads arrive in chunks into OpenClaw's media store, indexed in the keyed state store (namespace `attachments`). Outbound media is staged and announced in the `reply`, and each device downloads it on request, sealed for that device. The size limit is the media limit in [setup.md](../../docs/setup.md#2-config).
 - **Settings**: `device_list` lists the paired devices (key, model, paired time, push, and which one is asking). `device_patch` turns push on or off for a device, or removes it.
@@ -105,3 +106,7 @@ node_modules/openclaw/node_modules/.bin/tsc -p . | grep -E '^(index|setup-entry|
 ```
 
 No output means the plugin typechecks. The `grep` drops errors from inside the OpenClaw checkout.
+
+## Tests
+
+`src/liveactivity.ts` imports nothing at runtime, so Node runs its tests without OpenClaw: `node --test test/*.test.ts` (Node 26, from this folder). They share `apps/ios/Tests/Fixtures/activity-content-state.json` with the relay's and the app's tests.
