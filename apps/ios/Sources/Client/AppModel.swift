@@ -951,11 +951,12 @@ final class AppModel {
     }
 
     /// Opens what a widget, a control or a Lock Screen accessory asked for. Without a pairing the app just comes forward.
+    /// Demo mode opens only new conversations: it writes no snapshot, so no link names one of its conversations.
     func open(_ link: WidgetLink) {
-        guard !isDemo, pairing != nil else { return }
+        guard isDemo || pairing != nil else { return }
         switch link {
         case .conversation(let convId):
-            guard WireEvent.isId(convId) else { return }
+            guard !isDemo, WireEvent.isId(convId) else { return }
             requestedConversation = convId
         case .new:
             requestedConversation = WireEvent.newId()
