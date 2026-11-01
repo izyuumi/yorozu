@@ -110,9 +110,14 @@ final class AppModel {
         }
         liveStateLoaded = true
         do {
+            PairingMigration.run()
             pairing = try Pairing.load()
         } catch {
             pairingError = String(localized: "Couldn’t read this device’s pairing: \(error.localizedDescription)")
+        }
+        Task.detached(priority: .utility) {
+            StoredNames.shared.migrate(.conversations)
+            StoredNames.shared.migrate(.attachments)
         }
         guard pairing != nil else { return }
         for conversation in cache.loadAll() { conversations[conversation.id] = conversation }

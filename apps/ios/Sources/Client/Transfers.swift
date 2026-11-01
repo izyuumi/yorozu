@@ -13,8 +13,7 @@ enum AttachmentFiles {
     }
 
     static func local(_ attachment: ChatAttachment) -> URL? {
-        let url = url(attachment)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        StoredNames.shared.local("\(attachment.id)/\(safeName(attachment.name))", in: .attachments)
     }
 
     static func write(_ data: Data, for attachment: ChatAttachment) throws { try write(data, to: url(attachment)) }
@@ -30,11 +29,11 @@ enum AttachmentFiles {
     }
 
     static func load<T: Decodable>(_ type: T.Type, from name: String, of attachment: ChatAttachment) -> T? {
-        (try? Data(contentsOf: sidecar(name, of: attachment))).flatMap { try? JSONDecoder().decode(type, from: $0) }
+        StoredNames.shared.read("\(attachment.id)/\(name)", in: .attachments).flatMap { try? JSONDecoder().decode(type, from: $0) }
     }
 
     static func discard(_ names: String..., of attachment: ChatAttachment) {
-        for name in names { try? FileManager.default.removeItem(at: sidecar(name, of: attachment)) }
+        for name in names { try? StoredNames.shared.remove("\(attachment.id)/\(name)", in: .attachments) }
     }
 
     /// An empty file, protected like the attachments, replacing any there.
@@ -60,10 +59,10 @@ enum AttachmentFiles {
     }
 
     static func remove(_ attachment: ChatAttachment) {
-        try? FileManager.default.removeItem(at: url(attachment).deletingLastPathComponent())
+        try? StoredNames.shared.remove(attachment.id, in: .attachments)
     }
 
-    static func wipe() { try? FileManager.default.removeItem(at: directory) }
+    static func wipe() { try? StoredNames.shared.remove(in: .attachments) }
 
     static func safeName(_ name: String) -> String {
         let cleaned = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")

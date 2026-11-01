@@ -174,14 +174,16 @@ struct ToolCall: Codable, Equatable, Identifiable {
 }
 
 final class ConversationCache: Sendable {
-    private let directory = clientDirectory("Conversations")
+    private let storedNames: StoredNames
+    private var directory: URL { storedNames.directory(.conversations) }
+
+    init(storedNames: StoredNames = .shared) { self.storedNames = storedNames }
     private let queue = DispatchQueue(label: "yorozu.cache")
 
     func loadAll() -> [Conversation] {
         queue.sync {
-            let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-            return files.filter { $0.pathExtension == "json" }.compactMap {
-                (try? Data(contentsOf: $0)).flatMap { try? JSONDecoder().decode(Conversation.self, from: $0) }?.withoutStrayErrors
+            return storedNames.fileNames(.conversations).filter { $0.hasSuffix(".json") }.compactMap {
+                storedNames.read($0, in: .conversations).flatMap { try? JSONDecoder().decode(Conversation.self, from: $0) }?.withoutStrayErrors
             }
         }
     }
@@ -202,11 +204,11 @@ final class ConversationCache: Sendable {
 
     func remove(_ id: String) {
         guard WireEvent.isId(id) else { return }
-        queue.async { [directory] in try? FileManager.default.removeItem(at: directory.appending(path: "\(id).json")) }
+        queue.async { [storedNames] in try? storedNames.remove("\(id).json", in: .conversations) }
     }
 
     func wipe() {
-        queue.async { [directory] in try? FileManager.default.removeItem(at: directory) }
+        queue.async { [storedNames] in try? storedNames.remove(in: .conversations) }
     }
 
     private static func makeDirectory(_ url: URL) throws {
