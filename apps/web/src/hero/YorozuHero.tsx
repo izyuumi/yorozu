@@ -4,7 +4,6 @@ import { Stage, type Act } from './kit/stage'
 import { Phone } from './kit/phone'
 import { Thread, Bubble } from './kit/messages'
 import { Collapse } from './kit/motion/Collapse'
-import './yorozu-hero.css'
 
 // A Yorozu conversation on iPhone, as the app draws it: vermilion bubbles for
 // you, gray cards for the agent, a glass composer. Beats: a question is typed

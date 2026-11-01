@@ -23,3 +23,9 @@ The home page hero's phone (`YorozuHero.tsx`), built with the stageshow kit
 - 390 wide: one `fat row` line, a false positive. The detector treats a wrapped
   paragraph in a single span as one line, so a three-line agent card reads as
   "75px tall for one 17px line".
+
+## Local change to the kit
+
+The kit components here don't import their own CSS. `hero.css` collects those
+styles, and `mount.tsx` links it at runtime. Astro adds CSS imported from a page
+script to every page of the site, and this keeps it to the home page.

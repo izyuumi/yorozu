@@ -1,7 +1,6 @@
 import { Children, cloneElement, createContext, isValidElement, useContext, useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactElement, type ReactNode } from 'react'
 import { useLook } from './looks'
 import { Roll } from './motion/Roll'
-import './messages.css'
 
 // Message threads the way messaging apps draw them: runs of bubbles where only
 // the last in a run has a tail, a typing indicator that grows into the reply,

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import './stage.css'
 import { checkSeam, createAct, Stopped, type Script } from './act'
 import { Cursor, ripple as spawnRipple, type CursorKind, type CursorStyle } from './cursor'
 import { Keycaps, type Keys, type KeysAt } from './keys'

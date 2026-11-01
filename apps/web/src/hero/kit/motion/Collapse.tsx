@@ -1,5 +1,4 @@
 import { useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react'
-import './Collapse.css'
 
 /**
  * Opens and closes its content's height, so what comes after moves with it:

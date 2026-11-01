@@ -1,6 +1,5 @@
 import { type CSSProperties, type HTMLAttributes, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useLook } from './looks'
-import './phone.css'
 
 // An iPhone drawn from the real geometry, the iPhone 18 Pro in points, as
 // Apple's iOS 27 UI kit lays it out: screen 402 × 874, status bar 62 tall,

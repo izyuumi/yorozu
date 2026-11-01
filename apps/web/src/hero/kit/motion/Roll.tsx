@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { useReducedMotion } from '../reduced-motion'
-import './Roll.css'
 
 /**
  * Text that rolls when it changes. Only the part that differs moves: in

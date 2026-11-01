@@ -1,7 +1,6 @@
 import type { ReactNode, Ref } from 'react'
 import { MacCrosshair, MacGrab, MacIbeam, MacOpenHand, MacPointer, MacPointingHand, MacResizeEW, MacResizeNESW, MacResizeNS, MacResizeNWSE, MacWait } from './cursors'
 import type { Point } from './measure'
-import './cursor.css'
 
 // The cursor a stage draws: the glyph for each kind, where its hotspot sits,
 // the five styles, and the ripple a click can send out.
