@@ -50,6 +50,8 @@ protocol ConnectionLeg: Actor {
     /// "<host[:port]>" and "<path> <host[:port]>" for the log.
     nonisolated var host: String { get }
     nonisolated var label: String { get }
+    /// What the winner store keeps for a direct candidate: its URL string.
+    nonisolated var key: String { get }
 }
 
 extension ConnectionLeg {
@@ -59,18 +61,26 @@ extension ConnectionLeg {
 
 extension RelayConnection: ConnectionLeg {}
 
-/// Dials the direct candidates and the relay together; the first path whose Noise session opens wins and the others are
-/// closed. One leg handshakes at a time: the plugin keeps a device's newest session, so two inits in flight could leave
-/// it holding the loser's. A network path change or a lost direct session starts a new race; nothing migrates, and the
-/// app resends its unacknowledged outbox on the new session.
+/// Dials the direct candidates and the relay; the first path whose Noise session opens wins and the others are closed.
+/// `RacePolicy` sets when each leg starts: last time's winner on this network kind first, the other direct candidates
+/// 50 ms apart, the relay 300 ms late behind a direct winner, and at once when every direct leg has failed. One leg
+/// handshakes at a time: the plugin keeps a device's newest session, so two inits in flight could leave it holding the
+/// loser's. A network path change or a lost session starts a new race; nothing migrates, and the app resends its
+/// unacknowledged outbox on the new session.
 public actor RacingConnection {
     typealias Legs = @Sendable (_ pairing: QrPayload, _ relayKnows: Bool) -> (relay: any ConnectionLeg, direct: [any ConnectionLeg])
+    typealias Sleep = @Sendable (Duration) async throws -> Void
+
+    /// An app reconnect joins a race this young that has no winner yet, instead of starting another.
+    static let joinWindow = Duration.seconds(10)
 
     private var pairing: QrPayload
     private var relayKnows: Bool
     private let makeLegs: Legs
     private let pathChanges: @Sendable () -> AsyncStream<Void>
-    private let pause: Duration
+    private let network: @Sendable () async -> String
+    private let winners: any RaceWinners
+    private let sleep: Sleep
 
     private var continuation: AsyncStream<RelayConnection.Update>.Continuation?
     private var running = false
@@ -79,6 +89,11 @@ public actor RacingConnection {
     private var nextID = 0
     private var legs: [Int: any ConnectionLeg] = [:]
     private var relayID: Int?
+    /// The race's direct legs in dial order.
+    private var order: [Int] = []
+    private var started: Set<Int> = []
+    private var timers: [Task<Void, Never>] = []
+    private var relayState: RelayConnection.State?
     private var listeners: [Task<Void, Never>] = []
     private var waiting: [Int] = []
     private var holder: Int?
@@ -87,6 +102,9 @@ public actor RacingConnection {
     private var again: Task<Void, Never>?
     private var pushToken: String?
     private var raceBegan = ContinuousClock.now
+    private var raceNetwork = "none"
+    private var sessionBegan = ContinuousClock.now
+    private var quickLosses = 0
 
     public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo, urlSession: URLSession = .shared) throws {
         let relayURL = try RelayConnection.relayURL(pairing)
@@ -99,16 +117,25 @@ public actor RacingConnection {
                     urlSession: urlSession)
             } : []
             return (relay: relay as any ConnectionLeg, direct: direct)
-        }, pathChanges: RacingConnection.networkChanges)
+        }, pathChanges: RacingConnection.networkChanges, network: { await NetworkKind.shared.current() },
+            winners: DefaultsRaceWinners())
     }
 
     init(pairing: QrPayload, relayKnows: Bool, legs: @escaping Legs, pathChanges: @escaping @Sendable () -> AsyncStream<Void>,
-        pause: Duration = .seconds(1)) {
+        network: @escaping @Sendable () async -> String, winners: any RaceWinners,
+        sleep: @escaping Sleep = { try await Task.sleep(for: $0) }) {
         self.pairing = pairing
         self.relayKnows = relayKnows
         makeLegs = legs
         self.pathChanges = pathChanges
-        self.pause = pause
+        self.network = network
+        self.winners = winners
+        self.sleep = sleep
+    }
+
+    /// Forgets which path won for this pairing room, on every network kind: for a pairing the app removes or replaces.
+    public static func forgetRaceWinners(room: String) {
+        DefaultsRaceWinners.forget(room: room)
     }
 
     public func updates() -> AsyncStream<RelayConnection.Update> {
@@ -122,13 +149,20 @@ public actor RacingConnection {
         running = true
         let changes = pathChanges()
         paths = Task { [weak self] in
-            for await _ in changes { await self?.reconnect() }
+            // A new path can change which candidates answer: always a new race.
+            for await _ in changes { await self?.race() }
         }
         await race()
     }
 
+    /// The app's reconnect (scene active, a sent share, a background wake) joins a race in flight that has no winner yet:
+    /// that race began moments ago for the same reason. A stale race, a relay waiting out its retry or a pause after a
+    /// lost session gives way to a new race.
     public func reconnect() async {
         guard running else { return await start() }
+        if winner == nil, again == nil, relayState != .offline, ContinuousClock.now - raceBegan < Self.joinWindow {
+            return connectionLog.info("reconnect joins race \(self.round, privacy: .public) in flight")
+        }
         await race()
     }
 
@@ -157,38 +191,78 @@ public actor RacingConnection {
         return await leg.send(event)
     }
 
-    private func endRace() async {
+    /// Returns the new round, taken before any wait: a race that began during the wait has a newer one.
+    @discardableResult
+    private func endRace() async -> Int {
         round += 1
+        let round = round
+        // A race being set up counts as in flight for `reconnect`.
+        raceBegan = .now
         again?.cancel()
         again = nil
-        for listener in listeners { listener.cancel() }
+        for task in listeners + timers { task.cancel() }
         listeners = []
+        timers = []
         let old = legs
         legs = [:]
         relayID = nil
+        order = []
+        started = []
+        relayState = nil
         waiting = []
         holder = nil
         winner = nil
         for leg in old.values { await leg.stop() }
+        return round
     }
 
     private func race() async {
-        await endRace()
+        let round = await endRace()
         guard running else { return }
+        let network = await network()
+        guard round == self.round, running else { return }
         let (relay, direct) = makeLegs(pairing, relayKnows)
         raceBegan = .now
-        let directHosts = direct.isEmpty ? "no direct candidates" : "direct " + direct.map(\.host).joined(separator: ", ")
-        connectionLog.info("race \(self.round, privacy: .public): dialing relay \(relay.host, privacy: .public) and \(directHosts, privacy: .public)")
-        add(relay, relay: true)
-        for leg in direct { add(leg, relay: false) }
+        raceNetwork = network
+        let last = pairing.roomId.flatMap { winners.winner(room: $0, network: network) }
+        let plan = RacePolicy.plan(direct: direct.map(\.key), lastWinner: last)
+        let relayID = register(relay)
+        self.relayID = relayID
+        order = plan.direct.map { register(direct[$0.index]) }
+        let starts = plan.direct.map { "\(direct[$0.index].label) at \($0.delay.ms) ms" } + ["\(relay.label) at \(plan.relay.ms) ms"]
+        connectionLog.info("race \(round, privacy: .public) on \(network, privacy: .public), last winner \(last ?? "none", privacy: .public): \(starts.joined(separator: ", "), privacy: .public)")
+        set(.connecting)
+        for (id, start) in zip(order, plan.direct) { schedule(id, after: start.delay) }
+        schedule(relayID, after: plan.relay)
     }
 
-    private func add(_ leg: any ConnectionLeg, relay: Bool) {
+    private func register(_ leg: any ConnectionLeg) -> Int {
         let id = nextID
         nextID += 1
         legs[id] = leg
-        if relay { relayID = id }
+        return id
+    }
+
+    private func schedule(_ id: Int, after delay: Duration) {
+        guard delay > .zero else { return launch(id, round) }
         let round = round
+        let sleep = sleep
+        timers.append(Task { [weak self] in
+            do { try await sleep(delay) } catch { return }
+            await self?.launch(id, round)
+        })
+    }
+
+    /// Happy Eyeballs: a failed direct leg starts the next pending one at once, and once every direct leg has failed the
+    /// relay starts without waiting out its head start. A failed relay never holds back a direct leg.
+    private func hurry() {
+        guard winner == nil else { return }
+        if let next = order.first(where: { legs[$0] != nil && !started.contains($0) }) { return launch(next, round) }
+        if order.allSatisfy({ legs[$0] == nil }), let relayID { launch(relayID, round) }
+    }
+
+    private func launch(_ id: Int, _ round: Int) {
+        guard round == self.round, winner == nil, let leg = legs[id], started.insert(id).inserted else { return }
         let token = pushToken
         listeners.append(Task { [weak self] in
             let updates = await leg.updates()
@@ -238,12 +312,18 @@ public actor RacingConnection {
                 winner = id
                 holder = id
                 waiting = []
+                for timer in timers { timer.cancel() }
+                timers = []
+                if let room = pairing.roomId, let leg = legs[id] {
+                    winners.record(id == relayID ? RacePolicy.relayKey : leg.key, room: room, network: raceNetwork)
+                }
                 let losers = legs.filter { $0.key != id }
                 for key in losers.keys { legs[key] = nil }
                 for leg in losers.values { await leg.stop() }
                 guard round == self.round else { return }
                 pairing.secret = nil
             }
+            sessionBegan = .now
             set(.ready)
             continuation?.yield(.sessionOpen(peer))
         case .state(let new):
@@ -257,16 +337,25 @@ public actor RacingConnection {
                 break
             }
             if id == winner {
-                guard id != relayID, new != .ready else { return set(new) }
-                // The direct session is gone: race again, after a pause so a socket that keeps closing cannot spin.
-                connectionLog.info("direct session lost (\(String(describing: new), privacy: .public)); racing again in \(String(describing: self.pause), privacy: .public)")
+                // A direct winner is lost on any state but ready; a relay winner only when its socket closes (it rides
+                // out a host going offline on the same socket). Either way the next race may find the other path.
+                let lost = id == relayID ? new == .offline : new != .ready
+                guard lost, let leg = legs[id] else { return set(new) }
+                let lived = ContinuousClock.now - sessionBegan
+                quickLosses = RacePolicy.quickLosses(after: quickLosses, lived: lived)
+                let pause = RacePolicy.pause(quickLosses: quickLosses)
+                connectionLog.info("\(leg.label, privacy: .public) session lost (\(String(describing: new), privacy: .public)) after \(lived.ms, privacy: .public) ms, quick losses \(self.quickLosses, privacy: .public); racing again in \(String(describing: pause), privacy: .public)")
                 legs[id] = nil
                 winner = nil
                 holder = nil
                 set(.connecting)
-                return rerace()
+                rerace(after: pause)
+                return await leg.stop()
             }
-            if id == relayID && winner == nil { set(new) }
+            if id == relayID {
+                relayState = new
+                if winner == nil { set(new) }
+            }
             // `.ready` comes just before `.sessionOpen`; the holder keeps its turn through both.
             if new != .handshaking && new != .ready {
                 waiting.removeAll { $0 == id }
@@ -275,7 +364,10 @@ public actor RacingConnection {
                     await next()
                 }
             }
-            if new == .offline && id != relayID { legs[id] = nil }
+            if new == .offline && id != relayID {
+                legs[id] = nil
+                hurry()
+            }
         case .accepted, .event:
             if id == winner { continuation?.yield(update) }
         case .relayJoined:
@@ -284,12 +376,14 @@ public actor RacingConnection {
         }
     }
 
-    private func rerace() {
+    private func rerace(after pause: Duration) {
         guard again == nil else { return }
-        let pause = pause
         let round = round
+        let sleep = sleep
         again = Task { [weak self] in
-            try? await Task.sleep(for: pause)
+            if pause > .zero {
+                do { try await sleep(pause) } catch { return }
+            }
             guard !Task.isCancelled else { return }
             await self?.rerace(round)
         }
