@@ -43,8 +43,8 @@ export type HubOptions = {
   peerInfo: () => PeerInfo;
   /** The allowlisted device's X25519 key, base64url. */
   staticKeyOf: (deviceKey: string) => Promise<string | undefined>;
-  /** Relay only (offline pairing is #532 step 5): stores a device whose proof matches a pending pairing. */
-  pair?: (proof: string | undefined, staticPub: string, deviceKey: string, now: number) => Promise<boolean>;
+  /** Stores a device whose proof matches a pending pairing, on either path (offline pairing, #532 step 5). */
+  pair?: (proof: string | undefined, staticPub: string, deviceKey: string, now: number, path: Path) => Promise<boolean>;
   /** A relay handshake from a device that is not allowlisted. */
   refused?: (deviceKey: string) => void;
   directHints?: () => DirectHints | undefined;
@@ -117,7 +117,7 @@ export class Hub {
     for (const [sid, until] of this.answered) if (until < now) this.answered.delete(sid);
     if (this.answered.has(accepted.sid)) return this.drop("replayed");
     const known = (await this.opts.staticKeyOf(deviceKey)) === staticPub;
-    const paired = !known && link.path === "relay" && (await this.opts.pair?.(accepted.payload.proof, staticPub, deviceKey, now));
+    const paired = !known && (await this.opts.pair?.(accepted.payload.proof, staticPub, deviceKey, now, link.path));
     if (!known && !paired) {
       if (link.path === "relay") this.opts.refused?.(deviceKey);
       return this.drop("device not allowlisted");

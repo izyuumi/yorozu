@@ -23,6 +23,7 @@ export function registerYorozuCli(program: Program): void {
     print(`Scan with the Yorozu app, or open: ${pairing.link}`);
     print(`Host fingerprint: ${pairing.fingerprint} (the app shows it too; they must match)`);
     print(`One device, until ${time(pairing.expiresAt)}.`);
+    if (pairing.directOnly) print("The relay is unreachable: this code pairs only over the direct path (same network, Tailscale or this Mac).");
     if (pairing.devices >= 16) print("16 devices are paired: the new one replaces the oldest.");
   });
 
