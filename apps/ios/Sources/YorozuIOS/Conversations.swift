@@ -157,7 +157,7 @@ struct ConversationsView: View {
             ToolbarItem(placement: .topBarLeading) {
                 Button(String(localized: "Settings"), systemImage: "gearshape") { showingSettings = true; VoiceSetupTip().invalidate(reason: .actionPerformed) }
                     .accessibilityIdentifier("conversations.settings")
-                    .popoverTip(VoiceModel.supported && !voiceEnabled ? VoiceSetupTip() : nil)
+                    .popoverTip(VoiceSetup.supported && !voiceEnabled ? VoiceSetupTip() : nil)
             }
             #endif
             ToolbarItem(placement: .primaryAction) { compose }

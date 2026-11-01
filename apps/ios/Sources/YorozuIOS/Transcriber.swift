@@ -1,4 +1,6 @@
 import Foundation
+import SpeechEngines
+import VoiceText
 #if canImport(llama)
 import llama
 #endif
@@ -8,42 +10,11 @@ import llama
 final class Transcriber: @unchecked Sendable {
     static let sampleRate = 16_000
 
-    /// The speech languages LFM3-Audio-2B transcribes; the raw value is the English name its prompt takes.
-    enum Language: String, CaseIterable, Identifiable {
-        case automatic, arabic, chinese, danish, dutch, english, finnish, french, german, greek, hebrew, italian,
-            japanese, korean, polish, portuguese, spanish, swedish, turkish
-        var id: Self { self }
-        var prompt: String { self == .automatic ? "Perform ASR." : "Perform ASR in \(rawValue.capitalized)." }
-
-        private var code: String {
-            switch self {
-            case .automatic: ""
-            case .arabic: "ar"
-            case .chinese: "zh"
-            case .danish: "da"
-            case .dutch: "nl"
-            case .english: "en"
-            case .finnish: "fi"
-            case .french: "fr"
-            case .german: "de"
-            case .greek: "el"
-            case .hebrew: "he"
-            case .italian: "it"
-            case .japanese: "ja"
-            case .korean: "ko"
-            case .polish: "pl"
-            case .portuguese: "pt"
-            case .spanish: "es"
-            case .swedish: "sv"
-            case .turkish: "tr"
-            }
-        }
-
-        /// The language's name in itself, as the system writes it.
-        var name: String {
-            let locale = Locale(identifier: code)
-            return locale.localizedString(forLanguageCode: code)?.capitalized(with: locale) ?? rawValue.capitalized
-        }
+    /// LFM3-Audio's instruction: transcribe, in the language if one is set, spelling the hints as given.
+    static func prompt(language: VoiceLanguage, hints: [String]) -> String {
+        var prompt = language == .automatic ? "Perform ASR." : "Perform ASR in \(language.rawValue.capitalized)."
+        if !hints.isEmpty { prompt += " Vocabulary: " + hints.joined(separator: ", ") + "." }
+        return prompt
     }
 
     struct Failure: LocalizedError {
@@ -85,13 +56,13 @@ final class Transcriber: @unchecked Sendable {
     }
 
     /// Transcribes 16 kHz mono PCM with greedy decoding. Stops early when the calling task is cancelled.
-    func transcribe(_ samples: [Float], language: Language) throws -> String {
+    func transcribe(_ samples: [Float], language: VoiceLanguage, hints: [String] = []) throws -> String {
         var params = llama_context_default_params()
         params.n_ctx = Self.contextTokens
         guard let context = llama_init_from_model(model, params) else { throw Failure(String(localized: "Not enough memory to transcribe.")) }
         defer { llama_free(context) }
 
-        let prompt = try chatPrompt(system: language.prompt, user: String(cString: mtmd_default_marker()))
+        let prompt = try chatPrompt(system: Self.prompt(language: language, hints: hints), user: String(cString: mtmd_default_marker()))
         guard let chunks = mtmd_input_chunks_init() else { throw Failure(String(localized: "Transcription failed.")) }
         defer { mtmd_input_chunks_free(chunks) }
         guard let audio = samples.withUnsafeBufferPointer({ mtmd_bitmap_init_from_audio($0.count, $0.baseAddress) }) else {
@@ -156,6 +127,12 @@ final class Transcriber: @unchecked Sendable {
     // TUIST_VOICE_INPUT=0) leaves it out and has no voice input.
     static let available = false
     init(model: URL, projector: URL) throws { throw Failure(String(localized: "The voice model could not be loaded.")) }
-    func transcribe(_ samples: [Float], language: Language) throws -> String { "" }
+    func transcribe(_ samples: [Float], language: VoiceLanguage, hints: [String] = []) throws -> String { "" }
     #endif
+}
+
+extension Transcriber: SpeechEngine {
+    func transcribe(_ samples: [Float], language: String?, hints: [String]) async throws -> String {
+        try transcribe(samples, language: language.map(VoiceLanguage.init(code:)) ?? .automatic, hints: hints)
+    }
 }

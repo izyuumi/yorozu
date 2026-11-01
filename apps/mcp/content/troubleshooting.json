@@ -26,9 +26,10 @@
     },
     {
       "symptom": "Voice input says \"The voice model isn’t available for this version of Yorozu yet. Try again later.\"",
-      "fix": "On iPhone and iPad the voice model is an Apple-hosted asset pack (ID VoiceModel). Until App Store Connect has processed the pack (and, for the App Store and external TestFlight, approved it), the system knows no pack with that ID (ManagedBackgroundAssetsError.assetPackNotFound). Nothing on the device fixes it: tap Try Again later, or update the app. Copy Diagnostics (Settings › About) includes the underlying error.",
+      "fix": "On iPhone and iPad each voice model is an Apple-hosted asset pack (IDs VoiceModel, VoiceWhisperTurbo, VoiceWhisperSmall and VoiceNemotron); Settings › Voice Input › Model shows such a model as Not available yet. Until App Store Connect has processed the pack (and, for the App Store and external TestFlight, approved it), the system knows no pack with that ID (ManagedBackgroundAssetsError.assetPackNotFound). Nothing on the device fixes it: pick another model, tap Try Again later, or update the app. Copy Diagnostics (Settings › About) includes the underlying error.",
       "quotes": [
-        { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "The voice model isn’t available for this version of Yorozu yet. Try again later." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceSettings.swift", "text": "The voice model isn’t available for this version of Yorozu yet. Try again later." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceSettings.swift", "text": "Not available yet" },
         { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "case .assetPackNotFound?" }
       ]
     },
@@ -36,25 +37,41 @@
       "symptom": "The voice model download says \"Waiting for Wi-Fi\"",
       "fix": "The download waits for Wi-Fi and doesn't use cellular, a personal hotspot or Low Data Mode. Join Wi-Fi, or tap Download Using Cellular… and confirm.",
       "quotes": [
-        { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "Waiting for Wi-Fi. The model downloads on Wi-Fi so it doesn’t use cellular data." }
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceSettings.swift", "text": "Waiting for Wi-Fi. The model downloads on Wi-Fi so it doesn’t use cellular data." }
       ]
     },
     {
       "symptom": "Voice input is greyed out: \"Voice input needs iOS 26 or later.\" or \"This device needs more memory for voice input.\"",
-      "fix": "Voice input needs iOS 26 or later on iPhone and iPad (Apple-hosted asset packs) and about 6 GB of RAM on any device. Update iOS if the device supports it; otherwise use the system keyboard's dictation.",
+      "fix": "Voice input needs iOS 26 or later on iPhone and iPad (Apple Speech and the Apple-hosted asset packs). On a Mac before macOS 26, or a device where Apple Speech isn't available, a downloaded model is needed: 4 GB of RAM for Whisper Small and Nemotron 3.5 ASR, 6 GB for the others. Settings › Voice Input › Model says why a model can't be picked. Update the OS if the device supports it; otherwise use the system keyboard's dictation.",
       "quotes": [
-        { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "Voice input needs iOS 26 or later." },
-        { "file": "apps/ios/Sources/YorozuIOS/VoiceInput.swift", "text": "This device needs more memory for voice input." }
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceSettings.swift", "text": "Voice input needs iOS 26 or later." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceSettings.swift", "text": "This device needs more memory for voice input." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceSetup.swift", "text": "GB of memory or more." }
       ]
     },
     {
       "symptom": "The voice model download fails: interrupted, damaged, or an HTTP error",
-      "fix": "Tap Try Again. On the Mac the model comes from Hugging Face and resumes a partial download; a damaged file fails its SHA-256 check and is downloaded again. Check the network and that there is about 1.5 GB of free disk space. Keep the app open while it downloads on the Mac.",
+      "fix": "Tap Try Again. On the Mac the model comes from Hugging Face, pinned to a revision, and resumes a partial download; a damaged file fails its SHA-256 check and is downloaded again. Check the network and that there is room for the model (about 1.5 GB for LFM3-Audio-2B, less for the others). Keep the app open while it downloads on the Mac.",
       "quotes": [
         { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "The download was interrupted. Try again." },
         { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "The downloaded model was damaged. Try again." },
         { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "The download failed (HTTP" },
         { "file": "apps/ios/Sources/YorozuIOS/VoiceModel.swift", "text": "The voice model couldn’t be downloaded. Try again." }
+      ]
+    },
+    {
+      "symptom": "Apple Speech says it \"can’t transcribe this language on this device\"",
+      "fix": "Apple Speech has no model for the chosen language on this device, or the system hasn't downloaded it yet. Pick another language under Settings › Voice Input › Language (Automatic is the device's language), tap Download the Language when it's offered, or choose a downloaded model under Model.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceSettings.swift", "text": "Apple Speech can’t transcribe this language on this device. Pick another language or model." },
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceSetup.swift", "text": "Apple Speech can’t transcribe this language on this device yet." }
+      ]
+    },
+    {
+      "symptom": "Voice input keeps writing a name or word wrong",
+      "fix": "Add it under Settings › Voice Input › Dictionary. With Heard As left empty the model is only told to expect the word; put what voice input writes instead under Heard As and every transcript gets the word in its place.",
+      "quotes": [
+        { "file": "apps/ios/Sources/YorozuIOS/VoiceSettings.swift", "text": "Heard As (Optional)" }
       ]
     },
     {

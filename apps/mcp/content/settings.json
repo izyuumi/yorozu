@@ -35,13 +35,25 @@
       "title": "Voice Input",
       "platforms": ["ios", "macos"],
       "location": "Settings › Voice Input",
-      "description": "Speak a message instead of typing it. Speech is transcribed on the device. Turning it on downloads the voice model (about 1.44 GB): from Apple as an asset pack on iPhone and iPad (iOS 26 or later), from Hugging Face on the Mac. Devices with less than about 6 GB of RAM can't turn it on."
+      "description": "Speak a message instead of typing it. Speech is transcribed on the device by the engine chosen under Model. With Apple Speech (the default on iOS 26 and macOS 26 and later) turning it on has the system download the language; with a downloaded model it downloads that model: from Apple as an asset pack on iPhone and iPad (iOS 26 or later), from Hugging Face on the Mac."
+    },
+    "voiceInputEngine": {
+      "title": "Model",
+      "platforms": ["ios", "macos"],
+      "location": "Settings › Voice Input › Model",
+      "description": "The speech engine voice input uses, each listed with its download size, languages, the memory it needs, whether it streams, and its license: Apple Speech (built into iOS 26 and macOS 26; languages vary by device), LFM3-Audio-2B (about 1.44 GB, 18 languages, 6 GB of RAM), Whisper Large v3 Turbo (about 740 MB, 99 languages, 6 GB), Whisper Small (about 490 MB, 99 languages, 4 GB) and Nemotron 3.5 ASR (about 615 MB, 8 languages, 4 GB, streaming; Apple silicon on the Mac). A model whose iPhone and iPad asset pack isn't in App Store Connect yet shows Not available yet. Until you pick one, Apple Speech is used where it runs, and a device that already downloaded LFM3-Audio-2B keeps it. Delete removes a downloaded model that isn't selected. Licenses opens the license texts."
     },
     "voiceInputLanguage": {
       "title": "Language",
       "platforms": ["ios", "macos"],
       "location": "Settings › Voice Input",
-      "description": "The spoken language for voice input: Automatic, or one of the 18 speech languages the model supports, each named in its own language."
+      "description": "The spoken language for voice input, each named in its own language: Automatic, or one of the languages the chosen model supports. Automatic detects the language with the downloaded models; with Apple Speech it uses the device's language, and the list shows only the languages Apple Speech supports on the device."
+    },
+    "voiceDictionary": {
+      "title": "Dictionary",
+      "platforms": ["ios", "macos"],
+      "location": "Settings › Voice Input › Dictionary",
+      "description": "Names and words voice input gets wrong, up to 200, each with an optional Heard As. Every model is told to expect the words (Apple Speech's contextual strings, Whisper's prompt, Nemotron's custom vocabulary, LFM3-Audio's instruction), and wherever a transcript has a Heard As, the word replaces it, whole words only in spaced languages. The dictionary stays on the device and isn't in Copy Diagnostics."
     },
     "YorozuZoomStep": {
       "title": "Zoom",
