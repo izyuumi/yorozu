@@ -10,9 +10,9 @@ struct HomeView: View {
     @State private var selection: String?
     @State private var pair = ChatPair()
     @State private var blank: String?
+    @State private var columns = LaunchColumns.initial
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var columns = NavigationSplitViewVisibility.automatic
     @State private var windowWidth: CGFloat = 0
     @State private var dragging = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -26,7 +26,11 @@ struct HomeView: View {
             split
             #endif
         }
-        .opensRequestedConversation(model, selection: $selection)
+        .opensRequestedConversation(model, selection: $selection) {
+            #if os(iOS)
+            columns = LaunchColumns.afterRequestedOpen(columns)
+            #endif
+        }
         .inAppNotices(model) { open($0, automation: nil) }
         .onChange(of: selection == nil && besideList, initial: true) { _, empty in
             guard empty else { return }
@@ -82,7 +86,7 @@ struct HomeView: View {
             }
         }
         #else
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             ConversationsView(model: model, selection: $selection, section: $section, showsCrons: true)
                 #if os(macOS)
                 .navigationSplitViewColumnWidth(min: LayoutMetrics.sidebarMinWidth, ideal: LayoutMetrics.sidebarIdealWidth,

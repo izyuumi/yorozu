@@ -120,10 +120,11 @@ enum Notices {
 }
 
 extension View {
-    func opensRequestedConversation(_ model: AppModel, selection: Binding<String?>) -> some View {
+    func opensRequestedConversation(_ model: AppModel, selection: Binding<String?>, opened: @escaping () -> Void = {}) -> some View {
         onChange(of: model.requestedConversation, initial: true) { _, convId in
             guard let convId else { return }
             selection.wrappedValue = convId
+            opened()
             model.requestedConversation = nil
         }
     }

@@ -63,6 +63,10 @@ All paths are under `apps/ios/Sources/YorozuIOS/`.
 - iPhone vs. iPad: `HomeView` in `Crons.swift` picks tabs for a compact horizontal size
   class (an iPhone in portrait, an iPad in a narrow multitasking width) and a split view for
   a regular one; the Mac always uses the split view. Nothing branches on the device model.
+- On a cold launch the split view shows its sidebar (`LaunchColumns.initial`, `.all`) on the
+  iPad and the Mac. A conversation opened by a link, widget, notification or intent sets an
+  iPad's shown sidebar back to `.automatic`, so the system hides it wherever it would cover
+  the conversation; a side-by-side pair (`.detailOnly`) stays as it is.
 - iPhone and iPad split view only (`#if os(iOS)`): when two conversations open side by side,
   `ChatPairView` in `Pair.swift` measures its width with `onGeometryChange` and hides the
   sidebar when each pane would get less than `comfortablePane` (360 points).
