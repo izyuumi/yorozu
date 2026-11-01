@@ -158,7 +158,8 @@ test("push registrations are accepted only in the shape the relay stores", () =>
 
 test("a notify is a known class and an opaque reference, or it is nothing", () => {
   expect(parseNotify({ class: "reply", threadRef: "r" })).toEqual({ class: "reply", threadRef: "r" });
-  expect(parseNotify({ class: "gossip", threadRef: "r" })).toBeNull();
+  expect(parseNotify({ class: "gossip", threadRef: "r" })).toBeUndefined();
+  expect(parseNotify({ class: 1, threadRef: "r" })).toBeNull();
   expect(parseNotify({ class: "sync", threadRef: "r" })).toEqual({ class: "sync", threadRef: "r" });
   const key = "A".repeat(43);
   expect(parseNotify({ class: "reply", threadRef: "r", devices: [key] })).toEqual({ class: "reply", threadRef: "r", devices: [key] });
@@ -245,10 +246,12 @@ test("an activity state keeps only opaque tokens, kinds, states, counts and time
   const job = { token: "AAAAAAAAAAAAAAAA", kind: "turn", state: "running", startedAt: 1 };
   expect(parseActivityState({ jobs: [{ ...job, title: "secret", convId: "x" }], extra: 1 })).toEqual({ jobs: [job] });
   expect(parseActivityState({ jobs: [] })).toEqual({ jobs: [] });
+  // A job with a kind or state this relay does not know is dropped, and the rest are kept.
+  expect(parseActivityState({ jobs: [{ ...job, kind: "tool" }, job, { ...job, state: "paused" }] })).toEqual({ jobs: [job] });
   for (const bad of [
     { ...job, token: "short" },
-    { ...job, kind: "tool" },
-    { ...job, state: "paused" },
+    { ...job, kind: 1 },
+    { ...job, state: null },
     { ...job, steps: -1 },
     { ...job, steps: 1.5 },
     { ...job, startedAt: "now" },
@@ -272,7 +275,9 @@ test("an activity push is an update or end at priority 5 or 10, and its payload 
   const parsed = parseActivityPush(push)!;
   expect(parsed).toEqual(push);
   expect(parseActivityPush({ ...push, priority: 1 })).toBeNull();
-  expect(parseActivityPush({ ...push, event: "start" })).toBeNull();
+  expect(parseActivityPush({ ...push, event: "start" })).toBeUndefined();
+  expect(parseActivityPush({ ...push, event: 1 })).toBeNull();
+  expect(parseActivityPush({ ...push, extra: 1 })).toEqual(push);
   expect(parseActivityPush({ ...push, staleDate: 1.5 })).toBeNull();
   expect(parseActivityPush({ ...push, state: { jobs: [{}] } })).toBeNull();
 

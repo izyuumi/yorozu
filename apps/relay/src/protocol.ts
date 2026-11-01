@@ -215,9 +215,11 @@ export const parsePush = (msg: Record<string, unknown>): Push | null =>
     ? { deviceToken: msg.deviceToken }
     : null;
 
-export const parseNotify = (msg: Record<string, unknown>): Notify | null => {
+/** `null` when malformed; `undefined` for a class this relay does not know, which the caller ignores. */
+export const parseNotify = (msg: Record<string, unknown>): Notify | null | undefined => {
   if (typeof msg.threadRef !== "string" || msg.threadRef === "") return null;
-  if (!NOTIFY_CLASSES.includes(msg.class as NotifyClass) && msg.class !== SILENT_CLASS) return null;
+  if (typeof msg.class !== "string") return null;
+  if (!NOTIFY_CLASSES.includes(msg.class as NotifyClass) && msg.class !== SILENT_CLASS) return undefined;
   if (msg.eventRef !== undefined && (typeof msg.eventRef !== "string" || msg.eventRef === "")) return null;
   const previews = parsePreviews(msg.previews);
   if (previews === null) return null;
@@ -288,12 +290,14 @@ const deviceKey = (value: unknown): value is string =>
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 const epochSeconds = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0;
 
-function parseActivityJob(value: unknown): ActivityJob | null {
+/** `null` when malformed; `undefined` for a kind or state this relay does not know, which drops the job. */
+function parseActivityJob(value: unknown): ActivityJob | null | undefined {
   if (!isEnvelope(value)) return null;
   const { token, kind, state, steps, startedAt, finishedAt } = value;
   if (typeof token !== "string" || !JOB_TOKEN.test(token)) return null;
-  if (!ACTIVITY_KINDS.includes(kind as ActivityJob["kind"])) return null;
-  if (!ACTIVITY_STATES.includes(state as ActivityJob["state"])) return null;
+  if (typeof kind !== "string" || typeof state !== "string") return null;
+  if (!ACTIVITY_KINDS.includes(kind as ActivityJob["kind"])) return undefined;
+  if (!ACTIVITY_STATES.includes(state as ActivityJob["state"])) return undefined;
   if (steps !== undefined && !(Number.isSafeInteger(steps) && (steps as number) >= 0 && (steps as number) <= MAX_STEPS)) return null;
   if (!finite(startedAt) || (finishedAt !== undefined && !finite(finishedAt))) return null;
   return {
@@ -312,8 +316,8 @@ export function parseActivityState(value: unknown): ActivityState | null {
   const jobs: ActivityJob[] = [];
   for (const entry of value.jobs) {
     const job = parseActivityJob(entry);
-    if (!job) return null;
-    jobs.push(job);
+    if (job === null) return null;
+    if (job) jobs.push(job);
   }
   return { jobs };
 }
@@ -326,8 +330,10 @@ export const parseActivityToken = (msg: Record<string, unknown>): ActivityToken 
   return token ? { device, token: token.deviceToken } : null;
 };
 
-export const parseActivityPush = (msg: Record<string, unknown>): ActivityPush | null => {
-  if (!deviceKey(msg.device) || (msg.event !== "update" && msg.event !== "end")) return null;
+/** `null` when malformed; `undefined` for an event this relay does not know, which the caller ignores. */
+export const parseActivityPush = (msg: Record<string, unknown>): ActivityPush | null | undefined => {
+  if (!deviceKey(msg.device) || typeof msg.event !== "string") return null;
+  if (msg.event !== "update" && msg.event !== "end") return undefined;
   if (msg.priority !== 5 && msg.priority !== 10) return null;
   if (msg.staleDate !== undefined && !epochSeconds(msg.staleDate)) return null;
   if (msg.dismissalDate !== undefined && !epochSeconds(msg.dismissalDate)) return null;

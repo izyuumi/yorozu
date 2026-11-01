@@ -450,6 +450,10 @@ test("only a joined phone may register, and only the mac may notify", async () =
   expect(await second.closed()).toBe(4001);
 
   mac.send({ type: "notify", class: "gossip", threadRef: "r" });
+  mac.send({ type: "ping" });
+  expect(await mac.next()).toMatchObject({ type: "pong" });
+
+  mac.send({ type: "notify", class: 1, threadRef: "r" });
   expect(await mac.closed()).toBe(4001);
 });
 

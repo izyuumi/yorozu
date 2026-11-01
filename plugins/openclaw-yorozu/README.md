@@ -21,7 +21,8 @@ A method fails with `UNAVAILABLE` and the error text, for example while the chan
 - Connects to `<relayUrl>?room=<room id>`, registers by signing the relay's nonce, then sends the device allowlist (`devices`). Pings every 30 s and drops a half-open socket. Redials with backoff from 1 s up to 30 s until the account stops.
 - A handshake is answered only when the device's Ed25519 key and the X25519 key its handshake authenticates both match an allowlist row, or when it proves a pending pairing. Anything else gets a `revoke` to the relay. A handshake id that was already answered is not answered again within the 5-minute freshness window.
 - One session per device, in memory. Sessions survive relay reconnects but not a channel or Gateway restart.
-- Each device must send `peer_info` before anything else counts. If the protocol versions do not overlap, the device gets `error update_required` and its session is dropped. The host's `peer_info` carries the agent, the OpenClaw version, `mediaMaxBytes` and the capabilities `attachments`, `devices`, `invite`, `replies` and `reactions`, plus `liveActivityPush` while the relay can push.
+- Each device must send `peer_info` before anything else counts. If the protocol versions do not overlap, the device gets `error update_required` and its session is dropped. The host's `peer_info` carries the agent, the OpenClaw version, `mediaMaxBytes` and the capabilities `attachments`, `devices`, `invite`, `replies` and `reactions`, plus `liveActivityPush` while the relay can push. `direct` is defined (`DIRECT`) but not listed until the direct listener exists (#532 step 3).
+- Unknown input never ends a session: an unknown kind is answered `error unsupported`, unknown fields are ignored, an unknown enum value passes validation (an unknown `live_activity` job kind or state is dropped before it reaches the relay), and an unknown relay message type is ignored.
 - Frames the relay buffered (`seq`) are acked after handling. Host frames are batched at up to 16 frames and under 1 MiB per batch.
 
 ## Keys and devices (`src/keys.ts`, `src/devices.ts`)
@@ -109,4 +110,4 @@ No output means the plugin typechecks. The `grep` drops errors from inside the O
 
 ## Tests
 
-`src/liveactivity.ts` imports nothing at runtime, so Node runs its tests without OpenClaw: `node --test test/*.test.ts` (Node 26, from this folder). They share `apps/ios/Tests/Fixtures/activity-content-state.json` with the relay's and the app's tests.
+`src/liveactivity.ts` and `src/envelope.ts` import nothing from OpenClaw, so Node runs their tests without it: `node --test test/*.test.ts` (Node 26, from this folder; `test/envelope.test.ts` maps the sibling `./x.js` imports to `./x.ts` with a resolve hook). The Live Activity tests share `apps/ios/Tests/Fixtures/activity-content-state.json` with the relay's and the app's tests.

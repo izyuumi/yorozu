@@ -47,8 +47,8 @@ const validJob = (v: unknown): boolean =>
   object(v) &&
   typeof v.token === "string" &&
   JOB_TOKEN.test(v.token) &&
-  KINDS.includes(v.kind as string) &&
-  STATES.includes(v.state as string) &&
+  typeof v.kind === "string" &&
+  typeof v.state === "string" &&
   (v.steps === undefined || nat(v.steps)) &&
   nat(v.startedAt) &&
   (v.finishedAt === undefined || nat(v.finishedAt));
@@ -62,9 +62,9 @@ export const validReport = (d: Fields): boolean =>
   Object.keys(d.turns).length <= LIMIT &&
   Object.entries(d.turns).every(([token, convId]) => JOB_TOKEN.test(token) && typeof convId === "string" && CONV_ID.test(convId));
 
-/** A report's jobs with only the known fields, so nothing else can reach the relay. */
+/** A report's jobs with only the known fields, so nothing else can reach the relay; a job of an unknown kind or state is dropped. */
 export const cleanJobs = (jobs: readonly WireJob[]): WireJob[] =>
-  jobs.map(({ token, kind, state, steps, startedAt, finishedAt }) => ({
+  jobs.filter((job) => KINDS.includes(job.kind) && STATES.includes(job.state)).map(({ token, kind, state, steps, startedAt, finishedAt }) => ({
     token,
     kind,
     state,
