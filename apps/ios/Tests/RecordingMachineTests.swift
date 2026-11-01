@@ -45,16 +45,16 @@ private struct FakeRecorder {
 }
 
 extension RecordingMachineTests {
-    @Test(arguments: [300.0, 301.0])
+    @Test(arguments: [600.0, 601.0])
     func capStopsAtOrAboveLimit(seconds: Double) {
         var machine = RecordingMachine()
         _ = machine.handle(.start)
-        #expect(RecordingLimits.maxSeconds == 300)
-        #expect(machine.handle(.captured(seconds: 299.99)).isEmpty)
+        #expect(RecordingLimits.maxSeconds == 600)
+        #expect(machine.handle(.captured(seconds: 599.99)).isEmpty)
         #expect(machine.phase == .recording)
         #expect(machine.handle(.captured(seconds: seconds)) == [.stopEngine, .persistClip, .announceCap, .updateActivity])
         #expect(machine.phase == .finished(.capReached))
-        #expect(machine.handle(.captured(seconds: 400)).isEmpty)
+        #expect(machine.handle(.captured(seconds: 700)).isEmpty)
         #expect(machine.captured == seconds)
         #expect(machine.handle(.start) == [.startEngine, .updateActivity])
         #expect(machine.captured == 0)

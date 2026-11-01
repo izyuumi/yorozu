@@ -95,7 +95,7 @@ final class VoiceSession {
             if phase == .recording { showRow(.recording) }
         case .announceCap:
             capped = true
-            notice = String(localized: "Recording stopped at the 5-minute limit.")
+            notice = String(localized: "Recording stopped at the 10-minute limit.")
             Dictation.shared.notify(.cap, convId: convId)
         case .discardClip:
             let id = clipID

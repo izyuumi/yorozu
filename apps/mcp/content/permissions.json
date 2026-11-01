@@ -2,7 +2,7 @@
   "$comment": "Plain-language meaning of each permission and entitlement. The usage strings and entitlement keys come from apps/ios/Project.swift and apps/ios/Resources/MacHardenedRuntime.entitlements (scripts/generate.ts); each needs an entry here. Runtime prompts quote the code that asks for them.",
   "usage": {
     "NSCameraUsageDescription": "Camera: asked the first time you scan a pairing QR code or take a photo to send.",
-    "NSMicrophoneUsageDescription": "Microphone: asked the first time you use voice input. Audio is transcribed on the device. On iPhone and iPad a recording keeps going when you switch apps or lock the phone, with the system's microphone indicator on, until you stop it or it reaches 5 minutes.",
+    "NSMicrophoneUsageDescription": "Microphone: asked the first time you use voice input. Audio is transcribed on the device. On iPhone and iPad a recording keeps going when you switch apps or lock the phone, with the system's microphone indicator on, until you stop it or it reaches 10 minutes.",
     "NSPhotoLibraryAddUsageDescription": "Photos (add only): asked the first time you save a picture from a conversation. Yorozu can't read your library through this."
   },
   "entitlements": {

@@ -167,7 +167,7 @@ final class Dictation {
         switch notice {
         case .cap:
             content.title = String(localized: "Recording Stopped")
-            content.body = String(localized: "Recording stopped at the 5-minute limit.")
+            content.body = String(localized: "Recording stopped at the 10-minute limit.")
         case .transcriptReady:
             content.title = String(localized: "Transcript Ready")
             content.body = String(localized: "The text is in the message field for you to review.")

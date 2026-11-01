@@ -1,7 +1,7 @@
 import Foundation
 
 enum RecordingLimits {
-    static let maxSeconds: Double = 300
+    static let maxSeconds: Double = 600
 }
 
 enum RecordingPhase: Equatable, Sendable {

@@ -313,54 +313,54 @@
         }
       }
     },
-    "Recording stopped at the 5-minute limit." : {
+    "Recording stopped at the 10-minute limit." : {
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "録音は上限の5分で止まりました。"
+            "value" : "録音は上限の10分で止まりました。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "录音已在 5 分钟上限时停止。"
+            "value" : "录音已在 10 分钟上限时停止。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "錄音已在 5 分鐘上限時停止。"
+            "value" : "錄音已在 10 分鐘上限時停止。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "녹음이 최대 5분에 도달해 중지되었습니다."
+            "value" : "녹음이 최대 10분에 도달해 중지되었습니다."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "La grabación se detuvo al llegar al límite de 5 minutos."
+            "value" : "La grabación se detuvo al llegar al límite de 10 minutos."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "L’enregistrement s’est arrêté à la limite de 5 minutes."
+            "value" : "L’enregistrement s’est arrêté à la limite de 10 minutes."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Die Aufnahme wurde beim Limit von 5 Minuten beendet."
+            "value" : "Die Aufnahme wurde beim Limit von 10 Minuten beendet."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "A gravação parou no limite de 5 minutos."
+            "value" : "A gravação parou no limite de 10 minutos."
           }
         }
       }
