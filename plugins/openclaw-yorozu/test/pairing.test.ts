@@ -57,6 +57,22 @@ test("a relay token while the relay mints; an offline code when it can't but dir
   await assert.rejects(mintCode(async () => { throw new Error("relay timeout"); }, undefined), /relay timeout/);
 });
 
+test("a proof of the wrong length or one character off is refused without throwing; the valid one spends once", () => {
+  const pending = new PendingPairings();
+  const secret = pending.add(10_000, 0);
+  const [staticPub, signingPub] = [b64u(Buffer.alloc(32, 1)), b64u(Buffer.alloc(32, 2))];
+  const valid = helloProof(secret, staticPub, signingPub);
+  const last = valid.at(-1);
+  const offByOne = valid.slice(0, -1) + (last === "A" ? "B" : "A");
+  for (const proof of [valid.slice(0, -1), valid + "A", "", "x", offByOne]) {
+    assert.equal(pending.spend(proof, staticPub, signingPub, 1), false, proof);
+  }
+  assert.equal(offByOne.length, valid.length);
+  assert.equal(pending.spend(undefined, staticPub, signingPub, 1), false);
+  assert.equal(pending.spend(valid, staticPub, signingPub, 1), true, "the secret survives the refusals");
+  assert.equal(pending.spend(valid, staticPub, signingPub, 1), false, "spent");
+});
+
 const peer = { app: "test", protocolMin: 3, protocolMax: 3, capabilities: [] as string[] };
 
 function host(relayConnected: boolean) {

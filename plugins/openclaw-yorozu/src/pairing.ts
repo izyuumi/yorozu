@@ -1,7 +1,7 @@
 // Pairing codes (#532 step 5): the link the QR carries, the code minted while the relay is down, and the one-time
 // secrets a device's hello proof must match on either path. Imports only node built-ins and the pure wire files, so
 // `node --test` runs it without OpenClaw.
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { DirectHints } from "./envelope.js";
 import type { Log, Path } from "./hub.js";
 import { b64u, helloProof } from "./wire.js";
@@ -62,12 +62,18 @@ export class PendingPairings {
   /** Whether `proof` matches an unexpired secret; that secret is spent, so a second use is refused. */
   spend(proof: string | undefined, staticPub: string, signingPub: string, now = Date.now()): boolean {
     if (!proof) return false;
+    const given = Buffer.from(proof, "utf8");
     for (const [secret, until] of this.secrets) {
-      if (until >= now && helloProof(secret, staticPub, signingPub) === proof) return this.secrets.delete(secret);
+      if (until >= now && sameBytes(Buffer.from(helloProof(secret, staticPub, signingPub), "utf8"), given)) {
+        return this.secrets.delete(secret);
+      }
     }
     return false;
   }
 }
+
+/** Constant-time equality; unequal lengths never match. */
+const sameBytes = (a: Buffer, b: Buffer) => a.length === b.length && timingSafeEqual(a, b);
 
 /** The hub's `pair`: stores a device whose proof spends a pending secret. After a pairing over the direct path the
  * relay gets the allowlist at once if it is connected, else on its next `registered`. */
