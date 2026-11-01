@@ -50,6 +50,14 @@ export function pairingQuery(opts: {
 /** The one-time secrets of the pairing codes not yet used, each until its code expires. */
 export class PendingPairings {
   private readonly secrets = new Map<string, number>();
+  /** Told each secret a device spends, so the local pairing file holding it goes (#532 `local-pair`). */
+  onSpend?: (secret: string) => void;
+
+  /** Whether `secret` is pending: not spent, not expired. */
+  has(secret: string, now = Date.now()): boolean {
+    const until = this.secrets.get(secret);
+    return until !== undefined && until >= now;
+  }
 
   /** A new secret for a code that expires at `expiresAt`. */
   add(expiresAt: number, now = Date.now()): string {
@@ -65,7 +73,9 @@ export class PendingPairings {
     const given = Buffer.from(proof, "utf8");
     for (const [secret, until] of this.secrets) {
       if (until >= now && sameBytes(Buffer.from(helloProof(secret, staticPub, signingPub), "utf8"), given)) {
-        return this.secrets.delete(secret);
+        this.secrets.delete(secret);
+        this.onSpend?.(secret);
+        return true;
       }
     }
     return false;
