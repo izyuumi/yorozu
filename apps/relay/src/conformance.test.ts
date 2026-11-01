@@ -10,6 +10,7 @@ export type Peer = {
   close(code?: number, reason?: string): void;
   next(): Promise<any>;
   closed(): Promise<number>;
+  closedReason(): Promise<string>;
 };
 
 export type Adapter = {
@@ -29,7 +30,7 @@ export function conformance(relay: Adapter) {
     const mac = await connect(room);
     const { nonce } = await mac.next();
     mac.send({ type: "register", pubkey: keys.pub, nonceSig: await keys.sign(nonce) });
-    expect(await mac.next()).toMatchObject({ type: "registered", roomId: room });
+    expect(await mac.next()).toMatchObject({ type: "registered", roomId: room, pushProxy: true });
     return mac;
   }
 
@@ -352,6 +353,39 @@ export function conformance(relay: Adapter) {
       invalid.phone.send({ type: "push", deviceToken });
       expect(await invalid.phone.closed()).toBe(CLOSE_PROTOCOL);
     }
+  });
+
+  test("host push accepts known devices and silently ignores unknown devices", async () => {
+    const { mac, keys } = await paired();
+    const direct = await keypair();
+    mac.send({ type: "devices", devices: [direct.pub] });
+    for (const device of [keys.pub, direct.pub, (await keypair()).pub]) {
+      mac.send({ type: "push", device, token: "AB".repeat(32) });
+      mac.send({ type: "mint" });
+      expect(await mac.next()).toMatchObject({ type: "token" });
+    }
+  });
+
+  test("malformed host push closes with bad push", async () => {
+    const device = (await keypair()).pub;
+    for (const fields of [
+      ...[undefined, null, 42, "", "a".repeat(63), "gg", "aa\n", "aa".repeat(513)]
+        .map((token) => ({ device, token })),
+      ...[undefined, null, 42, "", "D".repeat(42), "+".repeat(43), "D".repeat(44)]
+        .map((device) => ({ device, token: "ab".repeat(32) })),
+    ]) {
+      const mac = await connectMac(await keypair());
+      mac.send({ type: "push", ...fields });
+      expect(await mac.closed()).toBe(CLOSE_PROTOCOL);
+      expect(await mac.closedReason()).toBe("bad push");
+    }
+  });
+
+  test("a device cannot register a token using the host push shape", async () => {
+    const { phone, keys } = await paired();
+    phone.send({ type: "push", device: keys.pub, token: "ab".repeat(32) });
+    expect(await phone.closed()).toBe(CLOSE_PROTOCOL);
+    expect(await phone.closedReason()).toBe("bad push");
   });
 
   test("a mis-typed message closes the socket", async () => {
