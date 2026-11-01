@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().delegate = self
         SpotlightIndexer.start(model: model)
         #if os(iOS)
-        TurnActivities.start(model: model)
+        YorozuActivities.start(model: model)
         #endif
         model.requestNotifications()
     }

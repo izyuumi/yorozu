@@ -41,12 +41,12 @@ struct RootView: View {
             case .active:
                 model.resume()
                 #if os(iOS)
-                TurnActivities.shared?.returned()
+                YorozuActivities.shared?.returned()
                 #endif
             #if os(iOS)
             case .inactive:
                 // Still in the foreground: the last moment a Live Activity can start.
-                if previous == .active { TurnActivities.shared?.leaving() }
+                if previous == .active { YorozuActivities.shared?.leaving() }
             #endif
             default: break
             }
