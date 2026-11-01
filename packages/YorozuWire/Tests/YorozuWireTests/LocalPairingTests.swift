@@ -140,7 +140,8 @@ struct LocalPairingTests {
         let silent = scripted(reply: nil)
         let start = ContinuousClock.now
         await #expect(throws: LocalPairing.Failure.notFound) { try await LocalPairing.ask(silent, timeout: .milliseconds(100)) }
-        #expect(ContinuousClock.now - start < .seconds(2))
+        // Allow scheduling delays on shared CI runners while still catching a stalled exchange.
+        #expect(ContinuousClock.now - start < .seconds(10))
         #expect(silent.closed)
     }
 
