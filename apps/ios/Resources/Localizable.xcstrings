@@ -25752,6 +25752,65 @@
         }
       }
     },
+    "Direct (local network)" : {
+      "comment" : "Settings › Host › Connection: talking to the host directly on the local network.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Direct (local network)"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接（ローカルネットワーク）"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直连（本地网络）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直連（區域網路）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "직접 (로컬 네트워크)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Directa (red local)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Directe (réseau local)"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Direkt (lokales Netzwerk)"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Direta (rede local)"
+          }
+        }
+      }
+    },
     "Direct (Tailscale)" : {
       "comment" : "Settings › Host › Connection: talking to the host directly over Tailscale.",
       "localizations" : {

@@ -79,6 +79,7 @@ public actor RacingConnection {
     private let makeLegs: Legs
     private let makeDirect: DirectLeg
     private let candidates: Candidates
+    private let hostIsLocal: @Sendable (DirectHints?) -> Bool
     private let hints: DirectHintStore
     private let browse: Browse?
     private let pathChanges: @Sendable () -> AsyncStream<Void>
@@ -139,19 +140,21 @@ public actor RacingConnection {
                 lanAllowed: LocalNetwork.allowed, lanDenied: LocalNetwork.denied)
         }, hints: DirectHintStore(), browse: { key in LocalNetwork.usable ? Bonjour.browse(hostKey: key) : nil },
             pathChanges: RacingConnection.networkChanges, network: { await NetworkKind.shared.current() },
-            winners: DefaultsRaceWinners())
+            winners: DefaultsRaceWinners(), hostIsLocal: { DirectCandidates.hostMayBeLocal($0, LocalInterface.current()) })
     }
 
     init(pairing: QrPayload, relayKnows: Bool, legs: @escaping Legs, direct: @escaping DirectLeg,
         candidates: @escaping Candidates, hints: DirectHintStore, browse: Browse?,
         pathChanges: @escaping @Sendable () -> AsyncStream<Void>,
         network: @escaping @Sendable () async -> String, winners: any RaceWinners,
-        sleep: @escaping Sleep = { try await Task.sleep(for: $0) }, joinWindow: Duration = RacingConnection.joinWindow) {
+        sleep: @escaping Sleep = { try await Task.sleep(for: $0) }, joinWindow: Duration = RacingConnection.joinWindow,
+        hostIsLocal: @escaping @Sendable (DirectHints?) -> Bool = { _ in true }) {
         self.pairing = pairing
         self.relayKnows = relayKnows
         makeLegs = legs
         makeDirect = direct
         self.candidates = candidates
+        self.hostIsLocal = hostIsLocal
         self.hints = hints
         self.browse = browse
         self.pathChanges = pathChanges
@@ -412,9 +415,15 @@ public actor RacingConnection {
             let won = winner != id
             if id == winner, id == relayID, hostWasOffline {
                 hostWasOffline = false
-                if !candidates(pairing.roomId.flatMap(hints.load(room:))).candidates.isEmpty {
-                    connectionLog.info("race \(round, privacy: .public): host back on the relay, racing again for direct")
-                    rerace(after: .zero, preferDirect: true)
+                let stored = pairing.roomId.flatMap(hints.load(room:))
+                let remaining = candidates(stored).candidates
+                if !remaining.isEmpty {
+                    if remaining.allSatisfy({ DirectRoute.of($0, network: raceNetwork) == .thisMac }), !hostIsLocal(stored) {
+                        connectionLog.info("race \(round, privacy: .public): host back on the relay; only loopback left and the host is on another machine, keeping the relay")
+                    } else {
+                        connectionLog.info("race \(round, privacy: .public): host back on the relay, racing again for direct")
+                        rerace(after: .zero, preferDirect: true)
+                    }
                 }
             }
             if winner != id {
@@ -438,7 +447,7 @@ public actor RacingConnection {
             sessionBegan = .now
             set(.ready)
             if won {
-                continuation?.yield(.route(id == relayID ? .relay : DirectRoute.of(legs[id].flatMap { URL(string: $0.key) })))
+                continuation?.yield(.route(id == relayID ? .relay : DirectRoute.of(legs[id].flatMap { URL(string: $0.key) }, network: raceNetwork)))
             }
             continuation?.yield(.sessionOpen(peer))
         case .state(let new):

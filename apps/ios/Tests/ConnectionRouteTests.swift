@@ -33,6 +33,7 @@ import YorozuWire
 
     @Test func routeLabels() {
         #expect(DirectRoute.wifi.label == "Direct (Wi-Fi)")
+        #expect(DirectRoute.localNetwork.label == "Direct (local network)")
         #expect(DirectRoute.tailscale.label == "Direct (Tailscale)")
         #expect(DirectRoute.thisMac.label == "Direct (this Mac)")
         #expect(DirectRoute.relay.label == "Relay")

@@ -206,7 +206,8 @@ struct RaceTests {
     /// Waits a hundredth of the policy's delays unless `sleep` says otherwise. The candidates are `direct0`… and each
     /// stored LAN hint as `ws://<address>:<port>`.
     func racer(direct: Int = 1, sleep: RacingConnection.Sleep? = nil, joinWindow: Duration = RacingConnection.joinWindow,
-        bonjour: Bool = false, secret: String? = nil) async -> RacingConnection {
+        bonjour: Bool = false, network: String = "wifi", candidates makeCandidates: RacingConnection.Candidates? = nil,
+        hostIsLocal: @escaping @Sendable (DirectHints?) -> Bool = { _ in true }, secret: String? = nil) async -> RacingConnection {
         var pairing = pairing
         pairing.secret = secret
         let races = races
@@ -231,9 +232,9 @@ struct RaceTests {
             return browser.results.stream
         }
         let changes = changes
-        let racer = RacingConnection(pairing: pairing, relayKnows: secret == nil, legs: legs, direct: added, candidates: candidates,
-            hints: hints, browse: bonjour ? browse : nil, pathChanges: { changes.stream }, network: { "wifi" }, winners: winners,
-            sleep: sleep ?? { try await Task.sleep(for: $0 / 100) }, joinWindow: joinWindow)
+        let racer = RacingConnection(pairing: pairing, relayKnows: secret == nil, legs: legs, direct: added, candidates: makeCandidates ?? candidates,
+            hints: hints, browse: bonjour ? browse : nil, pathChanges: { changes.stream }, network: { network }, winners: winners,
+            sleep: sleep ?? { try await Task.sleep(for: $0 / 100) }, joinWindow: joinWindow, hostIsLocal: hostIsLocal)
         let updates = await racer.updates()
         let seen = seen
         Task { for await update in updates { await seen.add(update) } }
@@ -579,6 +580,90 @@ struct RaceTests {
         await eventually("back on direct") { await seen.opened.last == "ws://192.168.0.9:8738" }
         #expect(await relay2.grants == 0)
         #expect(await seen.routesAndSessions.suffix(2) == ["route:wifi", "open:ws://192.168.0.9:8738"])
+        await racer.stop()
+    }
+
+    @Test(arguments: ["wired", "wifi"]) func lanWinnerReportsTheRacesNetwork(network: String) async {
+        hints.save(lanHints, room: "room")
+        let racer = await racer(direct: 0, network: network)
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await direct[0].becomeReady()
+        await direct[0].open()
+        await eventually("LAN session opened") { await seen.opened == ["ws://192.168.0.9:8738"] }
+        let route = network == "wifi" ? "wifi" : "localNetwork"
+        #expect(await seen.routesAndSessions == ["route:\(route)", "open:ws://192.168.0.9:8738"])
+        await racer.stop()
+    }
+
+    @Test(arguments: [false, true]) func hostReturningOnAnotherMachineKeepsTheRelay(lanDenied: Bool) async {
+        hints.save(lanHints, room: "room")
+        let racer = await racer(direct: 0, candidates: { hints in
+            let interfaces = [LocalInterface(name: "en0", address: "10.77.0.20", prefix: 24)]
+            return DirectCandidates.plan(hints: hints, interfaces: interfaces, isMac: true, lanAllowed: true, lanDenied: lanDenied)
+        }, hostIsLocal: { _ in false })
+        let (relay, direct) = await round(1)
+        #expect(direct.map(\.name) == ["ws://127.0.0.1:8738", "ws://[::1]:8738"])
+        await started([relay] + direct)
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened.count == 1 }
+        await relay.emit(.state(.hostOffline))
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("host returned") { await seen.opened.count == 2 }
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 1)
+        #expect(await !relay.stopped)
+        await racer.stop()
+    }
+
+    @Test func hostReturningOnThisMacRacesAgain() async {
+        hints.save(lanHints, room: "room")
+        let racer = await racer(candidates: { hints in
+            DirectCandidates.plan(hints: hints, interfaces: [], isMac: true, lanAllowed: false)
+        }, hostIsLocal: { _ in true })
+        let (relay, direct) = await round(1)
+        #expect(direct.map(\.name) == ["ws://127.0.0.1:8738", "ws://[::1]:8738"])
+        await started([relay] + direct)
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened.count == 1 }
+        await relay.emit(.state(.hostOffline))
+        await relay.becomeReady()
+        await relay.open()
+        let (relay2, direct2) = await round(2)
+        await started([relay2] + direct2)
+        for leg in direct2 { await leg.fail() }
+        await relay2.becomeReady()
+        await relay2.open()
+        await eventually("relay reopened after the retry") { await seen.opened.count == 3 }
+        await relay2.open()
+        await eventually("another session on the same relay") { await seen.opened.count == 4 }
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 2)
+        await racer.stop()
+    }
+
+    @Test func staleHintsStillReachThisMacWithoutTheRelay() async {
+        hints.save(lanHints, room: "room")
+        let interfaces = [LocalInterface(name: "en0", address: "10.0.0.5", prefix: 24)]
+        #expect(!DirectCandidates.hostMayBeLocal(hints.load(room: "room"), interfaces))
+        let racer = await racer(network: "none", candidates: { hints in
+            DirectCandidates.plan(hints: hints, interfaces: interfaces, isMac: true, lanAllowed: true)
+        }, hostIsLocal: { DirectCandidates.hostMayBeLocal($0, interfaces) })
+        let (relay, direct) = await round(1)
+        #expect(direct.map(\.name) == ["ws://127.0.0.1:8738", "ws://[::1]:8738"])
+        await started([relay] + direct)
+        await relay.fail()
+        await direct[0].becomeReady()
+        await eventually("loopback handshake granted") { await direct[0].grants == 1 }
+        await direct[0].open()
+        await eventually("loopback session opened on this Mac") {
+            await seen.routesAndSessions == ["route:thisMac", "open:ws://127.0.0.1:8738"]
+        }
+        #expect(await relay.stopped)
+        #expect(await races.count == 1)
         await racer.stop()
     }
 
