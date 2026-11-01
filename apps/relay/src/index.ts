@@ -22,6 +22,7 @@ import {
   parseDevices,
   parseEnvelope,
   parseFrames,
+  parseHostPush,
   parseJoin,
   parseNotify,
   parsePush,
@@ -118,6 +119,13 @@ function newRoom(): Room {
 
 function sweepTokens(room: Room, now: number): void {
   for (const [token, expiresAt] of room.tokens) if (now > expiresAt) room.tokens.delete(token);
+}
+
+function registerPush(room: Room, pubkey: string, deviceToken: string): void {
+  for (const [other, token] of room.pushTokens) {
+    if (other !== pubkey && token === deviceToken) room.pushTokens.delete(other);
+  }
+  room.pushTokens.set(pubkey, deviceToken);
 }
 
 function trimBuffer(room: Room, now: number): void {
@@ -294,7 +302,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
           conn.roomId = id;
           conn.key = key;
           clearTimeout(authTimer);
-          ws.send(JSON.stringify({ type: "registered", roomId: id, phones: room.phones.size }));
+          ws.send(JSON.stringify({ type: "registered", roomId: id, phones: room.phones.size, pushProxy: true }));
           log("registered", { phones: room.phones.size });
           notifyOwner(room, true);
           drainBuffer(room, ws, now);
@@ -415,15 +423,18 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
         }
 
         case "push": {
+          if (conn.role === "mac" && conn.room) {
+            const push = parseHostPush(msg);
+            if (!push) return ws.close(CLOSE_PROTOCOL, "bad push");
+            if (!conn.room.devices.has(push.device)) return;
+            return registerPush(conn.room, push.device, push.deviceToken);
+          }
           if (conn.role !== "phone" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not joined");
           const push = parsePush(msg);
           if (!push) return ws.close(CLOSE_PROTOCOL, "bad push");
           const pubkey = phoneKeys.get(ws);
           if (pubkey) {
-            for (const [other, token] of conn.room.pushTokens) {
-              if (other !== pubkey && token === push.deviceToken) conn.room.pushTokens.delete(other);
-            }
-            conn.room.pushTokens.set(pubkey, push.deviceToken);
+            registerPush(conn.room, pubkey, push.deviceToken);
           }
           return;
         }

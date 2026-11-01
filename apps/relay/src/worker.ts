@@ -30,6 +30,7 @@ import {
   parseDevices,
   parseEnvelope,
   parseFrames,
+  parseHostPush,
   parseJoin,
   parseNotify,
   parsePush,
@@ -380,6 +381,21 @@ export class Room implements DurableObject {
     }
   }
 
+  private async registerPush(device: string, deviceToken: string): Promise<void> {
+    const key = pushPrefix + device;
+    await this.state.storage.transaction(async (storage) => {
+      const records = await storage.list<PushRecord>({ prefix: pushPrefix });
+      const stale = [...records]
+        .filter(([other, record]) => other !== key && record.deviceToken === deviceToken)
+        .map(([other]) => other);
+      if (stale.length > 0) await storage.delete(stale);
+      const record = records.get(key);
+      const next: PushRecord = { ...record, deviceToken };
+      if (record?.deviceToken !== deviceToken) delete next.sandbox;
+      await storage.put(key, next);
+    });
+  }
+
   private async push(
     request: apns.ApnsRequest,
     now: number,
@@ -581,6 +597,7 @@ export class Room implements DurableObject {
           type: "registered",
           roomId: id,
           phones: this.phoneCount(),
+          pushProxy: true,
           ...(apns.configured(this.env) ? { liveActivity: true } : {}),
         }));
         log("registered", { phones: this.sockets("phone").length });
@@ -684,22 +701,16 @@ export class Room implements DurableObject {
       }
 
       case "push": {
+        if (conn.role === "mac") {
+          const push = parseHostPush(msg);
+          if (!push) return this.drop(ws, CLOSE_PROTOCOL, "bad push");
+          if ((await storage.get<number>(devicePrefix + push.device)) === undefined) return;
+          return await this.registerPush(push.device, push.deviceToken);
+        }
         if (conn.role !== "phone" || !conn.key) return this.drop(ws, CLOSE_PROTOCOL, "not joined");
         const push = parsePush(msg);
         if (!push) return this.drop(ws, CLOSE_PROTOCOL, "bad push");
-        const key = pushPrefix + conn.key;
-        await storage.transaction(async (storage) => {
-          const records = await storage.list<PushRecord>({ prefix: pushPrefix });
-          const stale = [...records]
-            .filter(([other, record]) => other !== key && record.deviceToken === push.deviceToken)
-            .map(([other]) => other);
-          if (stale.length > 0) await storage.delete(stale);
-          const record = records.get(key);
-          const next: PushRecord = { ...record, deviceToken: push.deviceToken };
-          if (record?.deviceToken !== push.deviceToken) delete next.sandbox;
-          await storage.put(key, next);
-        });
-        return;
+        return await this.registerPush(conn.key, push.deviceToken);
       }
 
       case "notify": {

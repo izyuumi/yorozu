@@ -215,6 +215,13 @@ export const parsePush = (msg: Record<string, unknown>): Push | null =>
     ? { deviceToken: msg.deviceToken }
     : null;
 
+// pushProxy / the push-proxy capability, #532: the host registers a direct client's token.
+export const parseHostPush = (msg: Record<string, unknown>): { device: string; deviceToken: string } | null => {
+  if (!deviceKey(msg.device)) return null;
+  const push = parsePush({ deviceToken: msg.token });
+  return push ? { device: msg.device, deviceToken: push.deviceToken } : null;
+};
+
 /** `null` when malformed; `undefined` for a class this relay does not know, which the caller ignores. */
 export const parseNotify = (msg: Record<string, unknown>): Notify | null | undefined => {
   if (typeof msg.threadRef !== "string" || msg.threadRef === "") return null;

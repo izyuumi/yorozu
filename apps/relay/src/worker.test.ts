@@ -55,6 +55,7 @@ async function connect(room: string) {
   const queue: any[] = [];
   const waiters: ((v: any) => void)[] = [];
   let closeCode: number | null = null;
+  let closeReason = "";
   const closers: ((v: number) => void)[] = [];
   const phones: number[] = [];
   ws.addEventListener("message", (event: MessageEvent) => {
@@ -66,6 +67,7 @@ async function connect(room: string) {
   });
   ws.addEventListener("close", (event: CloseEvent) => {
     closeCode = event.code;
+    closeReason = event.reason;
     for (const done of closers.splice(0)) done(event.code);
   });
   ws.accept();
@@ -79,6 +81,10 @@ async function connect(room: string) {
       queue.length > 0 ? Promise.resolve(queue.shift()!) : new Promise((r) => waiters.push(r)),
     closed: (): Promise<number> =>
       closeCode !== null ? Promise.resolve(closeCode) : new Promise((r) => closers.push(r)),
+    closedReason: async (): Promise<string> => {
+      if (closeCode === null) await new Promise<number>((r) => closers.push(r));
+      return closeReason;
+    },
   };
 }
 
@@ -421,6 +427,76 @@ test("a phone registers where it can be woken, and revoking it takes the token w
   expect(await record(room, keys.pub)).toBeUndefined();
 });
 
+test("host push registers an announced device without a relay socket for targeted notify", async () => {
+  const calls = fakeApns();
+  const macKeys = await keypair();
+  const name = await roomId(macKeys.pub);
+  const mac = await connectMac(macKeys);
+  const device = (await keypair()).pub;
+  mac.send({ type: "devices", devices: [device] });
+  mac.send({ type: "push", device, token: DEVICE_TOKEN });
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", devices: [device] });
+  await macSettled(mac);
+  expect(await record(name, device)).toMatchObject({ deviceToken: DEVICE_TOKEN });
+  expect(calls).toHaveLength(2);
+  expect(calls.every((call) => new URL(call.url).pathname.endsWith(`/device/${DEVICE_TOKEN}`))).toBe(true);
+  expect(calls.map((call) => call.headers.get("apns-push-type"))).toEqual(["alert", "background"]);
+});
+
+test("host push for an unknown device stores nothing and sends nothing", async () => {
+  const calls = fakeApns();
+  const { mac, keys, room: name } = await paired();
+  const device = (await keypair()).pub;
+  mac.send({ type: "push", device, token: DEVICE_TOKEN });
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", devices: [device] });
+  await macSettled(mac);
+  expect(await record(name, device)).toBeUndefined();
+  expect(await record(name, keys.pub)).toEqual({ deviceToken: DEVICE_TOKEN });
+  expect(calls).toHaveLength(0);
+});
+
+test("host push moves a token from device A to device B", async () => {
+  const { mac, keys, room: name } = await paired();
+  const second = await connectPhone(name, await mintToken(mac));
+  await second.phone.next();
+  mac.send({ type: "push", device: second.keys.pub, token: DEVICE_TOKEN });
+  await macSettled(mac);
+  expect(await record(name, keys.pub)).toBeUndefined();
+  expect(await record(name, second.keys.pub)).toEqual({ deviceToken: DEVICE_TOKEN });
+});
+
+test("host push preserves sandbox for the same token and clears it for a changed token", async () => {
+  const calls = fakeApns((url) => (url.startsWith("https://apns.test/") ? 400 : 200));
+  const { mac, keys, room: name } = await paired();
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", devices: [keys.pub] });
+  await macSettled(mac);
+  expect(await record(name, keys.pub)).toMatchObject({ sandbox: true });
+  mac.send({ type: "push", device: keys.pub, token: DEVICE_TOKEN });
+  await macSettled(mac);
+  expect(await record(name, keys.pub)).toMatchObject({ sandbox: true });
+  mac.send({ type: "push", device: keys.pub, token: SECOND_DEVICE_TOKEN });
+  await macSettled(mac);
+  expect(await record(name, keys.pub)).toEqual({ deviceToken: SECOND_DEVICE_TOKEN });
+  calls.length = 0;
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", devices: [keys.pub] });
+  await macSettled(mac);
+  expect(calls.map((call) => new URL(call.url).host)).toEqual(["apns.test", "apns-sandbox.test"]);
+});
+
+test("revoke forgets a host-registered push token", async () => {
+  const calls = fakeApns();
+  const { mac, phone, keys, room: name } = await paired();
+  mac.send({ type: "push", device: keys.pub, token: SECOND_DEVICE_TOKEN });
+  await macSettled(mac);
+  expect(await record(name, keys.pub)).toEqual({ deviceToken: SECOND_DEVICE_TOKEN });
+  mac.send({ type: "revoke", pubkey: keys.pub });
+  expect(await phone.closed()).toBe(4001);
+  mac.send({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z", devices: [keys.pub] });
+  await macSettled(mac);
+  expect(await record(name, keys.pub)).toBeUndefined();
+  expect(calls).toHaveLength(0);
+});
+
 test("evicting the oldest device removes its push registration and socket", async () => {
   const { mac, phone, keys, room: name } = await paired();
   await runInDurableObject(room(name), async (_instance, state) => {
@@ -434,7 +510,7 @@ test("evicting the oldest device removes its push registration and socket", asyn
   expect(await phone.closed()).toBe(4001);
 });
 
-test("only a joined phone may register, and only the mac may notify", async () => {
+test("an unjoined socket cannot register push, and only the mac may notify", async () => {
   const macKeys = await keypair();
   const room = await roomId(macKeys.pub);
   const mac = await connectMac(macKeys);
