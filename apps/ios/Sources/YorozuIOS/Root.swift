@@ -73,12 +73,16 @@ struct PairingView: View {
 
     @State private var code = ""
     @State private var scanning = false
+    @State private var findingHost = false
 
     var body: some View {
         NavigationStack {
             Form {
                 #if os(macOS)
-                if !model.connecting { deviceCode }
+                if !model.connecting {
+                    thisMac
+                    deviceCode
+                }
                 #endif
                 Section {
                     Text("Run `openclaw yorozu pair` on the computer that runs your OpenClaw Gateway. It prints a QR code and a pairing link, valid for 10 minutes.")
@@ -151,6 +155,31 @@ struct PairingView: View {
     }
 
     #if os(macOS)
+    private var thisMac: some View {
+        Section {
+            Button {
+                findingHost = true
+                Task {
+                    model.pairingError = await model.pairWithThisMac()
+                    findingHost = false
+                }
+            } label: {
+                if findingHost {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Finding the Gateway…")
+                    }
+                } else {
+                    Label(String(localized: "Pair with the Gateway on this Mac"), systemImage: "desktopcomputer")
+                }
+            }
+            .disabled(findingHost)
+            .accessibilityIdentifier("pairing.thisMac")
+        } footer: {
+            Text("If your OpenClaw Gateway runs on this Mac, Yorozu pairs with it directly, without a code.")
+        }
+    }
+
     private var deviceCode: some View {
         Section {
             if let code = model.deviceCode {

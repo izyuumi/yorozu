@@ -1,6 +1,318 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Pair with the Gateway on this Mac" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac の Gateway とペアリング"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与这台 Mac 上的 Gateway 配对"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "與這台 Mac 上的 Gateway 配對"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 Gateway와 페어링"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Emparejar con el Gateway de este Mac"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jumeler avec le Gateway de ce Mac"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit dem Gateway auf diesem Mac koppeln"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Emparelhar com o Gateway deste Mac"
+          }
+        }
+      }
+    },
+    "Finding the Gateway…" : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway を探しています…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在查找 Gateway…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在尋找 Gateway…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway를 찾는 중…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buscando el Gateway…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recherche du Gateway…"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gateway wird gesucht…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Procurando o Gateway…"
+          }
+        }
+      }
+    },
+    "If your OpenClaw Gateway runs on this Mac, Yorozu pairs with it directly, without a code." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw Gateway がこの Mac で動いている場合は、コードなしで直接ペアリングできます。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如果你的 OpenClaw Gateway 在这台 Mac 上运行，Yorozu 会直接与它配对，无需代码。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如果你的 OpenClaw Gateway 在這台 Mac 上執行，Yorozu 會直接與它配對，無需代碼。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OpenClaw Gateway가 이 Mac에서 실행 중이면 Yorozu가 코드 없이 바로 페어링합니다."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si tu OpenClaw Gateway funciona en este Mac, Yorozu se empareja con él directamente, sin código."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si votre OpenClaw Gateway tourne sur ce Mac, Yorozu s’y jumelle directement, sans code."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wenn dein OpenClaw Gateway auf diesem Mac läuft, koppelt Yorozu sich direkt damit, ohne Code."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se o seu OpenClaw Gateway roda neste Mac, o Yorozu se emparelha com ele diretamente, sem código."
+          }
+        }
+      }
+    },
+    "No OpenClaw Gateway with Yorozu was found on this Mac." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac で Yorozu を使う OpenClaw Gateway が見つかりませんでした。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在这台 Mac 上没有找到装有 Yorozu 的 OpenClaw Gateway。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在這台 Mac 上找不到裝有 Yorozu 的 OpenClaw Gateway。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에서 Yorozu가 설치된 OpenClaw Gateway를 찾을 수 없었습니다."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se encontró ningún OpenClaw Gateway con Yorozu en este Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun OpenClaw Gateway avec Yorozu n’a été trouvé sur ce Mac."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Mac wurde kein OpenClaw Gateway mit Yorozu gefunden."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nenhum OpenClaw Gateway com o Yorozu foi encontrado neste Mac."
+          }
+        }
+      }
+    },
+    "The Gateway on this Mac couldn’t make a pairing code. Check `openclaw channels status`." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac の Gateway がペアリングコードを作成できませんでした。`openclaw channels status` を確認してください。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 上的 Gateway 无法生成配对代码。请检查 `openclaw channels status`。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這台 Mac 上的 Gateway 無法產生配對代碼。請檢查 `openclaw channels status`。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 Gateway가 페어링 코드를 만들 수 없었습니다. `openclaw channels status`를 확인하십시오."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El Gateway de este Mac no pudo crear un código de enlace. Revisa `openclaw channels status`."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le Gateway de ce Mac n’a pas pu créer de code de jumelage. Vérifiez `openclaw channels status`."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Gateway auf diesem Mac konnte keinen Kopplungscode erstellen. Prüfe `openclaw channels status`."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Gateway deste Mac não conseguiu criar um código de emparelhamento. Verifique `openclaw channels status`."
+          }
+        }
+      }
+    },
+    "The Gateway on this Mac answered, but its pairing file couldn’t be read or doesn’t match it." : {
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Mac の Gateway は応答しましたが、ペアリングファイルを読み込めないか、内容が一致しません。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 上的 Gateway 已响应，但它的配对文件无法读取或与之不符。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這台 Mac 上的 Gateway 已回應，但它的配對檔案無法讀取或與之不符。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac의 Gateway가 응답했지만 페어링 파일을 읽을 수 없거나 일치하지 않습니다."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El Gateway de este Mac respondió, pero su archivo de emparejamiento no se pudo leer o no coincide."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le Gateway de ce Mac a répondu, mais son fichier de jumelage est illisible ou ne lui correspond pas."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Gateway auf diesem Mac hat geantwortet, aber seine Kopplungsdatei ließ sich nicht lesen oder passt nicht dazu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Gateway deste Mac respondeu, mas o arquivo de emparelhamento não pôde ser lido ou não corresponde a ele."
+          }
+        }
+      }
+    },
     "Dismiss" : {
       "localizations" : {
         "ja" : {

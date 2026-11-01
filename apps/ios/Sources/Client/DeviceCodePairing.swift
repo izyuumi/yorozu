@@ -53,6 +53,27 @@ extension AppModel {
         deviceCode = nil
     }
 
+    #if os(macOS)
+    /// "Pair with the Gateway on this Mac" (#532 `local-pair`): finds the plugin on loopback, reads its local pairing file
+    /// and asks "Pair with this host?" as for a scanned code. The error to show, or nil.
+    func pairWithThisMac() async -> String? {
+        guard !isDemo else { return String(localized: "Exit demo mode before pairing with a host.") }
+        let found: LocalPairing.Found
+        do {
+            found = try await LocalPairing.find()
+        } catch LocalPairing.Failure.hostFailed {
+            return String(localized: "The Gateway on this Mac couldn’t make a pairing code. Check `openclaw channels status`.")
+        } catch {
+            return String(localized: "No OpenClaw Gateway with Yorozu was found on this Mac.")
+        }
+        guard let payload = try? LocalPairingFile.read(path: found.path, room: found.room) else {
+            return String(localized: "The Gateway on this Mac answered, but its pairing file couldn’t be read or doesn’t match it.")
+        }
+        pendingPairing = payload
+        return nil
+    }
+    #endif
+
     private func mailboxLetter(_ code: DeviceCode, for duration: Duration) async -> String? {
         guard let url = code.mailbox(websocket: true) else { return nil }
         let end = ContinuousClock.now + duration
