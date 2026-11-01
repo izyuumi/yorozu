@@ -56,6 +56,9 @@ final class AppModel {
     private(set) var localNetworkAllowed = LocalNetwork.allowed
     private(set) var localNetworkExplained = LocalNetwork.explained
     private(set) var localNetworkDenied = LocalNetwork.denied
+    /// While pairing (#532 step 5): the relay couldn't be reached, and the code's hints name LAN addresses.
+    private(set) var pairingRelayUnreachable = false
+    private(set) var pairingLANHints = false
     /// Counts opened sessions, so the Live Activity can report itself again to a host that may have restarted.
     private(set) var sessionsOpened = 0
     let transfers = Transfers()
@@ -130,6 +133,8 @@ final class AppModel {
 
     var showLocalNetworkExplainer: Bool {
         ConnectionRoute.explainerDue(paired: paired, isDemo: isDemo, explained: localNetworkExplained, state: state)
+            || ConnectionRoute.pairingExplainerDue(pairing: connecting, relayUnreachable: pairingRelayUnreachable,
+                lanHints: pairingLANHints, explained: localNetworkExplained, denied: localNetworkDenied)
     }
 
     /// The explainer's Continue and Settings' toggle: LAN candidates and Bonjour, after the system's prompt on iOS.
@@ -199,6 +204,9 @@ final class AppModel {
         cache.wipe()
         AttachmentFiles.wipe()
         conversations = [:]
+        var payload = payload
+        let hints = payload.hints
+        payload.hints = nil
         let new = Pairing(pairing: payload, identity: .generate())
         do {
             try new.save()
@@ -206,6 +214,9 @@ final class AppModel {
             pairingError = String(localized: "Couldn’t save the pairing: \(error.localizedDescription)")
             return
         }
+        // The code's direct hints go where the host's later ones go (#532 step 5): the racer reads them there.
+        if let hints, let room = payload.roomId { DirectHintStore().save(hints, room: room) }
+        pairingRelayUnreachable = false
         pairing = new
         publishWidgets()
         connect()
@@ -523,6 +534,10 @@ final class AppModel {
             route = next
         case .relayJoined:
             updatePairing { $0.relayKnows = true; $0.pairing.token = "" }
+        case .relayUnreachable:
+            Self.connectionLog.info("pairing: relay unreachable")
+            pairingLANHints = pairing?.pairing.roomId.flatMap(DirectHintStore().load(room:))?.lan.isEmpty == false
+            pairingRelayUnreachable = true
         case .sessionOpen(let host):
             Self.connectionLog.info("session open, host \(host.app, privacy: .public) OpenClaw \(host.hostVersion ?? "?", privacy: .public)")
             hostInfo = host

@@ -19,6 +19,18 @@ import YorozuWire
         #expect(!ConnectionRoute.explainerDue(paired: true, isDemo: false, explained: true, state: .ready))
     }
 
+    @Test func scanTimeExplainerShowsWhilePairingWithoutTheRelay() {
+        #expect(ConnectionRoute.pairingExplainerDue(pairing: true, relayUnreachable: true, lanHints: true, explained: false, denied: false))
+    }
+
+    @Test func scanTimeExplainerNeedsEveryCondition() {
+        #expect(!ConnectionRoute.pairingExplainerDue(pairing: false, relayUnreachable: true, lanHints: true, explained: false, denied: false))
+        #expect(!ConnectionRoute.pairingExplainerDue(pairing: true, relayUnreachable: false, lanHints: true, explained: false, denied: false))
+        #expect(!ConnectionRoute.pairingExplainerDue(pairing: true, relayUnreachable: true, lanHints: false, explained: false, denied: false))
+        #expect(!ConnectionRoute.pairingExplainerDue(pairing: true, relayUnreachable: true, lanHints: true, explained: true, denied: false))
+        #expect(!ConnectionRoute.pairingExplainerDue(pairing: true, relayUnreachable: true, lanHints: true, explained: false, denied: true))
+    }
+
     @Test func routeLabels() {
         #expect(DirectRoute.wifi.label == "Direct (Wi-Fi)")
         #expect(DirectRoute.tailscale.label == "Direct (Tailscale)")
