@@ -29,6 +29,7 @@ public enum WireEvent: Equatable, Sendable {
     case chunk(Chunk)
     case liveActivity(ActivityReport)
     case pushToken(PushToken)
+    case directHints(DirectHints)
     case unknown(kind: String, data: JSONValue?)
 
     public var kind: String {
@@ -60,6 +61,7 @@ public enum WireEvent: Equatable, Sendable {
         case .chunk: "chunk"
         case .liveActivity: "live_activity"
         case .pushToken: "push_token"
+        case .directHints: "direct_hints"
         case .unknown(let kind, _): kind
         }
     }
@@ -552,6 +554,53 @@ public struct PushToken: Codable, Equatable, Sendable {
     public init(token: String) { self.token = token }
 }
 
+/// Plugin → client, only to a client listing `direct` (#532): where the plugin's direct listener can be reached, sent
+/// right after the client's `peer_info` and again whenever its addresses change. Invalid addresses are dropped.
+public struct DirectHints: Codable, Equatable, Sendable {
+    public struct Lan: Codable, Equatable, Sendable {
+        public var address: String
+        public var prefix: Int
+
+        public init(address: String, prefix: Int) {
+            self.address = address
+            self.prefix = prefix
+        }
+    }
+
+    public struct Tailscale: Codable, Equatable, Sendable {
+        public var address: String
+
+        public init(address: String) { self.address = address }
+    }
+
+    public var port: Int
+    public var lan: [Lan]
+    public var tailscale: [Tailscale]
+    public var magicDNS: String?
+
+    public init(port: Int, lan: [Lan] = [], tailscale: [Tailscale] = [], magicDNS: String? = nil) {
+        self.port = port
+        self.lan = lan
+        self.tailscale = tailscale
+        self.magicDNS = magicDNS
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        port = try c.decode(Int.self, forKey: .port)
+        guard (1...65535).contains(port) else {
+            throw DecodingError.dataCorruptedError(forKey: .port, in: c, debugDescription: "port out of range")
+        }
+        lan = (try c.decodeIfPresent([Lossy<Lan>].self, forKey: .lan) ?? []).compactMap(\.value).filter {
+            guard let bytes = Direct.ipBytes($0.address) else { return false }
+            return (0...bytes.count * 8).contains($0.prefix)
+        }
+        tailscale = (try c.decodeIfPresent([Lossy<Tailscale>].self, forKey: .tailscale) ?? []).compactMap(\.value)
+            .filter { Direct.ipBytes($0.address) != nil }
+        magicDNS = (try? c.decodeIfPresent(String.self, forKey: .magicDNS)).flatMap { $0 }.flatMap(Direct.hostName)
+    }
+}
+
 public struct PairInvite: Codable, Equatable, Sendable {
     public var link: String?
     public var webLink: String?
@@ -733,6 +782,8 @@ extension WireEvent: Codable {
             if let v = data(ActivityReport.self) { self = .liveActivity(v); return }
         case "push_token":
             if let v = data(PushToken.self) { self = .pushToken(v); return }
+        case "direct_hints":
+            if let v = data(DirectHints.self) { self = .directHints(v); return }
         default:
             break
         }
@@ -770,6 +821,7 @@ extension WireEvent: Codable {
         case .chunk(let v): try c.encode(v, forKey: .data)
         case .liveActivity(let v): try c.encode(v, forKey: .data)
         case .pushToken(let v): try c.encode(v, forKey: .data)
+        case .directHints(let v): try c.encode(v, forKey: .data)
         case .unknown(_, let v): try c.encodeIfPresent(v, forKey: .data)
         }
     }

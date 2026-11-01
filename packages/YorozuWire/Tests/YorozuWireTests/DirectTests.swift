@@ -42,13 +42,6 @@ struct DirectProbeTests {
         #expect(try JSONDecoder().decode(WireEvent.self, from: event.encoded()) == event)
     }
 
-    @Test func loopbackIsTheOnlyCandidate() {
-        #if os(macOS)
-        #expect(Direct.candidates.map(\.absoluteString) == ["ws://127.0.0.1:8738", "ws://[::1]:8738"])
-        #else
-        #expect(Direct.candidates.isEmpty)
-        #endif
-    }
 }
 
 actor FakeLeg: ConnectionLeg {
@@ -106,12 +99,29 @@ actor FakeLeg: ConnectionLeg {
     func emit(_ update: RelayConnection.Update) { continuation?.yield(update) }
 }
 
-/// Every leg each race made, newest race last.
+/// Every leg each race made, newest race last, and the legs Bonjour added.
 actor Races {
     private(set) var rounds: [(relay: FakeLeg, direct: [FakeLeg])] = []
+    private(set) var added: [FakeLeg] = []
     func add(_ round: (relay: FakeLeg, direct: [FakeLeg])) { rounds.append(round) }
+    func add(_ leg: FakeLeg) { added.append(leg) }
     var last: (relay: FakeLeg, direct: [FakeLeg])? { rounds.last }
     var count: Int { rounds.count }
+}
+
+/// Bonjour results the test hands the race, and whether the race stopped browsing.
+actor Browser {
+    let results = AsyncStream<URL>.makeStream()
+    private(set) var browsed = 0
+    private(set) var ended = 0
+
+    init() {
+        results.continuation.onTermination = { [weak self] _ in Task { await self?.end() } }
+    }
+
+    func began() { browsed += 1 }
+    func end() { ended += 1 }
+    nonisolated func find(_ url: String) { results.continuation.yield(URL(string: url)!) }
 }
 
 /// What the app saw.
@@ -166,22 +176,44 @@ actor Sleeps {
 }
 
 struct RaceTests {
-    let pairing = QrPayload(v: 3, relayUrl: "wss://relay.test", macPubkey: "", token: "", roomId: "room")
+    let pairing = QrPayload(v: 3, relayUrl: "wss://relay.test", macPubkey: Data(count: 32).base64URLEncodedString(), token: "",
+        roomId: "room")
     let races = Races()
     let seen = Seen()
     let changes = AsyncStream<Void>.makeStream()
     let winners = MemoryWinners()
     let sleeps = Sleeps()
+    let hints = DirectHintStore(suite: "yorozu.tests.\(UUID().uuidString)")
+    let browser = Browser()
 
-    /// Waits a hundredth of the policy's delays unless `sleep` says otherwise.
-    func racer(direct: Int = 1, sleep: RacingConnection.Sleep? = nil, joinWindow: Duration = RacingConnection.joinWindow) async
-        -> RacingConnection {
+    /// Waits a hundredth of the policy's delays unless `sleep` says otherwise. The candidates are `direct0`… and each
+    /// stored LAN hint as `ws://<address>:<port>`.
+    func racer(direct: Int = 1, sleep: RacingConnection.Sleep? = nil, joinWindow: Duration = RacingConnection.joinWindow,
+        bonjour: Bool = false) async -> RacingConnection {
         let races = races
-        let racer = RacingConnection(pairing: pairing, relayKnows: true, legs: { _, _ in
-            let round = (relay: FakeLeg("relay"), direct: (0..<direct).map { FakeLeg("direct\($0)") })
+        let browser = browser
+        let legs: RacingConnection.Legs = { _, _, urls in
+            let round = (relay: FakeLeg("relay"), direct: urls.map { FakeLeg($0.absoluteString) })
             Task { await races.add(round) }
             return (relay: round.relay as any ConnectionLeg, direct: round.direct.map { $0 as any ConnectionLeg })
-        }, pathChanges: { [changes] in changes.stream }, network: { "wifi" }, winners: winners,
+        }
+        let added: RacingConnection.DirectLeg = { _, url in
+            let leg = FakeLeg(url.absoluteString)
+            Task { await races.add(leg) }
+            return leg
+        }
+        let candidates: RacingConnection.Candidates = { hints in
+            let base = (0..<direct).compactMap { URL(string: "direct\($0)") }
+            guard let hints else { return (candidates: base, skipped: []) }
+            return (candidates: base + hints.lan.compactMap { URL(string: "ws://\($0.address):\(hints.port)") }, skipped: [])
+        }
+        let browse: RacingConnection.Browse = { _ in
+            Task { await browser.began() }
+            return browser.results.stream
+        }
+        let changes = changes
+        let racer = RacingConnection(pairing: pairing, relayKnows: true, legs: legs, direct: added, candidates: candidates,
+            hints: hints, browse: bonjour ? browse : nil, pathChanges: { changes.stream }, network: { "wifi" }, winners: winners,
             sleep: sleep ?? { try await Task.sleep(for: $0 / 100) }, joinWindow: joinWindow)
         let updates = await racer.updates()
         let seen = seen
@@ -421,6 +453,96 @@ struct RaceTests {
         try? await Task.sleep(for: .milliseconds(30))
         #expect(await races.count == 2)
         #expect(await seen.states.last == .connecting)
+        await racer.stop()
+    }
+
+    @Test func aBonjourLegAddedMidRaceCanWinAndBrowsingStops() async {
+        let racer = await racer(bonjour: true)
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await eventually("browsing") { await browser.browsed == 1 }
+        browser.find("ws://192.168.0.9:8738")
+        await eventually("Bonjour leg added") { await races.added.count == 1 }
+        let found = await races.added[0]
+        await started([found])
+        await found.becomeReady()
+        await eventually("Bonjour leg granted") { await found.grants == 1 }
+        await found.open()
+        await eventually("Bonjour leg won") { await seen.opened == ["ws://192.168.0.9:8738"] }
+        await eventually("others closed") { await stopped([relay] + direct) }
+        await eventually("browsing stopped") { await browser.ended == 1 }
+        #expect(winners.winner(room: "room", network: "wifi") == "ws://192.168.0.9:8738")
+        await racer.stop()
+    }
+
+    @Test func aBonjourResultTheRaceAlreadyDialsIsNotAdded() async {
+        let racer = await racer(bonjour: true)
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await eventually("browsing") { await browser.browsed == 1 }
+        browser.find("direct0")
+        browser.find("ws://192.168.0.9:8738")
+        browser.find("ws://192.168.0.9:8738")
+        await eventually("one leg added") { await races.added.count == 1 }
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.added.map(\.name) == ["ws://192.168.0.9:8738"])
+        await racer.stop()
+    }
+
+    @Test func aBonjourResultAfterTheWinIsIgnored() async {
+        let racer = await racer(bonjour: true)
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await eventually("browsing") { await browser.browsed == 1 }
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened == ["relay"] }
+        await eventually("browsing stopped") { await browser.ended == 1 }
+        browser.find("ws://192.168.0.9:8738")
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.added.isEmpty)
+        await racer.stop()
+    }
+
+    let lanHints = DirectHints(port: 8738, lan: [.init(address: "192.168.0.9", prefix: 24)])
+
+    @Test func newHintsOnTheRelayRaceAgainWithTheirCandidate() async {
+        let racer = await racer()
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await direct[0].fail()
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened == ["relay"] }
+        await relay.emit(.event(.directHints(lanHints)))
+        let (relay2, direct2) = await round(2)
+        #expect(hints.load(room: "room") == lanHints)
+        #expect(direct2.map(\.name) == ["direct0", "ws://192.168.0.9:8738"])
+        await eventually("old relay closed") { await relay.stopped }
+        await started([relay2] + direct2)
+        for leg in direct2 { await leg.fail() }
+        await relay2.becomeReady()
+        await relay2.open()
+        await eventually("relay opened again") { await seen.opened == ["relay", "relay"] }
+        // The same hints name nothing new: no third race.
+        await relay2.emit(.event(.directHints(lanHints)))
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 2)
+        await racer.stop()
+    }
+
+    @Test func newHintsOnADirectWinnerAreOnlyStored() async {
+        let racer = await racer()
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await direct[0].becomeReady()
+        await direct[0].open()
+        await eventually("direct opened") { await seen.opened == ["direct0"] }
+        await direct[0].emit(.event(.directHints(lanHints)))
+        await eventually("hints stored") { hints.load(room: "room") == lanHints }
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 1)
+        #expect(await !direct[0].stopped)
         await racer.stop()
     }
 }

@@ -147,7 +147,7 @@ final class AppModel {
         guard !isDemo else { return }
         pendingPairing = nil
         disconnect()
-        if let room = pairing?.pairing.roomId { RacingConnection.forgetRaceWinners(room: room) }
+        if let room = pairing?.pairing.roomId { forgetDirectPath(room: room) }
         cache.wipe()
         AttachmentFiles.wipe()
         conversations = [:]
@@ -166,7 +166,7 @@ final class AppModel {
     func unpair() {
         if isDemo { return exitDemo() }
         disconnect()
-        if let room = pairing?.pairing.roomId { RacingConnection.forgetRaceWinners(room: room) }
+        if let room = pairing?.pairing.roomId { forgetDirectPath(room: room) }
         try? Pairing.remove()
         #if os(iOS)
         PreviewKeychain.clear()
@@ -185,6 +185,11 @@ final class AppModel {
         devices = nil
         devicesError = nil
         notice = nil
+    }
+
+    private func forgetDirectPath(room: String) {
+        RacingConnection.forgetRaceWinners(room: room)
+        DirectHintStore().forget(room: room)
     }
 
     func enterDemo() {
@@ -267,13 +272,10 @@ final class AppModel {
         guard !isDemo, let pairing else { return }
         let local = PeerInfo(app: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             name: DeviceModel.name, capabilities: [Attachment.capability, Devices.capability, ReplyTo.capability, Reaction.capability,
-                Attachment.resumeCapability])
-        // The Mac also races the Gateway on this machine over loopback (#532); iPhone and iPad have no direct candidate yet.
-        #if os(macOS)
+                Attachment.resumeCapability, Direct.capability])
+        // The relay races the plugin's direct listener (#532): loopback on the Mac, the plugin's hints and Bonjour; with no
+        // usable candidate the race is relay-only. The racer keeps the `direct_hints` it receives.
         let made = try? RacingConnection(pairing: pairing.pairing, identity: pairing.identity, relayKnows: pairing.relayKnows, local: local)
-        #else
-        let made = try? RelayConnection(pairing: pairing.pairing, identity: pairing.identity, relayKnows: pairing.relayKnows, local: local)
-        #endif
         guard let connection = made else { return failPairing(String(localized: "This pairing code can’t be used.")) }
         self.connection = connection
         #if os(iOS)
@@ -319,6 +321,13 @@ final class AppModel {
     func resume() {
         setActive(true)
         takeShares()
+        guard let connection else { return connect() }
+        Task { await connection.reconnect() }
+    }
+
+    /// #532 item 8: the race starts on the way back to the foreground, before the scene is active; `resume` then joins it.
+    func prewarm() {
+        guard !isDemo else { return }
         guard let connection else { return connect() }
         Task { await connection.reconnect() }
     }
@@ -704,7 +713,7 @@ final class AppModel {
             guard answer.link != nil || answer.error != nil else { return }
             invite = answer
             if case .asking(let code) = deviceAdding { deliver(answer, to: code) }
-        case .peerInfo, .message, .upload, .uploadStatus, .download, .foreground, .historyRequest, .convPatch, .devicePatch, .liveActivity, .pushToken, .unknown:
+        case .peerInfo, .message, .upload, .uploadStatus, .download, .foreground, .historyRequest, .convPatch, .devicePatch, .liveActivity, .pushToken, .directHints, .unknown:
             break
         }
     }
