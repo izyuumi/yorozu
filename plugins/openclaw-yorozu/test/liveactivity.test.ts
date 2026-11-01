@@ -7,6 +7,7 @@ import {
   contentState,
   holdFor,
   LINGER_MS,
+  MAX_STEPS,
   plan,
   STEP_INTERVAL_MS,
   tidy,
@@ -96,4 +97,11 @@ test("a report carries only opaque tokens, kinds, states, counts and times", () 
   assert.equal(validReport({ ...report, jobs: Array(9).fill(turn()) }), false);
   const extra = { ...turn(), title: "secret" } as WireJob;
   assert.deepEqual(cleanJobs([extra]), [turn()]);
+});
+
+test("step counts above the relay's cap go out as the cap, normal counts unchanged", () => {
+  assert.equal(MAX_STEPS, 100_000);
+  assert.deepEqual(cleanJobs([turn({ steps: 250_000 })]), [turn({ steps: 100_000 })]);
+  assert.equal(contentState([turn({ steps: 250_000 })]).jobs[0]!.steps, 100_000);
+  assert.equal(contentState([turn({ steps: 42 })]).jobs[0]!.steps, 42);
 });
