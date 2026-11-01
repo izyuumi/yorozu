@@ -37,7 +37,7 @@ Pending owner decisions or owner-only checks. Each row keeps its current default
 - The plugin sends only to devices with a live session; offline devices backfill from history on reconnect. A reply whose delivered text differs from its transcript text shows the transcript text in history.
 - A Gateway restart drops live device sessions (devices re-handshake) and forgets pairing secrets not yet used.
 - At most 16 paired devices (`MAX_DEVICES`, plugin and relay); adding one past that removes the oldest.
-- An interrupted attachment upload starts over (partials are dropped after 30 minutes).
+- An interrupted attachment upload resumes from the chunks the plugin spooled to disk (dropped after 24 hours idle, at most 8), also across a plugin or Gateway restart and an app relaunch; against a plugin without `resume` it starts over. Downloads resume from the chunks the device kept.
 - `openclaw cron add --thread-id` accepts only numeric (Telegram) ids, so a job delivering into a Yorozu conversation is made with the agent's cron tool or `cron.add`.
 - The plugin's keyed state (allowlist, read cursors) and OpenClaw's transcripts are not encrypted at rest beyond the disk's encryption.
 - Relay only for now: the direct path (LAN, Tailscale, loopback) is decided for 0.10.0 ([#532](https://github.com/izyuumi/yorozu/issues/532)).

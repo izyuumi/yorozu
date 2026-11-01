@@ -243,7 +243,7 @@ let project = Project(
                 "Tests/**", "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift",
                 "Sources/Client/WidgetPublisher.swift", "Sources/Client/ActivityReports.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
-                "Sources/WidgetShared/Interface/Launcher.swift",
+                "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift",
                 "Sources/VoiceCapture/**",
             ],
             dependencies: [.package(product: "YorozuWire")],

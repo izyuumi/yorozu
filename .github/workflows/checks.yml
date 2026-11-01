@@ -17,6 +17,7 @@ jobs:
       plugin: ${{ steps.diff.outputs.plugin }}
       mcp: ${{ steps.diff.outputs.mcp }}
       web: ${{ steps.diff.outputs.web }}
+      plugin: ${{ steps.diff.outputs.plugin }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
@@ -33,6 +34,7 @@ jobs:
           echo "mcp=$(match '^(apps/mcp/|apps/ios/|plugins/openclaw-yorozu/|docs/|README\.md$|apps/web/worker\.mjs$|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           # The website's Worker serves the help MCP server, so its tests run for both.
           echo "web=$(match '^(apps/web/|apps/mcp/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "plugin=$(match '^(plugins/openclaw-yorozu/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
 
   app:
     needs: changes
@@ -70,6 +72,20 @@ jobs:
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
       - name: Voice package tests
         run: env -u SDKROOT swift test --package-path packages/YorozuVoice --scratch-path .build/voice
+      - name: Wire package tests
+        run: env -u SDKROOT swift test --package-path packages/YorozuWire --scratch-path .build/wire
+
+  # The plugin's spool tests import only node built-ins, so they run without OpenClaw or an install.
+  plugin:
+    needs: changes
+    if: needs.changes.outputs.plugin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - run: node --test 'plugins/openclaw-yorozu/test/*.test.ts'
 
   # Every external TestFlight or Beta App Review path must pass the kill switch (scripts/external_testflight.sh).
   release-guards:

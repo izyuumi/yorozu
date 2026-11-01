@@ -1,0 +1,21 @@
+{
+  "//": "The plugin files that import only node built-ins, checked in CI without OpenClaw. Same strictness as OpenClaw's tsconfig, which tsconfig.json extends.",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "strict": true,
+    "target": "es2023",
+    "types": ["node"],
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/envelope.ts", "src/spool.ts", "src/wire.ts"]
+}

@@ -1,0 +1,30 @@
+name: Plugin typecheck
+on:
+  pull_request:
+    paths:
+      - 'plugins/openclaw-yorozu/**'
+      - '.github/workflows/plugin-typecheck.yml'
+
+concurrency:
+  group: plugin-typecheck-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+
+jobs:
+  # The whole plugin typechecks only against an OpenClaw source checkout (tsconfig.json extends it).
+  # The files that import only node built-ins are checked here with the same strictness, no install of OpenClaw.
+  standalone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: Install TypeScript
+        run: npm install --prefix "$RUNNER_TEMP/ts" --no-save --no-audit --no-fund --no-package-lock typescript@7.0.2 @types/node@26.6.2
+      - name: Typecheck
+        run: >-
+          "$RUNNER_TEMP/ts/node_modules/.bin/tsc"
+          -p plugins/openclaw-yorozu/tsconfig.standalone.json
+          --typeRoots "$RUNNER_TEMP/ts/node_modules/@types"
