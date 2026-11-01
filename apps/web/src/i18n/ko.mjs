@@ -20,6 +20,15 @@ export default {
     appStore: 'App Store에서 Yorozu 받기',
     downloadMac: 'Mac용 다운로드',
     fine: 'Mac: macOS 15 이상 · iPhone 및 iPad: App Store에서 제공, iOS 18 이상 · 직접 운영하는 OpenClaw Gateway 필요 · <a href="https://github.com/izyuumi/yorozu">오픈 소스, MIT</a>',
+    demo: {
+      label: 'iPhone의 Yorozu 대화. 어젯밤 백업이 끝났는지 물으면 에이전트가 컴퓨터에서 확인하고 답합니다.',
+      title: '집안일',
+      earlier: [['내일 일정이 뭐야?', '두 가지예요. 오전 10:00 치과, 오후 7:00 저녁 식사.'], ['6시에 화분 물 주라고 알려 줘', '알겠어요. 오후 6:00에 알려 드릴게요.'], ['다운로드 폴더 정리해 줘', '완료했어요. 파일 38개를 문서, 사진, 설치 프로그램으로 나눴어요. 삭제한 파일은 없어요.']],
+      ask: '어젯밤 백업 끝났어?',
+      tools: '도구 호출 2개',
+      answer: '네. 오전 3:12에 끝났고, 변경된 파일 4,812개를 외장 드라이브에 복사했어요. 여유 공간은 아직 212GB 남았어요.',
+      placeholder: '메시지',
+    },
     agent: {
       title: 'AI 에이전트로 설정하기',
       intro: '이 프롬프트를 Claude Code, Codex, Cursor 등 AI 에이전트에 붙여 넣으세요. 에이전트가 Yorozu 도움말 서버에 연결하고, Mac인지 iPhone·iPad인지 물은 뒤 한 단계씩 안내합니다.',

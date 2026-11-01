@@ -1,0 +1,214 @@
+/* Yorozu's iOS chat (Chat.swift, Palette.swift, Metrics.swift): Vermilion
+   bubbles at 16pt corners, agent cards on secondarySystemBackground at 14pt,
+   a glass composer. Light and dark follow the page. */
+.yz {
+  --yz-accent: #bc2d1c;
+  --yz-bubble: #bc2d1c;
+  --yz-card: #f2f2f7;
+  --yz-ink: #000;
+  --yz-muted: #8a8a8e;
+  --yz-fill: rgb(118 118 128 / 0.12);
+  --yz-glass: rgb(255 255 255 / 0.86);
+  --yz-glass-edge: rgb(0 0 0 / 0.08);
+  --yz-screen: #fff;
+
+  /* No plate: the phone sits on the hero's own ground, its shadow unclipped */
+  & .ss-stage {
+    overflow: visible;
+    background: transparent;
+  }
+
+  .yz-phone {
+    position: absolute;
+    top: 24px;
+    left: 65px;
+  }
+  & .ss-stage[data-layout='compact'] .yz-phone {
+    top: 24px;
+    left: 29px;
+  }
+
+  .yz-phone .ss-phone__screen { background: var(--yz-screen); }
+  .yz-phone .ss-phone__content { display: flex; flex-direction: column; }
+
+  .yz-screen {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    color: var(--yz-ink);
+  }
+
+  .yz-nav {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 44px 1fr 44px;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 16px 8px;
+  }
+
+  .yz-circle {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--yz-glass);
+    box-shadow: 0 0 0 0.5px var(--yz-glass-edge), 0 4px 14px rgb(0 0 0 / 0.08);
+    color: var(--yz-ink);
+  }
+  .yz-circle--accent { color: var(--yz-accent); }
+
+  .yz-title {
+    overflow: hidden;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .yz-thread {
+    flex: 1;
+    gap: 12px;
+    padding: 0 16px 12px;
+    /* Older turns scroll away under the nav bar, as the app's thread does */
+    mask-image: linear-gradient(transparent, #000 28px);
+    --ss-me: var(--yz-bubble);
+    --ss-me-text: #fff;
+  }
+
+  .yz-thread .ss-bubble-row[data-from='me'] { justify-content: flex-end; }
+  .yz-thread .ss-bubble-row[data-from='me'] > .ss-bubble {
+    max-width: 82%;
+    padding: 8px 12px;
+    border-radius: 16px;
+  }
+
+  /* The agent's turn: a full-width card, the typing capsule growing into it */
+  .yz-thread .ss-bubble-row[data-from='them'] > .ss-bubble {
+    --b: var(--yz-card);
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    padding: 12px;
+    border-radius: 14px;
+    background: var(--yz-card);
+    color: var(--yz-ink);
+    transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1), height 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .yz-thread .ss-bubble-row[data-from='them'] > .ss-bubble[data-typing] {
+    width: auto;
+    padding: 8px 12px;
+    border-radius: 999px;
+  }
+  .yz-thread .ss-bubble__tail { display: none; }
+  .yz-thread .ss-bubble__dots i { background: var(--yz-muted); }
+
+  /* The read mark hangs under its bubble, so it travels with it */
+  .yz-thread .yz-me { margin-bottom: 16px; }
+  .yz-thread .yz-me > .ss-bubble { position: relative; overflow: visible; }
+  .yz-mark {
+    position: absolute;
+    right: 0;
+    bottom: -19px;
+    display: inline-flex;
+    color: var(--yz-muted);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .yz-mark[data-show] { opacity: 1; }
+  .yz-mark svg { width: 15px; height: 15px; }
+  .yz-mark svg + svg {
+    margin-left: -5px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1.5px var(--yz-screen);
+    background: var(--yz-screen);
+  }
+
+  /* Rides the thread's glide like a message row */
+  .yz-tools-row {
+    position: relative;
+    top: 0;
+    flex: none;
+    will-change: transform;
+    transition: top var(--ss-scroll);
+  }
+
+  .yz-tools {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--yz-muted);
+    font-size: 14px;
+    line-height: 1.3;
+  }
+  .yz-tools__icon { position: relative; display: grid; width: 16px; height: 16px; }
+  .yz-tools__icon > * { grid-area: 1 / 1; transition: opacity 0.25s ease; }
+  .yz-spin { opacity: 0; animation: yz-spin 0.9s linear infinite; }
+  .yz-tools[data-running] .yz-spin { opacity: 1; }
+  .yz-tools[data-running] .yz-wrench { opacity: 0; }
+
+  .yz-compose { padding: 0 16px 36px; }
+
+  .yz-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    padding: 0 6px 0 16px;
+    border-radius: 24px;
+    background: var(--yz-glass);
+    box-shadow: 0 0 0 0.5px var(--yz-glass-edge), 0 6px 20px rgb(0 0 0 / 0.08);
+    font-size: 17px;
+    letter-spacing: -0.01em;
+  }
+  .yz-field__text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .yz-caret {
+    display: inline-block;
+    width: 2px;
+    height: 21px;
+    margin-left: 1px;
+    border-radius: 1px;
+    background: var(--yz-accent);
+    vertical-align: -4px;
+  }
+  .yz-field__ph { position: absolute; left: 16px; color: var(--yz-muted); pointer-events: none; }
+  .yz-field__ph[data-hide] { opacity: 0; }
+
+  .yz-send {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--yz-fill);
+    color: var(--yz-muted);
+    transition: background-color 0.18s ease, color 0.18s ease;
+  }
+  .yz-send[data-on] { background: var(--yz-bubble); color: #fff; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .yz {
+    --yz-accent: #f06047;
+    --yz-bubble: #b8382a;
+    --yz-card: #1c1c1e;
+    --yz-ink: #fff;
+    --yz-muted: #98989d;
+    --yz-fill: rgb(118 118 128 / 0.24);
+    --yz-glass: rgb(44 44 46 / 0.86);
+    --yz-glass-edge: rgb(255 255 255 / 0.1);
+    --yz-screen: #000;
+  }
+}
+
+@keyframes yz-spin { to { rotate: 360deg; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .yz .yz-spin { animation: none; }
+}

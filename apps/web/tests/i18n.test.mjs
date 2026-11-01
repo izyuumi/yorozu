@@ -129,9 +129,9 @@ function texts(value, path = '') {
 
 test('every translation has the English text\'s shape, links, tags and code, and is actually translated', () => {
   const en = strings.en;
-  // Words that are the same in a language: names, and "Support" in German.
+  // Words that are the same in a language: names, "Support" in German, and the app's "Message" placeholder in French.
   const same = new Set(['.name', '.footer.copyright', '.home.og.title']);
-  const sameIn = { de: ['.nav.support', '.support.title', '.home.docs.2.0'] };
+  const sameIn = { de: ['.nav.support', '.support.title', '.home.docs.2.0'], fr: ['.home.demo.placeholder'] };
   for (const { code } of translated) {
     const t = strings[code];
     assert.deepEqual(shape({ ...t, governs: null }), shape(en), code);
