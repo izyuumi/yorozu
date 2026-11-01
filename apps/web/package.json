@@ -9,8 +9,12 @@
     "deploy": "astro build && wrangler deploy"
   },
   "devDependencies": {
+    "@astrojs/react": "^7.1.2",
     "@yorozu/help-mcp": "workspace:*",
     "astro": "^7.4.2",
+    "lucide-react": "^1.65.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "wrangler": "^4.152.0"
   }
 }
