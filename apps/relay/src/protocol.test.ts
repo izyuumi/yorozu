@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import {
+  activityPayload,
+  parseActivityPush,
+  parseActivityState,
+  parseActivityToken,
   alertPayload,
   allowFrame,
   allowNotify,
@@ -227,4 +232,55 @@ test("an encrypted preview asks the notification service to replace the fallback
   expect(payload.aps["mutable-content"]).toBe(1);
   expect(payload.preview).toEqual(preview);
   expect(payload.aps.alert["loc-key"]).toBe(NOTIFY_BODY.reply);
+});
+
+// The content state the plugin makes, which the app's Swift test decodes as `YorozuActivityState`.
+const fixture = JSON.parse(
+  readFileSync(new URL("../../ios/Tests/Fixtures/activity-content-state.json", import.meta.url), "utf8"),
+) as unknown;
+const DEVICE = "D".repeat(43);
+
+test("an activity state keeps only opaque tokens, kinds, states, counts and times", () => {
+  expect(parseActivityState(fixture)).toEqual(fixture);
+  const job = { token: "AAAAAAAAAAAAAAAA", kind: "turn", state: "running", startedAt: 1 };
+  expect(parseActivityState({ jobs: [{ ...job, title: "secret", convId: "x" }], extra: 1 })).toEqual({ jobs: [job] });
+  expect(parseActivityState({ jobs: [] })).toEqual({ jobs: [] });
+  for (const bad of [
+    { ...job, token: "short" },
+    { ...job, kind: "tool" },
+    { ...job, state: "paused" },
+    { ...job, steps: -1 },
+    { ...job, steps: 1.5 },
+    { ...job, startedAt: "now" },
+    { ...job, finishedAt: Number.NaN },
+  ]) {
+    expect(parseActivityState({ jobs: [bad] })).toBeNull();
+  }
+  expect(parseActivityState({ jobs: Array(9).fill(job) })).toBeNull();
+  expect(parseActivityState([])).toBeNull();
+});
+
+test("an activity token names a device key and a hex token, or neither token to forget it", () => {
+  expect(parseActivityToken({ device: DEVICE, token: "ab".repeat(32) })).toEqual({ device: DEVICE, token: "ab".repeat(32) });
+  expect(parseActivityToken({ device: DEVICE })).toEqual({ device: DEVICE });
+  expect(parseActivityToken({ device: DEVICE, token: "xyz" })).toBeNull();
+  expect(parseActivityToken({ device: "short", token: "ab" })).toBeNull();
+});
+
+test("an activity push is an update or end at priority 5 or 10, and its payload has no alert", () => {
+  const push = { device: DEVICE, event: "update", priority: 5, state: fixture, staleDate: 1_800_000_900 };
+  const parsed = parseActivityPush(push)!;
+  expect(parsed).toEqual(push);
+  expect(parseActivityPush({ ...push, priority: 1 })).toBeNull();
+  expect(parseActivityPush({ ...push, event: "start" })).toBeNull();
+  expect(parseActivityPush({ ...push, staleDate: 1.5 })).toBeNull();
+  expect(parseActivityPush({ ...push, state: { jobs: [{}] } })).toBeNull();
+
+  const payload = activityPayload(parsed, 1_800_000_000_999) as any;
+  expect(payload).toEqual({
+    aps: { timestamp: 1_800_000_000, event: "update", "content-state": fixture, "stale-date": 1_800_000_900 },
+  });
+  const end = activityPayload({ ...parsed, event: "end", dismissalDate: 1_800_000_120 }, 1_800_000_000_000) as any;
+  expect(end.aps["dismissal-date"]).toBe(1_800_000_120);
+  expect(JSON.stringify(end)).not.toMatch(/alert|sound|badge/);
 });

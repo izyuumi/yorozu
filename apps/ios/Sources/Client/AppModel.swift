@@ -49,6 +49,8 @@ final class AppModel {
     @ObservationIgnored private var unplacedReads: [String: ReadCursor] = [:]
     @ObservationIgnored private var badge: Int?
     private(set) var hostInfo: PeerInfo?
+    /// Counts opened sessions, so the Live Activity can report itself again to a host that may have restarted.
+    private(set) var sessionsOpened = 0
     let transfers = Transfers()
     @ObservationIgnored private var outboxPumping = false
     @ObservationIgnored private var outboxAgain = false
@@ -456,6 +458,7 @@ final class AppModel {
         case .sessionOpen(let host):
             Self.connectionLog.info("session open, host \(host.app, privacy: .public) OpenClaw \(host.hostVersion ?? "?", privacy: .public)")
             hostInfo = host
+            sessionsOpened += 1
             transfers.resumable = host.capabilities.contains(Attachment.resumeCapability)
             if !paired { updatePairing { $0.paired = true; $0.pairedAt = Date(); $0.pairing.secret = nil } }
             requestNotifications()
@@ -506,6 +509,14 @@ final class AppModel {
     var mediaMaxBytes: Int { hostInfo?.mediaMaxBytes ?? Attachment.defaultMaxBytes }
     var repliesAvailable: Bool { !isDemo && (hostInfo.map { $0.capabilities.contains(ReplyTo.capability) } ?? true) }
     var reactionsAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(Reaction.capability) == true }
+    /// The host can keep the Live Activity current through counts-only relay pushes.
+    var liveActivityPushAvailable: Bool { !isDemo && hostInfo?.capabilities.contains(ActivityReport.capability) == true }
+
+    /// Tells the host about the Live Activity over the encrypted session; true when it went out.
+    func report(_ report: ActivityReport) async -> Bool {
+        guard let connection, liveActivityPushAvailable else { return false }
+        return await connection.send(.liveActivity(report))
+    }
 
     /// One reaction per person: picking the one the message already has removes it.
     func react(_ emoji: String, to item: ChatItem, in convId: String) {
@@ -688,7 +699,7 @@ final class AppModel {
             guard answer.link != nil || answer.error != nil else { return }
             invite = answer
             if case .asking(let code) = deviceAdding { deliver(answer, to: code) }
-        case .peerInfo, .message, .upload, .uploadStatus, .download, .foreground, .historyRequest, .convPatch, .devicePatch, .unknown:
+        case .peerInfo, .message, .upload, .uploadStatus, .download, .foreground, .historyRequest, .convPatch, .devicePatch, .liveActivity, .unknown:
             break
         }
     }

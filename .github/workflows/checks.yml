@@ -27,12 +27,12 @@ jobs:
           files=$(git diff --name-only "$BASE" HEAD)
           match() { printf '%s\n' "$files" | grep -qE "$1" && echo true || echo false; }
           echo "app=$(match '^(apps/ios/|packages/|plugins/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "relay=$(match '^(apps/relay/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "relay=$(match '^(apps/relay/|apps/ios/Tests/Fixtures/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           # The help MCP bundle is generated from these (not CHANGELOG.md: the release PR changes only that).
           echo "mcp=$(match '^(apps/mcp/|apps/ios/|plugins/openclaw-yorozu/|docs/|README\.md$|apps/web/worker\.mjs$|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
           # The website's Worker serves the help MCP server, so its tests run for both.
           echo "web=$(match '^(apps/web/|apps/mcp/|pnpm-lock\.yaml$|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "plugin=$(match '^(plugins/openclaw-yorozu/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "plugin=$(match '^(plugins/openclaw-yorozu/|apps/ios/Tests/Fixtures/|\.github/workflows/checks\.yml$)')" >> "$GITHUB_OUTPUT"
 
   app:
     needs: changes

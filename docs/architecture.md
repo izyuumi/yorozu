@@ -55,6 +55,7 @@ agent:<agent>:yorozu:direct:owner:thread:<convId>
 3. `run_started` marks the message read; `typing` repeats while the run lasts; each tool call sends a `tool` row.
 4. The reply arrives whole, one `reply` per `textChunkLimit` chunk, to every device with a session. Nothing is queued for devices without one: they catch up from history.
 5. After the turn, one push through the relay's `notify`, preview sealed per device, skipping devices that have the conversation or the app in front and devices whose push is off.
+6. With a host listing `liveActivityPush`, an iPhone or iPad whose Live Activity shows the turn gets counts-only ActivityKit pushes through the relay while it is suspended: each tool step (at most one per 15 s) and the turn's end ([Live Activity push](ios-relay-contract.md#live-activity-push)).
 
 A cron job with `delivery: {channel: "yorozu", to: "owner", threadId: <convId>}` arrives the same way as a `reply` and pushes once.
 
@@ -75,7 +76,7 @@ Details of each are in the contract; in short:
 | Plugin | Host keys: X25519 static (Noise) and Ed25519 (relay room, signed frames) | `<stateDir>/credentials/yorozu/host-keys.json` | `0600`; made once, never rewritten or logged. Deleting it means a new room: every device pairs again. |
 | Plugin | Device allowlist, read cursors, push titles, stored attachments, last-message times, retried messages, reply targets, reactions | OpenClaw's keyed state store, `<stateDir>/state/openclaw.sqlite`, namespaces `devices`, `read`, `push-titles`, `attachments`, `message-times`, `retry`, `replies`, `reactions` | The OpenClaw state dir's file permissions; assume not encrypted at rest. |
 | Plugin | Partial uploads | `<stateDir>/yorozu/upload-spool/<attachmentId>.part` and `.json` | Directory `0700`, files `0600`; dropped once stored, or after 24 hours idle. |
-| Plugin | Device sessions, pending pairing secrets, alerted-device lists | Memory | Gone on Gateway restart: devices handshake again; an unused `pair` must be run again. |
+| Plugin | Device sessions, pending pairing secrets, alerted-device lists, each device's reported Live Activity (its jobs and which conversation each running turn job is) | Memory | Gone on Gateway restart: devices handshake again; an unused `pair` must be run again; a Live Activity gets no more pushes until the app reports it on its next session. |
 | OpenClaw | Sessions, transcripts, generated titles | The agent's store under `<stateDir>/agents/<agent>/` | Plaintext, the same trust model as every OpenClaw channel. |
 | OpenClaw | Attachment files | `<stateDir>/media/inbound`, `media/outbound` | As above. |
 | Client | Pairing: the link's host data, this device's Ed25519 and X25519 keys | Keychain, the app's default group `<team>.to.yumi.yorozu.ios` (the share extension lists it too, to read), service `to.yumi.yorozu.ios`, account `pairing` (moved from `pairing-v3` on first launch) | Not synced, `AfterFirstUnlockThisDeviceOnly` so a background push can reconnect while locked. |
@@ -83,8 +84,10 @@ Details of each are in the contract; in short:
 | Client | Conversation cache (`Conversations/`), files (`Attachments/`), both moved from their `-v3` names on first use | iOS: the app's Application Support. Mac: `~/Library/Application Support/to.yumi.yorozu/client/` | iOS: Data Protection `complete`, excluded from backup. Mac: the user account's protection (no per-file classes outside the sandbox). Wiped on unpair and on a new pairing. |
 | Client (iOS) | Shares waiting for the app | App Group `group.to.yumi.yorozu`, `ShareInbox/` | Data Protection `complete`; holds no keys. |
 | Client (iOS) | Widget snapshot: up to 12 conversation titles, pins, unread counts and reply times; the latest reply's first line only with Show Message Previews in Widgets | App Group `group.to.yumi.yorozu`, `WidgetSnapshot.json`, written by the app and the notification service | Data Protection `completeUntilFirstUserAuthentication`, so a push can update it while locked; holds no keys; none in demo mode, deleted on unpair. |
-| Relay | Known device keys, join tokens, APNs tokens, device frames buffered while the host is away (5 MiB, 24 h) | Durable Object storage (Worker); memory (Node) | Sees only signed outer envelopes and sealed boxes. |
+| Relay | Known device keys, join tokens, APNs tokens, Live Activity push tokens (one per device, while its activity runs), device frames buffered while the host is away (5 MiB, 24 h) | Durable Object storage (Worker); memory (Node) | Sees only signed outer envelopes and sealed boxes, and the plaintext counts-only state of each Live Activity push (not stored). |
 
 `<stateDir>` is OpenClaw's state directory: `~/.openclaw`, or `~/.openclaw-<name>` for `openclaw --profile <name>`.
 
 Push previews (title and first line, at most 256 bytes) are sealed per device with a key derived from the host and device static keys; the relay and APNs see only the sealed box.
+
+A Live Activity push is not sealed: ActivityKit reads its `content-state` itself, so the relay and APNs see it. It is built to say nothing about the conversations: random 16-character job tokens, kinds (turn, recording, transcribing, needs you), states (running, done, failed), tool step counts and times, plus the activity's push token and when each push goes. Which conversation a job token stands for travels only inside the encrypted session, and its title only in the device's App Group; the relay rebuilds the state from those fields alone before forwarding it.

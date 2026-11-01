@@ -15,7 +15,7 @@ import { isId, type Attachment, type Event, type Message, type ReplyTo, type Too
 import { itemText, liveReplyIds } from "./history.js";
 import { noteReply } from "./replies.js";
 import { noteFirstMessage } from "./push.js";
-import { broadcast, notifyReply } from "./relay.js";
+import { activityTurn, broadcast, notifyReply } from "./relay.js";
 import { isTemporary, park } from "./retry.js";
 import { yorozuRuntime } from "./runtime.js";
 import { maybeTitle } from "./sessions.js";
@@ -132,11 +132,15 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
     keepaliveIntervalMs: TYPING_KEEPALIVE_MS,
     maxDurationMs: TYPING_MAX_MS,
   });
+  const calls = new Set<string>();
   const tool = (callId: string | undefined, name: string | undefined, status: ToolStatus) => {
     const n = name?.trim();
     if (!callId || !n) return;
     toolRan = true;
     send({ kind: "tool", data: { convId, messageId, callId: callId.slice(0, 128), name: n.slice(0, 128), status } });
+    if (calls.has(callId)) return;
+    calls.add(callId);
+    activityTurn(convId, { kind: "step", steps: calls.size });
   };
 
   const ctxPayload = buildChannelInboundEventContext({
@@ -162,6 +166,8 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
     access: { commands: { authorized: true } },
   });
 
+  // As the app reads a turn's end: a reply is done, a reported failure failed, a retry still running, nothing gone.
+  let ended: "failed" | "retrying" | undefined;
   try {
     await runChannelInboundEvent({
       channel: CHANNEL_ID,
@@ -216,8 +222,10 @@ export async function handleMessage(ctx: TurnContext, message: Message, attempt 
     const retrying = !firstReply && !toolRan && isTemporary(error) && (await park(message, attempt).catch(() => false));
     log?.warn(`yorozu: run failed${retrying ? ` (retry ${attempt + 1} queued)` : ""}: ${String(error)}`);
     if (!retrying) send({ kind: "error", data: { code: "run_failed", message: String(error).slice(0, 500), convId, messageId } });
+    ended = retrying ? "retrying" : "failed";
   } finally {
     setTyping(false);
+    if (ended !== "retrying") activityTurn(convId, { kind: firstReply ? "done" : (ended ?? "gone") });
     if (firstReply) {
       await notifyReply(convId, firstReply.messageId, firstReply.text).catch((error: unknown) =>
         log?.warn(`yorozu: notify failed: ${String(error)}`),

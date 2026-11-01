@@ -11,6 +11,7 @@ import {
   DEVICES,
   encodeEvent,
   INVITE,
+  LIVE_ACTIVITY_PUSH,
   REACTIONS,
   REPLIES,
   RESUME,
@@ -27,6 +28,7 @@ import {
   type PeerInfo,
 } from "./envelope.js";
 import type { HostKeys } from "./keys.js";
+import { applyTurn, cleanJobs, holdFor, plan, type TurnChange, type WireJob } from "./liveactivity.js";
 import { firstLine, previewKey, previewPlaintext, pushTitle, sealPreview, threadRef } from "./push.js";
 import { listCursors, mergeCursor } from "./reads.js";
 import {
@@ -114,10 +116,16 @@ let host: {
   forget: (deviceKeys: string[]) => void;
   broadcast: ((events: Event[]) => number) | null;
   notify: ((convId: string, messageId: string, text: string) => Promise<void>) | null;
+  activityTurn: (convId: string, change: TurnChange) => void;
 } | null = null;
 
 export function broadcast(events: Event[]): number {
   return host?.broadcast?.(events) ?? 0;
+}
+
+/** A turn moved on: devices whose Live Activity shows it get a counts-only push. */
+export function activityTurn(convId: string, change: TurnChange): void {
+  host?.activityTurn(convId, change);
 }
 
 export async function notifyReply(convId: string, messageId: string, text: string): Promise<void> {
@@ -181,6 +189,48 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     if (old) bySid.delete(b64u(old.session.sid));
     served.delete(deviceKey);
   };
+
+  // Live Activities by device key, kept across sessions: the app is suspended while they matter.
+  type Watch = { jobs: WireJob[]; sent: WireJob[]; turns: Record<string, string>; pushedAt?: number; timer?: NodeJS.Timeout };
+  const activities = new Map<string, Watch>();
+  let relayActivities = false;
+  const forgetActivity = (deviceKey: string, tellRelay: boolean): void => {
+    clearTimeout(activities.get(deviceKey)?.timer);
+    activities.delete(deviceKey);
+    if (tellRelay) relaySend?.(JSON.stringify({ type: "activityToken", device: deviceKey }));
+  };
+  const pushActivity = (deviceKey: string): void => {
+    const watch = activities.get(deviceKey);
+    if (!watch || !relaySend) return;
+    const now = Date.now();
+    const next = plan(watch.sent, watch.jobs, now);
+    if (!next) return;
+    const hold = holdFor(next.priority, watch.pushedAt, now);
+    if (hold > 0) {
+      watch.timer ??= setTimeout(() => {
+        watch.timer = undefined;
+        pushActivity(deviceKey);
+      }, hold).unref();
+      return;
+    }
+    clearTimeout(watch.timer);
+    watch.timer = undefined;
+    relaySend(JSON.stringify({ type: "activityPush", device: deviceKey, ...next }));
+    watch.sent = watch.jobs;
+    watch.pushedAt = now;
+    if (next.event === "end") activities.delete(deviceKey);
+  };
+  const reportActivity = (deviceKey: string, report: Extract<Event, { kind: "live_activity" }>["data"]): void => {
+    if (!relayActivities) return;
+    if (!report.pushToken) return forgetActivity(deviceKey, true);
+    const old = activities.get(deviceKey);
+    clearTimeout(old?.timer);
+    const jobs = cleanJobs(report.jobs);
+    // The app already shows these jobs; the throttle keeps counting from the last push.
+    activities.set(deviceKey, { jobs, sent: jobs, turns: { ...report.turns }, ...(old?.pushedAt !== undefined ? { pushedAt: old.pushedAt } : {}) });
+    relaySend?.(JSON.stringify({ type: "activityToken", device: deviceKey, token: report.pushToken }));
+  };
+
   const me: NonNullable<typeof host> = (host = {
     relayUrl: opts.relayUrl,
     keys,
@@ -190,7 +240,16 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     forget: (deviceKeys) => {
       for (const key of deviceKeys) {
         endSession(key);
+        forgetActivity(key, false);
         relaySend?.(JSON.stringify({ type: "revoke", pubkey: key }));
+      }
+    },
+    activityTurn: (convId, change) => {
+      const now = Date.now();
+      for (const [deviceKey, watch] of activities) {
+        if (!Object.values(watch.turns).includes(convId)) continue;
+        watch.jobs = applyTurn(watch.jobs, watch.turns, convId, change, now);
+        pushActivity(deviceKey);
       }
     },
   });
@@ -321,7 +380,8 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         endSession(deviceKey);
         served.set(deviceKey, { session: accepted.session });
         bySid.set(accepted.sid, deviceKey);
-        sendFrames([accepted.response, seal(accepted.session, { kind: "peer_info", data: peerInfo })]);
+        const capabilities = [...peerInfo.capabilities, ...(relayActivities ? [LIVE_ACTIVITY_PUSH] : [])];
+        sendFrames([accepted.response, seal(accepted.session, { kind: "peer_info", data: { ...peerInfo, capabilities } })]);
         log?.info(`yorozu: session open (${served.size} device${served.size === 1 ? "" : "s"})`);
       }
 
@@ -399,6 +459,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           entry.active = event.data.active === true;
           return;
         }
+        if (event?.kind === "live_activity") return reportActivity(deviceKey, event.data);
         if (event?.kind === "error") return log?.info(`yorozu: device error ${event.data.code}`);
         if (event?.kind === "device_list" || event?.kind === "device_patch") {
           const answer = event.kind === "device_list" ? await deviceList(deviceKey) : await patchDevice(event.data, deviceKey);
@@ -459,6 +520,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           case "registered": {
             registered = true;
             relaySend = send;
+            relayActivities = msg.liveActivity === true;
             me.broadcast = broadcastHere;
             me.notify = notifyHere;
             me.mint = () =>
@@ -499,6 +561,9 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           }
           case "state":
             return log?.info(`yorozu: relay state: ${String(msg.state).slice(0, 64)}`);
+          case "activityGone":
+            if (typeof msg.device === "string") forgetActivity(msg.device, false);
+            return;
           case "phones":
             if (msg.count === 0) {
               for (const entry of served.values()) {
