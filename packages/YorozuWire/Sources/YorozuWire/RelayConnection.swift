@@ -26,6 +26,8 @@ public actor RelayConnection {
         case relayJoined
         case sessionOpen(PeerInfo)
         case route(DirectRoute)
+        /// While pairing, the relay leg failed or closed before `joined` (#532 step 5): at most once per race.
+        case relayUnreachable
     }
 
     /// A relay, or the plugin's direct listener (#532): a probe instead of `join`, no relay buffer, flow control or push.
@@ -268,9 +270,16 @@ public actor RelayConnection {
         case "unknown device" where relayKnows:
             return terminal(.unpaired)
         case "unknown token", "expired token", "unknown device":
-            if !relayKnows && !triedAsKnown && reason == "unknown token" {
+            // Paired over the direct path (#532 step 5): the token may be spent or expired, and the relay learns the
+            // device from the plugin's allowlist, maybe later; until then this leg retries.
+            let pairedDirect = pairing.secret == nil && !relayKnows
+            if !relayKnows && !triedAsKnown && (reason == "unknown token" || pairedDirect && reason == "expired token") {
                 triedAsKnown = true
                 return connect()
+            }
+            if pairedDirect {
+                set(.offline)
+                return scheduleRetry()
             }
             return terminal(.pairingFailed(reason))
         default:

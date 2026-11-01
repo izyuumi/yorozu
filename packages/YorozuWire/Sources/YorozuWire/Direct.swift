@@ -107,6 +107,10 @@ public actor RacingConnection {
     private var holder: Int?
     private var winner: Int?
     private var hostWasOffline = false
+    /// While pairing: the relay leg joined, or `relayUnreachable` went out, this race.
+    private var relayReached = false
+    /// While pairing: the relay refused the code (an offline one), which the direct legs may still pair with.
+    private var relayRefusal: RelayConnection.State?
     private var paths: Task<Void, Never>?
     private var again: Task<Void, Never>?
     private var pushToken: String?
@@ -193,13 +197,14 @@ public actor RacingConnection {
         await race()
     }
 
-    /// Permission changes can make direct candidates usable while a relay session is healthy.
+    /// Permission changes can make direct candidates usable while a relay session is healthy, or while pairing (the
+    /// Local Network explainer's Continue), when it always races again.
     public func raceAgain() async {
         guard running else { return }
         if let winner, winner != relayID {
             return connectionLog.info("raceAgain: already direct")
         }
-        guard winner != nil || ContinuousClock.now - raceBegan >= .seconds(1) else { return }
+        guard winner != nil || pairing.secret != nil || ContinuousClock.now - raceBegan >= .seconds(1) else { return }
         await race(preferDirect: true)
     }
 
@@ -252,6 +257,8 @@ public actor RacingConnection {
         holder = nil
         winner = nil
         hostWasOffline = false
+        relayReached = false
+        relayRefusal = nil
         for leg in old.values { await leg.stop() }
         return round
     }
@@ -263,9 +270,9 @@ public actor RacingConnection {
         guard running else { return }
         let network = await network()
         guard round == self.round, running else { return }
-        // Offline pairing is #532 step 5: until the first session opens the device pairs over the relay.
+        // Pairing races the stored hints too, which came with the QR code (#532 step 5); Bonjour waits until it paired.
         let paired = pairing.secret == nil
-        let found = paired ? candidates(pairing.roomId.flatMap(hints.load(room:))) : (candidates: [], skipped: [])
+        let found = candidates(pairing.roomId.flatMap(hints.load(room:)))
         let (relay, direct) = makeLegs(pairing, relayKnows, found.candidates)
         raceBegan = .now
         raceNetwork = network
@@ -435,12 +442,27 @@ public actor RacingConnection {
             }
             continuation?.yield(.sessionOpen(peer))
         case .state(let new):
+            let refused = if case .pairingFailed = new { true } else { false }
+            if id == relayID, pairing.secret != nil, !relayReached, refused || new == .offline {
+                relayReached = true
+                continuation?.yield(.relayUnreachable)
+            }
+            // The relay doesn't know an offline code; the direct legs may still pair with it (#532 step 5).
+            if id == relayID, refused, pairing.secret != nil, order.contains(where: { legs[$0] != nil }), let leg = legs[id] {
+                connectionLog.info("race \(round, privacy: .public): the relay refused the pairing code, direct legs go on")
+                relayRefusal = new
+                relayState = new
+                legs[id] = nil
+                waiting.removeAll { $0 == id }
+                if holder == id {
+                    holder = nil
+                    await next()
+                }
+                return await leg.stop()
+            }
             switch new {
             case .updateRequired, .unpaired, .pairingFailed:
-                running = false
-                paths?.cancel()
-                await endRace()
-                return set(new)
+                return await fail(new)
             default:
                 break
             }
@@ -475,6 +497,7 @@ public actor RacingConnection {
             }
             if new == .offline && id != relayID {
                 legs[id] = nil
+                if let relayRefusal, winner == nil, order.allSatisfy({ legs[$0] == nil }) { return await fail(relayRefusal) }
                 hurry()
             }
         case .event(.directHints(let new)):
@@ -485,10 +508,19 @@ public actor RacingConnection {
             if id == winner { continuation?.yield(update) }
         case .relayJoined:
             relayKnows = true
+            relayReached = true
             continuation?.yield(update)
-        case .route:
+        case .route, .relayUnreachable:
             break
         }
+    }
+
+    /// A terminal state: the racer stops.
+    private func fail(_ final: RelayConnection.State) async {
+        running = false
+        paths?.cancel()
+        await endRace()
+        set(final)
     }
 
     private func rerace(after pause: Duration, preferDirect: Bool = false) {
