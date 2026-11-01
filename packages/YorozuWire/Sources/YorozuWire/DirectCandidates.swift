@@ -59,14 +59,14 @@ extension Direct {
 }
 
 public enum DirectRoute: String, Sendable, Equatable, CaseIterable {
-    case wifi, tailscale, thisMac, relay
+    case wifi, localNetwork, tailscale, thisMac, relay
 
-    public static func of(_ url: URL?) -> DirectRoute {
+    public static func of(_ url: URL?, network: String) -> DirectRoute {
         guard let url else { return .relay }
         let host = (url.host ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
         if ["127.0.0.1", "::1", "localhost"].contains(host) { return .thisMac }
         if DirectCandidates.isTailscale(host) || host.hasSuffix(".ts.net") { return .tailscale }
-        return .wifi
+        return network == "wifi" ? .wifi : .localNetwork
     }
 }
 
@@ -212,9 +212,9 @@ enum DirectCandidates {
     static let tailscaleV4 = (network: Direct.ipBytes("100.64.0.0")!, prefix: 10)
     static let tailscaleV6 = (network: Direct.ipBytes("fd7a:115c:a1e0::")!, prefix: 48)
 
-    /// Loopback on the Mac (the default port); LAN addresses on a subnet of an up, non-VPN interface, once Local Network
-    /// is allowed; Tailscale IPs and then the MagicDNS name while an up VPN interface holds a Tailscale address. `skipped`
-    /// names each left-out hint and why, for the log.
+    /// Loopback on the Mac (the default port), always, since stored hints can be stale; LAN addresses on a subnet of an
+    /// up, non-VPN interface, once Local Network is allowed; Tailscale IPs and then the MagicDNS name while an up VPN
+    /// interface holds a Tailscale address. `skipped` names each left-out hint and why, for the log.
     static func plan(hints: DirectHints?, interfaces: [LocalInterface], isMac: Bool, lanAllowed: Bool, lanDenied: Bool = false, port: Int = Direct.port)
         -> (candidates: [URL], skipped: [(String, String)]) {
         var candidates: [URL] = []
@@ -247,6 +247,16 @@ enum DirectCandidates {
             if tailnet { add(name, hints.port) } else { skipped.append(("the MagicDNS name", "no Tailscale interface up")) }
         }
         return (candidates, skipped)
+    }
+
+    /// No address hints, or a hint matching any local interface: loopback may reach the host.
+    static func hostMayBeLocal(_ hints: DirectHints?, _ interfaces: [LocalInterface]) -> Bool {
+        guard let hints else { return true }
+        let addresses = hints.lan.map(\.address) + hints.tailscale.map(\.address)
+        return addresses.isEmpty || addresses.contains { address in
+            guard let bytes = Direct.ipBytes(address) else { return false }
+            return interfaces.contains { Direct.ipBytes($0.address) == bytes }
+        }
     }
 
     static func isTailscale(_ address: String) -> Bool {

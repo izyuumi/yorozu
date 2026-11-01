@@ -19,6 +19,7 @@ extension DirectRoute {
     var label: String {
         switch self {
         case .wifi: String(localized: "Direct (Wi-Fi)")
+        case .localNetwork: String(localized: "Direct (local network)")
         case .tailscale: String(localized: "Direct (Tailscale)")
         case .thisMac: String(localized: "Direct (this Mac)")
         case .relay: String(localized: "Relay")
