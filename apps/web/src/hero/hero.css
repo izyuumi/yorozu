@@ -1,0 +1,11 @@
+/* Every style the hero demo uses, in the kit's own import order. Loaded by
+   mount.tsx as one stylesheet on the home page only: CSS imported from the
+   components would be added to every page of the site. */
+@import './kit/stage.css';
+@import './kit/keys.css';
+@import './kit/cursor.css';
+@import './kit/phone.css';
+@import './kit/motion/Roll.css';
+@import './kit/messages.css';
+@import './kit/motion/Collapse.css';
+@import './yorozu-hero.css';

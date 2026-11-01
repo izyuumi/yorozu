@@ -20,6 +20,15 @@ export default {
     appStore: '在 App Store 获取 Yorozu',
     downloadMac: '下载 Mac 版',
     fine: 'Mac：macOS 15 或更高版本 · iPhone 和 iPad：已在 App Store 上架，iOS 18 或更高版本 · 需要你自己的 OpenClaw Gateway · <a href="https://github.com/izyuumi/yorozu">开源，MIT 许可</a>',
+    demo: {
+      label: 'iPhone 上的 Yorozu 对话。你问昨晚的备份是否完成，代理在你的电脑上查看后回答。',
+      title: '家里的事',
+      earlier: [['我明天有什么安排？', '两件事：上午 10:00 看牙医，晚上 7:00 吃晚饭。'], ['6 点提醒我给植物浇水', '好的，我会在下午 6:00 提醒你。'], ['整理一下我的下载文件夹', '完成了。我把 38 个文件分到了文稿、图片和安装程序中，没有删除任何文件。']],
+      ask: '昨晚的备份完成了吗？',
+      tools: '2 次工具调用',
+      answer: '完成了。凌晨 3:12 结束，把 4,812 个有改动的文件复制到了外置硬盘，还剩 212 GB 可用空间。',
+      placeholder: '消息',
+    },
     agent: {
       title: '用 AI 智能体设置',
       intro: '把这段提示词粘贴到 Claude Code、Codex、Cursor 或其他 AI 智能体中。智能体会连接 Yorozu 的帮助服务器，询问你用的是 Mac 还是 iPhone、iPad，然后一步步带你完成设置。',
