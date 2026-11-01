@@ -427,6 +427,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
             const push = parseHostPush(msg);
             if (!push) return ws.close(CLOSE_PROTOCOL, "bad push");
             if (!conn.room.devices.has(push.device)) return;
+            conn.room.devices.set(push.device, now);
             return registerPush(conn.room, push.device, push.deviceToken);
           }
           if (conn.role !== "phone" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not joined");
