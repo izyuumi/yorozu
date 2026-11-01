@@ -957,6 +957,45 @@ test("a live activity push carries counts only, to the activity topic, with no a
   expect(calls[1]!.headers.get("apns-priority")).toBe("10");
 });
 
+const NOTIFY = JSON.stringify({ type: "notify", class: "reply", threadRef: "Ab3-_x9Z" });
+
+/** Delivers host messages at one instant, with both per-minute budgets set to 2. */
+const tightBudgets = (name: string, now: number) => (message: string) =>
+  runInDurableObject(room(name), async (_instance, state) => {
+    const socket = state.getWebSockets().find((ws) => ws.deserializeAttachment()?.role === "mac")!;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const limits = { RELAY_NOTIFY_PER_MINUTE: "2", RELAY_ACTIVITY_PER_MINUTE: "2" };
+      const awake = new Room(state, { ...(env as unknown as Env), ...limits });
+      await awake.webSocketMessage(socket, message);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+test("exhausting activity pushes refuses the third but leaves notifies their budget", async () => {
+  const calls = fakeApns();
+  const { mac, keys, room: name } = await withActivity();
+  const deliver = tightBudgets(name, Date.now());
+  const push = JSON.stringify(activityPush(keys.pub));
+  for (let i = 0; i < 3; i++) await deliver(push);
+  expect(await mac.next()).toEqual({ type: "state", state: "activity rate limit" });
+  await vi.waitFor(() => expect(calls.filter((call) => call.url.endsWith(ACTIVITY_TOKEN))).toHaveLength(2));
+  await deliver(NOTIFY);
+  await vi.waitFor(() => expect(calls.filter((call) => call.url.endsWith(DEVICE_TOKEN))).toHaveLength(1));
+});
+
+test("exhausting notifies leaves activity pushes their budget", async () => {
+  const calls = fakeApns();
+  const { mac, keys, room: name } = await withActivity();
+  const deliver = tightBudgets(name, Date.now());
+  for (let i = 0; i < 3; i++) await deliver(NOTIFY);
+  expect(await mac.next()).toEqual({ type: "state", state: "notify rate limit" });
+  await vi.waitFor(() => expect(calls.filter((call) => call.url.endsWith(DEVICE_TOKEN))).toHaveLength(2));
+  await deliver(JSON.stringify(activityPush(keys.pub)));
+  await vi.waitFor(() => expect(calls.filter((call) => call.url.endsWith(ACTIVITY_TOKEN))).toHaveLength(1));
+});
+
 test("only the host registers activity tokens, only for known devices, and a malformed push closes it", async () => {
   const calls = fakeApns();
   const { mac, phone, keys, room } = await paired();
