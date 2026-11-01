@@ -44,11 +44,13 @@ struct RootView: View {
                 #if os(iOS)
                 YorozuActivities.shared?.returned()
                 #endif
-            #if os(iOS)
             case .inactive:
+                #if os(iOS)
                 // Still in the foreground: the last moment a Live Activity can start.
                 if previous == .active { YorozuActivities.shared?.leaving() }
-            #endif
+                #endif
+                // On the way back to the foreground: race before the scene is active.
+                if previous == .background { model.prewarm() }
             default: break
             }
         }

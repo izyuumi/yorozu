@@ -3,22 +3,13 @@ import Foundation
 import Network
 
 /// The direct path to the plugin's own listener (#532, capability `direct`): a probe proves the host key, then the same
-/// signed frames as on the relay. This step dials only the Gateway on this Mac, over loopback.
+/// signed frames as on the relay. Candidates come from loopback on the Mac, the plugin's `direct_hints` and Bonjour.
 extension Direct {
     public static let port = 8738
     public enum Close {
         public static let unauthorized = 4101
         public static let replaced = 4102
         public static let tooLarge = 4103
-    }
-
-    /// Where the client dials directly: the Gateway on this Mac; nothing on iPhone and iPad yet.
-    public static var candidates: [URL] {
-        #if os(macOS)
-        ["ws://127.0.0.1:\(port)", "ws://[::1]:\(port)"].compactMap { URL(string: $0) }
-        #else
-        []
-        #endif
     }
 
     public static func newNonce() -> String {
@@ -66,17 +57,30 @@ extension RelayConnection: ConnectionLeg {}
 /// 50 ms apart, the relay 300 ms late behind a direct winner, and at once when every direct leg has failed. One leg
 /// handshakes at a time: the plugin keeps a device's newest session, so two inits in flight could leave it holding the
 /// loser's. A network path change or a lost session starts a new race; nothing migrates, and the app resends its
-/// unacknowledged outbox on the new session.
+/// unacknowledged outbox on the new session. Each race reads the stored `direct_hints`, and Bonjour results join it as
+/// they come.
 public actor RacingConnection {
-    typealias Legs = @Sendable (_ pairing: QrPayload, _ relayKnows: Bool) -> (relay: any ConnectionLeg, direct: [any ConnectionLeg])
+    typealias Legs = @Sendable (_ pairing: QrPayload, _ relayKnows: Bool, _ direct: [URL])
+        -> (relay: any ConnectionLeg, direct: [any ConnectionLeg])
+    /// A direct leg added to the race in flight (a Bonjour result).
+    typealias DirectLeg = @Sendable (_ pairing: QrPayload, _ url: URL) -> any ConnectionLeg
+    /// The direct candidates for these hints, and the hints left out with why.
+    typealias Candidates = @Sendable (_ hints: DirectHints?) -> (candidates: [URL], skipped: [(String, String)])
+    /// Matching Bonjour results for the pairing's tag; nil while browsing is not allowed.
+    typealias Browse = @Sendable (_ tag: String) -> AsyncStream<URL>?
     typealias Sleep = @Sendable (Duration) async throws -> Void
 
     /// An app reconnect joins a healthy race this young, won or not, instead of starting another.
     static let joinWindow = Duration.seconds(10)
+    static let browseTime = Duration.seconds(5)
 
     private var pairing: QrPayload
     private var relayKnows: Bool
     private let makeLegs: Legs
+    private let makeDirect: DirectLeg
+    private let candidates: Candidates
+    private let hints: DirectHintStore
+    private let browse: Browse?
     private let pathChanges: @Sendable () -> AsyncStream<Void>
     private let network: @Sendable () async -> String
     private let winners: any RaceWinners
@@ -92,6 +96,9 @@ public actor RacingConnection {
     private var relayID: Int?
     /// The race's direct legs in dial order.
     private var order: [Int] = []
+    /// Every direct URL this race dialed or is dialing.
+    private var dialed: Set<String> = []
+    private var browsing: Task<Void, Never>?
     private var started: Set<Int> = []
     private var timers: [Task<Void, Never>] = []
     private var relayState: RelayConnection.State?
@@ -109,25 +116,39 @@ public actor RacingConnection {
 
     public init(pairing: QrPayload, identity: PhoneIdentity, relayKnows: Bool, local: PeerInfo, urlSession: URLSession = .shared) throws {
         let relayURL = try RelayConnection.relayURL(pairing)
-        self.init(pairing: pairing, relayKnows: relayKnows, legs: { pairing, relayKnows in
+        let direct: DirectLeg = { pairing, url in
+            RelayConnection(path: .direct, dial: url, pairing: pairing, identity: identity, relayKnows: true, local: local,
+                urlSession: urlSession)
+        }
+        self.init(pairing: pairing, relayKnows: relayKnows, legs: { pairing, relayKnows, urls in
             let relay = RelayConnection(path: .relay, dial: relayURL, pairing: pairing, identity: identity, relayKnows: relayKnows,
                 local: local, urlSession: urlSession)
-            // Offline pairing is #532 step 5: until the first session opens the device pairs over the relay.
-            let direct: [any ConnectionLeg] = pairing.secret == nil ? Direct.candidates.map {
-                RelayConnection(path: .direct, dial: $0, pairing: pairing, identity: identity, relayKnows: true, local: local,
-                    urlSession: urlSession)
-            } : []
-            return (relay: relay as any ConnectionLeg, direct: direct)
-        }, pathChanges: RacingConnection.networkChanges, network: { await NetworkKind.shared.current() },
+            return (relay: relay as any ConnectionLeg, direct: urls.map { direct(pairing, $0) })
+        }, direct: direct, candidates: { hints in
+            #if os(macOS)
+            let isMac = true
+            #else
+            let isMac = false
+            #endif
+            return DirectCandidates.plan(hints: hints, interfaces: LocalInterface.current(), isMac: isMac,
+                lanAllowed: LocalNetwork.allowed)
+        }, hints: DirectHintStore(), browse: { tag in LocalNetwork.allowed ? Bonjour.browse(tag: tag) : nil },
+            pathChanges: RacingConnection.networkChanges, network: { await NetworkKind.shared.current() },
             winners: DefaultsRaceWinners())
     }
 
-    init(pairing: QrPayload, relayKnows: Bool, legs: @escaping Legs, pathChanges: @escaping @Sendable () -> AsyncStream<Void>,
+    init(pairing: QrPayload, relayKnows: Bool, legs: @escaping Legs, direct: @escaping DirectLeg,
+        candidates: @escaping Candidates, hints: DirectHintStore, browse: Browse?,
+        pathChanges: @escaping @Sendable () -> AsyncStream<Void>,
         network: @escaping @Sendable () async -> String, winners: any RaceWinners,
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }, joinWindow: Duration = RacingConnection.joinWindow) {
         self.pairing = pairing
         self.relayKnows = relayKnows
         makeLegs = legs
+        makeDirect = direct
+        self.candidates = candidates
+        self.hints = hints
+        self.browse = browse
         self.pathChanges = pathChanges
         self.network = network
         self.winners = winners
@@ -212,6 +233,8 @@ public actor RacingConnection {
         legs = [:]
         relayID = nil
         order = []
+        dialed = []
+        stopBrowsing()
         started = []
         relayState = nil
         waiting = []
@@ -226,9 +249,13 @@ public actor RacingConnection {
         guard running else { return }
         let network = await network()
         guard round == self.round, running else { return }
-        let (relay, direct) = makeLegs(pairing, relayKnows)
+        // Offline pairing is #532 step 5: until the first session opens the device pairs over the relay.
+        let paired = pairing.secret == nil
+        let found = paired ? candidates(pairing.roomId.flatMap(hints.load(room:))) : (candidates: [], skipped: [])
+        let (relay, direct) = makeLegs(pairing, relayKnows, found.candidates)
         raceBegan = .now
         raceNetwork = network
+        dialed = Set(direct.map(\.key))
         let last = pairing.roomId.flatMap { winners.winner(room: $0, network: network) }
         let plan = RacePolicy.plan(direct: direct.map(\.key), lastWinner: last)
         let relayID = register(relay)
@@ -236,9 +263,58 @@ public actor RacingConnection {
         order = plan.direct.map { register(direct[$0.index]) }
         let starts = plan.direct.map { "\(direct[$0.index].label) at \($0.delay.ms) ms" } + ["\(relay.label) at \(plan.relay.ms) ms"]
         connectionLog.info("race \(round, privacy: .public) on \(network, privacy: .public), last winner \(last ?? "none", privacy: .public): \(starts.joined(separator: ", "), privacy: .public)")
+        if !found.skipped.isEmpty {
+            let skipped = found.skipped.map { "\($0.0) (\($0.1))" }.joined(separator: ", ")
+            connectionLog.info("race \(round, privacy: .public) skipped \(skipped, privacy: .public)")
+        }
         set(.connecting)
         for (id, start) in zip(order, plan.direct) { schedule(id, after: start.delay) }
         schedule(relayID, after: plan.relay)
+        if paired { startBrowsing(round) }
+    }
+
+    /// Bonjour runs alongside the race until a session opens, the race ends or 5 s pass.
+    private func startBrowsing(_ round: Int) {
+        guard let key = Data(base64URLEncoded: pairing.macPubkey), key.count == 32,
+              let results = browse?(Direct.bonjourTag(hostKey: key)) else { return }
+        connectionLog.info("race \(round, privacy: .public) browsing Bonjour")
+        let time = Self.browseTime
+        browsing = Task { [weak self] in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    for await url in results { await self?.add(url, round) }
+                }
+                group.addTask { try? await Task.sleep(for: time) }
+                await group.next()
+                group.cancelAll()
+            }
+        }
+    }
+
+    private func stopBrowsing() {
+        browsing?.cancel()
+        browsing = nil
+    }
+
+    /// A Bonjour result joins the race in flight as one more direct leg, unless the race already dials its URL.
+    private func add(_ url: URL, _ round: Int) {
+        guard round == self.round, running, winner == nil, dialed.insert(url.absoluteString).inserted else { return }
+        let leg = makeDirect(pairing, url)
+        let id = register(leg)
+        order.append(id)
+        connectionLog.info("race \(round, privacy: .public) adds \(leg.label, privacy: .public) from Bonjour")
+        launch(id, round)
+    }
+
+    /// The plugin's addresses: kept for the next race. On the relay, hints that name a candidate this race did not dial
+    /// start a new race at once; a direct winner just keeps them.
+    private func received(_ new: DirectHints, from id: Int) {
+        guard let room = pairing.roomId else { return }
+        hints.save(new, room: room)
+        guard id == relayID, pairing.secret == nil,
+              candidates(new).candidates.contains(where: { !dialed.contains($0.absoluteString) }) else { return }
+        connectionLog.info("race \(self.round, privacy: .public): new direct hints on the relay, racing again")
+        rerace(after: .zero)
     }
 
     private func register(_ leg: any ConnectionLeg) -> Int {
@@ -319,6 +395,7 @@ public actor RacingConnection {
                 waiting = []
                 for timer in timers { timer.cancel() }
                 timers = []
+                stopBrowsing()
                 if let room = pairing.roomId, let leg = legs[id] {
                     winners.record(id == relayID ? RacePolicy.relayKey : leg.key, room: room, network: raceNetwork)
                 }
@@ -373,6 +450,10 @@ public actor RacingConnection {
                 legs[id] = nil
                 hurry()
             }
+        case .event(.directHints(let new)):
+            guard id == winner else { return }
+            continuation?.yield(update)
+            received(new, from: id)
         case .accepted, .event:
             if id == winner { continuation?.yield(update) }
         case .relayJoined:

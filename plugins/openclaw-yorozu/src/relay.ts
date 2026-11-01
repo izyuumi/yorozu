@@ -6,6 +6,8 @@ import { computeBackoff, sleepWithAbort } from "openclaw/plugin-sdk/runtime-env"
 import { WebSocket, WebSocketServer } from "openclaw/plugin-sdk/websocket-runtime";
 import { receiveUpload, receiveUploadStatus, serveDownload } from "./attachments.js";
 import { getDevice, listDevices, putDevice, removeDevice } from "./devices.js";
+import { serveBonjour } from "./bonjour.js";
+import { watchDirect } from "./hints.js";
 import { bindAddresses, serveDirect, type DirectListener } from "./direct.js";
 import {
   ATTACHMENTS,
@@ -18,6 +20,7 @@ import {
   REPLIES,
   RESUME,
   PROTOCOL_VERSION,
+  type DirectHints,
   type DeviceList,
   type DevicePatch,
   type Event,
@@ -63,6 +66,7 @@ export type RelayHostOptions = {
   hostVersion?: string;
   /** The direct listener's port (`channels.yorozu.direct`); absent when it is off. */
   directPort?: number;
+  directBonjour?: boolean;
 };
 
 export type Pairing = {
@@ -151,6 +155,9 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   let relayActivities = false;
   let relayPushProxy = false;
   let direct: DirectListener | null = null;
+  let hints: DirectHints | undefined;
+  let stopWatching: (() => Promise<void>) | undefined;
+  let bonjour: Awaited<ReturnType<typeof serveBonjour>> | undefined;
   // Every relay session shares this link; it sends through whichever relay socket is registered.
   const relayLink: Link = { path: "relay", send: (payloads) => relayFrames?.(payloads) };
 
@@ -300,6 +307,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
         ...(relayPushProxy ? [PUSH_PROXY] : []),
       ],
     }),
+    directHints: () => direct?.listening ? hints : undefined,
     staticKeyOf: async (deviceKey) => (await getDevice(deviceKey))?.staticPub,
     pair: async (proof, staticPub, deviceKey, now) => {
       const secret = provenSecret(proof, staticPub, deviceKey, now);
@@ -359,6 +367,18 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
           .catch((error: unknown) => log?.warn(`yorozu: direct send failed: ${String(error)}`)),
       log,
     });
+    stopWatching = await watchDirect({ listener: direct, port: opts.directPort, log, changed: async (next) => {
+      hints = next;
+      if (next) hub.broadcast([{ kind: "direct_hints", data: next }]);
+      if (opts.directBonjour !== false) {
+        const addresses = next?.lan.filter((i) => !i.address.includes(":")) ?? [];
+        if (!addresses.length) {
+          await bonjour?.close();
+          bonjour = undefined;
+        } else if (bonjour) await bonjour.update(addresses);
+        else bonjour = await serveBonjour({ hostStaticPub: keys.static.publicKey, port: opts.directPort!, addresses, log });
+      }
+    } });
     if (!direct.listening) log?.warn(`yorozu: direct listener could not bind port ${opts.directPort}; relay only`);
   }
 
@@ -549,6 +569,8 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     log?.info(`yorozu: reconnecting in ${Math.round(delay / 100) / 10} s`);
     await sleepWithAbort(delay, signal).catch(() => {});
   }
+  await stopWatching?.();
+  await bonjour?.close();
   await direct?.close();
   if (host === me) host = null;
 }

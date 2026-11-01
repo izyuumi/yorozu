@@ -62,6 +62,8 @@ let project = Project(
                 "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
                 "NSMicrophoneUsageDescription": "Yorozu turns what you say into a message, on this device, when you use voice input.",
                 "UIBackgroundModes": ["remote-notification"],
+                // The plugin's direct listener on the LAN (#532); browsed only once the owner allowed Local Network.
+                "NSBonjourServices": ["_yorozu._tcp"],
                 // One device-local Live Activity: started in the app, updated by the app and the notification service, never by push.
                 "NSSupportsLiveActivities": true,
                 // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).

@@ -87,7 +87,11 @@ export type CronList = { jobs?: CronJob[]; error?: string };
 // Capability `push-proxy` (#532): a direct client's APNs token (hex), forwarded to the relay as `push {device, token}`.
 export type PushToken = { token: string };
 
+// Introduced by feature flag `direct` (#532), plugin → client only.
+export type DirectHints = { port: number; lan: { address: string; prefix: number }[]; tailscale: { address: string }[]; magicDNS?: string };
+
 export type Event =
+  | { kind: "direct_hints"; data: DirectHints }
   | { kind: "peer_info"; data: PeerInfo }
   | { kind: "message"; data: Message }
   | { kind: "delivered"; data: MessageRef }
@@ -150,6 +154,9 @@ const replyTo = (v: unknown): boolean =>
   v === undefined || (typeof v === "object" && v !== null && isId((v as Fields).messageId) && optStr((v as Fields).text));
 
 const valid: Record<Event["kind"], (d: Fields) => boolean> = {
+  direct_hints: (d) => int(d.port) && d.port > 0 && d.port <= 65535 && optStr(d.magicDNS) &&
+    Array.isArray(d.lan) && d.lan.every((i) => i && str(i.address) && nat(i.prefix) && i.prefix <= 128) &&
+    Array.isArray(d.tailscale) && d.tailscale.every((i) => i && str(i.address)),
   peer_info: (d) =>
     int(d.protocolMin) &&
     int(d.protocolMax) &&
@@ -223,7 +230,7 @@ export function parseEvent(bytes: Uint8Array): Received | null {
   if (!str(kind)) return null;
   const check = Object.hasOwn(valid, kind) ? valid[kind as Event["kind"]] : undefined;
   const fields = typeof data === "object" && data !== null && !Array.isArray(data) ? (data as Fields) : undefined;
-  if (!check) return { kind: "unknown", name: kind };
+  if (kind === "direct_hints" || !check) return { kind: "unknown", name: kind };
   if (fields && check(fields)) return { kind, data } as Event;
   const { convId, messageId, attachmentId } = fields ?? {};
   const invalid: Invalid = { kind: "invalid", name: kind };
