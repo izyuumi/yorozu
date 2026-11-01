@@ -22,7 +22,7 @@ struct SettingsView: View {
     @AppStorage(CommandReturnSends.key) private var commandReturnSends = false
     #else
     @AppStorage(WidgetStore.previewsKey, store: WidgetStore.defaults) private var widgetPreviews = false
-    @AppStorage(TurnActivities.enabledKey) private var turnActivity = true
+    @AppStorage(YorozuActivities.enabledKey) private var liveActivity = true
     #endif
     @State private var permission: UNAuthorizationStatus?
     @State private var removing: DeviceInfo?
@@ -202,12 +202,15 @@ struct SettingsView: View {
     private var widgets: some View {
         Section {
             Toggle(String(localized: "Show Message Previews in Widgets"), isOn: $widgetPreviews)
-                .onChange(of: widgetPreviews) { model.publishWidgets() }
-            Toggle(String(localized: "Live Activity While the Agent Works"), isOn: $turnActivity)
+                .onChange(of: widgetPreviews) {
+                    model.publishWidgets()
+                    YorozuActivities.shared?.previewsChanged()
+                }
+            Toggle(String(localized: "Show Live Activity"), isOn: $liveActivity)
         } header: {
             Text("Widgets & Live Activities")
         } footer: {
-            Text("Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply. The Live Activity shows only that the agent is working and how many tool steps it took.")
+            Text("Widgets show conversation titles and unread counts, hidden on the Lock Screen until you unlock. Previews add the first line of the latest reply. One Live Activity follows agent turns, voice recording and transcription, and approvals: what is running and how many tool steps a turn took, with conversation titles only while previews are on and never message text.")
         }
     }
     #endif

@@ -26,7 +26,7 @@ Yorozu is an OpenClaw chat channel. OpenClaw runs the agent, its sessions, memor
 | Bundle id | `to.yumi.yorozu.ios` | `to.yumi.yorozu` |
 | Pairing | Scans the host's QR or opens its link; can scan a Mac's code to add it | Opens a pairing link, or shows a code for a paired iPhone or iPad to scan |
 | Notifications | APNs through the relay; a notification service extension (`YorozuNotificationService`) opens sealed previews | No relay push: local notifications while the app runs |
-| Extensions | Share extension (`YorozuShare`), sending a share over a relay session of its own, or passing it to the app through the App Group; widgets, controls and the Live Activity's views (`YorozuWidgets`), reading only the App Group snapshot | None |
+| Extensions | Share extension (`YorozuShare`), sending a share over a relay session of its own, or passing it to the app through the App Group; widgets, controls and the one Live Activity's views (`YorozuWidgets`), reading only the App Group snapshot and the activity's token labels | None |
 | Updates | TestFlight and the App Store | Sparkle ([release.md](release.md)) |
 | Extra | — | Carries the plugin's source at `Yorozu.app/Contents/Resources/openclaw-channel` |
 

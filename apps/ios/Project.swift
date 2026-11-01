@@ -62,7 +62,7 @@ let project = Project(
                 "NSPhotoLibraryAddUsageDescription": "Yorozu saves pictures to your library when you ask it to.",
                 "NSMicrophoneUsageDescription": "Yorozu turns what you say into a message, on this device, when you use voice input.",
                 "UIBackgroundModes": ["remote-notification"],
-                // Device-local only: started in the app, ended by the app or the notification service, never by push.
+                // One device-local Live Activity: started in the app, updated by the app and the notification service, never by push.
                 "NSSupportsLiveActivities": true,
                 // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).
                 "BAAppGroupID": .string(appGroup),
@@ -150,7 +150,7 @@ let project = Project(
             ]),
             sources: ["Sources/YorozuNotificationService/**", "Sources/Shared/**", "Sources/WidgetShared/Model/**"],
             resources: ["Resources/Localizable.xcstrings"],
-            // The App Group holds the widgets' snapshot, which a reply's notification updates.
+            // The App Group holds the widgets' snapshot, which a reply's notification updates, and the Live Activity's labels.
             entitlements: .dictionary([
                 "keychain-access-groups": [.string(notificationKeychainGroup)],
                 "com.apple.security.application-groups": [.string(appGroup)],
@@ -227,7 +227,7 @@ let project = Project(
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             settings: signing()
         ),
-        // The snapshot's encoding, redaction and unread math, on the Mac without the app.
+        // The snapshot's encoding, redaction and unread math, and the Live Activity's job math, on the Mac without the app.
         .target(
             name: "YorozuTests",
             destinations: [.mac],

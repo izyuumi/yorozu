@@ -74,10 +74,10 @@
       "description": "Off by default. Widgets and Lock Screen accessories show conversation titles, unread counts and reply times, hidden on the Lock Screen until the device is unlocked. On: the medium and large widgets also show the first line of the latest reply. The snapshot stays in the app's App Group container on the device and is deleted when you unpair."
     },
     "turnLiveActivity": {
-      "title": "Live Activity While the Agent Works",
+      "title": "Show Live Activity",
       "platforms": ["ios"],
       "location": "Settings › General › Widgets & Live Activities",
-      "description": "On by default. When you leave Yorozu while the agent is still answering, a Live Activity on the Lock Screen and in the Dynamic Island shows that it is working and how many tool steps it took, never message text or tool details. It runs on the device only (no push) and ends when the reply arrives, when you return to the app, or after 15 minutes."
+      "description": "On by default. One Live Activity on the Lock Screen and in the Dynamic Island follows the agent's turns, approvals waiting for you, and voice recording and transcription: up to three rows, each opening its conversation, with the tool step count and elapsed time. It shows conversation titles only while message previews are on, and never message text or tool details. It starts when you leave Yorozu with something running, ends when you return (unless a recording or transcription is running), keeps finished rows for about two minutes, and runs on the device only (no push)."
     }
   }
 }

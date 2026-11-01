@@ -9,6 +9,6 @@ struct YorozuWidgets: WidgetBundle {
         AskLauncherWidget()
         NewConversationControl()
         TalkToYorozuControl()
-        TurnActivityWidget()
+        YorozuActivityWidget()
     }
 }
