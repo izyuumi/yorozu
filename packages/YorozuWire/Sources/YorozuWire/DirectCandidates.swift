@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import Network
 import os
+import dnssd
 
 /// Addresses, URLs and the Bonjour tag of the direct path (#532).
 extension Direct {
@@ -41,11 +42,31 @@ extension Direct {
         URL(string: "ws://\(host.contains(":") ? "[\(host)]" : host):\(port)")
     }
 
-    /// The `_yorozu._tcp` instance name and TXT `t`: base64url of the first 9 bytes of HMAC-SHA256 keyed with the host's
-    /// static X25519 key (QR `key=`) over `yorozu-bonjour`. Unlinkable to the room id or host name.
-    public static func bonjourTag(hostKey: Data) -> String {
-        let mac = HMAC<SHA256>.authenticationCode(for: Data("yorozu-bonjour".utf8), using: SymmetricKey(data: hostKey))
+    public static func bonjourEpoch(_ date: Date) -> Int64 {
+        Int64(floor(date.timeIntervalSince1970 / 3600))
+    }
+
+    /// Rotates the instance name and TXT `t` hourly to limit discovery tracking.
+    public static func bonjourTag(hostKey: Data, epoch: Int64) -> String {
+        let mac = HMAC<SHA256>.authenticationCode(for: Data("yorozu-bonjour:\(epoch)".utf8), using: SymmetricKey(data: hostKey))
         return Data(mac).prefix(9).base64URLEncodedString()
+    }
+
+    static func bonjourTags(hostKey: Data, at date: Date) -> Set<String> {
+        let epoch = bonjourEpoch(date)
+        return Set((epoch - 1...epoch + 1).map { bonjourTag(hostKey: hostKey, epoch: $0) })
+    }
+}
+
+public enum DirectRoute: String, Sendable, Equatable, CaseIterable {
+    case wifi, tailscale, thisMac, relay
+
+    public static func of(_ url: URL?) -> DirectRoute {
+        guard let url else { return .relay }
+        let host = (url.host ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        if ["127.0.0.1", "::1", "localhost"].contains(host) { return .thisMac }
+        if DirectCandidates.isTailscale(host) || host.hasSuffix(".ts.net") { return .tailscale }
+        return .wifi
     }
 }
 
@@ -118,6 +139,50 @@ public enum LocalNetwork {
         get { UserDefaults.standard.bool(forKey: key) }
         set { UserDefaults.standard.set(newValue, forKey: key) }
     }
+
+    public static var denied: Bool {
+        get { UserDefaults.standard.bool(forKey: "yorozu.localNetwork.denied") }
+        set { UserDefaults.standard.set(newValue, forKey: "yorozu.localNetwork.denied") }
+    }
+
+    public static var explained: Bool {
+        get { UserDefaults.standard.bool(forKey: "yorozu.localNetwork.explained") }
+        set { UserDefaults.standard.set(newValue, forKey: "yorozu.localNetwork.explained") }
+    }
+
+    public static var usable: Bool { allowed && !denied }
+
+    static func policyDenied(_ error: NWError) -> Bool {
+        if case .dns(let code) = error { return code == Int32(kDNSServiceErr_PolicyDenied) }
+        return false
+    }
+
+    /// Waits past ready: a policy denial can arrive after the browser starts.
+    public static func refresh(timeout: Duration = .seconds(3)) async -> Bool {
+        let browser = NWBrowser(for: .bonjour(type: Bonjour.type, domain: "local."), using: .tcp)
+        let (states, continuation) = AsyncStream<NWBrowser.State>.makeStream()
+        browser.stateUpdateHandler = { continuation.yield($0) }
+        continuation.onTermination = { _ in browser.cancel() }
+        let timer = Task {
+            try? await Task.sleep(for: timeout)
+            continuation.finish()
+        }
+        defer { timer.cancel(); continuation.finish(); browser.cancel() }
+        browser.start(queue: DispatchQueue(label: "to.yumi.yorozu.localNetwork"))
+        var ready = false
+        for await state in states {
+            switch state {
+            case .ready: ready = true
+            case .waiting(let error), .failed(let error):
+                if policyDenied(error) { denied = true; return true }
+                ready = false
+                if case .failed = state { return denied }
+            default: break
+            }
+        }
+        if ready && !Task.isCancelled { denied = false }
+        return denied
+    }
 }
 
 /// The latest `direct_hints` per pairing room, as JSON in user defaults.
@@ -150,7 +215,7 @@ enum DirectCandidates {
     /// Loopback on the Mac (the default port); LAN addresses on a subnet of an up, non-VPN interface, once Local Network
     /// is allowed; Tailscale IPs and then the MagicDNS name while an up VPN interface holds a Tailscale address. `skipped`
     /// names each left-out hint and why, for the log.
-    static func plan(hints: DirectHints?, interfaces: [LocalInterface], isMac: Bool, lanAllowed: Bool, port: Int = Direct.port)
+    static func plan(hints: DirectHints?, interfaces: [LocalInterface], isMac: Bool, lanAllowed: Bool, lanDenied: Bool = false, port: Int = Direct.port)
         -> (candidates: [URL], skipped: [(String, String)]) {
         var candidates: [URL] = []
         var skipped: [(String, String)] = []
@@ -163,7 +228,9 @@ enum DirectCandidates {
         }
         guard let hints else { return (candidates, skipped) }
         for hint in hints.lan {
-            if !lanAllowed {
+            if lanDenied {
+                skipped.append((hint.address, "Local Network denied"))
+            } else if !lanAllowed {
                 skipped.append((hint.address, "Local Network not allowed yet"))
             } else if let network = Direct.ipBytes(hint.address),
                       interfaces.contains(where: { $0.up && !$0.isVPN && Direct.ipBytes($0.address).map { Direct.contains(network, prefix: hint.prefix, $0) } == true }) {
@@ -202,7 +269,7 @@ enum DirectCandidates {
 enum Bonjour {
     static let type = "_yorozu._tcp"
 
-    static func browse(tag: String) -> AsyncStream<URL> {
+    static func browse(hostKey: Data) -> AsyncStream<URL> {
         AsyncStream { continuation in
             let resolver = Resolver()
             let browser = NWBrowser(for: .bonjourWithTXTRecord(type: type, domain: "local."), using: .tcp)
@@ -214,11 +281,22 @@ enum Bonjour {
                     case .changed(_, let new, _): result = new
                     default: continue
                     }
-                    guard case .bonjour(let txt) = result.metadata, txt["t"] == tag else { continue }
+                    guard case .bonjour(let txt) = result.metadata, let tag = txt["t"],
+                          Direct.bonjourTags(hostKey: hostKey, at: Date()).contains(tag) else { continue }
                     resolver.resolve(result.endpoint) { continuation.yield($0) }
                 }
             }
             browser.stateUpdateHandler = { state in
+                switch state {
+                case .waiting(let error), .failed(let error):
+                    if LocalNetwork.policyDenied(error) {
+                        LocalNetwork.denied = true
+                        connectionLog.info("Bonjour: Local Network denied")
+                        continuation.finish()
+                        return
+                    }
+                default: break
+                }
                 if case .failed(let error) = state {
                     connectionLog.error("Bonjour browse failed: \(String(describing: error), privacy: .public)")
                     continuation.finish()

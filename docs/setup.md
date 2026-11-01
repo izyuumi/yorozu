@@ -101,6 +101,7 @@ The command prints a QR code, a `yorozu://pair?…` link, the host fingerprint a
    - On any device, paste the link (or the https link the QR encodes) with Paste, or type it into "Pairing link" and tap Pair.
 2. The app asks "Pair with this host?" and shows the host key. Pair only if it matches the fingerprint the command printed.
 3. Pairing is done when the conversation list appears and `openclaw yorozu devices` lists the device by its model name. The app then asks to allow notifications.
+4. Once the first session opens, the app asks "Connect directly on Wi-Fi?" (iPhone, iPad, and Mac on macOS 15 or later). Continue lets it talk to the host directly on the same network; iOS then asks for Local Network access, and macOS may. Not Now keeps it on the relay, loopback and Tailscale; Settings › Host › Direct on Local Network changes it later.
 
 **From a paired device:** Settings › Add a Device… makes a fresh pairing code on the host and shows it as a QR code and a link.
 
@@ -181,5 +182,6 @@ Where each side keeps keys, state and cache: [architecture.md](architecture.md#d
 | `OpenClaw does not know the command "yorozu"` | The plugin is not installed in this profile, or the Gateway has not been restarted since the install. |
 | `openclaw yorozu pair` or `devices` cannot connect, or `pair` fails with `the yorozu channel is not connected to its relay` | The Gateway is not running, or the channel is not connected. Check `openclaw channels status`. For a non-default port or a remote Gateway, pass `--port`, or `--url` with `--token`. |
 | The app shows "Couldn’t pair", or "Removed from the host" right after pairing | The relay refused the token (`unknown token` or `expired token`: already used, or older than 10 minutes), or the plugin no longer holds the pairing secret (used, expired, or the Gateway restarted). Run `openclaw yorozu pair` again. |
+| Settings › Host › Connection says "Relay" on the host's own network | Direct on Local Network is off, or Local Network access is denied: the footer then says so, and "Open Privacy › Local Network" leads to the switch (the app's page in iOS Settings, or System Settings › Privacy & Security › Local Network on the Mac). The app tries the LAN again when it comes back to the front. A plugin with `direct.enabled: false`, or no private address, also leaves only the relay. |
 | The app says "Update required" | The client and the plugin share no protocol version. Update the older side. |
 | "Edit in Chat" or session tools are refused by the agent | `yorozu:owner` is not in `commands.ownerAllowFrom` ([Owner-only tools](#owner-only-tools)). |

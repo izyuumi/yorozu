@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { createSocket, type Socket } from "node:dgram";
+import dgram, { createSocket, type Socket } from "node:dgram";
+import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { registerHooks } from "node:module";
+import { syncBuiltinESMExports, registerHooks } from "node:module";
 import { test } from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   if (specifier.startsWith("./") && specifier.endsWith(".js") && context.parentURL) {
@@ -12,7 +13,8 @@ registerHooks({ resolve(specifier, context, next) {
 } });
 const { bonjourTag, encodeName, decodeName, parseQuery, buildResponse, sameSubnet, serveBonjour, SERVICE } = await import("../src/bonjour.ts");
 const key = Uint8Array.from({ length: 32 }, (_, i) => i);
-const tag = "CeUtuNddRZIG";
+const epoch = 493000;
+const tag = "Iaz7DaMYBz9S";
 function query(name = SERVICE, type = 12, qu = false): Buffer {
   const header = Buffer.alloc(12);
   header.writeUInt16BE(1, 4);
@@ -38,8 +40,11 @@ function records(packet: Buffer) {
 }
 
 test("Bonjour tag matches the static-public-key HMAC vector", () => {
-  assert.equal(bonjourTag(key), tag);
-  assert.throws(() => bonjourTag(new Uint8Array(31)));
+  assert.equal(bonjourTag(key, epoch), tag);
+  assert.notEqual(bonjourTag(key, epoch - 1), tag);
+  assert.notEqual(bonjourTag(key, epoch + 1), tag);
+  assert.notEqual(bonjourTag(key, epoch - 1), bonjourTag(key, epoch + 1));
+  assert.throws(() => bonjourTag(new Uint8Array(31), epoch));
 });
 
 test("DNS names decode compression pointers and reject cycles, short labels and oversized names", () => {
@@ -88,6 +93,82 @@ const bind = (socket: Socket, address: string) => new Promise<void>((resolve, re
   socket.once("error", reject);
   socket.bind(5353, address, () => { socket.removeListener("error", reject); resolve(); });
 });
+
+test("Bonjour rotates every address, answers only the current tag, and cancels rotation on close", async (t) => {
+  const packets: Buffer[] = [];
+  const sockets: FakeUDP[] = [];
+  class FakeUDP extends EventEmitter {
+    bind(_port: number, _address: string, callback: () => void) { callback(); }
+    unref() {}
+    addMembership() {}
+    dropMembership() {}
+    setMulticastInterface() {}
+    setMulticastTTL() {}
+    close() {}
+    send(packet: Buffer, _port: number, _address: string, callback: () => void) {
+      packets.push(packet);
+      callback();
+    }
+  }
+  const mock = t.mock.method(dgram, "createSocket", () => {
+    const socket = new FakeUDP();
+    sockets.push(socket);
+    return socket as unknown as Socket;
+  });
+  syncBuiltinESMExports();
+  let now = epoch * 3_600_000 + 1_800_000;
+  let rotate: (() => void) | undefined;
+  let cancelled = false;
+  let responder: Awaited<ReturnType<typeof serveBonjour>> | undefined;
+  try {
+    responder = await serveBonjour({ hostStaticPub: key, port: 8738,
+      addresses: [{ address: "192.168.1.5", prefix: 24 }, { address: "10.0.0.5", prefix: 24 }],
+      now: () => now, schedule: (callback, delay) => {
+        assert.equal(delay, now % 3_600_000 ? 1_800_000 : 3_600_000);
+        rotate = callback;
+        return () => { cancelled = true; };
+      },
+    });
+    const hasTag = (packet: Buffer, expected: string, ttl: number) => records(packet).some((r) =>
+      r.type === 16 && r.ttl === ttl && r.data.subarray(1).toString() === `t=${expected}`);
+    assert.equal(packets.length, 2);
+    assert.ok(packets.every((p) => hasTag(p, tag, 120)));
+    packets.length = 0;
+    now = (epoch + 1) * 3_600_000;
+    assert.ok(rotate);
+    rotate();
+    // Drain the async send callbacks and rotation's next timer registration.
+    await new Promise((resolve) => setImmediate(resolve));
+    const newTag = bonjourTag(key, epoch + 1);
+    assert.equal(packets.length, 4);
+    assert.ok(packets.slice(0, 2).every((p) => hasTag(p, tag, 0) && records(p).every((r) => r.ttl === 0)));
+    assert.ok(packets.slice(2).every((p) => hasTag(p, newTag, 120)));
+    assert.deepEqual(packets.map((p) => [...records(p).find((r) => r.type === 1)!.data]),
+      [[192, 168, 1, 5], [10, 0, 0, 5], [192, 168, 1, 5], [10, 0, 0, 5]]);
+    packets.length = 0;
+    const remote = { address: "192.168.1.20", port: 5353, family: "IPv4", size: 0 };
+    sockets[0]!.emit("message", query(`${tag}.${SERVICE}`, 16), remote);
+    sockets[0]!.emit("message", query(`${tag}.local`, 1), remote);
+    assert.equal(packets.length, 0, "old tag no longer answers");
+    sockets[0]!.emit("message", query(`${newTag}.${SERVICE}`, 16), remote);
+    assert.equal(packets.length, 1);
+    assert.ok(hasTag(packets[0]!, newTag, 120));
+    packets.length = 0;
+    await responder.close();
+    responder = undefined;
+    assert.equal(cancelled, true);
+    assert.equal(packets.length, 2);
+    assert.ok(packets.every((p) => hasTag(p, newTag, 0)));
+    rotate();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(packets.length, 2, "closed responder cannot announce again");
+  } finally {
+    await responder?.close();
+    mock.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
 test("loopback Bonjour answers multicast and QU PTR queries from a second explicitly bound socket", async (t) => {
   const observer = createSocket({ type: "udp4", reuseAddr: true });
   let client = createSocket({ type: "udp4", reuseAddr: true });
@@ -111,6 +192,7 @@ test("loopback Bonjour answers multicast and QU PTR queries from a second explic
       if (packet.length >= 12 && (packet.readUInt16BE(2) & 0x8000) && records(packet).some((r) => r.type === 16 && r.data.subarray(1).toString() === `t=${tag}`)) announcements++;
     });
     responder = await serveBonjour({ hostStaticPub: key, port: 8738, addresses: [{ address: "127.0.0.1", prefix: 8 }],
+      now: () => epoch * 3_600_000,
       log: { info: () => {}, warn: (s) => failures.push(s) } });
     assert.deepEqual(failures, [], "responder must bind when the independent multicast probe works");
     await new Promise((resolve) => setTimeout(resolve, 1100));

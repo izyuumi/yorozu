@@ -25,6 +25,7 @@ public actor RelayConnection {
         case accepted(messageId: String)
         case relayJoined
         case sessionOpen(PeerInfo)
+        case route(DirectRoute)
     }
 
     /// A relay, or the plugin's direct listener (#532): a probe instead of `join`, no relay buffer, flow control or push.

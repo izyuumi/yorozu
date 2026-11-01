@@ -64,6 +64,7 @@ let project = Project(
                 "UIBackgroundModes": ["remote-notification"],
                 // The plugin's direct listener on the LAN (#532); browsed only once the owner allowed Local Network.
                 "NSBonjourServices": ["_yorozu._tcp"],
+                "NSLocalNetworkUsageDescription": "Yorozu connects directly to your host on the same network, for faster messages.",
                 // One device-local Live Activity: started in the app, updated by the app and the notification service, never by push.
                 "NSSupportsLiveActivities": true,
                 // The voice model is an Apple-hosted asset pack on iPhone and iPad (YorozuAssets).
@@ -239,6 +240,7 @@ let project = Project(
             sources: [
                 "Tests/**", "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift",
                 "Sources/Client/WidgetPublisher.swift", "Sources/Client/ActivityReports.swift", "Sources/Client/CronSchedule.swift",
+                "Sources/Client/ConnectionRoute.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
                 "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift",
             ],
