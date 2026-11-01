@@ -220,7 +220,7 @@ let project = Project(
                 "NSExtension": ["NSExtensionPointIdentifier": "com.apple.widgetkit-extension"],
             ]),
             sources: ["Sources/YorozuWidgets/**", "Sources/WidgetShared/**"],
-            resources: ["Resources/Localizable.xcstrings"],
+            resources: ["Resources/Localizable.xcstrings", "Resources/Widgets.xcassets"],
             entitlements: .dictionary(["com.apple.security.application-groups": [.string(appGroup)]]),
             settings: signing()
         ),
@@ -234,7 +234,8 @@ let project = Project(
             sources: [
                 "Tests/**", "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift",
                 "Sources/Client/WidgetPublisher.swift",
-                "Sources/WidgetShared/Model/**",
+                "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
+                "Sources/WidgetShared/Interface/Launcher.swift",
             ],
             dependencies: [.package(product: "YorozuWire")],
             settings: .settings(base: ["DEVELOPMENT_TEAM": "AN5KM8QGEF", "CODE_SIGN_STYLE": "Automatic"])
