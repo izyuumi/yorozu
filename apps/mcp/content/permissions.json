@@ -2,7 +2,7 @@
   "$comment": "Plain-language meaning of each permission and entitlement. The usage strings and entitlement keys come from apps/ios/Project.swift and apps/ios/Resources/MacHardenedRuntime.entitlements (scripts/generate.ts); each needs an entry here. Runtime prompts quote the code that asks for them.",
   "usage": {
     "NSCameraUsageDescription": "Camera: asked the first time you scan a pairing QR code or take a photo to send.",
-    "NSMicrophoneUsageDescription": "Microphone: asked the first time you use voice input. Audio is transcribed on the device.",
+    "NSMicrophoneUsageDescription": "Microphone: asked the first time you use voice input. Audio is transcribed on the device. On iPhone and iPad a recording keeps going when you switch apps or lock the phone, with the system's microphone indicator on, until you stop it or it reaches 5 minutes.",
     "NSPhotoLibraryAddUsageDescription": "Photos (add only): asked the first time you save a picture from a conversation. Yorozu can't read your library through this."
   },
   "entitlements": {
@@ -10,6 +10,7 @@
     "com.apple.developer.associated-domains": "Opens the app from https://yorozu.yumi.to/pair links (the pairing QR's web link).",
     "keychain-access-groups": "Keeps the pairing keys in the Keychain, shared with the app's own extensions only.",
     "com.apple.security.application-groups": "A container shared with the app's own extensions (share sheet, voice model download).",
+    "com.apple.developer.background-tasks.continued-processing.gpu": "On iPhone and iPad (iOS 26), lets a voice transcription you started in the app keep using the GPU after you leave it, with its progress shown by the system. Nothing to grant.",
     "com.apple.security.device.audio-input": "Lets the hardened-runtime Mac app use the microphone for voice input. macOS still asks you first."
   },
   "runtime": [
