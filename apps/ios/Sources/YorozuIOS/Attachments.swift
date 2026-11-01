@@ -144,7 +144,7 @@ struct StagedFiles: View {
                     HStack(spacing: LayoutMetrics.tight) {
                         Image(systemName: "clock")
                         Text(automation.name).lineLimit(1).truncationMode(.middle)
-                        Text(automation.scheduleText).foregroundStyle(.secondary).lineLimit(1)
+                        Text(automation.localizedScheduleText).foregroundStyle(.secondary).lineLimit(1)
                         Button(action: onRemoveAutomation) {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                         }

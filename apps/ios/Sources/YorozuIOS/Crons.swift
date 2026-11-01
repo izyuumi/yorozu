@@ -242,7 +242,7 @@ private struct CronRow: View {
                 Text(job.name).textStyle(.headline).lineLimit(1)
                 status.layoutPriority(1)
             }
-            Text(job.scheduleText).textStyle(.subheadline)
+            Text(job.localizedScheduleText).textStyle(.subheadline)
             Group {
                 if !job.enabled {
                     Text("Disabled")
