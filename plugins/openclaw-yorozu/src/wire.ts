@@ -265,8 +265,8 @@ export function encodeFrame(frame: Frame): string {
 export function decodeFrame(payload: string): Frame | null {
   const b = fromB64u(payload);
   if (!b || b.length < 2) return null;
-  const legacy = b[0] === LEGACY_VERSION;
-  const type = legacy ? b[1] : b[0] - 0x10;
+  const legacy = b.readUInt8(0) === LEGACY_VERSION;
+  const type = legacy ? b.readUInt8(1) : b.readUInt8(0) - 0x10;
   const body = b.subarray(legacy ? 2 : 1);
   if (type === 1 && body.length >= 32 + 96 && body.length <= 32 + 65_535) {
     return { legacy, type: "init", deviceSigningKey: body.subarray(0, 32), message: body.subarray(32) };
