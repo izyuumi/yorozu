@@ -663,7 +663,7 @@ private struct Composer: View {
             guard let request else { return }
             onRequestHandled()
             guard request.talk else { return requestedFocus = request.convId }
-            if voiceAvailable, VoiceModel.shared.state == .ready { await voice.start() } else { settingUpVoice = true }
+            if voiceAvailable, VoiceSetup.shared.ready { await voice.start() } else { settingUpVoice = true }
         }
         .alert(String(localized: "Microphone access is off"), isPresented: $voice.micDenied) {
             Button(String(localized: "Open Settings")) { openMicrophoneSettings() }
@@ -716,7 +716,7 @@ private struct Composer: View {
 
     private var mic: some View {
         Button {
-            if VoiceModel.shared.state == .ready {
+            if VoiceSetup.shared.ready {
                 VoiceInputTip().invalidate(reason: .actionPerformed)
                 Task { await voice.start() }
             } else {
@@ -729,7 +729,7 @@ private struct Composer: View {
         .help(String(localized: "Voice Input"))
         .accessibilityLabel(Text("Voice Input"))
         .accessibilityIdentifier("composer.mic")
-        .popoverTip(VoiceModel.shared.state == .ready ? VoiceInputTip() : nil)
+        .popoverTip(VoiceSetup.shared.ready ? VoiceInputTip() : nil)
     }
 
     private var sendButton: some View {
@@ -753,7 +753,7 @@ private struct Composer: View {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || automation != nil
     }
 
-    private var voiceAvailable: Bool { voiceEnabled && VoiceModel.supported }
+    private var voiceAvailable: Bool { voiceEnabled && VoiceSetup.supported }
 
     private var showsSend: Bool { hasContent || !voiceAvailable }
 

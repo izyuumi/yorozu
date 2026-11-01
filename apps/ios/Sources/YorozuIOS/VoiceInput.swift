@@ -1,5 +1,7 @@
 import AVFoundation
+import SpeechEngines
 import SwiftUI
+import VoiceText
 
 /// One dictation in the composer: record, then transcribe into the field or straight into a message.
 /// The clip is kept until a transcript is delivered or the owner cancels, so a failure can be retried.
@@ -14,7 +16,7 @@ final class VoiceSession {
     var micDenied = false
     let recorder = VoiceRecorder()
     private var clip: [Float] = []
-    private var loading: Task<Transcriber, Error>?
+    private var loading: Task<any SpeechEngine, Error>?
     private var job: Task<Void, Never>?
     private var deliver: ((String) -> Void)?
 
@@ -31,10 +33,8 @@ final class VoiceSession {
         do {
             try recorder.start()
             phase = .recording
-            let model = VoiceModel.shared
-            let (modelURL, projector) = (model.modelURL, model.projectorURL)
             // Load while the owner speaks, so only the transcription itself is left after ✓.
-            loading = Task.detached(priority: .userInitiated) { try Transcriber(model: modelURL, projector: projector) }
+            loading = VoiceSetup.shared.load()
         } catch {
             _ = recorder.stop()
             phase = .failed(error.localizedDescription)
@@ -91,20 +91,24 @@ final class VoiceSession {
     }
 }
 
-/// A finished recording and the model load started while it was spoken.
+/// A finished recording and the engine load started while it was spoken.
 struct VoiceClip {
     let samples: [Float]
-    var loading: Task<Transcriber, Error>?
+    var loading: Task<any SpeechEngine, Error>?
 
-    /// The transcript in the chosen language; an empty one counts as a failure.
+    /// The transcript in the chosen language with the voice dictionary applied; an empty one counts as a failure.
     @MainActor func transcribe() async -> Result<String, Error> {
-        let language = Transcriber.Language(rawValue: UserDefaults.standard.string(forKey: VoiceModel.languageKey) ?? "") ?? .automatic
-        let model = VoiceModel.shared
-        let (modelURL, projector) = (model.modelURL, model.projectorURL)
-        let loading = loading ?? Task.detached(priority: .userInitiated) { try Transcriber(model: modelURL, projector: projector) }
+        let language = VoiceLanguage(rawValue: UserDefaults.standard.string(forKey: VoiceModel.languageKey) ?? "") ?? .automatic
+        let dictionary = VoiceDictionary.stored
+        let loading = loading ?? VoiceSetup.shared.load()
         let samples = samples
         let work = Task.detached(priority: .userInitiated) { () -> Result<String, Error> in
-            do { return .success(try await loading.value.transcribe(samples, language: language)) } catch { return .failure(error) }
+            do {
+                let text = try await loading.value.transcribe(samples, language: language.code, hints: dictionary.hints)
+                return .success(dictionary.apply(to: text))
+            } catch {
+                return .failure(error)
+            }
         }
         let result = await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
         if case .success(let text) = result, text.isEmpty { return .failure(VoiceModel.Failure(String(localized: "No speech was recognized."))) }
@@ -275,7 +279,7 @@ struct VoiceBar: View {
 
 struct VoiceSetupSheet: View {
     @Environment(\.dismiss) private var dismiss
-    private let model = VoiceModel.shared
+    private let setup = VoiceSetup.shared
 
     var body: some View {
         NavigationStack {
@@ -294,9 +298,9 @@ struct VoiceSetupSheet: View {
         #if os(iOS)
         .presentationDetents([.medium, .large])
         #else
-        .frame(width: LayoutMetrics.settingsWidth, height: 360)
+        .frame(width: LayoutMetrics.settingsWidth, height: 480)
         #endif
-        .onChange(of: model.state) { _, state in if state == .ready { dismiss() } }
+        .onChange(of: setup.ready) { _, ready in if ready { dismiss() } }
     }
 }
 
@@ -319,91 +323,4 @@ private struct Waveform: View {
         .frame(height: controlTarget / 2)
         .accessibilityHidden(true)
     }
-}
-
-/// Settings › Voice Input: the opt-in switch, the model download, the language and the model's license.
-struct VoiceInputSection: View {
-    @AppStorage(VoiceModel.enabledKey) private var enabled = false
-    @AppStorage(VoiceModel.languageKey) private var language = Transcriber.Language.automatic
-    @State private var deleting = false
-    @State private var confirmingCellular = false
-    private let model = VoiceModel.shared
-
-    var body: some View {
-        Section {
-            Toggle(String(localized: "Voice Input"), isOn: $enabled)
-                .disabled(!VoiceModel.supported)
-                .onChange(of: enabled) { _, on in on ? model.start() : model.pause() }
-            if enabled, VoiceModel.supported {
-                status
-                Picker(String(localized: "Language"), selection: $language) {
-                    Text("Automatic").tag(Transcriber.Language.automatic)
-                    ForEach(Transcriber.Language.allCases.dropFirst()) { Text(verbatim: $0.name).tag($0) }
-                }
-            }
-            if model.hasFiles {
-                Button(String(localized: "Delete Model"), role: .destructive) { deleting = true }
-            }
-        } header: {
-            Text("Voice Input")
-        } footer: {
-            VStack(alignment: .leading, spacing: LayoutMetrics.tight) {
-                if VoiceModel.supported {
-                    #if os(iOS)
-                    Text("Speak a message instead of typing it. Speech is transcribed on this device; turning this on downloads the \(Self.size(VoiceModel.totalBytes)) model from Apple.")
-                    #else
-                    Text("Speak a message instead of typing it. Speech is transcribed on this device; turning this on downloads the \(Self.size(VoiceModel.totalBytes)) model from Hugging Face.")
-                    #endif
-                } else if !VoiceModel.appleHosting {
-                    Text("Voice input needs iOS 26 or later.")
-                } else {
-                    Text("This device needs more memory for voice input.")
-                }
-                Text("The model is LFM3-Audio-2B by Liquid AI, under the [LFM Open License v1.0](https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/blob/main/LICENSE).")
-            }
-        }
-        .task { if enabled, VoiceModel.supported { model.start() } }
-        .confirmationDialog(String(localized: "Delete the voice model?"), isPresented: $deleting, titleVisibility: .visible) {
-            Button(String(localized: "Delete Model"), role: .destructive) {
-                enabled = false
-                model.delete()
-            }
-        } message: {
-            Text("Voice input turns off. Turning it on again downloads the model again.")
-        }
-        .confirmationDialog(String(localized: "Download using cellular data?"), isPresented: $confirmingCellular, titleVisibility: .visible) {
-            Button(String(localized: "Download Using Cellular")) { model.start(cellular: true) }
-        } message: {
-            Text("Up to \(Self.size(VoiceModel.totalBytes - model.received)) more will be downloaded over cellular or a personal hotspot. Charges may apply.")
-        }
-    }
-
-    @ViewBuilder private var status: some View {
-        switch model.state {
-        case .ready:
-            LabeledContent(String(localized: "Model"), value: Self.size(VoiceModel.totalBytes))
-        case .downloading:
-            ProgressView(value: Double(model.received), total: Double(VoiceModel.totalBytes)) {
-                Text("Downloading the model…")
-            } currentValueLabel: {
-                Text("\(Self.size(model.received)) of \(Self.size(VoiceModel.totalBytes))")
-            }
-            if model.waitingForWiFi {
-                Text("Waiting for Wi-Fi. The model downloads on Wi-Fi so it doesn’t use cellular data.")
-                    .foregroundStyle(.secondary)
-                Button(String(localized: "Download Using Cellular…")) { confirmingCellular = true }
-            }
-        case .absent:
-            Button(String(localized: "Download the Model")) { model.start() }
-        case .unavailable:
-            Text("The voice model isn’t available for this version of Yorozu yet. Try again later.")
-                .foregroundStyle(.secondary)
-            Button(String(localized: "Try Again")) { model.start() }
-        case .failed(let message):
-            Text(message).foregroundStyle(YorozuPalette.warning)
-            Button(String(localized: "Try Again")) { model.start() }
-        }
-    }
-
-    private static func size(_ bytes: Int64) -> String { bytes.formatted(.byteCount(style: .file)) }
 }

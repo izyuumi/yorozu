@@ -7,7 +7,7 @@ Yorozu is an OpenClaw chat channel (#415): a TypeScript channel plugin inside th
 - When changing the iOS launch screen, use the inner oval mark from the app icon, without the square icon background, with light and dark variants (owner correction, 2026-10-19).
 
 - Write Swift wherever possible, for a native feel, and never Python. Code that has to live in another ecosystem uses its language (for example a TypeScript plugin inside the OpenClaw Gateway); a separate long-running background process of our own is Rust.
-- There is no test suite yet: pull requests get compile checks for the client and the relay's tests (`.github/workflows/checks.yml`). Verify by compiling (commands below) and by running the app.
+- Pull requests get compile checks for the client, its unit tests (`YorozuTests`, and `swift test --package-path packages/YorozuVoice` for voice input's text handling) and the relay's tests (`.github/workflows/checks.yml`). Verify by compiling (commands below), by running those tests and by running the app.
 - The repository is public. Commit code and docs only: say "the owner", write paths as `~/…` or repo-relative, and keep names, emails, secrets, key IDs and personal notes out of files and commit messages. Commit only your own changes; the owner's uncommitted files stay as they are.
 - Commit messages follow Conventional Commits and every commit is signed (signing is configured).
 - Feature work: fetch `main`, then work in a dedicated git worktree on a new branch named for the topic alone, one per independent feature. Work only in your own worktree. Once its work is merged and the tree is clean, `git worktree remove` it (plain, without `--force`) and delete the branch if nothing else uses it.

@@ -63,10 +63,8 @@ struct SettingsView: View {
                 .tabItem { Label(String(localized: "General"), systemImage: "gearshape") }
             tab { deviceSections }
                 .tabItem { Label(String(localized: "Devices"), systemImage: "laptopcomputer.and.iphone") }
-            if Transcriber.available {
-                tab { VoiceInputSection() }
-                    .tabItem { Label(String(localized: "Voice Input"), systemImage: "mic") }
-            }
+            tab { VoiceInputSection() }
+                .tabItem { Label(String(localized: "Voice Input"), systemImage: "mic") }
             if !model.isDemo {
                 tab { host }
                     .tabItem { Label(String(localized: "Host"), systemImage: "server.rack") }
@@ -79,9 +77,7 @@ struct SettingsView: View {
         Form {
             Section {
                 page(String(localized: "General"), systemImage: "gearshape") { general }
-                if Transcriber.available {
-                    page(String(localized: "Voice Input"), systemImage: "mic") { VoiceInputSection() }
-                }
+                page(String(localized: "Voice Input"), systemImage: "mic") { VoiceInputSection() }
                 page(String(localized: "Devices"), systemImage: "laptopcomputer.and.iphone") { deviceSections }
                 if !model.isDemo {
                     page(String(localized: "Host"), systemImage: "server.rack") { host }

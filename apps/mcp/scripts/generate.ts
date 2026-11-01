@@ -75,6 +75,8 @@ function docs(): Doc[] {
 interface SwiftFacts {
   constants: Map<string, string>;
   cases: Map<string, string[]>;
+  /** Raw values that differ from the case name, by `Type.case`. */
+  raw: Map<string, string>;
   storage: { ref: string; defaultExpr: string; file: string }[];
 }
 
@@ -85,7 +87,7 @@ function swiftFiles(dir: string): string[] {
 }
 
 function swiftFacts(files: { path: string; text: string }[]): SwiftFacts {
-  const facts: SwiftFacts = { constants: new Map(), cases: new Map(), storage: [] };
+  const facts: SwiftFacts = { constants: new Map(), cases: new Map(), raw: new Map(), storage: [] };
   for (const { path, text } of files) {
     let type = "";
     const lines = text.split("\n");
@@ -95,21 +97,28 @@ function swiftFacts(files: { path: string; text: string }[]): SwiftFacts {
       if (decl) type = decl[1];
       const constant = /^\s*(?:(?:private|fileprivate|nonisolated)\s+)*static\s+let\s+(\w+)\s*=\s*"([^"]+)"/.exec(line);
       if (constant && type) facts.constants.set(`${type}.${constant[1]}`, constant[2]);
+      const raw = /^\s*case\s+([a-z]\w*)\s*=\s*"([^"]*)"\s*$/.exec(line);
+      if (raw && type) {
+        facts.cases.set(type, [...(facts.cases.get(type) ?? []), raw[2]]);
+        facts.raw.set(`${type}.${raw[1]}`, raw[2]);
+      }
       if (/^\s*case\s+[a-z]\w*(\s*,\s*[a-z]\w*)*\s*,?\s*$/.test(line) && type) {
         let list = line;
         while (list.trimEnd().endsWith(",") && i + 1 < lines.length) list += lines[++i];
         const names = list.replace(/^\s*case\s+/, "").split(",").map((s) => s.trim()).filter(Boolean);
         facts.cases.set(type, [...(facts.cases.get(type) ?? []), ...names]);
       }
-      const storage = /@AppStorage\((\w+\.\w+)(?:,\s*store:\s*[\w.]+)?\)\s+(?:private\s+)?var\s+\w+\s*=\s*(.+?)\s*$/.exec(line);
-      if (storage) facts.storage.push({ ref: storage[1], defaultExpr: storage[2], file: path });
+      const storage = /@AppStorage\((\w+\.\w+)(?:,\s*store:\s*[\w.]+)?\)\s+(?:private\s+)?var\s+\w+\s*(?:=\s*(.+?)|:\s*(\w+)\?)\s*$/.exec(line);
+      // An optional setting (`var x: Kind?`) has no default: unset until the owner picks one.
+      if (storage) facts.storage.push({ ref: storage[1], defaultExpr: storage[2] ?? `${storage[3]}.`, file: path });
     }
   }
   return facts;
 }
 
 function appSettings(): AppSetting[] {
-  const files = swiftFiles("apps/ios/Sources").map((path) => ({ path, text: read(path) }));
+  // The voice package declares the types some settings store.
+  const files = [...swiftFiles("apps/ios/Sources"), ...swiftFiles("packages/YorozuVoice/Sources")].map((path) => ({ path, text: read(path) }));
   const facts = swiftFacts(files);
   const curated: Record<string, Omit<AppSetting, "key" | "type" | "default" | "options" | "source">> = json("content/settings.json").app;
   const found = new Map<string, AppSetting>();
@@ -118,10 +127,13 @@ function appSettings(): AppSetting[] {
     let setting: Pick<AppSetting, "type" | "default" | "options">;
     if (defaultExpr === "true" || defaultExpr === "false") setting = { type: "boolean", default: defaultExpr === "true" };
     else if (/^-?\d+$/.test(defaultExpr)) setting = { type: "integer", default: Number(defaultExpr) };
+    else if (defaultExpr === '""') setting = { type: "string", default: "" };
     else {
       const parts = defaultExpr.split(".");
-      const options = facts.cases.get(parts.at(-2) ?? "") ?? fail(`@AppStorage(${ref}) in ${file}: unknown default ${defaultExpr}`);
-      setting = { type: "enum", default: parts.at(-1)!, options };
+      const kind = parts.at(-2) ?? "";
+      const options = facts.cases.get(kind) ?? fail(`@AppStorage(${ref}) in ${file}: unknown default ${defaultExpr}`);
+      const name = parts.at(-1)!;
+      setting = { type: "enum", default: name ? (facts.raw.get(`${kind}.${name}`) ?? name) : null, options };
     }
     const previous = found.get(key);
     if (previous && previous.default !== setting.default) fail(`${key} has defaults ${previous.default} and ${setting.default}`);

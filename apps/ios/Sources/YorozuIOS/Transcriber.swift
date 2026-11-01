@@ -1,4 +1,6 @@
 import Foundation
+import SpeechEngines
+import VoiceText
 #if canImport(llama)
 import llama
 #endif
@@ -8,42 +10,18 @@ import llama
 final class Transcriber: @unchecked Sendable {
     static let sampleRate = 16_000
 
-    /// The speech languages LFM3-Audio-2B transcribes; the raw value is the English name its prompt takes.
-    enum Language: String, CaseIterable, Identifiable {
-        case automatic, arabic, chinese, danish, dutch, english, finnish, french, german, greek, hebrew, italian,
-            japanese, korean, polish, portuguese, spanish, swedish, turkish
-        var id: Self { self }
-        var prompt: String { self == .automatic ? "Perform ASR." : "Perform ASR in \(rawValue.capitalized)." }
+    /// LFM3-Audio's instruction: transcribe, in the language if one is set, spelling the hints as given.
+    static func prompt(language: VoiceLanguage, hints: [String]) -> String {
+        var prompt = language == .automatic ? "Perform ASR." : "Perform ASR in \(language.rawValue.capitalized)."
+        if !hints.isEmpty { prompt += " Vocabulary: " + hints.joined(separator: ", ") + "." }
+        return prompt
+    }
 
-        private var code: String {
-            switch self {
-            case .automatic: ""
-            case .arabic: "ar"
-            case .chinese: "zh"
-            case .danish: "da"
-            case .dutch: "nl"
-            case .english: "en"
-            case .finnish: "fi"
-            case .french: "fr"
-            case .german: "de"
-            case .greek: "el"
-            case .hebrew: "he"
-            case .italian: "it"
-            case .japanese: "ja"
-            case .korean: "ko"
-            case .polish: "pl"
-            case .portuguese: "pt"
-            case .spanish: "es"
-            case .swedish: "sv"
-            case .turkish: "tr"
-            }
-        }
-
-        /// The language's name in itself, as the system writes it.
-        var name: String {
-            let locale = Locale(identifier: code)
-            return locale.localizedString(forLanguageCode: code)?.capitalized(with: locale) ?? rawValue.capitalized
-        }
+    /// One decode: its text, and whether it was still writing when its token budget or the context ran out,
+    /// which speech never needs (`TranscriptBudget`).
+    struct Decoded: Equatable {
+        let text: String
+        let reachedLimit: Bool
     }
 
     struct Failure: LocalizedError {
@@ -84,14 +62,15 @@ final class Transcriber: @unchecked Sendable {
         llama_model_free(model)
     }
 
-    /// Transcribes 16 kHz mono PCM with greedy decoding. Stops early when the calling task is cancelled.
-    func transcribe(_ samples: [Float], language: Language) throws -> String {
+    /// Transcribes 16 kHz mono PCM with greedy decoding, generating at most `maxTokens` tokens. Stops early when
+    /// the calling task is cancelled.
+    func decode(_ samples: [Float], language: VoiceLanguage, hints: [String], maxTokens: Int) throws -> Decoded {
         var params = llama_context_default_params()
         params.n_ctx = Self.contextTokens
         guard let context = llama_init_from_model(model, params) else { throw Failure(String(localized: "Not enough memory to transcribe.")) }
         defer { llama_free(context) }
 
-        let prompt = try chatPrompt(system: language.prompt, user: String(cString: mtmd_default_marker()))
+        let prompt = try chatPrompt(system: Self.prompt(language: language, hints: hints), user: String(cString: mtmd_default_marker()))
         guard let chunks = mtmd_input_chunks_init() else { throw Failure(String(localized: "Transcription failed.")) }
         defer { mtmd_input_chunks_free(chunks) }
         guard let audio = samples.withUnsafeBufferPointer({ mtmd_bitmap_init_from_audio($0.count, $0.baseAddress) }) else {
@@ -120,17 +99,23 @@ final class Transcriber: @unchecked Sendable {
 
         var bytes: [CChar] = []
         var piece = [CChar](repeating: 0, count: 256)
-        while position < Int32(Self.contextTokens) {
+        var generated = 0
+        var reachedLimit = true
+        while generated < maxTokens, position < Int32(Self.contextTokens) {
             try Task.checkCancellation()
             var token = llama_sampler_sample(sampler, context, -1)
-            if llama_vocab_is_eog(vocab, token) { break }
+            if llama_vocab_is_eog(vocab, token) {
+                reachedLimit = false
+                break
+            }
             let count = llama_token_to_piece(vocab, token, &piece, Int32(piece.count), 0, false)
             if count > 0 { bytes.append(contentsOf: piece[0..<Int(count)]) }
             guard llama_decode(context, llama_batch_get_one(&token, 1)) == 0 else { throw Failure(String(localized: "Transcription failed.")) }
             position += 1
+            generated += 1
         }
         let text = String(decoding: bytes.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Decoded(text: text.trimmingCharacters(in: .whitespacesAndNewlines), reachedLimit: reachedLimit)
     }
 
     private func chatPrompt(system: String, user: String) throws -> String {
@@ -156,6 +141,25 @@ final class Transcriber: @unchecked Sendable {
     // TUIST_VOICE_INPUT=0) leaves it out and has no voice input.
     static let available = false
     init(model: URL, projector: URL) throws { throw Failure(String(localized: "The voice model could not be loaded.")) }
-    func transcribe(_ samples: [Float], language: Language) throws -> String { "" }
+    func decode(_ samples: [Float], language: VoiceLanguage, hints: [String], maxTokens: Int) throws -> Decoded {
+        Decoded(text: "", reachedLimit: false)
+    }
     #endif
+}
+
+extension Transcriber: SpeechEngine {
+    /// With hints, LFM3-Audio can loop or read the vocabulary back on audio it can't make out; such a
+    /// transcript is replaced by one decoded without hints. A decode that outruns the clip's token budget is
+    /// a loop too, cut short. If the transcript without hints is no better, nothing was recognized.
+    func transcribe(_ samples: [Float], language: String?, hints: [String]) async throws -> String {
+        let language = language.map(VoiceLanguage.init(code:)) ?? .automatic
+        let budget = TranscriptBudget.maxTokens(seconds: Double(samples.count) / Double(Self.sampleRate))
+        let first = try decode(samples, language: language, hints: hints, maxTokens: budget)
+        if !first.reachedLimit, hints.isEmpty || TranscriptDegeneration.detect(in: first.text, hints: hints) == nil {
+            return first.text
+        }
+        guard !hints.isEmpty else { return "" }
+        let retry = try decode(samples, language: language, hints: [], maxTokens: budget)
+        return retry.reachedLimit || TranscriptDegeneration.detect(in: retry.text, hints: []) != nil ? "" : retry.text
+    }
 }

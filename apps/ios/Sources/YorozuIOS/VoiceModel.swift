@@ -2,39 +2,30 @@ import CryptoKit
 import Foundation
 import Observation
 import OSLog
+import VoiceText
 #if os(iOS)
 import BackgroundAssets
 import Network
 import System
 #endif
 
-/// The opt-in voice input model (LFM3-Audio-2B, GGUF). iPhone and iPad get it as an Apple-hosted asset pack
-/// (`scripts/voice_asset_pack.sh` builds it), so no third party sees the download; the Mac downloads it from
-/// Hugging Face into Application Support, resumable, excluded from backup, checked against pinned hashes.
+/// One downloadable voice model (`VoiceCatalog.swift` in packages/YorozuVoice pins its files). iPhone and iPad
+/// get each as an Apple-hosted asset pack (`scripts/voice_asset_pack.sh` builds them), so no third party sees
+/// the download; the Mac downloads it from Hugging Face into Application Support, resumable, excluded from
+/// backup, checked against the pinned hashes. LFM3-Audio's files sit at the top of the folder, as they always
+/// have; every other model has a subfolder of its own, on disk and inside its pack.
 @MainActor @Observable
 final class VoiceModel {
-    static let shared = VoiceModel()
-    static let enabledKey = "voiceInput"
-    static let languageKey = "voiceInputLanguage"
+    nonisolated static let enabledKey = "voiceInput"
+    nonisolated static let languageKey = "voiceInputLanguage"
+    nonisolated static let engineKey = "voiceInputEngine"
+    nonisolated static let dictionaryKey = "voiceDictionary"
 
-    struct File {
-        let name: String
-        let bytes: Int64
-        let sha256: String
-    }
+    /// The downloadable models, by engine; Apple's has none.
+    static let all: [VoiceEngineID: VoiceModel] = Dictionary(uniqueKeysWithValues: VoiceEngineID.allCases.compactMap { engine in
+        engine.model.map { (engine, VoiceModel(engine: engine, spec: $0)) }
+    })
 
-    static let revision = "fcfae9027c00a6f3f872c48a841cfeb77e2b5a1c"
-    static let files = [
-        File(name: "LFM3-Audio-2B-Q4_K_M.gguf", bytes: 1_099_626_016,
-            sha256: "9a773289bd321ed879cd3a76545f6aca506e403851a45fb315420aee45625be2"),
-        File(name: "mmproj-LFM3-Audio-2B-Q8_0.gguf", bytes: 337_862_080,
-            sha256: "26601e904245a85bd8f3cf320a629e897cfc01c1d09369e8b4fd951f13024d3e"),
-    ]
-    static let totalBytes = files.reduce(0) { $0 + $1.bytes }
-    static let supported = Transcriber.available && enoughMemory && appleHosting
-    /// About 6 GB of RAM: those devices report a little under 6 GiB, 4 GB ones well below this.
-    static let enoughMemory = ProcessInfo.processInfo.physicalMemory >= 5 << 30
-    static let packID = "VoiceModel"
     /// iPhone and iPad need iOS 26 for Apple-hosted asset packs.
     static var appleHosting: Bool {
         #if os(iOS)
@@ -47,12 +38,15 @@ final class VoiceModel {
 
     enum State: Equatable {
         case absent, downloading, ready
+        /// The model's asset pack is not in App Store Connect yet.
         case unavailable
         case failed(String)
     }
 
     private static let log = Logger(subsystem: Diagnostics.subsystem, category: "VoiceModel")
 
+    let engine: VoiceEngineID
+    let spec: VoiceModelSpec
     private(set) var state: State = .absent
     private(set) var received: Int64 = 0
     /// The download is held back because the only network is cellular, a hotspot or in Low Data Mode.
@@ -61,13 +55,23 @@ final class VoiceModel {
     private var cellular = false
     private let directory = clientSupportDirectory.appending(path: "VoiceModel", directoryHint: .isDirectory)
 
-    var modelURL: URL { final(Self.files[0]) }
-    var projectorURL: URL { final(Self.files[1]) }
+    var totalBytes: Int64 { spec.totalBytes }
     var hasFiles: Bool { received > 0 }
 
-    private init() {
+    /// Where a file of the model is once downloaded.
+    func url(of file: VoiceModelSpec.File) -> URL { final(file) }
+
+    /// The folder the model's runtime loads: the one holding its top-level files.
+    var folderURL: URL {
+        guard let top = spec.files.first(where: { !$0.path.contains("/") }) else { return directory.appending(path: spec.folder) }
+        return final(top).deletingLastPathComponent()
+    }
+
+    private init(engine: VoiceEngineID, spec: VoiceModelSpec) {
+        self.engine = engine
+        self.spec = spec
         received = onDisk()
-        if Self.files.allSatisfy({ size(of: final($0)) == $0.bytes }) { state = .ready }
+        if spec.files.allSatisfy({ size(of: final($0)) == $0.bytes }) { state = .ready }
     }
 
     /// Starts or resumes the download; does nothing while one runs or once the model is ready. It waits for
@@ -91,11 +95,31 @@ final class VoiceModel {
     func delete() {
         pause()
         #if os(iOS)
-        if #available(iOS 26, *) { Task { try? await AssetPackManager.shared.remove(assetPackWithID: Self.packID) } }
+        if #available(iOS 26, *) { Task { [packID = spec.packID] in try? await AssetPackManager.shared.remove(assetPackWithID: packID) } }
         #endif
-        try? FileManager.default.removeItem(at: directory)
+        if spec.folder.isEmpty {
+            for file in spec.files {
+                try? FileManager.default.removeItem(at: directory.appending(path: file.path))
+                try? FileManager.default.removeItem(at: part(file))
+            }
+        } else {
+            try? FileManager.default.removeItem(at: directory.appending(path: spec.folder, directoryHint: .isDirectory))
+        }
         received = 0
         state = .absent
+    }
+
+    /// On iPhone and iPad, marks the model unavailable when App Store Connect has no pack for it yet.
+    func checkAvailability() async {
+        #if os(iOS)
+        guard #available(iOS 26, *), state == .absent || state == .unavailable, download == nil else { return }
+        do {
+            _ = try await AssetPackManager.shared.assetPack(withID: spec.packID)
+            if state == .unavailable { state = .absent }
+        } catch {
+            if case .assetPackNotFound? = error as? ManagedBackgroundAssetsError { state = .unavailable }
+        }
+        #endif
     }
 
     private func run() async {
@@ -108,7 +132,7 @@ final class VoiceModel {
             #if os(iOS)
             if #available(iOS 26, *) { try await fetchPack() }
             #else
-            for file in Self.files where size(of: final(file)) != file.bytes {
+            for file in spec.files where size(of: final(file)) != file.bytes {
                 try await fetch(file)
             }
             #endif
@@ -123,15 +147,17 @@ final class VoiceModel {
         download = nil
         waitingForWiFi = false
         cellular = false
+        VoiceSetup.shared.refresh()
     }
 
-    private func fetch(_ file: File) async throws {
-        let part = directory.appending(path: file.name + ".part")
+    private func fetch(_ file: VoiceModelSpec.File) async throws {
+        let part = part(file)
+        try FileManager.default.createDirectory(at: part.deletingLastPathComponent(), withIntermediateDirectories: true)
         if size(of: part) > file.bytes { try FileManager.default.removeItem(at: part) }
         if !FileManager.default.fileExists(atPath: part.path) { FileManager.default.createFile(atPath: part.path, contents: nil) }
         let offset = size(of: part)
         if offset < file.bytes {
-            var request = URLRequest(url: URL(string: "https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/resolve/\(Self.revision)/\(file.name)")!)
+            var request = URLRequest(url: file.url)
             if offset > 0 { request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range") }
             let before = onDisk() - offset
             try await PartWriter(file: part, offset: offset, cellular: cellular) { [weak self] written in
@@ -179,29 +205,33 @@ final class VoiceModel {
             try Task.checkCancellation()
         }
         let manager = AssetPackManager.shared
+        let (packID, total) = (spec.packID, Double(totalBytes))
         let progress = Task {
-            for await update in manager.statusUpdates(forAssetPackWithID: Self.packID) {
-                if case .downloading(_, let progress) = update { received = Int64(progress.fractionCompleted * Double(Self.totalBytes)) }
+            for await update in manager.statusUpdates(forAssetPackWithID: packID) {
+                if case .downloading(_, let progress) = update { received = Int64(progress.fractionCompleted * total) }
             }
         }
         defer { progress.cancel() }
-        try await manager.ensureLocalAvailability(of: manager.assetPack(withID: Self.packID))
+        try await manager.ensureLocalAvailability(of: manager.assetPack(withID: packID))
     }
     #endif
 
-    private func final(_ file: File) -> URL {
+    private func final(_ file: VoiceModelSpec.File) -> URL {
+        let location = spec.location(of: file)
         #if os(iOS)
-        if #available(iOS 26, *), let url = try? AssetPackManager.shared.url(for: FilePath(file.name)) { return url }
+        if #available(iOS 26, *), let url = try? AssetPackManager.shared.url(for: FilePath(location)) { return url }
         #endif
-        return directory.appending(path: file.name)
+        return directory.appending(path: location)
     }
+
+    private func part(_ file: VoiceModelSpec.File) -> URL { directory.appending(path: spec.location(of: file) + ".part") }
 
     private func size(of url: URL) -> Int64 {
         ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? 0
     }
 
     private func onDisk() -> Int64 {
-        Self.files.reduce(0) { $0 + max(size(of: final($1)), size(of: directory.appending(path: $1.name + ".part"))) }
+        spec.files.reduce(0) { $0 + max(size(of: final($1)), size(of: part($1))) }
     }
 
     nonisolated private static func sha256(of url: URL) throws -> String {

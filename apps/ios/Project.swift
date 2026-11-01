@@ -33,6 +33,7 @@ let project = Project(
     name: "Yorozu",
     packages: [
         .local(path: "../../packages/YorozuWire"),
+        .local(path: "../../packages/YorozuVoice"),
         .remote(url: "https://github.com/sparkle-project/Sparkle", requirement: .upToNextMajor(from: "2.9.0")),
     ] + (voiceInput ? [.local(path: "../../packages/Llama")] : []),
     targets: [
@@ -117,6 +118,8 @@ let project = Project(
             ],
             dependencies: [
                 .package(product: "YorozuWire"),
+                .package(product: "VoiceText"),
+                .package(product: "SpeechEngines"),
                 .package(product: "Sparkle", condition: .when([.macos])),
                 .target(name: "YorozuNotificationService", condition: .when([.ios])),
                 .target(name: "YorozuShare", condition: .when([.ios])),

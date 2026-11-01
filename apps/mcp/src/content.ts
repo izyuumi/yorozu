@@ -25,8 +25,9 @@ export interface AppSetting {
   platforms: Platform[];
   location: string;
   description: string;
-  type: "boolean" | "integer" | "enum";
-  default: string | number | boolean;
+  type: "boolean" | "integer" | "string" | "enum";
+  /** null: unset until the owner picks one. */
+  default: string | number | boolean | null;
   options?: string[];
   source: string[];
 }

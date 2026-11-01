@@ -66,6 +66,8 @@ jobs:
             -destination 'platform=macOS' -derivedDataPath .build/xcode-tests \
             -clonedSourcePackagesDirPath .build/xcode-packages -skipPackagePluginValidation -quiet \
             CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+      - name: Voice package tests
+        run: env -u SDKROOT swift test --package-path packages/YorozuVoice --scratch-path .build/voice
 
   # Every external TestFlight or Beta App Review path must pass the kill switch (scripts/external_testflight.sh).
   release-guards:
