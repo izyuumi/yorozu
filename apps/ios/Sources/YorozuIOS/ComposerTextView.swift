@@ -23,7 +23,7 @@ struct ComposerTextView: NSViewRepresentable {
     private static let maxLines: CGFloat = 5
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
+        let scroll = ComposerScrollView()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -41,6 +41,7 @@ struct ComposerTextView: NSViewRepresentable {
         view.autoresizingMask = .width
         view.textContainer?.widthTracksTextView = true
         view.setAccessibilityLabel(String(localized: "Message"))
+        view.setAccessibilityIdentifier("composer.text")
         scroll.documentView = view
         return scroll
     }
@@ -100,6 +101,12 @@ struct ComposerTextView: NSViewRepresentable {
             cursor?.track(view.selectedRange())
         }
     }
+}
+
+/// A plain container: the text view inside is the field, and without this accessibility clients meet
+/// "Message" twice, once on the scroll area and again on the text area.
+final class ComposerScrollView: NSScrollView {
+    override func isAccessibilityElement() -> Bool { false }
 }
 
 final class ComposerNSTextView: NSTextView {
