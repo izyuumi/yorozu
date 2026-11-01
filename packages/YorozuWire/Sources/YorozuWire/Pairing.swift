@@ -37,10 +37,17 @@ public struct QrPayload: Codable, Equatable, Sendable {
     public var token: String
     public var roomId: String?
     public var secret: String?
+    /// The direct listener's addresses (#532 step 5), so a device can pair while the relay is down; the app moves them
+    /// into `DirectHintStore` when it saves the pairing.
+    public var hints: DirectHints?
+
+    /// The link carries at most this many LAN and Tailscale addresses, so the QR stays readable.
+    public static let maxLAN = 4
+    public static let maxTailscale = 2
 
     public init(
         v: Int = 1, relayUrl: String, macPubkey: String, token: String, roomId: String? = nil,
-        secret: String? = nil
+        secret: String? = nil, hints: DirectHints? = nil
     ) {
         self.v = v
         self.relayUrl = relayUrl
@@ -48,6 +55,7 @@ public struct QrPayload: Codable, Equatable, Sendable {
         self.token = token
         self.roomId = roomId
         self.secret = secret
+        self.hints = hints
     }
 
     public func encoded() throws -> String {
@@ -62,6 +70,7 @@ public struct QrPayload: Codable, Equatable, Sendable {
             URLQueryItem(name: "token", value: token),
         ] + (roomId.map { [URLQueryItem(name: "room", value: $0)] } ?? [])
             + (secret.map { [URLQueryItem(name: "secret", value: $0)] } ?? [])
+            + (hints.map(Self.hintItems) ?? [])
         guard let string = components.string else {
             throw YorozuCrypto.CryptoError.malformed(String(localized: "not a Yorozu v1 pairing string"))
         }
@@ -127,7 +136,32 @@ public struct QrPayload: Codable, Equatable, Sendable {
             macPubkey: try base64Url(query["key"]),
             token: try base64Url(query["token"]),
             roomId: query["room"].flatMap { $0.isEmpty ? nil : $0 },
-            secret: try query["secret"].flatMap { $0.isEmpty ? nil : $0 }.map(base64Url)
+            secret: try query["secret"].flatMap { $0.isEmpty ? nil : $0 }.map(base64Url),
+            hints: hints(query)
         )
+    }
+
+    /// `port`, `lan=<addr>/<prefix>,…` and `ts=<addr>,…`; the lists only when not empty.
+    private static func hintItems(_ hints: DirectHints) -> [URLQueryItem] {
+        let lan = hints.lan.prefix(maxLAN).map { "\($0.address)/\($0.prefix)" }
+        let ts = hints.tailscale.prefix(maxTailscale).map(\.address)
+        return [URLQueryItem(name: "port", value: String(hints.port))]
+            + (lan.isEmpty ? [] : [URLQueryItem(name: "lan", value: lan.joined(separator: ","))])
+            + (ts.isEmpty ? [] : [URLQueryItem(name: "ts", value: ts.joined(separator: ","))])
+    }
+
+    /// The link's hints, nil without a valid port; invalid entries are dropped as `DirectHints` drops them, and the
+    /// lists are capped as the plugin caps them.
+    static func hints(_ query: [String: String]) -> DirectHints? {
+        guard let port = query["port"].flatMap({ Int($0) }), (1...65535).contains(port) else { return nil }
+        func entries(_ name: String) -> [String] { (query[name] ?? "").split(separator: ",").map(String.init) }
+        let lan = entries("lan").compactMap { entry -> DirectHints.Lan? in
+            let parts = entry.split(separator: "/", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let prefix = Int(parts[1]), let bytes = Direct.ipBytes(parts[0]),
+                  (0...bytes.count * 8).contains(prefix) else { return nil }
+            return DirectHints.Lan(address: parts[0], prefix: prefix)
+        }
+        let tailscale = entries("ts").filter { Direct.ipBytes($0) != nil }.map(DirectHints.Tailscale.init(address:))
+        return DirectHints(port: port, lan: Array(lan.prefix(maxLAN)), tailscale: Array(tailscale.prefix(maxTailscale)))
     }
 }

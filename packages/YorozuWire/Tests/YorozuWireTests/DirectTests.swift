@@ -103,7 +103,12 @@ actor FakeLeg: ConnectionLeg {
 actor Races {
     private(set) var rounds: [(relay: FakeLeg, direct: [FakeLeg])] = []
     private(set) var added: [FakeLeg] = []
-    func add(_ round: (relay: FakeLeg, direct: [FakeLeg])) { rounds.append(round) }
+    /// The pairing secret each race handed its legs.
+    private(set) var secrets: [String?] = []
+    func add(_ round: (relay: FakeLeg, direct: [FakeLeg]), secret: String? = nil) {
+        rounds.append(round)
+        secrets.append(secret)
+    }
     func add(_ leg: FakeLeg) { added.append(leg) }
     var last: (relay: FakeLeg, direct: [FakeLeg])? { rounds.last }
     var count: Int { rounds.count }
@@ -148,6 +153,9 @@ actor Seen {
             default: nil
             }
         }
+    }
+    var unreachable: Int {
+        updates.filter { if case .relayUnreachable = $0 { true } else { false } }.count
     }
     var states: [RelayConnection.State] {
         updates.compactMap { update -> RelayConnection.State? in
@@ -199,12 +207,14 @@ struct RaceTests {
     /// stored LAN hint as `ws://<address>:<port>`.
     func racer(direct: Int = 1, sleep: RacingConnection.Sleep? = nil, joinWindow: Duration = RacingConnection.joinWindow,
         bonjour: Bool = false, network: String = "wifi", candidates makeCandidates: RacingConnection.Candidates? = nil,
-        hostIsLocal: @escaping @Sendable (DirectHints?) -> Bool = { _ in true }) async -> RacingConnection {
+        hostIsLocal: @escaping @Sendable (DirectHints?) -> Bool = { _ in true }, secret: String? = nil) async -> RacingConnection {
+        var pairing = pairing
+        pairing.secret = secret
         let races = races
         let browser = browser
-        let legs: RacingConnection.Legs = { _, _, urls in
+        let legs: RacingConnection.Legs = { pairing, _, urls in
             let round = (relay: FakeLeg("relay"), direct: urls.map { FakeLeg($0.absoluteString) })
-            Task { await races.add(round) }
+            Task { await races.add(round, secret: pairing.secret) }
             return (relay: round.relay as any ConnectionLeg, direct: round.direct.map { $0 as any ConnectionLeg })
         }
         let added: RacingConnection.DirectLeg = { _, url in
@@ -222,7 +232,7 @@ struct RaceTests {
             return browser.results.stream
         }
         let changes = changes
-        let racer = RacingConnection(pairing: pairing, relayKnows: true, legs: legs, direct: added, candidates: makeCandidates ?? candidates,
+        let racer = RacingConnection(pairing: pairing, relayKnows: secret == nil, legs: legs, direct: added, candidates: makeCandidates ?? candidates,
             hints: hints, browse: bonjour ? browse : nil, pathChanges: { changes.stream }, network: { network }, winners: winners,
             sleep: sleep ?? { try await Task.sleep(for: $0 / 100) }, joinWindow: joinWindow, hostIsLocal: hostIsLocal)
         let updates = await racer.updates()
@@ -744,6 +754,98 @@ struct RaceTests {
         try? await Task.sleep(for: .milliseconds(30))
         #expect(await races.count == 1)
         #expect(await !direct[0].stopped)
+        await racer.stop()
+    }
+
+    // Offline pairing (#532 step 5).
+
+    @Test func aPairingRaceDialsTheStoredHintsAndADirectWinPairs() async {
+        hints.save(lanHints, room: "room")
+        let racer = await racer(direct: 0, bonjour: true, secret: "sec")
+        let (relay, direct) = await round(1)
+        #expect(direct.map(\.name) == ["ws://192.168.0.9:8738"])
+        #expect(await races.secrets == ["sec"], "the legs build their init's proof from the secret")
+        await started([relay] + direct)
+        await direct[0].becomeReady()
+        await direct[0].open()
+        await eventually("direct opened") { await seen.opened == ["ws://192.168.0.9:8738"] }
+        await eventually("relay closed") { await relay.stopped }
+        #expect(await browser.browsed == 0, "no Bonjour while pairing")
+        changes.continuation.yield()
+        _ = await round(2)
+        #expect(await races.secrets == ["sec", nil], "paired: the next race carries no secret")
+        await eventually("Bonjour once paired") { await browser.browsed == 1 }
+        await racer.stop()
+    }
+
+    @Test func theRelayFailingWhilePairingIsReportedOncePerRace() async {
+        let racer = await racer(secret: "sec")
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.fail()
+        await eventually("relay unreachable") { await seen.unreachable == 1 }
+        await relay.emit(.state(.connecting))
+        await relay.fail()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await seen.unreachable == 1)
+        await racer.raceAgain()
+        let (relay2, _) = await round(2)
+        await started([relay2])
+        await relay2.fail()
+        await eventually("once more in the new race") { await seen.unreachable == 2 }
+        await racer.stop()
+    }
+
+    @Test func theRelayFailingWhenPairedOrAfterJoinedIsNotReported() async {
+        let racer = await racer()
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.fail()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await seen.unreachable == 0)
+        await racer.stop()
+        let pairing = await self.racer(secret: "sec")
+        let (relay2, direct2) = await round(2)
+        await started([relay2] + direct2)
+        await relay2.emit(.relayJoined)
+        await relay2.fail()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await seen.unreachable == 0)
+        await pairing.stop()
+    }
+
+    @Test func aRelayRefusingAnOfflineCodeLeavesThePairingToDirect() async {
+        let racer = await racer(secret: "sec")
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.emit(.state(.pairingFailed("unknown device")))
+        await eventually("relay unreachable") { await seen.unreachable == 1 }
+        await eventually("relay closed") { await relay.stopped }
+        #expect(await !seen.states.contains(.pairingFailed("unknown device")))
+        await direct[0].becomeReady()
+        await direct[0].open()
+        await eventually("direct paired") { await seen.opened == ["direct0"] }
+        await racer.stop()
+    }
+
+    @Test func aRefusedCodeFailsOnceTheDirectLegsFailToo() async {
+        let racer = await racer(secret: "sec")
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.emit(.state(.pairingFailed("unknown device")))
+        await eventually("relay closed") { await relay.stopped }
+        await direct[0].fail()
+        await eventually("pairing failed") { await seen.states.last == .pairingFailed("unknown device") }
+        await racer.raceAgain()
+        #expect(await races.count == 1, "a failed pairing doesn't race again")
+    }
+
+    @Test func raceAgainWhilePairingRacesAtOnce() async {
+        let racer = await racer(secret: "sec")
+        _ = await round(1)
+        await racer.raceAgain()
+        _ = await round(2)
+        #expect(await races.secrets == ["sec", "sec"])
         await racer.stop()
     }
 }

@@ -20,7 +20,8 @@ struct RootView: View {
             if let failure = model.submit(url.absoluteString) { model.pairingError = failure }
         }
         .deviceAddingAlerts(model)
-        // #532: once, after the first session with a pairing; it stays up if the session drops, and a swipe away counts as Not Now.
+        // #532: once, after the first session with a pairing or, while pairing, when the relay can't be reached and the code
+        // names LAN addresses; it stays up if the session drops, and a swipe away counts as Not Now.
         .onChange(of: model.showLocalNetworkExplainer, initial: true) { _, due in if due { explainingLocalNetwork = true } }
         .sheet(isPresented: $explainingLocalNetwork, onDismiss: { model.explainLocalNetwork() }) {
             LocalNetworkExplainer(model: model).yorozuTint()

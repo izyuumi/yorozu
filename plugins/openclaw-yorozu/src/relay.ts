@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import os from "node:os";
 import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
 import { captureEffectAuthority } from "openclaw/plugin-sdk/fetch-runtime";
@@ -31,9 +30,10 @@ import {
 import { CLOSE, Hub, type Link, type Request } from "./hub.js";
 import type { HostKeys } from "./keys.js";
 import { applyTurn, cleanJobs, holdFor, plan, type TurnChange, type WireJob } from "./liveactivity.js";
+import { mintCode, pairer, pairingQuery, PendingPairings } from "./pairing.js";
 import { firstLine, previewKey, previewPlaintext, pushTitle, sealPreview, threadRef } from "./push.js";
 import { listCursors, mergeCursor } from "./reads.js";
-import { b64u, decodeFrame, fingerprint, helloProof, signFrame } from "./wire.js";
+import { b64u, decodeFrame, fingerprint, signFrame } from "./wire.js";
 
 const PING = JSON.stringify({ type: "ping" });
 const PONG = JSON.stringify({ type: "pong" });
@@ -75,16 +75,21 @@ export type Pairing = {
   fingerprint: string;
   expiresAt: number;
   devices: number;
+  /** The relay could not mint a token: the code pairs over the direct path only (#532 step 5). */
+  directOnly: boolean;
 };
 
 const PAIR_WEB_LINK = "https://yorozu.yumi.to/pair";
 const MINT_TIMEOUT_MS = 10_000;
 
-const pending = new Map<string, number>();
+const pending = new PendingPairings();
 let host: {
   relayUrl: string;
   keys: HostKeys;
+  log?: ChannelGatewayContext["log"];
   mint: (() => Promise<{ token: string; expiresAt: number }>) | null;
+  /** The direct listener's hints while it is listening. */
+  hints: () => DirectHints | undefined;
   forget: (deviceKeys: string[]) => void;
   broadcast: (events: Event[]) => number;
   notify: ((convId: string, messageId: string, text: string) => Promise<void>) | null;
@@ -105,21 +110,19 @@ export async function notifyReply(convId: string, messageId: string, text: strin
 }
 
 export async function beginPairing(): Promise<Pairing> {
-  if (!host?.mint) throw new Error("the yorozu channel is not connected to its relay; check `openclaw channels status`");
+  if (!host) throw new Error("the yorozu channel reaches neither its relay nor its direct listener; check `openclaw channels status`");
   const { relayUrl, keys } = host;
-  const { token, expiresAt } = await host.mint();
-  const secret = b64u(randomBytes(32));
-  const now = Date.now();
-  for (const [old, until] of pending) if (until < now) pending.delete(old);
-  pending.set(secret, expiresAt);
-  const q = (value: string) => encodeURIComponent(value).replace(/%3A/gi, ":").replace(/%2F/gi, "/");
-  const query = `v=3&relay=${q(relayUrl)}&key=${b64u(keys.static.publicKey)}&token=${q(token)}&room=${keys.room}&secret=${secret}`;
+  const hints = host.hints();
+  const { token, expiresAt, directOnly } = await mintCode(host.mint, hints, host.log);
+  const secret = pending.add(expiresAt);
+  const query = pairingQuery({ relayUrl, hostStatic: keys.static.publicKey, token, room: keys.room, secret, hints });
   return {
     link: `yorozu://pair?${query}`,
     webLink: `${PAIR_WEB_LINK}#${query}`,
     fingerprint: fingerprint(keys.static.publicKey),
     expiresAt,
     devices: (await listDevices()).length,
+    directOnly,
   };
 }
 
@@ -127,14 +130,6 @@ export async function unpairDevice(deviceKey: string): Promise<boolean> {
   const removed = await removeDevice(deviceKey);
   host?.forget([deviceKey]);
   return removed;
-}
-
-function provenSecret(proof: string | undefined, staticPub: string, signingPub: string, now: number): string | undefined {
-  if (!proof) return undefined;
-  for (const [secret, until] of pending) {
-    if (until >= now && helloProof(secret, staticPub, signingPub) === proof) return secret;
-  }
-  return undefined;
 }
 
 export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
@@ -309,15 +304,14 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
     }),
     directHints: () => direct?.listening ? hints : undefined,
     staticKeyOf: async (deviceKey) => (await getDevice(deviceKey))?.staticPub,
-    pair: async (proof, staticPub, deviceKey, now) => {
-      const secret = provenSecret(proof, staticPub, deviceKey, now);
-      if (!secret) return false;
-      pending.delete(secret);
-      const evicted = await putDevice({ signingPub: deviceKey, staticPub, pairedAt: now });
-      me.forget(evicted);
-      log?.info(`yorozu: device paired${evicted.length ? " (the oldest made way)" : ""}`);
-      return true;
-    },
+    pair: pairer({
+      pending,
+      put: putDevice,
+      forget: (deviceKeys) => me.forget(deviceKeys),
+      allowlist: async () => (await listDevices()).map((d) => d.signingPub),
+      relaySend: () => relaySend,
+      log,
+    }),
     refused: (deviceKey) => relaySend?.(JSON.stringify({ type: "revoke", pubkey: deviceKey })),
     onPeer: async ({ deviceKey, event, reply }) => {
       if (event.kind !== "peer_info") return;
@@ -334,7 +328,9 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   const me: NonNullable<typeof host> = (host = {
     relayUrl: opts.relayUrl,
     keys,
+    log,
     mint: null,
+    hints: () => direct?.listening ? hints : undefined,
     broadcast: (events) => hub.broadcast(events),
     notify: null,
     forget: (deviceKeys) => {
