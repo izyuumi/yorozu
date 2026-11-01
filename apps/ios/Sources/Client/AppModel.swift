@@ -147,6 +147,7 @@ final class AppModel {
         guard !isDemo else { return }
         pendingPairing = nil
         disconnect()
+        if let room = pairing?.pairing.roomId { RacingConnection.forgetRaceWinners(room: room) }
         cache.wipe()
         AttachmentFiles.wipe()
         conversations = [:]
@@ -165,6 +166,7 @@ final class AppModel {
     func unpair() {
         if isDemo { return exitDemo() }
         disconnect()
+        if let room = pairing?.pairing.roomId { RacingConnection.forgetRaceWinners(room: room) }
         try? Pairing.remove()
         #if os(iOS)
         PreviewKeychain.clear()

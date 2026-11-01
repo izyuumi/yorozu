@@ -67,6 +67,8 @@ public actor RelayConnection {
     /// "<path> <host[:port]>" for the log: never the query, which holds the room id.
     nonisolated let host: String
     nonisolated let label: String
+    /// A direct candidate's URL for the race's winner store; never the relay URL, whose query holds the room id.
+    nonisolated let key: String
     private var dialed = ContinuousClock.now
     private var socketOpen = false
 
@@ -91,6 +93,7 @@ public actor RelayConnection {
         self.dial = dial
         host = Self.hostPort(dial)
         label = "\(path) \(host)"
+        key = path == .relay ? RacePolicy.relayKey : dial.absoluteString
     }
 
     static func hostPort(_ url: URL) -> String {
@@ -135,9 +138,12 @@ public actor RelayConnection {
         connect()
     }
 
+    /// The app's reconnect joins a dial under 10 s old that is still connecting or has opened (at launch, `start` and the
+    /// scene becoming active come together); otherwise, and while waiting out a retry or offline, it dials at once.
     public func reconnect() {
         guard running else { return start() }
         attempt = 0
+        if socket != nil, state != .offline, ContinuousClock.now - dialed < RacingConnection.joinWindow { return }
         connect()
     }
 

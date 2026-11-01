@@ -62,6 +62,7 @@ actor FakeLeg: ConnectionLeg {
     private(set) var sent: [String] = []
 
     init(_ name: String) { self.name = name }
+    nonisolated var key: String { name }
 
     func updates() -> AsyncStream<RelayConnection.Update> {
         let (stream, continuation) = AsyncStream<RelayConnection.Update>.makeStream()
@@ -137,19 +138,51 @@ actor Seen {
     }
 }
 
+/// The winner store, in memory.
+final class MemoryWinners: RaceWinners, @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [String: String] = [:]
+
+    func winner(room: String, network: String) -> String? {
+        lock.withLock { stored["\(room) \(network)"] }
+    }
+
+    func record(_ key: String, room: String, network: String) {
+        lock.withLock { stored["\(room) \(network)"] = key }
+    }
+}
+
+/// Every wait the racer asked for; each one lasts until the race is over, so nothing starts on a timer.
+actor Sleeps {
+    private(set) var asked: [Duration] = []
+    func add(_ duration: Duration) { asked.append(duration) }
+
+    nonisolated var never: RacingConnection.Sleep {
+        { duration in
+            await self.add(duration)
+            try await Task.sleep(for: .seconds(3600))
+        }
+    }
+}
+
 struct RaceTests {
     let pairing = QrPayload(v: 3, relayUrl: "wss://relay.test", macPubkey: "", token: "", roomId: "room")
     let races = Races()
     let seen = Seen()
     let changes = AsyncStream<Void>.makeStream()
+    let winners = MemoryWinners()
+    let sleeps = Sleeps()
 
-    func racer(direct: Int = 1) async -> RacingConnection {
+    /// Waits a hundredth of the policy's delays unless `sleep` says otherwise.
+    func racer(direct: Int = 1, sleep: RacingConnection.Sleep? = nil, joinWindow: Duration = RacingConnection.joinWindow) async
+        -> RacingConnection {
         let races = races
         let racer = RacingConnection(pairing: pairing, relayKnows: true, legs: { _, _ in
             let round = (relay: FakeLeg("relay"), direct: (0..<direct).map { FakeLeg("direct\($0)") })
             Task { await races.add(round) }
             return (relay: round.relay as any ConnectionLeg, direct: round.direct.map { $0 as any ConnectionLeg })
-        }, pathChanges: { [changes] in changes.stream }, pause: .milliseconds(10))
+        }, pathChanges: { [changes] in changes.stream }, network: { "wifi" }, winners: winners,
+            sleep: sleep ?? { try await Task.sleep(for: $0 / 100) }, joinWindow: joinWindow)
         let updates = await racer.updates()
         let seen = seen
         Task { for await update in updates { await seen.add(update) } }
@@ -271,6 +304,123 @@ struct RaceTests {
         #expect(await direct[0].grants == 0)
         await direct[1].open()
         await eventually("others closed") { await stopped([relay, direct[0]]) }
+        await racer.stop()
+    }
+
+    @Test func lastTimesDirectWinnerGoesFirstAndTheRelayWaits() async {
+        let racer = await racer(direct: 2, sleep: sleeps.never)
+        let (relay, direct) = await round(1)
+        await started([relay, direct[0]])
+        #expect(await !direct[1].started, "50 ms behind the first candidate")
+        await direct[0].fail()
+        await started([direct[1]])
+        await direct[1].becomeReady()
+        await direct[1].open()
+        await eventually("second candidate won") { await seen.opened == ["direct1"] }
+        #expect(winners.winner(room: "room", network: "wifi") == "direct1")
+
+        changes.continuation.yield()
+        let (relay2, direct2) = await round(2)
+        await started([direct2[1]])
+        await eventually("relay and other candidate wait") {
+            let asked = await sleeps.asked
+            return asked.count == 3 && asked.suffix(2).sorted() == [.milliseconds(50), .milliseconds(300)]
+        }
+        #expect(await !relay2.started)
+        #expect(await !direct2[0].started)
+        // A relay that would be ready at once cannot win: it has not started.
+        await relay2.becomeReady()
+        await direct2[1].becomeReady()
+        await direct2[1].open()
+        await eventually("direct won again") { await seen.opened == ["direct1", "direct1"] }
+        await eventually("relay closed") { await relay2.stopped }
+        #expect(await relay2.grants == 0)
+        await racer.stop()
+    }
+
+    @Test func aStaleDirectWinnerDoesNotHoldTheRelayBack() async {
+        winners.record("direct0", room: "room", network: "wifi")
+        let racer = await racer(direct: 2, sleep: sleeps.never)
+        let (relay, direct) = await round(1)
+        await started([direct[0]])
+        #expect(await !relay.started)
+        await direct[0].fail()
+        await started([direct[1]])
+        #expect(await !relay.started)
+        await direct[1].fail()
+        await started([relay])
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened == ["relay"] }
+        #expect(winners.winner(room: "room", network: "wifi") == "relay")
+        await racer.stop()
+    }
+
+    @Test func reconnectJoinsTheRaceInFlight() async {
+        let racer = await racer()
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await racer.reconnect()
+        await racer.reconnect()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 1)
+        #expect(await !relay.stopped)
+        // A new network path still restarts it.
+        changes.continuation.yield()
+        _ = await round(2)
+        await eventually("old legs closed") { await stopped([relay] + direct) }
+        await racer.stop()
+    }
+
+    @Test func reconnectRightAfterTheRaceWasWonJoinsIt() async {
+        let racer = await racer()
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened == ["relay"] }
+        await racer.reconnect()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 1)
+        #expect(await !relay.stopped)
+        #expect(await racer.send(Message(convId: "c", messageId: "m1", text: "hi")))
+        await racer.stop()
+    }
+
+    @Test func reconnectAfterTheJoinWindowRacesAgain() async {
+        let racer = await racer(joinWindow: .milliseconds(50))
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened == ["relay"] }
+        try? await Task.sleep(for: .milliseconds(80))
+        await racer.reconnect()
+        _ = await round(2)
+        await eventually("old legs closed") { await stopped([relay] + direct) }
+        await racer.stop()
+    }
+
+    @Test func theFirstLossRacesAgainAtOnceAndTheSecondQuickOnePauses() async {
+        let racer = await racer(sleep: sleeps.never)
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await direct[0].becomeReady()
+        await direct[0].open()
+        await eventually("direct opened") { await seen.opened == ["direct0"] }
+        await direct[0].fail()
+        // Every wait lasts until the race ends, so a second race at all means no pause.
+        let (_, direct2) = await round(2)
+        await started(direct2)
+        await direct2[0].becomeReady()
+        await direct2[0].open()
+        await eventually("direct opened again") { await seen.opened == ["direct0", "direct0"] }
+        await direct2[0].fail()
+        await eventually("second quick loss pauses 1 s") { await sleeps.asked.contains(.seconds(1)) }
+        #expect(await !sleeps.asked.contains { $0 >= .seconds(1) && $0 != .seconds(1) })
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 2)
+        #expect(await seen.states.last == .connecting)
         await racer.stop()
     }
 }
