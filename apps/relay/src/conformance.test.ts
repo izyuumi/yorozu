@@ -10,6 +10,7 @@ export type Peer = {
   close(code?: number, reason?: string): void;
   next(): Promise<any>;
   closed(): Promise<number>;
+  closedReason(): Promise<string>;
 };
 
 export type Adapter = {
@@ -29,7 +30,7 @@ export function conformance(relay: Adapter) {
     const mac = await connect(room);
     const { nonce } = await mac.next();
     mac.send({ type: "register", pubkey: keys.pub, nonceSig: await keys.sign(nonce) });
-    expect(await mac.next()).toMatchObject({ type: "registered", roomId: room });
+    expect(await mac.next()).toMatchObject({ type: "registered", roomId: room, pushProxy: true });
     return mac;
   }
 
@@ -354,11 +355,56 @@ export function conformance(relay: Adapter) {
     }
   });
 
-  test("a mis-typed message closes the socket", async () => {
-    const peer = await connect(fakeRoom("anything"));
-    await peer.next();
-    peer.send({ type: "nope" });
-    expect(await peer.closed()).toBe(CLOSE_PROTOCOL);
+  test("host push accepts known devices and silently ignores unknown devices", async () => {
+    const { mac, keys } = await paired();
+    const direct = await keypair();
+    mac.send({ type: "devices", devices: [direct.pub] });
+    for (const device of [keys.pub, direct.pub, (await keypair()).pub]) {
+      mac.send({ type: "push", device, token: "AB".repeat(32) });
+      mac.send({ type: "mint" });
+      expect(await mac.next()).toMatchObject({ type: "token" });
+    }
+  });
+
+  test("malformed host push closes with bad push", async () => {
+    const device = (await keypair()).pub;
+    for (const fields of [
+      ...[undefined, null, 42, "", "a".repeat(63), "gg", "aa\n", "aa".repeat(513)]
+        .map((token) => ({ device, token })),
+      ...[undefined, null, 42, "", "D".repeat(42), "+".repeat(43), "D".repeat(44)]
+        .map((device) => ({ device, token: "ab".repeat(32) })),
+    ]) {
+      const mac = await connectMac(await keypair());
+      mac.send({ type: "push", ...fields });
+      expect(await mac.closed()).toBe(CLOSE_PROTOCOL);
+      expect(await mac.closedReason()).toBe("bad push");
+    }
+  });
+
+  test("a device cannot register a token using the host push shape", async () => {
+    const { phone, keys } = await paired();
+    phone.send({ type: "push", device: keys.pub, token: "ab".repeat(32) });
+    expect(await phone.closed()).toBe(CLOSE_PROTOCOL);
+    expect(await phone.closedReason()).toBe("bad push");
+  });
+
+  test("an unknown type is ignored, from the mac and from a phone, and the socket stays open", async () => {
+    const { mac, phone } = await paired();
+    mac.send({ type: "nope", extra: 1 });
+    mac.send({ type: "ping" });
+    expect(await mac.next()).toMatchObject({ type: "pong" });
+    phone.send({ type: "nope", extra: 1 });
+    phone.send({ type: "owner" });
+    expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+  });
+
+  test("unknown fields on a known type are ignored", async () => {
+    const { mac, phone, keys } = await paired();
+    phone.send({ type: "owner", extra: { nested: true } });
+    expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+    const sig = await keys.sign("cA");
+    phone.send({ type: "frame", payload: "cA", sig, extra: 1 });
+    expect(await mac.next()).toMatchObject({ type: "frame", payload: "cA" });
   });
 
   test("tells phones whether the room's mac is online", async () => {
