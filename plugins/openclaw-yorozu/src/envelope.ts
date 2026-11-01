@@ -24,6 +24,17 @@ export const RESUME = "resume";
 export const DIRECT = "direct";
 /** #532: listed only while the relay's `registered` said `pushProxy: true`; a direct client then sends `push_token`. */
 export const PUSH_PROXY = "push-proxy";
+/** Feature flag `unversioned-wire` (#532 wire migration step 1): accepts unversioned frames and the `yorozu|…` prologue.
+ * Clients may send unversioned only to a plugin listing it; this plugin always lists it. */
+export const UNVERSIONED_WIRE = "unversioned-wire";
+
+export const PEER_INFO: PeerInfo = {
+  protocolMin: PROTOCOL_VERSION,
+  protocolMax: PROTOCOL_VERSION,
+  app: "0.1.0",
+  capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES, REACTIONS, RESUME, UNVERSIONED_WIRE],
+};
+
 export const CHUNK_BYTES = 160 * 1024;
 export type Attachment = { id: string; name: string; mime: string; size: number };
 // Capability `replies`.

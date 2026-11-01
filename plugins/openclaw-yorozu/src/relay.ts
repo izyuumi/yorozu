@@ -10,16 +10,10 @@ import { serveBonjour } from "./bonjour.js";
 import { watchDirect } from "./hints.js";
 import { bindAddresses, serveDirect, type DirectListener } from "./direct.js";
 import {
-  ATTACHMENTS,
-  DEVICES,
   DIRECT,
-  INVITE,
   LIVE_ACTIVITY_PUSH,
   PUSH_PROXY,
-  REACTIONS,
-  REPLIES,
-  RESUME,
-  PROTOCOL_VERSION,
+  PEER_INFO,
   type DirectHints,
   type DeviceList,
   type DevicePatch,
@@ -43,14 +37,6 @@ const HEARTBEAT_MS = 30_000;
 const BACKOFF = { initialMs: 1_000, maxMs: 30_000, factor: 2, jitter: 0.3 };
 const BATCH_FRAMES = 16;
 const BATCH_BYTES = 1024 * 1024 - 4096;
-
-const PEER_INFO: PeerInfo = {
-  protocolMin: PROTOCOL_VERSION,
-  protocolMax: PROTOCOL_VERSION,
-  app: "0.1.0",
-  name: os.hostname().replace(/\.local$/, ""),
-  capabilities: [ATTACHMENTS, DEVICES, INVITE, REPLIES, REACTIONS, RESUME],
-};
 
 type Status = { connected: boolean; error?: string };
 
@@ -146,6 +132,7 @@ export async function runRelayHost(opts: RelayHostOptions): Promise<void> {
   const { keys, signal, log } = opts;
   const peerInfo: PeerInfo = {
     ...PEER_INFO,
+    name: os.hostname().replace(/\.local$/, ""),
     mediaMaxBytes: opts.mediaMaxBytes,
     ...(opts.agent && { agent: opts.agent }),
     ...(opts.hostVersion && { hostVersion: opts.hostVersion }),
