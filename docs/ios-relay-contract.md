@@ -314,7 +314,7 @@ The client's Automations tab. The plugin answers with every cron job of `channel
 | `name` | The job's `displayName`, else its `name` |
 | `enabled` | false: shown greyed |
 | `schedule` | OpenClaw's schedule object as stored (`kind`: `at`, `every`, `cron`, `on-exit`, `stream`, and its fields) |
-| `scheduleText` | The plugin's English wording (`Every 30 minutes`, `Daily at 09:00 (Asia/Tokyo)`, `Weekdays at 08:30`, `Once`, else `Cron <expr>`); clients show it as is |
+| `scheduleText` | The plugin's English wording (`Every 30 minutes`, `Daily at 09:00 (Asia/Tokyo)`, `Weekdays at 08:30`, `Once`, else `Cron <expr>`); the app words `schedule` in its own language and falls back to `scheduleText` for what it does not recognise |
 | `nextRunAt`?, `lastRunAt`? | The scheduler's |
 | `lastStatus`? | `ok`, `error` or `skipped` |
 | `lastError`? | At most 2,000 characters |

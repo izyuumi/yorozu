@@ -17,7 +17,7 @@ struct ChatView: View {
     @State private var dropFailure: String?
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
-    @State private var timesShown: CGFloat = 0
+    @State private var reveal = TimesReveal()
     @ScaledMetric(relativeTo: .caption2) private var timesWidth: CGFloat = 64
     @Environment(\.textZoom) private var zoom
     @Environment(\.scenePhase) private var scenePhase
@@ -43,7 +43,7 @@ struct ChatView: View {
                             in: RoundedRectangle(cornerRadius: LayoutMetrics.cardRadius, style: .continuous))
                         .modifier(MessageTimeBelow(item: item))
                         .readableRow()
-                        .modifier(MessageTime(item: item, shown: timesShown, width: timesWidth * zoom))
+                        .modifier(MessageTime(item: item, reveal: reveal, width: timesWidth * zoom))
                 }
                 pendingVoice
                 if typing {
@@ -54,8 +54,8 @@ struct ChatView: View {
         }
         .scrollPosition($position)
         #if os(iOS)
-        .gesture(LeftwardPan { dx in timesShown = min(max(-dx, 0), timesWidth * zoom) } ended: {
-            withAnimation(.snappy) { timesShown = 0 }
+        .gesture(LeftwardPan { dx in reveal.shown = min(max(-dx, 0), timesWidth * zoom) } ended: {
+            withAnimation(.snappy) { reveal.shown = 0 }
         })
         #endif
         .scrollDismissesKeyboard(.interactively)
@@ -516,13 +516,18 @@ private struct ToolsRow: View {
     }
 }
 
+@MainActor @Observable private final class TimesReveal {
+    var shown: CGFloat = 0
+}
+
 private struct MessageTime: ViewModifier {
     let item: ChatItem
-    let shown: CGFloat
+    let reveal: TimesReveal
     let width: CGFloat
 
     func body(content: Content) -> some View {
-        content
+        let shown = reveal.shown
+        return content
             .offset(x: -shown)
             .overlay(alignment: .trailing) {
                 if shown > 0, Self.isTimed(item) {
