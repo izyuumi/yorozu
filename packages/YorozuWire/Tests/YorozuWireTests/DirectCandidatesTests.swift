@@ -8,9 +8,9 @@ struct DirectCandidatesTests {
     let wifi6 = LocalInterface(name: "en0", address: "fd00:1::20", prefix: 64)
     let tailscale = LocalInterface(name: "utun4", address: "100.101.1.2", prefix: 32)
 
-    func plan(_ hints: DirectHints?, _ interfaces: [LocalInterface], isMac: Bool = false, lanAllowed: Bool = true)
+    func plan(_ hints: DirectHints?, _ interfaces: [LocalInterface], isMac: Bool = false, lanAllowed: Bool = true, lanDenied: Bool = false)
         -> (candidates: [String], skipped: [String]) {
-        let plan = DirectCandidates.plan(hints: hints, interfaces: interfaces, isMac: isMac, lanAllowed: lanAllowed)
+        let plan = DirectCandidates.plan(hints: hints, interfaces: interfaces, isMac: isMac, lanAllowed: lanAllowed, lanDenied: lanDenied)
         return (plan.candidates.map(\.absoluteString), plan.skipped.map { "\($0.0) (\($0.1))" })
     }
 
@@ -31,6 +31,7 @@ struct DirectCandidatesTests {
     @Test func lanWaitsForLocalNetwork() {
         let hints = DirectHints(port: 9000, lan: [.init(address: "192.168.0.9", prefix: 24)])
         #expect(plan(hints, [wifi], lanAllowed: false) == ([], ["192.168.0.9 (Local Network not allowed yet)"]))
+        #expect(plan(hints, [wifi], lanDenied: true) == ([], ["192.168.0.9 (Local Network denied)"]))
     }
 
     @Test func tailscaleOnlyWithAnUpVPNInterfaceInRangeAndTheNameLast() {
@@ -66,7 +67,31 @@ struct DirectCandidatesTests {
     }
 
     @Test func theTagMatchesTheVector() {
-        #expect(Direct.bonjourTag(hostKey: Data(0...31)) == "CeUtuNddRZIG")
+        let key = Data(0...31)
+        let date = Date(timeIntervalSince1970: 493000 * 3600)
+        #expect(Direct.bonjourEpoch(date) == 493000)
+        #expect(Direct.bonjourEpoch(date.addingTimeInterval(-0.1)) == 492999)
+        #expect(Direct.bonjourEpoch(date.addingTimeInterval(3599.9)) == 493000)
+        #expect(Direct.bonjourTag(hostKey: key, epoch: 493000) == "Iaz7DaMYBz9S")
+        let tags = Direct.bonjourTags(hostKey: key, at: date)
+        #expect(tags.count == 3)
+        for epoch: Int64 in 492999...493001 {
+            #expect(tags.contains(Direct.bonjourTag(hostKey: key, epoch: epoch)))
+        }
+        #expect(Direct.bonjourTags(hostKey: key, at: date.addingTimeInterval(3600)) != tags)
+    }
+
+    @Test func routesClassifyTheWinningURL() {
+        #expect(DirectRoute.of(nil) == .relay)
+        for host in ["127.0.0.1", "[::1]", "localhost"] {
+            #expect(DirectRoute.of(URL(string: "ws://\(host):8738")) == .thisMac)
+        }
+        for host in ["100.64.0.1", "[fd7a:115c:a1e0::1]", "x.ts.net"] {
+            #expect(DirectRoute.of(URL(string: "ws://\(host):8738")) == .tailscale)
+        }
+        for host in ["192.168.0.1", "host.local", "[fd00::1]", "100.128.0.1"] {
+            #expect(DirectRoute.of(URL(string: "ws://\(host):8738")) == .wifi)
+        }
     }
 
     func decode(_ json: String) throws -> WireEvent {

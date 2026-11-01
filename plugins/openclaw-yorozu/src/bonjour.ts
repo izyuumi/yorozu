@@ -7,9 +7,9 @@ import type { Log } from "./hub.js";
 const GROUP = "224.0.0.251";
 const PORT = 5353;
 export const SERVICE = "_yorozu._tcp.local";
-export const bonjourTag = (hostStaticPub: Uint8Array): string => {
+export const bonjourTag = (hostStaticPub: Uint8Array, epoch: number): string => {
   if (hostStaticPub.length !== 32) throw new Error("expected a 32-byte static public key");
-  return createHmac("sha256", hostStaticPub).update("yorozu-bonjour").digest().subarray(0, 9).toString("base64url");
+  return createHmac("sha256", hostStaticPub).update(`yorozu-bonjour:${epoch}`).digest().subarray(0, 9).toString("base64url");
 };
 
 export function encodeName(name: string): Buffer {
@@ -125,17 +125,44 @@ export function sameSubnet(local: Address, remote: string): boolean {
 }
 
 /** IPv4 only for now. Production passes LAN hints; an injected loopback address permits the integration test. */
-export async function serveBonjour(opts: { hostStaticPub: Uint8Array; port: number; addresses: Address[]; log?: Log }): Promise<{
+export async function serveBonjour(opts: {
+  hostStaticPub: Uint8Array; port: number; addresses: Address[]; log?: Log; now?: () => number;
+  schedule?: (callback: () => void, delay: number) => () => void;
+}): Promise<{
   update: (addresses: Address[]) => Promise<void>; close: () => Promise<void>;
 }> {
-  const tag = bonjourTag(opts.hostStaticPub);
+  const now = opts.now ?? Date.now;
+  const hour = 3_600_000;
+  const currentTag = () => bonjourTag(opts.hostStaticPub, Math.floor(now() / hour));
+  let tag = currentTag();
+  const schedule = opts.schedule ?? ((callback, delay) => {
+    const timer = setTimeout(callback, delay);
+    timer.unref();
+    return () => clearTimeout(timer);
+  });
+  let cancelRotation: (() => void) | undefined;
   const senders = new Map<string, { socket: Socket; info: Address }>();
   let rx: Receiver | undefined;
   let closed = false;
   let announceTimer: NodeJS.Timeout | undefined;
   const send = (socket: Socket, address: string, ttl = 120, remote?: RemoteInfo, id = 0): Promise<void> =>
     new Promise((resolve) => socket.send(buildResponse(tag, opts.port, address, ttl, id), remote?.port ?? PORT, remote?.address ?? GROUP, () => resolve()));
+  const rotate = async () => {
+    if (closed) return;
+    if (tag !== currentTag()) {
+      clearTimeout(announceTimer);
+      await Promise.all([...senders.values()].map(({ socket, info }) => send(socket, info.address, 0)));
+      if (closed) return;
+      tag = currentTag();
+      await Promise.all([...senders.values()].map(({ socket, info }) => send(socket, info.address)));
+    }
+    cancelRotation?.();
+    if (!closed) cancelRotation = schedule(() => { void rotate(); }, hour - (now() % hour));
+  };
   const answer = (packet: Buffer, remote: RemoteInfo) => {
+    if (closed) return;
+    // A wall-clock jump past the timer: rotate now and answer under the new tag from then on.
+    if (tag !== currentTag()) return void rotate();
     const query = parseQuery(packet);
     if (!query) return;
     const matching = query.questions.filter((q) => {
@@ -197,8 +224,10 @@ export async function serveBonjour(opts: { hostStaticPub: Uint8Array; port: numb
     announceTimer.unref();
   };
   await update(opts.addresses);
+  await rotate();
   return { update, close: async () => {
     closed = true;
+    cancelRotation?.();
     clearTimeout(announceTimer);
     for (const address of senders.keys()) await remove(address);
     if (rx) {

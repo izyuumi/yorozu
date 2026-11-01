@@ -140,6 +140,15 @@ actor Seen {
             return nil
         }
     }
+    var routesAndSessions: [String] {
+        updates.compactMap { update in
+            switch update {
+            case .route(let route): "route:\(route.rawValue)"
+            case .sessionOpen(let peer): "open:\(peer.app)"
+            default: nil
+            }
+        }
+    }
     var states: [RelayConnection.State] {
         updates.compactMap { update -> RelayConnection.State? in
             if case .state(let state) = update { return state }
@@ -258,6 +267,7 @@ struct RaceTests {
         #expect(await relay.grants == 0, "one handshake at a time")
         await direct[0].open()
         await eventually("direct opened") { await seen.opened == ["direct0"] }
+        #expect(await seen.routesAndSessions == ["route:wifi", "open:direct0"])
         await eventually("relay closed") { await relay.stopped }
         #expect(await relay.grants == 0)
         #expect(await racer.send(Message(convId: "c", messageId: "m1", text: "hi")))
@@ -277,6 +287,7 @@ struct RaceTests {
         await eventually("relay granted once direct failed") { await relay.grants == 1 }
         await relay.open()
         await eventually("relay opened") { await seen.opened == ["relay"] }
+        #expect(await seen.routesAndSessions == ["route:relay", "open:relay"])
         #expect(await seen.states.last == .ready)
         #expect(await racer.send(Message(convId: "c", messageId: "m1", text: "hi")))
         #expect(await relay.sent == ["m1"])
@@ -505,6 +516,111 @@ struct RaceTests {
     }
 
     let lanHints = DirectHints(port: 8738, lan: [.init(address: "192.168.0.9", prefix: 24)])
+
+    @Test func hostReturningOnTheRelayRetriesStoredCandidatesWithoutLooping() async {
+        hints.save(lanHints, room: "room")
+        let racer = await racer(direct: 0)
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        await relay.emit(.state(.hostOffline))
+        for leg in direct { await leg.fail() }
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("first relay session opened") { await seen.opened == ["relay"] }
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 1, "offline before the first win is no host return")
+        await relay.emit(.state(.hostOffline))
+        await relay.becomeReady()
+        await relay.open()
+        let (relay2, direct2) = await round(2)
+        #expect(direct2.map(\.name) == ["ws://192.168.0.9:8738"])
+        await started([relay2] + direct2)
+        for leg in direct2 { await leg.fail() }
+        await relay2.becomeReady()
+        await relay2.open()
+        await eventually("relay won after direct failed again") { await seen.opened.count == 3 }
+        await relay2.emit(.event(.directHints(lanHints)))
+        await relay2.open()
+        await eventually("another session on the same relay") { await seen.opened.count == 4 }
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 2)
+        #expect(await seen.routesAndSessions == ["route:relay", "open:relay", "open:relay", "route:relay", "open:relay", "open:relay"])
+        await racer.stop()
+    }
+
+    @Test func hostReturningGivesDirectTheHeadStartAfterARelayWin() async {
+        hints.save(lanHints, room: "room")
+        let racer = await racer(direct: 0, sleep: sleeps.never)
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        for leg in direct { await leg.fail() }
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay won") { await seen.opened == ["relay"] }
+        #expect(await !sleeps.asked.contains(RacePolicy.headStart), "no head start before direct ever won")
+        await relay.emit(.state(.hostOffline))
+        await relay.becomeReady()
+        await relay.open()
+        let (relay2, direct2) = await round(2)
+        await started(direct2)
+        await eventually("relay waits out the head start") { await sleeps.asked.contains(RacePolicy.headStart) }
+        await direct2[0].becomeReady()
+        await direct2[0].open()
+        await eventually("back on direct") { await seen.opened.last == "ws://192.168.0.9:8738" }
+        #expect(await relay2.grants == 0)
+        #expect(await seen.routesAndSessions.suffix(2) == ["route:wifi", "open:ws://192.168.0.9:8738"])
+        await racer.stop()
+    }
+
+    @Test func hostReturningWithoutCandidatesKeepsTheRelay() async {
+        let racer = await racer(direct: 0)
+        let (relay, _) = await round(1)
+        await started([relay])
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("relay opened") { await seen.opened.count == 1 }
+        await relay.emit(.state(.hostOffline))
+        await relay.becomeReady()
+        await relay.open()
+        await eventually("host returned") { await seen.opened.count == 2 }
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == 1)
+        #expect(await !relay.stopped)
+        await racer.stop()
+    }
+
+    @Test(arguments: [false, true]) func permissionChangeRacesAgainOnlyOnTheRelay(directWins: Bool) async {
+        let racer = await racer()
+        let (relay, direct) = await round(1)
+        await started([relay] + direct)
+        let winner = directWins ? direct[0] : relay
+        await winner.becomeReady()
+        await winner.open()
+        await eventually("session opened") { await seen.opened.count == 1 }
+        await racer.raceAgain()
+        if directWins {
+            #expect(await races.count == 1)
+            #expect(await !winner.stopped)
+        } else {
+            _ = await round(2)
+            await eventually("old relay stopped") { await relay.stopped }
+        }
+        await racer.stop()
+        await racer.raceAgain()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(await races.count == (directWins ? 1 : 2))
+    }
+
+    @Test func permissionChangeJoinsOnlyAYoungRaceInFlight() async {
+        let racer = await racer()
+        _ = await round(1)
+        await racer.raceAgain()
+        #expect(await races.count == 1)
+        try? await Task.sleep(for: .milliseconds(1100))
+        await racer.raceAgain()
+        _ = await round(2)
+        await racer.stop()
+    }
 
     @Test func newHintsOnTheRelayRaceAgainWithTheirCandidate() async {
         let racer = await racer()

@@ -67,7 +67,7 @@ public actor RacingConnection {
     /// The direct candidates for these hints, and the hints left out with why.
     typealias Candidates = @Sendable (_ hints: DirectHints?) -> (candidates: [URL], skipped: [(String, String)])
     /// Matching Bonjour results for the pairing's tag; nil while browsing is not allowed.
-    typealias Browse = @Sendable (_ tag: String) -> AsyncStream<URL>?
+    typealias Browse = @Sendable (_ hostKey: Data) -> AsyncStream<URL>?
     typealias Sleep = @Sendable (Duration) async throws -> Void
 
     /// An app reconnect joins a healthy race this young, won or not, instead of starting another.
@@ -106,6 +106,7 @@ public actor RacingConnection {
     private var waiting: [Int] = []
     private var holder: Int?
     private var winner: Int?
+    private var hostWasOffline = false
     private var paths: Task<Void, Never>?
     private var again: Task<Void, Never>?
     private var pushToken: String?
@@ -131,8 +132,8 @@ public actor RacingConnection {
             let isMac = false
             #endif
             return DirectCandidates.plan(hints: hints, interfaces: LocalInterface.current(), isMac: isMac,
-                lanAllowed: LocalNetwork.allowed)
-        }, hints: DirectHintStore(), browse: { tag in LocalNetwork.allowed ? Bonjour.browse(tag: tag) : nil },
+                lanAllowed: LocalNetwork.allowed, lanDenied: LocalNetwork.denied)
+        }, hints: DirectHintStore(), browse: { key in LocalNetwork.usable ? Bonjour.browse(hostKey: key) : nil },
             pathChanges: RacingConnection.networkChanges, network: { await NetworkKind.shared.current() },
             winners: DefaultsRaceWinners())
     }
@@ -192,6 +193,16 @@ public actor RacingConnection {
         await race()
     }
 
+    /// Permission changes can make direct candidates usable while a relay session is healthy.
+    public func raceAgain() async {
+        guard running else { return }
+        if let winner, winner != relayID {
+            return connectionLog.info("raceAgain: already direct")
+        }
+        guard winner != nil || ContinuousClock.now - raceBegan >= .seconds(1) else { return }
+        await race(preferDirect: true)
+    }
+
     public func stop() async {
         running = false
         paths?.cancel()
@@ -240,11 +251,14 @@ public actor RacingConnection {
         waiting = []
         holder = nil
         winner = nil
+        hostWasOffline = false
         for leg in old.values { await leg.stop() }
         return round
     }
 
-    private func race() async {
+    /// `preferDirect`: the race is for a direct path that may have come back (the host returned, permission changed), so the
+    /// relay waits out the head start even after a relay win; otherwise a loopback relay can take the tie again.
+    private func race(preferDirect: Bool = false) async {
         let round = await endRace()
         guard running else { return }
         let network = await network()
@@ -257,7 +271,8 @@ public actor RacingConnection {
         raceNetwork = network
         dialed = Set(direct.map(\.key))
         let last = pairing.roomId.flatMap { winners.winner(room: $0, network: network) }
-        let plan = RacePolicy.plan(direct: direct.map(\.key), lastWinner: last)
+        var plan = RacePolicy.plan(direct: direct.map(\.key), lastWinner: last)
+        if preferDirect, !plan.direct.isEmpty { plan.relay = max(plan.relay, RacePolicy.headStart) }
         let relayID = register(relay)
         self.relayID = relayID
         order = plan.direct.map { register(direct[$0.index]) }
@@ -276,7 +291,7 @@ public actor RacingConnection {
     /// Bonjour runs alongside the race until a session opens, the race ends or 5 s pass.
     private func startBrowsing(_ round: Int) {
         guard let key = Data(base64URLEncoded: pairing.macPubkey), key.count == 32,
-              let results = browse?(Direct.bonjourTag(hostKey: key)) else { return }
+              let results = browse?(key) else { return }
         connectionLog.info("race \(round, privacy: .public) browsing Bonjour")
         let time = Self.browseTime
         browsing = Task { [weak self] in
@@ -314,7 +329,7 @@ public actor RacingConnection {
         guard id == relayID, pairing.secret == nil,
               candidates(new).candidates.contains(where: { !dialed.contains($0.absoluteString) }) else { return }
         connectionLog.info("race \(self.round, privacy: .public): new direct hints on the relay, racing again")
-        rerace(after: .zero)
+        rerace(after: .zero, preferDirect: true)
     }
 
     private func register(_ leg: any ConnectionLeg) -> Int {
@@ -387,6 +402,14 @@ public actor RacingConnection {
         guard round == self.round, legs[id] != nil else { return }
         switch update {
         case .sessionOpen(let peer):
+            let won = winner != id
+            if id == winner, id == relayID, hostWasOffline {
+                hostWasOffline = false
+                if !candidates(pairing.roomId.flatMap(hints.load(room:))).candidates.isEmpty {
+                    connectionLog.info("race \(round, privacy: .public): host back on the relay, racing again for direct")
+                    rerace(after: .zero, preferDirect: true)
+                }
+            }
             if winner != id {
                 let label = legs[id]?.label ?? "leg"
                 connectionLog.info("race \(round, privacy: .public) won by \(label, privacy: .public) after \((ContinuousClock.now - self.raceBegan).ms, privacy: .public) ms")
@@ -407,6 +430,9 @@ public actor RacingConnection {
             }
             sessionBegan = .now
             set(.ready)
+            if won {
+                continuation?.yield(.route(id == relayID ? .relay : DirectRoute.of(legs[id].flatMap { URL(string: $0.key) })))
+            }
             continuation?.yield(.sessionOpen(peer))
         case .state(let new):
             switch new {
@@ -419,6 +445,7 @@ public actor RacingConnection {
                 break
             }
             if id == winner {
+                if id == relayID, new == .hostOffline { hostWasOffline = true }
                 // A direct winner is lost on any state but ready; a relay winner only when its socket closes (it rides
                 // out a host going offline on the same socket). Either way the next race may find the other path.
                 let lost = id == relayID ? new == .offline : new != .ready
@@ -459,10 +486,12 @@ public actor RacingConnection {
         case .relayJoined:
             relayKnows = true
             continuation?.yield(update)
+        case .route:
+            break
         }
     }
 
-    private func rerace(after pause: Duration) {
+    private func rerace(after pause: Duration, preferDirect: Bool = false) {
         guard again == nil else { return }
         let round = round
         let sleep = sleep
@@ -471,13 +500,13 @@ public actor RacingConnection {
                 do { try await sleep(pause) } catch { return }
             }
             guard !Task.isCancelled else { return }
-            await self?.rerace(round)
+            await self?.rerace(round, preferDirect: preferDirect)
         }
     }
 
-    private func rerace(_ round: Int) async {
+    private func rerace(_ round: Int, preferDirect: Bool) async {
         guard round == self.round, running else { return }
-        await race()
+        await race(preferDirect: preferDirect)
     }
 
     private func set(_ new: RelayConnection.State) {
