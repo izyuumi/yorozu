@@ -51,9 +51,26 @@ struct DirectCandidatesTests {
 
     @Test func loopbackOnlyOnTheMacAndFirst() {
         let hints = DirectHints(port: 9000, lan: [.init(address: "192.168.0.9", prefix: 24)])
-        #expect(plan(hints, [wifi], isMac: true).candidates == ["ws://127.0.0.1:8738", "ws://[::1]:8738", "ws://192.168.0.9:9000"])
+        let hostInterface = LocalInterface(name: "en0", address: "192.168.0.9", prefix: 24)
+        #expect(plan(hints, [hostInterface], isMac: true).candidates == ["ws://127.0.0.1:8738", "ws://[::1]:8738", "ws://192.168.0.9:9000"])
         #expect(plan(nil, [wifi], isMac: true).candidates == ["ws://127.0.0.1:8738", "ws://[::1]:8738"])
+        #expect(plan(DirectHints(port: 9000), [wifi], isMac: true).candidates == ["ws://127.0.0.1:8738", "ws://[::1]:8738"])
         #expect(plan(nil, [wifi]).candidates.isEmpty)
+    }
+
+    @Test func loopbackIsSkippedWhenTheHostsAddressesAreNotLocal() {
+        let hints = DirectHints(port: 9000, lan: [.init(address: "192.168.1.9", prefix: 24)],
+            tailscale: [.init(address: "100.101.1.1")])
+        #expect(plan(hints, [wifi], isMac: true) == ([], [
+            "127.0.0.1 (host is on another machine)", "::1 (host is on another machine)",
+            "192.168.1.9 (not on this subnet)", "100.101.1.1 (no Tailscale interface up)"
+        ]))
+    }
+
+    @Test func aLocalHintMatchesAddressBytesEvenOnADownVPNInterface() {
+        let hints = DirectHints(port: 9000, tailscale: [.init(address: "fd7a:115c:a1e0:0:0:0:0:1")])
+        let local = LocalInterface(name: "utun4", address: "fd7a:115c:a1e0::1", prefix: 128, up: false)
+        #expect(plan(hints, [local], isMac: true).candidates == ["ws://127.0.0.1:8738", "ws://[::1]:8738"])
     }
 
     @Test func bonjourResultsMustBeOnALocalSubnet() {
@@ -82,15 +99,17 @@ struct DirectCandidatesTests {
     }
 
     @Test func routesClassifyTheWinningURL() {
-        #expect(DirectRoute.of(nil) == .relay)
+        #expect(DirectRoute.of(nil, network: "wired") == .relay)
         for host in ["127.0.0.1", "[::1]", "localhost"] {
-            #expect(DirectRoute.of(URL(string: "ws://\(host):8738")) == .thisMac)
+            #expect(DirectRoute.of(URL(string: "ws://\(host):8738"), network: "wired") == .thisMac)
         }
         for host in ["100.64.0.1", "[fd7a:115c:a1e0::1]", "x.ts.net"] {
-            #expect(DirectRoute.of(URL(string: "ws://\(host):8738")) == .tailscale)
+            #expect(DirectRoute.of(URL(string: "ws://\(host):8738"), network: "wired") == .tailscale)
         }
         for host in ["192.168.0.1", "host.local", "[fd00::1]", "100.128.0.1"] {
-            #expect(DirectRoute.of(URL(string: "ws://\(host):8738")) == .wifi)
+            #expect(DirectRoute.of(URL(string: "ws://\(host):8738"), network: "wifi") == .wifi)
+            #expect(DirectRoute.of(URL(string: "ws://\(host):8738"), network: "wired") == .localNetwork)
+            #expect(DirectRoute.of(URL(string: "ws://\(host):8738"), network: "other") == .localNetwork)
         }
     }
 

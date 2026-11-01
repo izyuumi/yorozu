@@ -431,7 +431,7 @@ public actor RacingConnection {
             sessionBegan = .now
             set(.ready)
             if won {
-                continuation?.yield(.route(id == relayID ? .relay : DirectRoute.of(legs[id].flatMap { URL(string: $0.key) })))
+                continuation?.yield(.route(id == relayID ? .relay : DirectRoute.of(legs[id].flatMap { URL(string: $0.key) }, network: raceNetwork)))
             }
             continuation?.yield(.sessionOpen(peer))
         case .state(let new):
