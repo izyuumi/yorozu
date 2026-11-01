@@ -120,7 +120,7 @@ final class StoredNames: @unchecked Sendable {
         let old = root.appending(path: "\(name.rawValue)-v3", directoryHint: .isDirectory)
         let staging = root.appending(path: ".\(name.rawValue)-v3-staging", directoryHint: .isDirectory)
         var moved = 0, kept = 0, failed = 0
-        var bytes: Int64 = 0
+        var bytes: Int64 = 0, movedBytes: Int64 = 0
         do {
             // No old directory: no filesystem changes, including creation of the new directory.
             guard files.exists(old) else {
@@ -176,6 +176,7 @@ final class StoredNames: @unchecked Sendable {
                                 throw CocoaError(.fileReadCorruptFile)
                             }
                             moved += 1
+                            movedBytes += size
                         }
                         try files.remove(source)
                     }
@@ -192,7 +193,7 @@ final class StoredNames: @unchecked Sendable {
             }
         } catch { failed += 1 }
         let outcome = isComplete(name) ? "complete" : "retry"
-        logger.info("\(name.rawValue, privacy: .public): moved \(moved, privacy: .public), kept-new \(kept, privacy: .public), failed \(failed, privacy: .public), \(bytes, privacy: .public) bytes; \(outcome, privacy: .public)")
+        logger.info("\(name.rawValue, privacy: .public): moved \(moved, privacy: .public), kept-new \(kept, privacy: .public), failed \(failed, privacy: .public), \(movedBytes, privacy: .public) of \(bytes, privacy: .public) bytes moved; \(outcome, privacy: .public)")
         return isComplete(name)
     }
 }
