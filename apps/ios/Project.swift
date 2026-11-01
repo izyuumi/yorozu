@@ -238,7 +238,7 @@ let project = Project(
                 "Tests/**", "Sources/Client/Store.swift", "Sources/Client/SupportDirectory.swift",
                 "Sources/Client/WidgetPublisher.swift",
                 "Sources/WidgetShared/Model/**", "Sources/WidgetShared/Interface/WidgetLink.swift",
-                "Sources/WidgetShared/Interface/Launcher.swift",
+                "Sources/WidgetShared/Interface/Launcher.swift", "Sources/YorozuIOS/LaunchColumns.swift",
             ],
             dependencies: [.package(product: "YorozuWire")],
             settings: .settings(base: ["DEVELOPMENT_TEAM": "AN5KM8QGEF", "CODE_SIGN_STYLE": "Automatic"])
