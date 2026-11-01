@@ -388,11 +388,23 @@ export function conformance(relay: Adapter) {
     expect(await phone.closedReason()).toBe("bad push");
   });
 
-  test("a mis-typed message closes the socket", async () => {
-    const peer = await connect(fakeRoom("anything"));
-    await peer.next();
-    peer.send({ type: "nope" });
-    expect(await peer.closed()).toBe(CLOSE_PROTOCOL);
+  test("an unknown type is ignored, from the mac and from a phone, and the socket stays open", async () => {
+    const { mac, phone } = await paired();
+    mac.send({ type: "nope", extra: 1 });
+    mac.send({ type: "ping" });
+    expect(await mac.next()).toMatchObject({ type: "pong" });
+    phone.send({ type: "nope", extra: 1 });
+    phone.send({ type: "owner" });
+    expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+  });
+
+  test("unknown fields on a known type are ignored", async () => {
+    const { mac, phone, keys } = await paired();
+    phone.send({ type: "owner", extra: { nested: true } });
+    expect(await phone.next()).toMatchObject({ type: "owner", online: true });
+    const sig = await keys.sign("cA");
+    phone.send({ type: "frame", payload: "cA", sig, extra: 1 });
+    expect(await mac.next()).toMatchObject({ type: "frame", payload: "cA" });
   });
 
   test("tells phones whether the room's mac is online", async () => {

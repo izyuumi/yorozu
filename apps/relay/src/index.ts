@@ -441,7 +441,9 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
 
         case "notify": {
           if (conn.role !== "mac" || !conn.room) return ws.close(CLOSE_PROTOCOL, "not registered");
-          if (!parseNotify(msg)) return ws.close(CLOSE_PROTOCOL, "bad notify");
+          const notify = parseNotify(msg);
+          if (notify === null) return ws.close(CLOSE_PROTOCOL, "bad notify");
+          if (!notify) return;
           if (!allowNotify(conn.room.notifyWindow, now, notifyLimit)) {
             ws.send(JSON.stringify({ type: "state", state: "notify rate limit" }));
           }
@@ -449,7 +451,7 @@ export function startRelay(port = Number(process.env.PORT ?? 8787)): Promise<Rel
         }
 
         default:
-          return ws.close(CLOSE_PROTOCOL, "unknown type");
+          return; // An unknown type is ignored (it still costs a rate-limit token).
       }
     });
 

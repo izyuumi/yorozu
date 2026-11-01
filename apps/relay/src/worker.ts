@@ -716,7 +716,8 @@ export class Room implements DurableObject {
       case "notify": {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const notify = parseNotify(msg);
-        if (!notify) return this.drop(ws, CLOSE_PROTOCOL, "bad notify");
+        if (notify === null) return this.drop(ws, CLOSE_PROTOCOL, "bad notify");
+        if (!notify) return;
         const limit = positiveLimit(this.env.RELAY_NOTIFY_PER_MINUTE, NOTIFY_PER_MINUTE);
         if (!(await this.reserveNotify(now, "notify-window", limit))) {
           ws.send(JSON.stringify({ type: "state", state: "notify rate limit" }));
@@ -739,7 +740,8 @@ export class Room implements DurableObject {
       case "activityPush": {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const push = parseActivityPush(msg);
-        if (!push) return this.drop(ws, CLOSE_PROTOCOL, "bad activity push");
+        if (push === null) return this.drop(ws, CLOSE_PROTOCOL, "bad activity push");
+        if (!push) return;
         const limit = positiveLimit(this.env.RELAY_ACTIVITY_PER_MINUTE, ACTIVITY_PUSH_PER_MINUTE);
         if (!(await this.reserveNotify(now, "activity-window", limit))) {
           ws.send(JSON.stringify({ type: "state", state: "activity rate limit" }));
@@ -777,7 +779,7 @@ export class Room implements DurableObject {
       }
 
       default:
-        return this.drop(ws, CLOSE_PROTOCOL, "unknown type");
+        return; // An unknown type is ignored (it still costs a rate-limit token).
     }
   }
 }
