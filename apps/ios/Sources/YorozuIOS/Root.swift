@@ -27,10 +27,10 @@ struct RootView: View {
             LocalNetworkExplainer(model: model).yorozuTint()
         }
         .alert(String(localized: "Pair with this host?"),
-            isPresented: Binding(get: { model.pendingPairing != nil }, set: { if !$0 { model.pendingPairing = nil } }),
+            isPresented: Binding(get: { model.pendingPairing != nil }, set: { if !$0 && model.pendingPairing != nil { model.dismissPendingPairing() } }),
             presenting: model.pendingPairing) { payload in
             Button(String(localized: "Pair")) { model.confirm(payload) }
-            Button(String(localized: "Cancel"), role: .cancel) { model.pendingPairing = nil }
+            Button(String(localized: "Cancel"), role: .cancel) { model.dismissPendingPairing() }
         } message: { payload in
             Text(String(localized: "Check that this host key matches the one `openclaw yorozu pair` printed, or the one your other device shows.\n\nHost key: \(payload.fingerprint)\nRelay: \(URL(string: payload.relayUrl)?.host() ?? payload.relayUrl)"))
         }
@@ -69,9 +69,8 @@ struct RootView: View {
 }
 
 struct PairingView: View {
-    let model: AppModel
+    @Bindable var model: AppModel
 
-    @State private var code = ""
     @State private var scanning = false
     @State private var findingHost = false
 
@@ -97,7 +96,7 @@ struct PairingView: View {
                             ProgressView()
                             Text("Pairing…")
                         }
-                        Button(String(localized: "Cancel"), role: .cancel) { model.unpair() }
+                        Button(String(localized: "Cancel"), role: .cancel) { model.cancelPairing() }
                     } footer: {
                         Text(model.state.label)
                     }
@@ -108,7 +107,7 @@ struct PairingView: View {
                     }
                     #endif
                     Section {
-                        TextField(String(localized: "Pairing link"), text: $code, axis: .vertical)
+                        TextField(String(localized: "Pairing link"), text: $model.pairingEntry.text, axis: .vertical)
                             .textStyle(.footnote, monospaced: true)
                             #if os(iOS)
                             .textInputAutocapitalization(.never)
@@ -119,13 +118,13 @@ struct PairingView: View {
                         PasteButton(payloadType: String.self) { strings in
                             guard let text = strings.first else { return }
                             Task { @MainActor in
-                                code = text
+                                model.pairingEntry.text = text
                                 model.pairingError = model.submit(text)
                             }
                         }
                         .accessibilityIdentifier("pairing.paste")
-                        Button(String(localized: "Pair")) { model.pairingError = model.submit(code) }
-                            .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button(String(localized: "Pair")) { model.pairingError = model.submit(model.pairingEntry.text) }
+                            .disabled(model.pairingEntry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             .accessibilityIdentifier("pairing.submit")
                     } footer: {
                         Text("Paste the `yorozu://pair…` link, or the https link the QR code opens.")
