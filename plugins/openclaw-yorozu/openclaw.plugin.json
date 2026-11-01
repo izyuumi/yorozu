@@ -29,7 +29,8 @@
             "additionalProperties": false,
             "properties": {
               "enabled": { "type": "boolean", "default": true },
-              "port": { "type": "integer", "minimum": 1024, "maximum": 65535, "default": 8738 }
+              "port": { "type": "integer", "minimum": 1024, "maximum": 65535, "default": 8738 },
+              "bonjour": { "type": "boolean", "default": true }
             }
           }
         }

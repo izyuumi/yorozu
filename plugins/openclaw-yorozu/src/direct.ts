@@ -89,7 +89,7 @@ export type DirectOptions = {
   log?: Log;
 };
 
-export type DirectListener = { readonly listening: boolean; readonly bound: string[]; close: () => Promise<void> };
+export type DirectListener = { readonly listening: boolean; readonly bound: string[]; update: (addresses: string[]) => Promise<void>; close: () => Promise<void> };
 
 const OPEN = 1;
 const size = (data: unknown): number =>
@@ -102,11 +102,11 @@ const size = (data: unknown): number =>
 export async function serveDirect(opts: DirectOptions): Promise<DirectListener> {
   const { keys, hub, log } = opts;
   const transmit = opts.transmit ?? ((socket, raw) => socket.send(raw));
-  const sockets = new Set<DirectSocket>();
+  const sockets = new Map<DirectSocket, string>();
   let pending = 0;
 
-  const accept = (ws: DirectSocket, origin: unknown): void => {
-    sockets.add(ws);
+  const accept = (ws: DirectSocket, origin: unknown, host: string): void => {
+    sockets.set(ws, host);
     let counted = true;
     pending++;
     const settle = () => {
@@ -195,7 +195,7 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
     new Promise((resolve) => {
       const server = opts.server({ host, port: opts.port, maxPayload: 2 * MAX_FRAME_BYTES });
       server.on("connection", (ws: DirectSocket, request: { headers?: Record<string, unknown> } | undefined) =>
-        accept(ws, request?.headers?.origin));
+        accept(ws, request?.headers?.origin, host));
       let up = false;
       server.on("listening", () => {
         up = true;
@@ -209,32 +209,53 @@ export async function serveDirect(opts: DirectOptions): Promise<DirectListener> 
       });
     });
 
-  const bound: string[] = [];
-  const servers: DirectServer[] = [];
-  for (const host of opts.addresses) {
-    if (!directAddress(host)) {
-      log?.warn(`yorozu: direct listener skips ${host}: not a loopback or private address`);
-      continue;
+  const servers = new Map<string, DirectServer>();
+  let closed = false;
+  let queue = Promise.resolve();
+  const closeSockets = (host?: string) => {
+    for (const [ws, address] of sockets) {
+      if (host !== undefined && address !== host) continue;
+      ws.close(1001, "stopping");
+      setTimeout(() => ws.terminate(), 1_000).unref();
     }
-    const server = await listen(host);
-    if (!server) continue;
-    servers.push(server);
-    bound.push(host);
-  }
+  };
+  const update = (addresses: string[]): Promise<void> => {
+    const next = queue.then(async () => {
+      if (closed) return;
+      for (const [address, server] of servers) {
+        if (addresses.includes(address)) continue;
+        servers.delete(address);
+        closeSockets(address);
+        server.close();
+      }
+      for (const host of new Set(addresses)) {
+        if (!directAddress(host)) {
+          log?.warn(`yorozu: direct listener skips ${host}: not a loopback or private address`);
+          continue;
+        }
+        if (servers.has(host)) continue;
+        const server = await listen(host);
+        if (server) servers.set(host, server);
+      }
+    });
+    queue = next.catch(() => {});
+    return next;
+  };
+  await update(opts.addresses);
+  const bound = [...servers.keys()];
   if (bound.length) log?.info(`yorozu: direct listener on port ${opts.port} (${bound.join(", ")})`);
-  let open = servers.length > 0;
   return {
     get listening() {
-      return open;
+      return !closed && servers.size > 0;
     },
-    bound,
+    get bound() { return [...servers.keys()]; },
+    update,
     close: async () => {
-      open = false;
-      for (const ws of sockets) {
-        ws.close(1001, "stopping");
-        setTimeout(() => ws.terminate(), 1_000).unref();
-      }
-      await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+      closed = true;
+      await queue;
+      closeSockets();
+      await Promise.all([...servers.values()].map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+      servers.clear();
     },
   };
 }

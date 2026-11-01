@@ -82,6 +82,7 @@ class FakeSocket extends EventEmitter {
 }
 
 class FakeServer extends EventEmitter {
+  closed = false;
   readonly options: { host: string; port: number; maxPayload: number };
   constructor(options: { host: string; port: number; maxPayload: number }) {
     super();
@@ -89,6 +90,7 @@ class FakeServer extends EventEmitter {
     queueMicrotask(() => (options.host === "10.9.9.9" ? this.emit("error", new Error("EADDRNOTAVAIL")) : this.emit("listening")));
   }
   close(callback?: () => void) {
+    this.closed = true;
     callback?.();
   }
 }
@@ -190,4 +192,25 @@ test(`at most ${MAX_PENDING} connections wait for their handshake`, async () => 
   const next = connect();
   await settle();
   assert.equal(next.closed, undefined, "a slot frees when a waiting socket closes");
+});
+
+test("update rebinds only changed addresses, preserves surviving connections and follows listening state", async () => {
+  const { direct, servers, connect } = await listener();
+  const survivor = connect();
+  await direct.update(["127.0.0.1", "192.168.1.5", "0.0.0.0", "::", "8.8.8.8"]);
+  assert.deepEqual(direct.bound, ["127.0.0.1", "192.168.1.5"]);
+  assert.equal(servers.length, 2);
+  assert.equal(survivor.closed, undefined);
+  await direct.update(["127.0.0.1"]);
+  assert.equal(servers[1]!.closed, true);
+  assert.equal(servers[0]!.closed, false);
+  assert.equal(survivor.closed, undefined);
+  await direct.update([]);
+  assert.equal(survivor.closed, 1001);
+  assert.equal(direct.listening, false);
+  await direct.update(["::1"]);
+  assert.equal(direct.listening, true);
+  await direct.close();
+  await direct.update(["127.0.0.1"]);
+  assert.equal(direct.listening, false);
 });

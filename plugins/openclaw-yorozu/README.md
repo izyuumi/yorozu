@@ -33,11 +33,14 @@ Capability `direct` (#532): clients reach the plugin without the relay, over the
 |---|---|---|
 | `channels.yorozu.direct.enabled` | `true` | `false` turns the listener off |
 | `channels.yorozu.direct.port` | `8738` | Its port, an integer from 1024 to 65535 (anything else falls back to 8738) |
+| `channels.yorozu.direct.bonjour` | `true` | `false` stops the `_yorozu._tcp` Bonjour responder; hints still go out |
 
-- Its own WebSocket server (`WebSocketServer` from `openclaw/plugin-sdk/websocket-runtime`), not a Gateway route: one per local address that is loopback, RFC 1918, ULA or 100.64.0.0/10, read from `os.networkInterfaces()` when the channel starts. It never binds `0.0.0.0`, `::` or a public address. A port that no address can bind is logged, and the channel runs relay only.
+- Its own WebSocket server (`WebSocketServer` from `openclaw/plugin-sdk/websocket-runtime`), not a Gateway route: one per local address that is loopback, RFC 1918, ULA or 100.64.0.0/10, read from `os.networkInterfaces()` when the channel starts and again every 5 s (`src/hints.ts`): new addresses are bound, addresses that went away are closed with their sockets. It never binds `0.0.0.0`, `::` or a public address. A port that no address can bind is logged, and the channel runs relay only.
 - A socket must send `probe {nonce}` first; the plugin answers with the host's Ed25519 key and its signature over `yorozu-direct|<room>|<nonce>`. Then an init frame from an allowlisted device (no pairing here yet), then signed boxes, each answered `accepted`. At most 8 sockets wait for their handshake, each for 10 s; a message over 1 MiB closes `4103`; anything out of order, a refused handshake, a bad signature or a browser `Origin` closes `4101`; a socket silent for 90 s is dropped.
+- Hints (`direct_hints {port, lan[{address,prefix}], tailscale[{address}], magicDNS?}`, flag `direct`): the bound non-loopback addresses, split into LAN and Tailscale (100.64.0.0/10, `fd7a:115c:a1e0::/48`), plus the `.ts.net` name from a reverse lookup of the Tailscale IPv4 (2 s timeout). They go inside the encrypted session to devices whose `peer_info` lists `direct`, right after it and again whenever they change, over whichever path the device is on.
+- Bonjour (`src/bonjour.ts`): a small mDNS responder on `node:dgram`, IPv4 LAN addresses only. One receive socket joins 224.0.0.251:5353 on each LAN address; replies and announcements go out from a socket bound to that address, never a wildcard. It advertises `<tag>._yorozu._tcp.local` with TXT `t=<tag>`, where the tag is the base64url of the first 9 bytes of HMAC-SHA256 (key: the host static public key, message `yorozu-bonjour`). Only a paired device, which knows that key, can match it to the host.
 - `push_token {token}` from a device (capability `push-proxy`) goes to the relay as `push {device, token}` while the relay offers `pushProxy`, and is dropped otherwise.
-- `node --test` covers the address filter, the probe and the limits (`test/direct.test.ts`); `apps/relay/src/direct.test.ts` runs the listener and `hub.ts` end to end with a device, directly and through the Node relay.
+- `node --test` covers the address filter, the probe, the limits and rebinding (`test/direct.test.ts`), hint extraction, MagicDNS and the watcher (`test/hints.test.ts`), and the tag vector, DNS parsing and a responder answering on loopback (`test/bonjour.test.ts`); `apps/relay/src/direct.test.ts` runs the listener and `hub.ts` end to end with a device, directly and through the Node relay.
 
 ## Keys and devices (`src/keys.ts`, `src/devices.ts`)
 
@@ -124,4 +127,4 @@ No output means the plugin typechecks. The `grep` drops errors from inside the O
 
 ## Tests
 
-`src/liveactivity.ts`, `src/envelope.ts`, `src/direct.ts` and `src/hub.ts` import nothing from OpenClaw, so Node runs their tests without it: `node --test test/*.test.ts` (Node 26, from this folder; `test/envelope.test.ts` maps the sibling `./x.js` imports to `./x.ts` with a resolve hook). The Live Activity tests share `apps/ios/Tests/Fixtures/activity-content-state.json` with the relay's and the app's tests.
+`src/liveactivity.ts`, `src/envelope.ts`, `src/direct.ts`, `src/hints.ts`, `src/bonjour.ts` and `src/hub.ts` import nothing from OpenClaw, so Node runs their tests without it: `node --test test/*.test.ts` (Node 26, from this folder; `test/envelope.test.ts` maps the sibling `./x.js` imports to `./x.ts` with a resolve hook). The Live Activity tests share `apps/ios/Tests/Fixtures/activity-content-state.json` with the relay's and the app's tests.

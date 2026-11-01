@@ -2,6 +2,8 @@
 // built-ins and the pure wire and envelope files, so the direct path's end-to-end test runs it without OpenClaw.
 import {
   ATTACHMENTS,
+  DIRECT,
+  type DirectHints,
   encodeEvent,
   negotiate,
   parseEvent,
@@ -45,6 +47,7 @@ export type HubOptions = {
   pair?: (proof: string | undefined, staticPub: string, deviceKey: string, now: number) => Promise<boolean>;
   /** A relay handshake from a device that is not allowlisted. */
   refused?: (deviceKey: string) => void;
+  directHints?: () => DirectHints | undefined;
   onPeer?: (request: Request) => Promise<void>;
   onMessage: (message: Message) => void;
   /** Every other event after `peer_info`; false when the plugin does not take it from a device. */
@@ -169,6 +172,8 @@ export class Hub {
         return log?.info("yorozu: session closed (update required)");
       }
       entry.peer = event.data;
+      const hints = this.opts.directHints?.();
+      if (hints && entry.peer.capabilities.includes(DIRECT)) reply([{ kind: "direct_hints", data: hints }]);
       await this.opts.onPeer?.(request);
       return log?.info(`yorozu: peer_info received (protocol ${PROTOCOL_VERSION})`);
     }
@@ -196,7 +201,9 @@ export class Hub {
   /** Every device with a live session, each over its own path: the relay batch skips devices connected directly. */
   broadcast(events: Event[]): number {
     const live = [...this.served.values()].filter((entry) => entry.peer);
-    const takes = (event: Event, peer: PeerInfo) => event.kind !== "reaction" || peer.capabilities.includes(REACTIONS);
+    const takes = (event: Event, peer: PeerInfo) =>
+      event.kind === "direct_hints" ? !!this.opts.directHints?.() && peer.capabilities.includes(DIRECT) :
+        event.kind !== "reaction" || peer.capabilities.includes(REACTIONS);
     const out = new Map<Link, string[]>();
     for (const event of events) {
       for (const entry of live) {

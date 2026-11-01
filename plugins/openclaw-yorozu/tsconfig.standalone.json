@@ -17,5 +17,5 @@
     "types": ["node"],
     "verbatimModuleSyntax": true
   },
-  "include": ["src/direct.ts", "src/envelope.ts", "src/hub.ts", "src/spool.ts", "src/wire.ts"]
+  "include": ["src/bonjour.ts", "src/direct.ts", "src/envelope.ts", "src/hints.ts", "src/hub.ts", "src/spool.ts", "src/wire.ts"]
 }
