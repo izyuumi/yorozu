@@ -101,6 +101,15 @@ final class StoredNames: @unchecked Sendable {
         }
     }
 
+    /// Retry once at a new URL if a failed open lost its file to the migration.
+    func withLocal<T>(_ relative: String, in name: Name, _ body: (URL) throws -> T?) rethrows -> T? {
+        guard let url = local(relative, in: name) else { return nil }
+        if let result = try body(url) { return result }
+        guard !FileManager.default.fileExists(atPath: url.path),
+              let retry = local(relative, in: name), retry != url else { return nil }
+        return try body(retry)
+    }
+
     func remove(_ relative: String? = nil, in name: Name) throws {
         try lock.withLock {
             // Old first: if deletion fails, retain the new copy too rather than resurrecting old data.

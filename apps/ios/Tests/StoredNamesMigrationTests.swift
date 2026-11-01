@@ -48,6 +48,51 @@ private final class FaultFiles: StoredNamesFileOperations {
 }
 
 struct StoredNamesMigrationTests {
+    @Test func withLocalRetriesAfterTheMoveRemovesTheOldFile() throws {
+        let fixture = MigrationFixture(), store = fixture.store
+        try fixture.write("Attachments-v3/id/file", "whole file")
+        var urls: [URL] = []
+        let data = store.withLocal("id/file", in: .attachments) { url in
+            urls.append(url)
+            if urls.count == 1 { #expect(store.migrate(.attachments)) }
+            return try? Data(contentsOf: url)
+        }
+        #expect(urls == [fixture.url("Attachments-v3/id/file"), fixture.url("Attachments/id/file")])
+        #expect(data == Data("whole file".utf8))
+    }
+
+    @Test func withLocalReturnsNilWhenTheFileIsGone() throws {
+        let fixture = MigrationFixture(), store = fixture.store
+        try fixture.write("Attachments-v3/id/file", "whole file")
+        var calls = 0
+        let data: Data? = try store.withLocal("id/file", in: .attachments) { url in
+            calls += 1
+            try FileManager.default.removeItem(at: url)
+            return try? Data(contentsOf: url)
+        }
+        #expect(data == nil)
+        #expect(calls == 1)
+        let missing: Data? = store.withLocal("id/file", in: .attachments) { url in
+            calls += 1
+            return try? Data(contentsOf: url)
+        }
+        #expect(missing == nil)
+        #expect(calls == 1)
+    }
+
+    @Test func withLocalDoesNotRetryWhenTheFileStillExists() throws {
+        let fixture = MigrationFixture(), store = fixture.store
+        try fixture.write("Attachments-v3/id/file", "whole file")
+        var calls = 0
+        let data: Data? = store.withLocal("id/file", in: .attachments) { _ in
+            calls += 1
+            return nil
+        }
+        #expect(data == nil)
+        #expect(calls == 1)
+        #expect(fixture.exists("Attachments-v3/id/file"))
+    }
+
     @Test(arguments: StoredNames.Name.allCases) func oldOnlyDirectoriesMigrate(name: StoredNames.Name) throws {
         let fixture = MigrationFixture(), store = fixture.store
         try fixture.write("\(name.rawValue)-v3/nested/file", "complete contents")
