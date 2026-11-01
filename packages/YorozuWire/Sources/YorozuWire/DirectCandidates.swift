@@ -212,9 +212,9 @@ enum DirectCandidates {
     static let tailscaleV4 = (network: Direct.ipBytes("100.64.0.0")!, prefix: 10)
     static let tailscaleV6 = (network: Direct.ipBytes("fd7a:115c:a1e0::")!, prefix: 48)
 
-    /// Loopback on the Mac (the default port), unless hints show the host is on another machine; LAN addresses on a
-    /// subnet of an up, non-VPN interface, once Local Network is allowed; Tailscale IPs and then the MagicDNS name while
-    /// an up VPN interface holds a Tailscale address. `skipped` names each left-out hint and why, for the log.
+    /// Loopback on the Mac (the default port), always, since stored hints can be stale; LAN addresses on a subnet of an
+    /// up, non-VPN interface, once Local Network is allowed; Tailscale IPs and then the MagicDNS name while an up VPN
+    /// interface holds a Tailscale address. `skipped` names each left-out hint and why, for the log.
     static func plan(hints: DirectHints?, interfaces: [LocalInterface], isMac: Bool, lanAllowed: Bool, lanDenied: Bool = false, port: Int = Direct.port)
         -> (candidates: [URL], skipped: [(String, String)]) {
         var candidates: [URL] = []
@@ -223,13 +223,8 @@ enum DirectCandidates {
             if let url = Direct.url(host: host, port: port), !candidates.contains(url) { candidates.append(url) }
         }
         if isMac {
-            if hostMayBeLocal(hints, interfaces) {
-                add("127.0.0.1", port)
-                add("::1", port)
-            } else {
-                skipped.append(("127.0.0.1", "host is on another machine"))
-                skipped.append(("::1", "host is on another machine"))
-            }
+            add("127.0.0.1", port)
+            add("::1", port)
         }
         guard let hints else { return (candidates, skipped) }
         for hint in hints.lan {

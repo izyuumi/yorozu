@@ -58,11 +58,10 @@ struct DirectCandidatesTests {
         #expect(plan(nil, [wifi]).candidates.isEmpty)
     }
 
-    @Test func loopbackIsSkippedWhenTheHostsAddressesAreNotLocal() {
+    @Test func loopbackStaysFirstWhenTheHostsAddressesAreNotLocal() {
         let hints = DirectHints(port: 9000, lan: [.init(address: "192.168.1.9", prefix: 24)],
             tailscale: [.init(address: "100.101.1.1")])
-        #expect(plan(hints, [wifi], isMac: true) == ([], [
-            "127.0.0.1 (host is on another machine)", "::1 (host is on another machine)",
+        #expect(plan(hints, [wifi], isMac: true) == (["ws://127.0.0.1:8738", "ws://[::1]:8738"], [
             "192.168.1.9 (not on this subnet)", "100.101.1.1 (no Tailscale interface up)"
         ]))
     }
@@ -70,7 +69,10 @@ struct DirectCandidatesTests {
     @Test func aLocalHintMatchesAddressBytesEvenOnADownVPNInterface() {
         let hints = DirectHints(port: 9000, tailscale: [.init(address: "fd7a:115c:a1e0:0:0:0:0:1")])
         let local = LocalInterface(name: "utun4", address: "fd7a:115c:a1e0::1", prefix: 128, up: false)
-        #expect(plan(hints, [local], isMac: true).candidates == ["ws://127.0.0.1:8738", "ws://[::1]:8738"])
+        #expect(DirectCandidates.hostMayBeLocal(nil, []))
+        #expect(DirectCandidates.hostMayBeLocal(DirectHints(port: 9000), []))
+        #expect(DirectCandidates.hostMayBeLocal(hints, [local]))
+        #expect(!DirectCandidates.hostMayBeLocal(hints, [wifi]))
     }
 
     @Test func bonjourResultsMustBeOnALocalSubnet() {
