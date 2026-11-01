@@ -202,14 +202,25 @@ extension Transcriber: SpeechEngine {
                 guard let text = try? transcript(samples[half.range], language: language, hints: hints) else { break }
                 texts.append(text)
             }
-            let joined = TranscriptSeam.join(texts)
-            if texts.count == halves.count, TranscriptDensity.isBetter(joined, than: parts[part].text) {
+            guard texts.count == halves.count else { continue }
+            let joined = TranscriptSeam.join(texts, overlapSpeechSeconds: Self.seams(halves, activity: activity))
+            if TranscriptDensity.isBetter(joined, than: parts[part].text) {
                 parts[part].text = joined
             }
         }
         // A half's decode stops on cancellation without throwing (`try?` above).
         try Task.checkCancellation()
-        return TranscriptSeam.join(parts.map(\.text))
+        // Only consecutive windows share audio; one skipped as silent between two parts leaves none.
+        let seams = zip(parts, parts.dropFirst()).map { previous, next in
+            next.index == previous.index + 1
+                ? AudioWindowPlan.overlapSpeechSeconds(windows[previous.index], windows[next.index], activity: activity) : 0
+        }
+        return TranscriptSeam.join(parts.map(\.text), overlapSpeechSeconds: seams)
+    }
+
+    /// The speech each pair of consecutive `windows` both hear, for `TranscriptSeam.join`.
+    static func seams(_ windows: [AudioWindow], activity: VoiceActivity) -> [Double] {
+        zip(windows, windows.dropFirst()).map { AudioWindowPlan.overlapSpeechSeconds($0, $1, activity: activity) }
     }
 
     /// One window, or part of one. A window with speech that fails (`transcript`), or one of a longer clip
@@ -234,7 +245,7 @@ extension Transcriber: SpeechEngine {
                 parts.append(try transcribe(half, of: samples, activity: activity, language: language, hints: hints,
                                             alone: false, depth: depth + 1, progress: progress))
             }
-            return TranscriptSeam.join(parts)
+            return TranscriptSeam.join(parts, overlapSpeechSeconds: Self.seams(halves, activity: activity))
         }
         throw Failure(String(localized: "Part of the recording couldn’t be transcribed. Try again."))
     }

@@ -126,6 +126,14 @@ public enum AudioWindowPlan {
                 AudioWindow(range: max(range.lowerBound, cut - overlap)..<range.upperBound, activity: activity)]
     }
 
+    /// Seconds of speech in the audio `previous` and `next` both hear (`next` starting before `previous`
+    /// ends), for `TranscriptSeam.join`; zero when they don't overlap.
+    public static func overlapSpeechSeconds(_ previous: AudioWindow, _ next: AudioWindow, activity: VoiceActivity) -> Double {
+        let start = max(previous.range.lowerBound, next.range.lowerBound)
+        let end = min(previous.range.upperBound, next.range.upperBound)
+        return start < end ? activity.speechSeconds(in: start..<end) : 0
+    }
+
     /// The sample to cut at among the whole frames inside `span`: the middle of the longest run of silent
     /// frames (the latest of equals), else the middle of the quietest frame; nil when no whole frame fits.
     static func quietestPoint(in span: Range<Int>, activity: VoiceActivity) -> Int? {
