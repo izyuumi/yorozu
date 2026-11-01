@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import {
+  ACTIVITY_PUSH_PER_MINUTE,
   activityPayload,
   alertPayload,
   allowFrame,
@@ -53,6 +54,7 @@ export interface Env extends apns.ApnsEnv {
   CONNECT_LIMIT?: RateLimit;
   RELAY_MAX_TOKENS_PER_ROOM?: string;
   RELAY_NOTIFY_PER_MINUTE?: string;
+  RELAY_ACTIVITY_PER_MINUTE?: string;
 }
 
 const ED25519 = { name: "Ed25519" } as const;
@@ -235,12 +237,11 @@ export class Room implements DurableObject {
     return { token, expiresAt };
   }
 
-  private async reserveNotify(now: number): Promise<boolean> {
-    const limit = positiveLimit(this.env.RELAY_NOTIFY_PER_MINUTE, NOTIFY_PER_MINUTE);
+  private async reserveNotify(now: number, key: string, limit: number): Promise<boolean> {
     return this.state.storage.transaction(async (storage) => {
-      const window = (await storage.get<NotifyWindow>("notify-window")) ?? { count: 0, startedAt: now };
+      const window = (await storage.get<NotifyWindow>(key)) ?? { count: 0, startedAt: now };
       if (!allowNotify(window, now, limit)) return false;
-      await storage.put("notify-window", window);
+      await storage.put(key, window);
       return true;
     });
   }
@@ -705,7 +706,8 @@ export class Room implements DurableObject {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const notify = parseNotify(msg);
         if (!notify) return this.drop(ws, CLOSE_PROTOCOL, "bad notify");
-        if (!(await this.reserveNotify(now))) {
+        const limit = positiveLimit(this.env.RELAY_NOTIFY_PER_MINUTE, NOTIFY_PER_MINUTE);
+        if (!(await this.reserveNotify(now, "notify-window", limit))) {
           ws.send(JSON.stringify({ type: "state", state: "notify rate limit" }));
           return;
         }
@@ -727,8 +729,9 @@ export class Room implements DurableObject {
         if (conn.role !== "mac") return this.drop(ws, CLOSE_PROTOCOL, "not registered");
         const push = parseActivityPush(msg);
         if (!push) return this.drop(ws, CLOSE_PROTOCOL, "bad activity push");
-        if (!(await this.reserveNotify(now))) {
-          ws.send(JSON.stringify({ type: "state", state: "notify rate limit" }));
+        const limit = positiveLimit(this.env.RELAY_ACTIVITY_PER_MINUTE, ACTIVITY_PUSH_PER_MINUTE);
+        if (!(await this.reserveNotify(now, "activity-window", limit))) {
+          ws.send(JSON.stringify({ type: "state", state: "activity rate limit" }));
           return;
         }
         const pushed = this.activityTail

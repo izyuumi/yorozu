@@ -29,6 +29,8 @@ export const LINGER_MS = 120_000;
 export const STALE_MS = 15 * 60_000;
 /** Step counts go at most this often per activity, at priority 5. */
 export const STEP_INTERVAL_MS = 15_000;
+/** The relay refuses a job above this many steps and drops the host; must match `MAX_STEPS` in apps/relay/src/protocol.ts. */
+export const MAX_STEPS = 100_000;
 
 const REFERENCE_MS = 978_307_200_000;
 const KINDS: readonly string[] = ["turn", "recording", "transcribing", "needsYou"];
@@ -66,7 +68,7 @@ export const cleanJobs = (jobs: readonly WireJob[]): WireJob[] =>
     token,
     kind,
     state,
-    ...(steps !== undefined && { steps }),
+    ...(steps !== undefined && { steps: Math.min(steps, MAX_STEPS) }),
     startedAt,
     ...(finishedAt !== undefined && { finishedAt }),
   }));
@@ -111,7 +113,7 @@ export const contentState = (jobs: readonly WireJob[]): ContentState => ({
     token,
     kind,
     state,
-    ...(steps !== undefined && { steps }),
+    ...(steps !== undefined && { steps: Math.min(steps, MAX_STEPS) }),
     startedAt: seconds(startedAt),
     ...(finishedAt !== undefined && { finishedAt: seconds(finishedAt) }),
   })),

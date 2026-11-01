@@ -13,7 +13,7 @@ Two implementations of one protocol, sharing limits, envelope parsing and close 
 | Mailboxes (Mac pairing) | `Mailbox` Durable Object, `/mailbox/<id>` (`src/mailbox.ts`) | None |
 | Connection limit | `CONNECT_LIMIT` rate limit: 30 new sockets a minute per address | `RELAY_MAX_CONNS_PER_IP` open sockets per address (default 32); `RELAY_TRUST_PROXY` sets trusted proxy hops |
 
-Both read `RELAY_MAX_TOKENS_PER_ROOM` (default 8) and `RELAY_NOTIFY_PER_MINUTE` (default 60). The Worker's APNs secrets are listed in [docs/setup.md](../../docs/setup.md).
+Both read `RELAY_MAX_TOKENS_PER_ROOM` (default 8) and `RELAY_NOTIFY_PER_MINUTE` (default 60). The Worker also reads `RELAY_ACTIVITY_PER_MINUTE` (default 60), the separate budget for Live Activity pushes. The Worker's APNs secrets are listed in [docs/setup.md](../../docs/setup.md).
 
 ## Develop
 

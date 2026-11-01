@@ -7,6 +7,7 @@ export const MAX_PAYLOAD_BYTES = 1_048_576;
 export const PHONE_BUFFER_CAP_BYTES = 2 * MAX_PAYLOAD_BYTES;
 export const MAX_TOKENS_PER_ROOM = 8;
 export const NOTIFY_PER_MINUTE = 60;
+export const ACTIVITY_PUSH_PER_MINUTE = 60;
 
 export function positiveLimit(value: string | undefined, fallback: number): number {
   const limit = Number(value);
